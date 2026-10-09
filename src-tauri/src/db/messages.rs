@@ -34,7 +34,7 @@ impl Database {
                     },
                 )
                 .optional()?
-                .ok_or_else(|| DatabaseError::Message("Attachment source not found".into()))
+                .ok_or(DatabaseError::NotFound("Attachment source"))
         })
     }
 
@@ -50,10 +50,10 @@ impl Database {
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .optional()?
-                .ok_or_else(|| "Message not found".to_string())?;
+                .ok_or(DatabaseError::NotFound("Message"))?;
             let metadata = metadata_json
                 .ok_or_else(|| {
-                    DatabaseError::Message("This message has no unsubscribe option".into())
+                    DatabaseError::invalid("This message has no unsubscribe option")
                 })
                 .and_then(|value| {
                     serde_json::from_str::<UnsubscribeMetadata>(&value).map_err(serialization_error)
@@ -65,7 +65,7 @@ impl Database {
             } else if let Some(url) = metadata.web_url {
                 (UnsubscribeMethod::Web, url)
             } else {
-                return Err("This message has no usable unsubscribe option".into());
+                return Err(DatabaseError::invalid("This message has no usable unsubscribe option"));
             };
             let request_id = Uuid::new_v4().to_string();
             transaction.execute(
@@ -96,7 +96,7 @@ impl Database {
         error: Option<&str>,
     ) -> DbResult<()> {
         if !matches!(state, "succeeded" | "opened" | "failed") {
-            return Err("Invalid unsubscribe request state".into());
+            return Err(DatabaseError::invalid("Invalid unsubscribe request state"));
         }
         let changed = self.with_connection(|connection| {
             Ok(connection.execute(
@@ -113,7 +113,7 @@ impl Database {
             )?)
         })?;
         if changed == 0 {
-            return Err("Unsubscribe request was not pending".into());
+            return Err(DatabaseError::invalid("Unsubscribe request was not pending"));
         }
         Ok(())
     }

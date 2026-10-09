@@ -1,5 +1,6 @@
 //! Atomic address-book imports and explicit merges. Suppression is local to
 //! this installation and intentionally independent of saved-profile lifetime.
+use super::DatabaseError;
 use super::contacts::save_contact_on;
 use super::{Database, DbResult};
 use crate::models::{ContactProfile, ContactRecord, KeepInTouch, SaveContactRequest};
@@ -27,7 +28,7 @@ fn read_record(connection: &Connection, id: &str) -> DbResult<ContactRecord> {
             photo_data: row.get(8)?, favorite: row.get(9)?, birthday: row.get(10)?, addresses: Vec::new(),
             keep_in_touch: KeepInTouch { interval_days: row.get(11)?, started_at: row.get(12)?, snoozed_until: row.get(13)?, snoozed_at: row.get(14)?, last_touch_at: row.get(15)? },
         })
-    ).optional()?.ok_or("Saved contact not found")?;
+    ).optional()?.ok_or(DatabaseError::NotFound("Saved contact"))?;
     let mut statement = connection.prepare(
         "SELECT email FROM contact_addresses WHERE contact_id=?1 ORDER BY position,rowid",
     )?;
@@ -38,10 +39,10 @@ fn read_record(connection: &Connection, id: &str) -> DbResult<ContactRecord> {
 }
 
 fn record_contact(tx: &Transaction, id: &str) -> DbResult<()> {
-    let value = serde_json::to_value(read_record(tx, id)?).map_err(|error| error.to_string())?;
+    let value = serde_json::to_value(read_record(tx, id)?).map_err(super::serialization_error)?;
     let fields = value
         .as_object()
-        .ok_or("Invalid contact")?
+        .ok_or_else(|| DatabaseError::corrupt("Invalid contact"))?
         .keys()
         .cloned()
         .collect();
@@ -69,11 +70,10 @@ impl Database {
         contacts: &[SaveContactRequest],
     ) -> DbResult<ContactImportResult> {
         if contacts.len() > crate::contact_interchange::MAX_IMPORT_CONTACTS {
-            return Err("Too many contacts in one import".into());
+            return Err(DatabaseError::invalid("Too many contacts in one import"));
         }
         let sync = self
-            .replicated_sync_active()
-            .map_err(super::DatabaseError::from)?;
+            .replicated_sync_active()?;
         self.with_transaction(|tx| {
             let mut result = ContactImportResult {
                 imported: 0,
@@ -115,11 +115,10 @@ impl Database {
     ) -> DbResult<ContactProfile> {
         let sources: BTreeSet<_> = source_ids.iter().cloned().collect();
         if sources.is_empty() || sources.len() > 50 || sources.contains(target_id) {
-            return Err("Choose a retained contact and 1 to 50 other saved contacts".into());
+            return Err(DatabaseError::invalid("Choose a retained contact and 1 to 50 other saved contacts"));
         }
         let sync = self
-            .replicated_sync_active()
-            .map_err(super::DatabaseError::from)?;
+            .replicated_sync_active()?;
         self.with_transaction(|tx| {
             let mut target = read_record(tx, target_id)?;
             let mut group_fields = std::collections::BTreeMap::<String, BTreeSet<String>>::new();
@@ -164,7 +163,7 @@ impl Database {
                 tx.execute("UPDATE contact_groups SET updated_at=?2 WHERE id=?1", params![group, chrono::Utc::now().to_rfc3339()])?;
                 if sync {
                     // Only changed memberships are written, preserving concurrent edits.
-                    let payload = super::contact_groups::contact_group_record_on(tx, &group)?.ok_or("Contact group not found")?;
+                    let payload = super::contact_groups::contact_group_record_on(tx, &group)?.ok_or(DatabaseError::NotFound("Contact group"))?;
                     let mut fields = fields;
                     let has_replica: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM sync_values WHERE entity_type='contact_group' AND entity_id=?1)", [&group], |row| row.get(0))?;
                     if !has_replica { fields.extend(payload.as_object().unwrap().keys().cloned()); }
@@ -174,7 +173,7 @@ impl Database {
             Ok(())
         })?;
         self.get_contact_profile(target_id)?
-            .ok_or_else(|| "Merged contact could not be loaded".into())
+            .ok_or(DatabaseError::NotFound("Merged contact"))
     }
 
     pub fn list_contact_suppressions(&self) -> DbResult<Vec<String>> {
@@ -191,13 +190,13 @@ impl Database {
     pub fn set_contact_suppressed(&self, email: &str, suppressed: bool) -> DbResult<()> {
         let email = email.trim().to_ascii_lowercase();
         let parsed =
-            crate::correspondence::addresses(&email).map_err(super::DatabaseError::from)?;
+            crate::correspondence::addresses(&email).map_err(DatabaseError::Validation)?;
         if email.len() > 320
             || parsed.len() != 1
             || parsed[0].1 != email
             || email.chars().any(char::is_control)
         {
-            return Err("Enter one valid email address".into());
+            return Err(DatabaseError::invalid("Enter one valid email address"));
         }
         self.with_connection(|connection| {
             if suppressed {

@@ -73,14 +73,14 @@ impl Database {
     /// persisted "Enable replicated sync" Settings toggle a user turned on
     /// themselves. Reuses `sync_spaces.enabled`, which every earlier phase
     /// reserved for exactly this without ever wiring it up.
-    pub fn replicated_sync_active(&self) -> Result<bool, String> {
+    pub fn replicated_sync_active(&self) -> DbResult<bool> {
         Ok(enabled() || self.beta_features_enabled()?)
     }
 
     /// The persisted state of the Settings "Enable replicated sync" toggle.
     /// `false` (not an error) when no `sync_spaces` row exists yet — nothing
     /// has ever been turned on.
-    pub fn beta_features_enabled(&self) -> Result<bool, String> {
+    pub fn beta_features_enabled(&self) -> DbResult<bool> {
         let enabled: Option<bool> = self.with_connection(|connection| {
             Ok(connection
                 .query_row("SELECT enabled FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
@@ -94,7 +94,7 @@ impl Database {
     /// call check this) without deleting local keys, roster, or graph
     /// state — matching "disabling sync and returning to local-only
     /// operation" rather than an irreversible reset.
-    pub fn set_beta_features_enabled(&self, on: bool) -> Result<(), String> {
+    pub fn set_beta_features_enabled(&self, on: bool) -> DbResult<()> {
         self.with_connection(|connection| {
             connection.execute(
                 "INSERT INTO sync_spaces(id, active_epoch, lamport, enabled) VALUES (?1, 0, 0, ?2)
@@ -102,8 +102,7 @@ impl Database {
                 params![SPACE_ID, on],
             )?;
             Ok(())
-        })?;
-        Ok(())
+        })
     }
 }
 
@@ -265,7 +264,7 @@ impl Database {
     /// threads. Always restores the previous state afterward, including
     /// when `work` returns an error or panics.
     /// Wraps `materialize_touched_entities`'s projection of a merged snapshot.
-    pub(crate) fn with_remote_projection<R>(&self, work: impl FnOnce() -> Result<R, String>) -> Result<R, String> {
+    pub(crate) fn with_remote_projection<R, E>(&self, work: impl FnOnce() -> Result<R, E>) -> Result<R, E> {
         struct Projection<'a> {
             database: &'a Database,
             thread: std::thread::ThreadId,
@@ -325,7 +324,7 @@ pub(crate) fn ensure_space_and_device(tx: &Transaction) -> DbResult<[u8; 16]> {
         .query_row("SELECT device_id FROM sync_devices WHERE is_self=1 LIMIT 1", [], |row| row.get(0))
         .optional()?;
     if let Some(hex) = existing {
-        return Ok(decode_id(&hex)?);
+        return decode_id(&hex).map_err(DatabaseError::Corrupt);
     }
     let device_id = random_id();
     tx.execute(
@@ -570,16 +569,15 @@ impl Database {
         })?;
         rows.into_iter()
             .map(|(device_id_hex, key_bytes)| {
-                let device_id = EnvelopeDeviceId::from_bytes(decode_id(&device_id_hex)?);
+                let device_id = EnvelopeDeviceId::from_bytes(decode_id(&device_id_hex).map_err(DatabaseError::Corrupt)?);
                 let key_array: [u8; 32] = key_bytes
                     .try_into()
-                    .map_err(|_| "Stored device public key is invalid".to_string())?;
+                    .map_err(|_| DatabaseError::corrupt("Stored device public key is invalid"))?;
                 let verifying_key = VerifyingKey::from_bytes(&key_array)
-                    .map_err(|_| "Stored device public key is invalid".to_string())?;
+                    .map_err(|_| DatabaseError::corrupt("Stored device public key is invalid"))?;
                 Ok((device_id, verifying_key))
             })
-            .collect::<Result<_, String>>()
-            .map_err(DatabaseError::from)
+            .collect()
     }
 }
 
@@ -740,7 +738,7 @@ impl Database {
                 objects.push((cid.clone(), "state_chunk", index as i64, chunk_count, chunk.clone()));
                 chunk_cids.push(cid);
             }
-            let index_bytes = serde_json::to_vec(&ChunkIndex { chunk_cids }).map_err(display)?;
+            let index_bytes = serde_json::to_vec(&ChunkIndex { chunk_cids }).map_err(crate::db::serialization_error)?;
             objects.push((compute_cid(&index_bytes), "state_index", 0, 1, index_bytes));
             for (cid, kind, chunk_index, chunk_count, bytes) in objects {
                 tx.execute(
@@ -908,7 +906,7 @@ impl Database {
     /// Records the protocol marker as a local object, so anti-entropy
     /// repair stores it on every connector this device uses, including ones
     /// added later. Idempotent.
-    pub(crate) fn ensure_protocol_marker_object(&self) -> Result<(), String> {
+    pub(crate) fn ensure_protocol_marker_object(&self) -> DbResult<()> {
         self.with_connection(|connection| {
             connection.execute(
                 "INSERT OR IGNORE INTO sync_objects(cid,object_kind,chunk_index,chunk_count,bytes) VALUES (?1,'protocol_marker',0,1,?2)",
@@ -916,7 +914,6 @@ impl Database {
             )?;
             Ok(())
         })
-        .map_err(String::from)
     }
 
     /// Whether to tell the user that upgrading reset sync: this device left
@@ -1976,7 +1973,7 @@ impl ReplicatedSync {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let transports = build_configured_transports(&self.database).await;
-        crate::enrollment::begin_genesis(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, &transports, allow_existing_space).await
+        crate::enrollment::begin_genesis(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, &transports, allow_existing_space).await.map_err(String::from)
     }
 
     /// Whether the configured transports already hold a sync space, so
@@ -1992,7 +1989,7 @@ impl ReplicatedSync {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let transports = build_configured_transports(&self.database).await;
-        crate::enrollment::publish_enrollment_request(&self.database, &identity, &transports).await
+        crate::enrollment::publish_enrollment_request(&self.database, &identity, &transports).await.map_err(String::from)
     }
 
     /// Approves a pending incoming request, publishing a grant.
@@ -2001,7 +1998,7 @@ impl ReplicatedSync {
         let identity = self.database.local_device_identity()?;
         let keys = self.database.local_replicated_keys()?;
         let transports = build_configured_transports(&self.database).await;
-        crate::enrollment::approve_enrollment_request(&self.database, &identity, &keys, request_id_hex, &transports).await
+        crate::enrollment::approve_enrollment_request(&self.database, &identity, &keys, request_id_hex, &transports).await.map_err(String::from)
     }
 
     /// Rejects an incoming request and publishes the signed group-wide
@@ -2010,14 +2007,14 @@ impl ReplicatedSync {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let transports = build_configured_transports(&self.database).await;
-        crate::enrollment::reject_enrollment_request(&self.database, &identity, request_id_hex, &transports).await
+        crate::enrollment::reject_enrollment_request(&self.database, &identity, request_id_hex, &transports).await.map_err(String::from)
     }
 
     /// Imports a staged grant after the user confirms its fingerprint.
     pub async fn confirm_enrollment(&self, request_id_hex: &str) -> Result<(), String> {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
-        crate::enrollment::confirm_and_import_grant(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, request_id_hex).await
+        crate::enrollment::confirm_and_import_grant(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, request_id_hex).await.map_err(String::from)
     }
 
     /// Rotates the active epoch, optionally revoking a device. This and the
@@ -2029,7 +2026,7 @@ impl ReplicatedSync {
         let identity = self.database.local_device_identity()?;
         let keys = self.database.local_replicated_keys()?;
         let transports = build_configured_transports(&self.database).await;
-        crate::enrollment::rotate_epoch(&self.database, &identity, &keys, &crate::enrollment::KeychainEpochKeyStore, &transports, revoke_device_id_hex).await
+        crate::enrollment::rotate_epoch(&self.database, &identity, &keys, &crate::enrollment::KeychainEpochKeyStore, &transports, revoke_device_id_hex).await.map_err(String::from)
     }
 
     /// Leaves the sync space on this device only; see
@@ -2066,6 +2063,7 @@ impl ReplicatedSync {
             Utc::now().timestamp_millis(),
         )
         .await
+        .map_err(String::from)
     }
 
     /// Cancels an open join code and rotates keys. Holds the sync gate so
@@ -2084,6 +2082,7 @@ impl ReplicatedSync {
             invitation_cid,
         )
         .await
+        .map_err(String::from)
     }
 
     /// Joins a sync group with a pasted join code, setting up its
@@ -2106,6 +2105,7 @@ impl ReplicatedSync {
             Utc::now().timestamp_millis(),
         )
         .await
+        .map_err(String::from)
     }
 
     /// Joins an existing sync space using only a recovery phrase.
@@ -2113,7 +2113,7 @@ impl ReplicatedSync {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let transports = build_configured_transports(&self.database).await;
-        crate::enrollment::join_with_recovery_phrase(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, phrase, &transports).await
+        crate::enrollment::join_with_recovery_phrase(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, phrase, &transports).await.map_err(String::from)
     }
 
     /// Spawns the periodic push/pull loop. Only ever does real work when
@@ -2322,9 +2322,9 @@ mod tests {
     fn nested_remote_projection_stays_engaged_until_the_outer_call_ends() {
         let db = Database::open_memory();
         db.with_remote_projection(|| {
-            db.with_remote_projection(|| Ok(()))?;
+            db.with_remote_projection(|| Ok::<_, String>(()))?;
             assert!(db.is_projecting_remote_operation());
-            Ok(())
+            Ok::<_, String>(())
         })
         .unwrap();
         assert!(!db.is_projecting_remote_operation());
@@ -2334,7 +2334,7 @@ mod tests {
     fn remote_projection_flag_is_restored_after_a_panic() {
         let db = Database::open_memory();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            db.with_remote_projection::<()>(|| panic!("boom"))
+            db.with_remote_projection::<(), String>(|| panic!("boom"))
         }));
         assert!(result.is_err());
         assert!(!db.is_projecting_remote_operation());

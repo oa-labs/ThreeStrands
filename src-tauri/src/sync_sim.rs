@@ -27,11 +27,11 @@ use rand::{RngExt, SeedableRng};
 use threestrands_sync_core::{Dot, FieldKey, Operation, OperationGraph, OperationId, WinnerStamp};
 use threestrands_sync_protocol::EntityType;
 use threestrands_sync_transport::fake::FakeTransport;
-use threestrands_sync_transport::{Cid as TransportCid, SyncTransport};
+use threestrands_sync_transport::{Cid as TransportCid, SyncTransport, TransportError};
 
 use crate::db::Database;
 use crate::enrollment::test_support::{local_keys_for, test_identity, FakeEpochKeyStore};
-use crate::enrollment::{begin_genesis, join_with_recovery_phrase, rotate_epoch, run_enrollment_sweep};
+use crate::enrollment::{begin_genesis, join_with_recovery_phrase, rotate_epoch, run_enrollment_sweep, EnrollmentError};
 use crate::replicated_sync::{encode_id, pull_from_transports, push_local_state, DeviceIdentity};
 
 const HOUR_MS: i64 = 60 * 60 * 1000;
@@ -146,7 +146,7 @@ impl Sim {
             Ok(must_rotate) => must_rotate,
             // An injected outage can fail a sweep; it simply runs again next round.
             Err(error) => {
-                if !error.contains("transient") {
+                if !is_injected_outage(&error) {
                     self.fail(format!("{} sweep: {error}", device.name));
                 }
                 false
@@ -155,7 +155,7 @@ impl Sim {
         if must_rotate {
             let keys = local_keys_for(&device.database, &device.identity, &device.epoch_keys);
             if let Err(error) = rotate_epoch(&device.database, &device.identity, &keys, &device.epoch_keys, transports, None).await {
-                if !error.contains("transient") {
+                if !is_injected_outage(&error) {
                     self.fail(format!("{} collision rotation: {error}", device.name));
                 }
             }
@@ -200,7 +200,7 @@ impl Sim {
             let id = ids[self.rng.random_range(0..ids.len())].clone();
             let before = entity_values(database, &id);
             if roll < 8 {
-                let result = database.update_snippet(&id, &name, "edited").map_err(String::from).and_then(|snippet| {
+                let result = database.update_snippet(&id, &name, "edited").and_then(|snippet| {
                     database.record_local_entity_write(
                         EntityType::Snippet,
                         &id,
@@ -213,7 +213,6 @@ impl Sim {
             }
             let result = database
                 .delete_snippet(&id)
-                .map_err(String::from)
                 .and_then(|_| database.record_local_entity_deletion(EntityType::Snippet, &id));
             self.record_deletion(&before);
             return self.check_write(index, result);
@@ -222,7 +221,7 @@ impl Sim {
         self.check_write(index, result);
     }
 
-    fn check_write(&self, index: usize, result: Result<(), String>) {
+    fn check_write(&self, index: usize, result: crate::db::DbResult<()>) {
         if let Err(error) = result {
             self.fail(format!("{} write: {error}", self.devices[index].name));
         }
@@ -474,11 +473,16 @@ fn futures_lite_block_on<F: std::future::Future>(future: F) -> F::Output {
     }
 }
 
-fn is_retryable_join_failure(error: &str) -> bool {
-    error == crate::enrollment::LEGACY_SPACE_REFUSAL
-        || error.contains("transient")
-        || error.starts_with("No rotation object on any configured transport opened with this recovery phrase yet")
-        || error == crate::enrollment::RECOVERY_INCOMPLETE
+fn is_injected_outage(error: &EnrollmentError) -> bool {
+    matches!(error, EnrollmentError::Transport(TransportError::Transient(_)))
+}
+
+fn is_retryable_join_failure(error: &EnrollmentError) -> bool {
+    is_injected_outage(error)
+        || matches!(
+            error,
+            EnrollmentError::LegacySpace | EnrollmentError::NoRecoverableRotation | EnrollmentError::RecoveryIncomplete
+        )
 }
 
 fn new_device(name: &str) -> SimDevice {

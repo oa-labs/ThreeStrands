@@ -47,7 +47,7 @@ impl Database {
                 [email],
             )?)
         })?;
-        if changed == 0 { return Err("Calendar account not found".into()); }
+        if changed == 0 { return Err(DatabaseError::NotFound("Calendar account")); }
         Ok(())
     }
 
@@ -63,7 +63,7 @@ impl Database {
                     |row| row.get::<_, bool>(0),
                 )
                 .optional()?
-                .ok_or_else(|| DatabaseError::Message("Calendar account not found".into()))?;
+                .ok_or(DatabaseError::NotFound("Calendar account"))?;
             if !initialized {
                 return Ok(None);
             }
@@ -87,7 +87,7 @@ impl Database {
                 [email],
             )?;
             if changed == 0 {
-                return Err("Calendar account not found".into());
+                return Err(DatabaseError::NotFound("Calendar account"));
             }
             transaction.execute(
                 "DELETE FROM calendar_selections WHERE account_id = ?1",

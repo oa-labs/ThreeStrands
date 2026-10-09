@@ -1,5 +1,6 @@
 //! Snippet template persistence.
 
+use super::DatabaseError;
 use super::{Database, DbResult};
 use crate::models::Snippet;
 use chrono::Utc;
@@ -21,10 +22,10 @@ impl Database {
         let name = name.trim();
         let body = body.trim();
         if name.is_empty() {
-            return Err("Snippet name cannot be empty".into());
+            return Err(DatabaseError::invalid("Snippet name cannot be empty"));
         }
         if body.is_empty() {
-            return Err("Snippet body cannot be empty".into());
+            return Err(DatabaseError::invalid("Snippet body cannot be empty"));
         }
         let id = Uuid::new_v4().to_string();
         let created_at = Utc::now().to_rfc3339();
@@ -47,10 +48,10 @@ impl Database {
         let name = name.trim();
         let body = body.trim();
         if name.is_empty() {
-            return Err("Snippet name cannot be empty".into());
+            return Err(DatabaseError::invalid("Snippet name cannot be empty"));
         }
         if body.is_empty() {
-            return Err("Snippet body cannot be empty".into());
+            return Err(DatabaseError::invalid("Snippet body cannot be empty"));
         }
         self.with_connection(|connection| {
             let changed = connection.execute(
@@ -58,7 +59,7 @@ impl Database {
                 params![name, body, id],
             )?;
             if changed == 0 {
-                return Err("Snippet not found".into());
+                return Err(DatabaseError::NotFound("Snippet"));
             }
             Ok(connection.query_row(
                 "SELECT id, name, body, created_at FROM snippets WHERE id = ?1",

@@ -3,6 +3,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use threestrands_sync_protocol::goal_period_matches;
 use uuid::Uuid;
 
+use super::DatabaseError;
 use super::{Database, DbResult};
 use crate::models::{CreateGoalRequest, Goal, ThreadTask, UpdateGoalRequest};
 
@@ -19,16 +20,16 @@ pub struct GoalDeletion {
 fn validate_goal_fields(title: &str, notes: Option<&str>, horizon: &str, period: &str, status: &str) -> DbResult<()> {
     let title = title.trim();
     if title.is_empty() || title.chars().count() > MAX_TITLE {
-        return Err(format!("Goal title must be between 1 and {MAX_TITLE} characters").into());
+        return Err(DatabaseError::invalid(format!("Goal title must be between 1 and {MAX_TITLE} characters")));
     }
     if notes.is_some_and(|value| value.chars().count() > MAX_NOTES) {
-        return Err(format!("Goal notes exceed {MAX_NOTES} characters").into());
+        return Err(DatabaseError::invalid(format!("Goal notes exceed {MAX_NOTES} characters")));
     }
     if !goal_period_matches(horizon, period) {
-        return Err("Choose a period that matches the goal's horizon, such as 2026, 2026-H2, or 2026-Q4".into());
+        return Err(DatabaseError::invalid("Choose a period that matches the goal's horizon, such as 2026, 2026-H2, or 2026-Q4"));
     }
     if !matches!(status, "active" | "achieved" | "dropped") {
-        return Err("Unknown goal status".into());
+        return Err(DatabaseError::invalid("Unknown goal status"));
     }
     Ok(())
 }
@@ -84,9 +85,9 @@ fn goal_by_id(connection: &Connection, id: &str) -> DbResult<Option<Goal>> {
 /// A task may support only a goal that exists in the task's own account.
 pub(super) fn ensure_goal_link(connection: &Connection, account_id: &str, goal_id: Option<&str>) -> DbResult<()> {
     let Some(goal_id) = goal_id else { return Ok(()) };
-    let goal = goal_by_id(connection, goal_id)?.ok_or_else(|| "Goal not found".to_string())?;
+    let goal = goal_by_id(connection, goal_id)?.ok_or(DatabaseError::NotFound("Goal"))?;
     if goal.account_id != account_id {
-        return Err("A task can only support a goal in its own account".into());
+        return Err(DatabaseError::invalid("A task can only support a goal in its own account"));
     }
     Ok(())
 }
@@ -94,14 +95,14 @@ pub(super) fn ensure_goal_link(connection: &Connection, account_id: &str, goal_i
 fn ensure_parent(connection: &Connection, goal_id: Option<&str>, account_id: &str, horizon: &str, period: &str, parent_id: Option<&str>) -> DbResult<()> {
     let Some(parent_id) = parent_id else { return Ok(()) };
     if Some(parent_id) == goal_id {
-        return Err("A goal cannot support itself".into());
+        return Err(DatabaseError::invalid("A goal cannot support itself"));
     }
-    let parent = goal_by_id(connection, parent_id)?.ok_or_else(|| "Parent goal not found".to_string())?;
+    let parent = goal_by_id(connection, parent_id)?.ok_or(DatabaseError::NotFound("Parent goal"))?;
     if parent.account_id != account_id {
-        return Err("A goal can only support a goal in its own account".into());
+        return Err(DatabaseError::invalid("A goal can only support a goal in its own account"));
     }
     if horizon_rank(&parent.horizon) >= horizon_rank(horizon) || !period_encloses(&parent.period, period) {
-        return Err("A goal can only support a longer-term goal whose period includes it".into());
+        return Err(DatabaseError::invalid("A goal can only support a longer-term goal whose period includes it"));
     }
     Ok(())
 }
@@ -150,7 +151,7 @@ impl Database {
 
     pub fn update_goal(&self, request: &UpdateGoalRequest) -> DbResult<Goal> {
         self.with_connection(|connection| {
-            let current = goal_by_id(connection, &request.id)?.ok_or_else(|| "Goal not found".to_string())?;
+            let current = goal_by_id(connection, &request.id)?.ok_or(DatabaseError::NotFound("Goal"))?;
             let title = request.title.as_deref().unwrap_or(&current.title);
             let notes = request.notes.as_ref().map_or(current.notes.as_deref(), |value| value.as_deref());
             let notes = notes.map(str::trim).filter(|notes| !notes.is_empty());
@@ -170,7 +171,7 @@ impl Database {
                     .collect::<Result<_, _>>()?;
                 // Closed supporting goals keep their link as history; only active ones must still fit.
                 if children.iter().any(|child| child.status == "active" && (horizon_rank(horizon) >= horizon_rank(&child.horizon) || !period_encloses(period, &child.period))) {
-                    return Err("Some goals that support this one fall outside its new period. Unlink them first.".into());
+                    return Err(DatabaseError::invalid("Some goals that support this one fall outside its new period. Unlink them first."));
                 }
             }
             let closed_at = match (status, current.status.as_str()) {

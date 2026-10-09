@@ -3,6 +3,7 @@ use chrono_tz::Tz;
 use rusqlite::{params, OptionalExtension};
 use uuid::Uuid;
 
+use super::DatabaseError;
 use super::{display_error, goals::ensure_goal_link, Database, DbResult};
 use crate::models::{CreateTaskRequest, ThreadTask, UpdateTaskRequest};
 
@@ -21,22 +22,22 @@ fn validate_task_fields(
 ) -> DbResult<()> {
     let title = title.trim();
     if title.is_empty() || title.chars().count() > MAX_TITLE {
-        return Err(format!("Task title must be between 1 and {MAX_TITLE} characters").into());
+        return Err(DatabaseError::invalid(format!("Task title must be between 1 and {MAX_TITLE} characters")));
     }
     if !matches!(kind, "action" | "follow_up" | "waiting_for") {
-        return Err("Unknown task kind".into());
+        return Err(DatabaseError::invalid("Unknown task kind"));
     }
     if !matches!(due_kind, "none" | "date" | "datetime") {
-        return Err("Unknown task due kind".into());
+        return Err(DatabaseError::invalid("Unknown task due kind"));
     }
     if due_kind == "none" && due_value.is_some_and(|value| !value.trim().is_empty()) {
-        return Err("A task without a due date cannot have a due value".into());
+        return Err(DatabaseError::invalid("A task without a due date cannot have a due value"));
     }
     if due_kind != "none" && due_value.is_none_or(|value| value.trim().is_empty()) {
-        return Err("A dated task must have a due value".into());
+        return Err(DatabaseError::invalid("A dated task must have a due value"));
     }
     if repeat_interval_days.is_some_and(|value| !(1..=365).contains(&value)) {
-        return Err("Repeat interval must be between 1 and 365 days".into());
+        return Err(DatabaseError::invalid("Repeat interval must be between 1 and 365 days"));
     }
     Ok(())
 }
@@ -151,22 +152,22 @@ impl Database {
         )?;
         match (&request.thread_id, &request.subject_snapshot) {
             (Some(_), Some(subject)) if !subject.trim().is_empty() => {}
-            (Some(_), _) => return Err("Task subject snapshot cannot be empty".into()),
+            (Some(_), _) => return Err(DatabaseError::invalid("Task subject snapshot cannot be empty")),
             (None, None) => {}
             (None, Some(_)) => {
-                return Err("A standalone task cannot have a subject snapshot".into())
+                return Err(DatabaseError::invalid("A standalone task cannot have a subject snapshot"))
             }
         }
         if request.thread_id.is_none()
             && (request.source_message_id.is_some() || request.evidence_text.is_some())
         {
-            return Err("A standalone task cannot have conversation context".into());
+            return Err(DatabaseError::invalid("A standalone task cannot have conversation context"));
         }
         if request.notes.as_deref().is_some_and(|value| value.chars().count() > MAX_NOTES) {
-            return Err(format!("Task notes exceed {MAX_NOTES} characters").into());
+            return Err(DatabaseError::invalid(format!("Task notes exceed {MAX_NOTES} characters")));
         }
         if request.evidence_text.as_deref().is_some_and(|value| value.chars().count() > MAX_EVIDENCE) {
-            return Err(format!("Task evidence exceeds {MAX_EVIDENCE} characters").into());
+            return Err(DatabaseError::invalid(format!("Task evidence exceeds {MAX_EVIDENCE} characters")));
         }
         self.with_connection(|connection| {
             ensure_goal_link(connection, &request.account_id, request.goal_id.as_deref())?;
@@ -178,7 +179,7 @@ impl Database {
                         |row| row.get(0),
                     )
                     .optional()?
-                    .ok_or_else(|| "Source thread not found".to_string())?,
+                    .ok_or(DatabaseError::NotFound("Source thread"))?,
                 None => None,
             };
             let now = Utc::now().to_rfc3339();
@@ -218,7 +219,7 @@ impl Database {
     pub fn update_task(&self, request: &UpdateTaskRequest) -> DbResult<ThreadTask> {
         self.with_connection(|connection| {
             let current = task_by_id(connection, &request.id)?
-                .ok_or_else(|| "Task not found".to_string())?;
+                .ok_or(DatabaseError::NotFound("Task"))?;
             let title = request.title.as_deref().unwrap_or(&current.title);
             let kind = request.kind.as_deref().unwrap_or(&current.kind);
             let due_kind = request.due_kind.as_deref().unwrap_or(&current.due_kind);
@@ -246,7 +247,7 @@ impl Database {
                 ensure_goal_link(connection, &current.account_id, goal_id)?;
             }
             if notes.is_some_and(|value| value.chars().count() > MAX_NOTES) {
-                return Err(format!("Task notes exceed {MAX_NOTES} characters").into());
+                return Err(DatabaseError::invalid(format!("Task notes exceed {MAX_NOTES} characters")));
             }
             let now = Utc::now().to_rfc3339();
             connection
@@ -264,10 +265,10 @@ impl Database {
 
     pub fn set_task_status(&self, id: &str, status: &str, source: &str) -> DbResult<ThreadTask> {
         if !matches!(status, "open" | "in_progress" | "completed" | "cancelled") {
-            return Err("Unknown task status".into());
+            return Err(DatabaseError::invalid("Unknown task status"));
         }
         if !matches!(source, "user" | "reply" | "external") {
-            return Err("Unknown task completion source".into());
+            return Err(DatabaseError::invalid("Unknown task completion source"));
         }
         let now = Utc::now().to_rfc3339();
         let completed_at = (status == "completed").then_some(now.as_str());
@@ -285,22 +286,22 @@ impl Database {
     pub fn record_follow_up(&self, id: &str) -> DbResult<ThreadTask> {
         self.with_connection(|connection| {
             let current =
-                task_by_id(connection, id)?.ok_or_else(|| "Task not found".to_string())?;
+                task_by_id(connection, id)?.ok_or(DatabaseError::NotFound("Task"))?;
             if !is_active_status(&current.status)
                 || current.kind != "follow_up"
                 || current.repeat_interval_days.is_none()
             {
-                return Err("Only active repeating follow-up tasks can be recorded".into());
+                return Err(DatabaseError::invalid("Only active repeating follow-up tasks can be recorded"));
             }
             let interval = current.repeat_interval_days.unwrap_or_default() as i64;
             let due_value = current
                 .due_value
                 .as_deref()
-                .ok_or_else(|| "Repeating follow-up has no due date".to_string())?;
+                .ok_or_else(|| DatabaseError::invalid("Repeating follow-up has no due date"))?;
             let next_due = match current.due_kind.as_str() {
                 "date" => NaiveDate::parse_from_str(due_value, "%Y-%m-%d").map_err(display_error)?
                     .checked_add_days(Days::new(interval as u64))
-                    .ok_or_else(|| "Follow-up due date is out of range".to_string())?
+                    .ok_or_else(|| DatabaseError::invalid("Follow-up due date is out of range"))?
                     .format("%Y-%m-%d")
                     .to_string(),
                 "datetime" => {
@@ -315,16 +316,16 @@ impl Database {
                     let next_local = local
                         .naive_local()
                         .checked_add_days(Days::new(interval as u64))
-                        .ok_or_else(|| "Follow-up due date is out of range".to_string())?;
+                        .ok_or_else(|| DatabaseError::invalid("Follow-up due date is out of range"))?;
                     time_zone
                         .from_local_datetime(&next_local)
                         .single()
                         .or_else(|| time_zone.from_local_datetime(&next_local).earliest())
                         .or_else(|| time_zone.from_local_datetime(&next_local).latest())
-                        .ok_or_else(|| "Follow-up due date is invalid in its timezone".to_string())?
+                        .ok_or_else(|| DatabaseError::invalid("Follow-up due date is invalid in its timezone"))?
                         .to_rfc3339()
                 }
-                _ => return Err("Repeating follow-up must have a date or datetime due value".into()),
+                _ => return Err(DatabaseError::invalid("Repeating follow-up must have a date or datetime due value")),
             };
             let now = Utc::now().to_rfc3339();
             connection

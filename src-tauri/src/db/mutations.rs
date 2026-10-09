@@ -27,7 +27,7 @@ impl Database {
             ThreadMutation::Label { .. } => "label",
         };
         if Self::apply_mutation_locally(transaction, mutation)? == 0 {
-            return Err("Thread not found".into());
+            return Err(DatabaseError::NotFound("Thread"));
         }
         Self::queue_mutation(transaction, mutation, kind)
     }
@@ -56,7 +56,7 @@ impl Database {
                         |row| row.get(0),
                     )
                     .optional()?
-                    .ok_or_else(|| "Thread not found".to_string())?;
+                    .ok_or(DatabaseError::NotFound("Thread"))?;
                 let mut labels: Vec<String> =
                     serde_json::from_str(&labels).map_err(serialization_error)?;
                 labels.retain(|item| item != "SPAM" && item != "INBOX");
@@ -84,7 +84,7 @@ impl Database {
                         |row| row.get(0),
                     )
                     .optional()?
-                    .ok_or_else(|| "Thread not found".to_string())?;
+                    .ok_or(DatabaseError::NotFound("Thread"))?;
                 let mut labels: Vec<String> =
                     serde_json::from_str(&labels).map_err(serialization_error)?;
                 labels.retain(|item| item != label_id);

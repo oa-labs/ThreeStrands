@@ -45,18 +45,18 @@ use threestrands_sync_envelope::limits::MAX_EARLIER_EPOCH_KEYS;
 use threestrands_sync_envelope::{protocol_marker_cid, PROTOCOL_MARKER};
 use threestrands_sync_transport::{Cid as TransportCid, SyncTransport, TransportError};
 
-use crate::db::Database;
-use crate::error_text::display;
+use crate::db::{Database, DatabaseError, DbResult};
 
+mod error;
 mod join_codes;
+pub(crate) use error::{EnrollmentError, EnrollmentResult};
 pub(crate) use join_codes::{
     cancel_join_code, create_join_code, join_with_code, preview_join_code, process_join_codes, JoinCodeConnectorChoice,
     JoinCodeNotice, JoinCodePreview, JoinCredentialsChoice, JoinFolderChoice, OutstandingJoinCode,
 };
 #[cfg(test)]
 use join_codes::{
-    find_invitation, verify_fetched_invitation, CREDENTIALS_REJECTED, INVITATION_NOT_FOUND, MAX_JOIN_CODE_HOURS, MIN_JOIN_CODE_HOURS,
-    STORAGE_UNREACHABLE,
+    find_invitation, verify_fetched_invitation, MAX_JOIN_CODE_HOURS, MIN_JOIN_CODE_HOURS,
 };
 use crate::replicated_sync::{decode_id, encode_id, random_id, x25519_public_bytes, DeviceIdentity, LocalKeys, SPACE_ID};
 
@@ -71,19 +71,19 @@ fn now_ms() -> i64 {
 /// `Database::local_replicated_keys` already follows by never being called
 /// from a test.
 pub(crate) trait EpochKeyStore: Send + Sync {
-    fn store(&self, key_epoch: u32, key: &[u8; 32]) -> Result<(), String>;
-    fn load(&self, key_epoch: u32) -> Result<Option<[u8; 32]>, String>;
+    fn store(&self, key_epoch: u32, key: &[u8; 32]) -> EnrollmentResult<()>;
+    fn load(&self, key_epoch: u32) -> EnrollmentResult<Option<[u8; 32]>>;
 }
 
 pub(crate) struct KeychainEpochKeyStore;
 
 impl EpochKeyStore for KeychainEpochKeyStore {
-    fn store(&self, key_epoch: u32, key: &[u8; 32]) -> Result<(), String> {
-        crate::replicated_sync::store_epoch_key(key_epoch, key)
+    fn store(&self, key_epoch: u32, key: &[u8; 32]) -> EnrollmentResult<()> {
+        crate::replicated_sync::store_epoch_key(key_epoch, key).map_err(EnrollmentError::Keychain)
     }
 
-    fn load(&self, key_epoch: u32) -> Result<Option<[u8; 32]>, String> {
-        crate::replicated_sync::load_epoch_key(key_epoch)
+    fn load(&self, key_epoch: u32) -> EnrollmentResult<Option<[u8; 32]>> {
+        crate::replicated_sync::load_epoch_key(key_epoch).map_err(EnrollmentError::Keychain)
     }
 }
 
@@ -94,7 +94,7 @@ impl EpochKeyStore for KeychainEpochKeyStore {
 /// everything already sealed under it, and the two devices would simply
 /// swap keys. The first key held stays, and the collision is resolved by a
 /// fresh rotation instead (see [`RotationOutcome::Collision`]).
-fn adopt_epoch_key(epoch_keys: &dyn EpochKeyStore, key_epoch: u32, key: &[u8; 32]) -> Result<bool, String> {
+fn adopt_epoch_key(epoch_keys: &dyn EpochKeyStore, key_epoch: u32, key: &[u8; 32]) -> EnrollmentResult<bool> {
     match epoch_keys.load(key_epoch)? {
         Some(existing) if existing != *key => Ok(false),
         Some(_) => Ok(true),
@@ -108,13 +108,13 @@ fn adopt_epoch_key(epoch_keys: &dyn EpochKeyStore, key_epoch: u32, key: &[u8; 32
 type RecoveryPublicKeys = ([u8; 32], [u8; 32]);
 type RawRecoveryPublicKeyRow = (Option<Vec<u8>>, Option<Vec<u8>>);
 
-fn roster_entry_verifying_key(entry: &RosterEntry) -> Result<VerifyingKey, String> {
-    let bytes: [u8; 32] = entry.ed25519_public.as_slice().try_into().map_err(|_| "Invalid roster public key".to_string())?;
-    VerifyingKey::from_bytes(&bytes).map_err(|_| "Invalid roster public key".to_string())
+fn roster_entry_verifying_key(entry: &RosterEntry) -> EnrollmentResult<VerifyingKey> {
+    let bytes: [u8; 32] = entry.ed25519_public.as_slice().try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid roster public key"))?;
+    VerifyingKey::from_bytes(&bytes).map_err(|_| EnrollmentError::MalformedKey("Invalid roster public key"))
 }
 
-fn roster_entry_x25519(entry: &RosterEntry) -> Result<[u8; 32], String> {
-    entry.x25519_public.as_slice().try_into().map_err(|_| "Invalid roster X25519 key".to_string())
+fn roster_entry_x25519(entry: &RosterEntry) -> EnrollmentResult<[u8; 32]> {
+    entry.x25519_public.as_slice().try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid roster X25519 key"))
 }
 
 // ============================ Status and listing ============================
@@ -174,11 +174,9 @@ pub const MAX_DEVICE_LABEL_CHARS: usize = 60;
 /// Seals every earlier epoch key this device holds to `recipient_x25519`,
 /// for a grant or invitation, so the new device can open history sealed
 /// before the current epoch.
-pub(crate) fn seal_earlier_epoch_keys(keys: &LocalKeys, recipient_x25519: &[u8; 32]) -> Result<Vec<SealedEpochKey>, String> {
+pub(crate) fn seal_earlier_epoch_keys(keys: &LocalKeys, recipient_x25519: &[u8; 32]) -> EnrollmentResult<Vec<SealedEpochKey>> {
     if keys.earlier_epoch_keys.len() > MAX_EARLIER_EPOCH_KEYS {
-        return Err(format!(
-            "This sync group has changed its keys more than {MAX_EARLIER_EPOCH_KEYS} times, so it can't hand its history to a new device. Create a new sync group instead."
-        ));
+        return Err(EnrollmentError::HistoryLimitReached);
     }
     Ok(keys
         .earlier_epoch_keys
@@ -210,7 +208,7 @@ pub(crate) fn store_earlier_epoch_keys(
     epoch_keys: &dyn EpochKeyStore,
     earlier: &[(u32, [u8; 32])],
     source_cid: &str,
-) -> Result<(), String> {
+) -> EnrollmentResult<()> {
     for (key_epoch, key) in earlier {
         if adopt_epoch_key(epoch_keys, *key_epoch, key)? {
             database.record_epoch_activation(*key_epoch, source_cid)?;
@@ -231,31 +229,31 @@ impl Database {
     /// grant staged for human fingerprint confirmation, or is fully
     /// enrolled. "Enrolled" is defined as: this device has adopted key
     /// material for the sync space's current `active_epoch`.
-    pub fn enrollment_status(&self) -> Result<EnrollmentStatus, String> {
+    pub fn enrollment_status(&self) -> DbResult<EnrollmentStatus> {
         let connection = self.connection()?;
         let active_epoch: Option<i64> = connection
             .query_row("SELECT active_epoch FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
             .optional()
-            .map_err(display)?;
+            ?;
         let Some(active_epoch) = active_epoch else {
             return Ok(EnrollmentStatus::NotStarted);
         };
         let adopted: bool = connection
             .query_row("SELECT 1 FROM sync_epoch_history WHERE key_epoch=?1", params![active_epoch], |_| Ok(true))
             .optional()
-            .map_err(display)?
+            ?
             .unwrap_or(false);
         if adopted {
             let device_count: i64 = connection
                 .query_row("SELECT COUNT(*) FROM sync_devices WHERE status='active'", [], |row| row.get(0))
-                .map_err(display)?;
+                ?;
             let history_handoff_keys_used: i64 = connection
                 .query_row(
                     "SELECT COUNT(*) FROM sync_epoch_history WHERE key_epoch < ?1",
                     [active_epoch],
                     |row| row.get(0),
                 )
-                .map_err(display)?;
+                ?;
             let history_handoff_keys_used = history_handoff_keys_used as usize;
             let history_handoff_warning = (history_handoff_keys_used >= MAX_EARLIER_EPOCH_KEYS - MAX_EARLIER_EPOCH_KEYS / 5)
                 .then_some(HistoryHandoffWarning {
@@ -278,7 +276,7 @@ impl Database {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()
-            .map_err(display)?;
+            ?;
         if let Some((request_id, fingerprint, grant_cbor)) = staged {
             let approver_fingerprint = decode_signed_enrollment_grant(&grant_cbor)
                 .ok()
@@ -296,7 +294,7 @@ impl Database {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()
-            .map_err(display)?;
+            ?;
         let rejected: Option<(String, String)> = connection
             .query_row(
                 "SELECT request_id, fingerprint FROM replicated_sync_enrollment_requests
@@ -305,7 +303,7 @@ impl Database {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
-            .map_err(display)?;
+            ?;
         match pending {
             Some((request_id, fingerprint, created_at)) => Ok(EnrollmentStatus::AwaitingGrant { request_id, fingerprint, created_at }),
             None => match rejected {
@@ -315,14 +313,14 @@ impl Database {
         }
     }
 
-    pub fn pending_incoming_enrollment_requests(&self) -> Result<Vec<IncomingEnrollmentRequest>, String> {
+    pub fn pending_incoming_enrollment_requests(&self) -> DbResult<Vec<IncomingEnrollmentRequest>> {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
                 "SELECT request_id, device_id, fingerprint, created_at FROM replicated_sync_enrollment_requests
                  WHERE direction='incoming' AND status='pending' ORDER BY created_at ASC",
             )
-            .map_err(display)?;
+            ?;
         let rows = statement
             .query_map([], |row| {
                 Ok(IncomingEnrollmentRequest {
@@ -332,19 +330,19 @@ impl Database {
                     created_at: row.get(3)?,
                 })
             })
-            .map_err(display)?
+            ?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(display)?;
+            ?;
         Ok(rows)
     }
 
     /// This device first, then active peers, then revoked ones.
-    pub fn device_roster(&self) -> Result<Vec<DeviceRosterEntry>, String> {
+    pub fn device_roster(&self) -> DbResult<Vec<DeviceRosterEntry>> {
         let self_device_id: Option<String> = self.connection()?.query_row(
             "SELECT device_id FROM sync_devices WHERE is_self=1 LIMIT 1",
             [],
             |row| row.get(0),
-        ).optional().map_err(display)?;
+        ).optional()?;
         if let Some(device_id) = self_device_id {
             self.ensure_self_device_name(&device_id)?;
         }
@@ -360,7 +358,7 @@ impl Database {
                  FROM sync_devices d LEFT JOIN sync_device_labels l ON l.device_id = d.device_id
                  ORDER BY d.is_self DESC, d.status = 'revoked', d.device_id",
             )
-            .map_err(display)?;
+            ?;
         let rows = statement
             .query_map([], |row| {
                 Ok(DeviceRosterEntry {
@@ -372,26 +370,26 @@ impl Database {
                     joined_with_join_code: row.get(5)?,
                 })
             })
-            .map_err(display)?
+            ?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(display)?;
+            ?;
         Ok(rows)
     }
 
     /// Gives this device its hostname the first time it appears in the roster.
     /// The sync loop records it once the portable preference entity exists.
-    pub(crate) fn ensure_self_device_name(&self, device_id_hex: &str) -> Result<(), String> {
+    pub(crate) fn ensure_self_device_name(&self, device_id_hex: &str) -> DbResult<()> {
         self.connection()?
             .execute(
                 "INSERT OR IGNORE INTO sync_device_labels(device_id,label) SELECT ?1,?2
                  WHERE EXISTS (SELECT 1 FROM sync_devices WHERE device_id=?1 AND is_self=1)",
                 params![device_id_hex, default_device_name()],
             )
-            .map_err(display)?;
+            ?;
         Ok(())
     }
 
-    pub(crate) fn record_self_device_name_if_missing(&self, device_id_hex: &str) -> Result<(), String> {
+    pub(crate) fn record_self_device_name_if_missing(&self, device_id_hex: &str) -> DbResult<()> {
         let field = format!("deviceName:{device_id_hex}");
         let (label, preferences_exist, already_recorded): (Option<String>, bool, bool) = self.connection()?.query_row(
             "SELECT l.label,
@@ -400,7 +398,7 @@ impl Database {
              FROM sync_device_labels l WHERE l.device_id=?2",
             params![field, device_id_hex],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        ).optional().map_err(display)?.unwrap_or((None, false, false));
+        ).optional()?.unwrap_or((None, false, false));
         if preferences_exist && !already_recorded {
             if let Some(label) = label {
                 let fields = BTreeSet::from([field.clone()]);
@@ -412,7 +410,7 @@ impl Database {
     }
 
     /// Applies a resolved shared device-name field to this device's roster cache.
-    pub(crate) fn materialize_device_name(&self, device_id_hex: &str, name: Option<&str>) -> Result<(), String> {
+    pub(crate) fn materialize_device_name(&self, device_id_hex: &str, name: Option<&str>) -> DbResult<()> {
         let connection = self.connection()?;
         match name {
             Some(name) => {
@@ -420,10 +418,10 @@ impl Database {
                     "INSERT INTO sync_device_labels(device_id,label) VALUES (?1,?2)
                      ON CONFLICT(device_id) DO UPDATE SET label=excluded.label",
                     params![device_id_hex, name],
-                ).map_err(display)?;
+                )?;
             }
             None => {
-                connection.execute("DELETE FROM sync_device_labels WHERE device_id=?1", params![device_id_hex]).map_err(display)?;
+                connection.execute("DELETE FROM sync_device_labels WHERE device_id=?1", params![device_id_hex])?;
             }
         }
         Ok(())
@@ -431,23 +429,23 @@ impl Database {
 
     /// Sets a shared roster name. A blank self-name restores this machine's
     /// hostname; a blank peer name removes its name from the shared roster.
-    pub fn set_device_label(&self, device_id_hex: &str, label: &str) -> Result<(), String> {
+    pub fn set_device_label(&self, device_id_hex: &str, label: &str) -> DbResult<()> {
         let label = if label.trim().is_empty() {
             let is_self: bool = self.connection()?.query_row(
                 "SELECT EXISTS(SELECT 1 FROM sync_devices WHERE device_id=?1 AND is_self=1)",
                 params![device_id_hex],
                 |row| row.get(0),
-            ).map_err(display)?;
+            )?;
             if is_self { default_device_name() } else { String::new() }
         } else {
             label.trim().to_string()
         };
         if label.chars().count() > MAX_DEVICE_LABEL_CHARS {
-            return Err(format!("Device names can be at most {MAX_DEVICE_LABEL_CHARS} characters."));
+            return Err(DatabaseError::invalid(format!("Device names can be at most {MAX_DEVICE_LABEL_CHARS} characters.")));
         }
         let connection = self.connection()?;
         if label.is_empty() {
-            connection.execute("DELETE FROM sync_device_labels WHERE device_id=?1", params![device_id_hex]).map_err(display)?;
+            connection.execute("DELETE FROM sync_device_labels WHERE device_id=?1", params![device_id_hex])?;
         } else {
             connection
                 .execute(
@@ -455,7 +453,7 @@ impl Database {
                      ON CONFLICT(device_id) DO UPDATE SET label=excluded.label",
                     params![device_id_hex, label],
                 )
-                .map_err(display)?;
+                ?;
         }
         drop(connection);
 
@@ -466,7 +464,7 @@ impl Database {
             "SELECT EXISTS(SELECT 1 FROM sync_values WHERE entity_type='preferences' AND entity_id='portable')",
             [],
             |row| row.get(0),
-        ).map_err(display)?;
+        )?;
         if preferences_exist {
             self.record_local_entity_write(threestrands_sync_protocol::EntityType::Preferences, "portable", payload, Some(fields))?;
         }
@@ -483,9 +481,9 @@ impl Database {
     /// caller can remove `0..=` that range from the keychain afterwards —
     /// after, so a keychain failure never leaves the database claiming an
     /// enrollment whose keys are already gone.
-    pub fn leave_sync_space(&self) -> Result<u32, String> {
+    pub fn leave_sync_space(&self) -> DbResult<u32> {
         let mut connection = self.connection()?;
-        let tx = connection.transaction().map_err(display)?;
+        let tx = connection.transaction()?;
         let highest_epoch: u32 = tx
             .query_row(
                 "SELECT MAX(COALESCE((SELECT MAX(key_epoch) FROM sync_epoch_history), 0),
@@ -493,7 +491,7 @@ impl Database {
                 params![SPACE_ID],
                 |row| row.get(0),
             )
-            .map_err(display)?;
+            ?;
         tx.execute_batch(
             "DELETE FROM sync_deliveries;
              DELETE FROM sync_values;
@@ -511,64 +509,64 @@ impl Database {
              DELETE FROM sync_retired_objects;
              DELETE FROM sync_head_publications;",
         )
-        .map_err(display)?;
+        ?;
         tx.execute(
             "UPDATE sync_spaces SET active_epoch=0, lamport=0, recovery_public_key=NULL, recovery_x25519_public=NULL, last_error=NULL WHERE id=?1",
             params![SPACE_ID],
         )
-        .map_err(display)?;
-        tx.commit().map_err(display)?;
+        ?;
+        tx.commit()?;
         Ok(highest_epoch)
     }
 
-    fn seen_control_object(&self, cid: &str) -> Result<bool, String> {
+    fn seen_control_object(&self, cid: &str) -> DbResult<bool> {
         self.connection()?
             .query_row("SELECT 1 FROM sync_control_objects_seen WHERE cid=?1", params![cid], |_| Ok(true))
             .optional()
-            .map_err(display)
             .map(|found| found.unwrap_or(false))
+            .map_err(DatabaseError::from)
     }
 
-    fn mark_control_object_seen(&self, cid: &str, kind: &str) -> Result<(), String> {
+    fn mark_control_object_seen(&self, cid: &str, kind: &str) -> DbResult<()> {
         self.connection()?
             .execute(
                 "INSERT OR IGNORE INTO sync_control_objects_seen(cid, object_kind) VALUES (?1,?2)",
                 params![cid, kind],
             )
-            .map_err(display)?;
+            ?;
         Ok(())
     }
 
-    fn record_epoch_activation(&self, key_epoch: u32, source_cid: &str) -> Result<(), String> {
+    fn record_epoch_activation(&self, key_epoch: u32, source_cid: &str) -> DbResult<()> {
         self.connection()?
             .execute(
                 "INSERT OR IGNORE INTO sync_epoch_history(key_epoch, activated_at, source_cid) VALUES (?1,?2,?3)",
                 params![key_epoch, Utc::now().to_rfc3339(), source_cid],
             )
-            .map_err(display)?;
+            ?;
         Ok(())
     }
 
-    fn set_active_epoch(&self, key_epoch: u32) -> Result<(), String> {
+    fn set_active_epoch(&self, key_epoch: u32) -> DbResult<()> {
         self.connection()?
             .execute("UPDATE sync_spaces SET active_epoch=?2 WHERE id=?1", params![SPACE_ID, key_epoch])
-            .map_err(display)?;
+            ?;
         Ok(())
     }
 
-    fn active_epoch(&self) -> Result<u32, String> {
+    fn active_epoch(&self) -> DbResult<u32> {
         self.connection()?
             .query_row("SELECT active_epoch FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
-            .map_err(display)
+            .map_err(DatabaseError::from)
     }
 
-    fn advance_active_epoch(&self, key_epoch: u32) -> Result<(), String> {
+    fn advance_active_epoch(&self, key_epoch: u32) -> DbResult<()> {
         self.connection()?
             .execute(
                 "UPDATE sync_spaces SET active_epoch=?2 WHERE id=?1 AND active_epoch < ?2",
                 params![SPACE_ID, key_epoch],
             )
-            .map_err(display)?;
+            ?;
         Ok(())
     }
 
@@ -576,7 +574,7 @@ impl Database {
     /// `key_epoch` with the rotation `incoming_cid`: it initiated the
     /// rotation it holds for that epoch, that rotation's content address is
     /// the greater of the two, and nothing has rotated past the epoch yet.
-    fn must_rotate_after_collision(&self, identity: &DeviceIdentity, key_epoch: u32, incoming_cid: &str) -> Result<bool, String> {
+    fn must_rotate_after_collision(&self, identity: &DeviceIdentity, key_epoch: u32, incoming_cid: &str) -> DbResult<bool> {
         if self.active_epoch()? != key_epoch {
             return Ok(false);
         }
@@ -590,39 +588,39 @@ impl Database {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
-            .map_err(display)?;
+            ?;
         let Some((own_cid, bytes)) = own_rotation else { return Ok(false) };
         let initiated_here = decode_signed_key_rotation(&bytes)
             .is_ok_and(|signed| signed.rotation.initiator_device_id == identity.device_id && signed.rotation.key_epoch == key_epoch);
         Ok(initiated_here && own_cid.as_str() > incoming_cid)
     }
 
-    fn set_recovery_public_keys(&self, ed25519_public: &[u8; 32], x25519_public: &[u8; 32]) -> Result<(), String> {
+    fn set_recovery_public_keys(&self, ed25519_public: &[u8; 32], x25519_public: &[u8; 32]) -> DbResult<()> {
         self.connection()?
             .execute(
                 "UPDATE sync_spaces SET recovery_public_key=?2, recovery_x25519_public=?3 WHERE id=?1",
                 params![SPACE_ID, ed25519_public.to_vec(), x25519_public.to_vec()],
             )
-            .map_err(display)?;
+            ?;
         Ok(())
     }
 
-    fn recovery_public_keys(&self) -> Result<Option<RecoveryPublicKeys>, String> {
+    fn recovery_public_keys(&self) -> DbResult<Option<RecoveryPublicKeys>> {
         let row: Option<RawRecoveryPublicKeyRow> = self
             .connection()?
             .query_row("SELECT recovery_public_key, recovery_x25519_public FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| {
                 Ok((row.get(0)?, row.get(1)?))
             })
             .optional()
-            .map_err(display)?;
+            ?;
         let Some((ed25519, x25519)) = row else { return Ok(None) };
         let (Some(ed25519), Some(x25519)) = (ed25519, x25519) else { return Ok(None) };
-        let ed25519: [u8; 32] = ed25519.try_into().map_err(|_| "Invalid stored recovery Ed25519 key".to_string())?;
-        let x25519: [u8; 32] = x25519.try_into().map_err(|_| "Invalid stored recovery X25519 key".to_string())?;
+        let ed25519: [u8; 32] = ed25519.try_into().map_err(|_| DatabaseError::corrupt("Invalid stored recovery Ed25519 key"))?;
+        let x25519: [u8; 32] = x25519.try_into().map_err(|_| DatabaseError::corrupt("Invalid stored recovery X25519 key"))?;
         Ok(Some((ed25519, x25519)))
     }
 
-    fn adopt_roster(&self, roster: &[RosterEntry]) -> Result<(), String> {
+    fn adopt_roster(&self, roster: &[RosterEntry]) -> EnrollmentResult<()> {
         for entry in roster {
             let verifying_key = roster_entry_verifying_key(entry)?;
             let x25519_public = roster_entry_x25519(entry)?;
@@ -644,7 +642,7 @@ impl Database {
 /// just now, and to any connector added later. A control object that never
 /// reaches storage would otherwise be lost silently — a rotation lost that
 /// way leaves every other device without the new epoch's key.
-async fn publish_control_object(database: &Database, transports: &[Arc<dyn SyncTransport>], bytes: &[u8]) -> Result<String, String> {
+async fn publish_control_object(database: &Database, transports: &[Arc<dyn SyncTransport>], bytes: &[u8]) -> EnrollmentResult<String> {
     let cid = compute_cid(bytes);
     database
         .connection()?
@@ -652,7 +650,7 @@ async fn publish_control_object(database: &Database, transports: &[Arc<dyn SyncT
             "INSERT OR IGNORE INTO sync_objects(cid,object_kind,chunk_index,chunk_count,bytes) VALUES (?1,'control',0,1,?2)",
             params![cid, bytes],
         )
-        .map_err(display)?;
+        ?;
     publish_to_all(transports, bytes).await;
     Ok(cid)
 }
@@ -674,20 +672,20 @@ impl Database {
     /// recipient learns a revocation explicitly (a `RosterEntry` with
     /// `status: "revoked"`) rather than merely inferring it from an
     /// omission, which a device that missed the rotation could not do.
-    fn full_roster_snapshot(&self) -> Result<Vec<RosterEntry>, String> {
+    fn full_roster_snapshot(&self) -> DbResult<Vec<RosterEntry>> {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare("SELECT device_id, public_key, x25519_public, status FROM sync_devices WHERE public_key IS NOT NULL AND x25519_public IS NOT NULL")
-            .map_err(display)?;
+            ?;
         let rows: Vec<(String, Vec<u8>, Vec<u8>, String)> = statement
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
-            .map_err(display)?
+            ?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(display)?;
+            ?;
         rows.into_iter()
             .map(|(device_id_hex, ed25519, x25519, status)| {
                 Ok(RosterEntry {
-                    device_id: EnvelopeDeviceId::from_bytes(decode_id(&device_id_hex)?),
+                    device_id: EnvelopeDeviceId::from_bytes(decode_id(&device_id_hex).map_err(DatabaseError::Corrupt)?),
                     ed25519_public: ByteBuf::from(ed25519),
                     x25519_public: ByteBuf::from(x25519),
                     status,
@@ -842,9 +840,9 @@ async fn newest_epoch_in_heads(transports: &[Arc<dyn SyncTransport>], roster: &[
 
 /// Refuses to set up or join sync over a connector that holds a group from
 /// an earlier, incompatible build.
-async fn refuse_legacy_space(transports: &[Arc<dyn SyncTransport>]) -> Result<(), String> {
+async fn refuse_legacy_space(transports: &[Arc<dyn SyncTransport>]) -> EnrollmentResult<()> {
     if inspect_sync_space(transports).await == SyncSpacePresence::Legacy {
-        return Err(LEGACY_SPACE_REFUSAL.to_string());
+        return Err(EnrollmentError::LegacySpace);
     }
     Ok(())
 }
@@ -866,7 +864,7 @@ pub(crate) async fn protocol_marker_missing(transports: &[Arc<dyn SyncTransport>
 
 /// Stores the protocol marker on every transport now, and records it as a
 /// local object so repair delivers it to any connector added later.
-pub(crate) async fn publish_protocol_marker(database: &Database, transports: &[Arc<dyn SyncTransport>]) -> Result<(), String> {
+pub(crate) async fn publish_protocol_marker(database: &Database, transports: &[Arc<dyn SyncTransport>]) -> EnrollmentResult<()> {
     database.ensure_protocol_marker_object()?;
     let cid = TransportCid(protocol_marker_cid());
     for transport in transports {
@@ -886,11 +884,11 @@ pub async fn begin_genesis(
     epoch_keys: &dyn EpochKeyStore,
     transports: &[Arc<dyn SyncTransport>],
     allow_existing_space: bool,
-) -> Result<String, String> {
+) -> EnrollmentResult<String> {
     require_not_started(database)?;
     match inspect_sync_space(transports).await {
-        SyncSpacePresence::Legacy => return Err(LEGACY_SPACE_REFUSAL.to_string()),
-        SyncSpacePresence::Existing if !allow_existing_space => return Err(EXISTING_SPACE_REFUSAL.to_string()),
+        SyncSpacePresence::Legacy => return Err(EnrollmentError::LegacySpace),
+        SyncSpacePresence::Existing if !allow_existing_space => return Err(EnrollmentError::ExistingSpace),
         _ => {}
     }
     database.set_beta_features_enabled(true)?;
@@ -925,8 +923,8 @@ pub async fn begin_genesis(
         recovery_x25519_public: ByteBuf::from(recovery_x25519_public.to_vec()),
         created_at_ms: now_ms(),
     };
-    let signed = sign_key_rotation(&identity.signing_key, rotation).map_err(display)?;
-    let bytes = encode_signed_key_rotation(&signed).map_err(display)?;
+    let signed = sign_key_rotation(&identity.signing_key, rotation)?;
+    let bytes = encode_signed_key_rotation(&signed)?;
     let cid = publish_control_object(database, transports, &bytes).await?;
 
     epoch_keys.store(0, &k_epoch)?;
@@ -940,7 +938,7 @@ pub async fn begin_genesis(
 /// Starts this device as a joiner: bootstraps its own device keys and
 /// publishes a signed enrollment request. Returns the request's fingerprint
 /// for display — the same value an approving device must see and confirm.
-pub async fn publish_enrollment_request(database: &Database, identity: &DeviceIdentity, transports: &[Arc<dyn SyncTransport>]) -> Result<String, String> {
+pub async fn publish_enrollment_request(database: &Database, identity: &DeviceIdentity, transports: &[Arc<dyn SyncTransport>]) -> EnrollmentResult<String> {
     refuse_legacy_space(transports).await?;
     database.set_beta_features_enabled(true)?;
     let x25519_public = x25519_public_bytes(&identity.x25519_secret);
@@ -954,8 +952,8 @@ pub async fn publish_enrollment_request(database: &Database, identity: &DeviceId
         x25519_public: ByteBuf::from(x25519_public.to_vec()),
         created_at_ms: now_ms(),
     };
-    let signed = sign_enrollment_request(&identity.signing_key, request).map_err(display)?;
-    let bytes = encode_signed_enrollment_request(&signed).map_err(display)?;
+    let signed = sign_enrollment_request(&identity.signing_key, request)?;
+    let bytes = encode_signed_enrollment_request(&signed)?;
     let cid = publish_control_object(database, transports, &bytes).await?;
     database.mark_control_object_seen(&cid, "enrollment_request")?;
 
@@ -974,7 +972,7 @@ pub async fn publish_enrollment_request(database: &Database, identity: &DeviceId
                 Utc::now().to_rfc3339(),
             ],
         )
-        .map_err(display)?;
+        ?;
     Ok(fingerprint)
 }
 
@@ -993,7 +991,7 @@ pub async fn publish_enrollment_request(database: &Database, identity: &DeviceId
 /// Returns whether this device must rotate to resolve an epoch collision
 /// (see [`RotationOutcome::Collision`]); the caller does so once it has
 /// loaded its keys.
-pub async fn run_enrollment_sweep(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, transports: &[Arc<dyn SyncTransport>]) -> Result<bool, String> {
+pub async fn run_enrollment_sweep(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, transports: &[Arc<dyn SyncTransport>]) -> EnrollmentResult<bool> {
     // Objects arrive in content-address order, so a join-code redemption
     // can come before the invitation it names. Those are retried once the
     // whole sweep has run, rather than waiting for the next cycle.
@@ -1002,7 +1000,7 @@ pub async fn run_enrollment_sweep(database: &Database, identity: &DeviceIdentity
     for transport in transports {
         let mut cursor: Option<String> = None;
         loop {
-            let Some(page) = transport.scan(cursor.as_deref()).await.map_err(display)? else { break };
+            let Some(page) = transport.scan(cursor.as_deref()).await? else { break };
             for locator in &page.objects {
                 if database.seen_control_object(&locator.cid.0)? {
                     continue;
@@ -1047,7 +1045,7 @@ enum ControlObject {
     RotateToResolve,
 }
 
-fn try_apply_control_object(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, cid: &str, bytes: &[u8]) -> Result<ControlObject, String> {
+fn try_apply_control_object(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, cid: &str, bytes: &[u8]) -> EnrollmentResult<ControlObject> {
     if let Ok(signed) = decode_signed_enrollment_request(bytes) {
         apply_incoming_request(database, identity, signed)?;
         return Ok(ControlObject::Applied);
@@ -1084,7 +1082,7 @@ fn try_apply_control_object(database: &Database, identity: &DeviceIdentity, epoc
     Ok(ControlObject::NotControl)
 }
 
-fn apply_incoming_request(database: &Database, identity: &DeviceIdentity, signed: SignedEnrollmentRequest) -> Result<(), String> {
+fn apply_incoming_request(database: &Database, identity: &DeviceIdentity, signed: SignedEnrollmentRequest) -> EnrollmentResult<()> {
     if signed.request.device_id == identity.device_id {
         return Ok(()); // our own request, not an incoming one to review
     }
@@ -1112,11 +1110,11 @@ fn apply_incoming_request(database: &Database, identity: &DeviceIdentity, signed
                 Utc::now().to_rfc3339(),
             ],
         )
-        .map_err(display)?;
+        ?;
     Ok(())
 }
 
-fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, signed: SignedEnrollmentGrant) -> Result<(), String> {
+fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, signed: SignedEnrollmentGrant) -> EnrollmentResult<()> {
     let request_id_hex = encode_id(signed.grant.request_id.as_bytes());
 
     // This grant may be addressed to another device that received the same
@@ -1131,7 +1129,7 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
-        .map_err(display)?;
+        ?;
     if !signed.grant.signed_by_recovery {
         let trusted_approver: Option<Vec<u8>> = database
             .connection()?
@@ -1141,7 +1139,7 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
                 |row| row.get(0),
             )
             .optional()
-            .map_err(display)?;
+            ?;
         let approver_verifies = trusted_approver
             .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
             .and_then(|bytes| VerifyingKey::from_bytes(&bytes).ok())
@@ -1165,7 +1163,7 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
                                 "UPDATE replicated_sync_enrollment_requests SET status='approved' WHERE request_id=?1 AND direction='incoming' AND status IN ('pending','rejected')",
                                 params![request_id_hex],
                             )
-                            .map_err(display)?;
+                            ?;
                     }
                 } else {
                     // A peer may have been offline until after both objects
@@ -1190,7 +1188,7 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
                                     Utc::now().to_rfc3339(),
                                 ],
                             )
-                            .map_err(display)?;
+                            ?;
                     }
                 }
             }
@@ -1205,7 +1203,7 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
             |row| row.get(0),
         )
         .optional()
-        .map_err(display)?;
+        ?;
     if matches_our_request.is_none() {
         // Not addressed to any request of ours. The only other reason to
         // apply a grant is a recovery-signed roster announcement — a
@@ -1261,14 +1259,14 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
 
     // `enrollment_status` re-derives the approver's fingerprint from the
     // staged CBOR for display, so nothing further to compute here.
-    let grant_cbor = encode_signed_enrollment_grant(&signed).map_err(display)?;
+    let grant_cbor = encode_signed_enrollment_grant(&signed)?;
     database
         .connection()?
         .execute(
             "UPDATE replicated_sync_enrollment_requests SET status='staged', pending_grant_cbor=?2 WHERE request_id=?1 AND direction='outgoing' AND status IN ('pending','rejected')",
             params![request_id_hex, grant_cbor],
         )
-        .map_err(display)?;
+        ?;
     Ok(())
 }
 
@@ -1301,7 +1299,7 @@ fn apply_key_share(
     epoch_keys: &dyn EpochKeyStore,
     signed: &SignedEnrollmentGrant,
     cid: &str,
-) -> Result<KeyShare, String> {
+) -> EnrollmentResult<KeyShare> {
     let grant = &signed.grant;
     if grant.signed_by_recovery {
         return Ok(KeyShare::Other);
@@ -1309,7 +1307,7 @@ fn apply_key_share(
     let enrolled: bool = database
         .connection()?
         .query_row("SELECT EXISTS(SELECT 1 FROM sync_epoch_history)", [], |row| row.get(0))
-        .map_err(display)?;
+        ?;
     let answers_our_request: bool = database
         .connection()?
         .query_row(
@@ -1317,7 +1315,7 @@ fn apply_key_share(
             params![encode_id(grant.request_id.as_bytes())],
             |row| row.get(0),
         )
-        .map_err(display)?;
+        ?;
     if !enrolled || answers_our_request {
         return Ok(KeyShare::Other);
     }
@@ -1332,7 +1330,7 @@ fn apply_key_share(
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
-        .map_err(display)?;
+        ?;
     let Some((status, public_key)) = sender else {
         return Ok(KeyShare::UnknownSender);
     };
@@ -1368,7 +1366,7 @@ pub(crate) async fn share_keys_with_lagging_peers(
     database: &Database,
     keys: &LocalKeys,
     transports: &[Arc<dyn SyncTransport>],
-) -> Result<usize, String> {
+) -> EnrollmentResult<usize> {
     let lagging: Vec<(String, Vec<u8>)> = {
         let connection = database.connection()?;
         let mut statement = connection
@@ -1378,12 +1376,12 @@ pub(crate) async fn share_keys_with_lagging_peers(
                  WHERE d.status = 'active' AND d.is_self = 0 AND d.x25519_public IS NOT NULL
                    AND r.last_head_epoch < ?1 AND (r.keys_shared_epoch IS NULL OR r.keys_shared_epoch < ?1)",
             )
-            .map_err(display)?;
+            ?;
         let rows = statement
             .query_map(params![keys.key_epoch], |row| Ok((row.get(0)?, row.get(1)?)))
-            .map_err(display)?
+            ?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(display)?;
+            ?;
         rows
     };
     if lagging.is_empty() {
@@ -1391,10 +1389,10 @@ pub(crate) async fn share_keys_with_lagging_peers(
     }
     let (recovery_ed25519, recovery_x25519) = database
         .recovery_public_keys()?
-        .ok_or_else(|| "No recovery keys on record for this sync group".to_string())?;
+        .ok_or(EnrollmentError::MissingRecoveryKeys)?;
     let roster = database.full_roster_snapshot()?;
     for (device_id, x25519_public) in &lagging {
-        let recipient: [u8; 32] = x25519_public.as_slice().try_into().map_err(|_| "Invalid peer X25519 key".to_string())?;
+        let recipient: [u8; 32] = x25519_public.as_slice().try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid peer X25519 key"))?;
         let share = EnrollmentGrant {
             request_id: RequestId::from_bytes(random_id()),
             approver_device_id: keys.device_id,
@@ -1407,14 +1405,14 @@ pub(crate) async fn share_keys_with_lagging_peers(
             created_at_ms: now_ms(),
             earlier_epoch_keys: seal_earlier_epoch_keys(keys, &recipient)?,
         };
-        let signed = sign_enrollment_grant(&keys.signing_key, share).map_err(display)?;
-        let bytes = encode_signed_enrollment_grant(&signed).map_err(display)?;
+        let signed = sign_enrollment_grant(&keys.signing_key, share)?;
+        let bytes = encode_signed_enrollment_grant(&signed)?;
         let cid = publish_control_object(database, transports, &bytes).await?;
         database.mark_control_object_seen(&cid, "key_share")?;
         database
             .connection()?
             .execute("UPDATE sync_remote_states SET keys_shared_epoch=?2 WHERE device_id=?1", params![device_id, keys.key_epoch])
-            .map_err(display)?;
+            ?;
     }
     Ok(lagging.len())
 }
@@ -1423,7 +1421,7 @@ pub(crate) async fn share_keys_with_lagging_peers(
 /// peer. A joining device can verify the response signature as informational
 /// status before it has a roster of its own. Missing requests are retried
 /// after the rest of the sweep so object ordering cannot leave peers stale.
-fn apply_incoming_rejection(database: &Database, signed: threestrands_sync_envelope::SignedEnrollmentRejection) -> Result<bool, String> {
+fn apply_incoming_rejection(database: &Database, signed: threestrands_sync_envelope::SignedEnrollmentRejection) -> EnrollmentResult<bool> {
     let request_id = encode_id(signed.rejection.request_id.as_bytes());
     let rejector_id = encode_id(signed.rejection.rejector_device_id.as_bytes());
     let trusted_key: Option<Vec<u8>> = database
@@ -1434,7 +1432,7 @@ fn apply_incoming_rejection(database: &Database, signed: threestrands_sync_envel
             |row| row.get(0),
         )
         .optional()
-        .map_err(display)?;
+        ?;
     let embedded_key = <[u8; 32]>::try_from(signed.rejection.rejector_ed25519_public.as_slice())
         .ok()
         .and_then(|bytes| VerifyingKey::from_bytes(&bytes).ok());
@@ -1451,7 +1449,7 @@ fn apply_incoming_rejection(database: &Database, signed: threestrands_sync_envel
             |row| row.get(0),
         )
         .optional()
-        .map_err(display)?;
+        ?;
     let Some(direction) = request_direction else { return Ok(false) };
     // Existing devices only honor decisions from a peer already in their
     // trusted roster. A joining device has no roster yet, so it can verify
@@ -1471,7 +1469,7 @@ fn apply_incoming_rejection(database: &Database, signed: threestrands_sync_envel
              WHERE request_id=?1 AND status='pending'",
             params![request_id],
         )
-        .map_err(display)?;
+        ?;
     Ok(true)
 }
 
@@ -1480,7 +1478,7 @@ pub async fn reject_enrollment_request(
     identity: &DeviceIdentity,
     request_id_hex: &str,
     transports: &[Arc<dyn SyncTransport>],
-) -> Result<(), String> {
+) -> EnrollmentResult<()> {
     let exists: bool = database
         .connection()?
         .query_row(
@@ -1488,18 +1486,18 @@ pub async fn reject_enrollment_request(
             params![request_id_hex],
             |row| row.get(0),
         )
-        .map_err(display)?;
+        ?;
     if !exists {
-        return Err("This request is no longer pending.".to_string());
+        return Err(EnrollmentError::RequestNotPending);
     }
     let rejection = EnrollmentRejection {
-        request_id: RequestId::from_bytes(decode_id(request_id_hex)?),
+        request_id: RequestId::from_bytes(decode_id(request_id_hex).map_err(EnrollmentError::MalformedId)?),
         rejector_device_id: identity.device_id,
         rejector_ed25519_public: ByteBuf::from(identity.verifying_key.to_bytes().to_vec()),
         rejected_at_ms: now_ms(),
     };
-    let signed = sign_enrollment_rejection(&identity.signing_key, rejection).map_err(display)?;
-    let bytes = encode_signed_enrollment_rejection(&signed).map_err(display)?;
+    let signed = sign_enrollment_rejection(&identity.signing_key, rejection)?;
+    let bytes = encode_signed_enrollment_rejection(&signed)?;
     let cid = publish_control_object(database, transports, &bytes).await?;
     database.mark_control_object_seen(&cid, "enrollment_rejection")?;
     database
@@ -1508,7 +1506,7 @@ pub async fn reject_enrollment_request(
             "UPDATE replicated_sync_enrollment_requests SET status='rejected' WHERE request_id=?1 AND direction='incoming' AND status='pending'",
             params![request_id_hex],
         )
-        .map_err(display)?;
+        ?;
     Ok(())
 }
 
@@ -1526,7 +1524,7 @@ enum RotationOutcome {
     Collision,
 }
 
-fn apply_incoming_rotation(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, signed: SignedKeyRotation, cid: &str) -> Result<RotationOutcome, String> {
+fn apply_incoming_rotation(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, signed: SignedKeyRotation, cid: &str) -> EnrollmentResult<RotationOutcome> {
     // A rotation is only auto-applied when its signer is already in our
     // roster: no new trust decision, just an authenticated update to an
     // existing one. A genesis/recovery-only rotation (signer not yet
@@ -1547,7 +1545,7 @@ fn apply_incoming_rotation(database: &Database, identity: &DeviceIdentity, epoch
                 params![encode_id(signed.rotation.initiator_device_id.as_bytes())],
                 |row| row.get(0),
             )
-            .map_err(display)?;
+            ?;
         return Ok(if known_but_revoked { RotationOutcome::Done } else { RotationOutcome::UnknownInitiator });
     };
     if verify_key_rotation(verifying_key, &signed).is_err() {
@@ -1556,12 +1554,12 @@ fn apply_incoming_rotation(database: &Database, identity: &DeviceIdentity, epoch
     apply_rotation_common(database, identity, epoch_keys, &signed, cid)
 }
 
-fn apply_rotation_common(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, signed: &SignedKeyRotation, cid: &str) -> Result<RotationOutcome, String> {
+fn apply_rotation_common(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, signed: &SignedKeyRotation, cid: &str) -> EnrollmentResult<RotationOutcome> {
     database.adopt_roster(&signed.rotation.roster)?;
     join_codes::note_admission_if_listed(database, identity, &signed.rotation.roster)?;
     database.set_recovery_public_keys(
-        signed.rotation.recovery_ed25519_public.as_slice().try_into().map_err(|_| "Invalid recovery key".to_string())?,
-        signed.rotation.recovery_x25519_public.as_slice().try_into().map_err(|_| "Invalid recovery key".to_string())?,
+        signed.rotation.recovery_ed25519_public.as_slice().try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?,
+        signed.rotation.recovery_x25519_public.as_slice().try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?,
     )?;
 
     // Try every sealed stanza with our own device secret first, then (if we
@@ -1597,7 +1595,7 @@ fn apply_rotation_common(database: &Database, identity: &DeviceIdentity, epoch_k
 /// The joining device's explicit action after visually comparing
 /// [`enrollment_fingerprint`] on both screens: imports a staged grant,
 /// adopting the epoch key and the whole roster it carries.
-pub async fn confirm_and_import_grant(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, request_id_hex: &str) -> Result<(), String> {
+pub async fn confirm_and_import_grant(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, request_id_hex: &str) -> EnrollmentResult<()> {
     let grant_cbor: Vec<u8> = database
         .connection()?
         .query_row(
@@ -1605,17 +1603,17 @@ pub async fn confirm_and_import_grant(database: &Database, identity: &DeviceIden
             params![request_id_hex],
             |row| row.get(0),
         )
-        .map_err(display)?;
-    let signed = decode_signed_enrollment_grant(&grant_cbor).map_err(display)?;
+        ?;
+    let signed = decode_signed_enrollment_grant(&grant_cbor)?;
     let k_epoch_bytes = try_open_sealed_box(&identity.x25519_secret, &signed.grant.sealed_epoch_key)
-        .ok_or_else(|| "This grant was not sealed to this device".to_string())?;
-    let k_epoch: [u8; 32] = k_epoch_bytes.try_into().map_err(|_| "Invalid sealed epoch key".to_string())?;
+        .ok_or(EnrollmentError::NotSealedToThisDevice("This grant was not sealed to this device"))?;
+    let k_epoch: [u8; 32] = k_epoch_bytes.try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid sealed epoch key"))?;
     let earlier = open_earlier_epoch_keys(&identity.x25519_secret, &signed.grant.earlier_epoch_keys)
-        .ok_or_else(|| "This grant's earlier keys were not sealed to this device".to_string())?;
+        .ok_or(EnrollmentError::NotSealedToThisDevice("This grant's earlier keys were not sealed to this device"))?;
 
     database.adopt_roster(&signed.grant.roster)?;
-    let recovery_ed25519: [u8; 32] = signed.grant.recovery_ed25519_public.as_slice().try_into().map_err(|_| "Invalid recovery key".to_string())?;
-    let recovery_x25519: [u8; 32] = signed.grant.recovery_x25519_public.as_slice().try_into().map_err(|_| "Invalid recovery key".to_string())?;
+    let recovery_ed25519: [u8; 32] = signed.grant.recovery_ed25519_public.as_slice().try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?;
+    let recovery_x25519: [u8; 32] = signed.grant.recovery_x25519_public.as_slice().try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?;
     database.set_recovery_public_keys(&recovery_ed25519, &recovery_x25519)?;
 
     epoch_keys.store(signed.grant.key_epoch, &k_epoch)?;
@@ -1630,7 +1628,7 @@ pub async fn confirm_and_import_grant(database: &Database, identity: &DeviceIden
             "UPDATE replicated_sync_enrollment_requests SET status='completed' WHERE request_id=?1",
             params![request_id_hex],
         )
-        .map_err(display)?;
+        ?;
     Ok(())
 }
 
@@ -1646,7 +1644,7 @@ pub async fn approve_enrollment_request(
     keys: &LocalKeys,
     request_id_hex: &str,
     transports: &[Arc<dyn SyncTransport>],
-) -> Result<(), String> {
+) -> EnrollmentResult<()> {
     let (requester_device_id, requester_ed25519, requester_x25519): (String, Vec<u8>, Vec<u8>) = database
         .connection()?
         .query_row(
@@ -1654,11 +1652,11 @@ pub async fn approve_enrollment_request(
             params![request_id_hex],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
-        .map_err(display)?;
-    let requester_x25519: [u8; 32] = requester_x25519.try_into().map_err(|_| "Invalid requester X25519 key".to_string())?;
-    let requester_ed25519_bytes: [u8; 32] = requester_ed25519.try_into().map_err(|_| "Invalid requester Ed25519 key".to_string())?;
-    let requester_verifying_key = VerifyingKey::from_bytes(&requester_ed25519_bytes).map_err(|_| "Invalid requester Ed25519 key".to_string())?;
-    let requester_device_id_bytes = decode_id(&requester_device_id)?;
+        ?;
+    let requester_x25519: [u8; 32] = requester_x25519.try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid requester X25519 key"))?;
+    let requester_ed25519_bytes: [u8; 32] = requester_ed25519.try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid requester Ed25519 key"))?;
+    let requester_verifying_key = VerifyingKey::from_bytes(&requester_ed25519_bytes).map_err(|_| EnrollmentError::MalformedKey("Invalid requester Ed25519 key"))?;
+    let requester_device_id_bytes = decode_id(&requester_device_id).map_err(DatabaseError::Corrupt)?;
 
     // The approved device must appear in its own grant's roster (and in
     // every roster snapshot this device hands out from now on), so trust
@@ -1666,10 +1664,10 @@ pub async fn approve_enrollment_request(
     database.trust_device_keys(&requester_device_id_bytes, &requester_verifying_key, &requester_x25519)?;
 
     let roster = database.full_roster_snapshot()?;
-    let (recovery_ed25519, recovery_x25519) = database.recovery_public_keys()?.ok_or_else(|| "No recovery keys on record for this sync group".to_string())?;
+    let (recovery_ed25519, recovery_x25519) = database.recovery_public_keys()?.ok_or(EnrollmentError::MissingRecoveryKeys)?;
 
     let grant = EnrollmentGrant {
-        request_id: RequestId::from_bytes(decode_id(request_id_hex)?),
+        request_id: RequestId::from_bytes(decode_id(request_id_hex).map_err(EnrollmentError::MalformedId)?),
         approver_device_id: identity.device_id,
         signed_by_recovery: false,
         key_epoch: keys.key_epoch,
@@ -1680,8 +1678,8 @@ pub async fn approve_enrollment_request(
         created_at_ms: now_ms(),
         earlier_epoch_keys: seal_earlier_epoch_keys(keys, &requester_x25519)?,
     };
-    let signed = sign_enrollment_grant(&identity.signing_key, grant).map_err(display)?;
-    let bytes = encode_signed_enrollment_grant(&signed).map_err(display)?;
+    let signed = sign_enrollment_grant(&identity.signing_key, grant)?;
+    let bytes = encode_signed_enrollment_grant(&signed)?;
     let cid = publish_control_object(database, transports, &bytes).await?;
     database.mark_control_object_seen(&cid, "enrollment_grant")?;
 
@@ -1691,7 +1689,7 @@ pub async fn approve_enrollment_request(
             "UPDATE replicated_sync_enrollment_requests SET status='approved' WHERE request_id=?1",
             params![request_id_hex],
         )
-        .map_err(display)?;
+        ?;
     Ok(())
 }
 
@@ -1708,16 +1706,16 @@ pub async fn rotate_epoch(
     epoch_keys: &dyn EpochKeyStore,
     transports: &[Arc<dyn SyncTransport>],
     revoke_device_id_hex: Option<&str>,
-) -> Result<(), String> {
+) -> EnrollmentResult<()> {
     // Keys loaded before another rotation landed would build the epoch that
     // rotation already created, under a different key.
     if database.active_epoch()? != keys.key_epoch {
-        return Err("This device's sync keys changed while rotating. Try again.".to_string());
+        return Err(EnrollmentError::EpochChanged);
     }
-    let (recovery_ed25519, recovery_x25519) = database.recovery_public_keys()?.ok_or_else(|| "No recovery keys on record for this sync group".to_string())?;
+    let (recovery_ed25519, recovery_x25519) = database.recovery_public_keys()?.ok_or(EnrollmentError::MissingRecoveryKeys)?;
 
     if let Some(hex) = revoke_device_id_hex {
-        let device_id = decode_id(hex)?;
+        let device_id = decode_id(hex).map_err(EnrollmentError::MalformedId)?;
         database.revoke_device(&device_id)?;
     }
 
@@ -1748,8 +1746,8 @@ pub async fn rotate_epoch(
         recovery_x25519_public: ByteBuf::from(recovery_x25519.to_vec()),
         created_at_ms: now_ms(),
     };
-    let signed = sign_key_rotation(&identity.signing_key, rotation).map_err(display)?;
-    let bytes = encode_signed_key_rotation(&signed).map_err(display)?;
+    let signed = sign_key_rotation(&identity.signing_key, rotation)?;
+    let bytes = encode_signed_key_rotation(&signed)?;
     let cid = publish_control_object(database, transports, &bytes).await?;
     database.mark_control_object_seen(&cid, "key_rotation")?;
 
@@ -1772,18 +1770,18 @@ pub async fn rotate_epoch(
 /// of the newest rotation, not whichever one the scan happens to meet
 /// first. Only rotations that verify against their own initiator count, so
 /// arbitrary bytes that happen to decode can't steer the choice.
-pub async fn join_with_recovery_phrase(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, phrase: &str, transports: &[Arc<dyn SyncTransport>]) -> Result<(), String> {
+pub async fn join_with_recovery_phrase(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, phrase: &str, transports: &[Arc<dyn SyncTransport>]) -> EnrollmentResult<()> {
     require_not_started(database)?;
     refuse_legacy_space(transports).await?;
     database.set_beta_features_enabled(true)?;
-    let seed = recovery_seed_from_phrase(phrase)?;
+    let seed = recovery_seed_from_phrase(phrase).map_err(EnrollmentError::InvalidRecoveryPhrase)?;
     let recovery_secret_bytes = recovery_x25519_secret(&seed).to_bytes();
 
     let mut opened: std::collections::BTreeMap<u32, (SignedKeyRotation, String, [u8; 32])> = std::collections::BTreeMap::new();
     for transport in transports {
         let mut cursor: Option<String> = None;
         loop {
-            let Some(page) = transport.scan(cursor.as_deref()).await.map_err(display)? else { break };
+            let Some(page) = transport.scan(cursor.as_deref()).await? else { break };
             for locator in &page.objects {
                 let Ok(bytes) = transport.get_object(&locator.cid).await else { continue };
                 if !is_self_consistent_rotation(&bytes) {
@@ -1808,7 +1806,7 @@ pub async fn join_with_recovery_phrase(database: &Database, identity: &DeviceIde
         }
     }
     let Some((&latest_epoch, (latest, _, latest_key))) = opened.iter().next_back() else {
-        return Err("No rotation object on any configured transport opened with this recovery phrase yet".to_string());
+        return Err(EnrollmentError::NoRecoverableRotation);
     };
     let latest_key = *latest_key;
     // Joining without every epoch's key is permanent: the missing epoch's
@@ -1819,13 +1817,13 @@ pub async fn join_with_recovery_phrase(database: &Database, identity: &DeviceIde
     // epoch in use. Either way, wait rather than join incomplete.
     let newest_in_use = newest_epoch_in_heads(transports, &latest.rotation.roster).await;
     if (0..=latest_epoch).any(|epoch| !opened.contains_key(&epoch)) || newest_in_use > latest_epoch {
-        return Err(RECOVERY_INCOMPLETE.to_string());
+        return Err(EnrollmentError::RecoveryIncomplete);
     }
 
     database.adopt_roster(&latest.rotation.roster)?;
     database.set_recovery_public_keys(
-        latest.rotation.recovery_ed25519_public.as_slice().try_into().map_err(|_| "Invalid recovery key".to_string())?,
-        latest.rotation.recovery_x25519_public.as_slice().try_into().map_err(|_| "Invalid recovery key".to_string())?,
+        latest.rotation.recovery_ed25519_public.as_slice().try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?,
+        latest.rotation.recovery_x25519_public.as_slice().try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid recovery key"))?,
     )?;
     // Trust ourselves alongside the recovered roster — a fresh device
     // recovering has no prior self-entry there.
@@ -1856,16 +1854,16 @@ pub async fn join_with_recovery_phrase(database: &Database, identity: &DeviceIde
         earlier_epoch_keys: vec![],
     };
     database.ensure_protocol_marker_object()?;
-    let signed_announcement = sign_enrollment_grant(&recovery_ed25519_signing_key(&seed), announcement).map_err(display)?;
-    let announcement_bytes = encode_signed_enrollment_grant(&signed_announcement).map_err(display)?;
+    let signed_announcement = sign_enrollment_grant(&recovery_ed25519_signing_key(&seed), announcement)?;
+    let announcement_bytes = encode_signed_enrollment_grant(&signed_announcement)?;
     let announcement_cid = publish_control_object(database, transports, &announcement_bytes).await?;
     database.mark_control_object_seen(&announcement_cid, "enrollment_grant")?;
     Ok(())
 }
 
-pub(super) fn require_not_started(database: &Database) -> Result<(), String> {
+pub(super) fn require_not_started(database: &Database) -> EnrollmentResult<()> {
     if !matches!(database.enrollment_status()?, EnrollmentStatus::NotStarted) {
-        return Err("This device already belongs to a sync group or is joining one. Leave it first before starting or joining another sync group.".to_string());
+        return Err(EnrollmentError::AlreadyEnrolled);
     }
     Ok(())
 }
@@ -1912,12 +1910,12 @@ pub(crate) mod test_support {
     pub(crate) struct FakeEpochKeyStore(pub(crate) std::sync::Mutex<std::collections::HashMap<u32, [u8; 32]>>);
 
     impl EpochKeyStore for FakeEpochKeyStore {
-        fn store(&self, key_epoch: u32, key: &[u8; 32]) -> Result<(), String> {
+        fn store(&self, key_epoch: u32, key: &[u8; 32]) -> EnrollmentResult<()> {
             self.0.lock().unwrap().insert(key_epoch, *key);
             Ok(())
         }
 
-        fn load(&self, key_epoch: u32) -> Result<Option<[u8; 32]>, String> {
+        fn load(&self, key_epoch: u32) -> EnrollmentResult<Option<[u8; 32]>> {
             Ok(self.get(key_epoch))
         }
     }
@@ -2614,13 +2612,13 @@ mod tests {
         hide(1).await;
         let c = Member::new();
         let refused = join_with_recovery_phrase(&c.database, &c.identity, &c.epoch_keys, &phrase, &transports).await;
-        assert_eq!(refused.unwrap_err(), RECOVERY_INCOMPLETE);
+        assert!(matches!(refused.unwrap_err(), EnrollmentError::RecoveryIncomplete));
         restore(1).await;
 
         // The newest rotation missing, while A's head already says epoch 2.
         hide(2).await;
         let refused = join_with_recovery_phrase(&c.database, &c.identity, &c.epoch_keys, &phrase, &transports).await;
-        assert_eq!(refused.unwrap_err(), RECOVERY_INCOMPLETE);
+        assert!(matches!(refused.unwrap_err(), EnrollmentError::RecoveryIncomplete));
         assert!(c.epoch_keys.get(0).is_none(), "a refused join stores no keys");
         restore(2).await;
 
@@ -2754,9 +2752,61 @@ mod tests {
         let current_key = a.epoch_keys.get(current);
 
         let error = rotate_epoch(&a.database, &a.identity, &stale, &a.epoch_keys, &transports, None).await.unwrap_err();
-        assert!(error.contains("changed while rotating"));
+        assert!(matches!(error, EnrollmentError::EpochChanged), "{error}");
         assert_eq!(a.active_epoch(), current);
         assert_eq!(a.epoch_keys.get(current), current_key);
+    }
+
+    /// Callers branch on the failure category, never on message text: a
+    /// malformed id, a request that is gone, a recovery phrase that doesn't
+    /// parse, and a keychain refusal each arrive as their own variant.
+    #[tokio::test]
+    async fn enrollment_failures_keep_their_category() {
+        let transports = fake_transports("shared");
+        let a = Member::new();
+        begin_genesis(&a.database, &a.identity, &a.epoch_keys, &transports, false).await.unwrap();
+
+        let error = rotate_epoch(&a.database, &a.identity, &a.keys(), &a.epoch_keys, &transports, Some("not-hex")).await.unwrap_err();
+        assert!(matches!(error, EnrollmentError::MalformedId(_)), "{error}");
+
+        let error = reject_enrollment_request(&a.database, &a.identity, &encode_id(&random_id()), &transports).await.unwrap_err();
+        assert!(matches!(error, EnrollmentError::RequestNotPending), "{error}");
+        assert_eq!(String::from(error), "This request is no longer pending.");
+
+        let b = Member::new();
+        let error = join_with_recovery_phrase(&b.database, &b.identity, &b.epoch_keys, "not a phrase", &transports).await.unwrap_err();
+        assert!(matches!(error, EnrollmentError::InvalidRecoveryPhrase(_)), "{error}");
+
+        struct RefusingKeychain;
+        impl EpochKeyStore for RefusingKeychain {
+            fn store(&self, _: u32, _: &[u8; 32]) -> EnrollmentResult<()> {
+                Err(EnrollmentError::Keychain("keychain locked".to_string()))
+            }
+            fn load(&self, _: u32) -> EnrollmentResult<Option<[u8; 32]>> {
+                Ok(None)
+            }
+        }
+        let c = Member::new();
+        let error = begin_genesis(&c.database, &c.identity, &RefusingKeychain, &fake_transports("other"), false).await.unwrap_err();
+        assert!(matches!(error, EnrollmentError::Keychain(_)), "{error}");
+    }
+
+    /// Settings shows these sentences verbatim, and the shared constants are
+    /// still what each refusal displays.
+    #[test]
+    fn refusals_display_the_sentences_settings_shows() {
+        assert_eq!(EnrollmentError::LegacySpace.to_string(), LEGACY_SPACE_REFUSAL);
+        assert_eq!(EnrollmentError::ExistingSpace.to_string(), EXISTING_SPACE_REFUSAL);
+        assert_eq!(EnrollmentError::RecoveryIncomplete.to_string(), RECOVERY_INCOMPLETE);
+        assert_eq!(EnrollmentError::InvitationNotFound.to_string(), join_codes::INVITATION_NOT_FOUND);
+        assert_eq!(EnrollmentError::CredentialsRejected.to_string(), join_codes::CREDENTIALS_REJECTED);
+        assert_eq!(EnrollmentError::StorageUnreachable.to_string(), join_codes::STORAGE_UNREACHABLE);
+        assert_eq!(
+            EnrollmentError::HistoryLimitReached.to_string(),
+            format!(
+                "This sync group has changed its keys more than {MAX_EARLIER_EPOCH_KEYS} times, so it can't hand its history to a new device. Create a new sync group instead."
+            )
+        );
     }
 
     #[test]
@@ -3003,12 +3053,12 @@ mod tests {
         let b = Member::new();
         for allow_existing_space in [false, true] {
             let refused = begin_genesis(&b.database, &b.identity, &b.epoch_keys, &transports, allow_existing_space).await;
-            assert_eq!(refused.unwrap_err(), LEGACY_SPACE_REFUSAL);
+            assert!(matches!(refused.unwrap_err(), EnrollmentError::LegacySpace));
         }
         let refused = join_with_recovery_phrase(&b.database, &b.identity, &b.epoch_keys, &phrase, &transports).await;
-        assert_eq!(refused.unwrap_err(), LEGACY_SPACE_REFUSAL);
+        assert!(matches!(refused.unwrap_err(), EnrollmentError::LegacySpace));
         let refused = publish_enrollment_request(&b.database, &b.identity, &transports).await;
-        assert_eq!(refused.unwrap_err(), LEGACY_SPACE_REFUSAL);
+        assert!(matches!(refused.unwrap_err(), EnrollmentError::LegacySpace));
         // Nothing was set up or published on the way to refusing.
         assert_eq!(transports[0].scan(None).await.unwrap().unwrap().objects.len(), objects_before);
         assert!(b.epoch_keys.get(0).is_none());
@@ -3104,7 +3154,9 @@ mod tests {
 
         database_b.set_beta_features_enabled(false).unwrap();
         let refused = begin_genesis(&database_b, &identity_b, &epoch_keys_b, &transports, false).await;
-        assert_eq!(refused, Err(EXISTING_SPACE_REFUSAL.to_string()));
+        let refused = refused.unwrap_err();
+        assert!(matches!(refused, EnrollmentError::ExistingSpace));
+        assert_eq!(refused.to_string(), EXISTING_SPACE_REFUSAL, "the refusal Settings shows is unchanged");
         assert!(matches!(database_b.enrollment_status().unwrap(), EnrollmentStatus::NotStarted));
         assert!(!database_b.beta_features_enabled().unwrap());
         assert_eq!(epoch_keys_b.get(0), None);
@@ -3209,7 +3261,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(refused.contains("already belongs"), "{refused}");
+        assert!(matches!(refused, EnrollmentError::AlreadyEnrolled), "{refused}");
         let refused = join_with_recovery_phrase(
             &existing.database,
             &existing.identity,
@@ -3219,7 +3271,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(refused.contains("already belongs"), "{refused}");
+        assert!(matches!(refused, EnrollmentError::AlreadyEnrolled), "{refused}");
 
         assert!(matches!(existing.database.enrollment_status().unwrap(), EnrollmentStatus::Enrolled { .. }));
         assert!(!existing.database.beta_features_enabled().unwrap());
@@ -3525,7 +3577,7 @@ mod tests {
                 .unwrap()
         }
 
-        async fn join(device: &Device, code: &str, folder: &SharedFolder, now: i64) -> Result<(), String> {
+        async fn join(device: &Device, code: &str, folder: &SharedFolder, now: i64) -> EnrollmentResult<()> {
             join_with_code(&device.database, &device.identity, &device.epoch_keys, code, &[folder.choice(0)], vec![], now).await
         }
 
@@ -3647,7 +3699,7 @@ mod tests {
             assert_eq!(inspect_sync_space(&a.transports().await).await, SyncSpacePresence::Legacy);
 
             let d = Device::new();
-            assert_eq!(join(&d, &code, &folder, now + 1_000).await.unwrap_err(), LEGACY_SPACE_REFUSAL);
+            assert!(matches!(join(&d, &code, &folder, now + 1_000).await.unwrap_err(), EnrollmentError::LegacySpace));
             assert!(d.database.configured_transports().unwrap().is_empty());
             assert!(matches!(d.database.enrollment_status().unwrap(), EnrollmentStatus::NotStarted));
         }
@@ -3791,7 +3843,7 @@ mod tests {
 
             let b = Device::new();
             let error = join(&b, &code, &folder, now + 1_000).await.unwrap_err();
-            assert!(error.contains("Couldn't find"), "{error}");
+            assert!(matches!(error, EnrollmentError::InvitationNotFound), "{error}");
             assert!(b.database.configured_transports().unwrap().is_empty());
             assert!(matches!(b.database.enrollment_status().unwrap(), EnrollmentStatus::NotStarted));
         }
@@ -3823,12 +3875,12 @@ mod tests {
             missing.invitation_cid = compute_cid(b"no such invitation");
             let b = Device::new();
             let error = join(&b, &encode_join_code(&missing).unwrap(), &folder, now).await.unwrap_err();
-            assert!(error.contains("Couldn't find"), "{error}");
+            assert!(matches!(error, EnrollmentError::InvitationNotFound), "{error}");
 
             let mut wrong_secret = code.clone();
             wrong_secret.invite_secret = ByteBuf::from(vec![9u8; 32]);
             let error = join(&b, &encode_join_code(&wrong_secret).unwrap(), &folder, now).await.unwrap_err();
-            assert!(error.contains("damaged"), "{error}");
+            assert!(matches!(error, EnrollmentError::InvitationDamaged), "{error}");
 
             assert!(b.database.configured_transports().unwrap().is_empty());
             assert!(matches!(b.database.enrollment_status().unwrap(), EnrollmentStatus::NotStarted));
@@ -3969,15 +4021,15 @@ mod tests {
             let now = now_ms();
             let code = create(&a, now).await;
             let error = join(&c, &code, &folder, now).await.unwrap_err();
-            assert!(error.contains("already belongs"), "{error}");
+            assert!(matches!(error, EnrollmentError::AlreadyEnrolled), "{error}");
 
             let b = Device::new();
             let error = join(&b, &code, &folder, now + 25 * 3_600_000).await.unwrap_err();
-            assert!(error.contains("expired"), "{error}");
+            assert!(matches!(error, EnrollmentError::JoinCodeExpired), "{error}");
             assert!(b.database.configured_transports().unwrap().is_empty());
 
             let error = join_with_code(&b.database, &b.identity, &b.epoch_keys, &code, &[], vec![], now).await.unwrap_err();
-            assert!(error.contains("Choose this device's copy"), "{error}");
+            assert!(matches!(&error, EnrollmentError::Invalid(message) if message.contains("Choose this device's copy")), "{error}");
         }
 
         #[tokio::test]
@@ -4122,7 +4174,7 @@ mod tests {
 
             let b = Device::new();
             let error = join_with_code(&b.database, &b.identity, &b.epoch_keys, &code, &[], vec![], now).await.unwrap_err();
-            assert!(error.contains("access key"), "{error}");
+            assert!(matches!(&error, EnrollmentError::Connector(message) if message.contains("access key")), "{error}");
             let credentials: crate::sync_connectors::ConnectorCredentials = serde_json::from_value(serde_json::json!({
                 "kind": "s3",
                 "accessKeyId": crate::s3_transport::fake_server::ACCESS_KEY,
@@ -4183,8 +4235,14 @@ mod tests {
             assert_eq!(ipfs.location, "https://rpc.filebase.io");
             assert!(!preview.connectors[2].supported);
 
-            assert!(preview_join_code("hello", 0).unwrap_err().contains("isn't a ThreeStrands join code"));
-            assert!(preview_join_code("TSJOIN9-abc", 0).unwrap_err().contains("newer version"));
+            assert!(matches!(
+                preview_join_code("hello", 0).unwrap_err(),
+                EnrollmentError::JoinCode(threestrands_sync_envelope::JoinCodeError::NotAJoinCode)
+            ));
+            assert!(matches!(
+                preview_join_code("TSJOIN9-abc", 0).unwrap_err(),
+                EnrollmentError::JoinCode(threestrands_sync_envelope::JoinCodeError::NewerVersion)
+            ));
         }
 
         #[test]
@@ -4202,7 +4260,7 @@ mod tests {
                 }],
             };
             let error = join_codes::prepare_join_connectors(&base, &[], vec![]).unwrap_err();
-            assert!(error.contains("Update this app"), "{error}");
+            assert!(matches!(&error, EnrollmentError::Connector(message) if message.contains("Update this app")), "{error}");
             let mut mixed = base;
             mixed.connectors.push(threestrands_sync_envelope::JoinConnector {
                 kind: "ipfs_rpc".to_string(),
@@ -4234,9 +4292,9 @@ mod tests {
             };
 
             let error = find_invitation(&code, &as_transports(vec![rejecting])).await.err().unwrap();
-            assert_eq!(error, CREDENTIALS_REJECTED);
+            assert!(matches!(error, EnrollmentError::CredentialsRejected), "{error}");
             let error = find_invitation(&code, &as_transports(vec![offline])).await.err().unwrap();
-            assert_eq!(error, STORAGE_UNREACHABLE);
+            assert!(matches!(error, EnrollmentError::StorageUnreachable), "{error}");
 
             // Rejected credentials outrank an outage or an empty connector.
             let rejecting = threestrands_sync_transport::fake::FakeTransport::new("rejecting");
@@ -4244,7 +4302,7 @@ mod tests {
             let offline = threestrands_sync_transport::fake::FakeTransport::new("offline");
             offline.inject_transient_outage(10);
             let error = find_invitation(&code, &as_transports(vec![empty, offline, rejecting])).await.err().unwrap();
-            assert_eq!(error, CREDENTIALS_REJECTED);
+            assert!(matches!(error, EnrollmentError::CredentialsRejected), "{error}");
 
             // An object that doesn't match the code outranks everything.
             let wrong = threestrands_sync_transport::fake::FakeTransport::new("wrong");
@@ -4252,7 +4310,7 @@ mod tests {
             let rejecting = threestrands_sync_transport::fake::FakeTransport::new("rejecting");
             rejecting.set_authentication_failure(true);
             let error = find_invitation(&code, &as_transports(vec![rejecting, wrong])).await.err().unwrap();
-            assert!(error.contains("damaged"), "{error}");
+            assert!(matches!(error, EnrollmentError::InvitationDamaged), "{error}");
         }
 
         #[tokio::test]
@@ -4286,7 +4344,7 @@ mod tests {
             )
             .await
             .unwrap_err();
-            assert_eq!(error, CREDENTIALS_REJECTED);
+            assert!(matches!(error, EnrollmentError::CredentialsRejected), "{error}");
             assert!(b.database.configured_transports().unwrap().is_empty());
             assert!(matches!(b.database.enrollment_status().unwrap(), EnrollmentStatus::NotStarted));
         }
@@ -4302,7 +4360,7 @@ mod tests {
                 connectors: vec![],
             };
             let error = find_invitation(&code, &fake_transports("empty")).await.err().unwrap();
-            assert_eq!(error, INVITATION_NOT_FOUND);
+            assert!(matches!(error, EnrollmentError::InvitationNotFound), "{error}");
         }
     }
 }

@@ -1,5 +1,6 @@
 //! Local triage observation persistence.
 
+use super::DatabaseError;
 use super::{normalize_sender, Database, DbResult};
 use crate::models::{TriageAction, TriageContext, TriageEvent, TriageEventKind, TriageSenderStats};
 use chrono::Utc;
@@ -13,9 +14,9 @@ impl Database {
             (
                 TriageEventKind::Open | TriageEventKind::Close | TriageEventKind::Response,
                 Some(_),
-            ) => return Err("Open and close triage events cannot have an action".into()),
+            ) => return Err(DatabaseError::invalid("Open and close triage events cannot have an action")),
             (TriageEventKind::Disposition | TriageEventKind::Restore, None) => {
-                return Err("Disposition and restore triage events require an action".into())
+                return Err(DatabaseError::invalid("Disposition and restore triage events require an action"))
             }
             _ => {}
         }

@@ -1,7 +1,7 @@
 //! Local drafts and a send queue deliberately separate from retryable label mutations.
 use crate::{
     auth::AccountAuth,
-    db::Database,
+    db::{Database, DatabaseError, DbResult},
     limits::MAX_ATTACHMENT_BYTES,
     mime::{MimePart, RawMessage},
     provider::{DeliveryReceipt, MailProvider},
@@ -297,20 +297,19 @@ impl Database {
     /// How long locally cached mail is kept before `prune_expired_threads`
     /// removes it. `None` means unlimited (the default, so nobody's mail
     /// silently disappears the first time this ships).
-    pub fn retention_days(&self) -> Result<Option<i64>, String> {
+    pub fn retention_days(&self) -> DbResult<Option<i64>> {
         self.connection()?
             .query_row(
                 "SELECT value FROM compose_settings WHERE key='retention_days'",
                 [],
                 |r| r.get::<_, String>(0),
             )
-            .optional()
-            .map_err(error)?
-            .map(|value| value.parse::<i64>().map_err(error))
+            .optional()?
+            .map(|value| value.parse::<i64>().map_err(|e| DatabaseError::corrupt(e.to_string())))
             .transpose()
     }
-    pub fn set_retention_days(&self, days: Option<i64>) -> Result<(), String> {
-        validate_retention_days(days)?;
+    pub fn set_retention_days(&self, days: Option<i64>) -> DbResult<()> {
+        validate_retention_days(days).map_err(DatabaseError::Validation)?;
         let connection = self.connection()?;
         match days {
             Some(days) => connection.execute(
@@ -318,8 +317,7 @@ impl Database {
                 params![days.to_string()],
             ),
             None => connection.execute("DELETE FROM compose_settings WHERE key='retention_days'", []),
-        }
-        .map_err(error)?;
+        }?;
         Ok(())
     }
     pub fn drafts(&self) -> Result<Vec<Draft>, String> {

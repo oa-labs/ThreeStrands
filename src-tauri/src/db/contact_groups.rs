@@ -10,6 +10,7 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
+use super::DatabaseError;
 use super::{Database, DbResult};
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -39,7 +40,7 @@ pub(crate) fn member_field(contact_id: &str) -> String {
 pub(crate) fn validate_group_name(name: &str) -> DbResult<String> {
     let name = name.trim();
     if name.is_empty() || name.chars().count() > MAX_GROUP_NAME || name.chars().any(char::is_control) {
-        return Err(format!("Group names must be between 1 and {MAX_GROUP_NAME} characters").into());
+        return Err(DatabaseError::invalid(format!("Group names must be between 1 and {MAX_GROUP_NAME} characters")));
     }
     Ok(name.to_string())
 }
@@ -83,7 +84,7 @@ fn ensure_unique_name(connection: &Connection, name: &str, except_id: Option<&st
     for row in rows {
         let (id, existing) = row?;
         if Some(id.as_str()) != except_id && existing.to_lowercase() == folded {
-            return Err(format!("A group named \u{201c}{existing}\u{201d} already exists").into());
+            return Err(DatabaseError::invalid(format!("A group named \u{201c}{existing}\u{201d} already exists")));
         }
     }
     Ok(())
@@ -115,7 +116,7 @@ impl Database {
         self.with_transaction(|tx| {
             let count: i64 = tx.query_row("SELECT COUNT(*) FROM contact_groups", [], |row| row.get(0))?;
             if count as usize >= MAX_CONTACT_GROUPS {
-                return Err(format!("You can have at most {MAX_CONTACT_GROUPS} groups").into());
+                return Err(DatabaseError::invalid(format!("You can have at most {MAX_CONTACT_GROUPS} groups")));
             }
             ensure_unique_name(tx, &name, None)?;
             tx.execute(
@@ -126,7 +127,7 @@ impl Database {
         })?;
         let mut write = if contact_ids.is_empty() && emails.is_empty() {
             ContactGroupWrite {
-                group: self.get_contact_group(&id)?.ok_or("Saved group could not be loaded")?,
+                group: self.get_contact_group(&id)?.ok_or(DatabaseError::NotFound("Saved group"))?,
                 fields: BTreeSet::new(),
                 saved_contacts: Vec::new(),
             }
@@ -152,12 +153,12 @@ impl Database {
                 params![name, Utc::now().to_rfc3339(), id],
             )?;
             if changed == 0 {
-                return Err("Group not found".into());
+                return Err(DatabaseError::NotFound("Group"));
             }
             Ok(())
         })?;
         Ok(ContactGroupWrite {
-            group: self.get_contact_group(id)?.ok_or("Group not found")?,
+            group: self.get_contact_group(id)?.ok_or(DatabaseError::NotFound("Group"))?,
             fields: BTreeSet::from(["name".to_string()]),
             saved_contacts: Vec::new(),
         })
@@ -168,10 +169,10 @@ impl Database {
     /// new contact, so every member is a saved contact.
     pub fn add_contact_group_members(&self, id: &str, contact_ids: &[String], emails: &[String]) -> DbResult<ContactGroupWrite> {
         if contact_ids.len() + emails.len() > MAX_GROUP_MEMBERS {
-            return Err(format!("A group can have at most {MAX_GROUP_MEMBERS} members").into());
+            return Err(DatabaseError::invalid(format!("A group can have at most {MAX_GROUP_MEMBERS} members")));
         }
         if self.get_contact_group(id)?.is_none() {
-            return Err("Group not found".into());
+            return Err(DatabaseError::NotFound("Group"));
         }
         let mut saved_contacts = Vec::new();
         let mut resolved = Vec::new();
@@ -185,7 +186,7 @@ impl Database {
         for raw in emails {
             let email = raw.trim().to_ascii_lowercase();
             if !email.contains('@') || email.len() > 320 || email.chars().any(char::is_whitespace) {
-                return Err(format!("\u{201c}{}\u{201d} isn't a valid email address", raw.trim()).into());
+                return Err(DatabaseError::invalid(format!("\u{201c}{}\u{201d} isn't a valid email address", raw.trim())));
             }
             if let Some(owner) = self.contact_ids_for_addresses(std::slice::from_ref(&email))?.remove(&email) {
                 resolved.push(owner);
@@ -213,7 +214,7 @@ impl Database {
             let existing = stored_member_ids(tx, id)?;
             let added = resolved.iter().filter(|member| !existing.contains(*member)).cloned().collect::<BTreeSet<_>>();
             if existing.len() + added.len() > MAX_GROUP_MEMBERS {
-                return Err(format!("A group can have at most {MAX_GROUP_MEMBERS} members").into());
+                return Err(DatabaseError::invalid(format!("A group can have at most {MAX_GROUP_MEMBERS} members")));
             }
             for member in &added {
                 tx.execute("INSERT INTO contact_group_members(group_id,contact_id) VALUES(?1,?2)", params![id, member])?;
@@ -224,7 +225,7 @@ impl Database {
             Ok(added.iter().map(|member| member_field(member)).collect())
         })?;
         Ok(ContactGroupWrite {
-            group: self.get_contact_group(id)?.ok_or("Group not found")?,
+            group: self.get_contact_group(id)?.ok_or(DatabaseError::NotFound("Group"))?,
             fields,
             saved_contacts,
         })
@@ -233,7 +234,7 @@ impl Database {
     pub fn remove_contact_group_members(&self, id: &str, contact_ids: &[String]) -> DbResult<ContactGroupWrite> {
         let fields = self.with_transaction(|tx| {
             if group_by_id(tx, id)?.is_none() {
-                return Err("Group not found".into());
+                return Err(DatabaseError::NotFound("Group"));
             }
             let mut fields = BTreeSet::new();
             for member in contact_ids {
@@ -251,7 +252,7 @@ impl Database {
             Ok(fields)
         })?;
         Ok(ContactGroupWrite {
-            group: self.get_contact_group(id)?.ok_or("Group not found")?,
+            group: self.get_contact_group(id)?.ok_or(DatabaseError::NotFound("Group"))?,
             fields,
             saved_contacts: Vec::new(),
         })
@@ -321,7 +322,7 @@ impl Database {
     /// record's `member:*` fields; the name is not checked for uniqueness,
     /// since two devices may each have created the same name.
     pub(crate) fn upsert_synced_contact_group(&self, id: &str, payload: &Value) -> DbResult<()> {
-        let name = payload.get("name").and_then(Value::as_str).ok_or("A synced group has no name")?;
+        let name = payload.get("name").and_then(Value::as_str).ok_or_else(|| DatabaseError::corrupt("A synced group has no name"))?;
         let now = Utc::now().to_rfc3339();
         let created_at = payload.get("createdAt").and_then(Value::as_str).unwrap_or(&now).to_string();
         let members = payload

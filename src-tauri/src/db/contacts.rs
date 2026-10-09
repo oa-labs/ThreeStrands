@@ -1,5 +1,6 @@
 //! Address book profiles and mail-derived contacts.
 
+use super::DatabaseError;
 use super::{Database, DbResult};
 use crate::mime::NormalizedMessage;
 use chrono::Utc;
@@ -95,7 +96,7 @@ impl Database {
     ) -> DbResult<()> {
         let email = email.trim().to_ascii_lowercase();
         if !email.contains('@') || email.len() > 320 {
-            return Err("Enter a valid email address".into());
+            return Err(DatabaseError::invalid("Enter a valid email address"));
         }
         self.with_connection(|connection|{connection.execute("INSERT INTO pinned_contacts(account_id,email,display_name,pinned_at) VALUES(?1,?2,?3,?4) ON CONFLICT(account_id,email) DO UPDATE SET display_name=excluded.display_name",params![account_id,email,display_name,Utc::now().to_rfc3339()])?;Ok(())})?;
         let owner: Option<String> = self.with_connection(|connection| {
@@ -408,7 +409,7 @@ impl Database {
     pub fn save_contact_profile(&self, request: &SaveContactRequest) -> DbResult<ContactProfile> {
         let id = self.with_transaction(|tx| save_contact_on(tx, request))?;
         self.get_contact_profile(&id)?
-            .ok_or_else(|| "Saved contact could not be loaded".into())
+            .ok_or(DatabaseError::NotFound("Saved contact"))
     }
 
     /// Saved contacts with keep-in-touch reminders or a birthday, soonest
@@ -437,7 +438,7 @@ impl Database {
     /// are saved first, so the returned profiles carry their saved ids.
     pub fn set_keep_in_touch(&self, ids: &[String], interval_days: Option<i64>) -> DbResult<Vec<ContactProfile>> {
         if ids.is_empty() || ids.len() > MAX_CONTACTS {
-            return Err(format!("Choose between 1 and {MAX_CONTACTS} contacts").into());
+            return Err(DatabaseError::invalid(format!("Choose between 1 and {MAX_CONTACTS} contacts")));
         }
         if let Some(days) = interval_days {
             validate_keep_in_touch_days(days)?;
@@ -471,7 +472,7 @@ impl Database {
         })?;
         saved_ids
             .iter()
-            .map(|id| self.get_contact_profile(id)?.ok_or_else(|| "Saved contact could not be loaded".into()))
+            .map(|id| self.get_contact_profile(id)?.ok_or(DatabaseError::NotFound("Saved contact")))
             .collect()
     }
 
@@ -481,9 +482,9 @@ impl Database {
         let now = Utc::now();
         let until = match until {
             Some(value) => {
-                let instant = parse_instant(value).ok_or("Choose a valid snooze date")?;
+                let instant = parse_instant(value).ok_or_else(|| DatabaseError::invalid("Choose a valid snooze date"))?;
                 if instant <= now || instant > now + Duration::days(MAX_KEEP_IN_TOUCH_SNOOZE_DAYS) {
-                    return Err("Choose a snooze date within the next two years".into());
+                    return Err(DatabaseError::invalid("Choose a snooze date within the next two years"));
                 }
                 Some(instant.to_rfc3339())
             }
@@ -496,9 +497,9 @@ impl Database {
             )?)
         })?;
         if changed == 0 {
-            return Err("Turn on keep in touch for this contact before snoozing".into());
+            return Err(DatabaseError::invalid("Turn on keep in touch for this contact before snoozing"));
         }
-        self.get_contact_profile(id)?.ok_or_else(|| "Saved contact could not be loaded".into())
+        self.get_contact_profile(id)?.ok_or(DatabaseError::NotFound("Saved contact"))
     }
 
     /// Logs a touch outside email (a call, a coffee) at the current time,
@@ -513,12 +514,12 @@ impl Database {
             )?;
             Ok(())
         })?;
-        self.get_contact_profile(&id)?.ok_or_else(|| "Saved contact could not be loaded".into())
+        self.get_contact_profile(&id)?.ok_or(DatabaseError::NotFound("Saved contact"))
     }
 
     /// Returns a saved contact id, saving a `derived:<email>` contact first.
     pub(super) fn ensure_saved_contact(&self, id: &str) -> DbResult<String> {
-        let profile = self.get_contact_profile(id)?.ok_or("Contact not found")?;
+        let profile = self.get_contact_profile(id)?.ok_or(DatabaseError::NotFound("Contact"))?;
         if !profile.id.starts_with("derived:") {
             return Ok(profile.id);
         }
@@ -751,7 +752,7 @@ fn clean_contact_text(value: Option<&str>, max: usize) -> DbResult<Option<String
         return Ok(None);
     };
     if value.chars().count() > max {
-        return Err("Contact field is too long".into());
+        return Err(DatabaseError::invalid("Contact field is too long"));
     }
     Ok(Some(value.to_string()))
 }
@@ -777,7 +778,7 @@ pub(crate) fn validate_keep_in_touch_days(days: i64) -> DbResult<()> {
     if (1..=MAX_KEEP_IN_TOUCH_DAYS).contains(&days) {
         Ok(())
     } else {
-        Err(format!("Keep in touch every 1 to {MAX_KEEP_IN_TOUCH_DAYS} days").into())
+        Err(DatabaseError::invalid(format!("Keep in touch every 1 to {MAX_KEEP_IN_TOUCH_DAYS} days")))
     }
 }
 
@@ -788,7 +789,7 @@ pub(crate) fn validate_keep_in_touch(value: &KeepInTouch) -> DbResult<()> {
     }
     for instant in [&value.started_at, &value.snoozed_until, &value.snoozed_at, &value.last_touch_at].into_iter().flatten() {
         if parse_instant(instant).is_none() {
-            return Err("Keep-in-touch dates must be RFC 3339 timestamps".into());
+            return Err(DatabaseError::invalid("Keep-in-touch dates must be RFC 3339 timestamps"));
         }
     }
     Ok(())
@@ -811,7 +812,7 @@ pub(crate) fn normalize_birthday(value: Option<&str>) -> DbResult<Option<String>
     if valid {
         Ok(Some(value.to_string()))
     } else {
-        Err("Enter a birthday as MM-DD or YYYY-MM-DD".into())
+        Err(DatabaseError::invalid("Enter a birthday as MM-DD or YYYY-MM-DD"))
     }
 }
 
@@ -866,7 +867,7 @@ pub(super) fn save_contact_on(
         })
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     if id.trim().is_empty() || id.len() > 128 {
-        return Err("Contact id is invalid".into());
+        return Err(DatabaseError::invalid("Contact id is invalid"));
     }
     let name = clean_contact_text(request.display_name.as_deref(), 200)?;
     let role = clean_contact_text(request.role.as_deref(), 200)?;
@@ -884,33 +885,33 @@ pub(super) fn save_contact_on(
     for raw in &request.addresses {
         let email = raw.trim().to_ascii_lowercase();
         if !email.contains('@') || email.len() > 320 || email.chars().any(char::is_whitespace) {
-            return Err("Enter a valid email address".into());
+            return Err(DatabaseError::invalid("Enter a valid email address"));
         }
         if !addresses.iter().any(|value: &String| value == &email) {
             addresses.push(email);
         }
     }
     if addresses.is_empty() {
-        return Err("A contact needs at least one email address".into());
+        return Err(DatabaseError::invalid("A contact needs at least one email address"));
     }
     if request.links.len() > 20 {
-        return Err("A contact can have at most 20 links".into());
+        return Err(DatabaseError::invalid("A contact can have at most 20 links"));
     }
     let mut links = Vec::new();
     for link in &request.links {
         let value = link.trim();
-        let parsed = url::Url::parse(value).map_err(|_| "Enter a valid https link")?;
+        let parsed = url::Url::parse(value).map_err(|_| DatabaseError::invalid("Enter a valid https link"))?;
         if parsed.scheme() != "https" || parsed.host_str().is_none() || value.len() > 2048 {
-            return Err("Contact links must be valid https URLs".into());
+            return Err(DatabaseError::invalid("Contact links must be valid https URLs"));
         }
         links.push(value.to_string());
     }
     if let Some(photo) = request.photo_data.as_deref() {
         let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, photo)
-            .map_err(|_| "Contact photo is invalid")?;
-        crate::image_format::validate_contact_photo(&bytes)?;
+            .map_err(|_| DatabaseError::invalid("Contact photo is invalid"))?;
+        crate::image_format::validate_contact_photo(&bytes).map_err(DatabaseError::Validation)?;
     }
-    let links_json = serde_json::to_string(&links).map_err(|error| error.to_string())?;
+    let links_json = serde_json::to_string(&links).map_err(super::serialization_error)?;
     {
         // The address-derived ID is convenient for a first save, but an
         // address can later be removed and claimed by someone else. Keep
@@ -952,7 +953,7 @@ pub(super) fn save_contact_on(
                 )
                 .optional()?;
             if existing.as_deref().is_some_and(|owner| owner != id) {
-                return Err("That address already belongs to another saved contact. Remove it there before linking it here.".into());
+                return Err(DatabaseError::invalid("That address already belongs to another saved contact. Remove it there before linking it here."));
             }
         }
         tx.execute("INSERT INTO contacts(id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,updated_at,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,role=excluded.role,company=excluded.company,location=excluded.location,bio=excluded.bio,notes=excluded.notes,links_json=excluded.links_json,photo_data=excluded.photo_data,favorite=excluded.favorite,updated_at=excluded.updated_at,birthday=excluded.birthday,

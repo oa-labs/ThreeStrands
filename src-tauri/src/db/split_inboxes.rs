@@ -1,5 +1,6 @@
 //! Split-inbox rule persistence.
 
+use super::DatabaseError;
 use super::{normalize_sender, Database, DbResult};
 use crate::models::{SplitInbox, Thread, ThreadPage};
 use chrono::Utc;
@@ -28,13 +29,13 @@ impl Database {
         let name = name.trim();
         let match_value = match_value.trim();
         if name.is_empty() {
-            return Err("Split inbox name cannot be empty".into());
+            return Err(DatabaseError::invalid("Split inbox name cannot be empty"));
         }
         if match_value.is_empty() {
-            return Err("Split inbox match value cannot be empty".into());
+            return Err(DatabaseError::invalid("Split inbox match value cannot be empty"));
         }
         if !matches!(match_kind, "domain" | "label" | "pattern") {
-            return Err("Unknown split inbox match kind".into());
+            return Err(DatabaseError::invalid("Unknown split inbox match kind"));
         }
         // Domains and patterns are matched case-insensitively against
         // lowercased addresses (see `split_inbox_matches`), so normalize
@@ -75,7 +76,7 @@ impl Database {
     pub fn update_split_inbox(&self, id: &str, name: &str) -> DbResult<SplitInbox> {
         let name = name.trim();
         if name.is_empty() {
-            return Err("Split inbox name cannot be empty".into());
+            return Err(DatabaseError::invalid("Split inbox name cannot be empty"));
         }
         self.with_connection(|connection| {
             let changed = connection.execute(
@@ -83,7 +84,7 @@ impl Database {
                 params![name, id],
             )?;
             if changed == 0 {
-                return Err("Split inbox not found".into());
+                return Err(DatabaseError::NotFound("Split inbox"));
             }
             Ok(connection.query_row(
                 "SELECT id, name, match_kind, match_value, sort_order, created_at, account_id
@@ -137,7 +138,7 @@ impl Database {
                     )
                     .optional()?)
             })?
-            .ok_or_else(|| "Split inbox not found".to_string())?;
+            .ok_or(DatabaseError::NotFound("Split inbox"))?;
         let matched: Vec<Thread> = self
             .list_threads(Some(&rule.account_id))?
             .into_iter()

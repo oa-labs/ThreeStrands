@@ -5694,7 +5694,7 @@ dependencies = [
 
 [[package]]
 name = "threestrands"
-version = "0.86.4"
+version = "0.86.5"
 dependencies = [
  "argon2",
  "async-trait",

@@ -50,27 +50,32 @@ pub enum DatabaseError {
     ConnectionPoisoned,
     #[error("sqlite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
-    #[error("database validation failed: {0}")]
+    /// Input or state the operation refuses. The message is user-facing.
+    #[error("{0}")]
     Validation(String),
-    #[error("database record not found: {0}")]
-    NotFound(String),
+    /// The named record does not exist, e.g. `NotFound("Thread")`.
+    #[error("{0} not found")]
+    NotFound(&'static str),
     #[error("database serialization failed: {0}")]
     Serialization(String),
+    /// Stored or replicated data that no longer decodes, such as a malformed
+    /// device id or synced payload.
     #[error("{0}")]
-    Message(String),
+    Corrupt(String),
+    /// The OS keychain refused an operation the database write depends on.
+    #[error("{0}")]
+    Keychain(String),
 }
 
 pub type DbResult<T> = Result<T, DatabaseError>;
 
-impl From<String> for DatabaseError {
-    fn from(message: String) -> Self {
-        Self::Message(message)
+impl DatabaseError {
+    pub(crate) fn invalid(message: impl Into<String>) -> Self {
+        Self::Validation(message.into())
     }
-}
 
-impl From<&str> for DatabaseError {
-    fn from(message: &str) -> Self {
-        Self::Message(message.to_string())
+    pub(crate) fn corrupt(message: impl Into<String>) -> Self {
+        Self::Corrupt(message.into())
     }
 }
 
@@ -155,10 +160,10 @@ fn decode_json(value: String) -> rusqlite::Result<Vec<String>> {
 }
 
 pub(super) fn display_error(error: impl std::fmt::Display) -> DatabaseError {
-    DatabaseError::Message(error.to_string())
+    DatabaseError::Validation(error.to_string())
 }
 
-fn serialization_error(error: serde_json::Error) -> DatabaseError {
+pub(crate) fn serialization_error(error: serde_json::Error) -> DatabaseError {
     DatabaseError::Serialization(error.to_string())
 }
 

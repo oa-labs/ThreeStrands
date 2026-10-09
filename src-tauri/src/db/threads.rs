@@ -1,5 +1,6 @@
 //! Thread persistence.
 
+use super::DatabaseError;
 use super::messages::resolve_body;
 use super::split_inboxes::split_inbox_matches;
 use super::{decode_json, Database, DbResult};
@@ -178,7 +179,7 @@ impl Database {
                     thread_from_row,
                 )
                 .optional()?
-                .ok_or_else(|| "Thread not found".to_string())?;
+                .ok_or(DatabaseError::NotFound("Thread"))?;
 
             let mut statement = connection.prepare(
                 "SELECT id, thread_id, sender, recipients_json, sent_at, body_html, body_text,
@@ -232,7 +233,7 @@ impl Database {
                     )
                     .optional()?)
             })?
-            .ok_or_else(|| "Reply source message not found".to_string())?;
+            .ok_or(DatabaseError::NotFound("Reply source message"))?;
         self.get_thread(&thread_id)
     }
 

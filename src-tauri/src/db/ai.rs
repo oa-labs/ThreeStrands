@@ -42,7 +42,7 @@ impl Database {
         generated_at: &str,
         replace_same_revision: bool,
     ) -> DbResult<bool> {
-        let json = serde_json::to_string(analysis).map_err(|error| error.to_string())?;
+        let json = serde_json::to_string(analysis).map_err(super::serialization_error)?;
         self.with_connection(|connection| {
             Ok(connection.execute(
                 "INSERT INTO ai_thread_analyses(thread_id, last_message_at, analysis_json, generated_at)
@@ -69,7 +69,7 @@ impl Database {
         last_message_at: &str,
         proposal: &ActionProposal,
     ) -> DbResult<bool> {
-        let target = serde_json::to_value(proposal).map_err(|error| error.to_string())?;
+        let target = serde_json::to_value(proposal).map_err(super::serialization_error)?;
         self.with_transaction(|transaction| {
             let saved: Option<String> = transaction
                 .query_row(
@@ -90,7 +90,7 @@ impl Database {
                 return Ok(false);
             };
             analysis.proposals.remove(position);
-            let json = serde_json::to_string(&analysis).map_err(|error| error.to_string())?;
+            let json = serde_json::to_string(&analysis).map_err(super::serialization_error)?;
             transaction.execute(
                 "UPDATE ai_thread_analyses SET analysis_json = ?3 WHERE thread_id = ?1 AND last_message_at = ?2",
                 params![thread_id, last_message_at, json],
@@ -110,7 +110,7 @@ impl Database {
         output_tokens: u64,
         cost_usd: Option<f64>,
     ) -> DbResult<()> {
-        let date = NaiveDate::parse_from_str(day, "%Y-%m-%d").map_err(|error| error.to_string())?;
+        let date = NaiveDate::parse_from_str(day, "%Y-%m-%d").map_err(super::display_error)?;
         let cutoff = date
             .checked_sub_days(Days::new(AI_USAGE_RETENTION_DAYS))
             .unwrap_or(date)

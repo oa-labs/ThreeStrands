@@ -24,8 +24,7 @@ use threestrands_sync_envelope::{
     DeviceId as EnvelopeDeviceId, ReplicaSnapshot, SequenceEntry, SnapshotField, SnapshotValue, PROTOCOL_VERSION,
 };
 
-use crate::db::{Database, DbResult};
-use crate::error_text::display;
+use crate::db::{serialization_error, Database, DatabaseError, DbResult};
 use crate::replicated_sync::{decode_id, encode_id, ensure_space_and_device, FrontierConflict, FrontierConflictCandidate};
 
 /// Records that the replica changed, so the next push seals a new snapshot.
@@ -93,8 +92,8 @@ fn load_state(tx: &Transaction) -> DbResult<ReplicaState> {
             .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?
             .collect::<Result<Vec<_>, _>>()?;
         rows.into_iter()
-            .map(|(device, counter)| Ok((decode_id(&device)?, counter as u64)))
-            .collect::<Result<_, String>>()?
+            .map(|(device, counter)| Ok((decode_id(&device).map_err(DatabaseError::Corrupt)?, counter as u64)))
+            .collect::<DbResult<_>>()?
     };
     let mut fields: BTreeMap<FieldKey, Vec<StateValue>> = BTreeMap::new();
     let rows: Vec<ValueRow> = {
@@ -106,14 +105,14 @@ fn load_state(tx: &Transaction) -> DbResult<ReplicaState> {
         rows
     };
     for (entity_type, entity_id, field, device, counter, lamport, value) in rows {
-        let key = FieldKey { entity_type: entity_type.parse::<EntityType>()?, entity_id, field };
+        let key = FieldKey { entity_type: entity_type.parse::<EntityType>().map_err(|e| DatabaseError::corrupt(e.to_string()))?, entity_id, field };
         fields.entry(key).or_default().push(StateValue {
-            dot: Dot { device_id: decode_id(&device)?, counter: counter as u64 },
+            dot: Dot { device_id: decode_id(&device).map_err(DatabaseError::Corrupt)?, counter: counter as u64 },
             lamport: lamport as u64,
-            value: value.map(|json| serde_json::from_str(&json)).transpose().map_err(display)?,
+            value: value.map(|json| serde_json::from_str(&json)).transpose().map_err(serialization_error)?,
         });
     }
-    ReplicaState::from_parts(context, fields).map_err(|error| format!("The local sync state is inconsistent: {error:?}").into())
+    ReplicaState::from_parts(context, fields).map_err(|error| DatabaseError::corrupt(format!("The local sync state is inconsistent: {error:?}")))
 }
 
 /// Turns a peer's opened snapshot into a mergeable state, refusing one that
@@ -198,27 +197,25 @@ impl Database {
         entity_id: &str,
         fields: &BTreeSet<String>,
         payload: &Value,
-    ) -> Result<(), String> {
+    ) -> DbResult<()> {
         if self.is_projecting_remote_operation() {
             return Ok(());
         }
         self.with_transaction(|tx| {
             record_replicated_write_in_transaction(tx, entity_type, entity_id, fields, payload)
         })
-        .map_err(String::from)
     }
 
     /// Records a local deletion: every value of the entity is removed. No
     /// tombstone is kept; the causal context is what stops a peer's older
     /// copy from bringing it back.
-    pub fn record_replicated_deletion(&self, entity_type: EntityType, entity_id: &str) -> Result<(), String> {
+    pub fn record_replicated_deletion(&self, entity_type: EntityType, entity_id: &str) -> DbResult<()> {
         if self.is_projecting_remote_operation() {
             return Ok(());
         }
         self.with_transaction(|tx| {
             record_replicated_deletion_in_transaction(tx, entity_type, entity_id)
         })
-        .map_err(String::from)
     }
 
     /// True once the replica holds any value for this entity.
@@ -353,7 +350,7 @@ impl Database {
                 )
                 .optional()?)
         })?;
-        Ok(winner.flatten().map(|json| serde_json::from_str(&json)).transpose().map_err(display)?)
+        winner.flatten().map(|json| serde_json::from_str(&json)).transpose().map_err(serialization_error)
     }
 
     /// Every field currently in conflict: more than one surviving value, and
@@ -390,7 +387,7 @@ impl Database {
                     resolved.push(FrontierConflictCandidate {
                         operation_id: format!("{device_id}:{counter}"),
                         device_id,
-                        value: value.map(|json| serde_json::from_str(&json)).transpose().map_err(display)?,
+                        value: value.map(|json| serde_json::from_str(&json)).transpose().map_err(serialization_error)?,
                     });
                 }
                 if resolved.iter().all(|candidate| {
@@ -420,11 +417,11 @@ impl Database {
         entity_id: &str,
         field: &str,
         chosen_operation_id: &str,
-    ) -> Result<(), String> {
+    ) -> DbResult<()> {
         let (device_id, counter) = chosen_operation_id
             .split_once(':')
             .and_then(|(device, counter)| Some((device.to_string(), counter.parse::<i64>().ok()?)))
-            .ok_or_else(|| "That conflict choice is invalid".to_string())?;
+            .ok_or_else(|| DatabaseError::invalid("That conflict choice is invalid"))?;
         let stored: Option<String> = self
             .with_connection(|connection| {
                 Ok(connection.query_row(
@@ -433,10 +430,10 @@ impl Database {
                     |row| row.get(0),
                 )?)
             })
-            .map_err(|_| "That conflict was already resolved elsewhere".to_string())?;
+            .map_err(|_| DatabaseError::invalid("That conflict was already resolved elsewhere"))?;
         let mut payload = serde_json::Map::new();
         if let Some(json) = stored {
-            payload.insert(field.to_string(), serde_json::from_str(&json).map_err(display)?);
+            payload.insert(field.to_string(), serde_json::from_str(&json).map_err(serialization_error)?);
         }
         self.record_replicated_write(entity_type, entity_id, &BTreeSet::from([field.to_string()]), &Value::Object(payload))
     }

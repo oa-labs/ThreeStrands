@@ -1,5 +1,6 @@
 //! Account persistence.
 
+use super::DatabaseError;
 use super::{Database, DbResult};
 use crate::models::{Account, MailProviderKind};
 use chrono::Utc;
@@ -97,7 +98,7 @@ impl Database {
             Ok(())
         })?;
         self.get_account(email)?
-            .ok_or_else(|| "Account not found".into())
+            .ok_or(DatabaseError::NotFound("Account"))
     }
 
     /// Adopts a Gmail account — the shorthand most tests want.
@@ -218,7 +219,7 @@ impl Database {
             )?)
         })?;
         if changed == 0 {
-            return Err("Account not found".into());
+            return Err(DatabaseError::NotFound("Account"));
         }
         Ok(())
     }
@@ -232,10 +233,9 @@ impl Database {
         if normalized
             .is_some_and(|name| name.chars().count() > 200 || name.chars().any(char::is_control))
         {
-            return Err(
-                "Sender name must be 200 characters or fewer and cannot contain control characters"
-                    .into(),
-            );
+            return Err(DatabaseError::invalid(
+                "Sender name must be 200 characters or fewer and cannot contain control characters",
+            ));
         }
         let changed = self.with_connection(|connection| {
             Ok(connection.execute(
@@ -244,7 +244,7 @@ impl Database {
             )?)
         })?;
         if changed == 0 {
-            return Err("Account not found".into());
+            return Err(DatabaseError::NotFound("Account"));
         }
         Ok(())
     }

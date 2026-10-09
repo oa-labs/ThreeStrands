@@ -74,7 +74,8 @@ fn a_failing_mutation_rolls_back_the_whole_batch() {
         ])
         .unwrap_err();
 
-    assert!(error.to_string().contains("Thread not found"), "{error}");
+    assert!(matches!(error, DatabaseError::NotFound("Thread")), "{error}");
+    assert_eq!(error.to_string(), "Thread not found");
     assert_eq!(
         starred(&database, "welcome"),
         welcome_before,

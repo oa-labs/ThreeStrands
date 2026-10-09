@@ -1808,7 +1808,7 @@ async fn replicated_sync_cancel_join_code(invitation_cid: String, state: State<'
 /// Parses pasted join code text without saving or contacting anything.
 #[tauri::command]
 fn replicated_sync_preview_join_code(code: String) -> Result<enrollment::JoinCodePreview, String> {
-    enrollment::preview_join_code(&code, chrono::Utc::now().timestamp_millis())
+    Ok(enrollment::preview_join_code(&code, chrono::Utc::now().timestamp_millis())?)
 }
 
 /// Opens the native folder picker for a join code's shared-folder
@@ -1842,7 +1842,7 @@ async fn replicated_sync_join_code_notices(state: State<'_, AppState>) -> Result
 
 #[tauri::command(async)]
 fn replicated_sync_dismiss_join_code_notice(redemption_cid: String, state: State<'_, AppState>) -> Result<(), String> {
-    state.database.dismiss_join_code_notice(&redemption_cid)
+    Ok(state.database.dismiss_join_code_notice(&redemption_cid)?)
 }
 
 #[tauri::command]

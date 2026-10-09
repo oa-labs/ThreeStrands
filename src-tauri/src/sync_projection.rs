@@ -18,7 +18,7 @@ use threestrands_sync_protocol::EntityType;
 use crate::models::ContactRecord;
 
 use crate::{
-    db::{Database, DbResult},
+    db::{serialization_error, Database, DatabaseError, DbResult},
     enrollment::EnrollmentStatus,
     error_text::display,
     models::{Account, Snippet, SplitInbox, ThreadTask},
@@ -44,7 +44,7 @@ impl Database {
         entity_id: &str,
         payload: Value,
         fields: Option<BTreeSet<String>>,
-    ) -> Result<(), String> {
+    ) -> DbResult<()> {
         if !self.replicated_sync_active()? {
             return Ok(());
         }
@@ -58,7 +58,7 @@ impl Database {
     }
 
     /// Records a local deletion of a synchronized entity.
-    pub fn record_local_entity_deletion(&self, entity_type: EntityType, entity_id: &str) -> Result<(), String> {
+    pub fn record_local_entity_deletion(&self, entity_type: EntityType, entity_id: &str) -> DbResult<()> {
         if !self.replicated_sync_active()? {
             return Ok(());
         }
@@ -104,17 +104,17 @@ impl Database {
         } else if let Some(payload) = payload {
             match entity_type {
                 EntityType::Task => {
-                    self.upsert_synced_task(serde_json::from_value(payload.clone()).map_err(display)?)?
+                    self.upsert_synced_task(serde_json::from_value(payload.clone()).map_err(serialization_error)?)?
                 }
                 EntityType::Snippet => {
-                    self.upsert_synced_snippet(serde_json::from_value(payload.clone()).map_err(display)?)?
+                    self.upsert_synced_snippet(serde_json::from_value(payload.clone()).map_err(serialization_error)?)?
                 }
                 EntityType::SplitInbox => {
-                    self.upsert_synced_split(serde_json::from_value(payload.clone()).map_err(display)?)?
+                    self.upsert_synced_split(serde_json::from_value(payload.clone()).map_err(serialization_error)?)?
                 }
                 EntityType::Contact => self.upsert_synced_contact(payload)?,
                 EntityType::Goal => {
-                    self.upsert_synced_goal(&serde_json::from_value(payload.clone()).map_err(display)?)?
+                    self.upsert_synced_goal(&serde_json::from_value(payload.clone()).map_err(serialization_error)?)?
                 }
                 EntityType::ContactGroup => self.upsert_synced_contact_group(entity_id, payload)?,
                 EntityType::MailAccount => self.upsert_synced_account(payload)?,
@@ -181,7 +181,7 @@ impl Database {
     }
 
     pub(crate) fn upsert_synced_contact(&self, value: &Value) -> DbResult<()> {
-        let item: ContactRecord = serde_json::from_value(value.clone()).map_err(display)?;
+        let item: ContactRecord = serde_json::from_value(value.clone()).map_err(serialization_error)?;
         // A device on a build before birthdays and keep-in-touch sends
         // records without those keys. Treat a missing key as "unknown to the
         // sender" and keep the local value rather than clearing it.
@@ -246,7 +246,7 @@ impl Database {
             "connectedAt": Utc::now().to_rfc3339(),
             "lastSyncedAt": null,
         }))
-        .map_err(display)?;
+        .map_err(serialization_error)?;
         self.with_connection(|connection| {
             connection.execute(
                 "INSERT INTO accounts(email,display_name,color,status,provider,sort_order,connected_at) VALUES(?1,?2,?3,'needs_reauth',?4,?5,?6) ON CONFLICT(email) DO UPDATE SET display_name=excluded.display_name,color=excluded.color,provider=excluded.provider,sort_order=excluded.sort_order",
@@ -257,7 +257,7 @@ impl Database {
     }
 
     fn upsert_synced_calendar(&self, value: &Value) -> DbResult<()> {
-        let email = value.get("email").and_then(Value::as_str).ok_or("Invalid calendar account")?;
+        let email = value.get("email").and_then(Value::as_str).ok_or_else(|| DatabaseError::corrupt("Invalid calendar account"))?;
         self.with_connection(|connection| {
             connection.execute(
                 "INSERT INTO calendar_accounts(email,connected_at,status) VALUES(?1,?2,'needs_reauth') ON CONFLICT(email) DO NOTHING",
@@ -268,11 +268,11 @@ impl Database {
     }
 
     fn upsert_synced_calendar_selection(&self, value: &Value) -> DbResult<()> {
-        let email = value.get("accountId").and_then(Value::as_str).ok_or("Invalid calendar selection")?;
+        let email = value.get("accountId").and_then(Value::as_str).ok_or_else(|| DatabaseError::corrupt("Invalid calendar selection"))?;
         let ids = value
             .get("calendarIds")
             .and_then(Value::as_array)
-            .ok_or("Invalid calendar selection")?
+            .ok_or_else(|| DatabaseError::corrupt("Invalid calendar selection"))?
             .iter()
             .filter_map(Value::as_str)
             .map(str::to_owned)
@@ -326,7 +326,7 @@ impl Database {
             let current: Value = stored
                 .map(|value| serde_json::from_str(&value))
                 .transpose()
-                .map_err(display)?
+                .map_err(serialization_error)?
                 .unwrap_or_else(|| json!({}));
             let has_synced_record: bool = tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM sync_values WHERE entity_type='preferences' AND entity_id='portable')",
@@ -361,10 +361,11 @@ impl Database {
     }
 }
 
-fn clear_provider_credential(service: &str, key: &str) -> Result<(), String> {
-    match Entry::new(service, key).map_err(display)?.delete_credential() {
+fn clear_provider_credential(service: &str, key: &str) -> DbResult<()> {
+    let keychain = |error: keyring::Error| DatabaseError::Keychain(error.to_string());
+    match Entry::new(service, key).map_err(keychain)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(error) => Err(display(error)),
+        Err(error) => Err(keychain(error)),
     }
 }
 
@@ -520,7 +521,7 @@ mod tests {
         db.set_beta_features_enabled(true).unwrap();
         db.with_remote_projection(|| {
             assert!(db.update_synced_preferences(json!({"fontFamily": "Georgia"}))?);
-            Ok(())
+            Ok::<_, String>(())
         }).unwrap();
         assert_eq!(db.synced_preferences().unwrap(), Some(json!({"fontFamily": "Georgia"})));
         assert_eq!(db.resolve_field_winner(EntityType::Preferences, "portable", "fontFamily").unwrap(), Some(json!("Georgia")));
