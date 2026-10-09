@@ -5,7 +5,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 import { invoke } from "@tauri-apps/api/core";
 import { readAiFastModel, readAiFeatures, readAiModel, saveAiProvider } from "./aiSettings";
-import { AiProviderSettings } from "./SettingsPanel";
+import { AiProviderSettings } from "./AiProviderSettings";
 import { queuePortablePreferences } from "./syncedPreferences";
 
 describe("AI provider feature settings", () => {

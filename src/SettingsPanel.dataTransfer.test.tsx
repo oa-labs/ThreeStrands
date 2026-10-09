@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./userPreferences", () => ({ exportSettings: vi.fn(), importSettings: vi.fn() }));
 
 import { exportSettings, importSettings } from "./userPreferences";
-import { DataTransferSettings } from "./SettingsPanel";
+import { DataTransferSettings } from "./DataTransferSettings";
 
 describe("data transfer settings", () => {
   beforeEach(() => {

@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { DiagnosticsSettings, type SyncDiagnosticsActions } from "./SettingsPanel";
+import { DiagnosticsSettings } from "./DiagnosticsSettings";
+import type { SyncDiagnosticsActions } from "./settingsPanelTypes";
 import type { SyncStatus } from "./domain";
 
 afterEach(cleanup);

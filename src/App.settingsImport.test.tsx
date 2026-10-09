@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./userPreferences", async (importOriginal) => {
@@ -11,6 +11,7 @@ vi.mock("./userPreferences", async (importOriginal) => {
 
 import { App } from "./App";
 import { importSettings } from "./userPreferences";
+import { holdRecoveryPhrase, pendingRecoveryPhrase } from "./RecoveryPhraseDialog";
 
 describe("settings import navigation", () => {
   beforeEach(() => {
@@ -225,5 +226,46 @@ describe("settings section keyboard navigation", () => {
     fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
     expect(within(dialog).queryByRole("group", { name: "Disconnect mail account confirmation" })).not.toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Disconnect…" })).toBeInTheDocument();
+  });
+
+  it("clears section-local password drafts when navigating away and back", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Data Transfer" }));
+    for (const label of ["Export Password", "Confirm Password", "Backup File Password"]) {
+      fireEvent.change(within(dialog).getByLabelText(label), { target: { value: "temporary password" } });
+    }
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Diagnostics" }));
+    expect(within(dialog).queryByRole("region", { name: "Data transfer" })).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Data Transfer" }));
+    for (const label of ["Export Password", "Confirm Password", "Backup File Password"]) {
+      expect(within(dialog).getByLabelText(label)).toHaveValue("");
+    }
+  });
+
+  it("keeps a pending recovery phrase reachable above Settings and protects it from Escape", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    act(() => holdRecoveryPhrase("one two three four"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+    const recovery = await screen.findByRole("dialog", { name: "Save Your Recovery Phrase" });
+    try {
+      expect(recovery.parentElement).not.toHaveAttribute("aria-hidden");
+      expect(recovery.parentElement!.inert).toBeFalsy();
+      expect(within(recovery).getByRole("button", { name: "Copy" })).toHaveFocus();
+      fireEvent.keyDown(window, { key: "Escape" });
+      expect(pendingRecoveryPhrase()).toBe("one two three four");
+      expect(screen.getByRole("dialog", { name: "Settings", hidden: true })).toBeInTheDocument();
+    } finally {
+      fireEvent.click(within(recovery).getByRole("button", { name: "I’ve written it down" }));
+    }
+
+    expect(pendingRecoveryPhrase()).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Settings" })).toBeInTheDocument();
   });
 });

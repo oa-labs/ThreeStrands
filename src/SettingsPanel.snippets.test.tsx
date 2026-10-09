@@ -2,7 +2,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Snippet } from "./domain";
-import { SnippetsSettings } from "./SettingsPanel";
+import { SnippetsSettings } from "./SnippetsSettings";
 
 afterEach(cleanup);
 

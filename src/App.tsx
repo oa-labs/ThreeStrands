@@ -159,7 +159,7 @@ import {
   resumeTriageSession,
   type TriageSession,
 } from "./triage";
-import type { MailAccountSettings, SettingsSection, SyncDiagnosticsActions } from "./SettingsPanel";
+import type { MailAccountSettings, SettingsSection, SyncDiagnosticsActions } from "./settingsPanelTypes";
 import { EnrollmentRequestNotice } from "./EnrollmentRequestNotice";
 import { UpdateNotice } from "./UpdateNotice";
 import { errorMessage, logBackgroundFailure } from "./errors";

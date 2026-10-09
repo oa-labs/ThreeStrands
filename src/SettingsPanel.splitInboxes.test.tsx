@@ -2,7 +2,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SplitInbox } from "./domain";
-import { SplitInboxesSettings } from "./SettingsPanel";
+import { SplitInboxesSettings } from "./SplitInboxesSettings";
 
 afterEach(cleanup);
 

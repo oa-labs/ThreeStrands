@@ -1,9 +1,9 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CALENDAR_COLORS_KEY, resetCalendarColorsForTests } from "./calendarColors";
 import type { CalendarAccount, CalendarOption } from "./domain";
-import { CalendarAccountsSettings } from "./SettingsPanel";
+import { CalendarAccountsSettings } from "./CalendarAccountsSettings";
 
 afterEach(() => {
   cleanup();
@@ -13,7 +13,13 @@ afterEach(() => {
 
 const account: CalendarAccount = { email: "me@example.com", status: "connected" } as CalendarAccount;
 
-function renderPicker(props: { calendars?: CalendarOption[]; calendarsError?: string | null; calendarsLoaded: boolean }) {
+function renderPicker(props: {
+  calendars?: CalendarOption[];
+  calendarsError?: string | null;
+  calendarsLoaded: boolean;
+  onRemove?: (email: string) => Promise<void>;
+  onRemoveEverywhere?: (email: string) => Promise<void>;
+}) {
   render(
     <CalendarAccountsSettings
       authStatus={null}
@@ -23,8 +29,8 @@ function renderPicker(props: { calendars?: CalendarOption[]; calendarsError?: st
       calendarsLoaded={props.calendarsLoaded}
       onAdd={vi.fn()}
       onReconnect={vi.fn()}
-      onRemove={vi.fn()}
-      onRemoveEverywhere={vi.fn()}
+      onRemove={props.onRemove ?? vi.fn()}
+      onRemoveEverywhere={props.onRemoveEverywhere ?? vi.fn()}
       onSetSelection={vi.fn()}
     />,
   );
@@ -76,5 +82,28 @@ describe("calendar account picker", () => {
     expect(teamRow.style.getPropertyValue("--calendar-color")).toBe("#8a55c9");
     const meRow = within(picker).getByRole("checkbox", { name: "Me (Primary)" }).closest(".calendar-color-row") as HTMLElement;
     expect(meRow.style.getPropertyValue("--calendar-color")).toBe("");
+  });
+
+  it.each(["Disconnect this device", "Remove on all devices"])("confirms the calendar removal scope: %s", async (scope) => {
+    const onRemove = vi.fn().mockResolvedValue(undefined);
+    const onRemoveEverywhere = vi.fn().mockResolvedValue(undefined);
+    renderPicker({ calendarsLoaded: true, onRemove, onRemoveEverywhere });
+
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect…" }));
+    const confirmation = screen.getByRole("group", { name: "Disconnect calendar account confirmation" });
+    expect(onRemove).not.toHaveBeenCalled();
+    expect(onRemoveEverywhere).not.toHaveBeenCalled();
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("group", { name: "Disconnect calendar account confirmation" })).not.toBeInTheDocument();
+    expect(onRemove).not.toHaveBeenCalled();
+    expect(onRemoveEverywhere).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect…" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Disconnect calendar account confirmation" })).getByRole("button", { name: scope }));
+    const selected = scope === "Disconnect this device" ? onRemove : onRemoveEverywhere;
+    const other = scope === "Disconnect this device" ? onRemoveEverywhere : onRemove;
+    await waitFor(() => expect(selected).toHaveBeenCalledWith(account.email));
+    expect(selected).toHaveBeenCalledTimes(1);
+    expect(other).not.toHaveBeenCalled();
   });
 });

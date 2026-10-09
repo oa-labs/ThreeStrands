@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AppearanceSettings } from "./SettingsPanel";
+import { AppearanceSettings } from "./AppearanceSettings";
 import { useAppPreferences } from "./useAppPreferences";
 
 vi.mock("./systemFonts", () => ({ listSystemFontFamilies: vi.fn().mockResolvedValue([]) }));
