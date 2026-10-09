@@ -632,8 +632,8 @@ impl Database {
         self.connection()?
             .execute(
                 "UPDATE outbox_messages SET state='unverifiable', \
-                 error='This message was sent, but delivery could not be confirmed. \
-                 Check your Sent folder before sending it again.' \
+                 error='This message may have been sent, but delivery could not be confirmed. \
+                 Confirm with the recipient before sending it again.' \
                  WHERE id=?1 AND state='uncertain'",
                 [id],
             )
@@ -1227,6 +1227,15 @@ impl Correspondence {
             return Ok(());
         }
         let provider = self.provider_for(&item.draft.account).await?;
+        self.reconcile_with_provider(&item, provider.as_ref()).await
+    }
+
+    async fn reconcile_with_provider(
+        &self,
+        item: &OutboxItem,
+        provider: &dyn MailProvider,
+    ) -> Result<(), String> {
+        let id = &item.id;
         if provider.sender_identity().await.map_err(error)? != item.draft.account {
             return Err("Reconnect the original sender account".into());
         }
@@ -1702,6 +1711,171 @@ mod tests {
                 state,
                 "mark_unverifiable must not touch a {state} row"
             );
+        }
+    }
+
+    mod reconciliation {
+        use super::*;
+        use crate::{
+            models::Label,
+            provider::{
+                Delivery, LabelModel, MailFetch, MailMutate, MailSend, MailSync, ProviderCapabilities,
+                ProviderResult, SyncBatch, SyncCursor, ThreadPage,
+            },
+        };
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct ReconcileProvider {
+            operation: String,
+            verifiable_delivery: bool,
+            sent_copy: Option<DeliveryReceipt>,
+            lookups: AtomicUsize,
+        }
+
+        #[async_trait::async_trait]
+        impl MailSend for ReconcileProvider {
+            async fn sender_identity(&self) -> ProviderResult<String> {
+                Ok("you@example.com".into())
+            }
+
+            async fn find_sent_copy(
+                &self,
+                operation: &str,
+                expected_sender: &str,
+            ) -> ProviderResult<Option<DeliveryReceipt>> {
+                assert_eq!(operation, self.operation);
+                assert_eq!(expected_sender, "you@example.com");
+                self.lookups.fetch_add(1, Ordering::SeqCst);
+                Ok(self.sent_copy.clone())
+            }
+
+            async fn prepare_delivery(&self) -> ProviderResult<Box<dyn Delivery>> {
+                panic!("Reconciliation must never resend a message");
+            }
+        }
+
+        impl MailProvider for ReconcileProvider {
+            fn capabilities(&self) -> ProviderCapabilities {
+                ProviderCapabilities {
+                    server_search: false,
+                    provided_threads: false,
+                    label_model: LabelModel::GmailLabels,
+                    verifiable_delivery: self.verifiable_delivery,
+                }
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl MailSync for ReconcileProvider {
+            async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
+                panic!("Reconciliation must not start a sync");
+            }
+            async fn poll(&self, _: &SyncCursor) -> ProviderResult<SyncBatch> {
+                panic!("Reconciliation must not poll");
+            }
+            async fn list_inbox(&self, _: Option<&str>) -> ProviderResult<ThreadPage> {
+                panic!("Reconciliation must not list the inbox");
+            }
+            async fn fetch_thread(&self, _: &str) -> ProviderResult<Vec<RawMessage>> {
+                panic!("These receipts do not identify a provider thread");
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl MailFetch for ReconcileProvider {
+            async fn fetch_message(&self, _: &str) -> ProviderResult<RawMessage> {
+                panic!("Reconciliation must not fetch a message");
+            }
+            async fn attachment_bytes(&self, _: &str, _: &str) -> ProviderResult<Vec<u8>> {
+                panic!("Reconciliation must not fetch attachments");
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl MailMutate for ReconcileProvider {
+            async fn modify_thread(&self, _: &str, _: &[String], _: &[String]) -> ProviderResult<()> {
+                panic!("These receipts do not identify a provider thread");
+            }
+            async fn modify_messages(
+                &self,
+                _: &[String],
+                _: &[String],
+                _: &[String],
+            ) -> ProviderResult<()> {
+                panic!("Reconciliation must not modify messages");
+            }
+            async fn list_labels(&self) -> ProviderResult<Vec<Label>> {
+                panic!("Reconciliation must not list labels");
+            }
+            async fn create_label(&self, _: &str) -> ProviderResult<Label> {
+                panic!("Reconciliation must not create labels");
+            }
+            async fn update_label(&self, _: &str, _: &str) -> ProviderResult<Label> {
+                panic!("Reconciliation must not update labels");
+            }
+            async fn delete_label(&self, _: &str) -> ProviderResult<()> {
+                panic!("Reconciliation must not delete labels");
+            }
+        }
+
+        #[tokio::test]
+        async fn provider_capability_and_sent_copy_determine_the_delivery_outcome() {
+            for verifiable_delivery in [false, true] {
+                for found_copy in [false, true] {
+                    let service = service();
+                    let draft = saved(&service.database);
+                    let item = service
+                        .database
+                        .queue(&draft.id, draft.revision, false, &service.root)
+                        .unwrap();
+                    service.database.connection().unwrap().execute(
+                        "UPDATE outbox_messages SET state='uncertain', error='Connection dropped before SMTP acceptance' WHERE id=?1",
+                        [&item.id],
+                    ).unwrap();
+                    let item = service.database.outbox().unwrap().remove(0);
+                    let provider = ReconcileProvider {
+                        operation: item.id.clone(),
+                        verifiable_delivery,
+                        sent_copy: found_copy.then(|| DeliveryReceipt {
+                            provider_message_id: "confirmed-copy".into(),
+                            thread_id: None,
+                        }),
+                        lookups: AtomicUsize::new(0),
+                    };
+
+                    let result = service.reconcile_with_provider(&item, &provider).await;
+                    let resolved = service.database.outbox().unwrap().remove(0);
+                    if found_copy {
+                        result.unwrap();
+                        assert_eq!(resolved.state, "sent");
+                        assert_eq!(resolved.provider_id.as_deref(), Some("confirmed-copy"));
+                        assert!(resolved.error.is_none());
+                    } else if verifiable_delivery {
+                        assert_eq!(result.unwrap_err(), "Delivery is still uncertain. No automatic retry was made. Check Gmail Sent before composing another message.");
+                        assert_eq!(resolved.state, "uncertain");
+                        assert_eq!(resolved.error, item.error);
+                    } else {
+                        result.unwrap();
+                        assert_eq!(resolved.state, "unverifiable");
+                        assert_eq!(
+                            resolved.error.as_deref(),
+                            Some("This message may have been sent, but delivery could not be confirmed. Confirm with the recipient before sending it again.")
+                        );
+                        assert!(resolved.provider_id.is_none());
+                    }
+
+                    if resolved.state != "uncertain" {
+                        // Terminal outcomes must bypass provider access on later checks.
+                        service.reconcile(&item.id).await.unwrap();
+                        service.tick().await.unwrap();
+                        assert_eq!(
+                            service.database.outbox().unwrap().remove(0).state,
+                            resolved.state
+                        );
+                    }
+                    assert_eq!(provider.lookups.load(Ordering::SeqCst), 1);
+                }
+            }
         }
     }
     #[test]
