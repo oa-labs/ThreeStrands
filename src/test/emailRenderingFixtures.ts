@@ -35,11 +35,17 @@ const flowReportFooter = `
   </div>
 `;
 
+const quotedReportReply = `<div>On Monday, A. Sender wrote:</div><blockquote><p>Earlier quoted message.</p></blockquote>`;
+
 export const emailRenderingFixtures = {
   earlierTableReport: `<p>Your first report is ready.</p>${tableReportFooter}`,
   repeatedTableFooter: `<p>Your latest report includes new results.</p>${tableReportFooter}`,
   earlierFlowReport: `<p>Your previous account update.</p>${flowReportFooter}`,
   repeatedFlowFooter: `<p>New activity has been recorded.</p>${flowReportFooter}`,
+  tableFooterWithEmptyQuote: `<p>Your latest report includes new results.</p>${tableReportFooter}<blockquote><div><br>&nbsp;</div></blockquote>`,
+  flowFooterWithEmptyQuote: `<p>New activity has been recorded.</p>${flowReportFooter}<blockquote><span hidden>Hidden quoted message.</span></blockquote>`,
+  tableFooterBeforeQuote: `<p>Your latest report includes new results.</p>${tableReportFooter}${quotedReportReply}`,
+  flowFooterBeforeQuote: `<p>New activity has been recorded.</p>${flowReportFooter}${quotedReportReply}`,
   smallTextTable: `
     <table cellpadding="6" cellspacing="4"><tr><td style="font-size:10px;line-height:12px">
       Table copy <span style="font-size:80%">Relative footnote</span><span style="font-size:2.8em">Large relative heading</span>

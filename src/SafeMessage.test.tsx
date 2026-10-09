@@ -600,6 +600,76 @@ describe("SafeMessage", () => {
       expect(foldSanitizedWith(reply(signature))).toContain("Engineering Lead");
     });
 
+    it.each([
+      { fixture: "tableFooterWithEmptyQuote", earlier: "earlierTableReport", address: "123 Example Street", notice: "please unsubscribe", quoted: false },
+      { fixture: "flowFooterWithEmptyQuote", earlier: "earlierFlowReport", address: "456 Demonstration Avenue", notice: "unsubscribe from future updates", quoted: false },
+      { fixture: "tableFooterBeforeQuote", earlier: "earlierTableReport", address: "123 Example Street", notice: "please unsubscribe", quoted: true },
+      { fixture: "flowFooterBeforeQuote", earlier: "earlierFlowReport", address: "456 Demonstration Avenue", notice: "unsubscribe from future updates", quoted: true },
+    ] as const)("preserves the complete layout of $fixture", ({ fixture, earlier, address, notice, quoted }) => {
+      const prior = threadTextIndex([{ bodyText: "", bodyHtml: emailRenderingFixtures[earlier] }]).before(1);
+      const untrusted = emailRenderingFixtures[fixture].replace("<img ", '<img onerror="alert(1)" ')
+        .replace('href="https://example.com/unsubscribe"', 'href="javascript:alert(2)"');
+      const html = sanitizeMessageHtml(`${untrusted}<script>alert(3)</script>`);
+      const fold = foldQuotedHistoryHtml(html, prior);
+      if (quoted) {
+        expect(fold).not.toBeNull();
+        expect(fold!.visible).toContain(address);
+        expect(fold!.visible).toContain(notice);
+        expect(fold!.visible).not.toContain("Earlier quoted message.");
+        expect(fold!.expanded).toContain("Earlier quoted message.");
+        for (const output of [fold!.visible, fold!.expanded]) {
+          expect(output).not.toMatch(/<script|onerror|javascript:|\ssrc="https:/);
+          expect(output).toContain("data-blocked-src=");
+        }
+        const visible = new DOMParser().parseFromString(fold!.visible, "text/html");
+        const original = new DOMParser().parseFromString(html, "text/html");
+        expect(visible.querySelector("table, div[style]")!.outerHTML)
+          .toBe(original.querySelector("table, div[style]")!.outerHTML);
+      } else {
+        expect(fold).toBeNull();
+      }
+    });
+
+    it.each([
+      "<blockquote></blockquote>",
+      "<blockquote><div><br>&nbsp;\u200b</div></blockquote>",
+      "<blockquote><span hidden>Repeated content from an earlier message.</span></blockquote>",
+      "<blockquote><div>On Monday, A. Sender wrote:</div></blockquote>",
+      '<blockquote><img src="https://example.com/tracker.gif" width="1" height="1"></blockquote>',
+    ])("requires meaningful quoted text in %s", (quote) => {
+      const html = `${emailRenderingFixtures.repeatedTableFooter}${quote}`;
+      const prior = threadTextIndex([{ bodyText: "", bodyHtml: emailRenderingFixtures.earlierTableReport }]).before(1);
+      expect(foldSanitizedWith(html, prior)).toBeNull();
+      expect(foldSanitizedWith(`${emailRenderingFixtures.repeatedTableFooter}<div>On Monday, A. Sender wrote:</div>${quote}`, prior)).toBeNull();
+    });
+
+    it("keeps empty reply markers and quote runs visible in plain text", () => {
+      const prior = priorTo(earlier);
+      for (const suffix of ["On Monday, A. Sender wrote:", Array(EMAIL_QUOTE_FOLDING_LIMITS.minQuoteRunLines).fill(">").join("\n")]) {
+        expect(collapseQuotedHistoryText(`New answer.\n${earlier}\n${suffix}`, prior)).toBeNull();
+      }
+    });
+
+    it("can extend over an entire repeated layout without splitting it", () => {
+      const html = `<p>Fixed now.</p><table><tr><td>${signature}</td></tr></table><div>On Monday, A. Sender wrote:</div><blockquote>Earlier question.</blockquote>`;
+      const folded = foldSanitizedWith(html, priorTo(earlier));
+      expect(folded).toBe("<p>Fixed now.</p>");
+    });
+
+    it("does not extend inside a shared table that already contains the quote", () => {
+      const html = `<table><tr><td>Fixed now.<br><br>${signature}<div>On Monday, A. Sender wrote:</div><blockquote>Earlier question.</blockquote></td></tr></table>`;
+      const folded = foldSanitizedWith(html, priorTo(earlier));
+      expect(folded).toContain("Engineering Lead");
+      expect(folded).not.toContain("Earlier question.");
+    });
+
+    it("does not split a wrapper whose layout is supplied by a stylesheet", () => {
+      const html = `<p>Fixed now.</p><div class="signature-layout"><img src="https://example.com/logo.png"><div>${signature}</div></div><div>On Monday, A. Sender wrote:</div><blockquote>Earlier question.</blockquote>`;
+      const folded = foldSanitizedWith(html, priorTo(earlier));
+      expect(folded).toContain("Engineering Lead");
+      expect(folded).not.toContain("Earlier question.");
+    });
+
     it("keeps a signature the thread has not shown before", () => {
       expect(foldSanitizedWith(reply(signature), priorTo("Can you check the feed?"))).toContain("Engineering Lead");
     });
@@ -617,6 +687,25 @@ describe("SafeMessage", () => {
     });
 
     const words = (count: number, prefix = "w") => Array.from({ length: count }, (_, index) => `${prefix}${index}`).join(" ");
+
+    it.each([
+      { quoteWords: EMAIL_QUOTE_FOLDING_LIMITS.minCorroboratingShingles + EMAIL_QUOTE_FOLDING_LIMITS.shingleWords - 2, folds: false },
+      { quoteWords: EMAIL_QUOTE_FOLDING_LIMITS.minCorroboratingShingles + EMAIL_QUOTE_FOLDING_LIMITS.shingleWords - 1, folds: true },
+      { quoteWords: EMAIL_QUOTE_FOLDING_LIMITS.minCorroboratingShingles + EMAIL_QUOTE_FOLDING_LIMITS.shingleWords, folds: true },
+    ])("requires corroboration inside a $quoteWords-word citation: $folds", ({ quoteWords, folds }) => {
+      const copied = words(quoteWords, "cited");
+      const prior = threadTextIndex([{ bodyText: "", bodyHtml: `${emailRenderingFixtures.earlierTableReport}<p>${copied}</p>` }]).before(1);
+      const html = sanitizeMessageHtml(`${emailRenderingFixtures.repeatedTableFooter}<blockquote>${copied}</blockquote>`);
+      const fold = foldQuotedHistoryHtml(html, prior);
+      if (folds) {
+        expect(fold).not.toBeNull();
+        expect(fold!.visible).toContain("123 Example Street");
+        expect(fold!.visible).toContain("please unsubscribe");
+        expect(fold!.visible).not.toContain("cited0");
+      } else {
+        expect(fold).toBeNull();
+      }
+    });
 
     it.each([
       { sigWords: EMAIL_QUOTE_FOLDING_LIMITS.minCorroboratingShingles + EMAIL_QUOTE_FOLDING_LIMITS.shingleWords - 2, folds: false },

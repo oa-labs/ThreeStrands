@@ -91,6 +91,9 @@ function flatten(container: Element): FlatText {
       return;
     }
     if (!(node instanceof Element)) return;
+    // Hidden preview text and empty quote scaffolding are not reader-visible
+    // evidence. Keep their markup intact; exclude only their detection text.
+    if (node.hasAttribute("hidden")) return;
     if (node.tagName === "BR") {
       text += "\n";
       return;
@@ -161,6 +164,30 @@ function isAttributionLine(lines: Line[], index: number): boolean {
     if (wroteContinuationLine.test(lines[next].text)) return joinedLength <= LIMITS.maxAttributionLength;
   }
   return false;
+}
+
+/** A marker, header, quote prefix, or invisible spacer is not quoted prose. */
+function hasMeaningfulQuoteContent(lines: Line[], start = 0): boolean {
+  return lines.some((line, index) => index >= start
+    && !isAttributionLine(lines, index)
+    && !wroteContinuationLine.test(line.text)
+    && !headerField.test(line.text.trim())
+    && lineWords(line.text).length > 0);
+}
+
+/**
+ * An extension may remove a whole block, but cannot open a new partial wrapper
+ * or cut inside table/flex layout. Shared ordinary message wrappers can keep
+ * the original quote cut; unfamiliar wrappers stay intact conservatively,
+ * including layouts supplied through class-based sender stylesheets.
+ */
+function preservesExtensionLayout(boundary: QuotedHistoryBoundary, original: QuotedHistoryBoundary, container: Element): boolean {
+  for (let parent = boundary.node.parentElement; parent && parent !== container; parent = parent.parentElement) {
+    if (/^(?:TABLE|THEAD|TBODY|TFOOT|TR|TD|TH|CAPTION|COLGROUP)$/.test(parent.tagName)
+      || /^(?:inline-)?(?:flex|grid|table)(?:-|$)/.test((parent as HTMLElement).style.display)
+      || !parent.contains(original.node)) return false;
+  }
+  return true;
 }
 
 /** Base score for a From/Sent/To/Subject cluster starting at `index`, or 0. */
@@ -348,12 +375,12 @@ function findQuotedHistoryFold(container: Element, prior?: PriorThreadText): Fol
   for (let index = 0; index < lines.length; index++) {
     if (lines[index].blank) continue;
     const lineStart = lines[index].start;
-    if (isAttributionLine(lines, index)) {
+    if (isAttributionLine(lines, index) && hasMeaningfulQuoteContent(lines, index + 1)) {
       attributions.push({ lineStart, offset: lineStart, base: SCORE.separatorMarker, boundary: boundaryAt(flat, container, lineStart) });
       continue;
     }
     const headerScore = headerClusterScore(lines, index);
-    if (!headerScore) continue;
+    if (!headerScore || !hasMeaningfulQuoteContent(lines, index + 1)) continue;
     let previous = index - 1;
     while (previous >= 0 && lines[previous].blank) previous--;
     const afterPrevious = previous >= 0 ? lines[previous].end : -1;
@@ -371,9 +398,10 @@ function findQuotedHistoryFold(container: Element, prior?: PriorThreadText): Fol
 
   const regions: Region[] = Array.from(container.querySelectorAll("blockquote, cite"))
     .filter((node) => !hasMeaningfulFollowingContent(node, container))
-    .map((node) => ({ ...(flat.spans.get(node) ?? { start: 0, end: 0 }), base: SCORE.quotedRegion, boundary: { kind: "element", node } }));
+    .map((node): Region => ({ ...(flat.spans.get(node) ?? { start: 0, end: 0 }), base: SCORE.quotedRegion, boundary: { kind: "element", node } }))
+    .filter(({ start, end }) => hasMeaningfulQuoteContent(splitLines(flat.text.slice(start, end))));
   const quoteRun = trailingQuoteRunStart(lines);
-  if (quoteRun >= 0) {
+  if (quoteRun >= 0 && hasMeaningfulQuoteContent(lines, quoteRun)) {
     regions.push({ start: lines[quoteRun].start, end: flat.text.length, base: SCORE.quotedLineRun, boundary: boundaryAt(flat, container, lines[quoteRun].start) });
   }
 
@@ -426,18 +454,29 @@ function findQuotedHistoryFold(container: Element, prior?: PriorThreadText): Fol
   if (!prior) return structural?.fold ?? null;
 
   const repeated = classifyRepeatedLines(lines.map((line) => line.text), prior);
-  const foldAtLine = (line: number) => visibleBefore(boundaryAt(flat, container, lines[line].start));
+  const extendToLine = (line: number, original: Fold) => {
+    const boundary = boundaryAt(flat, container, lines[line].start);
+    return boundary && preservesExtensionLayout(boundary, original.boundary, container)
+      ? visibleBefore(boundary) ?? original : original;
+  };
   if (structural) {
     const run = repeatedRunAbove(repeated, structural.line);
     if (run.top < structural.line && run.matched >= LIMITS.minCorroboratingShingles) {
-      return foldAtLine(run.top) ?? structural.fold;
+      return extendToLine(run.top, structural.fold);
     }
     return structural.fold;
   }
   const run = repeatedRunAbove(repeated, lines.length);
   if (run.top >= lines.length) return null;
-  const confirmsCitation = regions.some((region) => region.start >= lines[run.top].start);
-  return confirmsCitation && run.matched >= LIMITS.minCorroboratingShingles ? foldAtLine(run.top) : null;
+  const citation = regions.find((region) => {
+    if (region.start < lines[run.top].start) return false;
+    // Evidence must come from the quote itself, not a repeated footer beside
+    // it. Matching prose outside a citation cannot corroborate that citation.
+    const [content] = classifyRepeatedLines([flat.text.slice(region.start, region.end)], prior);
+    return content.kind === "seen" && content.matched >= LIMITS.minCorroboratingShingles;
+  });
+  const citationFold = citation ? visibleBefore(citation.boundary) : null;
+  return citationFold ? extendToLine(run.top, citationFold) : null;
 }
 
 /** Index of the first line starting a run of minQuoteRunLines+ consecutive `>`-quoted lines, or -1. */
@@ -460,9 +499,11 @@ function findQuoteRunStart(lines: string[]): number {
 /** Line index where a plain-text reply's quoted history starts, from structure alone, or -1. */
 function structuralTextCut(lines: string[]): number {
   const plainLines = lines.map((line) => ({ text: line, start: 0, end: 0, blank: !line.trim() }));
-  const markerIndex = lines.findIndex((_, index) => isAttributionLine(plainLines, index));
+  const markerIndex = lines.findIndex((_, index) => isAttributionLine(plainLines, index)
+    && hasMeaningfulQuoteContent(plainLines, index + 1));
   const quoteRunIndex = findQuoteRunStart(lines);
-  const cutCandidates = [markerIndex, quoteRunIndex].filter((index) => index >= 0);
+  const cutCandidates = [markerIndex, quoteRunIndex].filter((index) => index >= 0
+    && hasMeaningfulQuoteContent(plainLines, index));
   if (cutCandidates.length > 0) return Math.min(...cutCandidates);
   // A From/Sent/To/Subject block that starts on a header line, directly
   // below a separator line; the fold starts at the separator.
@@ -473,7 +514,8 @@ function structuralTextCut(lines: string[]): number {
       block.push(lines[next].trim());
     }
     const fields = new Set(block.map((line) => line.match(headerField)?.[1].toLowerCase()).filter(Boolean));
-    if (!fields.has("from") || fields.size < 3 || !emailOrTimestamp.test(block.join(" "))) continue;
+    if (!fields.has("from") || fields.size < 3 || !emailOrTimestamp.test(block.join(" "))
+      || !hasMeaningfulQuoteContent(plainLines, index + 1)) continue;
     let separator = index - 1;
     while (separator >= 0 && !lines[separator].trim()) separator--;
     if (separator > 0 && separatorLine.test(lines[separator]) && lines.slice(0, separator).some((line) => line.trim())) {

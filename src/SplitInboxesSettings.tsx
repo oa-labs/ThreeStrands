@@ -5,6 +5,7 @@ import type { Account, Label, SplitInbox, SplitInboxMatchKind } from "./domain";
 import { moveItem, useSettingsOperation } from "./settingsOperations";
 import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
+import { InlineConfirm } from "./InlineConfirm";
 
 /** Resolves a label id to its display name by scanning every account's label
  * catalog rather than storing the name on the split inbox — ids are stable,
@@ -84,6 +85,7 @@ export function SplitInboxesSettings({
   const [matchValue, setMatchValue] = useState("");
   const [accountId, setAccountId] = useState(() => activeAccountId ?? accounts[0]?.email ?? "");
   const [creating, setCreating] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const { pending: busyId, error, setError, runFor } = useSettingsOperation();
 
   // A split inbox belongs to one account, so only that account's labels are
@@ -222,12 +224,31 @@ export function SplitInboxesSettings({
                     type="button"
                     className="btn btn-sm btn-danger"
                     disabled={busyId !== null}
-                    onClick={() => runFor(splitInbox.id, () => onDelete(splitInbox.id))}
+                    onClick={() => setDeletingId(splitInbox.id)}
                   >
                     Delete
                   </button>
                 </span>
               </div>
+              {deletingId === splitInbox.id ? (
+                <InlineConfirm
+                  ariaLabel={`Delete ${splitInbox.name} confirmation`}
+                  cancelLabel="Cancel"
+                  onCancel={() => setDeletingId(null)}
+                  disabled={busyId !== null}
+                  actions={[{
+                    label: "Delete Split Inbox",
+                    className: "btn-danger",
+                    onClick: () => {
+                      setDeletingId(null);
+                      runFor(splitInbox.id, () => onDelete(splitInbox.id));
+                    },
+                  }]}
+                >
+                  <strong>Delete {splitInbox.name}?</strong><br />
+                  This removes the split inbox view. Your emails will not be deleted.
+                </InlineConfirm>
+              ) : null}
             </li>
           ))}
         </ul>

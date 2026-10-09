@@ -48,9 +48,13 @@ test.describe("email rendering fixtures", () => {
   }
 
   for (const theme of ["light", "dark"]) {
-    for (const { fixture, prior, address, notice } of [
-      { fixture: "repeatedTableFooter", prior: "earlierTableReport", address: "123 Example Street", notice: "please unsubscribe" },
-      { fixture: "repeatedFlowFooter", prior: "earlierFlowReport", address: "456 Demonstration Avenue", notice: "unsubscribe from future updates" },
+    for (const { fixture, prior, address, notice, quoted } of [
+      { fixture: "repeatedTableFooter", prior: "earlierTableReport", address: "123 Example Street", notice: "please unsubscribe", quoted: false },
+      { fixture: "repeatedFlowFooter", prior: "earlierFlowReport", address: "456 Demonstration Avenue", notice: "unsubscribe from future updates", quoted: false },
+      { fixture: "tableFooterWithEmptyQuote", prior: "earlierTableReport", address: "123 Example Street", notice: "please unsubscribe", quoted: false },
+      { fixture: "flowFooterWithEmptyQuote", prior: "earlierFlowReport", address: "456 Demonstration Avenue", notice: "unsubscribe from future updates", quoted: false },
+      { fixture: "tableFooterBeforeQuote", prior: "earlierTableReport", address: "123 Example Street", notice: "please unsubscribe", quoted: true },
+      { fixture: "flowFooterBeforeQuote", prior: "earlierFlowReport", address: "456 Demonstration Avenue", notice: "unsubscribe from future updates", quoted: true },
     ]) {
       for (const width of [390, 1200]) {
         test(`${fixture} remains complete in a conversation in ${theme} mode at ${width}px`, async ({ page }) => {
@@ -62,7 +66,9 @@ test.describe("email rendering fixtures", () => {
           const noticeText = body.getByText(notice, { exact: false });
           await expect(addressText).toBeVisible();
           await expect(noticeText).toBeVisible();
-          await expect(page.getByRole("button", { name: "Show quoted content" })).toHaveCount(0);
+          const toggle = page.getByRole("button", { name: "Show quoted content" });
+          if (quoted) await expect(toggle).toBeVisible();
+          else await expect(toggle).toHaveCount(0);
           const logo = body.locator("img").first();
           // The address stays beside the logo, and the entire notice fits
           // inside the frame rather than leaving a truncated footer.
@@ -72,6 +78,16 @@ test.describe("email rendering fixtures", () => {
           const frameBox = (await frame.boundingBox())!;
           const noticeBox = (await noticeText.boundingBox())!;
           expect(noticeBox.y + noticeBox.height).toBeLessThanOrEqual(frameBox.y + frameBox.height);
+          if (quoted) {
+            await expect(body).not.toContainText("Earlier quoted message.");
+            await toggle.click();
+            await expect(body).toContainText("Earlier quoted message.");
+            await expect(addressText).toBeVisible();
+            await page.getByRole("button", { name: "Hide quoted content" }).click();
+            await expect(body).not.toContainText("Earlier quoted message.");
+            await expect(addressText).toBeVisible();
+            await expect(noticeText).toBeVisible();
+          }
         });
       }
     }

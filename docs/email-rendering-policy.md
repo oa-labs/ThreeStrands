@@ -16,7 +16,7 @@ Evidence and weights:
 
 - A standalone reply separator or reply-introduction line (`Original message`, `Forwarded message`, `On … wrote:`, including one whose `wrote:` hard-wrapped onto a following line): 3.
 - A From/Sent/To/Subject header cluster — consecutive non-blank lines that include `From:`, at least three distinct fields, and an address or timestamp: 2, or 3 when it is complete (four or more fields including `Sent:` or `Date:`). A horizontal rule or separator line directly above the cluster adds 1, and the fold then starts at that rule.
-- A trailing blockquote or citation (nothing meaningful after it): 2.
+- A trailing blockquote or citation with meaningful quoted prose (nothing meaningful after it): 2. Empty, whitespace-only, hidden-only, image-only, or attribution-only regions stay visible and contribute no quote evidence.
 - A trailing run of `>`-prefixed lines (at least `minQuoteRunLines`, with only blank lines between them and the end): 3. Quoted lines followed by unquoted text are an inline reply and never count.
 - An attribution paired with a quoted region that follows it, or that opens it as the region's first line: +2 for each.
 - Non-empty current content before the boundary: 1.
@@ -24,9 +24,11 @@ Evidence and weights:
 Repeated thread text is fill-in evidence, used only when the reader renders a message inside its conversation. `src/threadTextIndex.ts` indexes each message's plain text (decoded, or flattened from HTML in an inert document) as `shingleWords`-word shingles after removing quote markers, case and punctuation, and a message sees only shingles from messages before it. Shingles run across line breaks, so short and rewrapped lines still match. A line counts as repeated when matched shingles cover at least `minSeenLineCoverage` of its words; lines without words are neutral. Walking up from a boundary, the contiguous run of repeated or neutral lines:
 
 - extends a structural fold upward when it holds at least `minCorroboratingShingles` matches — typically the sender's signature repeated above the quote;
-- confirms a lone trailing blockquote or citation with the same minimum.
+- confirms a lone trailing blockquote or citation with the same minimum of matches inside the quoted prose itself; adjacent repeated boilerplate cannot supply that evidence.
 
 Repetition alone never establishes quoted history, in HTML or plain text. Reports, notifications, addresses, and unsubscribe notices can repeat across a conversation while still being current content. Folding requires semantic quote evidence; a matching footer must stay intact rather than being cut midway through its layout. Repeated text followed by new text never folds, a signature the conversation has not shown before stays visible, and an extension that would leave nothing visible falls back to the structural fold. Text a message shares with no earlier message, such as a genuine quotation, gets no repeated-text evidence.
+
+Attributions and header clusters also require meaningful quoted prose after them; bare markers and empty quote prefixes do not fold. Hidden markup remains in the sanitized message but its text is excluded from quote detection. Repeated-text extensions may remove whole blocks, but cannot cut inside table or flex layout or introduce a partial wrapper that the original quote boundary did not split. If extending would split a layout, keep the original quote boundary and leave the repeated content visible. This also protects unfamiliar wrappers styled through sender classes without interpreting provider-specific selectors.
 
 Folding requires `foldScoreThreshold` (four) points. When the boundary line begins one or more wrapper elements, the cut moves before the outermost wrapper so the visible copy does not end in an empty blockquote or rule. A lone trailing blockquote (3) and a mid-message header cluster without a rule or complete fields (3) stay visible. Ambiguous content remains visible and can be expanded when folded. All folding limits are in `EMAIL_QUOTE_FOLDING_LIMITS`. This is visual normalization, not a security decision: the security stages still sanitize and contain the complete message.
 
