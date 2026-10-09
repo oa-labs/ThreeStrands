@@ -641,7 +641,7 @@ export type AuthStatus = {
 };
 
 /** A mail backend an account can authenticate and sync through. */
-export type MailProvider = "gmail";
+export type MailProvider = "gmail" | "imap";
 
 export type Account = {
   email: string;

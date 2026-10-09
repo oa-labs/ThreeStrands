@@ -17,11 +17,31 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::Tokens;
 
+/// An IMAP/SMTP password credential, stored in the keychain under the same
+/// tagged envelope as every other secret. The IMAP password is always
+/// present; the SMTP password is `None` when the same password authenticates
+/// both submission and retrieval, which is the common case. Only the secrets
+/// live here — the non-secret server settings (hosts, ports, security mode,
+/// usernames) belong in the `imap_account_settings` table added with the IMAP
+/// provider, never in the keychain and never where a password could leak.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ImapPassword {
+    pub imap: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smtp: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum StoredCredential {
     #[serde(rename = "google_oauth")]
     GoogleOAuth(Tokens),
+    /// An IMAP account's password(s). Added in Phase 1 slice 2 ahead of the
+    /// IMAP provider (phase 2) that reads it; stored exactly like
+    /// [`Self::GoogleOAuth`] so the keychain envelope needs no change to hold
+    /// a non-OAuth credential.
+    #[serde(rename = "imap_password")]
+    ImapPassword(ImapPassword),
 }
 
 impl StoredCredential {
@@ -59,7 +79,10 @@ mod tests {
     #[test]
     fn a_bare_pre_envelope_payload_still_decodes() {
         let legacy = serde_json::to_string(&tokens()).unwrap();
-        let StoredCredential::GoogleOAuth(decoded) = StoredCredential::decode(&legacy).unwrap();
+        let StoredCredential::GoogleOAuth(decoded) = StoredCredential::decode(&legacy).unwrap()
+        else {
+            panic!("expected a GoogleOAuth credential");
+        };
         assert_eq!(decoded.access_token, "at");
         assert_eq!(decoded.refresh_token.as_deref(), Some("rt"));
     }
@@ -71,7 +94,60 @@ mod tests {
             encoded.contains("\"kind\":\"google_oauth\""),
             "expected a tagged envelope, got: {encoded}"
         );
-        let StoredCredential::GoogleOAuth(decoded) = StoredCredential::decode(&encoded).unwrap();
+        let StoredCredential::GoogleOAuth(decoded) = StoredCredential::decode(&encoded).unwrap()
+        else {
+            panic!("expected a GoogleOAuth credential");
+        };
         assert_eq!(decoded.access_token, "at");
+    }
+
+    #[test]
+    fn an_imap_password_credential_round_trips_tagged() {
+        let encoded = StoredCredential::ImapPassword(ImapPassword {
+            imap: "imap-secret".into(),
+            smtp: Some("smtp-secret".into()),
+        })
+        .encode()
+        .unwrap();
+        assert!(
+            encoded.contains("\"kind\":\"imap_password\""),
+            "expected a tagged envelope, got: {encoded}"
+        );
+        let StoredCredential::ImapPassword(decoded) = StoredCredential::decode(&encoded).unwrap()
+        else {
+            panic!("expected an ImapPassword credential");
+        };
+        assert_eq!(decoded.imap, "imap-secret");
+        assert_eq!(decoded.smtp.as_deref(), Some("smtp-secret"));
+    }
+
+    #[test]
+    fn an_imap_password_omits_an_absent_smtp_secret() {
+        let encoded = StoredCredential::ImapPassword(ImapPassword {
+            imap: "imap-secret".into(),
+            smtp: None,
+        })
+        .encode()
+        .unwrap();
+        // Omitted, not serialized as null, so a shared-password account
+        // never records an empty SMTP secret.
+        assert!(!encoded.contains("smtp"), "expected no smtp key, got: {encoded}");
+        let StoredCredential::ImapPassword(decoded) = StoredCredential::decode(&encoded).unwrap()
+        else {
+            panic!("expected an ImapPassword credential");
+        };
+        assert_eq!(decoded.imap, "imap-secret");
+        assert_eq!(decoded.smtp, None);
+    }
+
+    #[test]
+    fn a_bare_pre_envelope_payload_is_still_read_as_google_oauth_not_imap() {
+        // The bare-Tokens fallback must stay pinned to GoogleOAuth: a legacy
+        // entry predates IMAP entirely, so it can never be an IMAP password.
+        let legacy = serde_json::to_string(&tokens()).unwrap();
+        assert!(matches!(
+            StoredCredential::decode(&legacy).unwrap(),
+            StoredCredential::GoogleOAuth(_)
+        ));
     }
 }

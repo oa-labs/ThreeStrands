@@ -24,7 +24,7 @@ use crate::{
 };
 
 const FORMAT: &str = "dispatch-settings";
-const VERSION: u32 = 3;
+const VERSION: u32 = 4;
 const EXTENSION: &str = "dispatch-settings";
 const ARGON_MEMORY_KIB: u32 = 19_456;
 const ARGON_ITERATIONS: u32 = 2;
@@ -750,12 +750,13 @@ mod tests {
     }
 
     #[test]
-    fn current_envelope_uses_v3() {
+    fn current_envelope_uses_v4() {
         let encoded = encrypt(&payload(), "correct horse").unwrap();
         let envelope: EncryptedEnvelope = serde_json::from_slice(&encoded).unwrap();
 
         assert_eq!(envelope.format, "dispatch-settings");
-        assert_eq!(envelope.version, 3);
+        assert_eq!(envelope.version, 4);
+        assert_eq!(envelope.version, VERSION);
         assert_eq!(
             decrypt(&encoded, "correct horse").unwrap().accounts[0].email,
             "person@example.com"
@@ -917,11 +918,22 @@ mod tests {
     #[test]
     fn validate_rejects_an_unrecognized_account_provider() {
         let mut candidate = payload();
-        candidate.accounts[0].provider = "imap".to_string();
+        candidate.accounts[0].provider = "exchange".to_string();
         assert_eq!(
             candidate.validate().unwrap_err(),
             "The transfer contains an unrecognized account provider"
         );
+    }
+
+    #[test]
+    fn an_imap_account_provider_is_now_accepted_on_import() {
+        // Phase 1 slice 2 added MailProviderKind::Imap, so a transfer that
+        // carries `provider: "imap"` — which earlier builds rejected — now
+        // imports. The format version bump to 4 is how an older build knows
+        // to refuse an export it cannot represent.
+        let mut candidate = payload();
+        candidate.accounts[0].provider = "imap".to_string();
+        candidate.validate().unwrap();
     }
 
     #[test]
@@ -1019,10 +1031,15 @@ mod tests {
     ///   settings (0.66.10).
     /// - `v3-0.72`: last export before calendar colors (0.72.4).
     /// - `v3-0.78`: last export before contact groups (0.78.0).
-    /// - `v3-current`: what this build exports. The only fixture with a
+    /// - `v3-final`: the last version-3 exporter's output, frozen when the
+    ///   format bumped to version 4 in Phase 1 slice 2 (IMAP provider seam).
+    ///   A complete version-3 payload, so a version-3 export keeps full
+    ///   round-trip regression coverage under the new version, as AGENTS.md
+    ///   requires.
+    /// - `v4-current`: what this build exports. The only fixture with a
     ///   regenerate helper (`regenerate_current_settings_transfer_fixture`).
     ///
-    /// Every file except `v3-current` is frozen: never regenerate or edit
+    /// Every file except `v4-current` is frozen: never regenerate or edit
     /// it, because it stands in for a file a user already has on disk.
     mod fixtures {
         pub(super) const PASSWORD: &str = "correct horse battery staple";
@@ -1038,11 +1055,15 @@ mod tests {
             include_bytes!("../tests/fixtures/settings-transfer/v3-initial.dispatch-settings");
         pub(super) const V3_0_52: &[u8] =
             include_bytes!("../tests/fixtures/settings-transfer/v3-0.52.dispatch-settings");
-        pub(super) const V3_CURRENT: &[u8] =
-            include_bytes!("../tests/fixtures/settings-transfer/v3-current.dispatch-settings");
-        pub(super) const V3_CURRENT_PATH: &str = "tests/fixtures/settings-transfer/v3-current.dispatch-settings";
-        pub(super) const V3_CURRENT_SALT: [u8; super::SALT_LEN] = [0x60; super::SALT_LEN];
-        pub(super) const V3_CURRENT_NONCE: [u8; super::NONCE_LEN] = [0xe0; super::NONCE_LEN];
+        /// The last complete version-3 export, frozen at the version 3->4
+        /// bump. Its bytes are the pre-bump `v3-current` fixture verbatim.
+        pub(super) const V3_FINAL: &[u8] =
+            include_bytes!("../tests/fixtures/settings-transfer/v3-final.dispatch-settings");
+        pub(super) const V4_CURRENT: &[u8] =
+            include_bytes!("../tests/fixtures/settings-transfer/v4-current.dispatch-settings");
+        pub(super) const V4_CURRENT_PATH: &str = "tests/fixtures/settings-transfer/v4-current.dispatch-settings";
+        pub(super) const V4_CURRENT_SALT: [u8; super::SALT_LEN] = [0x60; super::SALT_LEN];
+        pub(super) const V4_CURRENT_NONCE: [u8; super::NONCE_LEN] = [0xe0; super::NONCE_LEN];
         /// The webview's `readExportablePreferences()` shape, shared with
         /// `src/userPreferences.test.ts`.
         pub(super) const WEBVIEW_PREFERENCES: &str =
@@ -1098,7 +1119,7 @@ mod tests {
 
     #[test]
     fn minimum_email_font_size_round_trips_and_rejects_invalid_bounds() {
-        let mut payload = decrypt(fixtures::V3_CURRENT, fixtures::PASSWORD).unwrap();
+        let mut payload = decrypt(fixtures::V4_CURRENT, fixtures::PASSWORD).unwrap();
         for value in [0, 12, 18, 32] {
             payload.preferences.email_minimum_font_size = value;
             let result = decrypt(&encrypt(&payload, fixtures::PASSWORD).unwrap(), fixtures::PASSWORD).unwrap();
@@ -1284,7 +1305,7 @@ mod tests {
         assert_eq!(database.retention_days().unwrap(), None);
     }
 
-    /// The payload behind `v3-current`: every field this build knows about,
+    /// The payload behind `v4-current`: every field this build knows about,
     /// set away from its default so a dropped or renamed field is visible.
     fn current_fixture_payload() -> TransferPayload {
         TransferPayload {
@@ -1401,13 +1422,13 @@ mod tests {
 
     fn seal_current_fixture() -> Vec<u8> {
         let plaintext = serde_json::to_vec(&current_fixture_payload()).unwrap();
-        seal(&plaintext, fixtures::PASSWORD, &fixtures::V3_CURRENT_SALT, &fixtures::V3_CURRENT_NONCE).unwrap()
+        seal(&plaintext, fixtures::PASSWORD, &fixtures::V4_CURRENT_SALT, &fixtures::V4_CURRENT_NONCE).unwrap()
     }
 
     #[test]
-    fn frozen_v3_current_export_imports_every_current_field() {
-        assert_eq!(envelope_version(fixtures::V3_CURRENT), VERSION);
-        let (database, result) = import_fixture(fixtures::V3_CURRENT);
+    fn frozen_v4_current_export_imports_every_current_field() {
+        assert_eq!(envelope_version(fixtures::V4_CURRENT), VERSION);
+        let (database, result) = import_fixture(fixtures::V4_CURRENT);
 
         let preferences = &result.preferences;
         assert_eq!(preferences.accent, "amber");
@@ -1457,6 +1478,43 @@ mod tests {
         assert_eq!(kit.snoozed_until.as_deref(), Some("2026-10-20T09:00:00+00:00"));
         assert_eq!(kit.snoozed_at.as_deref(), Some("2026-09-28T09:00:00+00:00"));
         assert_eq!(kit.last_touch_at.as_deref(), Some("2026-09-15T09:00:00+00:00"));
+        assert_eq!(database.retention_days().unwrap(), Some(365));
+    }
+
+    /// AGENTS.md requires a regression test for exports produced by the
+    /// preceding schema whenever the transfer format version is bumped. The
+    /// format bumped 3 -> 4 in Phase 1 slice 2; `v3-final` is the last
+    /// complete version-3 export, and it must still import in full under the
+    /// new version. The payload is identical to `v4-current` except for the
+    /// `version` field, so every field is covered here too.
+    #[test]
+    fn frozen_v3_final_export_still_imports_in_full_under_version_4() {
+        assert_eq!(envelope_version(fixtures::V3_FINAL), 3);
+        let (database, result) = import_fixture(fixtures::V3_FINAL);
+
+        let preferences = &result.preferences;
+        assert_eq!(preferences.accent, "amber");
+        assert_eq!(preferences.ai_model, "example-model-v3");
+        assert_eq!(preferences.ai_fast_model, "example-fast-model");
+        assert_eq!(preferences.email_minimum_font_size, 18);
+        let features = &preferences.ai_features;
+        assert!(features.draft_assist && features.summarize && features.action_extraction);
+        assert!(features.contact_enrichment && features.proactive_briefs);
+        assert!(features.proactive_known_senders_only && features.thread_chat);
+        assert!(!features.classify);
+        assert_eq!(preferences.availability_preferences.time_zone, "Asia/Tokyo");
+        assert_eq!(
+            (result.account_count, result.split_inbox_count, result.snippet_count, result.contact_count),
+            (2, 1, 1, 1)
+        );
+        assert_eq!(result.contact_group_count, 1);
+        assert_eq!(
+            accounts_of(&database),
+            vec![
+                ("current@example.com".into(), Some("Current".into()), "#123ABC".into(), "gmail".into(), 0),
+                ("other@example.net".into(), None, "#ABCDEF".into(), "gmail".into(), 1),
+            ]
+        );
         assert_eq!(database.retention_days().unwrap(), Some(365));
     }
 
@@ -1652,32 +1710,32 @@ mod tests {
     /// Fails whenever this build's export bytes drift from the checked-in
     /// current fixture. That is intended: any change to the export shape
     /// must be deliberate. Before regenerating, copy the existing
-    /// `v3-current.dispatch-settings` to a new frozen file (for example
-    /// `v3-<release>.dispatch-settings`) with its own import test, so the
+    /// `v4-current.dispatch-settings` to a new frozen file (for example
+    /// `v4-<release>.dispatch-settings`) with its own import test, so the
     /// preceding schema keeps regression coverage as AGENTS.md requires.
     #[test]
     fn this_build_still_exports_the_current_fixture_bytes() {
         assert!(
-            seal_current_fixture() == fixtures::V3_CURRENT,
-            "the export shape changed; freeze the old v3-current fixture, then run \
+            seal_current_fixture() == fixtures::V4_CURRENT,
+            "the export shape changed; freeze the old v4-current fixture, then run \
              `cargo test --lib transfer::tests::regenerate_current_settings_transfer_fixture -- --ignored`"
         );
     }
 
-    /// Regenerates only `v3-current`. Run deliberately, after freezing the
+    /// Regenerates only `v4-current`. Run deliberately, after freezing the
     /// previous file (see `this_build_still_exports_the_current_fixture_bytes`):
     /// `cargo test --lib transfer::tests::regenerate_current_settings_transfer_fixture -- --ignored`.
     /// The older fixtures have no regenerate helper by design.
     #[test]
     #[ignore]
     fn regenerate_current_settings_transfer_fixture() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(fixtures::V3_CURRENT_PATH);
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(fixtures::V4_CURRENT_PATH);
         std::fs::write(path, seal_current_fixture()).unwrap();
     }
 
     #[test]
     fn frozen_fixtures_reject_the_wrong_password() {
-        for fixture in [fixtures::V1_INITIAL, fixtures::V2_FINAL, fixtures::V3_CURRENT] {
+        for fixture in [fixtures::V1_INITIAL, fixtures::V2_FINAL, fixtures::V4_CURRENT] {
             assert_eq!(
                 decrypt(fixture, "not the fixture password").unwrap_err(),
                 "The password is incorrect or the settings export is damaged"
@@ -1687,7 +1745,7 @@ mod tests {
 
     #[test]
     fn an_envelope_from_a_future_format_version_is_rejected() {
-        let mut envelope: serde_json::Value = serde_json::from_slice(fixtures::V3_CURRENT).unwrap();
+        let mut envelope: serde_json::Value = serde_json::from_slice(fixtures::V4_CURRENT).unwrap();
         envelope["version"] = serde_json::json!(VERSION + 1);
         let future = serde_json::to_vec_pretty(&envelope).unwrap();
         assert_eq!(
@@ -1709,8 +1767,8 @@ mod tests {
         let sealed = seal(
             &serde_json::to_vec(&plaintext).unwrap(),
             fixtures::PASSWORD,
-            &fixtures::V3_CURRENT_SALT,
-            &fixtures::V3_CURRENT_NONCE,
+            &fixtures::V4_CURRENT_SALT,
+            &fixtures::V4_CURRENT_NONCE,
         )
         .unwrap();
         let payload = decrypt(&sealed, fixtures::PASSWORD).unwrap();

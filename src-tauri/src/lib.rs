@@ -2018,7 +2018,7 @@ async fn connect_google(state: State<'_, AppState>) -> Result<SyncStatus, String
     })
     .await
     .map_err(|_| OAuthProvider::Google.not_configured())?;
-    authorize_interactively(&state, auth.credential()).await?;
+    authorize_interactively(&state, auth.require_oauth_credential()?).await?;
     // Rekeys the placeholder registry entry onto the real address as a side
     // effect, so the account is addressable by email from here on.
     log_failure(
@@ -2051,7 +2051,7 @@ async fn add_account(
 ) -> Result<Account, String> {
     let provider = provider.unwrap_or(MailProviderKind::Gmail);
     let auth = state.auth_config.pending_mail_account(provider)?;
-    let email = authorize_interactively(&state, auth.credential()).await?;
+    let email = authorize_interactively(&state, auth.require_oauth_credential()?).await?;
     let account = state.database.adopt_mail_account(&email, provider)?;
     let connected = spawn_synced_account(state.database.clone(), auth, true, app);
     state.accounts.lock().await.insert(email, connected);
@@ -2182,7 +2182,7 @@ async fn reconnect_account(
         Some(connected) => connected.auth.clone(),
         None => fallback,
     };
-    authorize_interactively(&state, auth.credential()).await?;
+    authorize_interactively(&state, auth.require_oauth_credential()?).await?;
     // Make the persisted status authoritative before any newly spawned
     // service checks it. Previously the service could observe needs_reauth,
     // skip its initial sync, and sleep until the first polling interval.

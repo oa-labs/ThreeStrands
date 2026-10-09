@@ -1106,18 +1106,24 @@ pub struct Account {
 #[serde(rename_all = "lowercase")]
 pub enum MailProviderKind {
     Gmail,
+    /// An IMAP/SMTP account (password auth in v1). Added in Phase 1 slice 2;
+    /// the IMAP sync/send implementation lands in later phases. Having the
+    /// kind now lets a non-OAuth account be recorded, parsed and transferred.
+    Imap,
 }
 
 impl MailProviderKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Gmail => "gmail",
+            Self::Imap => "imap",
         }
     }
 
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "gmail" => Some(Self::Gmail),
+            "imap" => Some(Self::Imap),
             _ => None,
         }
     }
@@ -1137,9 +1143,8 @@ mod mail_provider_kind_tests {
 
     #[test]
     // One entry per provider; the list grows as providers are added.
-    #[allow(clippy::single_element_loop)]
     fn stored_provider_strings_round_trip() {
-        for kind in [MailProviderKind::Gmail] {
+        for kind in [MailProviderKind::Gmail, MailProviderKind::Imap] {
             assert_eq!(MailProviderKind::parse(kind.as_str()), Some(kind));
             assert!(is_known_account_provider(kind.as_str()));
             assert_eq!(
@@ -1148,7 +1153,9 @@ mod mail_provider_kind_tests {
                 "the IPC spelling must match the stored one"
             );
         }
+        assert_eq!(MailProviderKind::parse("gmail"), Some(MailProviderKind::Gmail));
+        assert_eq!(MailProviderKind::parse("imap"), Some(MailProviderKind::Imap));
         assert_eq!(MailProviderKind::parse("Gmail"), None);
-        assert_eq!(MailProviderKind::parse("imap"), None);
+        assert_eq!(MailProviderKind::parse("exchange"), None);
     }
 }

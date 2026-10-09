@@ -147,10 +147,15 @@ impl OAuthProvider {
 
     /// Unwraps a stored credential, which must have been written for this
     /// service: a token minted by one identity service is never presented
-    /// to another.
+    /// to another, and a non-OAuth credential (e.g. an IMAP password) is
+    /// never presented to an OAuth provider.
     fn unwrap(self, credential: StoredCredential) -> Result<Tokens, String> {
         match (self, credential) {
             (Self::Google, StoredCredential::GoogleOAuth(tokens)) => Ok(tokens),
+            (Self::Google, StoredCredential::ImapPassword(_)) => Err(format!(
+                "{} expected an OAuth token but found an IMAP password credential",
+                self.label()
+            )),
         }
     }
 }
@@ -266,19 +271,26 @@ impl AuthConfig {
             .ok_or_else(|| OAuthProvider::Google.not_configured())
     }
 
-    /// The identity service a mail provider signs in through.
+    /// The identity service a mail provider signs in through. Only OAuth
+    /// providers have one; an IMAP account authenticates with a stored
+    /// password and never reaches this.
     fn mail_app(&self, provider: MailProviderKind) -> Result<&OAuthApp, String> {
         match provider {
             MailProviderKind::Gmail => self.google(),
+            MailProviderKind::Imap => Err(
+                "IMAP accounts authenticate with a stored password, not an OAuth app".to_string(),
+            ),
         }
     }
 
     /// The credential for a mail account stored under `key` — its real
     /// address, or the `LEGACY_KEY` placeholder.
     pub fn mail_account(&self, provider: MailProviderKind, key: &str) -> Result<AccountAuth, String> {
-        let credential = self.mail_app(provider)?.mail_credential(key);
         Ok(match provider {
-            MailProviderKind::Gmail => AccountAuth::Gmail(credential),
+            MailProviderKind::Gmail => {
+                AccountAuth::Gmail(self.mail_app(provider)?.mail_credential(key))
+            }
+            MailProviderKind::Imap => AccountAuth::Imap(ImapCredential::for_account(key)),
         })
     }
 
@@ -1106,9 +1118,48 @@ mod tests {
             .pending_mail_account(MailProviderKind::Gmail)
             .unwrap();
         assert_eq!(auth.key(), PENDING_KEY);
-        let AccountAuth::Gmail(credential) = &auth;
+        let AccountAuth::Gmail(credential) = &auth else {
+            panic!("expected a Gmail account");
+        };
         assert_eq!(credential.service, MAIL_SERVICE);
         assert_eq!(credential.endpoints.scopes, GMAIL_SCOPES);
+    }
+
+    #[test]
+    fn an_imap_account_is_representable_without_an_oauth_credential() {
+        let auth = config()
+            .mail_account(MailProviderKind::Imap, "person@example.com")
+            .unwrap();
+        assert_eq!(auth.mail_provider(), MailProviderKind::Imap);
+        assert_eq!(auth.key(), "person@example.com");
+        // It has no OAuth credential, and asking for one is a clear error
+        // rather than a panic — the interactive browser flow is not its path.
+        assert!(auth.credential().is_none());
+        assert!(auth.require_oauth_credential().is_err());
+        assert!(matches!(auth, AccountAuth::Imap(_)));
+    }
+
+    #[test]
+    fn a_gmail_account_still_exposes_its_oauth_credential_unchanged() {
+        let auth = config()
+            .mail_account(MailProviderKind::Gmail, "work@example.com")
+            .unwrap();
+        // Gmail's credential() is byte-for-byte the same handle as before,
+        // now simply wrapped in Some.
+        let credential = auth.credential().expect("Gmail always has a credential");
+        assert_eq!(credential.key(), "work@example.com");
+        assert_eq!(credential.service, MAIL_SERVICE);
+        assert!(auth.require_oauth_credential().is_ok());
+    }
+
+    #[test]
+    fn an_imap_provider_has_no_oauth_app() {
+        // IMAP never reaches the OAuth app resolution; asking for one is a
+        // clear error, not a silent Gmail fallback.
+        let config = AuthConfig::default();
+        assert!(config
+            .mail_account(MailProviderKind::Imap, "person@example.com")
+            .is_ok());
     }
 
     #[test]
@@ -1181,8 +1232,21 @@ mod tests {
 /// Every method below is a thin dispatch to the wrapped credential; this
 /// type carries no state of its own.
 #[derive(Clone)]
+// `Gmail(OAuthCredential)` is ~880 bytes against `Imap(ImapCredential)`'s ~32
+// in slice 2, which trips `large_enum_variant`. The asymmetry is temporary:
+// `ImapCredential` is deliberately thin here and grows as the IMAP provider
+// lands (server settings, pinned-cert handle). Boxing the hot Gmail variant
+// to chase a transient gap would add an allocation and a deref to every
+// Gmail credential access and churn every `AccountAuth::Gmail(_)` site, which
+// this slice must keep byte-for-byte. Revisit once the Imap variant fills in.
+#[allow(clippy::large_enum_variant)]
 pub enum AccountAuth {
     Gmail(OAuthCredential),
+    /// A password-authenticated IMAP/SMTP account. Added in Phase 1 slice 2
+    /// so the auth model can *represent* a non-OAuth account; the IMAP
+    /// `MailProvider` implementation and the "test and save" setup command
+    /// that constructs this variant in production land in later phases.
+    Imap(ImapCredential),
 }
 
 impl AccountAuth {
@@ -1191,33 +1255,64 @@ impl AccountAuth {
     pub fn mail_provider(&self) -> MailProviderKind {
         match self {
             Self::Gmail(_) => MailProviderKind::Gmail,
+            Self::Imap(_) => MailProviderKind::Imap,
         }
     }
 
-    /// The OAuth credential behind this account, e.g. for the interactive
-    /// sign-in flow.
-    pub fn credential(&self) -> &OAuthCredential {
+    /// The OAuth credential behind this account, when it has one — e.g. for
+    /// the interactive sign-in flow. `None` for a non-OAuth account such as
+    /// IMAP, which authenticates with a stored password and never runs the
+    /// browser flow. Gmail always returns `Some`, exactly the credential it
+    /// returned before this became optional.
+    pub fn credential(&self) -> Option<&OAuthCredential> {
         match self {
-            Self::Gmail(credential) => credential,
+            Self::Gmail(credential) => Some(credential),
+            Self::Imap(_) => None,
         }
+    }
+
+    /// The OAuth credential this account must have to run the interactive
+    /// browser sign-in, or a clear error for an account that authenticates
+    /// another way. Gmail always succeeds; IMAP uses "test and save" instead.
+    pub fn require_oauth_credential(&self) -> Result<&OAuthCredential, String> {
+        self.credential().ok_or_else(|| {
+            format!(
+                "{} accounts do not use interactive OAuth sign-in",
+                self.mail_provider().as_str()
+            )
+        })
     }
 
     /// This account's id, once known — see [`OAuthCredential::key`] for
     /// what that means before then.
     pub fn key(&self) -> String {
-        self.credential().key()
+        match self {
+            Self::Gmail(credential) => credential.key(),
+            Self::Imap(credential) => credential.key(),
+        }
     }
 
     pub fn available(&self) -> bool {
-        self.credential().available()
+        match self {
+            Self::Gmail(credential) => credential.available(),
+            Self::Imap(credential) => credential.available(),
+        }
     }
 
     pub fn disconnect(&self) -> Result<(), String> {
-        self.credential().disconnect()
+        match self {
+            Self::Gmail(credential) => credential.disconnect(),
+            Self::Imap(credential) => credential.disconnect(),
+        }
     }
 
     pub fn accept_identity(&self, email: &str) -> Result<(), String> {
-        self.credential().accept_identity(email)
+        match self {
+            Self::Gmail(credential) => credential.accept_identity(email),
+            // An IMAP account's address is entered by the user at setup, not
+            // learned from an OAuth profile, so there is nothing to rekey.
+            Self::Imap(_) => Ok(()),
+        }
     }
 
     /// The mail backend this credential authorizes access to.
@@ -1226,6 +1321,88 @@ impl AccountAuth {
             Self::Gmail(credential) => std::sync::Arc::new(
                 crate::provider::gmail::GmailClient::new(credential.clone()),
             ),
+            // The IMAP provider lands in phase 2. No production path
+            // constructs `AccountAuth::Imap` yet (there is no IMAP "test and
+            // save" setup command), so this is unreachable in slice 2 rather
+            // than a stub client that could silently misbehave.
+            Self::Imap(_) => unreachable!(
+                "the IMAP MailProvider lands in phase 2; no AccountAuth::Imap is constructed yet"
+            ),
         }
+    }
+}
+
+/// A password-authenticated IMAP/SMTP account's credential handle, persisted
+/// in the OS keychain as a [`StoredCredential::ImapPassword`] under the
+/// account's address — the same keychain, the same tagged envelope, and the
+/// same encryption-at-rest as every OAuth credential.
+///
+/// Slice 2 carries only what representability needs: which keychain entry the
+/// account's password lives in, so the account can report whether it is
+/// connected and be disconnected. Reading the password to actually drive an
+/// IMAP session is the IMAP provider's job in a later phase.
+#[derive(Clone)]
+pub struct ImapCredential {
+    service: String,
+    key: Arc<Mutex<String>>,
+}
+
+impl ImapCredential {
+    /// A handle to the IMAP account stored under `key` (its address).
+    pub fn for_account(key: &str) -> Self {
+        Self {
+            service: MAIL_SERVICE.to_string(),
+            key: Arc::new(Mutex::new(key.to_string())),
+        }
+    }
+
+    /// The address this account is stored under.
+    pub fn key(&self) -> String {
+        self.key.lock().unwrap().clone()
+    }
+
+    /// Whether a password is stored for this account. Mirrors
+    /// [`OAuthCredential::available`]: an entry that reads back is connected.
+    pub fn available(&self) -> bool {
+        self.entry()
+            .and_then(|entry| entry.get_password().map_err(|error| error.to_string()))
+            .is_ok()
+    }
+
+    /// Stores (or replaces) this account's password credential, encrypted at
+    /// rest by the OS keychain exactly like an OAuth token.
+    ///
+    /// No caller in slice 2 — the IMAP "test and save" setup command that
+    /// writes a password (phase 2) is its first reader. The dead-code allow
+    /// is scoped to the two store/retrieval methods and removed with that
+    /// caller, the same way slice 1 scoped the unread `ProviderCapabilities`
+    /// flags.
+    #[allow(dead_code)]
+    pub fn save(&self, password: &crate::credentials::ImapPassword) -> Result<(), String> {
+        let value = StoredCredential::ImapPassword(password.clone()).encode()?;
+        self.entry()?.set_password(&value).map_err(display)
+    }
+
+    /// Reads this account's stored password credential.
+    #[allow(dead_code)]
+    pub fn load(&self) -> Result<crate::credentials::ImapPassword, String> {
+        let value = self.entry()?.get_password().map_err(display)?;
+        match StoredCredential::decode(&value)? {
+            StoredCredential::ImapPassword(password) => Ok(password),
+            StoredCredential::GoogleOAuth(_) => {
+                Err("expected an IMAP password but found an OAuth token credential".to_string())
+            }
+        }
+    }
+
+    pub fn disconnect(&self) -> Result<(), String> {
+        match self.entry()?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    fn entry(&self) -> Result<Entry, String> {
+        Entry::new(&self.service, &self.key()).map_err(display)
     }
 }
