@@ -245,7 +245,7 @@ export function ContactFilesSection({ contactId, onShowMessage }: {
 
 /**
  * An outline of a long conversation, newest first, so the reader can jump to
- * a message (or to their own replies) without scrolling the whole thread.
+ * a message without scrolling the whole thread.
  */
 export function ThreadOutlineSection({ detail, accounts, onShowMessage }: {
   detail: ThreadDetail;
@@ -253,8 +253,6 @@ export function ThreadOutlineSection({ detail, accounts, onShowMessage }: {
   onShowMessage(threadId: string, messageId: string): void;
 }) {
   const own = useMemo(() => new Set(accounts.map((account) => account.email.toLocaleLowerCase())), [accounts]);
-  const [onlyMine, setOnlyMine] = useState(false);
-  useEffect(() => { setOnlyMine(false); }, [detail.thread.id]);
   const isMine = (message: Message) => own.has(parseAddress(message.sender).email.toLocaleLowerCase());
   const messages = detail.messages;
   // Each preview drops text quoted from the messages before it.
@@ -264,11 +262,7 @@ export function ThreadOutlineSection({ detail, accounts, onShowMessage }: {
     return new Map(messages.map((message, position) => [message.id, messagePreview(message, index.before(position))]));
   }, [messages]);
   if (messages.length < THREAD_OUTLINE_MIN_MESSAGES) return null;
-  const mine = messages.filter(isMine);
-  const shown = (onlyMine ? mine : messages).slice().reverse();
-  const first = messages[0].sentAt;
-  const last = messages[messages.length - 1].sentAt;
-  const range = formatHistoryDate(first) === formatHistoryDate(last) ? formatHistoryDate(last) : `${formatHistoryDate(first)} – ${formatHistoryDate(last)}`;
+  const shown = messages.slice().reverse();
   const rows = shown.map((message) => {
     const sender = parseAddress(message.sender);
     const preview = previews.get(message.id);
@@ -289,15 +283,6 @@ export function ThreadOutlineSection({ detail, accounts, onShowMessage }: {
       className="context-outline"
       title="This thread"
       count={messages.length}
-      note={<>
-        <span>{range}</span>
-        {mine.length > 0 ? (
-          <span className="segmented context-outline-filter" role="group" aria-label="Thread outline filter">
-            <button type="button" className="segment" aria-pressed={!onlyMine} onClick={() => setOnlyMine(false)}>All</button>
-            <button type="button" className="segment" aria-pressed={onlyMine} onClick={() => setOnlyMine(true)}>Your replies · {mine.length}</button>
-          </span>
-        ) : null}
-      </>}
       rows={rows}
     />
   );

@@ -246,7 +246,7 @@ describe("ContextPanel",()=>{
     expect(onShowMessage).toHaveBeenCalledWith("thread-9","m4");
   });
 
-  it("outlines long conversations newest first and filters to the user's replies",async()=>{
+  it("outlines all replies newest first without a filter or date range",async()=>{
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
     const longDetail={thread:{id:"thread-1"},messages:Array.from({length:6},(_,index)=>({
@@ -261,14 +261,24 @@ describe("ContextPanel",()=>{
 
     const outline=await screen.findByRole("region",{name:"This thread"});
     expectContextRows(outline);
+    expect(outline.querySelector(".context-section-header .context-count")).toHaveTextContent("6");
+    expect(outline.querySelector(".context-section-note")).not.toBeInTheDocument();
+    expect(within(outline).queryByRole("group",{name:"Thread outline filter"})).not.toBeInTheDocument();
+    expect(within(outline).queryByRole("button",{name:"All"})).not.toBeInTheDocument();
+    expect(within(outline).queryByRole("button",{name:/Your replies/})).not.toBeInTheDocument();
     for (const row of outline.querySelectorAll(".context-row")) expect(row.querySelector(".context-row-icon svg.lucide-mail")).not.toBeNull();
     const rows=()=>within(outline).getAllByRole("button",{name:/Message number/});
     expect(rows().map((row)=>row.textContent)).toEqual([expect.stringContaining("Message number 5"),expect.stringContaining("Message number 4"),expect.stringContaining("Message number 3")]);
-    fireEvent.click(within(outline).getByRole("button",{name:"Your replies · 2"}));
-    expect(within(outline).getByRole("button",{name:"Your replies · 2"})).toHaveAttribute("aria-pressed","true");
-    expect(rows().map((row)=>row.textContent)).toEqual([expect.stringMatching(/^You.*Message number 5/),expect.stringMatching(/^You.*Message number 2/)]);
-    fireEvent.click(rows()[1]);
+    fireEvent.click(within(outline).getByRole("button",{name:"Show 3 more"}));
+    expect(rows().map((row)=>row.textContent)).toEqual([5,4,3,2,1,0].map(index=>expect.stringContaining(`Message number ${index}`)));
+    expect(rows()[0]).toHaveTextContent(/^You/);
+    expect(rows()[1]).toHaveTextContent(/^Bob Lee/);
+    expect(rows()[3]).toHaveTextContent(/^You/);
+    expect(rows()[3]).toHaveTextContent(formatHistoryDate(longDetail.messages[2].sentAt));
+    fireEvent.click(rows()[3]);
     expect(onShowMessage).toHaveBeenCalledWith("thread-1","m2");
+    fireEvent.click(within(outline).getByRole("button",{name:"Show fewer"}));
+    expect(rows()).toHaveLength(3);
     cleanup();
 
     renderPanel();
