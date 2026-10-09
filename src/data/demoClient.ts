@@ -30,6 +30,7 @@ import type {
   Message,
   ReplyAssistContext,
   ReplyAssistResult,
+  DraftReviewResult,
   ScheduleEvent,
   Snippet,
   SplitInbox,
@@ -515,6 +516,17 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
           sentAt: message.sentAt,
           bodyText: message.bodyText,
         })),
+      };
+    },
+    async reviewDraft(request): Promise<DraftReviewResult> {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      return {
+        assessment: "Demo review: make the next step easy for the recipient to answer.",
+        suggestions: [{ title: "Clarify the next step", field: "body", excerpt: request.body,
+          reason: "A direct question gives the recipient a clear way to respond.",
+          replacement: `${request.body.trim()}\n\nWould you be open to a brief conversation?` }],
+        revisedSubject: request.subject,
+        revisedBody: `${request.body.trim()}\n\nWould you be open to a brief conversation?`,
       };
     },
     async generateReply(context, instruction): Promise<ReplyAssistResult> {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { mailClient } from "./data/client";
 import type { Draft } from "./correspondence";
 import type { Account, AvailabilityCandidate, ContactGroupRecipients, AvailabilityPreferences, ContactActivity, ContactProfile, ContactTimelineItem, ScheduleEvent, ThreadTask } from "./domain";
@@ -138,6 +138,7 @@ export function ComposeContext({
   onDraftFollowUp,
   onTasksChanged,
   onKeyDown,
+  review,
 }: {
   draft: Draft;
   accounts: Account[];
@@ -162,6 +163,7 @@ export function ComposeContext({
   onTasksChanged(): void;
   /** Keyboard handling for the panel while focus is inside it. */
   onKeyDown?(event: KeyboardEvent<HTMLElement>): void;
+  review?: ReactNode;
 }) {
   const ownEmails = useMemo(() => accounts.map((account) => account.email), [accounts]);
   const known = useKnownCorrespondents(ownEmails);
@@ -216,6 +218,7 @@ export function ComposeContext({
         onSwitchAccount={onSwitchAccount}
         onMoveToBcc={onMoveToBcc}
       />
+      {review}
       <RecipientChips recipients={recipients} selectedEmail={email} onSelect={setPicked} />
       {selected ? <RecipientSummary email={selected.email} name={selected.name} profile={person?.profile ?? null} activity={person?.activity ?? null} /> : (
         <p className="context-status compose-context-empty">Add a recipient to see your history with them.</p>

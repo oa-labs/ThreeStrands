@@ -80,6 +80,7 @@ describe("AI provider preferences", () => {
     expect(AI_MODEL_TIERS).toEqual({
       summary: "fast",
       replyDraft: "fast",
+      draftReview: "reasoning",
       contactEnrichment: "fast",
       actionExtraction: "reasoning",
       brief: "reasoning",
@@ -91,8 +92,8 @@ describe("AI provider preferences", () => {
     const modelFor = (use: keyof typeof AI_MODEL_TIERS) => readAiRequestConfig("testing", use).model;
     expect(["summary", "replyDraft", "contactEnrichment"].map((use) => modelFor(use as keyof typeof AI_MODEL_TIERS)))
       .toEqual(["example/fast", "example/fast", "example/fast"]);
-    expect(["actionExtraction", "brief", "threadChat"].map((use) => modelFor(use as keyof typeof AI_MODEL_TIERS)))
-      .toEqual(["example/reasoning", "example/reasoning", "example/reasoning"]);
+    expect(["actionExtraction", "brief", "threadChat", "draftReview"].map((use) => modelFor(use as keyof typeof AI_MODEL_TIERS)))
+      .toEqual(["example/reasoning", "example/reasoning", "example/reasoning", "example/reasoning"]);
   });
 
   it("turns reasoning off only for fast-tier work running on a configured fast model", () => {
@@ -100,12 +101,12 @@ describe("AI provider preferences", () => {
     saveAiModel("example/reasoning");
     const reasoningFor = (use: keyof typeof AI_MODEL_TIERS) => readAiRequestConfig("testing", use).reasoning;
     const fastUses = ["summary", "replyDraft", "contactEnrichment"] as const;
-    const reasoningUses = ["actionExtraction", "brief", "threadChat"] as const;
+    const reasoningUses = ["actionExtraction", "brief", "threadChat", "draftReview"] as const;
 
-    expect([...fastUses, ...reasoningUses].map(reasoningFor)).toEqual(Array(6).fill("default"));
+    expect([...fastUses, ...reasoningUses].map(reasoningFor)).toEqual(Array(7).fill("default"));
     saveAiFastModel("example/fast");
     expect(fastUses.map(reasoningFor)).toEqual(["off", "off", "off"]);
-    expect(reasoningUses.map(reasoningFor)).toEqual(["default", "default", "default"]);
+    expect(reasoningUses.map(reasoningFor)).toEqual(["default", "default", "default", "default"]);
     saveAiFastModel("  ");
     expect(fastUses.map(reasoningFor)).toEqual(["default", "default", "default"]);
   });

@@ -12,6 +12,7 @@ import { draftWithSelectedQuote } from "./selectedMessageQuote";
 import { ICON_SIZE } from "./iconSizes";
 import type { MessageAppearance } from "./SafeMessage";
 import type { MailtoRequest } from "./mailtoLink";
+import type { DraftReviewActions } from "./draftReview";
 
 type ComposeOptions = {
   availabilityText?: string;
@@ -197,6 +198,16 @@ export function useCorrespondence(
   const switchDraftAccount = useCallback((email: string) => editor.current?.switchAccount(email), []);
   const moveDraftRecipientsToBcc = useCallback((emails: string[]) => editor.current?.moveRecipientsToBcc(emails), []);
   const focusDraftBody = useCallback(() => editor.current?.focusBody(), []);
+  const draftReview = useMemo<DraftReviewActions>(() => ({
+    readDraft: () => {
+      if (!editor.current) throw new Error("Open a draft to review it");
+      return editor.current.draftReview.readDraft();
+    },
+    replaceDraft: (expected, replacement) => {
+      if (!editor.current) throw new Error("Open a draft to apply changes");
+      return editor.current.draftReview.replaceDraft(expected, replacement);
+    },
+  }), []);
 
   const context = useMemo(() => ({
     closing,
@@ -275,6 +286,7 @@ export function useCorrespondence(
     switchDraftAccount,
     moveDraftRecipientsToBcc,
     focusDraftBody,
+    draftReview,
     composer,
     overlay: <>
       {pending && !active && <div className="send-notice" role="status">{pending.deadline > clock ? `Sending in ${Math.ceil((pending.deadline - clock) / 1000)}s` : "Queued for delivery"}<button className="btn-link" onClick={() => void undo(pending.id)}>Undo Send</button></div>}

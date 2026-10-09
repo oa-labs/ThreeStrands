@@ -40,6 +40,8 @@ import type {
   RecoveryStatus,
   ReplyAssistContext,
   ReplyAssistResult,
+  DraftReviewRequest,
+  DraftReviewResult,
   SearchThreadsRequest,
   ScheduleResult,
   ScheduleEvent,
@@ -122,6 +124,7 @@ export interface MailClient extends CorrespondenceClient {
     endpoint: string | null,
   ): Promise<ThreadBriefResult>;
   replyAssistContext(draftId: string): Promise<ReplyAssistContext>;
+  reviewDraft(request: DraftReviewRequest, provider: AiProvider, model: string, endpoint: string | null): Promise<DraftReviewResult>;
   generateReply(
     context: ReplyAssistContext,
     instruction: string,
@@ -298,6 +301,7 @@ const tauriClient: MailClient = {
   briefThread: (threadId, userTimeZone, provider, model, endpoint) =>
     complete("ai_brief_thread", { threadId, userTimeZone, provider, model, endpoint }),
   replyAssistContext: (draftId) => read("ai_reply_assist_context", { draftId }),
+  reviewDraft: (request, provider, model, endpoint) => complete("ai_review_draft", { request, provider, model, endpoint }),
   generateReply: (context, instruction, provider, model, endpoint, reasoning = "default") =>
     complete("ai_generate_reply", { context, instruction, provider, model, endpoint, reasoning }),
   searchThreads: (request, accountId) => read("search_threads", { request, accountId }),

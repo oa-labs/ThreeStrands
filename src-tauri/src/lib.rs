@@ -3670,6 +3670,17 @@ fn ai_reply_assist_context(
 }
 
 #[tauri::command]
+async fn ai_review_draft(
+    request: ai::DraftReviewRequest,
+    provider: ai::AiProvider,
+    model: String,
+    endpoint: Option<String>,
+) -> Result<ai::DraftReviewResult, String> {
+    let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
+    ai::review_draft(request, provider, &model, endpoint.as_deref(), &api_key).await
+}
+
+#[tauri::command]
 async fn ai_generate_reply(
     context: ReplyAssistContext,
     instruction: String,
@@ -4334,6 +4345,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         ai_enrich_contact,
         ai_reply_assist_context,
         ai_generate_reply,
+        ai_review_draft,
         // Tasks and follow-ups
         list_tasks,
         create_task,

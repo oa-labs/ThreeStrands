@@ -2210,6 +2210,23 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .compose-check strong { color:var(--text); font-weight:var(--weight-medium); overflow-wrap:anywhere; }
 .compose-check-warning { border-left-color:var(--warning); color:var(--text); }
 .compose-check > .btn { justify-self:start; }
+.draft-review-content { display:grid; gap:var(--space-2); min-width:0; font-size:var(--text-meta); line-height:var(--leading-normal); }
+.draft-review-content > .btn { justify-self:start; }
+.draft-review-content p { margin:0; }
+.draft-review-goal { display:grid; gap:var(--space-1); }
+.draft-review-goal small, .draft-review-suggestions small { color:var(--muted); }
+.draft-review-goal input { width:100%; min-width:0; }
+.draft-review-preview { min-width:0; padding:var(--space-2); border:1px solid var(--border); border-radius:var(--radius-sm); }
+.draft-review-preview summary { cursor:pointer; color:var(--muted); }
+.draft-review-preview h4 { margin:0 0 var(--space-2); font-size:inherit; }
+.draft-review-preview pre { margin:var(--space-2) 0; white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }
+.draft-review-preview > .btn { margin-top:var(--space-2); }
+.draft-review-suggestions { display:grid; gap:var(--space-3); margin:0; padding-left:var(--space-4); }
+.draft-review-suggestions li { min-width:0; overflow-wrap:anywhere; }
+.draft-review-suggestions small { display:block; }
+.draft-review-suggestions blockquote { margin:var(--space-1) 0; padding-left:var(--space-2); border-left:2px solid var(--border); color:var(--muted); white-space:pre-wrap; }
+.draft-review-suggestions .draft-review-wording { margin-top:var(--space-1); white-space:pre-wrap; }
+.draft-review-preview p { overflow-wrap:anywhere; }
 .compose-recipient-chips { display:flex; flex-wrap:wrap; gap:var(--space-1); padding-top:var(--space-3); }
 .recipient-history-chip { max-width:100%; padding:var(--space-0-5) var(--space-2); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--muted); background:transparent; font:inherit; font-size:var(--text-meta); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .recipient-history-chip[aria-pressed="true"] { border-color:var(--border-strong); color:var(--text); background:var(--hover); }

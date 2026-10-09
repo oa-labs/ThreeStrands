@@ -27,6 +27,8 @@ export type ComposeBodyEditorHandle = {
   insertText(text: string): void;
   prependText(text: string): void;
   focusBody(): void;
+  reviewBody(): { html: string; text: string; hasInlineImages: boolean };
+  replaceAuthoredHtml(html: string): void;
 };
 
 type ComposeBodyEditorProps = {
@@ -153,7 +155,19 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
     };
     reader.readAsDataURL(file);
   }
-  useImperativeHandle(ref, () => ({ captureChanges, insertText, prependText, focusBody }));
+  useImperativeHandle(ref, () => ({
+    captureChanges, insertText, prependText, focusBody,
+    reviewBody: () => {
+      if (!bodyEditor.current) throw new Error("The draft editor is unavailable");
+      return { ...serializeComposeBody(bodyEditor.current), hasInlineImages: Boolean(bodyEditor.current.querySelector("img")) };
+    },
+    replaceAuthoredHtml: (html) => {
+      if (!bodyEditor.current || busy) throw new Error("Finish the current composer action first");
+      bodyEditor.current.innerHTML = sanitizeComposeHtml(html);
+      lastBodyRange.current = null;
+      editBody();
+    },
+  }));
   useEffect(() => {
     mounted.current = true;
     [bodyEditor.current, quotedEditor.current].flatMap((editor) => Array.from(editor?.querySelectorAll<HTMLImageElement>("img") ?? [])).forEach((image) => {

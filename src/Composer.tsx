@@ -18,8 +18,11 @@ import { moveAddressesToBcc, replaceAddress } from "./composeChecks";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
+import type { DraftReviewActions } from "./draftReview";
+import { plainTextToHtml } from "./richText";
 
 export type ComposerHandle = {
+  draftReview: DraftReviewActions;
   flush(): Promise<Draft>; prepareExit(): Promise<void>; send(afterQueued?: () => void, archiveOnSend?: boolean): void; attach(): void; close(): void; discard(): void; draftReplyWithAI(): void;
   /** Inserts plain text where the caret last was in the body, or at the top when it never was. */
   insertText(text: string): void;
@@ -194,7 +197,32 @@ export const Composer = forwardRef<ComposerHandle, {
       replaceDraft(await mailClient.removeAttachment(latest.current.id, attachmentId));
     });
   }
-  useImperativeHandle(ref, () => ({ flush, send, attach, close, discard, draftReplyWithAI, insertText, replaceRecipient, moveRecipientsToBcc, switchAccount: changeAccount, focusBody, prepareExit: async () => {
+  function readReviewDraft() {
+    if (busyRef.current || !bodyEditor.current) throw new Error("Finish the current composer action first");
+    captureBody();
+    const authored = bodyEditor.current.reviewBody();
+    const current = latest.current;
+    return {
+      id: current.id, subject: current.subject, body: authored.text, bodyHtml: authored.html,
+      hasInlineImages: authored.hasInlineImages,
+      fingerprint: JSON.stringify([current.id, current.account, current.to, current.cc, current.bcc,
+        current.subject, current.body, current.bodyHtml, current.attachments]),
+    };
+  }
+  const draftReview: DraftReviewActions = {
+    readDraft: readReviewDraft,
+    replaceDraft: (expected, replacement) => {
+      const current = readReviewDraft();
+      if (current.id !== expected.id || current.fingerprint !== expected.fingerprint) {
+        throw new Error("Your draft changed. Review it again before replacing any text.");
+      }
+      if (current.hasInlineImages) throw new Error("Apply suggestions manually to preserve your inline images.");
+      bodyEditor.current!.replaceAuthoredHtml("bodyHtml" in replacement ? replacement.bodyHtml : plainTextToHtml(replacement.body));
+      edit("subject", replacement.subject);
+      return readReviewDraft();
+    },
+  };
+  useImperativeHandle(ref, () => ({ draftReview, flush, send, attach, close, discard, draftReplyWithAI, insertText, replaceRecipient, moveRecipientsToBcc, switchAccount: changeAccount, focusBody, prepareExit: async () => {
     if (busyRef.current) throw new Error("Finish the current composer action before closing.");
     busyRef.current = true; setBusy(true);
     try { await flush(); }

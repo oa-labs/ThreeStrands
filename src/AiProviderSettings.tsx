@@ -246,7 +246,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
           <div className="settings-toggle-list">
             <SettingsToggle
               label="Draft Assist"
-              description="Drafts a reply from a short instruction when you reply."
+              description="Reviews your drafts and drafts replies from a short instruction."
               checked={features.draftAssist}
               onChange={(value) => updateFeature("draftAssist", value)}
             />

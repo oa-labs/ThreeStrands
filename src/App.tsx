@@ -41,6 +41,7 @@ import { chatAttachmentOptions } from "./chatAttachments";
 import { labelCommand, type MailboxKind } from "./commands";
 import { draftRecipients } from "./composeChecks";
 import { ComposeContext, ReplyChecks } from "./ComposeContext";
+import { DraftReviewSection } from "./DraftReviewSection";
 import { ContactCardContext } from "./ContactCard";
 import { ContactMeetings } from "./ContactMeetings";
 import { ContextPanel } from "./ContextPanel";
@@ -238,7 +239,7 @@ export function App() {
   const [lightboxImageSrc, setLightboxImageSrc] = useState<string | null>(null);
   const {
     aiSummaryAvailable, aiSummaryFeatureEnabled, aiProactive, aiActionFeatureEnabled,
-    aiActionAvailable, aiChatFeatureEnabled, aiChatAvailable, refreshAiAvailability,
+    aiActionAvailable, aiChatFeatureEnabled, aiChatAvailable, aiDraftAvailable, refreshAiAvailability,
   } = useAiAvailability(settingsOpen);
   const {
     mailAccountSettings, applyImportedSettings,
@@ -907,6 +908,7 @@ export function App() {
         <ComposeContext
           key={correspondence.liveDraft.id}
           draft={correspondence.liveDraft}
+          review={<DraftReviewSection key={correspondence.liveDraft.id} actions={correspondence.draftReview} available={aiDraftAvailable} onOpenSettings={() => openSettingsAt("ai")} />}
           accounts={accounts}
           onKeyDown={contextPanelKeyDown}
           calendarConnected={calendarConnected}
@@ -934,6 +936,7 @@ export function App() {
           accounts={accounts}
           selectedEmail={contextPersonEmail}
           reply={composerBelongsToVisibleThread && correspondence.liveDraft ? {
+            review: <DraftReviewSection key={correspondence.liveDraft.id} actions={correspondence.draftReview} available={aiDraftAvailable} onOpenSettings={() => openSettingsAt("ai")} />,
             recipients: replyRecipients,
             checks: (
               <ReplyChecks

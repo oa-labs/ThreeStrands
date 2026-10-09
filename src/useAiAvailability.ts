@@ -9,20 +9,23 @@ export function useAiAvailability(settingsOpen: boolean) {
   const [aiActionAvailable, setAiActionAvailable] = useState(false);
   const [aiChatFeatureEnabled, setAiChatFeatureEnabled] = useState(false);
   const [aiChatAvailable, setAiChatAvailable] = useState(false);
+  const [aiDraftAvailable, setAiDraftAvailable] = useState(false);
   const refreshAiAvailability = useCallback(() => {
     const provider = readAiProvider();
     const features = readAiFeatures();
     const summaryEnabled = provider !== "none" && features.summarize;
     const actionEnabled = provider !== "none" && features.actionExtraction;
     const chatEnabled = provider !== "none" && features.threadChat;
+    const draftEnabled = provider !== "none" && features.draftAssist;
     setAiChatFeatureEnabled(features.threadChat);
     setAiSummaryFeatureEnabled(features.summarize);
     setAiProactive({ enabled: features.proactiveBriefs, knownSendersOnly: features.proactiveKnownSendersOnly });
     setAiActionFeatureEnabled(features.actionExtraction);
-    if (!summaryEnabled && !actionEnabled && !chatEnabled) {
+    if (!summaryEnabled && !actionEnabled && !chatEnabled && !draftEnabled) {
       setAiSummaryAvailable(false);
       setAiActionAvailable(false);
       setAiChatAvailable(false);
+      setAiDraftAvailable(false);
       return;
     }
     void isAiApiKeyConfigured()
@@ -30,11 +33,13 @@ export function useAiAvailability(settingsOpen: boolean) {
         setAiSummaryAvailable(configured && summaryEnabled);
         setAiActionAvailable(configured && actionEnabled);
         setAiChatAvailable(configured && chatEnabled);
+        setAiDraftAvailable(configured && draftEnabled);
       })
       .catch(() => {
         setAiSummaryAvailable(false);
         setAiActionAvailable(false);
         setAiChatAvailable(false);
+        setAiDraftAvailable(false);
       });
   }, []);
   useEffect(() => {
@@ -43,6 +48,6 @@ export function useAiAvailability(settingsOpen: boolean) {
   }, [settingsOpen, refreshAiAvailability]);
   return {
     aiSummaryAvailable, aiSummaryFeatureEnabled, aiProactive, aiActionFeatureEnabled,
-    aiActionAvailable, aiChatFeatureEnabled, aiChatAvailable, refreshAiAvailability,
+    aiActionAvailable, aiChatFeatureEnabled, aiChatAvailable, aiDraftAvailable, refreshAiAvailability,
   };
 }

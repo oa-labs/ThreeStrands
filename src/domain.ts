@@ -558,6 +558,25 @@ export type ReplyAssistResult = {
   body: string;
 };
 
+export type DraftReviewRequest = {
+  subject: string;
+  body: string;
+  goal: string;
+};
+
+export type DraftReviewResult = {
+  assessment: string;
+  suggestions: {
+    title: string;
+    field: "subject" | "body";
+    excerpt: string;
+    reason: string;
+    replacement: string;
+  }[];
+  revisedSubject: string;
+  revisedBody: string;
+};
+
 export type SearchThreadsRequest = {
   query: string;
   limit?: number;

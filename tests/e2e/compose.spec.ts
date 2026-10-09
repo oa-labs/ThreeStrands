@@ -5,6 +5,63 @@ async function openFolders(page: import("@playwright/test").Page) {
   return page.getByRole("group", { name: "Folders" });
 }
 
+async function enableDraftReview(page: import("@playwright/test").Page) {
+  await page.evaluate(() => {
+    localStorage.setItem("threestrands.settings.ai.provider", "openai");
+    localStorage.setItem("threestrands.settings.ai.features", JSON.stringify({ draftAssist: true }));
+  });
+  await page.evaluate('import("/src/aiSettings.ts").then(({ setAiApiKey }) => setAiApiKey("test-key"))');
+  // Closing settings refreshes availability without reopening the draft.
+  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await settings.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(settings).not.toBeVisible();
+}
+
+test("reviews a new email in the context panel, applies and undoes without sending, and saves the original", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "New Message (c)" }).click();
+  await enableDraftReview(page);
+  const composer = page.getByRole("dialog", { name: "New Message" });
+  const panel = page.getByRole("region", { name: "Draft review" });
+  const body = composer.getByRole("textbox", { name: "Message Body" });
+  await composer.getByRole("textbox", { name: "To", exact: true }).fill("client@example.com");
+  await composer.getByRole("textbox", { name: "Subject" }).fill("An introduction");
+  await body.fill("I help teams improve their workflow.");
+  await panel.getByRole("textbox", { name: /What do you want/ }).fill("Get an introductory call");
+  await panel.getByRole("button", { name: "Review Draft", exact: true }).click();
+  await expect(panel.locator("pre")).toHaveText("I help teams improve their workflow.");
+  await expect(body).toHaveText("I help teams improve their workflow.");
+  await panel.getByRole("button", { name: "Get Feedback" }).click();
+  await panel.getByRole("button", { name: "Apply Revision" }).click();
+  await expect(body).toContainText("Would you be open to a brief conversation?");
+  await expect(composer.getByRole("status")).toHaveText("Saved on this device");
+  await panel.getByRole("button", { name: "Undo Revision" }).click();
+  await expect(body).toHaveText("I help teams improve their workflow.");
+  await composer.getByRole("button", { name: "Save and Close Draft" }).click();
+  await (await openFolders(page)).getByRole("button", { name: /Drafts/ }).click();
+  await page.getByRole("button", { name: /An introduction/ }).click();
+  await expect(body).toHaveText("I help teams improve their workflow.");
+  await expect(panel.getByRole("textbox", { name: /What do you want/ })).toHaveValue("");
+  await expect(panel.getByRole("button", { name: "Apply Revision" })).toHaveCount(0);
+});
+
+test("draft review protects changes made after requesting feedback", async ({ page }) => {
+  await page.goto("/");
+  await enableDraftReview(page);
+  await page.getByRole("button", { name: "New Message (c)" }).click();
+  const composer = page.getByRole("dialog", { name: "New Message" });
+  const panel = page.getByRole("region", { name: "Draft review" });
+  const body = composer.getByRole("textbox", { name: "Message Body" });
+  await body.fill("Let me know your thoughts.");
+  await panel.getByRole("button", { name: "Review Draft", exact: true }).click();
+  await panel.getByRole("button", { name: "Get Feedback" }).click();
+  await body.fill("Keep this newer wording.");
+  await panel.getByRole("button", { name: "Apply Revision" }).click();
+  await expect(panel.getByRole("alert")).toContainText("Your draft changed");
+  await expect(body).toHaveText("Keep this newer wording.");
+});
+
 test("saves an offline draft, restores after reload, sends once, and undoes", async ({ page, context }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "New Message (c)" }).click();
