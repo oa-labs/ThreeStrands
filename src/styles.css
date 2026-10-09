@@ -2231,8 +2231,10 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .recipient-history-chip { max-width:100%; padding:var(--space-0-5) var(--space-2); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--muted); background:transparent; font:inherit; font-size:var(--text-meta); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .recipient-history-chip[aria-pressed="true"] { border-color:var(--border-strong); color:var(--text); background:var(--hover); }
 .compose-recipient { display:grid; gap:var(--space-0-5); }
-.compose-recipient-name { color:var(--text); font-size:var(--text-card-title); font-weight:var(--weight-semibold); line-height:var(--leading-snug); overflow-wrap:anywhere; }
-.compose-recipient-email, .compose-recipient-role { color:var(--muted); font-size:var(--text-meta); overflow-wrap:anywhere; }
+.compose-recipient-name, .compose-recipient-email { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.compose-recipient-name { color:var(--text); font-size:var(--text-card-title); font-weight:var(--weight-semibold); line-height:var(--leading-snug); }
+.compose-recipient-email, .compose-recipient-role { color:var(--muted); font-size:var(--text-meta); }
+.compose-recipient-role { overflow-wrap:anywhere; }
 .compose-recipient-facts { display:grid; gap:var(--space-0-5); margin:var(--space-1) 0 0; padding:0; list-style:none; color:var(--muted); font-size:var(--text-meta); line-height:var(--leading-normal); }
 .compose-recipient-notes { display:-webkit-box; margin:var(--space-1-5) 0 0; overflow:hidden; color:var(--text); font-size:var(--text-meta); line-height:var(--leading-normal); white-space:pre-wrap; -webkit-box-orient:vertical; -webkit-line-clamp:4; }
 .compose-context-empty { padding:var(--space-3) 0; }

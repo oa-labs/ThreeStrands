@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ComposeContext, ReplyChecks } from "./ComposeContext";
+import { RecipientSummary } from "./RecipientSections";
 import { mailClient } from "./data/client";
 import { ICON_SIZE } from "./iconSizes";
 import type { Draft } from "./correspondence";
@@ -82,6 +83,15 @@ describe("ComposeContext", () => {
     expect(mailClient.contactTimeline).toHaveBeenCalledWith(ann.id, 0, 5);
     fireEvent.click(await screen.findByRole("button", { name: /Q3 budget/ }));
     expect(props.onOpenThread).toHaveBeenCalledWith("t-1");
+  });
+
+  it.each([null, "A recipient with a very long display name"])("keeps full recipient text available when truncated (name: %s)", (name) => {
+    const email = "someone.with.a.long.address@a.very.long.organization.example.com";
+    render(<RecipientSummary email={email} name={name} profile={null} activity={null} />);
+    const about = screen.getByRole("region", { name: `About ${name || email}` });
+    expect(within(about).getByText(name || email)).toHaveAttribute("title", name || email);
+    expect(within(about).getByText(email)).toHaveAttribute("title", email);
+    expect(about.querySelectorAll(".compose-recipient-email")).toHaveLength(name ? 1 : 0);
   });
 
   it("keys the recipient's tasks and files sections distinctly", async () => {

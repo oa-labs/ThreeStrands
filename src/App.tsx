@@ -908,7 +908,10 @@ export function App() {
         <ComposeContext
           key={correspondence.liveDraft.id}
           draft={correspondence.liveDraft}
-          review={<DraftReviewSection key={correspondence.liveDraft.id} actions={correspondence.draftReview} available={aiDraftAvailable} onOpenSettings={() => openSettingsAt("ai")} />}
+          review={correspondence.liveDraft.mode !== "forward" ? (
+            <DraftReviewSection key={correspondence.liveDraft.id} actions={correspondence.draftReview}
+              available={aiDraftAvailable} onOpenSettings={() => openSettingsAt("ai")} />
+          ) : null}
           accounts={accounts}
           onKeyDown={contextPanelKeyDown}
           calendarConnected={calendarConnected}
@@ -936,7 +939,8 @@ export function App() {
           accounts={accounts}
           selectedEmail={contextPersonEmail}
           reply={composerBelongsToVisibleThread && correspondence.liveDraft ? {
-            review: <DraftReviewSection key={correspondence.liveDraft.id} actions={correspondence.draftReview} available={aiDraftAvailable} onOpenSettings={() => openSettingsAt("ai")} />,
+            review: <DraftReviewSection key={correspondence.liveDraft.id} actions={correspondence.draftReview}
+              available={aiDraftAvailable} onOpenSettings={() => openSettingsAt("ai")} />,
             recipients: replyRecipients,
             checks: (
               <ReplyChecks

@@ -93,7 +93,7 @@ describe("Draft review", () => {
     fireEvent.click(screen.getByRole("button", { name: "Get Feedback" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Refresh the preview");
     expect(mailClient.reviewDraft).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: /Review Again/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Preview" }));
     fireEvent.click(screen.getByRole("button", { name: "Get Feedback" }));
     await screen.findByText(result.assessment);
     expect(mailClient.reviewDraft).toHaveBeenCalledWith(expect.objectContaining({ body: "Newer words" }), "openai", expect.any(String), null);
@@ -155,6 +155,27 @@ describe("Draft review", () => {
     await reviewDraft();
     expect(screen.getByRole("button", { name: "Apply Revision" })).toBeDisabled();
     expect(body.querySelector("img")).toBeInTheDocument();
+  });
+
+  it("protects citations mixed into an inline reply from body replacement", async () => {
+    const { body, ref } = setup({ ...draft, mode: "reply", bodyHtml: 'On Monday, Client wrote:<blockquote type="cite">Their words.</blockquote>My inline answer.' });
+    await reviewDraft();
+    expect(screen.getByRole("button", { name: "Apply Revision" })).toBeDisabled();
+    expect(body.querySelector("blockquote")).toHaveTextContent("Their words.");
+    const snapshot = ref.current!.draftReview.readDraft();
+    expect(() => ref.current!.draftReview.replaceDraft(snapshot, { subject: "Changed", body: "New words" })).toThrow("preserve inline images and quoted text");
+  });
+
+  it("preserves formatting when only the subject changes, including during undo", async () => {
+    vi.mocked(mailClient.reviewDraft).mockResolvedValue({ ...result, revisedBody: draft.body });
+    const { body } = setup();
+    await reviewDraft();
+    fireEvent.click(screen.getByRole("button", { name: "Apply Revision" }));
+    expect(body.querySelector("strong")).toHaveTextContent(draft.body);
+    expect(screen.getByRole("textbox", { name: "Subject" })).toHaveValue(result.revisedSubject);
+    fireEvent.click(screen.getByRole("button", { name: "Undo Revision" }));
+    expect(body.querySelector("strong")).toHaveTextContent(draft.body);
+    expect(screen.getByRole("textbox", { name: "Subject" })).toHaveValue(draft.subject);
   });
 
   it("supports a good draft with no suggested changes", async () => {

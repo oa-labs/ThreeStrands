@@ -18,6 +18,37 @@ async function enableDraftReview(page: import("@playwright/test").Page) {
   await expect(settings).not.toBeVisible();
 }
 
+for (const name of [null, "A recipient with a very long display name that exceeds the panel width"]) {
+  test(`long recipient ${name ? "names and email addresses" : "email headings"} truncate within the context panel`, async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "New Message (c)" }).click();
+    const composer = page.getByRole("dialog", { name: "New Message" });
+    const email = "someone.with.a.long.address@a.very.long.organization.example.com";
+    await composer.getByRole("textbox", { name: "To", exact: true }).fill(name ? `${name} <${email}>` : email);
+    await composer.getByRole("textbox", { name: "Subject" }).focus();
+    const about = page.getByRole("region", { name: `About ${name || email}` });
+    await expect(about).toBeVisible();
+    const lines = about.locator(".compose-recipient-name, .compose-recipient-email");
+    await expect(lines).toHaveCount(name ? 2 : 1);
+    for (const line of await lines.all()) {
+      await expect(line).toHaveCSS("white-space", "nowrap");
+      await expect(line).toHaveCSS("text-overflow", "ellipsis");
+      await expect(line).toHaveCSS("overflow-x", "hidden");
+      const layout = await line.evaluate((element) => ({
+        scrollWidth: element.scrollWidth,
+        clientWidth: element.clientWidth,
+        right: element.getBoundingClientRect().right,
+        panelRight: element.closest(".context-panel")!.getBoundingClientRect().right,
+        text: element.textContent,
+        title: element.getAttribute("title"),
+      }));
+      expect(layout.scrollWidth).toBeGreaterThan(layout.clientWidth);
+      expect(layout.right).toBeLessThanOrEqual(layout.panelRight);
+      expect(layout.title).toBe(layout.text);
+    }
+  });
+}
+
 test("reviews a new email in the context panel, applies and undoes without sending, and saves the original", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "New Message (c)" }).click();

@@ -27,7 +27,7 @@ export type ComposeBodyEditorHandle = {
   insertText(text: string): void;
   prependText(text: string): void;
   focusBody(): void;
-  reviewBody(): { html: string; text: string; hasInlineImages: boolean };
+  reviewBody(): { html: string; text: string; hasInlineImages: boolean; hasInlineQuotes: boolean };
   replaceAuthoredHtml(html: string): void;
 };
 
@@ -159,7 +159,13 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
     captureChanges, insertText, prependText, focusBody,
     reviewBody: () => {
       if (!bodyEditor.current) throw new Error("The draft editor is unavailable");
-      return { ...serializeComposeBody(bodyEditor.current), hasInlineImages: Boolean(bodyEditor.current.querySelector("img")) };
+      return {
+        ...serializeComposeBody(bodyEditor.current),
+        hasInlineImages: Boolean(bodyEditor.current.querySelector("img")),
+        // A citation mixed into an inline answer cannot be replaced as one
+        // authored paragraph without also changing somebody else's words.
+        hasInlineQuotes: Boolean(bodyEditor.current.querySelector('blockquote[type="cite"]')),
+      };
     },
     replaceAuthoredHtml: (html) => {
       if (!bodyEditor.current || busy) throw new Error("Finish the current composer action first");

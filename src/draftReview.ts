@@ -8,6 +8,7 @@ export type DraftReviewSnapshot = {
   bodyHtml: string;
   fingerprint: string;
   hasInlineImages: boolean;
+  hasInlineQuotes: boolean;
 };
 
 export type DraftReviewEdit = { subject: string } & ({ body: string } | { bodyHtml: string });

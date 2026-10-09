@@ -205,6 +205,7 @@ export const Composer = forwardRef<ComposerHandle, {
     return {
       id: current.id, subject: current.subject, body: authored.text, bodyHtml: authored.html,
       hasInlineImages: authored.hasInlineImages,
+      hasInlineQuotes: authored.hasInlineQuotes,
       fingerprint: JSON.stringify([current.id, current.account, current.to, current.cc, current.bcc,
         current.subject, current.body, current.bodyHtml, current.attachments]),
     };
@@ -216,8 +217,14 @@ export const Composer = forwardRef<ComposerHandle, {
       if (current.id !== expected.id || current.fingerprint !== expected.fingerprint) {
         throw new Error("Your draft changed. Review it again before replacing any text.");
       }
-      if (current.hasInlineImages) throw new Error("Apply suggestions manually to preserve your inline images.");
-      bodyEditor.current!.replaceAuthoredHtml("bodyHtml" in replacement ? replacement.bodyHtml : plainTextToHtml(replacement.body));
+      const html = "bodyHtml" in replacement ? replacement.bodyHtml
+        : replacement.body === current.body ? current.bodyHtml : plainTextToHtml(replacement.body);
+      if (html !== current.bodyHtml) {
+        if (current.hasInlineImages || current.hasInlineQuotes) {
+          throw new Error("Apply body suggestions manually to preserve inline images and quoted text.");
+        }
+        bodyEditor.current!.replaceAuthoredHtml(html);
+      }
       edit("subject", replacement.subject);
       return readReviewDraft();
     },

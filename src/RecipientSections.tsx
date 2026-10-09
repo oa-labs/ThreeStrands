@@ -82,8 +82,8 @@ export function RecipientSummary({ email, name, profile, activity }: {
   const facts = activity ? describeActivity(activity) : [];
   return (
     <section className="context-section compose-recipient" aria-label={`About ${displayName}`}>
-      <strong className="compose-recipient-name">{displayName}</strong>
-      {displayName !== email ? <span className="compose-recipient-email">{email}</span> : null}
+      <strong className="compose-recipient-name" title={displayName}>{displayName}</strong>
+      {displayName !== email ? <span className="compose-recipient-email" title={email}>{email}</span> : null}
       {role ? <span className="compose-recipient-role">{role}</span> : null}
       {facts.length > 0 ? <ul className="compose-recipient-facts">{facts.map((fact) => <li key={fact}>{fact}</li>)}</ul> : null}
       {profile?.notes?.trim() ? <p className="compose-recipient-notes">{profile.notes.trim()}</p> : null}

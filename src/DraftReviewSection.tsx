@@ -21,6 +21,8 @@ export function DraftReviewSection({ actions, available, onOpenSettings }: {
   const [error, setError] = useState("");
   const inFlight = useRef(false);
   const mounted = useRef(true);
+  const replacesBody = Boolean(original && review && original.body !== review.revisedBody);
+  const protectedBody = Boolean(original?.hasInlineImages || original?.hasInlineQuotes);
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; };
@@ -83,14 +85,14 @@ export function DraftReviewSection({ actions, available, onOpenSettings }: {
         <input value={goal} disabled={busy} placeholder="e.g. Get an introductory call" onChange={(event) => setGoal(event.target.value)} />
       </label>
       <button type="button" className="btn btn-sm" disabled={busy} onClick={prepare}>
-        {original ? "Review Again / Refresh Preview" : "Review Draft"}
+        {review ? "Review Again" : original ? "Refresh Preview" : "Review Draft"}
       </button>
       {original ? <>
         <details className="draft-review-preview" open={!review}>
           <summary>{review ? "Original email" : `Email content sent to ${readAiProvider()}`}</summary>
           <p><strong>Subject:</strong> {original.subject || "(no subject)"}</p>
           <pre>{original.body}</pre>
-          {!review ? <p className="context-section-note">Only this subject, your written text, and the optional goal are sent. Recipient addresses, quoted history, and attachments are excluded.</p> : null}
+          {!review ? <p className="context-section-note">Only this subject, the text shown here, and the optional goal are sent. Recipient fields, separately stored quoted history, and attachments are excluded.</p> : null}
         </details>
         {!review ? <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => void getFeedback()}>
           {busy ? "Reviewing…" : "Get Feedback"}
@@ -113,10 +115,11 @@ export function DraftReviewSection({ actions, available, onOpenSettings }: {
               <p role="status">Revision applied.</p>
               <button type="button" className="btn btn-sm" onClick={undo}>Undo Revision</button>
             </> : <>
-              <p className="context-section-note">{original.hasInlineImages
-                ? "Apply suggestions manually to keep your inline images and layout."
-                : "Applying replaces your written text and its formatting. Undo restores the original. Quoted history and attachments stay in place."}</p>
-              <button type="button" className="btn btn-sm btn-primary" disabled={original.hasInlineImages} onClick={apply}>Apply Revision</button>
+              <p className="context-section-note">{replacesBody && protectedBody
+                ? "Apply body suggestions manually to keep inline images and quoted text in place."
+                : replacesBody ? "Applying replaces your written text and its formatting. Undo restores the original. Quoted history and attachments stay in place."
+                  : "Only the subject changes. Your written text and formatting stay in place."}</p>
+              <button type="button" className="btn btn-sm btn-primary" disabled={replacesBody && protectedBody} onClick={apply}>Apply Revision</button>
             </>}
           </div> : null}
         </>}
