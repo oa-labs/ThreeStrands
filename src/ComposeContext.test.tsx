@@ -74,24 +74,39 @@ describe("ComposeContext", () => {
     expect(mailClient.resolveContactIds).not.toHaveBeenCalled();
   });
 
-  it("shows who the recipient is, the user's notes, and recent emails with them", async () => {
+  it("shows what the user saved about the recipient, and recent emails with them", async () => {
     const { props } = renderPanel({ draft: { ...draft, to: "Ann Lee <ann@partner.com>" } });
     const about = await screen.findByRole("region", { name: "About Ann Lee" });
+    expect(within(about).getByRole("heading", { name: "About" })).toBeInTheDocument();
     expect(about).toHaveTextContent("CTO · Partner Co");
     expect(about).toHaveTextContent("Prefers short emails");
-    await waitFor(() => expect(about).toHaveTextContent("10 emails since"));
+    // Volume and dates belong to Recent emails, not a second summary above it.
+    expect(about).not.toHaveTextContent(/emails since|You last wrote/);
+    expect(mailClient.contactActivity).not.toHaveBeenCalled();
     expect(mailClient.contactTimeline).toHaveBeenCalledWith(ann.id, 0, 5);
     fireEvent.click(await screen.findByRole("button", { name: /Q3 budget/ }));
     expect(props.onOpenThread).toHaveBeenCalledWith("t-1");
   });
 
-  it.each([null, "A recipient with a very long display name"])("keeps full recipient text available when truncated (name: %s)", (name) => {
+  it.each([null, "A recipient with a very long display name"])("leaves the section out when nothing is saved about the recipient (name: %s)", (name) => {
     const email = "someone.with.a.long.address@a.very.long.organization.example.com";
-    render(<RecipientSummary email={email} name={name} profile={null} activity={null} />);
-    const about = screen.getByRole("region", { name: `About ${name || email}` });
-    expect(within(about).getByText(name || email)).toHaveAttribute("title", name || email);
-    expect(within(about).getByText(email)).toHaveAttribute("title", email);
-    expect(about.querySelectorAll(".compose-recipient-email")).toHaveLength(name ? 1 : 0);
+    const { container } = render(<RecipientSummary email={email} name={name} profile={null} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it.each([
+    [{ role: "CTO", company: null, notes: null }, "CTO", null],
+    [{ role: null, company: null, notes: "  Prefers mornings  " }, null, "Prefers mornings"],
+    [{ role: null, company: null, notes: "   " }, null, null],
+  ])("shows only the saved details that exist (%o)", (fields, role, notes) => {
+    const { container } = render(<RecipientSummary email={ann.addresses[0]} name={null} profile={{ ...ann, ...fields }} />);
+    if (!role && !notes) {
+      expect(container).toBeEmptyDOMElement();
+      return;
+    }
+    const about = screen.getByRole("region", { name: "About Ann Lee" });
+    expect(about.querySelector(".compose-recipient-role")?.textContent ?? null).toBe(role);
+    expect(about.querySelector(".compose-recipient-notes")?.textContent ?? null).toBe(notes);
   });
 
   it("keys the recipient's tasks and files sections distinctly", async () => {
@@ -112,8 +127,8 @@ describe("ComposeContext", () => {
     const chips = screen.getByRole("group", { name: "Show history with" });
     expect(within(chips).getByRole("button", { name: "ann@partner.com" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(within(chips).getByRole("button", { name: "Pal" }));
-    expect(await screen.findByRole("region", { name: "About Pal" })).toBeInTheDocument();
-    await waitFor(() => expect(mailClient.contactActivity).toHaveBeenLastCalledWith("derived:pal@friends.org"));
+    expect(within(chips).getByRole("button", { name: "Pal" })).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(mailClient.contactTimeline).toHaveBeenLastCalledWith("derived:pal@friends.org", 0, 5));
   });
 
   it("offers the address the user probably meant and applies it through the composer", async () => {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { mailClient } from "./data/client";
 import type { Draft } from "./correspondence";
-import type { Account, AvailabilityCandidate, ContactGroupRecipients, AvailabilityPreferences, ContactActivity, ContactProfile, ContactTimelineItem, ScheduleEvent, ThreadTask } from "./domain";
+import type { Account, AvailabilityCandidate, ContactGroupRecipients, AvailabilityPreferences, ContactProfile, ContactTimelineItem, ScheduleEvent, ThreadTask } from "./domain";
 import { composeChecks, draftRecipients, knownAddressMap, type ComposeCheck, type KnownCorrespondents } from "./composeChecks";
 import { ContactFilesSection, ContextSection, DomainSection, RecentEmailsSection } from "./ContextSections";
 import { AvailabilitySection, RecipientChips, RecipientSummary } from "./RecipientSections";
@@ -176,7 +176,6 @@ export function ComposeContext({
     email: string;
     contactId: string;
     profile: ContactProfile | null;
-    activity: ContactActivity | null;
     timeline: ContactTimelineItem[];
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -189,11 +188,8 @@ export function ComposeContext({
         const id = owners[email] ?? `derived:${email}`;
         const profile = await mailClient.getContactProfile(id);
         const contactId = profile?.id ?? id;
-        const [activity, timeline] = await Promise.all([
-          mailClient.contactActivity(contactId),
-          mailClient.contactTimeline(contactId, 0, 5),
-        ]);
-        if (active) { setLoaded({ email, contactId, profile, activity, timeline }); setError(null); }
+        const timeline = await mailClient.contactTimeline(contactId, 0, 5);
+        if (active) { setLoaded({ email, contactId, profile, timeline }); setError(null); }
       } catch (reason) {
         if (active) setError(errorMessage(reason));
       }
@@ -220,7 +216,7 @@ export function ComposeContext({
       />
       {review}
       <RecipientChips recipients={recipients} selectedEmail={email} onSelect={setPicked} />
-      {selected ? <RecipientSummary email={selected.email} name={selected.name} profile={person?.profile ?? null} activity={person?.activity ?? null} /> : (
+      {selected ? <RecipientSummary email={selected.email} name={selected.name} profile={person?.profile ?? null} /> : (
         <p className="context-status compose-context-empty">Add a recipient to see your history with them.</p>
       )}
       {calendarConnected ? (

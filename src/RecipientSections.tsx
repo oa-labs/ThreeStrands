@@ -1,10 +1,9 @@
 // Sections about the people a draft is going to, shared by a new message's panel and a reply's.
 
 import { useState } from "react";
-import { CalendarDays } from "lucide-react";
-import type { AvailabilityCandidate, AvailabilityPreferences, ContactActivity, ContactProfile } from "./domain";
+import { CalendarDays, UserRound } from "lucide-react";
+import type { AvailabilityCandidate, AvailabilityPreferences, ContactProfile } from "./domain";
 import { ContextSectionHeader } from "./ContextSections";
-import { describeActivity } from "./contactContext";
 import { MeetingScheduler, type ScheduleSlot } from "./MeetingScheduler";
 import { lookaheadRange } from "./scheduling";
 import { ICON_SIZE } from "./iconSizes";
@@ -70,23 +69,25 @@ export function AvailabilitySection({ preferences, onInsertTimes, onAddToCalenda
   );
 }
 
-/** Who the selected recipient is and how much the user has written with them. */
-export function RecipientSummary({ email, name, profile, activity }: {
+/**
+ * What the user has saved about the selected recipient: role, company, and
+ * notes. Left out when nothing is saved; volume and dates are the Recent
+ * emails section's job.
+ */
+export function RecipientSummary({ email, name, profile }: {
   email: string;
   name: string | null;
   profile: ContactProfile | null;
-  activity: ContactActivity | null;
 }) {
   const displayName = profile?.displayName || name || email;
   const role = [profile?.role, profile?.company].filter(Boolean).join(" · ");
-  const facts = activity ? describeActivity(activity) : [];
+  const notes = profile?.notes?.trim() ?? "";
+  if (!role && !notes) return null;
   return (
     <section className="context-section compose-recipient" aria-label={`About ${displayName}`}>
-      <strong className="compose-recipient-name" title={displayName}>{displayName}</strong>
-      {displayName !== email ? <span className="compose-recipient-email" title={email}>{email}</span> : null}
-      {role ? <span className="compose-recipient-role">{role}</span> : null}
-      {facts.length > 0 ? <ul className="compose-recipient-facts">{facts.map((fact) => <li key={fact}>{fact}</li>)}</ul> : null}
-      {profile?.notes?.trim() ? <p className="compose-recipient-notes">{profile.notes.trim()}</p> : null}
+      <ContextSectionHeader title="About" icon={<UserRound size={ICON_SIZE.xs} />} />
+      {role ? <p className="compose-recipient-role">{role}</p> : null}
+      {notes ? <p className="compose-recipient-notes">{notes}</p> : null}
     </section>
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { mailClient } from "./data/client";
-import type { Account, ContactActivity, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
+import type { Account, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
 import { ContactFilesSection, DomainSection, RecentEmailsSection, ThreadOutlineSection } from "./ContextSections";
 import { RecipientChips, RecipientSummary } from "./RecipientSections";
 import { parseAddress, splitAddressList } from "./emailAddress";
@@ -97,32 +97,26 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, reply = n
   const email = reply
     ? (isRecipient(chipPick) ? chipPick! : isRecipient(picked) ? picked : recipients[0]?.email ?? "")
     : picked && participants.some((item) => item.email === picked) ? picked : preferred;
-  const replying = Boolean(reply);
   const [profile, setProfile] = useState<ContactProfile | null>(null);
-  const [activity, setActivity] = useState<ContactActivity | null>(null);
   const [timeline, setTimeline] = useState<ContactTimelineItem[]>([]);
   const [loadedEmail, setLoadedEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    if (!email) { setProfile(null); setActivity(null); setTimeline([]); setLoadedEmail(""); return; }
+    if (!email) { setProfile(null); setTimeline([]); setLoadedEmail(""); return; }
     let active = true;
     void (async () => {
       try {
         const owners = await mailClient.resolveContactIds([email]);
         const loaded = await mailClient.getContactProfile(owners[email] ?? `derived:${email}`);
         const contactId = loaded?.id ?? `derived:${email}`;
-        // Only the reply's recipient card shows how much the user has written with them.
-        const [events, history] = await Promise.all([
-          mailClient.contactTimeline(contactId, 0, 6),
-          replying ? mailClient.contactActivity(contactId) : Promise.resolve(null),
-        ]);
-        if (active) { setProfile(loaded); setActivity(history); setTimeline(events); setLoadedEmail(email); setError(null); }
+        const events = await mailClient.contactTimeline(contactId, 0, 6);
+        if (active) { setProfile(loaded); setTimeline(events); setLoadedEmail(email); setError(null); }
       } catch (reason) {
         if (active) setError(reason instanceof Error ? reason.message : String(reason));
       }
     })();
     return () => { active = false; };
-  }, [email, replying]);
+  }, [email]);
 
   // One entry per person, for naming meeting attendees: addresses linked to
   // the same saved contact share a name, and anyone else keeps their own.
@@ -210,7 +204,6 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, reply = n
             email={recipient.email}
             name={recipient.name}
             profile={loadedEmail === email ? profile : null}
-            activity={loadedEmail === email ? activity : null}
           />
         ) : <p className="context-status compose-context-empty">Add a recipient to see your history with them.</p>}
         {reply.availability}

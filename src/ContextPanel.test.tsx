@@ -363,7 +363,8 @@ describe("ContextPanel",()=>{
       renderPanel({selectedEmail:null,reply:reply([toBob,ccCarol])});
       const panel=screen.getByRole("complementary",{name:"Conversation context"});
       expect(await within(panel).findByRole("region",{name:"About Bob Lee"})).toBeInTheDocument();
-      await waitFor(()=>expect(mailClient.contactActivity).toHaveBeenCalledWith(bob.id));
+      await personLoaded(bob.id);
+      expect(mailClient.contactActivity).not.toHaveBeenCalled();
       const chips=within(panel).getByRole("group",{name:"Show history with"});
       expect(within(chips).getAllByRole("button").map(button=>button.textContent)).toEqual(["Bob Lee","carol@example.com"]);
       expect(within(chips).getByRole("button",{name:"Bob Lee"})).toHaveAttribute("aria-pressed","true");

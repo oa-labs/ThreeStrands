@@ -48,7 +48,9 @@ it("follows a new message's recipients in the context panel instead of the conve
 
   const to = within(composer).getByRole("textbox", { name: "To" });
   fireEvent.change(to, { target: { value: "hello@threestrands.local," } });
-  expect(await within(panel).findByRole("region", { name: /^About / })).toBeInTheDocument();
+  await waitFor(() => expect(panel).not.toHaveTextContent("Add a recipient to see your history with them."));
+  // Nothing is saved about the demo sender, so no About section stands in for Recent emails.
+  expect(within(panel).queryByRole("region", { name: /^About / })).not.toBeInTheDocument();
 
   fireEvent.click(within(composer).getByRole("button", { name: "Save and Close Draft" }));
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New Message" })).not.toBeInTheDocument());
@@ -56,7 +58,7 @@ it("follows a new message's recipients in the context panel instead of the conve
   expect(screen.queryByRole("complementary", { name: "Compose context" })).not.toBeInTheDocument();
 });
 
-it("follows a reply's recipients in the conversation panel, with the brief below the recipient card", async () => {
+it("follows a reply's recipients in the conversation panel", async () => {
   localStorage.removeItem("threestrands.demoCorrespondence");
   try {
     render(<App />);
@@ -69,16 +71,14 @@ it("follows a reply's recipients in the conversation panel, with the brief below
     // A reply keeps the conversation panel, so its brief and chat stay at hand.
     expect(screen.getByRole("complementary", { name: "Conversation context" })).toBe(panel);
     expect(screen.queryByRole("complementary", { name: "Compose context" })).not.toBeInTheDocument();
-    const card = await within(panel).findByRole("region", { name: /^About / });
-    expect(card).toHaveTextContent("hello@threestrands.local");
-    const regions = within(panel).getAllByRole("region");
-    expect(regions.indexOf(card)).toBeLessThan(regions.indexOf(within(panel).getByRole("region", { name: "Brief" })));
+    await waitFor(() => expect(panel).not.toHaveTextContent("Add a recipient to see your history with them."));
+    expect(within(panel).queryByRole("region", { name: /^About / })).not.toBeInTheDocument();
 
     const to = within(composer).getByRole("textbox", { name: "To" });
     fireEvent.change(to, { target: { value: `${(to as HTMLInputElement).value}, carol@example.com,` } });
     const chips = await within(panel).findByRole("group", { name: "Show history with" });
     fireEvent.click(within(chips).getByRole("button", { name: "carol@example.com" }));
-    expect(await within(panel).findByRole("region", { name: "About carol@example.com" })).toBeInTheDocument();
+    expect(within(chips).getByRole("button", { name: "carol@example.com" })).toHaveAttribute("aria-pressed", "true");
 
     fireEvent.click(within(composer).getByRole("button", { name: "Save and Close Draft" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reply Message" })).not.toBeInTheDocument());
