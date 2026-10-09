@@ -39,6 +39,26 @@ describe("selected message quotes", () => {
     frame.contentWindow!.getSelection()!.addRange(range);
     frame.focus();
     expect(selectedMessageQuote()).toEqual({ messageId: "older", text: "A selected passage" });
+    const button = document.createElement("button");
+    document.body.append(button);
+    button.focus();
+    expect(selectedMessageQuote("older")).toEqual({ messageId: "older", text: "A selected passage" });
+    expect(selectedMessageQuote("other")).toBeNull();
+  });
+
+  it("ignores selections outside the targeted message, across messages, and in headers", () => {
+    document.body.innerHTML = '<article class="message-card-expanded" data-message-id="older"><header>Sender</header><div class="message-body-plain">Older message</div></article><article class="message-card-expanded" data-message-id="newer"><div class="message-body-plain">Newer message</div></article>';
+    const bodies = document.querySelectorAll(".message-body-plain");
+    const range = document.createRange();
+    range.selectNodeContents(bodies[0]);
+    window.getSelection()!.addRange(range);
+    expect(selectedMessageQuote("newer")).toBeNull();
+    range.setEnd(bodies[1].firstChild!, 5);
+    expect(selectedMessageQuote()).toBeNull();
+    range.selectNodeContents(document.querySelector("header")!);
+    expect(selectedMessageQuote()).toBeNull();
+    range.collapse(true);
+    expect(selectedMessageQuote()).toBeNull();
   });
 
   it("replaces a new reply's full quote and preserves the provider header and metadata", () => {
@@ -48,5 +68,27 @@ describe("selected message quotes", () => {
     expect(draftWithSelectedQuote({ ...draft, revision: 1, body: "My response" }, "Selected"))
       .toBeNull();
     expect(draftWithSelectedQuote(draft, "  ")).toBeNull();
+    expect(draftWithSelectedQuote({ ...draft, bodyHtml: "<p>My response</p>" }, "Selected")).toBeNull();
+    expect(draftWithSelectedQuote({ ...draft, mode: "new" }, "Selected")).toBeNull();
+  });
+
+  it.each([false, true])("quotes only selected text in a forward while escaping sender markup (HTML=%s)", (html) => {
+    const header = "---------- Forwarded message ----------\nFrom: Sender <sender@example.com>\nDate: Tuesday\nSubject: Subject\nTo: me@example.com\n\n";
+    const forward: Draft = {
+      ...draft, mode: "forward", to: "", body: html ? "" : `\n\n${header}Full original message`,
+      forwardedContent: html ? { html: '<p>Full original message<img src="https://tracker.example/pixel"></p>', text: header + "Full original message" } : null,
+    };
+    const selected = '<script>alert(1)</script>\r\n<img src="https://tracker.example/selected"> & text';
+    const quoted = draftWithSelectedQuote(forward, selected)!;
+    expect(quoted.body).toBe("");
+    expect(quoted.forwardedContent?.text).toBe(`${header}> <script>alert(1)</script>\n> <img src="https://tracker.example/selected"> & text`);
+    const content = document.createElement("div");
+    content.innerHTML = quoted.forwardedContent!.html;
+    expect(content.querySelector('blockquote[type="cite"]')?.textContent).toBe(selected.replace("\r\n", ""));
+    expect(content.querySelector("script, img, a, iframe")).toBeNull();
+    expect(content.textContent).not.toContain("Full original message");
+    expect(quoted.attachments).toEqual(forward.attachments);
+    expect(draftWithSelectedQuote({ ...forward, revision: 1 }, "Selected")).toBeNull();
+    expect(draftWithSelectedQuote({ ...forward, bodyHtml: "Edited forward" }, "Selected")).toBeNull();
   });
 });

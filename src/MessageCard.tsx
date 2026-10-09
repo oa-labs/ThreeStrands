@@ -16,6 +16,7 @@ import type { FontFamily } from "./settings";
 import { formatAttachmentSize, formatMailTimestamp, splitAttachmentName } from "./threadPresentation";
 import { ICON_SIZE } from "./iconSizes";
 import { AttachmentIcon } from "./AttachmentIcon";
+import { selectedMessageQuote } from "./selectedMessageQuote";
 
 export type MessageResponseKind = "reply" | "replyAll" | "forward";
 
@@ -82,6 +83,10 @@ export const MessageCard = memo(function MessageCard({
   }, [message.attachments, message.bodyHtml]);
   const cardBodyId = `message-body-${index}`;
   const messageId = message.id;
+  const preserveSelectedQuote = (event: MouseEvent<HTMLButtonElement>) => {
+    // Read iframe selections before the button's default mouse focus blurs them.
+    if (event.button === 0 && selectedMessageQuote(messageId)) event.preventDefault();
+  };
 
   const activateMessage = useCallback(() => onActivate(messageId), [messageId, onActivate]);
   const toggleMessage = useCallback(() => onToggle(messageId, isExpanded), [isExpanded, messageId, onToggle]);
@@ -150,6 +155,7 @@ export const MessageCard = memo(function MessageCard({
                 type="button"
                 className="btn-icon btn-icon-sm"
                 aria-label="Reply"
+                onMouseDown={preserveSelectedQuote}
                 onClick={() => onRespond("reply", message.id)}
               >
                 <Reply size={ICON_SIZE.sm} />
@@ -160,6 +166,7 @@ export const MessageCard = memo(function MessageCard({
                 type="button"
                 className="btn-icon btn-icon-sm"
                 aria-label="Reply All"
+                onMouseDown={preserveSelectedQuote}
                 onClick={() => onRespond("replyAll", message.id)}
               >
                 <ReplyAll size={ICON_SIZE.sm} />
@@ -170,6 +177,7 @@ export const MessageCard = memo(function MessageCard({
                 type="button"
                 className="btn-icon btn-icon-sm"
                 aria-label="Forward"
+                onMouseDown={preserveSelectedQuote}
                 onClick={() => onRespond("forward", message.id)}
               >
                 <Forward size={ICON_SIZE.sm} />

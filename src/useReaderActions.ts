@@ -5,6 +5,7 @@ import type { MailboxKind } from "./commands";
 import type { useReaderState } from "./useReaderState";
 import type { useCorrespondence } from "./useCorrespondence";
 import type { useTriageSession } from "./useTriageSession";
+import { selectedMessageQuote } from "./selectedMessageQuote";
 
 export function scrollBehavior(): ScrollBehavior {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
@@ -87,7 +88,8 @@ export function useReaderActions({
         context: mailbox === "inbox" && !includeArchived ? "inbox" : "other",
       });
     }
-    correspondence.context[kind](messageId);
+    const quote = selectedMessageQuote(messageId);
+    correspondence.context[kind](messageId, quote?.text);
   };
   const respondToMessage = useCallback((kind: MessageResponseKind, messageId: string) => {
     respondToMessageRef.current(kind, messageId);

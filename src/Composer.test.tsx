@@ -998,6 +998,15 @@ describe("Composer quoted history", () => {
     expect(saved.bodyHtml).toMatch(/^Friday works\.<br><br>On Sep 16, Sender wrote:<blockquote type="cite"/);
   });
 
+  it("shows an explicitly selected quote immediately and keeps focus in the reply body", () => {
+    render(<Composer draft={reply} accounts={accounts} {...snippetProps} expandQuotedText onClose={() => {}} onQueued={() => {}} />);
+    expect(screen.getByRole("textbox", { name: "Message Body" })).toHaveFocus();
+    expect(screen.getByRole("textbox", { name: "Quoted Text" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Hide Quoted Text" })).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Hide Quoted Text" }));
+    expect(screen.getByLabelText("Quoted Text")).not.toBeVisible();
+  });
+
   it("splits a reopened reply draft's saved HTML back into authored text and collapsed history", async () => {
     const saveDraft = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
     const reopened: Draft = {

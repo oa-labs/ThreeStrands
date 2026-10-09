@@ -356,6 +356,63 @@ describe("conversation labels", () => {
 describe("message cards", () => {
   useConversationFixture();
 
+  for (const html of [false, true]) {
+    it.each([
+      ["r", "Reply", "reply"],
+      ["a", "Reply All", "replyAll"],
+      ["f", "Forward", "forward"],
+      [null, "Reply", "reply"],
+      [null, "Reply All", "replyAll"],
+      [null, "Forward", "forward"],
+    ] as const)(`quotes selected ${html ? "HTML" : "plain"} message text using %s / %s`, async (key, label, mode) => {
+      const original = await mailClient.getThread("welcome");
+      const selected = "Selected <img> & passage";
+      vi.spyOn(mailClient, "getThread").mockResolvedValue({
+        ...original,
+        messages: [{ ...original.messages[0], bodyHtml: html ? "<p>Selected &lt;img&gt; &amp; passage</p>" : "", bodyText: selected }],
+      });
+      const createDraft = vi.spyOn(mailClient, "createDraft");
+      const saveDraft = vi.spyOn(mailClient, "saveDraft");
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      const body = screen.getByTestId("message-body");
+      const frame = html ? body as HTMLIFrameElement : null;
+      const doc = frame?.contentDocument ?? document;
+      // jsdom does not load srcdoc; install the selected text in its frame document.
+      if (frame) doc.body.textContent = selected;
+      const range = doc.createRange();
+      range.selectNodeContents(frame ? doc.body : body);
+      const selection = frame ? frame.contentWindow!.getSelection()! : window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      if (frame) frame.focus();
+
+      if (key) fireEvent.keyDown(window, { key });
+      else {
+        const button = screen.getByRole("button", { name: label });
+        expect(fireEvent.mouseDown(button, { button: 0 })).toBe(false);
+        fireEvent.click(button);
+      }
+
+      const composer = await screen.findByRole("dialog", { name: mode === "forward" ? "Forward Message" : "Reply Message" });
+      expect(createDraft).toHaveBeenCalledWith(mode, original.messages[0].id, original.thread.accountId);
+      await waitFor(() => expect(saveDraft).toHaveBeenCalled());
+      const saved = saveDraft.mock.calls[0][0];
+      if (mode === "forward") {
+        expect(saved.forwardedContent?.text).toContain(`> ${selected}`);
+        expect(saved.forwardedContent?.html).toContain('blockquote type="cite"');
+        expect(within(composer).getByRole("region", { name: "Forwarded message" })).toBeInTheDocument();
+      } else {
+        expect(within(composer).getByRole("textbox", { name: "Quoted Text" })).toBeVisible();
+        expect(within(composer).getByRole("textbox", { name: "Quoted Text" }).querySelector("blockquote")).toHaveTextContent(selected);
+        expect(within(composer).getByRole("textbox", { name: "Message Body" })).toHaveFocus();
+        expect(saved.body).toContain(`> ${selected}`);
+      }
+      expect(JSON.stringify(saved)).not.toContain("A keyboard-first inbox");
+      selection.removeAllRanges();
+    });
+  }
+
   it("expands, activates, and scrolls to a message picked from the context panel's thread outline", async () => {
     const originalDetail = await mailClient.getThread("welcome");
     const latest = originalDetail.messages[0]!;

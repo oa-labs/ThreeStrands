@@ -199,7 +199,8 @@ export function useAppCommandContext({
           context: mailbox === "inbox" && !includeArchived ? "inbox" : "other",
         });
       }
-      correspondence.context.forward();
+      const quote = selectedMessageQuote();
+      correspondence.context.forward(quote?.messageId, quote?.text);
     },
     toggleCheckedSelected: () => {
       if (selected) toggleChecked(selected.id);

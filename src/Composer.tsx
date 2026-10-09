@@ -47,10 +47,11 @@ export const Composer = forwardRef<ComposerHandle, {
   onClose(): void;
   onQueued(item: OutboxItem): void;
   availabilityText?: string | null;
+  expandQuotedText?: boolean;
   replyAssistInstruction?: string | null;
   /** Called with the draft as edits are made; body text arrives at each autosave. */
   onDraftChange?(draft: Draft): void;
-}>(function Composer({ draft: initial, accounts, messageAppearance, snippets, onCreateSnippet, onUpdateSnippet, onDeleteSnippet, onClose, onQueued, availabilityText = null, replyAssistInstruction = null, onDraftChange }, ref) {
+}>(function Composer({ draft: initial, accounts, messageAppearance, snippets, onCreateSnippet, onUpdateSnippet, onDeleteSnippet, onClose, onQueued, availabilityText = null, expandQuotedText = false, replyAssistInstruction = null, onDraftChange }, ref) {
   const bodyEditor = useRef<ComposeBodyEditorHandle>(null);
   const captureChanges = useCallback(() => bodyEditor.current?.captureChanges() ?? null, []);
   const [error, setError] = useState("");
@@ -309,6 +310,7 @@ export const Composer = forwardRef<ComposerHandle, {
           busy={busy}
           recipientTo={draft.to}
           availabilityText={availabilityText}
+          expandQuotedText={expandQuotedText}
           snippets={snippets}
           onCreateSnippet={onCreateSnippet}
           onUpdateSnippet={onUpdateSnippet}

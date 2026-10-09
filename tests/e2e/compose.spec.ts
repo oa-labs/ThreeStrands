@@ -222,8 +222,8 @@ test("HTML forwarding preserves formatting and blocked images after reopening, s
   await expect(frame.locator("img")).not.toHaveAttribute("src");
 });
 
-for (const [key, heading] of [["r", "Reply"], ["a", "Reply All"]] as const) {
-  test(`${key} quotes only selected email text`, async ({ page }) => {
+for (const [key, heading] of [["r", "Reply"], ["a", "Reply All"], ["f", "Forward"], [null, "Reply"], [null, "Reply All"], [null, "Forward"]] as const) {
+  test(`${key ?? `${heading} icon`} quotes only selected email text`, async ({ page }) => {
     await page.goto("/");
     await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
     const body = page.getByTitle("Message content").contentFrame().locator("body");
@@ -241,16 +241,25 @@ for (const [key, heading] of [["r", "Reply"], ["a", "Reply All"]] as const) {
       selection.addRange(range);
       return selection.toString().trim();
     });
-    await page.keyboard.press(key);
+    if (key) await page.keyboard.press(key);
+    else await page.getByRole("button", { name: heading, exact: true }).click();
 
-    const reply = page.getByRole("dialog", { name: "Reply Message" });
+    const reply = page.getByRole("dialog", { name: heading === "Forward" ? "Forward Message" : "Reply Message" });
     await expect(reply.getByRole("heading", { name: heading, exact: true })).toBeVisible();
     const editor = reply.getByRole("textbox", { name: "Message Body" });
-    await expect(editor).toBeFocused();
     await expect(editor).toHaveText("");
+    if (heading === "Forward") {
+      const forwarded = reply.getByRole("region", { name: "Forwarded message" }).getByTitle("Message content").contentFrame();
+      await expect(forwarded.locator("blockquote")).toHaveText(selected);
+      await expect(forwarded.locator("body")).not.toContainText("A keyboard-first inbox that keeps your mail on this device.");
+      await reply.getByRole("button", { name: "Save and Close Draft" }).click();
+      await (await openFolders(page)).getByRole("button", { name: /Drafts/ }).click();
+      await page.getByRole("button", { name: /Fwd: Welcome to ThreeStrands/ }).click();
+      await expect(forwarded.locator("blockquote")).toHaveText(selected);
+      return;
+    }
+    await expect(editor).toBeFocused();
     const quoted = reply.locator('[aria-label="Quoted Text"]');
-    await expect(quoted).toBeHidden();
-    await reply.getByRole("button", { name: "Show Quoted Text" }).click();
     await expect(quoted).toBeVisible();
     await expect(quoted.locator('blockquote[type="cite"]')).toContainText(selected);
     await expect(quoted).not.toContainText("A keyboard-first inbox that keeps your mail on this device.");

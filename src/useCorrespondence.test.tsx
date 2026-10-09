@@ -79,6 +79,22 @@ describe("useCorrespondence", () => {
     expect(saveDraft.mock.calls[0][0].body).toBe("\n\nOn Tuesday, Sender wrote:\n> One line\n> Another line");
   });
 
+  it("starts a forward to the selected message with only the selected quote", async () => {
+    vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);
+    const header = "---------- Forwarded message ----------\nFrom: Sender\nDate: Tuesday\nSubject: Subject\nTo: Me\n\n";
+    const createDraft = vi.spyOn(mailClient, "createDraft").mockResolvedValue({
+      ...draft, revision: 0, mode: "forward", body: "", forwardedContent: { html: "<p>Full message</p>", text: header + "Full message" },
+    });
+    const saveDraft = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: 1 }));
+    const { result } = renderHook(() => useCorrespondence([], "latest", "account@example.com", ...snippetArgs, "thread-1"));
+
+    act(() => result.current.context.forward("older", "One line\nAnother line"));
+    await waitFor(() => expect(result.current.activeDraft?.revision).toBe(1));
+    expect(createDraft).toHaveBeenCalledWith("forward", "older", "account@example.com");
+    expect(saveDraft.mock.calls[0][0].forwardedContent?.text).toBe(header + "> One line\n> Another line");
+  });
+
   it("cancels the pending outbox send and refreshes the lists", async () => {
     // Fake timers keep the one-second outbox poll from firing on its own, so
     // every listOutbox call below comes from a load or an explicit refresh.

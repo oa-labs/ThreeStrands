@@ -38,6 +38,7 @@ type ComposeBodyEditorProps = {
   busy: boolean;
   recipientTo: string;
   availabilityText: string | null;
+  expandQuotedText?: boolean;
   snippets: Snippet[];
   onCreateSnippet(name: string, body: string): Promise<Snippet>;
   onUpdateSnippet(id: string, name: string, body: string): Promise<Snippet>;
@@ -51,7 +52,7 @@ type ComposeBodyEditorProps = {
 
 /** Owns editable DOM, selection, and compose-only controls; persistence stays outside. */
 export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBodyEditorProps>(function ComposeBodyEditor({
-  initial, attachments, messageAppearance, busy, recipientTo, availabilityText, snippets,
+  initial, attachments, messageAppearance, busy, recipientTo, availabilityText, expandQuotedText = false, snippets,
   onCreateSnippet, onUpdateSnippet, onDeleteSnippet,
   onChange, onError, onAttachImage, onRemoveImage, readInlineImage,
 }, ref) {
@@ -64,7 +65,7 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
   const savedSnippetRange = useRef<Range | null>(null);
   const insertedAvailabilityText = useRef<string | null>(null);
   const [snippetPickerOpen, setSnippetPickerOpen] = useState(false);
-  const [quoteExpanded, setQuoteExpanded] = useState(false);
+  const [quoteExpanded, setQuoteExpanded] = useState(expandQuotedText);
   // Lazy initializer: `useRef(expr)` would evaluate `expr` on every render, so
   // each status change re-sanitized the whole quoted thread before the next paint.
   const [initialBody] = useState(() => {

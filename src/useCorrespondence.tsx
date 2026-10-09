@@ -34,6 +34,7 @@ export function useCorrespondence(
   messageAppearance?: MessageAppearance,
 ) {
   const [active, setActive] = useState<Draft | null>(null);
+  const [selectedQuoteDraftId, setSelectedQuoteDraftId] = useState<string | null>(null);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [activeAvailabilityText, setActiveAvailabilityText] = useState<string | null>(null);
   const [activeReplyAssistInstruction, setActiveReplyAssistInstruction] = useState<string | null>(null);
@@ -82,6 +83,7 @@ export function useCorrespondence(
       const d = options?.followUpTaskId
         ? await mailClient.saveDraft({ ...prepared, followUpTaskId: options.followUpTaskId })
         : prepared;
+      setSelectedQuoteDraftId(quoted ? d.id : null);
       setActiveAvailabilityText(options?.availabilityText ?? null);
       setActiveReplyAssistInstruction(options?.replyAssistInstruction ?? null);
       setActiveFollowUpTaskId(options?.followUpTaskId ?? null);
@@ -175,7 +177,7 @@ export function useCorrespondence(
       followUpTaskId: taskId,
     });
   }, [start]);
-  const forward = useCallback((messageId?: string) => { void start("forward", messageId); }, [start]);
+  const forward = useCallback((messageId?: string, selectedQuote?: string) => { void start("forward", messageId, { selectedQuote }); }, [start]);
   const openInbox = useCallback(() => {
     setActive(null);
     setActiveThreadId(null);
@@ -216,6 +218,7 @@ export function useCorrespondence(
     sendDraft, sendDraftAndThen, attachFiles, discardDraft, draftReplyWithAI, undoSend, canUndoSend: pendingId !== null,
   }), [attachFiles, closing, compose, composerActive, discardDraft, draftReplyWithAI, forward, openDrafts, openInbox, openOutbox, reply, replyAll, sendDraft, sendDraftAndThen, undoSend, pendingId]);
   const openDraft = useCallback((draft: Draft) => {
+    setSelectedQuoteDraftId(null);
     setActiveFollowUpTaskId(draft.followUpTaskId ?? null);
     setActiveThreadId(null);
     setActive(draft);
@@ -232,6 +235,7 @@ export function useCorrespondence(
       key={active.id}
       ref={editor}
       draft={active}
+      expandQuotedText={active.id === selectedQuoteDraftId}
       accounts={accounts}
       messageAppearance={messageAppearance}
       snippets={snippets}
