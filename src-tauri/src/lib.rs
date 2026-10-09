@@ -728,11 +728,14 @@ async fn correspondence_request(
     state.correspondence.request(request).await
 }
 
+/// How often quitting re-checks for undo windows that are still open.
+const EXIT_UNDO_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
+
 #[tauri::command]
 async fn finish_exit(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     // Give pending undo windows time to complete while keeping the UI responsive.
     while state.database.pending_undo()? {
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        tokio::time::sleep(EXIT_UNDO_POLL_INTERVAL).await;
     }
     // Do not terminate while a provider request is awaiting acknowledgement.
     let _send_guard = state.correspondence.gate.lock().await;
@@ -1560,14 +1563,16 @@ async fn primary_service(handle: &tauri::AppHandle) -> Option<SyncService> {
     service.is_connected().then_some(service)
 }
 
+/// Lets an in-flight mutate_thread IPC land in SQLite before flushing.
+const PENDING_FLUSH_SETTLE_DELAY: std::time::Duration = std::time::Duration::from_millis(150);
+
 fn spawn_pending_flush(handle: &tauri::AppHandle) {
     let handle = handle.clone();
     tauri::async_runtime::spawn(async move {
         let Some(service) = primary_service(&handle).await else {
             return;
         };
-        // Wait for an in-flight mutate_thread IPC to land in SQLite.
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        tokio::time::sleep(PENDING_FLUSH_SETTLE_DELAY).await;
         log_failure("flushing pending mutations", service.flush_pending().await);
     });
 }
@@ -3943,6 +3948,10 @@ fn spawn_badge_loop(database: Arc<Database>, handle: tauri::AppHandle) {
 }
 
 const FIRST_STORAGE_MAINTENANCE_DELAY: std::time::Duration = std::time::Duration::from_secs(3 * 60);
+const STORAGE_MAINTENANCE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+/// Pause between storage backfill batches so they don't starve the database
+/// mutex that normal sync and read operations also need.
+const BACKFILL_BATCH_PAUSE: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// One-time, potentially slow (full file rewrite) conversion to incremental
 /// auto-vacuum, then a recurring prune of mail past the user's retention
@@ -3981,7 +3990,7 @@ fn spawn_storage_maintenance(database: Arc<Database>) {
             if converted == 0 {
                 break;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            tokio::time::sleep(BACKFILL_BATCH_PAUSE).await;
         }
         // Same for raw provider payloads cached before they were compressed.
         loop {
@@ -3995,7 +4004,7 @@ fn spawn_storage_maintenance(database: Arc<Database>) {
             if converted == 0 {
                 break;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            tokio::time::sleep(BACKFILL_BATCH_PAUSE).await;
         }
         // Same for search rows queued by schema v46, rewritten without
         // quoted history the thread already contains.
@@ -4010,7 +4019,7 @@ fn spawn_storage_maintenance(database: Arc<Database>) {
             if reindexed == 0 {
                 break;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            tokio::time::sleep(BACKFILL_BATCH_PAUSE).await;
         }
         // Stay clear of the launch window, when the inbox loads and every
         // account runs its first sync; maintenance is never urgent.
@@ -4018,7 +4027,7 @@ fn spawn_storage_maintenance(database: Arc<Database>) {
         loop {
             let prune_db = database.clone();
             let _ = tokio::task::spawn_blocking(move || run_storage_maintenance(&prune_db)).await;
-            tokio::time::sleep(std::time::Duration::from_secs(6 * 60 * 60)).await;
+            tokio::time::sleep(STORAGE_MAINTENANCE_INTERVAL).await;
         }
     });
 }

@@ -249,6 +249,17 @@ const SEARCH_PAGE_SIZE = 50;
 // local search at this cadence rather than waiting for the whole scan to
 // finish before a match becomes visible.
 const REMOTE_SEARCH_POLL_MS = 1200;
+// Keep-in-touch reminders fall due as time passes and as mail arrives,
+// without any local edit, so the Contacts badge is re-read on this cadence.
+const KEEP_IN_TOUCH_REFRESH_MS = 5 * 60_000;
+const TASK_RECONCILE_INTERVAL_MS = 60_000;
+// The action-analysis preview mirrors what the assistant is sent: the most
+// recent messages, each body truncated.
+const ACTION_ANALYSIS_MAX_MESSAGES = 15;
+const ACTION_ANALYSIS_MAX_BODY_CHARS = 6000;
+// A provider message can match a local draft only if it was sent no earlier
+// than this before the draft's last save, allowing for clock skew.
+const DRAFT_MATCH_CLOCK_SKEW_MS = 60_000;
 
 const MAILBOX_TITLES: Record<MailboxKind, string> = {
   inbox: "Inbox",
@@ -397,9 +408,7 @@ export function App() {
   }, []);
   useEffect(() => {
     void refreshKeepInTouchCount();
-    // Reminders fall due as time passes and as mail arrives, without any
-    // local edit, so the badge is re-read periodically.
-    const timer = window.setInterval(() => void refreshKeepInTouchCount(), 5 * 60_000);
+    const timer = window.setInterval(() => void refreshKeepInTouchCount(), KEEP_IN_TOUCH_REFRESH_MS);
     return () => window.clearInterval(timer);
   }, [refreshKeepInTouchCount]);
   const taskWorkspaceRef = useRef<TaskWorkspaceHandle>(null);
@@ -441,7 +450,7 @@ export function App() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       void mailClient.reconcileTasks().then(() => refreshTaskIndicators()).catch(logBackgroundFailure("Task reconciliation"));
-    }, 60_000);
+    }, TASK_RECONCILE_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [refreshTaskIndicators]);
   const [labelTargetIds, setLabelTargetIds] = useState<string[] | null>(null);
@@ -1662,11 +1671,11 @@ export function App() {
   }, [actionProposalKey]);
   const actionAnalysisPreview = useMemo(() => {
     if (!visibleDetail) return null;
-    const messages = visibleDetail.messages.slice(-15).map((message) => ({
+    const messages = visibleDetail.messages.slice(-ACTION_ANALYSIS_MAX_MESSAGES).map((message) => ({
       sourceMessageId: message.id,
       sender: message.sender,
       sentAt: message.sentAt,
-      bodyText: message.bodyText.slice(0, 6000),
+      bodyText: message.bodyText.slice(0, ACTION_ANALYSIS_MAX_BODY_CHARS),
     }));
     return JSON.stringify({
       userTimeZone: availabilityPreferences.timeZone,
@@ -3340,7 +3349,7 @@ function comparableMessageBody(value: string): string {
 
 function providerMessageMatchesDraft(message: Message, draft: Draft): boolean {
   if (parseAddress(message.sender).email.toLocaleLowerCase() !== draft.account.toLocaleLowerCase()) return false;
-  if (new Date(message.sentAt).getTime() < draft.updatedAt - 60_000) return false;
+  if (new Date(message.sentAt).getTime() < draft.updatedAt - DRAFT_MATCH_CLOCK_SKEW_MS) return false;
   const actual = comparableMessageBody(message.bodyText);
   const expected = comparableMessageBody(draft.body);
   return Boolean(expected) && (actual === expected || actual.includes(expected) || expected.includes(actual));

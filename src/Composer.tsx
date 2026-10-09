@@ -47,6 +47,17 @@ export type ComposerHandle = {
   focusBody(): void;
 };
 
+// Typing pauses this long before a draft autosave.
+const AUTOSAVE_DEBOUNCE_MS = 300;
+// Upper bound on the unsaved window while editing never pauses.
+const AUTOSAVE_INTERVAL_MS = 3_000;
+const IMAGE_MIN_WIDTH = 80;
+const IMAGE_MAX_WIDTH = 2000;
+// Width assumed for an inline image whose size is not yet known.
+const IMAGE_FALLBACK_WIDTH = 320;
+const IMAGE_KEY_STEP = 10;
+const IMAGE_KEY_LARGE_STEP = 50;
+
 export const Composer = forwardRef<ComposerHandle, {
   draft: Draft;
   accounts: Account[];
@@ -140,7 +151,7 @@ export const Composer = forwardRef<ComposerHandle, {
     latest.current = { ...latest.current, [field]: value }; generation.current++;
     setDraft(latest.current); setStatus("Unsaved changes");
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => { void flush().catch(logBackgroundFailure("Draft autosave")); }, 300);
+    timer.current = setTimeout(() => { void flush().catch(logBackgroundFailure("Draft autosave")); }, AUTOSAVE_DEBOUNCE_MS);
   }
   const editBody = useCallback(() => {
     // Keep the browser-owned contenteditable DOM off React's render path.
@@ -150,7 +161,7 @@ export const Composer = forwardRef<ComposerHandle, {
     generation.current++;
     setStatus("Unsaved changes");
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => { void flush().catch(logBackgroundFailure("Draft autosave")); }, 300);
+    timer.current = setTimeout(() => { void flush().catch(logBackgroundFailure("Draft autosave")); }, AUTOSAVE_DEBOUNCE_MS);
   }, [flush]);
   async function run(action: () => Promise<void>) {
     if (busyRef.current) return;
@@ -308,9 +319,9 @@ export const Composer = forwardRef<ComposerHandle, {
     resize.dataset.composeImageResize = "true";
     resize.setAttribute("role", "slider");
     resize.setAttribute("aria-label", "Resize Pasted Image");
-    resize.setAttribute("aria-valuemin", "80");
-    resize.setAttribute("aria-valuemax", "2000");
-    resize.setAttribute("aria-valuenow", String(image.width || 320));
+    resize.setAttribute("aria-valuemin", String(IMAGE_MIN_WIDTH));
+    resize.setAttribute("aria-valuemax", String(IMAGE_MAX_WIDTH));
+    resize.setAttribute("aria-valuenow", String(image.width || IMAGE_FALLBACK_WIDTH));
     resize.tabIndex = 0;
     resize.title = "Drag to resize";
     wrapper.append(resize);
@@ -347,7 +358,7 @@ export const Composer = forwardRef<ComposerHandle, {
         window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(caret);
         image.onload = () => {
           const available = editor.clientWidth;
-          const width = Math.max(80, Math.min(image.naturalWidth, available));
+          const width = Math.max(IMAGE_MIN_WIDTH, Math.min(image.naturalWidth, available));
           if (width) { image.setAttribute("width", String(Math.round(width))); wrapper.style.width = `${Math.round(width)}px`; }
           editBody();
         };
@@ -385,7 +396,7 @@ export const Composer = forwardRef<ComposerHandle, {
     // continuous typing/dictation keeps resetting that debounce, so bound
     // the worst-case unsaved window regardless of how long editing continues.
     // `flush()` already no-ops if nothing changed since the last save.
-    const autosave = window.setInterval(() => { void flush().catch(logBackgroundFailure("Draft autosave")); }, 3_000);
+    const autosave = window.setInterval(() => { void flush().catch(logBackgroundFailure("Draft autosave")); }, AUTOSAVE_INTERVAL_MS);
     if (initial.mode === "forward" && initial.attachments.some((attachment) => !attachment.ready)) {
       void run(async () => {
         let next = await flush();
@@ -476,10 +487,10 @@ export const Composer = forwardRef<ComposerHandle, {
       event.preventDefault();
       const editor = event.currentTarget;
       const startX = event.clientX;
-      const startWidth = wrapper.getBoundingClientRect().width || image.width || 320;
-      const maximum = Math.max(80, editor.clientWidth);
+      const startWidth = wrapper.getBoundingClientRect().width || image.width || IMAGE_FALLBACK_WIDTH;
+      const maximum = Math.max(IMAGE_MIN_WIDTH, editor.clientWidth);
       const move = (moveEvent: PointerEvent) => {
-        const width = Math.round(Math.min(Math.max(startWidth + moveEvent.clientX - startX, 80), maximum));
+        const width = Math.round(Math.min(Math.max(startWidth + moveEvent.clientX - startX, IMAGE_MIN_WIDTH), maximum));
         wrapper.style.width = `${width}px`;
         image.setAttribute("width", String(width));
         handle.setAttribute("aria-valuenow", String(width));
@@ -506,7 +517,7 @@ export const Composer = forwardRef<ComposerHandle, {
         const image = wrapper?.querySelector("img");
         if (!wrapper || !image) return;
         const direction = event.key === "ArrowRight" ? 1 : -1;
-        const width = Math.min(Math.max((image.width || 320) + direction * (event.shiftKey ? 50 : 10), 80), event.currentTarget.clientWidth || 2000);
+        const width = Math.min(Math.max((image.width || IMAGE_FALLBACK_WIDTH) + direction * (event.shiftKey ? IMAGE_KEY_LARGE_STEP : IMAGE_KEY_STEP), IMAGE_MIN_WIDTH), event.currentTarget.clientWidth || IMAGE_MAX_WIDTH);
         wrapper.style.width = `${width}px`;
         image.setAttribute("width", String(width));
         resize.setAttribute("aria-valuenow", String(width));

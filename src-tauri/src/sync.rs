@@ -23,6 +23,11 @@ use crate::{
 /// Floor used by adaptive polling and by resume/foreground catch-up.
 pub const MIN_POLL_INTERVAL: Duration = Duration::from_secs(15);
 const MAX_POLL_INTERVAL: Duration = Duration::from_secs(300);
+/// Retry delay while an account's credentials are unavailable.
+const AUTH_UNAVAILABLE_RETRY_INTERVAL: Duration = Duration::from_secs(30);
+/// Backoff after a non-retryable poll failure (retryable server errors back
+/// off to [`MAX_POLL_INTERVAL`]).
+const POLL_FAILURE_RETRY_INTERVAL: Duration = Duration::from_secs(60);
 
 /// How often the background poll loop re-derives inbox membership from
 /// Gmail's live INBOX listing, independent of history-based incremental
@@ -407,7 +412,7 @@ impl SyncService {
             let jitter = Duration::from_millis(rand::rng().random_range(0..250));
             delay = wait_for_next_poll(&self.wake, delay, jitter).await;
             if !self.auth.available() {
-                delay = Duration::from_secs(30);
+                delay = AUTH_UNAVAILABLE_RETRY_INTERVAL;
                 continue;
             }
             delay = self.poll_once(delay, &on_synced).await;
@@ -536,7 +541,7 @@ fn next_poll_delay(
         Ok(status) if pending_before > 0 || status.pending_mutations > 0 => MIN_POLL_INTERVAL,
         Ok(_) => (current * 2).min(MAX_POLL_INTERVAL),
         Err(ProviderError::RetryableServer(_)) => MAX_POLL_INTERVAL,
-        Err(_) => Duration::from_secs(60),
+        Err(_) => POLL_FAILURE_RETRY_INTERVAL,
     }
 }
 
@@ -1532,7 +1537,7 @@ mod tests {
                     "display text happens to mention rate limit".into(),
                 )),
             ),
-            Duration::from_secs(60)
+            POLL_FAILURE_RETRY_INTERVAL
         );
     }
 
