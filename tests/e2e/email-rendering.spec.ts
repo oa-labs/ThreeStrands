@@ -48,6 +48,34 @@ test.describe("email rendering fixtures", () => {
   }
 
   for (const theme of ["light", "dark"]) {
+    for (const { fixture, prior, address, notice } of [
+      { fixture: "repeatedTableFooter", prior: "earlierTableReport", address: "123 Example Street", notice: "please unsubscribe" },
+      { fixture: "repeatedFlowFooter", prior: "earlierFlowReport", address: "456 Demonstration Avenue", notice: "unsubscribe from future updates" },
+    ]) {
+      for (const width of [390, 1200]) {
+        test(`${fixture} remains complete in a conversation in ${theme} mode at ${width}px`, async ({ page }) => {
+          await page.setViewportSize({ width, height: 900 });
+          await page.goto(`/tests/email-rendering.html?theme=${theme}&fixture=${fixture}&prior=${prior}`);
+          const frame = page.locator("iframe.message-body");
+          const body = frame.contentFrame().locator("body");
+          const addressText = body.getByText(address, { exact: false });
+          const noticeText = body.getByText(notice, { exact: false });
+          await expect(addressText).toBeVisible();
+          await expect(noticeText).toBeVisible();
+          await expect(page.getByRole("button", { name: "Show quoted content" })).toHaveCount(0);
+          const logo = body.locator("img").first();
+          // The address stays beside the logo, and the entire notice fits
+          // inside the frame rather than leaving a truncated footer.
+          const logoBox = (await logo.boundingBox())!;
+          const addressBox = (await addressText.boundingBox())!;
+          expect(addressBox.x).toBeGreaterThanOrEqual(logoBox.x + logoBox.width);
+          const frameBox = (await frame.boundingBox())!;
+          const noticeBox = (await noticeText.boundingBox())!;
+          expect(noticeBox.y + noticeBox.height).toBeLessThanOrEqual(frameBox.y + frameBox.height);
+        });
+      }
+    }
+
     for (const fixture of ["notification", "transactional"]) {
       for (const width of [390, 1200]) {
         test(`${fixture} stays contained in ${theme} mode at ${width}px`, async ({ page }) => {

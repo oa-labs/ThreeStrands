@@ -16,6 +16,7 @@ import { EMAIL_CSS_LIMITS, EMAIL_IMAGE_LIMITS, EMAIL_QUOTE_FOLDING_LIMITS } from
 import { buildThreadTextIndex, foldQuotedHistoryHtml, QUOTED_HISTORY_FOLD_ATTRIBUTE, type PriorThreadText } from "./quotedHistory";
 import { emailRenderingFixtures } from "./test/emailRenderingFixtures";
 import { setMailtoHandler } from "./mailtoLink";
+import { threadTextIndex } from "./threadTextIndex";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
@@ -572,6 +573,26 @@ describe("SafeMessage", () => {
     const priorTo = (...texts: string[]) => buildThreadTextIndex(texts).before(texts.length);
     const reply = (sig: string) => `Fixed now.<br><br>${sig}<br><br>On Mon, A. Sender wrote:<blockquote>Is the feed fixed?</blockquote>`;
 
+    it.each([
+      { fixture: "repeatedTableFooter", earlier: "earlierTableReport", address: "123 Example Street", notice: "please unsubscribe" },
+      { fixture: "repeatedFlowFooter", earlier: "earlierFlowReport", address: "456 Demonstration Avenue", notice: "unsubscribe from future updates" },
+    ] as const)("keeps the $fixture intact in a conversation", ({ fixture, earlier, address, notice }) => {
+      const index = threadTextIndex([{ bodyText: "", bodyHtml: emailRenderingFixtures[earlier] }]);
+      const prior = index.before(1);
+      const html = emailRenderingFixtures[fixture];
+      expect(foldSanitizedWith(emailRenderingFixtures[earlier], index.before(0))).toBeNull();
+      expect(foldSanitizedWith(html, prior)).toBeNull();
+      const untrusted = html.replace("<img ", '<img onerror="alert(1)" ')
+        .replace('href="https://example.com/unsubscribe"', 'href="javascript:alert(2)"');
+      render(<SafeMessage html={`${untrusted}<script>alert(3)</script>`} priorThreadText={prior} />);
+      const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+      expect(frame.srcdoc).toContain(address);
+      expect(frame.srcdoc).toContain(notice);
+      expect(frame.srcdoc).not.toMatch(/<script|onerror|javascript:|\ssrc="https:/);
+      expect(frame.srcdoc).toContain("script-src 'none'");
+      expect(screen.queryByRole("button", { name: "Show quoted content" })).toBeNull();
+    });
+
     it("extends a structural fold over a signature repeated from an earlier message", () => {
       const folded = foldSanitizedWith(reply(signature), priorTo(earlier));
       expect(folded).toContain("Fixed now.");
@@ -622,16 +643,11 @@ describe("SafeMessage", () => {
       else expect(folded).toContain("sig0");
     });
 
-    it.each([
-      { copiedWords: EMAIL_QUOTE_FOLDING_LIMITS.minRepeatedRegionShingles + EMAIL_QUOTE_FOLDING_LIMITS.shingleWords - 2, folds: false },
-      { copiedWords: EMAIL_QUOTE_FOLDING_LIMITS.minRepeatedRegionShingles + EMAIL_QUOTE_FOLDING_LIMITS.shingleWords - 1, folds: true },
-      { copiedWords: EMAIL_QUOTE_FOLDING_LIMITS.minRepeatedRegionShingles + EMAIL_QUOTE_FOLDING_LIMITS.shingleWords, folds: true },
-    ])("folds an unmarked trailing copy of $copiedWords earlier words: $folds", ({ copiedWords, folds }) => {
+    it.each([10, 11, 12, 100])("keeps %i repeated trailing words visible without quote evidence", (copiedWords) => {
       const copied = words(copiedWords, "old");
       const html = `<p>Agreed, ship it.</p><div>${copied}</div>`;
-      const folded = foldSanitizedWith(html, priorTo(copied));
-      if (folds) expect(folded).toBe("<p>Agreed, ship it.</p>");
-      else expect(folded).toBeNull();
+      expect(foldSanitizedWith(html, priorTo(copied))).toBeNull();
+      expect(collapseQuotedHistoryText(`Agreed, ship it.\n\n${copied}`, priorTo(copied))).toBeNull();
     });
 
     it("confirms a lone trailing citation whose text came from the thread", () => {
@@ -663,7 +679,7 @@ describe("SafeMessage", () => {
       expect(collapseQuotedHistoryText(text)).toContain("Engineering Lead");
 
       const copied = words(12, "old");
-      expect(collapseQuotedHistoryText(`Agreed.\n\n${copied}`, priorTo(copied))).toBe("Agreed.");
+      expect(collapseQuotedHistoryText(`Agreed.\n\n${copied}`, priorTo(copied))).toBeNull();
       expect(collapseQuotedHistoryText(`Agreed.\n\n${copied}\nNew closing thought.`, priorTo(copied))).toBeNull();
     });
 

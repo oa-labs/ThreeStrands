@@ -210,9 +210,9 @@ function trailingQuoteRunStart(lines: Line[]): number {
 
 /**
  * Text already seen earlier in the thread, as 4-word shingles. Repeated text
- * is fill-in evidence only: it extends a structural fold upward over a
- * repeated signature, confirms a lone citation, or — with a larger minimum —
- * folds a trailing run that carries no structural markers at all.
+ * is corroborating evidence only: it extends a structural fold upward over a
+ * repeated signature or confirms a lone citation. Repetition by itself is
+ * ambiguous: reports and notifications routinely share current footers.
  */
 export type PriorThreadText = { has(shingle: string): boolean };
 
@@ -437,8 +437,7 @@ function findQuotedHistoryFold(container: Element, prior?: PriorThreadText): Fol
   const run = repeatedRunAbove(repeated, lines.length);
   if (run.top >= lines.length) return null;
   const confirmsCitation = regions.some((region) => region.start >= lines[run.top].start);
-  const needed = confirmsCitation ? LIMITS.minCorroboratingShingles : LIMITS.minRepeatedRegionShingles;
-  return run.matched >= needed ? foldAtLine(run.top) : null;
+  return confirmsCitation && run.matched >= LIMITS.minCorroboratingShingles ? foldAtLine(run.top) : null;
 }
 
 /** Index of the first line starting a run of minQuoteRunLines+ consecutive `>`-quoted lines, or -1. */
@@ -507,6 +506,6 @@ export function foldQuotedHistoryText(text: string, prior?: PriorThreadText): { 
     }
     return visibleBefore(cut);
   }
-  const run = repeatedRunAbove(repeated, lines.length);
-  return run.top < lines.length && run.matched >= LIMITS.minRepeatedRegionShingles ? visibleBefore(run.top) : null;
+  // As with HTML, repeated boilerplate alone does not establish a quote.
+  return null;
 }

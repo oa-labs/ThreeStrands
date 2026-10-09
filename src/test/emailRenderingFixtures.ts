@@ -1,4 +1,45 @@
+// Repeated boilerplate is current content, even when a conversation contains
+// two reports with the same footer. Keep both table and flow layouts covered.
+const tableReportFooter = `
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f8f9fa">
+    <tr><td style="padding:30px 20px">
+      <table width="100%" cellpadding="0" cellspacing="0"><tr>
+        <td width="72"><img src="https://example.com/logo.png" width="64" alt="Example"></td>
+        <td width="16" style="border-left:1px solid #5f6368"><img src="https://example.com/spacer.gif" width="16" alt=""></td>
+        <td><table cellpadding="0" cellspacing="0"><tr><td style="font-size:10px;line-height:15px;color:#5f6368">
+          <a style="color:#5f6368">© 2026 Example LLC<br>123 Example Street,<br>Sample City, ST 12345</a><br>
+          <a href="https://example.com" style="color:#5f6368;text-decoration:underline">www.example.com</a>
+        </td></tr></table></td>
+      </tr></table>
+    </td></tr>
+    <tr><td style="padding:0 20px 30px;font-size:10px;line-height:15px;color:#5f6368">
+      This email was sent because you requested monthly insights about your business profile.
+      To stop receiving future reports, please unsubscribe <a href="https://example.com/unsubscribe">here</a>.
+    </td></tr>
+  </table>
+  <img src="https://example.com/tracker.gif" width="1" height="1" alt="">
+`;
+
+const flowReportFooter = `
+  <div style="background-color:#f4f4f4;padding:24px">
+    <div style="display:flex;gap:16px;align-items:center">
+      <img src="https://example.com/mark.png" width="48" alt="Example">
+      <div style="border-left:1px solid #666;padding-left:16px;font-size:12px;line-height:18px">
+        © 2026 Sample Organization<br>456 Demonstration Avenue<br>Demo Town, ST 67890
+      </div>
+    </div>
+    <p style="font-size:12px;line-height:18px">
+      You receive these account updates because you subscribed to our monthly activity reports.
+      You can change your preferences or <a href="https://example.com/unsubscribe">unsubscribe from future updates</a> at any time.
+    </p>
+  </div>
+`;
+
 export const emailRenderingFixtures = {
+  earlierTableReport: `<p>Your first report is ready.</p>${tableReportFooter}`,
+  repeatedTableFooter: `<p>Your latest report includes new results.</p>${tableReportFooter}`,
+  earlierFlowReport: `<p>Your previous account update.</p>${flowReportFooter}`,
+  repeatedFlowFooter: `<p>New activity has been recorded.</p>${flowReportFooter}`,
   smallTextTable: `
     <table cellpadding="6" cellspacing="4"><tr><td style="font-size:10px;line-height:12px">
       Table copy <span style="font-size:80%">Relative footnote</span><span style="font-size:2.8em">Large relative heading</span>
