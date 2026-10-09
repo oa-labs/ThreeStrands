@@ -177,6 +177,17 @@ pub struct ProviderCapabilities {
     /// actions the frontend offers. See [`LabelModel`].
     #[allow(dead_code)]
     pub label_model: LabelModel,
+    /// Whether a message's delivery can be *verified* against a server-side
+    /// sent copy. Gmail stores the sent message itself, so an uncertain send
+    /// is resolved by looking it up with [`MailSend::find_sent_copy`]
+    /// (`true`). A provider that keeps no server-side sent copy of its own —
+    /// an IMAP account where only we would `APPEND` to `\Sent`, and the
+    /// connection dropped before we could — has nothing to look the send up
+    /// against, so `find_sent_copy` can never confirm it (`false`). The
+    /// delivery path reads this to decide whether an unconfirmable send is an
+    /// error to re-check or the terminal `Unverifiable` outcome from
+    /// `docs/imap-design.md` ("Sending"). See [`crate::correspondence`].
+    pub verifiable_delivery: bool,
 }
 
 /// What a provider reports back after accepting a message for delivery.

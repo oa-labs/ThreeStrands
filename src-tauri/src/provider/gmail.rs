@@ -647,6 +647,11 @@ mod tests {
         assert!(capabilities.server_search);
         assert!(capabilities.provided_threads);
         assert_eq!(capabilities.label_model, LabelModel::GmailLabels);
+        // Gmail stores the sent copy server-side, so an uncertain send is
+        // resolved by find_sent_copy and delivery stays verifiable — the
+        // reconcile path must keep Gmail on its existing error branch, never
+        // the IMAP `unverifiable` outcome.
+        assert!(capabilities.verifiable_delivery);
     }
 
     mod unauthorized_replay {
@@ -1365,6 +1370,9 @@ impl MailProvider for GmailClient {
             // locally.
             provided_threads: true,
             label_model: LabelModel::GmailLabels,
+            // Gmail stores the sent message server-side, so an uncertain send
+            // is confirmed by `find_sent_copy`. Delivery stays verifiable.
+            verifiable_delivery: true,
         }
     }
 }

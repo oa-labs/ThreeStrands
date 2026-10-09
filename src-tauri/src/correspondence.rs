@@ -617,6 +617,29 @@ impl Database {
             )
             .map_err(error)
     }
+    /// Resolves an `uncertain` send to the terminal `unverifiable` state:
+    /// the message was handed to the server (its data was sent) but the
+    /// outcome can never be confirmed, because this provider keeps no
+    /// server-side sent copy to reconcile against. Distinct from `sent`
+    /// (confirmed delivered), `failed` (confirmed not delivered), and
+    /// `uncertain` (unconfirmed but still worth re-checking). Terminal:
+    /// `tick` only re-processes `undo_pending`/`ready`/`uncertain`, so
+    /// `unverifiable` is never retried or reconciled again. The user is
+    /// shown "may have been sent" and decides whether to resend. The guard
+    /// on `state='uncertain'` makes this a no-op if the row has since moved
+    /// on. See `docs/imap-design.md` ("Sending").
+    pub fn mark_unverifiable(&self, id: &str) -> Result<(), String> {
+        self.connection()?
+            .execute(
+                "UPDATE outbox_messages SET state='unverifiable', \
+                 error='This message was sent, but delivery could not be confirmed. \
+                 Check your Sent folder before sending it again.' \
+                 WHERE id=?1 AND state='uncertain'",
+                [id],
+            )
+            .map_err(error)?;
+        Ok(())
+    }
     pub fn queue(
         &self,
         id: &str,
@@ -1227,8 +1250,17 @@ impl Correspondence {
                 self.database
                     .upsert_thread(&item.draft.account, &normalized)?;
             }
-        } else {
+        } else if provider.capabilities().verifiable_delivery {
             return Err("Delivery is still uncertain. No automatic retry was made. Check Gmail Sent before composing another message.".into());
+        } else {
+            // The provider keeps no server-side sent copy to confirm against
+            // (`docs/imap-design.md`, "Sending": an uncertain SMTP result
+            // can't be checked against the server because only we would have
+            // `APPEND`ed the copy). `find_sent_copy` returning nothing is the
+            // expected terminal outcome here, not an error — resolve to the
+            // design's `Unverifiable` state so the send stops being re-checked
+            // and is shown as "may have been sent" rather than retried.
+            self.database.mark_unverifiable(id)?;
         }
         Ok(())
     }
@@ -1608,6 +1640,68 @@ mod tests {
             let item = db.outbox().unwrap().remove(0);
             assert_eq!(item.state, "uncertain");
             assert!(db.cancel_send(&item.id, true).is_err());
+        }
+    }
+    #[test]
+    fn an_uncertain_send_resolves_to_terminal_unverifiable_for_a_provider_without_a_sent_copy() {
+        // Mirrors the reconcile path for a non-verifiable provider: an
+        // `uncertain` send whose `find_sent_copy` can never confirm it is
+        // moved to the design's terminal `unverifiable` outcome rather than
+        // being left to re-check forever. `docs/imap-design.md` ("Sending").
+        let db = database();
+        let d = saved(&db);
+        let item = db.queue(&d.id, d.revision, false, Path::new("/unused")).unwrap();
+        db.connection()
+            .unwrap()
+            .execute(
+                "UPDATE outbox_messages SET state='uncertain', error='dropped before 250' WHERE id=?1",
+                [&item.id],
+            )
+            .unwrap();
+
+        db.mark_unverifiable(&item.id).unwrap();
+
+        let resolved = db.outbox().unwrap().into_iter().find(|o| o.id == item.id).unwrap();
+        assert_eq!(resolved.state, "unverifiable");
+        assert!(
+            resolved
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("could not be confirmed"),
+            "{:?}",
+            resolved.error
+        );
+
+        // Terminal: `tick` only re-processes undo_pending/ready/uncertain, so
+        // an unverifiable row is never picked up again. Re-marking is a no-op
+        // because the guard requires state='uncertain'.
+        db.mark_unverifiable(&item.id).unwrap();
+        assert_eq!(
+            db.outbox().unwrap().into_iter().find(|o| o.id == item.id).unwrap().state,
+            "unverifiable"
+        );
+    }
+    #[test]
+    fn mark_unverifiable_only_touches_an_uncertain_row() {
+        // The guard must never silently repurpose a sent/failed/ready row.
+        let db = database();
+        for state in ["sent", "failed", "ready", "undo_pending", "sending"] {
+            let d = saved(&db);
+            let item = db.queue(&d.id, d.revision, false, Path::new("/unused")).unwrap();
+            db.connection()
+                .unwrap()
+                .execute(
+                    "UPDATE outbox_messages SET state=?2 WHERE id=?1",
+                    params![item.id, state],
+                )
+                .unwrap();
+            db.mark_unverifiable(&item.id).unwrap();
+            assert_eq!(
+                db.outbox().unwrap().into_iter().find(|o| o.id == item.id).unwrap().state,
+                state,
+                "mark_unverifiable must not touch a {state} row"
+            );
         }
     }
     #[test]
