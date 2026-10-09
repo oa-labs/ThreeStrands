@@ -9,6 +9,7 @@
 //! tree whichever wire format it arrived in.
 
 pub mod gmail;
+pub mod imap;
 
 use async_trait::async_trait;
 
@@ -66,6 +67,16 @@ pub type ProviderResult<T> = Result<T, ProviderError>;
 /// here. A provider whose change detection is per-folder, or that needs to
 /// resume mid-page, encodes that structure in the same string instead of
 /// widening this type.
+///
+/// The IMAP provider's position is deliberately *not* its UID state: per
+/// `docs/imap-design.md`, the UID-to-id map and each mailbox's counters live
+/// in the [`ImapStateStore`](crate::provider::imap::ImapStateStore), and the
+/// cursor "stays small, holding only a sync generation number". That
+/// generation is a provider-neutral monotonic epoch — bumped whenever a sync
+/// round reconciles against the store — carried through this opaque string by
+/// [`SyncCursor::from_generation`] / [`SyncCursor::generation`], so slimming
+/// the IMAP cursor needs no change to this shared type or to Gmail's own
+/// `historyId` encoding.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SyncCursor(String);
 
@@ -76,6 +87,28 @@ impl SyncCursor {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// A cursor carrying only a provider-neutral sync generation number, as
+    /// the IMAP provider uses it. The decimal encoding keeps the persisted
+    /// `sync_state.cursor` a plain string like every other provider's.
+    ///
+    /// The IMAP provider that mints and reads these lands in phase 2, so the
+    /// pair has no non-test caller yet; the `dead_code` allow is scoped to
+    /// them and removed with that first caller, matching how slice 1 scoped
+    /// the unused `ProviderCapabilities` fields.
+    #[allow(dead_code)]
+    pub fn from_generation(generation: u64) -> Self {
+        Self(generation.to_string())
+    }
+
+    /// Reads this cursor back as a sync generation number. `None` when the
+    /// string was not minted by [`SyncCursor::from_generation`] (for example
+    /// a Gmail `historyId` cursor), so a caller can tell a generation cursor
+    /// apart from any other provider's encoding rather than guessing.
+    #[allow(dead_code)]
+    pub fn generation(&self) -> Option<u64> {
+        self.0.parse().ok()
     }
 }
 

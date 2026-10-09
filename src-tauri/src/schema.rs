@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 53;
+pub(crate) const LATEST_VERSION: i64 = 54;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1437,6 +1437,46 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
             email TEXT PRIMARY KEY NOT NULL
         ); PRAGMA user_version=53;").map_err(error)?;
     }
+    if version < 54 {
+        // The IMAP provider's own persistent sync state (see
+        // `docs/imap-design.md`, "Data model" / "Message identity"). This is
+        // the backing store behind the `ImapStateStore` seam in
+        // `provider::imap`: the per-account mailbox catalog with each
+        // mailbox's UID counters, and the UID-to-message-id location map that
+        // the opaque `SyncCursor` deliberately does not carry. Entirely inert
+        // until the IMAP provider lands (phase 2): no Gmail code path reads or
+        // writes these tables, so Gmail sync state is untouched. Reserve a new
+        // schema number for every later change to this shape rather than
+        // editing this block once it has shipped.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS imap_mailboxes (
+                account_id TEXT NOT NULL,
+                name TEXT NOT NULL,              -- decoded; delimiter kept separately
+                delimiter TEXT,
+                special_use TEXT,                -- \\Sent, \\Archive, … or NULL
+                uidvalidity INTEGER NOT NULL,
+                uidnext INTEGER NOT NULL,
+                highestmodseq INTEGER,           -- NULL without CONDSTORE
+                permanent_flags_json TEXT NOT NULL,  -- PERMANENTFLAGS as listed
+                permanent_keywords INTEGER NOT NULL, -- PERMANENTFLAGS contains \\*
+                PRIMARY KEY (account_id, name)
+            );
+            CREATE TABLE IF NOT EXISTS imap_locations (
+                account_id TEXT NOT NULL,
+                mailbox TEXT NOT NULL,
+                uidvalidity INTEGER NOT NULL,
+                uid INTEGER NOT NULL,
+                message_id TEXT NOT NULL,        -- the stable id above
+                flags_json TEXT NOT NULL,
+                modseq INTEGER,
+                PRIMARY KEY (account_id, mailbox, uidvalidity, uid)
+            );
+            CREATE INDEX IF NOT EXISTS imap_locations_by_message
+                ON imap_locations(account_id, message_id);
+            PRAGMA user_version=54;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1495,6 +1535,67 @@ mod tests {
         connection.execute("INSERT INTO contact_suggestion_suppressions(email) VALUES('person@example.com')", []).unwrap();
         super::migrate(&mut connection).unwrap();
         assert_eq!(connection.query_row("SELECT COUNT(*) FROM contact_suggestion_suppressions", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+    }
+
+    #[test]
+    fn v54_adds_the_imap_state_store_tables_and_reruns_cleanly() {
+        // A fresh database reaches the latest version with the IMAP provider
+        // state-store tables present and queryable.
+        let mut fresh = unmigrated_database_with_one_account();
+        super::migrate(&mut fresh).unwrap();
+        for table in ["imap_mailboxes", "imap_locations"] {
+            fresh
+                .execute(&format!("SELECT * FROM {table}"), [])
+                .unwrap_or_else(|error| panic!("table {table} should exist and be queryable: {error}"));
+        }
+        assert_eq!(
+            fresh.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
+            super::LATEST_VERSION
+        );
+
+        // An upgraded database (one that stopped at v53) converges to the same
+        // schema: rebuild the v53 shape, re-run, and confirm the tables appear
+        // and accept rows with the design-doc columns.
+        let mut upgraded = unmigrated_database_with_one_account();
+        super::migrate(&mut upgraded).unwrap();
+        upgraded
+            .execute_batch(
+                "DROP INDEX imap_locations_by_message;
+                 DROP TABLE imap_locations;
+                 DROP TABLE imap_mailboxes;
+                 PRAGMA user_version=53;",
+            )
+            .unwrap();
+        super::migrate(&mut upgraded).unwrap();
+        upgraded
+            .execute(
+                "INSERT INTO imap_mailboxes(account_id,name,delimiter,special_use,uidvalidity,uidnext,highestmodseq,permanent_flags_json,permanent_keywords)
+                 VALUES ('you@gmail.com','INBOX','/','\\Inbox',95479608,979,NULL,'[\"\\\\Seen\",\"\\\\Flagged\"]',0)",
+                [],
+            )
+            .unwrap();
+        upgraded
+            .execute(
+                "INSERT INTO imap_locations(account_id,mailbox,uidvalidity,uid,message_id,flags_json,modseq)
+                 VALUES ('you@gmail.com','INBOX',95479608,42,'imap:you@gmail.com:abc','[\"\\\\Seen\"]',NULL)",
+                [],
+            )
+            .unwrap();
+        let message_id: String = upgraded
+            .query_row(
+                "SELECT message_id FROM imap_locations WHERE account_id='you@gmail.com' AND uid=42",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(message_id, "imap:you@gmail.com:abc");
+        // Re-running once more over the already-created tables must not fail.
+        upgraded.pragma_update(None, "user_version", 53).unwrap();
+        super::migrate(&mut upgraded).unwrap();
+        assert_eq!(
+            upgraded.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
+            super::LATEST_VERSION
+        );
     }
 
     #[test]
