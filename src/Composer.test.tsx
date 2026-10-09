@@ -5,7 +5,7 @@ import DOMPurify from "dompurify";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Composer, type ComposerHandle } from "./Composer";
-import type { Draft } from "./correspondence";
+import type { Draft, OutboxItem } from "./correspondence";
 import { mailClient } from "./data/client";
 import type { Account, Snippet } from "./domain";
 import {
@@ -51,6 +51,13 @@ const snippetProps = {
   onUpdateSnippet: vi.fn(),
   onDeleteSnippet: vi.fn(),
 };
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
 
 describe("Composer From selector", () => {
   afterEach(() => {
@@ -164,50 +171,123 @@ describe("Composer list marker shortcuts", () => {
 });
 
 describe("Composer pasted links", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+  });
+
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
-  const renderWithSelection = (collapsed: boolean) => {
-    render(<Composer draft={{ ...draft, body: "Read the docs" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    const editor = screen.getByRole("textbox", { name: "Message Body" });
-    const text = editor.firstChild!;
+  const renderWithSelection = (collapsed: boolean, quoted = false) => {
+    const initial = quoted
+      ? { ...draft, mode: "reply" as const, bodyHtml: 'Answer<br><br>On Monday, Sender wrote:<blockquote type="cite">Read the docs</blockquote>' }
+      : { ...draft, body: "Read the docs" };
+    render(<Composer draft={initial} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    if (quoted) fireEvent.click(screen.getByRole("button", { name: "Show Quoted Text" }));
+    const editor = screen.getByRole("textbox", { name: quoted ? "Quoted Text" : "Message Body" });
+    const text = quoted ? editor.querySelector("blockquote")!.firstChild! : editor.firstChild!;
     const range = document.createRange();
     range.setStart(text, 9);
     range.setEnd(text, collapsed ? 9 : 13);
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    const execute = vi.fn(() => true);
+    // Simulate a browser that performs the edit without emitting `input`.
+    const execute = vi.fn((command: string, _ui: boolean, value: string) => {
+      const range = selection.getRangeAt(0);
+      if (command === "createLink") {
+        const link = document.createElement("a");
+        link.href = value;
+        link.append(range.extractContents());
+        range.insertNode(link);
+      } else {
+        range.deleteContents();
+        range.insertNode(range.createContextualFragment(value));
+      }
+      return true;
+    });
     Object.defineProperty(document, "execCommand", { configurable: true, value: execute });
     return { editor, execute };
   };
 
-  it("links the selected text when a URL is pasted over it", () => {
+  it("links the selected text and saves without a native input event", async () => {
     const { editor, execute } = renderWithSelection(false);
 
     fireEvent.paste(editor, { clipboardData: { files: [], getData: () => "https://example.com/docs" } });
 
     expect(execute).toHaveBeenCalledWith("createLink", false, "https://example.com/docs");
     expect(execute).not.toHaveBeenCalledWith("insertHTML", expect.anything(), expect.anything());
+    expect(editor.querySelector("a")).toHaveTextContent("docs");
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(mailClient.saveDraft).toHaveBeenCalledWith(expect.objectContaining({
+      body: "Read the docs",
+      bodyHtml: 'Read the <a href="https://example.com/docs">docs</a>',
+    }));
   });
 
-  it("inserts a pasted URL as a link when nothing is selected", () => {
+  it("inserts and saves a pasted URL as a link when nothing is selected", async () => {
     const { editor, execute } = renderWithSelection(true);
 
     fireEvent.paste(editor, { clipboardData: { files: [], getData: () => "https://example.com/docs" } });
 
     expect(execute).toHaveBeenCalledWith("insertHTML", false, '<a href="https://example.com/docs">https://example.com/docs</a>');
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(mailClient.saveDraft).toHaveBeenCalledWith(expect.objectContaining({
+      bodyHtml: 'Read the <a href="https://example.com/docs">https://example.com/docs</a>docs',
+    }));
   });
 
-  it("replaces the selection with pasted text that is not a lone URL", () => {
+  it("replaces and saves the selection with pasted text that is not a lone URL", async () => {
     const { editor, execute } = renderWithSelection(false);
 
     fireEvent.paste(editor, { clipboardData: { files: [], getData: () => "see https://example.com/docs" } });
 
     expect(execute).not.toHaveBeenCalledWith("createLink", expect.anything(), expect.anything());
     expect(execute).toHaveBeenCalledWith("insertHTML", false, 'see <a href="https://example.com/docs">https://example.com/docs</a>');
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(mailClient.saveDraft).toHaveBeenCalledWith(expect.objectContaining({
+      body: "Read the see https://example.com/docs",
+      bodyHtml: 'Read the see <a href="https://example.com/docs">https://example.com/docs</a>',
+    }));
+  });
+
+  it.each([false, "throw"])("reports a failed paste (%s) without marking the draft saved", async (failure) => {
+    const { editor, execute } = renderWithSelection(false);
+    execute.mockImplementation(() => {
+      if (failure === "throw") throw new Error("Command unavailable");
+      return false;
+    });
+    fireEvent.paste(editor, { clipboardData: { files: [], getData: () => "https://example.com/docs" } });
+    expect(screen.getByRole("alert")).toHaveTextContent(/paste/i);
+    expect(editor).toHaveTextContent("Read the docs");
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(mailClient.saveDraft).not.toHaveBeenCalled();
+  });
+
+  it("saves pasted markup as text and rejects unsafe link destinations", async () => {
+    const { editor } = renderWithSelection(false);
+    fireEvent.paste(editor, { clipboardData: { files: [], getData: () => '<img src=x onerror=alert(1)> javascript:alert(1)' } });
+    expect(editor.querySelector("img, a, script")).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(mailClient.saveDraft).toHaveBeenCalledWith(expect.objectContaining({
+      body: 'Read the <img src=x onerror=alert(1)> javascript:alert(1)',
+      bodyHtml: 'Read the &lt;img src=x onerror=alert(1)&gt; javascript:alert(1)',
+    }));
+  });
+
+  it("persists a link pasted into quoted history without changing the authored body", async () => {
+    const { editor } = renderWithSelection(false, true);
+    fireEvent.paste(editor, { clipboardData: { files: [], getData: () => "https://example.com/docs" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(screen.getByRole("textbox", { name: "Message Body" })).toHaveTextContent("Answer");
+    expect(mailClient.saveDraft).toHaveBeenCalledWith(expect.objectContaining({
+      body: "Answer\n\nOn Monday, Sender wrote:\n> Read the docs",
+      bodyHtml: expect.stringMatching(/^Answer<br><br>On Monday, Sender wrote:<blockquote type="cite"[^>]*>Read the <a href="https:\/\/example.com\/docs">docs<\/a><\/blockquote>$/),
+    }));
   });
 });
 
@@ -282,6 +362,124 @@ describe("Composer body input responsiveness", () => {
       body: "Send this text",
       bodyHtml: "<strong>Send this text</strong>",
     }));
+  });
+
+  it("serializes saves and makes concurrent flushes wait for edits made during saving", async () => {
+    const first = deferred<Draft>();
+    const second = deferred<Draft>();
+    const saveDraft = vi.spyOn(mailClient, "saveDraft")
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
+    editor.innerHTML = "First version";
+    fireEvent.input(editor);
+    let firstFlush!: Promise<Draft>;
+    act(() => { firstFlush = ref.current!.flush(); });
+
+    editor.innerHTML = "<b>Latest version</b>";
+    fireEvent.input(editor);
+    fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "Latest subject" } });
+    const secondFlush = ref.current!.flush();
+    const thirdFlush = ref.current!.flush();
+    const finished = vi.fn();
+    void Promise.all([firstFlush, secondFlush, thirdFlush]).then(finished);
+    expect(saveDraft).toHaveBeenCalledTimes(1);
+
+    await act(async () => { first.resolve({ ...saveDraft.mock.calls[0][0], revision: 1, updatedAt: 10 }); });
+    expect(saveDraft).toHaveBeenCalledTimes(2);
+    expect(saveDraft.mock.calls[1][0]).toMatchObject({
+      revision: 1, updatedAt: 10, subject: "Latest subject", body: "Latest version", bodyHtml: "<b>Latest version</b>",
+    });
+    expect(finished).not.toHaveBeenCalled();
+
+    await act(async () => { second.resolve({ ...saveDraft.mock.calls[1][0], revision: 2, updatedAt: 20 }); });
+    const results = await Promise.all([firstFlush, secondFlush, thirdFlush]);
+    expect(results.every((saved) => saved.revision === 2 && saved.body === "Latest version")).toBe(true);
+    expect(screen.getByRole("status")).toHaveTextContent("Saved on this device");
+    await ref.current!.flush();
+    expect(saveDraft).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps failed saves dirty, blocks closing, and retries with the latest edits", async () => {
+    const first = deferred<Draft>();
+    const saveDraft = vi.spyOn(mailClient, "saveDraft")
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    const onClose = vi.fn();
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={onClose} onQueued={() => {}} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "Keep me" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save and Close Draft" }));
+    expect(onClose).not.toHaveBeenCalled();
+    await act(async () => { first.reject(new Error("Disk unavailable")); });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveTextContent("Not saved");
+    expect(screen.getByRole("alert")).toHaveTextContent("Disk unavailable");
+    const unload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
+    editor.innerHTML = "Edits after failure";
+    fireEvent.input(editor);
+    fireEvent.click(screen.getByRole("button", { name: "Retry Save" }));
+    await act(async () => {});
+    expect(saveDraft.mock.calls[1][0]).toMatchObject({ revision: 0, subject: "Keep me", body: "Edits after failure" });
+    expect(screen.queryByRole("alert")).toBeNull();
+    const savedUnload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(savedUnload);
+    expect(savedUnload.defaultPrevented).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Save and Close Draft" }));
+    await act(async () => {});
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(saveDraft).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits for the latest revision before sending once during an outstanding autosave", async () => {
+    const first = deferred<Draft>();
+    const second = deferred<Draft>();
+    const saveDraft = vi.spyOn(mailClient, "saveDraft")
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    const item: OutboxItem = { id: "queued-1", draft, state: "undo_pending", deadline: 10, error: null };
+    const queueDraft = vi.spyOn(mailClient, "queueDraft").mockResolvedValue(item);
+    const onQueued = vi.fn();
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={onQueued} />);
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
+    editor.innerHTML = "Autosaved text";
+    fireEvent.input(editor);
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    editor.innerHTML = "Final text";
+    fireEvent.input(editor);
+    act(() => { ref.current!.send(); ref.current!.send(); });
+    expect(queueDraft).not.toHaveBeenCalled();
+    await act(async () => { first.resolve({ ...saveDraft.mock.calls[0][0], revision: 1 }); });
+    expect(saveDraft.mock.calls[1][0]).toMatchObject({ revision: 1, body: "Final text" });
+    expect(queueDraft).not.toHaveBeenCalled();
+    await act(async () => { second.resolve({ ...saveDraft.mock.calls[1][0], revision: 2 }); });
+    expect(queueDraft).toHaveBeenCalledExactlyOnceWith("draft-1", 2);
+    expect(onQueued).toHaveBeenCalledExactlyOnceWith(item);
+  });
+
+  it("saves during continuous input and cancels autosave timers on unmount", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    const saveDraft = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    const { unmount } = render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
+    for (let index = 0; index < 15; index++) {
+      editor.textContent = `Continuous input ${index}`;
+      fireEvent.input(editor);
+      await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+    }
+    expect(saveDraft).toHaveBeenCalledTimes(1);
+    expect(saveDraft.mock.calls[0][0].body).toBe("Continuous input 14");
+    editor.textContent = "Unmounted change";
+    fireEvent.input(editor);
+    unmount();
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(saveDraft).toHaveBeenCalledTimes(1);
   });
 
   it("discards a completely empty draft when the composer closes", async () => {
@@ -973,6 +1171,36 @@ describe("Composer context panel actions", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+  });
+
+  it.each([false, true])("inserts and saves a snippet at the selection after its picker takes focus (quoted=%s)", async (quoted) => {
+    const saveDraft = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    const ref = createRef<ComposerHandle>();
+    const initial: Draft = { ...draft, mode: "reply", to: "Ann <ann@example.com>", bodyHtml: 'Hello world<br><br>On Monday, Sender wrote:<blockquote type="cite">Quoted words</blockquote>' };
+    render(<Composer ref={ref} draft={initial} accounts={accounts} {...snippetProps} snippets={[{ id: "greeting", name: "Greeting", body: "<b>{first_name}</b>", createdAt: "2026-01-01" }]} onClose={() => {}} onQueued={() => {}} />);
+    if (quoted) fireEvent.click(screen.getByRole("button", { name: "Show Quoted Text" }));
+    const editor = screen.getByRole("textbox", { name: quoted ? "Quoted Text" : "Message Body" });
+    editor.focus();
+    const text = quoted ? editor.querySelector("blockquote")!.firstChild! : editor.firstChild!;
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, quoted ? 6 : 5);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    fireEvent.keyDown(editor, { key: ";", ctrlKey: true });
+    expect(screen.getByRole("combobox", { name: "Find or Create a Snippet" })).toHaveFocus();
+    fireEvent.click(screen.getByRole("option", { name: /Greeting/ }));
+    expect(screen.queryByRole("dialog", { name: "Insert Snippet" })).toBeNull();
+    expect(editor).toHaveFocus();
+    expect(editor.querySelector("b")).toHaveTextContent("Ann");
+    expect(editor).toHaveTextContent(quoted ? "Ann words" : "Ann world");
+    await act(async () => { await ref.current!.flush(); });
+    const savedBody = document.createElement("div");
+    savedBody.innerHTML = saveDraft.mock.calls.at(-1)![0].bodyHtml!;
+    const quote = savedBody.querySelector('blockquote[type="cite"]')!;
+    expect(quote.innerHTML).toBe(quoted ? "<b>Ann</b> words" : "Quoted words");
+    quote.remove();
+    expect(savedBody.innerHTML).toBe(`${quoted ? "Hello world" : "<b>Ann</b> world"}<br><br>On Monday, Sender wrote:`);
   });
 
   it("reports recipient edits as they happen and body text at autosave", async () => {

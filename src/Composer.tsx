@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Paperclip, Send, Sparkles, Trash, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { Draft, OutboxItem } from "./correspondence";
@@ -11,28 +11,12 @@ import {
 } from "./aiSettings";
 import { RecipientField } from "./RecipientField";
 import { Modal } from "./AppChrome";
-import {
-  applyListShortcut,
-  applyFormattingShortcut,
-  formattingShortcutFor,
-  insertHtmlAtRange,
-  linkifyPlainText,
-  pastedLinkHref,
-  draftTextToComposeHtml,
-  plainTextToHtml,
-  sanitizeComposeHtml,
-  serializeComposeBody,
-  splitReplyQuote,
-} from "./richText";
-import { SnippetPicker } from "./SnippetPicker";
+import { ComposeBodyEditor, type ComposeBodyEditorHandle } from "./ComposeBodyEditor";
+import { useDraftAutosave } from "./useDraftAutosave";
 import { moveAddressesToBcc, replaceAddress } from "./composeChecks";
-import { normalizeAddressList } from "./emailAddress";
-import { firstNameFromRecipient, renderSnippetBody } from "./snippets";
-import { recordSnippetUsed } from "./settings";
 import { useEscapeDismiss } from "./useEscapeDismiss";
-import { errorMessage, logBackgroundFailure } from "./errors";
+import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
-import { closestFrom } from "./domTargets";
 
 export type ComposerHandle = {
   flush(): Promise<Draft>; prepareExit(): Promise<void>; send(afterQueued?: () => void, archiveOnSend?: boolean): void; attach(): void; close(): void; discard(): void; draftReplyWithAI(): void;
@@ -48,17 +32,6 @@ export type ComposerHandle = {
   focusBody(): void;
 };
 
-// Typing pauses this long before a draft autosave.
-const AUTOSAVE_DEBOUNCE_MS = 300;
-// Upper bound on the unsaved window while editing never pauses.
-const AUTOSAVE_INTERVAL_MS = 3_000;
-const IMAGE_MIN_WIDTH = 80;
-const IMAGE_MAX_WIDTH = 2000;
-// Width assumed for an inline image whose size is not yet known.
-const IMAGE_FALLBACK_WIDTH = 320;
-const IMAGE_KEY_STEP = 10;
-const IMAGE_KEY_LARGE_STEP = 50;
-
 export const Composer = forwardRef<ComposerHandle, {
   draft: Draft;
   accounts: Account[];
@@ -73,13 +46,10 @@ export const Composer = forwardRef<ComposerHandle, {
   /** Called with the draft as edits are made; body text arrives at each autosave. */
   onDraftChange?(draft: Draft): void;
 }>(function Composer({ draft: initial, accounts, snippets, onCreateSnippet, onUpdateSnippet, onDeleteSnippet, onClose, onQueued, availabilityText = null, replyAssistInstruction = null, onDraftChange }, ref) {
-  const [draft, setDraft] = useState(initial);
-  const latest = useRef(initial);
-  const generation = useRef(0);
-  const savedGeneration = useRef(0);
-  const pending = useRef<Promise<Draft> | null>(null);
-  const [status, setStatus] = useState("Saved on this device");
+  const bodyEditor = useRef<ComposeBodyEditorHandle>(null);
+  const captureChanges = useCallback(() => bodyEditor.current?.captureChanges() ?? null, []);
   const [error, setError] = useState("");
+  const { draft, latest, status, edit, markChanged, captureBody, flush, replaceDraft } = useDraftAutosave(initial, captureChanges, setError);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [showBlankCopies, setShowBlankCopies] = useState(false);
@@ -91,83 +61,16 @@ export const Composer = forwardRef<ComposerHandle, {
   const [replyAssistError, setReplyAssistError] = useState("");
   const replyInstructionInput = useRef<HTMLInputElement>(null);
   const automaticallyOpenedInstruction = useRef<string | null>(null);
-  const insertedAvailabilityText = useRef<string | null>(null);
   const [confirmAddToExisting, setConfirmAddToExisting] = useState(false);
-  const [snippetPickerOpen, setSnippetPickerOpen] = useState(false);
-  const savedSnippetRange = useRef<Range | null>(null);
-  // Where the caret was when the body last lost focus, so text inserted from
-  // the context panel lands there rather than at the top.
-  const lastBodyRange = useRef<Range | null>(null);
   const panel = useRef<HTMLDivElement>(null);
-  const bodyEditor = useRef<HTMLDivElement>(null);
-  // A reply's quoted history, edited apart from the body and collapsed by default.
-  const quotedEditor = useRef<HTMLDivElement>(null);
-  const [quoteExpanded, setQuoteExpanded] = useState(false);
-  const bodyDirty = useRef(false);
   const pendingRecipientFocus = useRef<"cc" | "bcc" | null>(null);
-  // Lazy initializer: `useRef(expr)` would evaluate `expr` on every render, so
-  // each status change re-sanitized the whole quoted thread before the next paint.
-  const [initialBody] = useState(() => {
-    const html = sanitizeComposeHtml(initial.bodyHtml || draftTextToComposeHtml(initial.body));
-    return splitReplyQuote(html) ?? { authoredHtml: html, quotedHtml: null };
-  });
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
+  const readInlineImage = useCallback((attachmentId: string) => mailClient.readInlineImage(initial.id, attachmentId), [initial.id]);
 
-  const captureBody = useCallback(() => {
-    const editor = bodyEditor.current;
-    if (!bodyDirty.current || !editor) return;
-    const { html, text } = serializeComposeBody(editor, quotedEditor.current);
-    latest.current = {
-      ...latest.current,
-      body: text,
-      bodyHtml: html,
-    };
-    bodyDirty.current = false;
-  }, []);
-
-  const flush = useCallback(function flush(): Promise<Draft> {
-    if (timer.current) clearTimeout(timer.current);
-    captureBody();
-    if (pending.current) return pending.current.then(() => generation.current === savedGeneration.current ? latest.current : flush());
-    if (generation.current === savedGeneration.current) return Promise.resolve(latest.current);
-    const version = generation.current;
-    // Saved recipients are always well-formed header text, which also repairs
-    // a draft holding an unquoted comma in a name.
-    const snapshot = { ...latest.current, to: normalizeAddressList(latest.current.to), cc: normalizeAddressList(latest.current.cc), bcc: normalizeAddressList(latest.current.bcc) };
-    setStatus("Saving…"); setError("");
-    const saving = mailClient.saveDraft(snapshot).then((saved) => {
-      savedGeneration.current = version;
-      latest.current = { ...latest.current, revision: saved.revision, updatedAt: saved.updatedAt };
-      if (mounted.current) { setDraft(latest.current); setStatus(generation.current === version ? "Saved on this device" : "Unsaved changes"); }
-      return latest.current;
-    }).catch((e) => {
-      if (mounted.current) { setError(String(e)); setStatus("Not saved — retry before closing"); }
-      throw e;
-    }).finally(() => { pending.current = null; });
-    pending.current = saving;
-    return saving.then(() => generation.current === savedGeneration.current ? latest.current : flush());
-  }, [captureBody]);
-  function edit(field: "to" | "cc" | "bcc" | "subject" | "body", value: string) {
-    latest.current = { ...latest.current, [field]: value }; generation.current++;
-    setDraft(latest.current); setStatus("Unsaved changes");
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => { void flush().catch(logBackgroundFailure("Draft autosave")); }, AUTOSAVE_DEBOUNCE_MS);
-  }
-  const editBody = useCallback(() => {
-    // Keep the browser-owned contenteditable DOM off React's render path.
-    // Cloning and sanitizing a long reply on every input made typing cost grow
-    // with the entire quoted thread; capture it only at an autosave boundary.
-    bodyDirty.current = true;
-    generation.current++;
-    setStatus("Unsaved changes");
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => { void flush().catch(logBackgroundFailure("Draft autosave")); }, AUTOSAVE_DEBOUNCE_MS);
-  }, [flush]);
-  async function run(action: () => Promise<void>) {
+  async function run<T>(action: () => Promise<T>) {
     if (busyRef.current) return;
     busyRef.current = true; setBusy(true); setError("");
-    try { await action(); } catch (e) { setError(String(e)); }
+    try { return await action(); } catch (e) { setError(String(e)); }
     finally { busyRef.current = false; if (mounted.current) setBusy(false); }
   }
   function close() {
@@ -195,7 +98,7 @@ export const Composer = forwardRef<ComposerHandle, {
       afterQueued?.();
     });
   }
-  function attach() { void run(async () => { await flush(); const next = await mailClient.attachFiles(latest.current.id); latest.current = next; setDraft(next); }); }
+  function attach() { void run(async () => { await flush(); const next = await mailClient.attachFiles(latest.current.id); replaceDraft(next); }); }
   function focusRecipient(field: "to" | "cc" | "bcc") {
     const input = panel.current?.querySelector<HTMLInputElement>(`[name="${field}"]`);
     if (input) {
@@ -207,29 +110,12 @@ export const Composer = forwardRef<ComposerHandle, {
   }
   function changeAccount(email: string) {
     if (email === latest.current.account) return;
-    void run(async () => { await flush(); const next = await mailClient.setDraftAccount(latest.current.id, email); latest.current = next; setDraft(next); });
+    void run(async () => { await flush(); const next = await mailClient.setDraftAccount(latest.current.id, email); replaceDraft(next); });
   }
   function insertText(text: string) {
-    const editor = bodyEditor.current;
-    if (!editor || busyRef.current) return;
-    const saved = lastBodyRange.current;
-    const range = saved && editor.contains(saved.startContainer) ? saved : document.createRange();
-    if (range !== saved) { range.selectNodeContents(editor); range.collapse(true); }
-    editor.focus();
-    insertHtmlAtRange(editor, range, sanitizeComposeHtml(plainTextToHtml(`${text}\n`)));
-    lastBodyRange.current = null;
-    editBody();
+    if (!busyRef.current) bodyEditor.current?.insertText(text);
   }
-  function focusBody() {
-    const editor = bodyEditor.current;
-    if (!editor) return;
-    editor.focus();
-    const saved = lastBodyRange.current;
-    if (!saved || !editor.contains(saved.startContainer)) return;
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(saved);
-  }
+  function focusBody() { bodyEditor.current?.focusBody(); }
   function replaceRecipient(from: string, to: string) {
     for (const field of ["to", "cc", "bcc"] as const) {
       const next = replaceAddress(latest.current[field], from, to);
@@ -247,7 +133,7 @@ export const Composer = forwardRef<ComposerHandle, {
     if (!replyAssistAvailable || replyAssistOpen) return;
     void openReplyAssist();
   }
-  async function openReplyAssist() {
+  const openReplyAssist = useCallback(async () => {
     setReplyAssistOpen(true);
     setReplyAssistBusy(true);
     setReplyAssistError("");
@@ -259,7 +145,7 @@ export const Composer = forwardRef<ComposerHandle, {
     } finally {
       if (mounted.current) setReplyAssistBusy(false);
     }
-  }
+  }, [latest]);
   async function generateReply(confirmed = false) {
     if (!replyAssistContext || !bodyEditor.current) return;
     captureBody();
@@ -281,12 +167,7 @@ export const Composer = forwardRef<ComposerHandle, {
         reasoning,
       );
       if (!bodyEditor.current) return;
-      // The provider's output is always handled as text. `plainTextToHtml`
-      // escapes markup before insertion, and the composer sanitizer remains
-      // the final defense before the draft is persisted.
-      const generatedHtml = sanitizeComposeHtml(plainTextToHtml(`${result.body.trim()}\n\n`));
-      bodyEditor.current.insertAdjacentHTML("afterbegin", generatedHtml);
-      editBody();
+      bodyEditor.current.prependText(`${result.body.trim()}\n\n`);
       setReplyAssistOpen(false);
       setReplyInstruction("");
     } catch (reason) {
@@ -295,78 +176,21 @@ export const Composer = forwardRef<ComposerHandle, {
       if (mounted.current) setReplyAssistBusy(false);
     }
   }
-  function decorateImage(image: HTMLImageElement, attachmentId?: string) {
-    if (image.closest("[data-compose-image]")) return;
-    const wrapper = document.createElement("span");
-    wrapper.className = "compose-image";
-    wrapper.dataset.composeImage = "true";
-    if (attachmentId) wrapper.dataset.attachmentId = attachmentId;
-    wrapper.contentEditable = "false";
-    if (image.width) wrapper.style.width = `${image.width}px`;
-    image.before(wrapper);
-    wrapper.append(image);
-
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "compose-image-remove";
-    remove.dataset.composeImageRemove = "true";
-    remove.setAttribute("aria-label", "Remove Pasted Image");
-    remove.title = "Remove image";
-    remove.textContent = "×";
-    wrapper.append(remove);
-
-    const resize = document.createElement("span");
-    resize.className = "compose-image-resize";
-    resize.dataset.composeImageResize = "true";
-    resize.setAttribute("role", "slider");
-    resize.setAttribute("aria-label", "Resize Pasted Image");
-    resize.setAttribute("aria-valuemin", String(IMAGE_MIN_WIDTH));
-    resize.setAttribute("aria-valuemax", String(IMAGE_MAX_WIDTH));
-    resize.setAttribute("aria-valuenow", String(image.width || IMAGE_FALLBACK_WIDTH));
-    resize.tabIndex = 0;
-    resize.title = "Drag to resize";
-    wrapper.append(resize);
+  function attachInlineImage(file: File, data: string) {
+    return run(async () => {
+      await flush();
+      const next = await mailClient.attachInlineImage(latest.current.id, file.name || "pasted-image", file.type, data);
+      const attachment = next.attachments.find((candidate) => candidate.inline && !latest.current.attachments.some((existing) => existing.id === candidate.id));
+      if (!attachment?.contentId) throw new Error("Could not prepare the pasted image");
+      replaceDraft(next);
+      return attachment;
+    });
   }
-  function insertPastedImage(editor: HTMLElement, file: File, range: Range | null) {
-    const reader = new FileReader();
-    reader.onerror = () => setError(`Could not paste ${file.name || "image"}.`);
-    reader.onload = () => {
-      if (!mounted.current || typeof reader.result !== "string" || !editor.isConnected) return;
-      const preview = reader.result;
-      const data = preview.slice(preview.indexOf(",") + 1);
-      void run(async () => {
-        await flush();
-        const next = await mailClient.attachInlineImage(latest.current.id, file.name || "pasted-image", file.type, data);
-        const attachment = next.attachments.find((candidate) => candidate.inline && !latest.current.attachments.some((existing) => existing.id === candidate.id));
-        if (!attachment?.contentId || !editor.isConnected) throw new Error("Could not prepare the pasted image");
-        latest.current = next; setDraft(next);
-
-        const image = document.createElement("img");
-        image.src = preview;
-        image.dataset.composeSource = `cid:${attachment.contentId}`;
-        image.alt = file.name || "Pasted image";
-        decorateImage(image, attachment.id);
-        const wrapper = image.closest<HTMLElement>("[data-compose-image]")!;
-        const insertion = range && editor.contains(range.commonAncestorContainer) ? range : document.createRange();
-        if (!range || !editor.contains(range.commonAncestorContainer)) insertion.selectNodeContents(editor);
-        insertion.collapse(false);
-        insertion.deleteContents();
-        insertion.insertNode(wrapper);
-        const spacer = document.createTextNode("\u00a0");
-        wrapper.after(spacer);
-        const caret = document.createRange();
-        caret.setStartAfter(spacer); caret.collapse(true);
-        window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(caret);
-        image.onload = () => {
-          const available = editor.clientWidth;
-          const width = Math.max(IMAGE_MIN_WIDTH, Math.min(image.naturalWidth, available));
-          if (width) { image.setAttribute("width", String(Math.round(width))); wrapper.style.width = `${Math.round(width)}px`; }
-          editBody();
-        };
-        editBody();
-      });
-    };
-    reader.readAsDataURL(file);
+  function removeInlineImage(attachmentId: string) {
+    void run(async () => {
+      await flush();
+      replaceDraft(await mailClient.removeAttachment(latest.current.id, attachmentId));
+    });
   }
   useImperativeHandle(ref, () => ({ flush, send, attach, close, discard, draftReplyWithAI, insertText, replaceRecipient, moveRecipientsToBcc, switchAccount: changeAccount, focusBody, prepareExit: async () => {
     if (busyRef.current) throw new Error("Finish the current composer action before closing.");
@@ -377,48 +201,18 @@ export const Composer = forwardRef<ComposerHandle, {
   useEffect(() => {
     mounted.current = true;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    [bodyEditor.current, quotedEditor.current].flatMap((editor) => Array.from(editor?.querySelectorAll<HTMLImageElement>("img") ?? [])).forEach((image) => {
-      const source = image.getAttribute("src") ?? "";
-      const attachment = source.startsWith("cid:")
-        ? initial.attachments.find((candidate) => candidate.inline && candidate.contentId === source.slice(4))
-        : undefined;
-      if (attachment) {
-        image.dataset.composeSource = source;
-        void mailClient.readInlineImage(initial.id, attachment.id).then((preview) => { image.src = preview; }).catch((reason) => setError(String(reason)));
-      }
-      decorateImage(image, attachment?.id);
-    });
     panel.current?.querySelector<HTMLElement>(initial.mode === "new" || initial.mode === "forward" ? '[name="to"]' : '[contenteditable="true"]')?.focus();
-    const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (generation.current !== savedGeneration.current) { event.preventDefault(); event.returnValue = ""; }
-    };
-    window.addEventListener("beforeunload", beforeUnload);
-    // Safety net alongside the keystroke-debounced save in `edit`/`editBody`:
-    // continuous typing/dictation keeps resetting that debounce, so bound
-    // the worst-case unsaved window regardless of how long editing continues.
-    // `flush()` already no-ops if nothing changed since the last save.
-    const autosave = window.setInterval(() => { void flush().catch(logBackgroundFailure("Draft autosave")); }, AUTOSAVE_INTERVAL_MS);
     if (initial.mode === "forward" && initial.attachments.some((attachment) => !attachment.ready)) {
       void run(async () => {
         let next = await flush();
         for (const attachment of next.attachments.filter((candidate) => !candidate.ready)) {
           next = await mailClient.fetchAttachment(next.id, attachment.id);
-          latest.current = next;
-          if (mounted.current) setDraft(next);
+          if (mounted.current) replaceDraft(next);
         }
       });
     }
-    return () => { mounted.current = false; if (timer.current) clearTimeout(timer.current); window.clearInterval(autosave); window.removeEventListener("beforeunload", beforeUnload); previous?.focus(); };
-  }, [flush, initial.attachments, initial.id, initial.mode]);
-  useEffect(() => {
-    if (!availabilityText || !bodyEditor.current || insertedAvailabilityText.current === availabilityText) return;
-    insertedAvailabilityText.current = availabilityText;
-    bodyEditor.current.insertAdjacentHTML(
-      "afterbegin",
-      sanitizeComposeHtml(plainTextToHtml(`${availabilityText}\n\n`)),
-    );
-    editBody();
-  }, [availabilityText, editBody]);
+    return () => { mounted.current = false; previous?.focus(); };
+  }, [flush, initial.attachments, initial.mode, replaceDraft]);
   useEffect(() => {
     if (!["reply", "replyAll"].includes(initial.mode)) return;
     const enabled = readAiProvider() !== "none" && readAiFeatures().draftAssist;
@@ -432,7 +226,7 @@ export const Composer = forwardRef<ComposerHandle, {
     automaticallyOpenedInstruction.current = replyAssistInstruction;
     setReplyInstruction(replyAssistInstruction);
     if (!replyAssistOpen) void openReplyAssist();
-  }, [replyAssistAvailable, replyAssistInstruction, replyAssistOpen]);
+  }, [replyAssistAvailable, replyAssistInstruction, replyAssistOpen, openReplyAssist]);
   useEffect(() => {
     const field = pendingRecipientFocus.current;
     if (!field || !showBlankCopies) return;
@@ -441,107 +235,6 @@ export const Composer = forwardRef<ComposerHandle, {
   }, [showBlankCopies]);
   useEffect(() => { onDraftChange?.(draft); }, [draft, onDraftChange]);
   useEscapeDismiss(close);
-  // Editing behavior shared by the body and a reply's quoted history.
-  const editingProps = {
-    contentEditable: !busy,
-    suppressContentEditableWarning: true,
-    onInput: editBody,
-    onPaste: (event: ReactClipboardEvent<HTMLDivElement>) => {
-      const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
-      if (images.length) {
-        event.preventDefault();
-        const selection = window.getSelection();
-        const editor = event.currentTarget;
-        const range = selection?.rangeCount && editor.contains(selection.anchorNode) ? selection.getRangeAt(0).cloneRange() : null;
-        images.forEach((image) => insertPastedImage(editor, image, range?.cloneRange() ?? null));
-        return;
-      }
-      event.preventDefault();
-      const text = event.clipboardData.getData("text/plain");
-      const selection = window.getSelection();
-      const href = pastedLinkHref(text);
-      if (href && selection && !selection.isCollapsed && selection.toString().trim() && event.currentTarget.contains(selection.anchorNode)) {
-        document.execCommand("createLink", false, href);
-        return;
-      }
-      document.execCommand("insertHTML", false, linkifyPlainText(text));
-    },
-    onClick: (event: ReactMouseEvent<HTMLDivElement>) => {
-      const remove = closestFrom<HTMLElement>(event.target, "[data-compose-image-remove]");
-      if (!remove) return;
-      const wrapper = remove.closest<HTMLElement>("[data-compose-image]");
-      const attachmentId = wrapper?.dataset.attachmentId;
-      wrapper?.remove();
-      editBody();
-      event.currentTarget.focus();
-      if (attachmentId) void run(async () => {
-        await flush();
-        const next = await mailClient.removeAttachment(latest.current.id, attachmentId);
-        latest.current = next; setDraft(next);
-      });
-    },
-    onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => {
-      const handle = closestFrom<HTMLElement>(event.target, "[data-compose-image-resize]");
-      const wrapper = handle?.closest<HTMLElement>("[data-compose-image]");
-      const image = wrapper?.querySelector("img");
-      if (!handle || !wrapper || !image) return;
-      event.preventDefault();
-      const editor = event.currentTarget;
-      const startX = event.clientX;
-      const startWidth = wrapper.getBoundingClientRect().width || image.width || IMAGE_FALLBACK_WIDTH;
-      const maximum = Math.max(IMAGE_MIN_WIDTH, editor.clientWidth);
-      const move = (moveEvent: PointerEvent) => {
-        const width = Math.round(Math.min(Math.max(startWidth + moveEvent.clientX - startX, IMAGE_MIN_WIDTH), maximum));
-        wrapper.style.width = `${width}px`;
-        image.setAttribute("width", String(width));
-        handle.setAttribute("aria-valuenow", String(width));
-      };
-      const finish = () => {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", finish);
-        editBody();
-      };
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", finish, { once: true });
-    },
-    onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === ";") {
-        event.preventDefault();
-        const selection = window.getSelection();
-        savedSnippetRange.current = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
-        setSnippetPickerOpen(true);
-        return;
-      }
-      const resize = closestFrom<HTMLElement>(event.target, "[data-compose-image-resize]");
-      if (resize && ["ArrowLeft", "ArrowRight"].includes(event.key)) {
-        const wrapper = resize.closest<HTMLElement>("[data-compose-image]");
-        const image = wrapper?.querySelector("img");
-        if (!wrapper || !image) return;
-        const direction = event.key === "ArrowRight" ? 1 : -1;
-        const width = Math.min(Math.max((image.width || IMAGE_FALLBACK_WIDTH) + direction * (event.shiftKey ? IMAGE_KEY_LARGE_STEP : IMAGE_KEY_STEP), IMAGE_MIN_WIDTH), event.currentTarget.clientWidth || IMAGE_MAX_WIDTH);
-        wrapper.style.width = `${width}px`;
-        image.setAttribute("width", String(width));
-        resize.setAttribute("aria-valuenow", String(width));
-        editBody();
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-      if (!event.nativeEvent.isComposing && event.key === " " && applyListShortcut(event.currentTarget)) {
-        event.preventDefault();
-        event.stopPropagation();
-        editBody();
-        return;
-      }
-      const shortcut = formattingShortcutFor(event.nativeEvent);
-      if (!shortcut) return;
-      if (applyFormattingShortcut(event.currentTarget, shortcut)) {
-        event.preventDefault();
-        event.stopPropagation();
-        editBody();
-      }
-    },
-  };
   return <div ref={panel} className={initial.mode === "new" ? "composer composer-inline composer-new" : "composer composer-inline"} role="dialog" data-shortcut-scope="compose" aria-label={initial.mode === "new" ? "New Message" : initial.mode === "forward" ? "Forward Message" : "Reply Message"}
       onKeyDown={(event) => {
         if (event.nativeEvent.isComposing || replyAssistOpen) return;
@@ -571,49 +264,22 @@ export const Composer = forwardRef<ComposerHandle, {
           )
         ))}
         <label className="compose-field"><span>Subject</span><input aria-label="Subject" value={draft.subject} onChange={(e) => edit("subject", e.target.value)} disabled={busy} /></label>
-        <div
+        <ComposeBodyEditor
           ref={bodyEditor}
-          className="compose-body"
-          role="textbox"
-          aria-label="Message Body"
-          aria-multiline="true"
-          aria-disabled={busy}
-          data-placeholder="Write your message…"
-          dangerouslySetInnerHTML={{ __html: initialBody.authoredHtml }}
-          {...editingProps}
-          onBlur={() => {
-            const selection = window.getSelection();
-            const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-            lastBodyRange.current = range && bodyEditor.current?.contains(range.startContainer) ? range.cloneRange() : null;
-          }}
+          initial={initial}
+          busy={busy}
+          recipientTo={draft.to}
+          availabilityText={availabilityText}
+          snippets={snippets}
+          onCreateSnippet={onCreateSnippet}
+          onUpdateSnippet={onUpdateSnippet}
+          onDeleteSnippet={onDeleteSnippet}
+          onChange={markChanged}
+          onError={setError}
+          onAttachImage={attachInlineImage}
+          onRemoveImage={removeInlineImage}
+          readInlineImage={readInlineImage}
         />
-        {initialBody.quotedHtml !== null ? (
-          <>
-            <button
-              type="button"
-              className="btn btn-sm compose-quote-toggle"
-              aria-label={quoteExpanded ? "Hide Quoted Text" : "Show Quoted Text"}
-              aria-expanded={quoteExpanded}
-              aria-controls={`${initial.id}-quoted`}
-              title={quoteExpanded ? "Hide quoted text" : "Show quoted text"}
-              onClick={() => setQuoteExpanded((expanded) => !expanded)}
-            >···</button>
-            {/* Collapsed with `hidden`, so assistive and dictation software
-                reading the page skip the history until it is shown. */}
-            <div
-              ref={quotedEditor}
-              id={`${initial.id}-quoted`}
-              className="compose-body compose-quoted"
-              role="textbox"
-              aria-label="Quoted Text"
-              aria-multiline="true"
-              aria-disabled={busy}
-              hidden={!quoteExpanded}
-              dangerouslySetInnerHTML={{ __html: initialBody.quotedHtml }}
-              {...editingProps}
-            />
-          </>
-        ) : null}
         {replyAssistAvailable ? (
           <div className="reply-assist">
             <button type="button" className="btn reply-assist-trigger" onClick={() => void openReplyAssist()}>
@@ -624,39 +290,11 @@ export const Composer = forwardRef<ComposerHandle, {
         {replyAssistInstruction && !replyAssistAvailable ? (
           <p className="reply-assist-task-context"><strong>Task-derived instruction:</strong> {replyAssistInstruction} Configure Reply Assist in AI settings to generate a suggestion.</p>
         ) : null}
-        {draft.attachments.some((attachment) => !attachment.inline) && <ul className="attachment-list">{draft.attachments.filter((attachment) => !attachment.inline).map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : "Download required"}</small></span>{!a.ready && <button className="btn btn-sm" disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); latest.current = next; setDraft(next); })}>Download</button>}<button className="btn-icon btn-icon-sm" aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); latest.current = next; setDraft(next); })}><X size={ICON_SIZE.sm} /></button></li>)}</ul>}
+        {draft.attachments.some((attachment) => !attachment.inline) && <ul className="attachment-list">{draft.attachments.filter((attachment) => !attachment.inline).map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : "Download required"}</small></span>{!a.ready && <button className="btn btn-sm" disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); replaceDraft(next); })}>Download</button>}<button className="btn-icon btn-icon-sm" aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); replaceDraft(next); })}><X size={ICON_SIZE.sm} /></button></li>)}</ul>}
         {error && <div className="notice compose-error" role="alert">{error} <button className="btn btn-sm" onClick={() => void run(async () => { await flush(); })}>Retry Save</button></div>}
       </div>
       <footer><button className="btn btn-primary send-button" onClick={() => send()} disabled={busy}><Send size={ICON_SIZE.md} /> Send <kbd>⌘/Ctrl ↵</kbd></button><button className="btn-icon" onClick={attach} disabled={busy} aria-label="Attach Files"><Paperclip size={ICON_SIZE.lg} /></button><span className="save-status" role="status">{status}</span><button className="btn-icon" disabled={busy} aria-label="Discard Draft" onClick={discard}><Trash size={ICON_SIZE.lg} /></button></footer>
       <p className="compose-note">Drafts are saved on this device. Send has a 10-second undo window.{!("__TAURI_INTERNALS__" in window) && " Browser preview: delivery and attachments are simulated."}</p>
-      {snippetPickerOpen ? (
-        <SnippetPicker
-          snippets={snippets}
-          onClose={() => setSnippetPickerOpen(false)}
-          onInsert={(snippet) => {
-            recordSnippetUsed(snippet.id);
-            setSnippetPickerOpen(false);
-            const saved = savedSnippetRange.current;
-            const editor = [bodyEditor.current, quotedEditor.current].find((candidate) => candidate && saved && candidate.contains(saved.startContainer)) ?? bodyEditor.current;
-            if (!editor) return;
-            editor.focus();
-            let range: Range;
-            if (saved && editor.contains(saved.startContainer)) {
-              range = saved;
-            } else {
-              range = document.createRange();
-              range.selectNodeContents(editor);
-              range.collapse(false);
-            }
-            const rendered = renderSnippetBody(snippet.body, { firstName: firstNameFromRecipient(draft.to) });
-            insertHtmlAtRange(editor, range, rendered);
-            editBody();
-          }}
-          onCreate={onCreateSnippet}
-          onUpdate={onUpdateSnippet}
-          onDelete={onDeleteSnippet}
-        />
-      ) : null}
       {replyAssistOpen ? (
         <Modal title="Reply Assist" className="reply-assist-modal" backdropClassName="reply-assist-backdrop" initialFocusRef={replyInstructionInput} onClose={() => { setReplyAssistOpen(false); setConfirmAddToExisting(false); }}>
           <div className="reply-assist-panel">

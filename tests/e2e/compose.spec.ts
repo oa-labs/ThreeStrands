@@ -29,6 +29,50 @@ test("saves an offline draft, restores after reload, sends once, and undoes", as
   await expect((await openFolders(page)).getByRole("button", { name: "Outbox" }).locator(".folder-menu-meta > span")).toHaveCount(0);
 });
 
+for (const paste of [
+  { subject: "Pasted link", text: "https://example.com/docs", expected: "Read the docs", linkedText: "Read the docs" },
+  { subject: "Pasted text", text: '<img src=x onerror=alert(1)> https://example.com/docs', expected: '<img src=x onerror=alert(1)> https://example.com/docs', linkedText: "https://example.com/docs" },
+]) {
+  test(`${paste.subject} supports undo and redo and survives autosave and reopening`, async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "New Message (c)" }).click();
+    const composer = page.getByRole("dialog", { name: "New Message" });
+    const body = composer.getByRole("textbox", { name: "Message Body" });
+    await composer.getByRole("textbox", { name: "Subject" }).fill(paste.subject);
+    await body.fill("Read the docs");
+    await body.press("ControlOrMeta+a");
+    // Supply clipboard data without relying on the host clipboard. The editor
+    // still executes the real browser editing command and uses its undo stack.
+    await body.evaluate((editor, text) => {
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", text);
+      editor.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+    }, paste.text);
+    await expect(body).toHaveText(paste.expected);
+    await expect(body.locator("a")).toHaveAttribute("href", "https://example.com/docs");
+    await expect(body.locator("a")).toHaveText(paste.linkedText);
+    await expect(body.locator("img, script")).toHaveCount(0);
+    await expect(composer.getByRole("status")).toHaveText("Saved on this device");
+
+    await body.press("ControlOrMeta+z");
+    await expect(body).toHaveText("Read the docs");
+    await expect(body.locator("a")).toHaveCount(0);
+    await body.press("ControlOrMeta+Shift+z");
+    await expect(body).toHaveText(paste.expected);
+    await expect(body.locator("a")).toHaveAttribute("href", "https://example.com/docs");
+    await expect(composer.getByRole("status")).toHaveText("Saved on this device");
+
+    await composer.getByRole("button", { name: "Save and Close Draft" }).click();
+    await expect(composer).not.toBeVisible();
+    await page.reload();
+    await (await openFolders(page)).getByRole("button", { name: "Drafts" }).click();
+    await page.getByRole("button", { name: new RegExp(paste.subject) }).click();
+    await expect(body).toHaveText(paste.expected);
+    await expect(body.locator("a")).toHaveAttribute("href", "https://example.com/docs");
+    await expect(body.locator("img, script")).toHaveCount(0);
+  });
+}
+
 test("reply shortcuts keep inbox actions out of the composer and forwarding starts unaddressed", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
