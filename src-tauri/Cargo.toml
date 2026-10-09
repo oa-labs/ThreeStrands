@@ -97,3 +97,21 @@ objc2-uniform-type-identifiers = { version = "0.3", default-features = false, fe
 axum = { version = "0.8", features = ["multipart"] }
 # Test-only: paused tokio time for the polling loop's wait tests.
 tokio = { version = "1", features = ["test-util"] }
+# --- Phase 2 Slice 0 spike (THROWAWAY, dev-only) -------------------------
+# These back `examples/imap_spike.rs` only. They are dev-dependencies so they
+# do NOT ship in the lib/bin: cargo examples compile against dev-deps, and the
+# default `cargo build`/release build never pulls them. Pinned to the stack
+# `docs/imap-design.md` recommends so the spike exercises exactly what Phase 2
+# would use. Delete this block (and the [[example]] stanza) when the spike's
+# verdict is recorded and the throwaway code is removed.
+async-imap = { version = "0.12", default-features = false, features = ["runtime-tokio"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls-pki-types = "1"
+futures = "0.3"
+
+# The spike probe is a cargo EXAMPLE, not part of the lib/bin, so it is never
+# linked into the shipped app. Run it with:
+#   cargo run --example imap_spike
+[[example]]
+name = "imap_spike"
+path = "examples/imap_spike.rs"
