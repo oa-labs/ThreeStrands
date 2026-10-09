@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import postcss from "postcss";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ContactManagement, MergeContactsDialog } from "./ContactManagement";
@@ -16,6 +19,35 @@ const open = () => fireEvent.click(screen.getByRole("button", { name: "Manage Co
 describe("contact management", () => {
   beforeEach(() => vi.resetAllMocks());
   afterEach(cleanup);
+
+  it("gives management actions a padded, stacked layout in a wider scrollable dialog", () => {
+    render(<ContactManagement addresses={[]} onChanged={vi.fn()}/>); open();
+    const dialog = screen.getByRole("dialog", { name: "Manage contacts" });
+    const actions = within(dialog).getAllByRole("button").filter(button => button.getAttribute("aria-label") !== "Close");
+    expect(actions).toHaveLength(3);
+    expect(actions.every(button => button.closest(".modal-form")?.parentElement === dialog)).toBe(true);
+
+    // jsdom does not lay out dialogs; guard against edge-flush actions and
+    // clipped content using the rules applied to the rendered structure.
+    const css = postcss.parse(readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8"));
+    const declaration = (selector: string, property: string) => {
+      let value: string | undefined;
+      css.walkRules(selector, rule => {
+        if (rule.selector === selector) rule.walkDecls(property, entry => { value = entry.value; });
+      });
+      return value;
+    };
+    expect(declaration(".contact-management-dialog", "width")).toBe("min(var(--dialog-w-lg), calc(100vw - var(--dialog-edge)))");
+    expect(declaration(".contact-management-dialog", "overflow-y")).toBe("auto");
+    expect(declaration(".modal-form", "padding")).toBe("var(--space-2) var(--dialog-inset) var(--space-4)");
+    expect(declaration(".contact-management-dialog .modal-form", "padding-bottom")).toBe("var(--space-6)");
+    expect(declaration(".contact-management-options", "display")).toBe("grid");
+    expect(declaration(".contact-management-options .btn", "height")).toBe("auto");
+    expect(declaration(".contact-management-options .btn", "white-space")).toBe("normal");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Export CSV or vCard…" }));
+    expect(screen.getByLabelText("File format").closest(".modal-form")?.parentElement).toBe(dialog);
+  });
 
   it("reviews warnings and contacts before importing and reports duplicate and invalid skips", async () => {
     vi.mocked(mailClient.previewContactImport).mockResolvedValue({ contacts: [request], skipped: 2, warnings: ["Phone fields omitted"] });

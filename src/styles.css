@@ -1879,7 +1879,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .goal-group h3, .goal-other summary { margin: 0 var(--space-1) var(--space-1-5); color: var(--muted); font-size: var(--text-meta); font-weight: var(--weight-semibold); }
 .goal-other summary { cursor: pointer; }
 .goal-empty { margin: 0 var(--space-1); color: var(--muted); font-size: var(--text-meta); }
-.goal-account-note { margin: 0 var(--space-1) var(--space-3); color: var(--muted); font-size: var(--text-meta); overflow-wrap: anywhere; }
+.goal-account-note { margin: var(--space-1) var(--space-1) var(--space-3); color: var(--muted); font-size: var(--text-meta); overflow-wrap: anywhere; }
 .goal-account-note p { margin: 0; }
 .goal-account-note p + p { margin-top: var(--space-1); }
 .goal-account-note strong { color: var(--text); font-weight: var(--weight-semibold); }
@@ -2972,10 +2972,11 @@ input::placeholder { color: var(--muted); opacity: 1; }
 }
 
 /* Contact management dialogs use the shared modal and control system. */
-.contact-management-dialog { max-width: 640px; }
-.contact-management-dialog p { line-height: var(--leading-normal); }
-.contact-management-options { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.contact-management-dialog label { display: grid; gap: var(--space-2); margin-block: var(--space-3); }
+.contact-management-dialog { width: min(var(--dialog-w-lg), calc(100vw - var(--dialog-edge))); overflow-y: auto; }
+.contact-management-dialog .modal-form { padding-bottom: var(--space-6); }
+.contact-management-dialog p { margin: 0; line-height: var(--leading-normal); }
+.contact-management-options { display: grid; gap: var(--space-3); }
+.contact-management-options .btn { height: auto; min-height: var(--control-h); justify-content: flex-start; padding: var(--space-3) var(--space-4); white-space: normal; text-align: left; }
 .contact-management-dialog ul { max-height: 240px; overflow: auto; padding-left: var(--space-5); overflow-wrap: anywhere; }
 .contact-management-dialog li { margin-block: var(--space-2); }
 .contact-management-dialog li .btn { margin-left: var(--space-2); }
