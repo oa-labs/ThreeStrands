@@ -937,6 +937,27 @@ mod tests {
     }
 
     #[test]
+    fn an_imported_imap_account_stays_out_of_the_runtime_registry_after_restart() {
+        let path = crate::db::test_support::TempDbPath::new();
+        let mut candidate = payload();
+        candidate.accounts[0].provider = "imap".to_string();
+        let encoded = encrypt(&candidate, "correct horse").unwrap();
+        {
+            let database = Database::open(&path.path).unwrap();
+            apply_import(&database, decrypt(&encoded, "correct horse").unwrap()).unwrap();
+        }
+
+        let database = Database::open(&path.path).unwrap();
+        let account = database.get_account("person@example.com").unwrap().unwrap();
+        assert_eq!(account.provider, "imap");
+        assert_eq!(account.status, "needs_reauth");
+        assert!(crate::startup_account_credentials(
+            &database,
+            &crate::auth::AuthConfig::google_for_test(),
+        ).is_empty());
+    }
+
+    #[test]
     fn legacy_split_inbox_without_account_is_assigned_to_first_account() {
         let mut serialized = serde_json::to_value(payload()).unwrap();
         serialized["splitInboxes"] = serde_json::json!([{

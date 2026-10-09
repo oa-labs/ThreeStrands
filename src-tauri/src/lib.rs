@@ -324,6 +324,35 @@ mod account_startup_tests {
     }
 
     #[test]
+    fn an_unimplemented_provider_stays_in_the_catalog_without_starting() {
+        let database = Database::open_memory();
+        database.adopt_mail_account("imap@example.com", MailProviderKind::Imap).unwrap();
+
+        for config in [AuthConfig::default(), AuthConfig::google_for_test()] {
+            assert!(startup_account_credentials(&database, &config).is_empty());
+        }
+        assert_eq!(database.list_accounts().unwrap().len(), 1);
+        assert_eq!(
+            catalogued_mail_provider(&database, "imap@example.com").unwrap(),
+            MailProviderKind::Imap
+        );
+    }
+
+    #[test]
+    fn an_unimplemented_primary_provider_does_not_block_gmail_startup() {
+        let database = Database::open_memory();
+        database.adopt_mail_account("imap@example.com", MailProviderKind::Imap).unwrap();
+        database.adopt_mail_account("work@example.com", MailProviderKind::Gmail).unwrap();
+
+        assert_eq!(database.primary_account_id(), "imap@example.com");
+        let credentials = startup_account_credentials(&database, &AuthConfig::google_for_test());
+        let keys = credentials.iter().map(|(key, _)| key.as_str()).collect::<Vec<_>>();
+        assert_eq!(keys, ["work@example.com"]);
+        assert_eq!(credentials[0].1.mail_provider(), MailProviderKind::Gmail);
+        assert_eq!(database.list_accounts().unwrap().len(), 2);
+    }
+
+    #[test]
     fn an_account_with_an_unsupported_provider_is_skipped_without_blocking_others() {
         let database = Database::open_memory();
         database.adopt_mail_account("work@example.com", MailProviderKind::Gmail).unwrap();
@@ -4076,9 +4105,9 @@ fn startup_account_registry(
 }
 
 /// The credential each catalogued account starts with, keyed by account
-/// id — or, before the first connect, the Gmail placeholder. An account
-/// whose provider has no configured OAuth app is left out rather than
-/// failing the others.
+/// id — or, before the first connect, the Gmail placeholder. Providers that
+/// are not implemented or configured stay in the catalog without entering
+/// the runtime registry, so they cannot block other accounts.
 fn startup_account_credentials(
     database: &Database,
     auth_config: &AuthConfig,
@@ -4102,6 +4131,20 @@ fn startup_account_credentials(
                 );
                 None
             })?;
+            // A recognized kind can be imported before its MailProvider
+            // exists. Only implemented providers may enter the registry.
+            // Keep this match exhaustive so each new kind needs a decision.
+            match provider {
+                MailProviderKind::Gmail => {}
+                MailProviderKind::Imap => {
+                    log::warn!(
+                        "skipping {}: mail provider {} is not implemented yet",
+                        account.email,
+                        provider.as_str()
+                    );
+                    return None;
+                }
+            }
             let auth = log_failure(
                 "starting a catalogued account",
                 auth_config.mail_account(provider, &account.email),

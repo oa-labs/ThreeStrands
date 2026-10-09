@@ -1321,12 +1321,10 @@ impl AccountAuth {
             Self::Gmail(credential) => std::sync::Arc::new(
                 crate::provider::gmail::GmailClient::new(credential.clone()),
             ),
-            // The IMAP provider lands in phase 2. No production path
-            // constructs `AccountAuth::Imap` yet (there is no IMAP "test and
-            // save" setup command), so this is unreachable in slice 2 rather
-            // than a stub client that could silently misbehave.
+            // The IMAP provider lands in phase 2. Startup keeps these accounts
+            // out of the runtime registry, and OAuth setup rejects them.
             Self::Imap(_) => unreachable!(
-                "the IMAP MailProvider lands in phase 2; no AccountAuth::Imap is constructed yet"
+                "the IMAP MailProvider lands in phase 2; IMAP accounts must stay out of the runtime registry"
             ),
         }
     }
