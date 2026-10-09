@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { clearAiApiKey, DEFAULT_AI_FEATURES, saveAiFeatures, saveAiProvider, setAiApiKey, type AiFeatureFlags } from "./aiSettings";
@@ -246,6 +246,31 @@ describe("conversation brief", () => {
     await waitFor(() => expect(briefThread).toHaveBeenCalledTimes(1));
     expect(analyzeThread).not.toHaveBeenCalled();
     expect(await within(panel).findByText("Welcome to the app.")).toBeInTheDocument();
+  });
+
+  it.each([false, true])("keeps a late summary off the conversation selected while it was pending (combined brief: %s)", async (combined) => {
+    await enableAi({ summarize: true, actionExtraction: combined });
+    let finishRequest!: () => void;
+    const summarizeThread = vi.spyOn(mailClient, "summarizeThread").mockImplementation(() => new Promise((resolve) => {
+      finishRequest = () => resolve(briefResult.summary);
+    }));
+    const briefThread = vi.spyOn(mailClient, "briefThread").mockImplementation(() => new Promise((resolve) => {
+      finishRequest = () => resolve(briefResult);
+    }));
+    const other = await mailClient.getThread("roadmap");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const panel = screen.getByRole("complementary", { name: "Conversation context" });
+    fireEvent.click(await within(panel).findByRole("button", { name: "Get Brief" }));
+    await waitFor(() => expect(combined ? briefThread : summarizeThread).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("option", { name: new RegExp(other.thread.subject) }));
+    await screen.findByRole("heading", { name: other.thread.subject });
+    await act(async () => finishRequest());
+
+    expect(screen.getByRole("heading", { name: other.thread.subject })).toBeInTheDocument();
+    expect(within(panel).queryByText("Welcome to the app.")).not.toBeInTheDocument();
+    expect(combined ? summarizeThread : briefThread).not.toHaveBeenCalled();
   });
 
   it("uses the single-purpose request when only one AI feature is on", async () => {

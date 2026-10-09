@@ -85,6 +85,7 @@ import { useLabelCatalog } from "./useLabelCatalog";
 import { useMailboxThreads } from "./useMailboxThreads";
 import { useMailNavigation } from "./useMailNavigation";
 import { useMailRefresh, useUnreadCounts } from "./useMailRefresh";
+import { useMailStateActions } from "./useMailStateActions";
 import { useMeetingActions } from "./useMeetingActions";
 import { useNativeMailLinks } from "./useNativeMailLinks";
 import { useNotice } from "./useNotice";
@@ -165,6 +166,7 @@ export function App() {
   const [notice, setNotice] = useNotice();
   const threadDetail = useThreadDetail(selectedId, threads, setNotice);
   const { detail, setDetail, visibleDetail, detailLoading } = threadDetail;
+  const { applyThreadSummary } = useMailStateActions({ mailboxThreads, threadDetail });
   const snippetLibrary = useSnippets();
   const correspondence = useCorrespondence(
     accounts, visibleDetail?.messages.at(-1)?.id, visibleDetail?.thread.accountId,
@@ -279,7 +281,7 @@ export function App() {
   const unsubscribeMessage = visibleDetail?.messages.find((message) => message.id === unsubscribeMessageId) ?? null;
   const intelligence = useThreadIntelligence({
     accounts, selected, visibleDetail, isThreadMailbox, autoReadDelaySeconds,
-    availabilityPreferences, setThreads, setDetail, aiProactive, aiSummaryAvailable,
+    availabilityPreferences, applyThreadSummary, aiProactive, aiSummaryAvailable,
     aiActionAvailable, aiActionFeatureEnabled,
   });
   const {

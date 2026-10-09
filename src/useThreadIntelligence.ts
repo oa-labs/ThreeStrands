@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { readAiRequestConfig } from "./aiSettings";
 import { attachmentKey, type ChatAttachmentOption } from "./chatAttachments";
 import { mailClient } from "./data/client";
@@ -34,14 +34,13 @@ type Options = Pick<ReturnType<typeof useAiAvailability>, "aiProactive" | "aiSum
   isThreadMailbox: boolean;
   autoReadDelaySeconds: number;
   availabilityPreferences: ReturnType<typeof useAppPreferences>["availabilityPreferences"];
-  setThreads: Dispatch<SetStateAction<Thread[]>>;
-  setDetail: Dispatch<SetStateAction<ThreadDetail | null>>;
+  applyThreadSummary: (threadId: string, result: SummaryResult) => void;
 };
 
 /** Owns per-conversation AI requests, cached suggestions, and session chat. */
 export function useThreadIntelligence({
   accounts, selected, visibleDetail, isThreadMailbox, autoReadDelaySeconds,
-  availabilityPreferences, setThreads, setDetail, aiProactive, aiSummaryAvailable,
+  availabilityPreferences, applyThreadSummary, aiProactive, aiSummaryAvailable,
   aiActionAvailable, aiActionFeatureEnabled,
 }: Options) {
   // Keyed by thread id, not a single flag, so summarizing thread A in the
@@ -50,32 +49,6 @@ export function useThreadIntelligence({
   const summarizingRef = useRef<Set<string>>(new Set());
   const [summarizingIds, setSummarizingIds] = useState<Set<string>>(new Set());
   const [summaryErrors, setSummaryErrors] = useState<Record<string, string>>({});
-  /**
-   * Always calls the provider, even when a summary is already cached — used
-   * for both the first generation and an explicit "Regenerate". Guarded by
-   * `summarizingRef` (checked and updated synchronously, not via state) so
-   * pressing "i" or Regenerate repeatedly for the same thread while a
-   * request is already in flight doesn't fire duplicate provider calls; a
-   * different thread can still summarize concurrently in the background.
-   */
-  const applySummary = useCallback((threadId: string, result: SummaryResult) => {
-    setThreads((current) =>
-      current.map((thread) =>
-        thread.id === threadId
-          ? { ...thread, summary: result.summary, summaryGeneratedAt: result.generatedAt, summaryRevision: result.revision }
-          : thread,
-      ),
-    );
-    setDetail((current) =>
-      current && current.thread.id === threadId
-        ? {
-            ...current,
-            thread: { ...current.thread, summary: result.summary, summaryGeneratedAt: result.generatedAt, summaryRevision: result.revision },
-          }
-        : current,
-    );
-  }, [setDetail, setThreads]);
-
   /** Marks a thread's summary request as in flight; false when one already is. */
   const beginSummary = useCallback((threadId: string) => {
     if (summarizingRef.current.has(threadId)) return false;
@@ -90,13 +63,21 @@ export function useThreadIntelligence({
     setSummarizingIds(new Set(summarizingRef.current));
   }, []);
 
+  /**
+   * Always calls the provider, even when a summary is already cached — used
+   * for both the first generation and an explicit "Regenerate". Guarded by
+   * `summarizingRef` (checked and updated synchronously, not via state) so
+   * pressing "i" or Regenerate repeatedly for the same thread while a
+   * request is already in flight doesn't fire duplicate provider calls; a
+   * different thread can still summarize concurrently in the background.
+   */
   const runSummarize = useCallback(async () => {
     if (!selected) return;
     const threadId = selected.id;
     if (!beginSummary(threadId)) return;
     try {
       const { provider, model, endpoint, reasoning } = readAiRequestConfig("summarizing", "summary");
-      applySummary(threadId, await mailClient.summarizeThread(threadId, provider, model, endpoint, reasoning));
+      applyThreadSummary(threadId, await mailClient.summarizeThread(threadId, provider, model, endpoint, reasoning));
     } catch (error) {
       setSummaryErrors((current) => ({
         ...current,
@@ -105,7 +86,7 @@ export function useThreadIntelligence({
     } finally {
       endSummary(threadId);
     }
-  }, [applySummary, beginSummary, endSummary, selected]);
+  }, [applyThreadSummary, beginSummary, endSummary, selected]);
 
   const [actionProposalSets, setActionProposalSets] = useState<Record<string, ActionProposal[]>>({});
   const [actionHiddenCounts, setActionHiddenCounts] = useState<Record<string, number>>({});
@@ -213,7 +194,7 @@ export function useThreadIntelligence({
     try {
       const { provider, model, endpoint } = readAiRequestConfig("getting a brief", "brief");
       const { summary, analysis } = await mailClient.briefThread(threadId, availabilityPreferences.timeZone, provider, model, endpoint);
-      applySummary(threadId, summary);
+      applyThreadSummary(threadId, summary);
       setActionProposalSets((current) => ({ ...current, [proposalKey]: analysis.proposals }));
       markSuggestionsFetched(proposalKey);
       setActionHiddenCounts((current) => ({ ...current, [proposalKey]: analysis.hiddenCount }));
@@ -224,7 +205,7 @@ export function useThreadIntelligence({
       endActionAnalysis(proposalKey);
     }
   }, [
-    markSuggestionsFetched, actionProposalKey, applySummary, availabilityPreferences.timeZone,
+    markSuggestionsFetched, actionProposalKey, applyThreadSummary, availabilityPreferences.timeZone,
     beginActionAnalysis, beginSummary, endActionAnalysis, endSummary, visibleDetail,
   ]);
 
