@@ -1,5 +1,6 @@
 import {
   Activity,
+  AppWindow,
   CircleAlert,
   ArrowLeftRight,
   CalendarDays,
@@ -40,6 +41,7 @@ import {
 import { formatLabelName } from "./labels";
 import { Modal } from "./AppChrome";
 import { InlineConfirm } from "./InlineConfirm";
+import { DefaultAppsSettings } from "./DefaultAppsSettings";
 import type {
   Account,
   AuthStatus,
@@ -105,7 +107,7 @@ import { AiUsageSummary } from "./AiUsageSummary";
 import { MIN_PROACTIVE_DWELL_SECONDS } from "./proactiveBrief";
 import { ICON_SIZE } from "./iconSizes";
 
-export type SettingsSection = "replicatedSync" | "appearance" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "snippets" | "ai" | "privacy" | "diagnostics" | "data";
+export type SettingsSection = "replicatedSync" | "appearance" | "defaultApps" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "snippets" | "ai" | "privacy" | "diagnostics" | "data";
 
 function recoveryStatusMessage(recovery: RecoveryStatus): string {
   switch (recovery.kind) {
@@ -354,6 +356,7 @@ const SETTINGS_GROUPS: SettingsGroup[] = ["General", "Accounts", "Workflow", "In
 
 const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   { id: "appearance", label: "Appearance", group: "General", description: "Choose how ThreeStrands looks and when conversations are marked read.", keywords: "theme light dark accent color font size family minimum email font size accessibility reading mark read delay conversation", icon: Palette, autosaves: true },
+  { id: "defaultApps", label: "Default Apps", group: "General", description: "Open email links and calendar invitations in ThreeStrands.", keywords: "mailto default email reader mail client ics calendar invitation handler macos", icon: AppWindow },
   { id: "accounts", label: "Mail Accounts", group: "Accounts", description: "Connect mail accounts and manage their identity and order.", keywords: "gmail sender name color reconnect disconnect", icon: Mail },
   { id: "calendarAccounts", label: "Calendar Accounts", group: "Accounts", description: "Connect calendars and choose which ones appear in the sidebar.", keywords: "google calendar connect selection", icon: CalendarDays },
   { id: "availability", label: "Availability", group: "Workflow", description: "Set your timezone, working hours, and meeting defaults.", keywords: "timezone working hours duration slots meetings", icon: Clock, autosaves: true },
@@ -592,6 +595,7 @@ export function Settings({
               onAutoReadDelayChange={preferences.setAutoReadDelaySeconds}
             />
           ) : null}
+          {section === "defaultApps" ? <DefaultAppsSettings /> : null}
           {section === "accounts" ? (
             <AccountsSettings
               authStatus={mailAccounts.authStatus}

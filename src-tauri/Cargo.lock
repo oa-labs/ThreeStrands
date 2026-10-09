@@ -3472,6 +3472,7 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-foundation",
  "objc2-quartz-core",
+ "objc2-uniform-type-identifiers",
 ]
 
 [[package]]
@@ -3633,6 +3634,16 @@ dependencies = [
  "objc2-foundation",
  "objc2-quartz-core",
  "objc2-user-notifications",
+]
+
+[[package]]
+name = "objc2-uniform-type-identifiers"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7902ac02859fc1f7045f8b598c63f1ae0cc7efeaa06a9bc9f3d9a3c955974fa4"
+dependencies = [
+ "objc2",
+ "objc2-foundation",
 ]
 
 [[package]]
@@ -5683,12 +5694,13 @@ dependencies = [
 
 [[package]]
 name = "threestrands"
-version = "0.84.0"
+version = "0.85.0"
 dependencies = [
  "argon2",
  "async-trait",
  "axum",
  "base64 0.22.1",
+ "block2",
  "calcard",
  "chacha20poly1305",
  "chrono",
@@ -5706,6 +5718,10 @@ dependencies = [
  "mail-parser",
  "md-5 0.11.0",
  "oauth2",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "objc2-uniform-type-identifiers",
  "open",
  "pdf-extract",
  "percent-encoding",

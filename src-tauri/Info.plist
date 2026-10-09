@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Merged into the bundle's Info.plist by the Tauri bundler. Declaring the
-     mailto scheme lets macOS offer ThreeStrands as the default email reader;
-     the links arrive as RunEvent::Opened (see mail_links.rs). -->
+     mailto scheme lets macOS offer ThreeStrands as the default email reader,
+     and the .ics document type lets it open calendar invitations. Both arrive
+     as RunEvent::Opened (see mail_links.rs and calendar_files.rs). The .ics
+     rank is Alternate so installing never takes over calendar files; the
+     user chooses ThreeStrands in Settings → Default Apps or in Finder. -->
 <plist version="1.0">
 <dict>
 	<key>CFBundleURLTypes</key>
@@ -16,6 +19,21 @@
 			</array>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
+		</dict>
+	</array>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Calendar Invitation</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.apple.ical.ics</string>
+			</array>
 		</dict>
 	</array>
 </dict>

@@ -26,6 +26,7 @@ import { useCalendarSchedule } from "./useCalendarSchedule";
 import { ICON_SIZE } from "./iconSizes";
 import { InlineConfirm } from "./InlineConfirm";
 import { EditCalendarEventDialog } from "./CreateCalendarEventDialog";
+import { CalendarResponseControls } from "./CalendarResponseControls";
 
 export const CALENDAR_SCROLL_TOP_KEY = "threestrands.calendar.scrollTop";
 const DEFAULT_CALENDAR_SCROLL_TOP = 7 * HOUR_HEIGHT;
@@ -188,13 +189,10 @@ export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEv
   const calendarColors = useCalendarColors();
   const viewerRef = useRef<HTMLDivElement>(null);
   const conferenceUrl = safeWebUrl(event.conferenceUrl);
-  const [responsePending, setResponsePending] = useState(false);
-  const [responseError, setResponseError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const label = responseLabel(event);
   const deleteEvent = async () => {
     setDeletePending(true);
     setDeleteError(null);
@@ -205,19 +203,6 @@ export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEv
     } catch (error) {
       setDeleteError(errorMessage(error));
       setDeletePending(false);
-    }
-  };
-  const respond = async (status: "accepted" | "declined" | "tentative") => {
-    setResponsePending(true);
-    setResponseError(null);
-    try {
-      const updated = await mailClient.updateCalendarResponse(event, status);
-      onUpdated(updated);
-      revalidateScheduleCache(updated);
-    } catch (error) {
-      setResponseError(errorMessage(error));
-    } finally {
-      setResponsePending(false);
     }
   };
   useEscapeDismiss(onDismiss);
@@ -276,15 +261,7 @@ export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEv
         ) : null}
         {event.location ? <p><MapPin size={ICON_SIZE.lg} /><span><EventLocation location={event.location} /></span></p> : null}
         <p><CalendarDays size={ICON_SIZE.lg} /><span>{event.accountId}</span></p>
-        {label ? <div className="calendar-event-response">
-          <span>Your response: <strong>{label}</strong></span>
-          {event.canRespond ? <div className="segmented calendar-response-actions" role="group" aria-label="Going?">
-            {([ ["accepted", "Yes"], ["declined", "No"], ["tentative", "Maybe"] ] as const).map(([status, title]) => (
-              <button key={status} type="button" className="segment" aria-pressed={event.responseStatus === status} disabled={responsePending} onClick={() => void respond(status)}>{title}</button>
-            ))}
-          </div> : null}
-          {responseError ? <p role="alert">{responseError}</p> : null}
-        </div> : null}
+        <CalendarResponseControls event={event} onUpdated={onUpdated} />
         {event.description ? <p className="calendar-event-viewer-description"><TextAlignStart size={ICON_SIZE.lg} /><span>{calendarDescriptionText(event.description)}</span></p> : null}
       </div>
       {editing ? <EditCalendarEventDialog

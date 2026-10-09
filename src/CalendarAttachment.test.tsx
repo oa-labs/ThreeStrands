@@ -1,6 +1,6 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CalendarAttachment, CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachment";
+import { CalendarAttachment, CalendarAttachmentGroup, calendarEventRange, isCalendarAttachment } from "./CalendarAttachment";
 import { mailClient } from "./data/client";
 
 const attachment = {
@@ -161,5 +161,34 @@ describe("CalendarAttachmentGroup", () => {
     expect(screen.queryByText("Loading calendar invitation…")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Economic outlook" })).toBeVisible();
     expect(mailClient.previewCalendarAttachment).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("calendarEventRange", () => {
+  const event = {
+    uid: null, title: "Launch review", start: "2026-10-12T15:00:00Z", end: "2026-10-12T16:30:00Z", allDay: false,
+    timeZone: null, location: null, description: null, organizer: null, attendeeCount: 0, recurring: false, status: null,
+  };
+
+  it("uses the invitation's own start and end", () => {
+    expect(calendarEventRange(event)).toEqual({ start: new Date("2026-10-12T15:00:00Z"), end: new Date("2026-10-12T16:30:00Z") });
+  });
+
+  it("gives a timed event without a usable end one hour", () => {
+    for (const end of [null, "2026-10-12T14:00:00Z", "not a date"]) {
+      expect(calendarEventRange({ ...event, end })).toEqual({ start: new Date("2026-10-12T15:00:00Z"), end: new Date("2026-10-12T16:00:00Z") });
+    }
+  });
+
+  it("reads all-day dates as local days and gives a missing end one day", () => {
+    expect(calendarEventRange({ ...event, allDay: true, start: "2026-10-12", end: "2026-10-14" }))
+      .toEqual({ start: new Date(2026, 9, 12), end: new Date(2026, 9, 14) });
+    expect(calendarEventRange({ ...event, allDay: true, start: "2026-10-12", end: null }))
+      .toEqual({ start: new Date(2026, 9, 12), end: new Date(2026, 9, 13) });
+  });
+
+  it("has no range without a usable start", () => {
+    expect(calendarEventRange({ ...event, start: null })).toBeNull();
+    expect(calendarEventRange({ ...event, start: "soon" })).toBeNull();
   });
 });

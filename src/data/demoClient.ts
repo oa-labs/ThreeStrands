@@ -1047,6 +1047,15 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       current.responseStatus = responseStatus;
       return structuredClone(current);
     },
+    async findCalendarInvitation(_uid) {
+      return null;
+    },
+    async defaultAppStatus() {
+      return { supported: false, mail: false, calendar: false };
+    },
+    async makeDefaultApp(_role) {
+      throw new Error("Default apps can only be set from the installed ThreeStrands app on macOS");
+    },
     async createCalendarEvent(request) {
       const calendar = calendarOptions.find((option) => option.id === request.calendarId && option.accountId === request.accountId && option.writable);
       if (!calendar) throw new Error("Choose a calendar where you can create events");

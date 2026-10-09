@@ -173,7 +173,7 @@ export function CalendarAttachment({ messageId, attachment, onError, loadedPrevi
   );
 }
 
-function CalendarEvent({ event }: { event: CalendarEventPreview }) {
+export function CalendarEvent({ event }: { event: CalendarEventPreview }) {
   const status = event.status?.toLocaleLowerCase();
   return (
     <article className={`calendar-event${status === "cancelled" ? " calendar-event-cancelled" : ""}`}>
@@ -232,6 +232,22 @@ function parsedDate(value: string | null): Date | null {
     ? new Date(Number(allDay[1]), Number(allDay[2]) - 1, Number(allDay[3]))
     : new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/**
+ * The time an invitation event covers, for prefilling a new calendar event.
+ * A missing end means one hour (or, all day, one day) after the start.
+ * Null when the invitation has no usable start.
+ */
+export function calendarEventRange(event: CalendarEventPreview): { start: Date; end: Date } | null {
+  const start = parsedDate(event.start);
+  if (!start) return null;
+  const end = parsedDate(event.end);
+  if (end && end > start) return { start, end };
+  const fallback = new Date(start);
+  if (event.allDay) fallback.setDate(fallback.getDate() + 1);
+  else fallback.setHours(fallback.getHours() + 1);
+  return { start, end: fallback };
 }
 
 function calendarMonth(value: string | null): string {

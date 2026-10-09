@@ -653,8 +653,11 @@ button:disabled { cursor: default; }
 .thread-header-title { display: flex; align-items: center; gap: var(--space-3); }
 .mailbox-heading-context { display: flex; align-items: center; gap: var(--space-2); min-width: 0; color: var(--muted); font-size: var(--text-meta); }
 .mailbox-heading-context .eyebrow-account { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Undoes a jump from the context panel, Tasks, or Contacts; a long subject truncates. */
-.reader-back { max-width:100%; margin-bottom:var(--space-1); font-size:var(--text-meta); }
+/* Undoes a jump from the context panel, Tasks, or Contacts; a long subject
+   truncates. Capped at half the reader panel width (50cqw, measured against
+   the .reader inline-size container) so a long origin label can never grow
+   past the content panel's midpoint and shove the action icons off-screen. */
+.reader-back { max-width:50cqw; margin-bottom:var(--space-1); font-size:var(--text-meta); }
 .reader-back-label { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .reader-account-scope { display: block; margin-bottom: var(--space-1); color: var(--muted); font-size: var(--text-meta); overflow-wrap: anywhere; }
 .select-all { display: flex; }
@@ -1027,7 +1030,7 @@ kbd {
 .connect-account-cta p { margin: 0; max-width: 220px; }
 .load-more { width: calc(100% - 20px); margin: var(--space-1-5) var(--space-2-5) 0; }
 
-.reader { min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--reader); }
+.reader { min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--reader); container-type: inline-size; }
 .reader-header { flex-shrink: 0; border-bottom: 1px solid var(--border); }
 .reader-header h2 { transform: translateY(4px); }
 /* Line the top of the icon row up with the top of the account-email line.
@@ -1275,6 +1278,8 @@ kbd {
   font-size: var(--text-meta);
 }
 .calendar-card-actions > span { display: flex; flex: 1; align-items: center; gap: var(--space-1-5); min-width: 0; }
+/* An opened .ics file: the RSVP control takes the footer's status slot. */
+.calendar-invitation-modal .calendar-card-actions .calendar-event-response { flex: 1; padding: var(--space-1) 0; }
 .message-card {
   overflow: hidden;
   border: 1px solid transparent;

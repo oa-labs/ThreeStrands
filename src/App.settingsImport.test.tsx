@@ -134,12 +134,19 @@ describe("settings section keyboard navigation", () => {
     expect(appearanceButton).toHaveAttribute("aria-current", "true");
 
     fireEvent.keyDown(appearanceButton, { key: "ArrowDown" });
+    const defaultAppsButton = within(dialog).getByRole("button", { name: "Default Apps" });
+    expect(defaultAppsButton).toHaveAttribute("aria-current", "true");
+    expect(defaultAppsButton).toHaveFocus();
+    expect(within(dialog).getByRole("region", { name: "Default Apps" })).toBeInTheDocument();
+
+    fireEvent.keyDown(defaultAppsButton, { key: "ArrowDown" });
     const accountsButton = within(dialog).getByRole("button", { name: "Mail Accounts" });
     expect(accountsButton).toHaveAttribute("aria-current", "true");
     expect(accountsButton).toHaveFocus();
     expect(within(dialog).getByRole("region", { name: "Mail Accounts" })).toBeInTheDocument();
 
     fireEvent.keyDown(accountsButton, { key: "ArrowUp" });
+    fireEvent.keyDown(defaultAppsButton, { key: "ArrowUp" });
     expect(appearanceButton).toHaveAttribute("aria-current", "true");
     expect(appearanceButton).toHaveFocus();
 
@@ -158,7 +165,7 @@ describe("settings section keyboard navigation", () => {
     const dialog = await screen.findByRole("dialog", { name: "Settings" });
     const nav = within(dialog).getByRole("navigation", { name: "Settings sections" });
     const sectionButtons = Array.from(nav.querySelectorAll<HTMLButtonElement>("button[data-section-id]"));
-    expect(sectionButtons).toHaveLength(11);
+    expect(sectionButtons).toHaveLength(12);
     for (const button of sectionButtons) {
       const icon = button.querySelector("svg");
       expect(icon).not.toBeNull();

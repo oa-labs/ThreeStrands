@@ -13,7 +13,7 @@ use crate::{
 };
 
 const MAX_EVENTS: usize = 20;
-const MAX_CALENDAR_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const MAX_CALENDAR_BYTES: usize = 2 * 1024 * 1024;
 const CALENDAR_LIST_URL: &str = "https://www.googleapis.com/calendar/v3/users/me/calendarList";
 const CALENDARS_URL: &str = "https://www.googleapis.com/calendar/v3/calendars/";
 const FREEBUSY_URL: &str = "https://www.googleapis.com/calendar/v3/freeBusy";
@@ -357,6 +357,34 @@ pub async fn fetch_schedule(
     }
     schedule.sort_by(|left, right| left.start.cmp(&right.start));
     Ok(schedule)
+}
+
+/// Looks an invitation up by its iCalendar UID on an account's primary
+/// calendar, where Google files the invitations it receives. Google's primary
+/// calendar ID is the account address, which keeps the result's ID in the
+/// same form the schedule uses.
+pub async fn find_invitation(
+    auth: OAuthCredential,
+    account_id: &str,
+    uid: &str,
+) -> Result<Option<ScheduleEvent>, String> {
+    let Some(url) = events_url(account_id)? else {
+        return Ok(None);
+    };
+    let access_token = auth.access_token().await.map_err(|error| error.to_string())?;
+    let response = calendar_client()?
+        .get(url)
+        .bearer_auth(&access_token)
+        .query(&[("iCalUID", uid), ("maxResults", "1")])
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(invitation_from(checked_json(response).await?, account_id))
+}
+
+fn invitation_from(events: GoogleEvents, account_id: &str) -> Option<ScheduleEvent> {
+    let writable = writable_access_role(&events.access_role);
+    normalize_events(events.items, account_id, account_id, writable).into_iter().next()
 }
 
 /// Queries Google's FreeBusy endpoint once for all selected calendars on an
@@ -951,6 +979,41 @@ mod tests {
         assert!(writable_access_role(&list.access_role));
         let list: GoogleEvents = serde_json::from_value(serde_json::json!({})).unwrap();
         assert!(!writable_access_role(&list.access_role));
+    }
+
+    #[test]
+    fn an_invitation_found_by_uid_can_be_answered_on_the_primary_calendar() {
+        let events: GoogleEvents = serde_json::from_value(serde_json::json!({
+            "accessRole": "owner",
+            "items": [{
+                "id": "evt123",
+                "summary": "Launch review",
+                "start": { "dateTime": "2026-10-12T15:00:00Z" },
+                "end": { "dateTime": "2026-10-12T16:00:00Z" },
+                "organizer": { "email": "lead@example.com" },
+                "attendees": [
+                    { "email": "lead@example.com", "responseStatus": "accepted" },
+                    { "email": "me@example.com", "self": true, "responseStatus": "needsAction" }
+                ]
+            }]
+        })).unwrap();
+        let event = invitation_from(events, "me@example.com").unwrap();
+        assert_eq!(event.calendar_id, "me@example.com");
+        assert_eq!(google_event_id(&event.calendar_id, &event.id), Ok("evt123"));
+        assert_eq!(event.response_status.as_deref(), Some("needsAction"));
+        assert!(event.can_respond);
+        assert!(!event.can_edit);
+    }
+
+    #[test]
+    fn a_cancelled_or_missing_invitation_is_not_found() {
+        let missing: GoogleEvents = serde_json::from_value(serde_json::json!({ "accessRole": "owner", "items": [] })).unwrap();
+        assert!(invitation_from(missing, "me@example.com").is_none());
+        let cancelled: GoogleEvents = serde_json::from_value(serde_json::json!({
+            "accessRole": "owner",
+            "items": [{ "id": "gone", "status": "cancelled", "start": { "date": "2026-10-12" }, "end": { "date": "2026-10-13" } }]
+        })).unwrap();
+        assert!(invitation_from(cancelled, "me@example.com").is_none());
     }
 
     #[test]

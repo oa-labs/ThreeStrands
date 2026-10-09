@@ -65,6 +65,8 @@ import type {
   Label,
   RecoveryStatus,
   ScheduleEvent,
+  CalendarEventPreview,
+  OpenedCalendarFile,
   Thread,
   ThreadDetail,
   TriageEvent,
@@ -163,6 +165,10 @@ import { UpdateNotice } from "./UpdateNotice";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import { listenForNativeMailLinks, setMailtoHandler } from "./mailtoLink";
+import { listenForOpenedCalendarFiles } from "./calendarFiles";
+import { OpenedCalendarDialog } from "./OpenedCalendarDialog";
+import { calendarEventRange } from "./CalendarAttachment";
+import { calendarDescriptionText } from "./calendarDescription";
 
 type RightWorkspace = "calendar" | "contacts" | "tasks" | "week" | null;
 /** Where a suggestion set lives: its state key, and the thread revision its saved copy is stored under. */
@@ -1966,7 +1972,36 @@ export function App() {
     description: string;
     /** The suggestion this event comes from; it is removed once the event exists. */
     source: { from: ProposalSource; proposal: ActionProposal } | null;
+    /** Added from an opened calendar file, which is dismissed once the event exists. */
+    fromOpenedFile?: boolean;
   } | null>(null);
+  // .ics files macOS opened with ThreeStrands, shown one at a time.
+  const [openedCalendarFiles, setOpenedCalendarFiles] = useState<{ id: number; file: OpenedCalendarFile }[]>([]);
+  const nextOpenedCalendarFileId = useRef(0);
+  useEffect(() => listenForOpenedCalendarFiles((files) => {
+    const arrived = files.map((file) => ({ id: nextOpenedCalendarFileId.current++, file }));
+    setOpenedCalendarFiles((current) => [...current, ...arrived]);
+  }), []);
+  const dismissOpenedCalendarFile = useCallback(() => setOpenedCalendarFiles((current) => current.slice(1)), []);
+  // The invitation is added as the user's own event, without its guests, so
+  // nobody on the original invitation is emailed again.
+  const addOpenedInvitationToCalendar = useCallback((event: CalendarEventPreview) => {
+    const range = calendarEventRange(event);
+    if (!range) return;
+    void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"));
+    setMeetingEventDraft({
+      ...range,
+      title: event.title,
+      invitees: [],
+      description: [
+        event.location ? `Location: ${event.location}` : null,
+        event.organizer ? `Organized by ${event.organizer}` : null,
+        event.description ? calendarDescriptionText(event.description) : null,
+      ].filter(Boolean).join("\n\n"),
+      source: null,
+      fromOpenedFile: true,
+    });
+  }, [refreshCalendarOptions]);
   const addMeetingToCalendar = useCallback((slot: ScheduleSlot, meeting: { title: string; participants: string[]; excerpt: string | null }, source: { from: ProposalSource; proposal: ActionProposal } | null) => {
     if (!visibleDetail) return;
     const invitees = meeting.participants.filter((participant) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(participant.trim())).map((participant) => participant.trim());
@@ -3118,7 +3153,20 @@ export function App() {
           initialInvitees={meetingEventDraft.invitees}
           initialDescription={meetingEventDraft.description}
           onClose={() => setMeetingEventDraft(null)}
-          onCreated={meetingCreated}
+          onCreated={(event) => {
+            if (meetingEventDraft.fromOpenedFile) dismissOpenedCalendarFile();
+            meetingCreated(event);
+          }}
+        />
+      ) : null}
+      {openedCalendarFiles[0] && !meetingEventDraft ? (
+        <OpenedCalendarDialog
+          key={openedCalendarFiles[0].id}
+          file={openedCalendarFiles[0].file}
+          waiting={openedCalendarFiles.length - 1}
+          calendarConnected={calendarConnected}
+          onAddToCalendar={addOpenedInvitationToCalendar}
+          onClose={dismissOpenedCalendarFile}
         />
       ) : null}
       {taskEditor ? (

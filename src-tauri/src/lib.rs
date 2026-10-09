@@ -7,10 +7,12 @@ mod attachment_security;
 mod auth;
 mod backoff;
 mod calendar;
+mod calendar_files;
 mod correspondence;
 mod contact_interchange;
 mod credentials;
 mod db;
+mod default_apps;
 mod endpoint_origin;
 mod enrollment;
 mod error_text;
@@ -2672,6 +2674,34 @@ async fn update_calendar_response(
     ).await
 }
 
+/// Finds an opened invitation on the connected calendars by its iCalendar
+/// UID, so the user can RSVP to the copy their calendar already holds. Ok(None)
+/// means every connected calendar was checked and none has it.
+#[tauri::command]
+async fn find_calendar_invitation(
+    uid: String,
+    state: State<'_, AppState>,
+) -> Result<Option<models::ScheduleEvent>, String> {
+    let uid = uid.trim();
+    if uid.is_empty() || uid.len() > limits::MAX_CALENDAR_UID_BYTES {
+        return Err("This invitation has no usable event ID".into());
+    }
+    let config = state.auth_config.google()?;
+    let mut errors = Vec::new();
+    for account in state.database.list_calendar_accounts()? {
+        match calendar::find_invitation(config.calendar_account(&account.email), &account.email, uid).await {
+            Ok(Some(event)) => return Ok(Some(event)),
+            Ok(None) => {}
+            Err(error) => errors.push(format!("{}: {error}", account.email)),
+        }
+    }
+    if errors.is_empty() {
+        Ok(None)
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
 #[tauri::command]
 async fn find_availability(
     request: FindAvailabilityRequest,
@@ -3781,6 +3811,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(app_update::PendingUpdate::default())
         .manage(mail_links::MailLinkInbox::default())
+        .manage(calendar_files::CalendarFileInbox::default())
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(
@@ -4266,7 +4297,21 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         app_update::check_for_app_update,
         app_update::install_app_update,
         mail_links::take_pending_mail_links,
+        calendar_files::take_pending_calendar_files,
+        find_calendar_invitation,
+        default_apps::default_app_status,
+        default_apps::make_default_app,
     ]
+}
+
+/// Brings the main window forward for something opened from outside the app
+/// (a mail link or calendar file).
+pub(crate) fn focus_main_window<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) {
+    if let Some(window) = handle.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 /// Holds window close and app exit until the frontend has had a chance to
@@ -4304,13 +4349,21 @@ fn handle_run_event(handle: &tauri::AppHandle, event: tauri::RunEvent) {
             }
         }
         tauri::RunEvent::Resumed => spawn_foreground_sync(handle),
-        // macOS opens `mailto:` links here when ThreeStrands is the default
-        // mail app (Info.plist declares the scheme), including the link that
+        // macOS opens `mailto:` links and `.ics` files here when ThreeStrands
+        // handles them (Info.plist declares both), including the one that
         // launched it.
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Opened { urls } => {
-            for url in urls.iter().filter(|url| url.scheme() == "mailto") {
-                mail_links::deliver(handle, url.as_str());
+            for url in urls {
+                match url.scheme() {
+                    "mailto" => mail_links::deliver(handle, url.as_str()),
+                    "file" => {
+                        if let Ok(path) = url.to_file_path() {
+                            calendar_files::deliver(handle, &path);
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
         tauri::RunEvent::Exit => {

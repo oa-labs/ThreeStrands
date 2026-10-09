@@ -15,6 +15,8 @@ import type {
   CalendarOption,
   CalendarPreview,
   CreateCalendarEventRequest,
+  DefaultAppRole,
+  DefaultAppStatus,
   UpdateCalendarEventRequest,
   ContactSuggestion,
   ContactFormat,
@@ -218,6 +220,11 @@ export interface MailClient extends CorrespondenceClient {
   setCalendarSelection(accountId: string, calendarIds: string[]): Promise<CalendarOption[]>;
   listScheduleEvents(timeMin: string, timeMax: string, timeZone: string): Promise<ScheduleResult>;
   updateCalendarResponse(event: ScheduleEvent, responseStatus: "accepted" | "declined" | "tentative"): Promise<ScheduleEvent>;
+  /** Finds an invitation on the connected calendars by its iCalendar UID; null when none has it. */
+  findCalendarInvitation(uid: string): Promise<ScheduleEvent | null>;
+  defaultAppStatus(): Promise<DefaultAppStatus>;
+  /** Asks macOS (which confirms with the user) to make ThreeStrands the default for `role`. */
+  makeDefaultApp(role: DefaultAppRole): Promise<DefaultAppStatus>;
   createCalendarEvent(request: CreateCalendarEventRequest): Promise<ScheduleEvent>;
   /** Changes an event the user organizes and notifies its guests. */
   updateCalendarEvent(request: UpdateCalendarEventRequest): Promise<ScheduleEvent>;
@@ -360,6 +367,9 @@ const tauriClient: MailClient = {
     complete("list_schedule_events", { timeMin, timeMax, timeZone }),
   updateCalendarResponse: (event, responseStatus) =>
     complete("update_calendar_response", { accountId: event.accountId, calendarId: event.calendarId, eventId: event.id, responseStatus }),
+  findCalendarInvitation: (uid) => complete("find_calendar_invitation", { uid }),
+  defaultAppStatus: () => read("default_app_status"),
+  makeDefaultApp: (role) => complete("make_default_app", { role }),
   createCalendarEvent: (request) => complete("create_calendar_event", { request }),
   updateCalendarEvent: (request) => complete("update_calendar_event", { request }),
   deleteCalendarEvent: (event) =>

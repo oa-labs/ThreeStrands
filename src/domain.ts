@@ -51,6 +51,24 @@ export type CalendarPreview = {
   truncated: boolean;
 };
 
+/** A `.ics` file macOS opened with ThreeStrands, parsed natively. */
+export type OpenedCalendarFile = {
+  name: string;
+  preview: CalendarPreview | null;
+  /** Why the file could not be shown, when `preview` is null. */
+  error: string | null;
+};
+
+export type DefaultAppRole = "mail" | "calendar";
+
+/** Whether ThreeStrands is the macOS default for each role. */
+export type DefaultAppStatus = {
+  /** False outside an installed macOS copy, where defaults cannot be set. */
+  supported: boolean;
+  mail: boolean;
+  calendar: boolean;
+};
+
 export type CalendarAccount = {
   email: string;
   connectedAt: string;

@@ -56,11 +56,7 @@ pub fn deliver<R: Runtime>(handle: &AppHandle<R>, url: &str) {
         return;
     }
     let _ = handle.emit(MAIL_LINK_EVENT, ());
-    if let Some(window) = handle.get_webview_window("main") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
+    crate::focus_main_window(handle);
 }
 
 #[tauri::command]
