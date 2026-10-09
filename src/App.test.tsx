@@ -536,12 +536,15 @@ describe("message cards", () => {
       expect(container.querySelectorAll("[aria-expanded='true']")).toHaveLength(3);
       expect(screen.getAllByTestId("message-body")).toHaveLength(3);
 
+      const frameDocuments = screen.getAllByTestId("message-body").map((frame) => (frame as HTMLIFrameElement).srcdoc);
+
       await advance(3000);
       await screen.findByRole("button", { name: "Mark Unread (u)" });
 
       expect(container.querySelectorAll("button.message-card-toggle[aria-expanded='false']")).toHaveLength(0);
       expect(container.querySelectorAll("[aria-expanded='true']")).toHaveLength(3);
       expect(screen.getAllByTestId("message-body")).toHaveLength(3);
+      expect(screen.getAllByTestId("message-body").map((frame) => (frame as HTMLIFrameElement).srcdoc)).toEqual(frameDocuments);
     } finally {
       getThread.mockRestore();
     }
@@ -593,7 +596,7 @@ describe("read state and auto-read", () => {
     expect(screen.getByRole("button", { name: "Mark Read (u)" })).toBeInTheDocument();
   });
 
-  it("does not scroll away from a reply when the delayed auto-read update runs", async () => {
+  it.each([false, true])("does not scroll when the delayed auto-read update runs (reply open: %s)", async (replyOpen) => {
     await mailClient.mutateThread({ kind: "read", threadId: "welcome", value: false });
     const scrollIntoView = vi.fn();
     const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
@@ -605,10 +608,12 @@ describe("read state and auto-read", () => {
       await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
       scrollIntoView.mockClear();
 
-      await act(async () => {
-        window.dispatchEvent(new KeyboardEvent("keydown", { key: "r" }));
-      });
-      await screen.findByRole("dialog", { name: "Reply Message" });
+      if (replyOpen) {
+        await act(async () => {
+          window.dispatchEvent(new KeyboardEvent("keydown", { key: "r" }));
+        });
+        await screen.findByRole("dialog", { name: "Reply Message" });
+      }
 
       await advance(3000);
       await screen.findByRole("button", { name: "Mark Unread (u)" });

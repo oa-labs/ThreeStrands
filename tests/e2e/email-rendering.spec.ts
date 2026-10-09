@@ -1,6 +1,39 @@
 import { expect, test } from "@playwright/test";
 
 test.describe("email rendering fixtures", () => {
+  for (const fixture of ["notification", "transactional"]) {
+    test(`${fixture} changes read styling without reloading or losing selection`, async ({ page }) => {
+      await page.goto(`/tests/email-rendering.html?theme=light&fixture=${fixture}&tone`);
+      const frame = page.locator("iframe.message-body");
+      const body = frame.contentFrame().locator("body");
+      await expect(body).toHaveAttribute("data-tone", "default");
+      const originalDocument = await frame.evaluateHandle((element) => (element as HTMLIFrameElement).contentDocument!);
+      const originalSrcdoc = await frame.getAttribute("srcdoc");
+      const selectedText = await frame.evaluate((element) => {
+        const doc = (element as HTMLIFrameElement).contentDocument!;
+        const range = doc.createRange();
+        range.selectNodeContents(doc.querySelector("[data-email-root]")!);
+        doc.getSelection()!.addRange(range);
+        return doc.getSelection()!.toString();
+      });
+      expect(selectedText.length).toBeGreaterThan(0);
+
+      for (const { tone, color } of [
+        { tone: "muted", color: "rgb(98, 98, 115)" },
+        { tone: "current", color: "rgb(36, 36, 44)" },
+        { tone: "default", color: "rgb(53, 53, 65)" },
+      ]) {
+        await page.getByRole("combobox", { name: "Message tone" }).selectOption(tone);
+        await expect(body).toHaveAttribute("data-tone", tone);
+        await expect(body).toHaveCSS("color", color);
+        expect(await frame.getAttribute("srcdoc")).toBe(originalSrcdoc);
+        expect(await frame.evaluate((element, original) => (element as HTMLIFrameElement).contentDocument === original, originalDocument)).toBe(true);
+        expect(await frame.evaluate((element) => (element as HTMLIFrameElement).contentDocument!.getSelection()!.toString())).toBe(selectedText);
+      }
+      await originalDocument.dispose();
+    });
+  }
+
   test("plain text respects the floor and keeps a larger app font scale", async ({ page }) => {
     await page.goto("/tests/email-rendering.html?theme=light&fixture=smallTextFlow&minimumFontSize=18&plain");
     const body = page.getByTestId("message-body");

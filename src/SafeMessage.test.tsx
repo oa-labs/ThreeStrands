@@ -37,6 +37,60 @@ function loadFrame(frame: HTMLIFrameElement) {
 }
 
 describe("SafeMessage", () => {
+  it.each(["notification", "transactional"] as const)("updates read-status styling in place for a %s layout", (fixture) => {
+    const html = emailRenderingFixtures[fixture];
+    const { rerender } = render(<SafeMessage html={html} tone="default" />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    const initialDocument = frame.srcdoc;
+    const doc = loadFrame(frame);
+    const root = doc.querySelector("[data-email-root]")!;
+    const markup = root.innerHTML;
+    const range = doc.createRange();
+    range.selectNodeContents(root);
+    const selection = doc.getSelection()!;
+    selection.addRange(range);
+    const selectedText = selection.toString();
+
+    for (const tone of ["muted", "current", "default"] as const) {
+      rerender(<SafeMessage html={html} tone={tone} />);
+      expect(doc.body.dataset.tone).toBe(tone);
+      expect(frame.srcdoc).toBe(initialDocument);
+      expect(frame.contentDocument).toBe(doc);
+      expect(doc.querySelector("[data-email-root]")).toBe(root);
+      expect(root.innerHTML).toBe(markup);
+      expect(selection.toString()).toBe(selectedText);
+    }
+  });
+
+  it("applies the latest tone on initial load and after a document reload", () => {
+    const html = "<p>Message</p>";
+    const { rerender } = render(<SafeMessage html={html} tone="current" />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    // The read timer can settle before the iframe's load event.
+    rerender(<SafeMessage html={html} tone="muted" />);
+    expect(loadFrame(frame).body.dataset.tone).toBe("muted");
+    rerender(<SafeMessage html={html} tone="muted" theme="light" />);
+    expect(loadFrame(frame).body.dataset.tone).toBe("muted");
+  });
+
+  it("keeps scripts, unsafe links, and remote resources blocked across tone changes", () => {
+    const html = '<p style="background:url(https://tracker.invalid)">Message</p><img src="https://tracker.invalid/image" onerror="parent.compromised=true"><script>parent.compromised=true</script><a href="javascript:alert(1)">Bad link</a>';
+    const resolveImage = vi.fn();
+    const { rerender } = render(<SafeMessage html={html} resolveImage={resolveImage} />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    const doc = loadFrame(frame);
+    rerender(<SafeMessage html={html} resolveImage={resolveImage} tone="muted" />);
+
+    expect(doc.body.dataset.tone).toBe("muted");
+    expect(frame.srcdoc).toContain("script-src 'none'");
+    expect(frame.getAttribute("sandbox")).toBe("allow-same-origin allow-scripts");
+    expect(doc.querySelector("script, [onerror]")).toBeNull();
+    expect(doc.querySelector("img")!.hasAttribute("src")).toBe(false);
+    expect(doc.querySelector("a")!.hasAttribute("href")).toBe(false);
+    expect(doc.querySelector("p")!.style.backgroundImage).toBe("");
+    expect(resolveImage).not.toHaveBeenCalled();
+  });
+
   it("enlarges small text, leaves larger text and spacers intact, and restores author styles", () => {
     const html = '<p style="font-size:10px;line-height:12px">Small</p><h2 style="font-size:28px">Heading</h2><div style="font-size:1px;height:8px">&nbsp;</div><p style="font-size:0.1px;line-height:4096px">Tiny font</p>';
     const { rerender } = render(<SafeMessage html={html} emailMinimumFontSize={18} />);

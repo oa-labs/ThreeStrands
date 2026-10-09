@@ -24,6 +24,7 @@ export function useReaderState({
   const activeMessageIdRef = useRef<string | null>(null);
   const pendingMessageToggleFocusRef = useRef<string | null>(null);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
+  const lastAutoScrollRef = useRef<{ threadId: string; messageId: string } | null>(null);
 
   useEffect(() => {
     setMessageExpansionOverrides(new Map());
@@ -31,6 +32,7 @@ export function useReaderState({
     activeMessageIdRef.current = null;
     pendingMessageToggleFocusRef.current = null;
     setActiveMessageId(null);
+    lastAutoScrollRef.current = null;
   }, [selectedThreadId]);
 
   useEffect(() => {
@@ -46,16 +48,22 @@ export function useReaderState({
   }, [detail]);
 
   const latestDisplayedMessageId = displayedMessages.at(-1)?.id;
+  const detailThreadId = detail?.thread.id;
   useEffect(() => {
     if (!latestDisplayedMessageId) return;
     activeMessageIdRef.current = latestDisplayedMessageId;
     setActiveMessageId(latestDisplayedMessageId);
-  }, [detail, latestDisplayedMessageId]);
+  }, [detailThreadId, latestDisplayedMessageId]);
 
   useEffect(() => {
-    if (!detail || composerOpen) return;
+    if (!detailThreadId || !latestDisplayedMessageId || composerOpen) return;
+    // Read status, summaries, and other metadata replace detail without
+    // opening a conversation or adding a message. Leave the reader in place.
+    const previous = lastAutoScrollRef.current;
+    if (previous?.threadId === detailThreadId && previous.messageId === latestDisplayedMessageId) return;
+    lastAutoScrollRef.current = { threadId: detailThreadId, messageId: latestDisplayedMessageId };
     latestMessageRef.current?.scrollIntoView?.({ block: "start" });
-  }, [composerOpen, detail, latestDisplayedMessageId]);
+  }, [composerOpen, detailThreadId, latestDisplayedMessageId]);
 
   useLayoutEffect(() => {
     // Collapsing tall cards can leave Chrome's scroll offset beyond the new

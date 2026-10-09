@@ -32,12 +32,16 @@ document.body.style.color = theme === "light" ? "#24242c" : "#e8e8eb";
 
 function RenderingHarness() {
   const [minimum, setMinimum] = useState(Number(params.get("minimumFontSize") ?? 0));
+  const [tone, setTone] = useState<"default" | "current" | "muted">("default");
   return (
     <div style={{ width: "100%", maxWidth: 760, margin: "0 auto" }}>
       {params.has("minimumFontSize") ? <select aria-label="Minimum email font size" value={minimum} onChange={(event) => setMinimum(Number(event.target.value))}>
         <option value={0}>Off</option><option value={18}>18 px</option><option value={22}>22 px</option>
       </select> : null}
-      <SafeMessage html={params.has("plain") ? "" : fixture} text="Plain text message" theme={theme} loadImages={false} emailMinimumFontSize={minimum} priorThreadText={priorThreadText} />
+      {params.has("tone") ? <select aria-label="Message tone" value={tone} onChange={(event) => setTone(event.target.value as typeof tone)}>
+        <option value="default">Unread</option><option value="muted">Read</option><option value="current">Latest</option>
+      </select> : null}
+      <SafeMessage html={params.has("plain") ? "" : fixture} text="Plain text message" theme={theme} loadImages={false} emailMinimumFontSize={minimum} priorThreadText={priorThreadText} tone={tone} />
     </div>
   );
 }

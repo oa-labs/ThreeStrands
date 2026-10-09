@@ -105,6 +105,78 @@ describe("useReaderState", () => {
     expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
+  it.each(["read status", "summary", "refresh"])("preserves scroll and active message after a %s update", (update) => {
+    const scrollIntoView = vi.fn();
+    const { result, rerender } = renderHook((props) => useReaderState(props), {
+      initialProps: {
+        selectedThreadId: "thread-1",
+        detail: null as ThreadDetail | null,
+        displayedMessages: [] as Message[],
+        composerOpen: false,
+      },
+    });
+    result.current.latestMessageRef.current = { scrollIntoView } as unknown as HTMLElement;
+    rerender({ selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen: false });
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    act(() => {
+      result.current.activeMessageIdRef.current = "older";
+      result.current.setActiveMessageId("older");
+    });
+    const refreshed: ThreadDetail = {
+      ...detail,
+      thread: {
+        ...detail.thread,
+        ...(update === "read status" ? { unread: false } : {}),
+        ...(update === "summary" ? { summary: "A new summary" } : {}),
+      },
+      messages: detail.messages.map((item) => ({ ...item, unread: false })),
+    };
+    rerender({ selectedThreadId: "thread-1", detail: refreshed, displayedMessages: refreshed.messages, composerOpen: false });
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(result.current.activeMessageId).toBe("older");
+    expect(result.current.activeMessageIdRef.current).toBe("older");
+  });
+
+  it("scrolls when a new latest message arrives and when a conversation is reopened", () => {
+    const scrollIntoView = vi.fn();
+    const { result, rerender } = renderHook((props) => useReaderState(props), {
+      initialProps: {
+        selectedThreadId: "thread-1" as string | null,
+        detail: null as ThreadDetail | null,
+        displayedMessages: [] as Message[],
+        composerOpen: false,
+      },
+    });
+    result.current.latestMessageRef.current = { scrollIntoView } as unknown as HTMLElement;
+    rerender({ selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen: false });
+    const next = { ...detail, messages: [...detail.messages, message("newest")] };
+    rerender({ selectedThreadId: "thread-1", detail: next, displayedMessages: next.messages, composerOpen: false });
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    expect(result.current.activeMessageId).toBe("newest");
+
+    rerender({ selectedThreadId: null, detail: null, displayedMessages: [], composerOpen: false });
+    rerender({ selectedThreadId: "thread-1", detail: next, displayedMessages: next.messages, composerOpen: false });
+    expect(scrollIntoView).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not scroll again when a composer closes after the conversation was positioned", () => {
+    const scrollIntoView = vi.fn();
+    const { result, rerender } = renderHook((props) => useReaderState(props), {
+      initialProps: {
+        selectedThreadId: "thread-1",
+        detail: null as ThreadDetail | null,
+        displayedMessages: [] as Message[],
+        composerOpen: false,
+      },
+    });
+    result.current.latestMessageRef.current = { scrollIntoView } as unknown as HTMLElement;
+    rerender({ selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen: false });
+    rerender({ selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen: true });
+    rerender({ selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen: false });
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     { composerOpen: false, scrolls: true },
     { composerOpen: true, scrolls: false },

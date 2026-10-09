@@ -168,10 +168,9 @@ function buildMessageDocument(bodyHtml: string, options: {
   theme: "light" | "dark";
   fontScale: number;
   fontFamily: FontFamily;
-  tone: "default" | "current" | "muted";
   emailStyleSheet: string;
 }): string {
-  const { theme, fontScale, fontFamily, tone, emailStyleSheet } = options;
+  const { theme, fontScale, fontFamily, emailStyleSheet } = options;
   const fontStyle = fontFamilyStack(fontFamily)
     .replaceAll("&", "&amp;")
     .replaceAll('"', "&quot;")
@@ -184,7 +183,7 @@ function buildMessageDocument(bodyHtml: string, options: {
 <meta http-equiv="Content-Security-Policy" content="${MESSAGE_DOCUMENT_CSP}">
 <style>${MESSAGE_DOCUMENT_STYLES}</style>
 ${emailStyleSheet ? `<style>${emailStyleSheet}</style>\n` : ""}</head>
-<body data-tone="${tone}" style="font-family: ${fontStyle}; --font-scale: ${fontScale};">
+<body style="font-family: ${fontStyle}; --font-scale: ${fontScale};">
 <div class="email-root" data-email-root data-theme="${theme}">
 ${bodyHtml}
 </div>
@@ -596,11 +595,19 @@ export function SafeMessage({
   const emailStyleSheet = useMemo(() => extractSafeStyleSheet(html, theme), [html, theme]);
 
   const doc = useMemo(
-    () => buildMessageDocument(renderedHtml, { theme, fontScale, fontFamily, tone, emailStyleSheet }),
-    [renderedHtml, theme, fontScale, fontFamily, tone, emailStyleSheet],
+    () => buildMessageDocument(renderedHtml, { theme, fontScale, fontFamily, emailStyleSheet }),
+    [renderedHtml, theme, fontScale, fontFamily, emailStyleSheet],
   );
 
   const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const toneRef = useRef(tone);
+  toneRef.current = tone;
+  // Read-status styling is a trusted body attribute. Patch it in place so a
+  // delayed mark-read cannot reload the document or discard text selection.
+  useEffect(() => {
+    const body = frameRef.current?.contentDocument?.body;
+    if (body) body.dataset.tone = tone;
+  }, [tone]);
   const cleanupRef = useRef<(() => void) | null>(null);
   const [frameHeight, setFrameHeight] = useState(0);
   const [foldTop, setFoldTop] = useState<number | null>(null);
@@ -616,6 +623,7 @@ export function SafeMessage({
     const frame = frameRef.current;
     const frameDoc = frame?.contentDocument;
     if (!frameDoc) return;
+    frameDoc.body.dataset.tone = toneRef.current;
     const updateFontSize = createEmailFontSizeController(frameDoc);
     fontSizeControllerRef.current = updateFontSize;
     updateFontSize(minimumFontSizeRef.current);
