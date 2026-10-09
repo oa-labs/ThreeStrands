@@ -13,10 +13,15 @@ use crate::net_safety::{self, is_disallowed_url_host};
 
 const ONE_CLICK_BODY: &str = "List-Unsubscribe=One-Click";
 
-pub async fn execute(target: &UnsubscribeTarget) -> Result<UnsubscribeResult, String> {
+/// `open_mailto` receives a validated mailto fallback so it can start a draft
+/// in ThreeStrands instead of leaving for the OS mail handler.
+pub async fn execute(
+    target: &UnsubscribeTarget,
+    open_mailto: impl FnOnce(&str),
+) -> Result<UnsubscribeResult, String> {
     match target.method {
         UnsubscribeMethod::OneClick => execute_one_click(target).await,
-        UnsubscribeMethod::Mailto | UnsubscribeMethod::Web => open_fallback(target),
+        UnsubscribeMethod::Mailto | UnsubscribeMethod::Web => open_fallback(target, open_mailto),
     }
 }
 
@@ -52,17 +57,22 @@ async fn execute_one_click(target: &UnsubscribeTarget) -> Result<UnsubscribeResu
     })
 }
 
-fn open_fallback(target: &UnsubscribeTarget) -> Result<UnsubscribeResult, String> {
+fn open_fallback(
+    target: &UnsubscribeTarget,
+    open_mailto: impl FnOnce(&str),
+) -> Result<UnsubscribeResult, String> {
     let url = Url::parse(&target.url).map_err(|_| "Invalid unsubscribe URL".to_string())?;
     match target.method {
-        UnsubscribeMethod::Mailto if url.scheme().eq_ignore_ascii_case("mailto") => {}
+        UnsubscribeMethod::Mailto if url.scheme().eq_ignore_ascii_case("mailto") => {
+            open_mailto(&target.url);
+        }
         UnsubscribeMethod::Web => {
             validate_https_url(&target.url)?;
+            open::that(&target.url)
+                .map_err(|error| format!("Unable to open unsubscribe option: {error}"))?;
         }
         _ => return Err("Invalid unsubscribe fallback".to_string()),
     }
-    open::that(&target.url)
-        .map_err(|error| format!("Unable to open unsubscribe option: {error}"))?;
     Ok(UnsubscribeResult {
         method: target.method.clone(),
         outcome: "opened".into(),
@@ -120,6 +130,38 @@ mod tests {
     fn rejects_credentials_and_fragments() {
         assert!(validate_https_url("https://user:pass@lists.example/unsubscribe").is_err());
         assert!(validate_https_url("https://lists.example/unsubscribe#confirm").is_err());
+    }
+
+    fn target(method: UnsubscribeMethod, url: &str) -> UnsubscribeTarget {
+        UnsubscribeTarget { request_id: "request".into(), method, url: url.into() }
+    }
+
+    #[test]
+    fn mailto_fallback_starts_an_in_app_draft() {
+        let mut opened = None;
+        let result = open_fallback(
+            &target(UnsubscribeMethod::Mailto, "mailto:leave@lists.example?subject=unsubscribe"),
+            |url| opened = Some(url.to_string()),
+        )
+        .unwrap();
+        assert_eq!(opened.as_deref(), Some("mailto:leave@lists.example?subject=unsubscribe"));
+        assert_eq!(result.outcome, "opened");
+    }
+
+    #[test]
+    fn rejects_a_fallback_whose_url_does_not_match_its_method() {
+        let mut opened = false;
+        assert!(open_fallback(
+            &target(UnsubscribeMethod::Mailto, "https://lists.example/unsubscribe"),
+            |_| opened = true,
+        )
+        .is_err());
+        assert!(open_fallback(
+            &target(UnsubscribeMethod::Web, "mailto:leave@lists.example"),
+            |_| opened = true,
+        )
+        .is_err());
+        assert!(!opened);
     }
 
     #[test]

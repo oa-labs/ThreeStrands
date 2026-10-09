@@ -272,3 +272,25 @@ for (const theme of ["light", "dark"] as const) {
     await page.screenshot({ path: testInfo.outputPath(`composer-${theme}.png`) });
   });
 }
+
+test("a mailto link in a message starts a prefilled draft in ThreeStrands", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
+  const frame = page.getByTitle("Message content").contentFrame();
+  await frame.locator("body").evaluate((body) => {
+    const link = body.ownerDocument.createElement("a");
+    link.href = "mailto:jane@example.com?cc=alex@example.com&subject=Quarterly%20plan&body=Hi%20Jane%2C%0D%0ASee%20below.&attach=%2Fetc%2Fpasswd";
+    link.textContent = "Write to Jane";
+    body.append(link);
+  });
+
+  await frame.getByRole("link", { name: "Write to Jane" }).click();
+
+  const composer = page.getByRole("dialog", { name: "New Message" });
+  await expect(composer.getByRole("button", { name: "Remove jane@example.com" })).toBeVisible();
+  await expect(composer.getByRole("button", { name: "Remove alex@example.com" })).toBeVisible();
+  await expect(composer.getByRole("textbox", { name: "Subject" })).toHaveValue("Quarterly plan");
+  await expect(composer.getByRole("textbox", { name: "Message Body" })).toContainText("Hi Jane,");
+  await expect(composer.getByRole("textbox", { name: "Message Body" })).toContainText("See below.");
+  await expect(composer.getByRole("button", { name: /^Remove .*passwd/ })).toHaveCount(0);
+});

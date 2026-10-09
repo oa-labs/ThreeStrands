@@ -162,6 +162,7 @@ import { EnrollmentRequestNotice } from "./EnrollmentRequestNotice";
 import { UpdateNotice } from "./UpdateNotice";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
+import { listenForNativeMailLinks, setMailtoHandler } from "./mailtoLink";
 
 type RightWorkspace = "calendar" | "contacts" | "tasks" | "week" | null;
 /** Where a suggestion set lives: its state key, and the thread revision its saved copy is stored under. */
@@ -738,6 +739,22 @@ export function App() {
       void unlisten.then((fn) => fn());
     };
   }, [refreshUnreadCounts, refreshMailboxUnreadCounts, activeAccountId]);
+
+  // mailto links — clicked in a message, or handed over by macOS when
+  // ThreeStrands is the default mail app — open as a new draft here.
+  const composeMailtoRef = useRef(correspondence.composeMailto);
+  composeMailtoRef.current = correspondence.composeMailto;
+  useEffect(() => {
+    setMailtoHandler((request) => {
+      setRightWorkspace(null);
+      composeMailtoRef.current(request);
+    });
+    const stopListening = listenForNativeMailLinks();
+    return () => {
+      stopListening();
+      setMailtoHandler(null);
+    };
+  }, []);
 
   const loadMoreResults = useCallback(async () => {
     const trimmed = query.trim();
@@ -3691,7 +3708,7 @@ function UnsubscribeConfirm({
           {method === "oneClick"
             ? "ThreeStrands will send the sender's one-click request without opening a web page."
             : method === "mailto"
-              ? "ThreeStrands will open a new email in your default mail handler. You will still need to send it."
+              ? "ThreeStrands will start a new email addressed to the sender's unsubscribe address. You will still need to send it."
               : "ThreeStrands will open the sender's unsubscribe page in your default browser."}
         </p>
         <div className="unsubscribe-actions">

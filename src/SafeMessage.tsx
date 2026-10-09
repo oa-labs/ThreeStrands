@@ -1,4 +1,4 @@
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openMessageLink } from "./mailtoLink";
 import DOMPurify from "dompurify";
 import { Image } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -220,8 +220,8 @@ export function decodeHtmlEntities(text: string): string {
 
 /**
  * Turns bare URLs, www.-domains, and email addresses in a plain-text message
- * body into clickable links, routed through the same `openUrl` (OS browser /
- * default mail client) path HTML message bodies use.
+ * body into clickable links, routed through the same `openMessageLink` path
+ * HTML message bodies use (OS browser, or a new draft for email addresses).
  */
 export function linkifyText(text: string): ReactNode[] {
   const nodes: ReactNode[] = [];
@@ -238,7 +238,7 @@ export function linkifyText(text: string): ReactNode[] {
         href={href}
         onClick={(event) => {
           event.preventDefault();
-          void openUrl(href);
+          openMessageLink(href);
         }}
       >
         {url}
@@ -384,7 +384,7 @@ export function sanitizeMessageHtml(html: string): string {
       if (/^(https?:\/\/|mailto:|tel:)/i.test(href)) {
         // Every click is already intercepted in the frame's own onClick
         // handler (see handleLoad below), which calls preventDefault and
-        // routes the href through the native opener instead of letting the
+        // routes the href through openMessageLink instead of letting the
         // browser navigate — a target="_blank" is never meant to be
         // followed natively. DOMPurify already strips any target the
         // sender sent (it's not in ALLOWED_ATTR above); this used to add
@@ -652,7 +652,7 @@ export function SafeMessage({
       const href = link?.getAttribute("href");
       if (href) {
         event.preventDefault();
-        void openUrl(href);
+        openMessageLink(href);
         return;
       }
       // Read the live src (not the sanitized markup) so this reflects

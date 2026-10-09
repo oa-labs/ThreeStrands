@@ -15,6 +15,7 @@ import {
 import { EMAIL_CSS_LIMITS, EMAIL_IMAGE_LIMITS, EMAIL_QUOTE_FOLDING_LIMITS } from "./emailRenderingPolicy";
 import { buildThreadTextIndex, foldQuotedHistoryHtml, QUOTED_HISTORY_FOLD_ATTRIBUTE, type PriorThreadText } from "./quotedHistory";
 import { emailRenderingFixtures } from "./test/emailRenderingFixtures";
+import { setMailtoHandler } from "./mailtoLink";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
@@ -1021,6 +1022,47 @@ it.each([
 
   expect(accepted).toBe(false);
   expect(openUrl).toHaveBeenCalledWith(expected);
+});
+
+describe("mailto links in message bodies", () => {
+  afterEach(() => setMailtoHandler(null));
+
+  it.each([
+    {
+      name: "a sender-authored link nested in a table button",
+      html: '<table><tbody><tr><td><a href="mailto:help@support.example?subject=Order%20123"><span>Contact us</span></a></td></tr></tbody></table>',
+      selector: "a span",
+      expected: { to: "help@support.example", cc: "", bcc: "", subject: "Order 123", body: "" },
+    },
+    {
+      name: "a bare address linkified in an HTML paragraph",
+      html: "<p>Questions? Write to billing@example.com today.</p>",
+      selector: "a",
+      expected: { to: "billing@example.com", cc: "", bcc: "", subject: "", body: "" },
+    },
+  ])("starts a draft in ThreeStrands for $name", ({ html, selector, expected }) => {
+    const handler = vi.fn();
+    setMailtoHandler(handler);
+    render(<SafeMessage html={html} />);
+    const frameDoc = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement);
+
+    const accepted = fireEvent.click(frameDoc.querySelector(selector)!);
+
+    expect(accepted).toBe(false);
+    expect(handler).toHaveBeenCalledWith(expected);
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it("starts a draft for an address linkified in a plain-text body", () => {
+    const handler = vi.fn();
+    setMailtoHandler(handler);
+    render(<SafeMessage html="" text="Reply to tom@example.com, please." />);
+
+    fireEvent.click(screen.getByRole("link", { name: "tom@example.com" }));
+
+    expect(handler).toHaveBeenCalledWith({ to: "tom@example.com", cc: "", bcc: "", subject: "", body: "" });
+    expect(openUrl).not.toHaveBeenCalled();
+  });
 });
 
 describe("link destination status", () => {

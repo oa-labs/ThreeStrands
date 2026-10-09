@@ -19,6 +19,7 @@ mod image_format;
 mod image_proxy;
 mod ipfs_transport;
 mod limits;
+mod mail_links;
 mod mime;
 mod models;
 mod net_safety;
@@ -93,11 +94,15 @@ fn allow_in_app_navigation(url: &Url) -> bool {
 
 fn external_navigation_guard<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     tauri::plugin::Builder::new("external-navigation")
-        .on_navigation(|_, url| {
+        .on_navigation(|webview, url| {
             if allow_in_app_navigation(url) {
                 return true;
             }
-            if matches!(url.scheme(), "http" | "https" | "mailto" | "tel") {
+            // Mail links start a draft here rather than bouncing through the
+            // OS mail handler, which may be ThreeStrands itself.
+            if url.scheme() == "mailto" {
+                mail_links::deliver(webview.app_handle(), url.as_str());
+            } else if matches!(url.scheme(), "http" | "https" | "tel") {
                 log_failure("opening external link", open::that(url.as_str()));
             }
             false
@@ -1418,10 +1423,11 @@ fn unpin_contact(
 #[tauri::command]
 async fn unsubscribe(
     message_id: String,
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<models::UnsubscribeResult, String> {
     let target = state.database.begin_unsubscribe(&message_id)?;
-    match unsubscribe_service::execute(&target).await {
+    match unsubscribe_service::execute(&target, |url| mail_links::deliver(&app, url)).await {
         Ok(result) => {
             state.database.finish_unsubscribe(
                 &target.request_id,
@@ -3774,6 +3780,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(app_update::PendingUpdate::default())
+        .manage(mail_links::MailLinkInbox::default())
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(
@@ -4258,6 +4265,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         system_fonts::list_system_font_families,
         app_update::check_for_app_update,
         app_update::install_app_update,
+        mail_links::take_pending_mail_links,
     ]
 }
 
@@ -4296,6 +4304,15 @@ fn handle_run_event(handle: &tauri::AppHandle, event: tauri::RunEvent) {
             }
         }
         tauri::RunEvent::Resumed => spawn_foreground_sync(handle),
+        // macOS opens `mailto:` links here when ThreeStrands is the default
+        // mail app (Info.plist declares the scheme), including the link that
+        // launched it.
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Opened { urls } => {
+            for url in urls.iter().filter(|url| url.scheme() == "mailto") {
+                mail_links::deliver(handle, url.as_str());
+            }
+        }
         tauri::RunEvent::Exit => {
             if let Some(state) = handle.try_state::<AppState>() {
                 log_failure("checkpointing the WAL at exit", state.database.checkpoint_on_exit());

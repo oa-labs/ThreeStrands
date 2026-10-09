@@ -10,12 +10,14 @@ import { matchesShortcut } from "./commands";
 import { logBackgroundFailure } from "./errors";
 import { draftWithSelectedQuote } from "./selectedMessageQuote";
 import { ICON_SIZE } from "./iconSizes";
+import type { MailtoRequest } from "./mailtoLink";
 
 type ComposeOptions = {
   availabilityText?: string;
   selectedQuote?: string;
   replyAssistInstruction?: string;
   followUpTaskId?: string;
+  prefill?: MailtoRequest;
 };
 
 export function useCorrespondence(
@@ -72,7 +74,8 @@ export function useCorrespondence(
         ? await mailClient.createDraft(mode)
         : await mailClient.createDraft(mode, messageId ?? sourceId, sourceAccountId);
       const quoted = options?.selectedQuote ? draftWithSelectedQuote(created, options.selectedQuote) : null;
-      const prepared = quoted ? await mailClient.saveDraft(quoted) : created;
+      const filled = quoted ?? (options?.prefill ? { ...created, ...options.prefill } : null);
+      const prepared = filled ? await mailClient.saveDraft(filled) : created;
       const d = options?.followUpTaskId
         ? await mailClient.saveDraft({ ...prepared, followUpTaskId: options.followUpTaskId })
         : prepared;
@@ -147,6 +150,13 @@ export function useCorrespondence(
   }, [hasActiveDelivery, refresh]);
 
   const compose = useCallback(() => { void start("new"); }, [start]);
+  // Links can arrive together (several opened while the app launched), so
+  // each waits for the previous draft to open instead of being dropped by
+  // the one-at-a-time guard in start.
+  const mailtoQueue = useRef(Promise.resolve());
+  const composeMailto = useCallback((request: MailtoRequest) => {
+    mailtoQueue.current = mailtoQueue.current.then(() => start("new", undefined, { prefill: request }));
+  }, [start]);
   const reply = useCallback((messageId?: string, selectedQuote?: string) => { void start("reply", messageId, { selectedQuote }); }, [start]);
   const replyAll = useCallback((messageId?: string, selectedQuote?: string) => { void start("replyAll", messageId, { selectedQuote }); }, [start]);
   const replyWithAvailability = useCallback((text: string, messageId?: string) => {
@@ -238,6 +248,7 @@ export function useCorrespondence(
   ) : null;
   return {
     context,
+    composeMailto,
     replyWithAvailability,
     replyWithText,
     replyWithFollowUp,
