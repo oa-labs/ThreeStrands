@@ -311,6 +311,16 @@ describe("mail workspace with the calendar schedule open", () => {
 });
 
 describe("conversation participant layout", () => {
+  it("top-aligns dates with the first title line across shared context rows", () => {
+    // Baseline alignment pushed the smaller date below the title's top edge.
+    // Explicit leading keeps dates independent of the surrounding panel's typography.
+    expect(lastDeclaration(".context-row-line", "align-items")).toBe("flex-start");
+    expect(lastDeclaration(".context-row-date", "line-height")).toBe("var(--leading-normal)");
+    expect(lastDeclaration(".context-row-date", "line-height")).toBe(lastDeclaration(".context-row-title", "line-height"));
+    expect(lastDeclaration(".context-row-date", "flex")).toBe("0 0 auto");
+    expect(lastDeclaration(".context-row-wrap .context-row-title", "white-space")).toBe("normal");
+  });
+
   it("draws section counts as badges", () => {
     expect(lastDeclaration(".context-count", "border")).toBe("1px solid var(--border)");
     expect(lastDeclaration(".context-count", "border-radius")).toBe("var(--radius-xs)");

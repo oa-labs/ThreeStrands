@@ -2176,10 +2176,11 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-row-interactive .context-row-main { cursor:pointer; }
 .context-row-has-control .context-row-main { grid-column:2; grid-template-columns:minmax(0,1fr); }
 .context-row-text { grid-column:-2; display:grid; gap:var(--space-0-5); min-width:0; }
-.context-row-line { display:flex; align-items:baseline; gap:var(--space-2); min-width:0; }
+/* Top-align the smaller date with the title's first line, including wrapped task titles. */
+.context-row-line { display:flex; align-items:flex-start; gap:var(--space-2); min-width:0; }
 .context-row-title { flex:1; min-width:0; overflow:hidden; font-size:var(--text-secondary); font-weight:var(--weight-medium); line-height:var(--leading-normal); text-overflow:ellipsis; white-space:nowrap; }
 .context-row-wrap .context-row-title { white-space:normal; overflow-wrap:anywhere; }
-.context-row-date { flex:0 0 auto; color:var(--muted); font-size:var(--text-meta); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.context-row-date { flex:0 0 auto; color:var(--muted); font-size:var(--text-meta); line-height:var(--leading-normal); font-variant-numeric:tabular-nums; white-space:nowrap; }
 .context-row-date.task-due-overdue { color:var(--error); font-weight:var(--weight-semibold); }
 .context-row-detail { min-width:0; overflow:hidden; color:var(--muted); font-size:var(--text-meta); text-overflow:ellipsis; white-space:nowrap; }
 /* A small action shares the text column's cell, ending the detail line under the date. It
