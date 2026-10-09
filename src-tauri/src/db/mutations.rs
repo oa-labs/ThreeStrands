@@ -17,6 +17,31 @@ pub struct PendingMutation {
 }
 
 impl Database {
+    fn updated_thread_labels_json(
+        transaction: &Transaction<'_>,
+        thread_id: &str,
+        remove: &[&str],
+        add: Option<&str>,
+    ) -> DbResult<String> {
+        let labels: String = transaction
+            .query_row(
+                "SELECT labels_json FROM threads WHERE id = ?1",
+                [thread_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(DatabaseError::NotFound("Thread"))?;
+        let mut labels: Vec<String> = serde_json::from_str(&labels).map_err(serialization_error)?;
+        labels.retain(|item| !remove.contains(&item.as_str()));
+        // Removal alone preserves the remaining order and duplicates.
+        if let Some(label) = add {
+            labels.push(label.to_string());
+            labels.sort();
+            labels.dedup();
+        }
+        serde_json::to_string(&labels).map_err(serialization_error)
+    }
+
     fn apply_mutation(transaction: &Transaction<'_>, mutation: &ThreadMutation) -> DbResult<()> {
         let kind = match mutation {
             ThreadMutation::Archive { .. } => "archive",
@@ -49,27 +74,15 @@ impl Database {
         };
         let changed = match mutation {
             ThreadMutation::Spam { thread_id, value } => {
-                let labels: String = transaction
-                    .query_row(
-                        "SELECT labels_json FROM threads WHERE id = ?1",
-                        [thread_id],
-                        |row| row.get(0),
-                    )
-                    .optional()?
-                    .ok_or(DatabaseError::NotFound("Thread"))?;
-                let mut labels: Vec<String> =
-                    serde_json::from_str(&labels).map_err(serialization_error)?;
-                labels.retain(|item| item != "SPAM" && item != "INBOX");
-                labels.push(if *value { "SPAM" } else { "INBOX" }.to_string());
-                labels.sort();
-                labels.dedup();
+                let labels_json = Self::updated_thread_labels_json(
+                    transaction,
+                    thread_id,
+                    &["SPAM", "INBOX"],
+                    Some(if *value { "SPAM" } else { "INBOX" }),
+                )?;
                 transaction.execute(
                     "UPDATE threads SET labels_json = ?1, archived = ?2 WHERE id = ?3",
-                    params![
-                        serde_json::to_string(&labels).map_err(serialization_error)?,
-                        value,
-                        thread_id,
-                    ],
+                    params![labels_json, value, thread_id],
                 )?
             }
             ThreadMutation::Label {
@@ -77,22 +90,12 @@ impl Database {
                 label_id,
                 value,
             } => {
-                let labels: String = transaction
-                    .query_row(
-                        "SELECT labels_json FROM threads WHERE id = ?1",
-                        [thread_id],
-                        |row| row.get(0),
-                    )
-                    .optional()?
-                    .ok_or(DatabaseError::NotFound("Thread"))?;
-                let mut labels: Vec<String> =
-                    serde_json::from_str(&labels).map_err(serialization_error)?;
-                labels.retain(|item| item != label_id);
-                if *value {
-                    labels.push(label_id.clone());
-                    labels.sort();
-                    labels.dedup();
-                }
+                let labels_json = Self::updated_thread_labels_json(
+                    transaction,
+                    thread_id,
+                    &[label_id.as_str()],
+                    value.then_some(label_id.as_str()),
+                )?;
                 // Only the flag this label controls changes. Archive, read
                 // and star mutations set their columns without rewriting
                 // `labels_json`, so deriving every flag from it here would
@@ -103,7 +106,6 @@ impl Database {
                     "INBOX" => Some(("archived", !*value)),
                     _ => None,
                 };
-                let labels_json = serde_json::to_string(&labels).map_err(serialization_error)?;
                 match flag {
                     Some((column, flag_value)) => transaction.execute(
                         &format!(

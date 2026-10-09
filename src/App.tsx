@@ -604,6 +604,15 @@ export function App() {
     }
   }, [setNotice]);
 
+  const fetchMailboxPage = useCallback((box: MailboxKind, accountId: string | undefined, offset: number) => {
+    if (box === "allMail") return mailClient.listAllMailPage(accountId, offset, SEARCH_PAGE_SIZE);
+    if (box === "trash") return mailClient.listTrashPage(accountId, offset, SEARCH_PAGE_SIZE);
+    if (box === "split" && activeSplitInboxId) {
+      return mailClient.listSplitInboxPage(activeSplitInboxId, offset, SEARCH_PAGE_SIZE);
+    }
+    return mailClient.listThreadsPage(accountId, offset, SEARCH_PAGE_SIZE);
+  }, [activeSplitInboxId]);
+
   const loadThreads = useCallback(async (search: string, accountOverride?: string | null, mailboxOverride?: MailboxKind) => {
     const requestId = ++threadsRequest.current;
     const box = mailboxOverride ?? mailbox;
@@ -704,19 +713,13 @@ export function App() {
         return;
       }
 
-      const page = box === "allMail"
-        ? await mailClient.listAllMailPage(accountId, 0, SEARCH_PAGE_SIZE)
-        : box === "trash"
-          ? await mailClient.listTrashPage(accountId, 0, SEARCH_PAGE_SIZE)
-          : box === "split" && activeSplitInboxId
-            ? await mailClient.listSplitInboxPage(activeSplitInboxId, 0, SEARCH_PAGE_SIZE)
-            : await mailClient.listThreadsPage(accountId, 0, SEARCH_PAGE_SIZE);
+      const page = await fetchMailboxPage(box, accountId, 0);
       commitPage(page);
     } catch (error) {
       if (requestId !== threadsRequest.current) return;
       setMailboxError(errorMessage(error));
     }
-  }, [includeArchived, activeAccountId, mailbox, activeSplitInboxId, refreshUnreadCounts, refreshMailboxUnreadCounts]);
+  }, [includeArchived, activeAccountId, mailbox, activeSplitInboxId, fetchMailboxPage, refreshUnreadCounts, refreshMailboxUnreadCounts]);
 
   // Sync round trips can outlive a mailbox/split-inbox switch. Reading
   // loadThreads through a ref at resolution time (rather than closing over
@@ -787,13 +790,7 @@ export function App() {
             offset: threads.length,
             includeArchived,
           }, accountId).then((items) => ({ threads: items, hasMore: items.length === SEARCH_PAGE_SIZE }))
-        : mailbox === "allMail"
-          ? await mailClient.listAllMailPage(accountId, threads.length, SEARCH_PAGE_SIZE)
-          : mailbox === "trash"
-            ? await mailClient.listTrashPage(accountId, threads.length, SEARCH_PAGE_SIZE)
-            : mailbox === "split" && activeSplitInboxId
-              ? await mailClient.listSplitInboxPage(activeSplitInboxId, threads.length, SEARCH_PAGE_SIZE)
-              : await mailClient.listThreadsPage(accountId, threads.length, SEARCH_PAGE_SIZE);
+        : await fetchMailboxPage(mailbox, accountId, threads.length);
       if (requestId !== threadsRequest.current) return;
       setThreads((current) => [...current, ...page.threads]);
       setHasMoreResults(page.hasMore);
@@ -805,7 +802,7 @@ export function App() {
       loadingMore.current = false;
       setLoadingMoreState(false);
     }
-  }, [query, threads.length, includeArchived, activeAccountId, mailbox, activeSplitInboxId]);
+  }, [query, threads.length, includeArchived, activeAccountId, mailbox, activeSplitInboxId, fetchMailboxPage]);
 
   // Reload only when a send completes. Outbox history persists, so testing
   // `sentCount > 0` would stay true forever and turn every search keystroke

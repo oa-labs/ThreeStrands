@@ -33,11 +33,13 @@ function independentSyncErrors(status: SyncStatus | null): string[] {
 
 function DiagnosticsIssue({
   title,
+  description,
   children,
   actions,
 }: {
   title: string;
-  children: ReactNode;
+  description: string;
+  children?: ReactNode;
   actions?: ReactNode;
 }) {
   return (
@@ -47,7 +49,8 @@ function DiagnosticsIssue({
         <strong>{title}</strong>
         {actions ? <span className="diagnostics-issue-actions">{actions}</span> : null}
       </div>
-      {children}
+      <p>{description}</p>
+      {children ? <ul className="failed-mutations">{children}</ul> : null}
     </div>
   );
 }
@@ -117,24 +120,24 @@ export function DiagnosticsSettings({
       {recovery ? (
         <DiagnosticsIssue
           title="Mail cache was recovered"
+          description={recoveryStatusMessage(recovery)}
           actions={actions ? <button className="btn btn-sm" type="button" onClick={actions.dismissRecovery}>Dismiss</button> : null}
-        >
-          <p>{recoveryStatusMessage(recovery)}</p>
-        </DiagnosticsIssue>
+        />
       ) : null}
 
       {syncErrors.length ? (
-        <DiagnosticsIssue title="Last sync attempt failed">
-          <p>This clears automatically after the next successful sync.</p>
-          <ul className="failed-mutations">
-            {syncErrors.map((line) => <li key={line}>{line}</li>)}
-          </ul>
+        <DiagnosticsIssue
+          title="Last sync attempt failed"
+          description="This clears automatically after the next successful sync."
+        >
+          {syncErrors.map((line) => <li key={line}>{line}</li>)}
         </DiagnosticsIssue>
       ) : null}
 
       {failed.length ? (
         <DiagnosticsIssue
           title={`${plural(failed.length, "change")} couldn’t be applied in Gmail`}
+          description="Gmail rejected these, so they only took effect in ThreeStrands. Retry once the cause is fixed, such as after reconnecting an account, or dismiss them."
           actions={actions ? (
             <>
               <button className="btn btn-sm" type="button" disabled={pending !== null} onClick={() => runFor("retry", actions.retryFailed)}>
@@ -146,48 +149,43 @@ export function DiagnosticsSettings({
             </>
           ) : null}
         >
-          <p>Gmail rejected these, so they only took effect in ThreeStrands. Retry once the cause is fixed, such as after reconnecting an account, or dismiss them.</p>
-          <ul className="failed-mutations">
-            {failed.map((mutation) => (
-              <li key={mutation.id}>
-                <strong>{mutation.kind}</strong>
+          {failed.map((mutation) => (
+            <li key={mutation.id}>
+              <strong>{mutation.kind}</strong>
+              {" · "}
+              {mutation.error}
+              <small>
+                {plural(mutation.attempts, "attempt")}
                 {" · "}
-                {mutation.error}
-                <small>
-                  {plural(mutation.attempts, "attempt")}
-                  {" · "}
-                  {new Date(mutation.createdAt).toLocaleString()}
-                </small>
-              </li>
-            ))}
-          </ul>
+                {new Date(mutation.createdAt).toLocaleString()}
+              </small>
+            </li>
+          ))}
         </DiagnosticsIssue>
       ) : null}
 
       {quarantined.length ? (
         <DiagnosticsIssue
           title={`${plural(quarantined.length, "message")} couldn’t be read`}
+          description="These messages were skipped so the rest of their conversations could sync. They are retried whenever their conversation changes."
           actions={actions ? (
             <button className="btn btn-sm" type="button" disabled={pending !== null} onClick={() => runFor("dismiss-quarantine", actions.dismissProblems)}>
               Dismiss
             </button>
           ) : null}
         >
-          <p>These messages were skipped so the rest of their conversations could sync. They are retried whenever their conversation changes.</p>
-          <ul className="failed-mutations">
-            {quarantined.map((message) => (
-              <li key={`${message.threadId}:${message.messageId}`}>
-                <strong>Message {message.messageId}</strong>
+          {quarantined.map((message) => (
+            <li key={`${message.threadId}:${message.messageId}`}>
+              <strong>Message {message.messageId}</strong>
+              {" · "}
+              {message.error}
+              <small>
+                Thread {message.threadId}
                 {" · "}
-                {message.error}
-                <small>
-                  Thread {message.threadId}
-                  {" · "}
-                  {new Date(message.createdAt).toLocaleString()}
-                </small>
-              </li>
-            ))}
-          </ul>
+                {new Date(message.createdAt).toLocaleString()}
+              </small>
+            </li>
+          ))}
         </DiagnosticsIssue>
       ) : null}
       {error ? <p className="form-error" role="alert">{error}</p> : null}

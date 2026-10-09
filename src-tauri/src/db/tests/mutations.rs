@@ -3,6 +3,95 @@ use crate::db::test_support::{database, message};
 use crate::models::{SearchThreadsRequest, ThreadMutation};
 
 #[test]
+fn spam_and_label_mutations_preserve_label_editing_semantics() {
+    for (mutation, expected_labels, archived) in [
+        (
+            ThreadMutation::Spam {
+                thread_id: "welcome".into(),
+                value: true,
+            },
+            vec!["SPAM", "STARRED", "UNREAD", "work", "z"],
+            true,
+        ),
+        (
+            ThreadMutation::Spam {
+                thread_id: "welcome".into(),
+                value: false,
+            },
+            vec!["INBOX", "STARRED", "UNREAD", "work", "z"],
+            false,
+        ),
+        (
+            ThreadMutation::Label {
+                thread_id: "welcome".into(),
+                label_id: "work".into(),
+                value: true,
+            },
+            vec!["INBOX", "SPAM", "STARRED", "UNREAD", "work", "z"],
+            false,
+        ),
+        (
+            ThreadMutation::Label {
+                thread_id: "welcome".into(),
+                label_id: "work".into(),
+                value: false,
+            },
+            vec!["z", "INBOX", "SPAM", "UNREAD", "STARRED", "z"],
+            false,
+        ),
+    ] {
+        let database = database();
+        database.connection().unwrap().execute(
+            "UPDATE threads SET labels_json = ?1, archived = 0, unread = 0, starred = 0 WHERE id = 'welcome'",
+            [r#"["z","INBOX","SPAM","UNREAD","STARRED","work","z"]"#],
+        ).unwrap();
+
+        database.mutate_thread(&mutation).unwrap();
+
+        let thread = database.get_thread("welcome").unwrap().thread;
+        assert_eq!(thread.labels, expected_labels, "{mutation:?}");
+        assert_eq!(thread.archived, archived, "{mutation:?}");
+        assert!(!thread.unread, "unrelated read state changed: {mutation:?}");
+        assert!(!thread.starred, "unrelated star state changed: {mutation:?}");
+    }
+}
+
+#[test]
+fn spam_and_label_mutations_reject_corrupt_labels_without_queueing() {
+    for mutation in [
+        ThreadMutation::Spam {
+            thread_id: "welcome".into(),
+            value: true,
+        },
+        ThreadMutation::Label {
+            thread_id: "welcome".into(),
+            label_id: "work".into(),
+            value: true,
+        },
+    ] {
+        let database = database();
+        database
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE threads SET labels_json = 'invalid json' WHERE id = 'welcome'",
+                [],
+            )
+            .unwrap();
+
+        let error = database.mutate_thread(&mutation).unwrap_err();
+
+        assert!(matches!(error, DatabaseError::Serialization(_)), "{error}");
+        let queued: i64 = database
+            .connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM mutations", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(queued, 0);
+    }
+}
+
+#[test]
 fn batch_mutations_commit_together() {
     let database = database();
     database

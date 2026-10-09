@@ -17,6 +17,39 @@ describe("split inbox search shortcuts", () => {
     vi.restoreAllMocks();
   });
 
+  it.each([
+    ["Inbox", "listThreadsPage"],
+    ["All Mail", "listAllMailPage"],
+    ["Trash", "listTrashPage"],
+    ["Work", "listSplitInboxPage"],
+  ] as const)("uses the same page source for initial and subsequent %s results", async (folder, method) => {
+    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
+    const threads = await mailClient.listThreads();
+    expect(threads.length).toBeGreaterThanOrEqual(3);
+    const fetchPage = vi.spyOn(mailClient, method)
+      .mockResolvedValueOnce({ threads: threads.slice(0, 2), hasMore: true })
+      .mockResolvedValueOnce({ threads: threads.slice(2, 3), hasMore: false });
+    vi.spyOn(mailClient, "listSplitInboxes").mockResolvedValue([{
+      id: "work-split", name: "Work", matchKind: "label", matchValue: "work", sortOrder: 0,
+      createdAt: "2026-03-01T00:00:00Z", accountId: "demo@example.com",
+    }]);
+
+    render(<App />);
+    await screen.findByRole("tab", { name: "Work" });
+    if (folder === "Work") fireEvent.click(screen.getByRole("tab", { name: "Work" }));
+    else if (folder !== "Inbox") selectFolder(folder);
+
+    const sourceId = folder === "Work" ? "work-split" : "demo@example.com";
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledWith(sourceId, 0, 50));
+    const list = screen.getByRole("listbox", { name: folder });
+    await waitFor(() => expect(within(list).getAllByRole("option")).toHaveLength(2));
+    fireEvent.click(screen.getByRole("button", { name: "Load More Results" }));
+
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledWith(sourceId, 2, 50));
+    await waitFor(() => expect(within(list).getAllByRole("option")).toHaveLength(3));
+    expect(screen.queryByRole("button", { name: "Load More Results" })).not.toBeInTheDocument();
+  });
+
   it("shows Inbox as the folder and Main as the default tab, with a dismissible folder menu", async () => {
     render(<App />);
     expect(await screen.findByRole("tab", { name: /^Main/ })).toHaveAttribute("aria-selected", "true");

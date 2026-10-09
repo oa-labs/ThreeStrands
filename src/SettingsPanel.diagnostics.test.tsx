@@ -41,6 +41,39 @@ function actions(): SyncDiagnosticsActions {
 }
 
 describe("DiagnosticsSettings", () => {
+  it("keeps each issue's description and list in its own card when all categories coexist", () => {
+    render(<DiagnosticsSettings
+      status={{
+        ...rejected,
+        error: "network unreachable\nauthentication expired",
+        quarantinedMessages: [{
+          messageId: "bad-message", threadId: "provider-thread", error: "Invalid message body",
+          createdAt: "2026-01-02T03:04:05Z",
+        }],
+      }}
+      recovery={{ kind: "restoredFromBackup", corruptPath: null, backupPath: "/cache/mail.backup.db" }}
+      accountCount={1}
+    />);
+
+    expect(screen.getByText("4 items to review")).toBeInTheDocument();
+    const recovery = screen.getByRole("group", { name: "Mail cache was recovered" });
+    expect(within(recovery).getByText(/restored from its most recent local backup/)).toBeInTheDocument();
+    expect(within(recovery).queryByRole("list")).not.toBeInTheDocument();
+    for (const [title, entries] of [
+      ["Last sync attempt failed", ["network unreachable", "authentication expired"]],
+      ["1 change couldn’t be applied in Gmail", ["invalid label"]],
+      ["1 message couldn’t be read", ["Invalid message body"]],
+    ] as const) {
+      const issue = screen.getByRole("group", { name: title });
+      expect(issue.querySelector("p")).not.toBeEmptyDOMElement();
+      const list = within(issue).getByRole("list");
+      expect(list).toHaveClass("failed-mutations");
+      const items = within(list).getAllByRole("listitem");
+      expect(items).toHaveLength(entries.length);
+      entries.forEach((entry, index) => expect(items[index]).toHaveTextContent(entry));
+    }
+  });
+
   it("keeps crash-report controls in the diagnostics section", () => {
     render(<DiagnosticsSettings status={null} accountCount={1} />);
 
