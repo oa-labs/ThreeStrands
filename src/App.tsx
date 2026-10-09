@@ -172,6 +172,7 @@ export function App() {
     accounts, visibleDetail?.messages.at(-1)?.id, visibleDetail?.thread.accountId,
     snippetLibrary.snippets, snippetLibrary.create, snippetLibrary.update, snippetLibrary.remove,
     selectedId,
+    { theme: effectiveThemeValue, fontScale: fontScale / 100, fontFamily, emailMinimumFontSize, loadImages: loadRemoteImages },
   );
   const composerBelongsToVisibleThread = Boolean(
     correspondence.activeDraft

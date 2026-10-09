@@ -1,4 +1,5 @@
 import type { CorrespondenceClient, Draft, OutboxItem } from "../correspondence";
+import { plainTextToHtml } from "../richText";
 import type { ThreadDetail } from "../domain";
 
 const key = "threestrands.demoCorrespondence";
@@ -53,7 +54,13 @@ export function demoCorrespondence(getSourceThread: (messageId: string) => Promi
         d.body = `\n\nOn ${attributionDate(message.sentAt)}, ${message.sender} wrote:\n${message.bodyText.split("\n").map((line) => `> ${line}`).join("\n")}`;
         if (mode === "forward") {
           d.subject = `Fwd: ${d.subject}`;
-          d.body = `\n\n---------- Forwarded message ----------\nFrom: ${message.sender}\nSubject: ${detail.thread.subject}\n\n${message.bodyText}`;
+          const attribution = `---------- Forwarded message ----------\nFrom: ${message.sender}\nDate: ${attributionDate(message.sentAt)}\nSubject: ${detail.thread.subject}\nTo: ${message.recipients.join(", ")}\n\n`;
+          if (message.bodyHtml.trim()) {
+            d.body = "";
+            d.forwardedContent = { html: `<div>${plainTextToHtml(attribution)}</div>${message.bodyHtml}`, text: attribution + message.bodyText };
+          } else {
+            d.body = `\n\n${attribution}${message.bodyText}`;
+          }
         } else {
           d.to = message.sender;
           d.threadId = detail.thread.providerThreadId;

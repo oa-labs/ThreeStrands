@@ -6,6 +6,9 @@ import {
   insertHtmlAtRange, linkifyPlainText, pastedLinkHref, draftTextToComposeHtml,
   plainTextToHtml, sanitizeComposeHtml, serializeComposeBody, splitReplyQuote,
 } from "./richText";
+import { SafeMessage, type MessageAppearance } from "./SafeMessage";
+import { mailClient } from "./data/client";
+import { normalizeContentId } from "./inlineAttachments";
 import { SnippetPicker } from "./SnippetPicker";
 import { firstNameFromRecipient, renderSnippetBody } from "./snippets";
 import { recordSnippetUsed } from "./settings";
@@ -28,6 +31,8 @@ export type ComposeBodyEditorHandle = {
 
 type ComposeBodyEditorProps = {
   initial: Draft;
+  attachments: Attachment[];
+  messageAppearance?: MessageAppearance;
   busy: boolean;
   recipientTo: string;
   availabilityText: string | null;
@@ -44,7 +49,7 @@ type ComposeBodyEditorProps = {
 
 /** Owns editable DOM, selection, and compose-only controls; persistence stays outside. */
 export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBodyEditorProps>(function ComposeBodyEditor({
-  initial, busy, recipientTo, availabilityText, snippets,
+  initial, attachments, messageAppearance, busy, recipientTo, availabilityText, snippets,
   onCreateSnippet, onUpdateSnippet, onDeleteSnippet,
   onChange, onError, onAttachImage, onRemoveImage, readInlineImage,
 }, ref) {
@@ -64,6 +69,13 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
     const html = sanitizeComposeHtml(initial.bodyHtml || draftTextToComposeHtml(initial.body));
     return splitReplyQuote(html) ?? { authoredHtml: html, quotedHtml: null };
   });
+
+  const resolveForwardedImage = useCallback((url: string) => {
+    if (!/^cid:/i.test(url)) return mailClient.fetchRemoteImage(url);
+    const attachment = attachments.find((candidate) => candidate.inline
+      && candidate.contentId && normalizeContentId(candidate.contentId) === normalizeContentId(url.slice(4)));
+    return attachment ? readInlineImage(attachment.id) : Promise.reject(new Error("Embedded image not found"));
+  }, [attachments, readInlineImage]);
 
   const editBody = useCallback(() => {
     // Keep cloning and sanitization off the keystroke path, including long quotes.
@@ -309,6 +321,12 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
           {...editingProps}
         />
       </>
+    ) : null}
+    {initial.forwardedContent ? (
+      <section aria-label="Forwarded message">
+        <SafeMessage {...messageAppearance} foldQuotes={false} html={initial.forwardedContent.html} text={initial.forwardedContent.text}
+          resolveImage={resolveForwardedImage} imageCacheKey={`${initial.id}:${attachments.filter((attachment) => attachment.inline && attachment.ready).map((attachment) => attachment.id).join(",")}`} />
+      </section>
     ) : null}
     {snippetPickerOpen ? (
       <SnippetPicker

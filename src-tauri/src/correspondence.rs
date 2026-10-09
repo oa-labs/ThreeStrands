@@ -60,6 +60,12 @@ pub struct Attachment {
     pub content_id: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForwardedContent {
+    pub html: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Draft {
     pub id: String,
@@ -77,6 +83,10 @@ pub struct Draft {
     pub body: String,
     #[serde(default)]
     pub body_html: String,
+    // Sender HTML stays separate from the editable compose surface. Older
+    // drafts have no preserved HTML and keep their existing text body.
+    #[serde(default)]
+    pub forwarded_content: Option<ForwardedContent>,
     #[serde(default)]
     pub follow_up_task_id: Option<String>,
     pub attachments: Vec<Attachment>,
@@ -247,23 +257,27 @@ where
         .unwrap_or_else(|_| rfc3339.to_string())
 }
 
-fn forward_attachments(part: &MimePart, message_id: &str, result: &mut Vec<Attachment>) {
-    if !part.filename.is_empty() {
-        result.push(Attachment {
+fn plain_text_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\n', "<br>")
+}
+
+fn forward_attachments(source: &RawMessage, normalized: &crate::mime::NormalizedMessage) -> Result<Vec<Attachment>, String> {
+    normalized.attachments.iter().map(|attachment| {
+        Ok(Attachment {
             id: Uuid::new_v4().to_string(),
-            name: part.filename.clone(),
-            size: part.body.size,
-            mime: part.mime_type.clone(),
+            name: attachment.filename.clone(),
+            size: attachment.size,
+            mime: attachment.mime_type.clone(),
             ready: false,
-            message_id: Some(message_id.into()),
-            provider_id: part.body.attachment_id.clone(),
-            inline: false,
-            content_id: None,
-        });
-    }
-    for child in &part.parts {
-        forward_attachments(child, message_id, result);
-    }
+            message_id: Some(source.id.clone()),
+            provider_id: crate::mime::provider_attachment_id_from_payload(source, &attachment.id)?,
+            inline: attachment.inline,
+            content_id: attachment.content_id.clone(),
+        })
+    }).collect()
 }
 
 impl Database {
@@ -369,6 +383,7 @@ impl Database {
             subject: String::new(),
             body: String::new(),
             body_html: String::new(),
+            forwarded_content: None,
             follow_up_task_id: None,
             attachments: vec![],
             updated_at: now(),
@@ -391,7 +406,7 @@ impl Database {
             let quote = if normalized.body_text.trim().is_empty() {
                 mail_parser::decoders::html::html_to_text(&normalized.body_html)
             } else {
-                normalized.body_text
+                normalized.body_text.clone()
             };
             let date = attribution_date(&normalized.date, &chrono::Local);
             d.body = format!(
@@ -406,8 +421,17 @@ impl Database {
             );
             if mode == "forward" {
                 d.subject = format!("Fwd: {}", d.subject);
-                d.body=format!("\n\n---------- Forwarded message ----------\nFrom: {from}\nDate: {date}\nSubject: {}\nTo: {}\n\n{quote}",normalized.subject,header(part,"To"));
-                forward_attachments(part, &source.id, &mut d.attachments);
+                let attribution = format!("---------- Forwarded message ----------\nFrom: {from}\nDate: {date}\nSubject: {}\nTo: {}\n\n", normalized.subject, header(part, "To"));
+                if normalized.body_html.trim().is_empty() {
+                    d.body = format!("\n\n{attribution}{quote}");
+                } else {
+                    d.body = String::new();
+                    d.forwarded_content = Some(ForwardedContent {
+                        html: format!("<div>{}</div>{}", plain_text_html(&attribution), normalized.body_html),
+                        text: format!("{attribution}{quote}"),
+                    });
+                }
+                d.attachments = forward_attachments(&source, &normalized)?;
             } else {
                 let reply = header(part, "Reply-To");
                 let own = addresses(from)?
@@ -482,6 +506,7 @@ impl Database {
         draft.reply_id = old.reply_id;
         draft.references = old.references;
         draft.attachments = old.attachments;
+        draft.forwarded_content = old.forwarded_content;
         draft.follow_up_task_id = draft.follow_up_task_id.or(old.follow_up_task_id);
         if draft.subject != old.subject {
             draft.thread_id = None;
@@ -726,15 +751,24 @@ fn build_mime(
     } else {
         builder.from(d.account.clone())
     };
+    let mut body = d.body.clone();
+    let mut body_html = d.body_html.clone();
+    if let Some(forwarded) = &d.forwarded_content {
+        body.push_str(&format!("\n\n{}", forwarded.text));
+        if body_html.trim().is_empty() {
+            body_html = plain_text_html(&d.body);
+        }
+        body_html.push_str(&format!("<br><br>{}", forwarded.html));
+    }
     let mut builder = builder
         .to(to)
         .cc(cc)
         .bcc(bcc)
         .subject(d.subject.clone())
-        .text_body(d.body.clone())
+        .text_body(body.clone())
         .message_id(format!("{id}@threestrands.local"));
-    if !d.body_html.trim().is_empty() {
-        builder = builder.html_body(d.body_html.clone());
+    if !body_html.trim().is_empty() {
+        builder = builder.html_body(body_html.clone());
     }
     if let Some(reply) = &d.reply_id {
         if reply.contains(['\r', '\n']) || d.references.iter().any(|r| r.contains(['\r', '\n'])) {
@@ -744,7 +778,7 @@ fn build_mime(
             .in_reply_to(reply.clone())
             .references(d.references.clone());
     }
-    let mut size = d.body.len() + d.body_html.len();
+    let mut size = body.len() + body_html.len();
     for attachment in &d.attachments {
         if !attachment.ready {
             return Err(format!(
@@ -1109,15 +1143,20 @@ impl Correspondence {
                         .map_err(error)?
                 } else {
                     let source = provider.fetch_message(message).await.map_err(error)?;
-                    fn find(part: &MimePart, name: &str) -> Option<String> {
-                        if part.filename == name {
+                    fn find(part: &MimePart, attachment: &Attachment) -> Option<String> {
+                        let matches = if let Some(content_id) = &attachment.content_id {
+                            header(part, "Content-ID").trim().trim_matches(['<', '>']).eq_ignore_ascii_case(content_id)
+                        } else {
+                            crate::attachment_security::normalize_filename(&part.filename) == attachment.name
+                        };
+                        if matches {
                             return part.body.data.clone();
                         }
-                        part.parts.iter().find_map(|p| find(p, name))
+                        part.parts.iter().find_map(|p| find(p, attachment))
                     }
                     URL_SAFE_NO_PAD
                         .decode(
-                            find(&source.payload, &a.name)
+                            find(&source.payload, a)
                                 .ok_or("Attachment content unavailable")?
                                 .trim_end_matches('='),
                         )
@@ -1726,6 +1765,82 @@ mod tests {
         assert!(forward.thread_id.is_none());
         assert_eq!(forward.subject, "Fwd: Topic");
     }
+    #[test]
+    fn html_forwards_preserve_source_in_mime_after_save_and_reopen() {
+        for (index, html) in [
+            "<p><strong>Golf Monday</strong></p><a href=\"https://example.com/profile?one=1&amp;two=2\">Profile</a><img src=\"https://images.example.com/invite.png\" alt=\"Invitation\">",
+            "<!doctype html><html><head><style>td { padding: 8px; }</style></head><body><table cellspacing=\"4\"><tr><td></td><td><em>Agenda</em><a href=\"https://example.com/agenda\">Read agenda</a></td></tr></table></body></html>",
+        ].into_iter().enumerate() {
+            let db = database();
+            let source_id = format!("html-forward-{index}");
+            let source = serde_json::json!({"id":source_id,"threadId":"thread","payload":{"mimeType":"multipart/alternative","headers":[{"name":"From","value":"Other <other@example.com>"},{"name":"To","value":"you@example.com"},{"name":"Subject","value":"Golf <Monday> & friends"}],"parts":[{"mimeType":"text/plain","body":{"data":URL_SAFE_NO_PAD.encode("Plain alternative [Profile] and [image]")}},{"mimeType":"text/html","body":{"data":URL_SAFE_NO_PAD.encode(html)}}]}});
+            db.connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES (?1, ?2)", params![source_id, source.to_string()]).unwrap();
+            let mut draft = db.create_draft("forward", Some(source_id), "you@example.com").unwrap();
+            let preserved = draft.forwarded_content.as_ref().unwrap();
+            assert!(preserved.html.ends_with(html));
+            assert!(preserved.html.contains("Other &lt;other@example.com&gt;"));
+            assert!(preserved.html.contains("Golf &lt;Monday&gt; &amp; friends"));
+            assert!(preserved.text.ends_with("Plain alternative [Profile] and [image]"));
+            assert!(draft.body.is_empty());
+            let expected_html = preserved.html.clone();
+            // Saving user edits cannot overwrite native-owned source HTML.
+            draft.forwarded_content = None;
+            draft.to = "friend@example.com".into();
+            draft.body = "Take a look <please>".into();
+            let saved = db.save_draft(draft).unwrap();
+            let reopened = db.draft(&saved.id).unwrap();
+            assert_eq!(reopened.forwarded_content.as_ref().unwrap().html, expected_html);
+            let raw = build_mime(&reopened, None, "forward", Path::new(".")).unwrap();
+            let parsed = MessageParser::default().parse(&raw).unwrap();
+            assert_eq!(parsed.body_html(0).unwrap(), format!("Take a look &lt;please&gt;<br><br>{expected_html}"));
+            let plain = parsed.body_text(0).unwrap().replace("\r\n", "\n");
+            assert_eq!(plain, format!("{}\n\n{}", reopened.body, reopened.forwarded_content.as_ref().unwrap().text));
+            assert!(parsed.in_reply_to().as_text().is_none());
+        }
+    }
+
+    #[test]
+    fn old_drafts_without_preserved_content_keep_their_body() {
+        let db = database();
+        let draft = saved(&db);
+        let mut value = serde_json::to_value(&draft).unwrap();
+        value.as_object_mut().unwrap().remove("forwardedContent");
+        let old: Draft = serde_json::from_value(value).unwrap();
+        assert!(old.forwarded_content.is_none());
+        let raw = build_mime(&old, None, "legacy", Path::new(".")).unwrap();
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        assert_eq!(parsed.body_text(0).unwrap(), draft.body);
+    }
+
+    #[test]
+    fn forwarding_keeps_named_and_unnamed_inline_images_and_content_ids() {
+        let db = database();
+        let html = "<p>Photos</p><img src=\"cid:first@example.com\"><table><tr><td><img src=\"cid:second@example.com\"></td></tr></table>";
+        let source = serde_json::json!({"id":"inline-forward","threadId":"thread","payload":{"mimeType":"multipart/related","headers":[{"name":"From","value":"other@example.com"},{"name":"Subject","value":"Photos"}],"parts":[{"mimeType":"text/html","body":{"data":URL_SAFE_NO_PAD.encode(html)}},{"mimeType":"image/png","filename":"photo.png","headers":[{"name":"Content-ID","value":"<first@example.com>"}],"body":{"attachmentId":"remote-part","size":3}},{"mimeType":"image/png","headers":[{"name":"Content-ID","value":"<second@example.com>"},{"name":"Content-Disposition","value":"inline"}],"body":{"data":URL_SAFE_NO_PAD.encode("png"),"size":3}}]}});
+        db.connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES ('inline-forward', ?1)", [source.to_string()]).unwrap();
+        let mut draft = db.create_draft("forward", Some("inline-forward".into()), "you@example.com").unwrap();
+        assert_eq!(draft.attachments.len(), 2);
+        assert!(draft.attachments.iter().all(|attachment| attachment.inline && !attachment.ready));
+        assert_eq!(draft.attachments[0].provider_id.as_deref(), Some("remote-part"));
+        assert_eq!(draft.attachments[1].provider_id, None);
+        let root = std::env::temp_dir().join(Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&root).unwrap();
+        for attachment in &mut draft.attachments {
+            std::fs::write(root.join(&attachment.id), b"png").unwrap();
+            attachment.ready = true;
+        }
+        draft.to = "friend@example.com".into();
+        draft.body_html = "<p>Please see below.</p>".into();
+        let raw = build_mime(&draft, None, "inline-forward", &root).unwrap();
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        assert!(parsed.body_html(0).unwrap().starts_with("<p>Please see below.</p><br><br>"));
+        assert!(parsed.body_html(0).unwrap().ends_with(html));
+        let raw = String::from_utf8(raw).unwrap();
+        assert!(raw.contains("Content-ID: <first@example.com>"));
+        assert!(raw.contains("Content-ID: <second@example.com>"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn reply_attribution_dates_are_readable_in_the_reader_time_zone() {
         let eastern = chrono::FixedOffset::west_opt(4 * 3600).unwrap();

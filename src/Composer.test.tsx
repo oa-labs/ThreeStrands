@@ -567,10 +567,94 @@ describe("Composer pasted images", () => {
   });
 });
 
-describe("Composer forwarded attachments", () => {
+describe("Composer forwarded content and attachments", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+  });
+
+  it.each([
+    '<p><strong>Golf Monday</strong></p><a href="https://example.com/profile?one=1&amp;two=2">Profile</a><img src="https://images.example.com/forward-paragraph.png" alt="Invitation">',
+    '<table cellspacing="4"><tr><td></td><td style="padding:8px"><em>Golf Monday</em><a href="https://example.com/profile?one=1&amp;two=2">Profile</a><img src="https://images.example.com/forward-table.png" alt="Invitation"></td></tr></table>',
+  ])("preserves forwarded markup through editing and reopening in an isolated preview (%s)", async (html) => {
+    const forwardedContent = { html: `<div>---------- Forwarded message ----------<br>From: Other &lt;other@example.com&gt;<br><br></div>${html}`, text: "Golf Monday [Profile] and [image]" };
+    const forwarded: Draft = { ...draft, mode: "forward", subject: "Fwd: Golf Monday", forwardedContent };
+    const saveDraft = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    const proxy = vi.spyOn(mailClient, "fetchRemoteImage");
+    const ref = createRef<ComposerHandle>();
+    const { unmount } = render(<Composer ref={ref} draft={forwarded} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
+    expect(editor).toBeEmptyDOMElement();
+    const frame = within(screen.getByRole("region", { name: "Forwarded message" })).getByTitle("Message content") as HTMLIFrameElement;
+    const preview = new DOMParser().parseFromString(frame.srcdoc, "text/html");
+    expect(preview.querySelector("strong, em")?.textContent).toBe("Golf Monday");
+    expect(preview.querySelector('a[href^="https:"]')?.getAttribute("href")).toBe("https://example.com/profile?one=1&two=2");
+    expect(preview.querySelector("img")?.hasAttribute("src")).toBe(false);
+    if (html.startsWith("<table")) {
+      expect(preview.querySelector("table")?.getAttribute("cellspacing")).toBe("4");
+      expect(preview.querySelectorAll("td")).toHaveLength(2);
+      expect(preview.querySelector("td")?.innerHTML).toBe("");
+    }
+    expect(proxy).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Show quoted content" })).not.toBeInTheDocument();
+    editor.innerHTML = "<b>See below.</b>";
+    fireEvent.input(editor);
+    let saved!: Draft;
+    await act(async () => { saved = await ref.current!.flush(); });
+    expect(saveDraft).toHaveBeenCalledWith(expect.objectContaining({ bodyHtml: "<b>See below.</b>", body: "See below.", forwardedContent }));
+    unmount();
+    render(<Composer draft={saved} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    expect(screen.getByRole("textbox", { name: "Message Body" })).toHaveTextContent("See below.");
+    expect(screen.getByTitle("Message content")).toHaveAttribute("srcdoc", frame.srcdoc);
+  });
+
+  it("keeps sender capabilities out of the editor and loads remote images only through the proxy", async () => {
+    const url = "https://images.example.com/forward-security.png";
+    const proxy = vi.spyOn(mailClient, "fetchRemoteImage").mockResolvedValue("data:image/png;base64,cG5n");
+    const forwardedContent = { html: `<p onclick="parent.compromised=true" style="position:fixed;background-image:url(${url})">Invitation</p><img src="${url}" onerror="parent.compromised=true" srcset="https://tracker.invalid/a 2x"><script>parent.compromised=true</script><iframe src="https://tracker.invalid"></iframe><a href="javascript:alert(1)">Unsafe</a>`, text: "Invitation" };
+    render(<Composer draft={{ ...draft, mode: "forward", forwardedContent }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} messageAppearance={{ theme: "light" }} />);
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
+    expect(editor).toBeEmptyDOMElement();
+    const frame = screen.getByTitle("Message content") as HTMLIFrameElement;
+    const preview = new DOMParser().parseFromString(frame.srcdoc, "text/html");
+    expect(frame).toHaveAttribute("sandbox", "allow-same-origin allow-scripts");
+    expect(frame).toHaveAttribute("referrerpolicy", "no-referrer");
+    expect(frame.srcdoc).toContain("script-src 'none'");
+    expect(frame.srcdoc).toContain("img-src data:");
+    expect(preview.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(preview.querySelector("script, iframe, [onclick], [onerror], [srcset]")).toBeNull();
+    expect(preview.querySelector("a")?.hasAttribute("href")).toBe(false);
+    expect(preview.querySelector("img")?.hasAttribute("src")).toBe(false);
+    expect(preview.querySelector("p")!.style.position).toBe("");
+    expect(preview.querySelector("p")!.style.backgroundImage).toBe("");
+    expect(proxy).not.toHaveBeenCalled();
+    frame.contentDocument!.body.innerHTML = preview.body.innerHTML;
+    fireEvent.load(frame);
+    fireEvent.click(screen.getByRole("button", { name: "Load images" }));
+    await waitFor(() => expect(proxy).toHaveBeenCalledWith(url));
+    await waitFor(() => expect(frame.contentDocument!.querySelector("img")).toHaveAttribute("src", "data:image/png;base64,cG5n"));
+  });
+
+  it("retries embedded image previews after the forwarded attachment finishes downloading", async () => {
+    const attachment = { id: "embedded-forward", name: "photo.png", mime: "image/png", size: 3, ready: false, messageId: "source", providerId: "part", inline: true, contentId: "photo@example.com" };
+    const forwarded: Draft = { ...draft, mode: "forward", attachments: [attachment], forwardedContent: { html: '<p>Photos</p><img src="cid:photo%40example.com" alt="Photo">', text: "Photos" } };
+    const ready = { ...forwarded, revision: 1, attachments: [{ ...attachment, ready: true }] };
+    const downloaded = deferred<Draft>();
+    vi.spyOn(mailClient, "fetchAttachment").mockReturnValue(downloaded.promise);
+    const readImage = vi.spyOn(mailClient, "readInlineImage")
+      .mockRejectedValueOnce(new Error("Inline image is unavailable"))
+      .mockResolvedValue("data:image/png;base64,cG5n");
+    const proxy = vi.spyOn(mailClient, "fetchRemoteImage");
+    render(<Composer draft={forwarded} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const frame = screen.getByTitle("Message content") as HTMLIFrameElement;
+    frame.contentDocument!.body.innerHTML = new DOMParser().parseFromString(frame.srcdoc, "text/html").body.innerHTML;
+    fireEvent.load(frame);
+    await waitFor(() => expect(readImage).toHaveBeenCalledTimes(1));
+    expect(frame.contentDocument!.querySelector("img")).not.toHaveAttribute("src");
+    await act(async () => { downloaded.resolve(ready); });
+    await waitFor(() => expect(frame.contentDocument!.querySelector("img")).toHaveAttribute("src", "data:image/png;base64,cG5n"));
+    expect(readImage).toHaveBeenCalledWith("draft-1", "embedded-forward");
+    expect(proxy).not.toHaveBeenCalled();
   });
 
   it("downloads unresolved forwarded images automatically before sending", async () => {

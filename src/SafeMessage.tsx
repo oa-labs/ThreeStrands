@@ -52,6 +52,8 @@ type SafeMessageProps = {
   tone?: "default" | "current" | "muted";
   /** Text from earlier messages in the conversation; lets repeated text (such as a signature) fold. */
   priorThreadText?: PriorThreadText;
+  /** A forward preview shows the complete content that will be sent. */
+  foldQuotes?: boolean;
   /** Called with an image's resolved `src` when the reader clicks it in the message body. */
   onImageClick?: (src: string) => void;
   /**
@@ -64,6 +66,8 @@ type SafeMessageProps = {
    */
   onEnterKey?: () => void;
 };
+
+export type MessageAppearance = Pick<SafeMessageProps, "theme" | "fontScale" | "fontFamily" | "emailMinimumFontSize" | "loadImages">;
 
 async function defaultResolveImage(): Promise<string> {
   throw new Error("Image loading is not configured for this SafeMessage instance");
@@ -505,6 +509,7 @@ export function SafeMessage({
   fontFamily = "system",
   tone = "default",
   priorThreadText,
+  foldQuotes = true,
   onImageClick,
   onEnterKey,
 }: SafeMessageProps) {
@@ -525,8 +530,8 @@ export function SafeMessage({
   const [quotedHistoryExpanded, setQuotedHistoryExpanded] = useState(false);
   const imagesAllowed = loadImages || imagesAllowedForMessage;
   const sanitized = useMemo(() => sanitizeMessageHtml(html), [html]);
-  const htmlFold = useMemo(() => foldQuotedHistoryHtml(sanitized, priorThreadText), [sanitized, priorThreadText]);
-  const textFold = useMemo(() => foldQuotedHistoryText(text, priorThreadText), [text, priorThreadText]);
+  const htmlFold = useMemo(() => foldQuotes ? foldQuotedHistoryHtml(sanitized, priorThreadText) : null, [foldQuotes, sanitized, priorThreadText]);
+  const textFold = useMemo(() => foldQuotes ? foldQuotedHistoryText(text, priorThreadText) : null, [foldQuotes, text, priorThreadText]);
   const hasCollapsedHistory = htmlFold !== null || (!sanitized.trim() && textFold !== null);
   const renderedHtml = htmlFold ? (quotedHistoryExpanded ? htmlFold.expanded : htmlFold.visible) : sanitized;
   const blockedUrls = useMemo(() => extractBlockedImageUrls(renderedHtml), [renderedHtml]);

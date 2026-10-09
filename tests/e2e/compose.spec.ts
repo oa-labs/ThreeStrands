@@ -106,6 +106,34 @@ test("reply shortcuts keep inbox actions out of the composer and forwarding star
   await expect(forward.getByRole("textbox", { name: "Subject" })).toHaveValue("Fwd: Welcome to ThreeStrands");
 });
 
+test("HTML forwarding preserves formatting and blocked images after reopening, sending, and undo", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Forward", exact: true }).click();
+  const composer = page.getByRole("dialog", { name: "Forward Message" });
+  const preview = composer.getByRole("region", { name: "Forwarded message" });
+  const frame = preview.getByTitle("Message content").contentFrame();
+  await expect(frame.locator("strong")).toHaveText("ThreeStrands");
+  await expect(frame.locator("img")).not.toHaveAttribute("src");
+  await expect(preview.getByRole("button", { name: "Load images" })).toBeVisible();
+  const body = composer.getByRole("textbox", { name: "Message Body" });
+  await expect(body).toBeEmpty();
+  await body.fill("Please see the original message below.");
+  await composer.getByRole("textbox", { name: "To", exact: true }).fill("friend@example.com");
+  await composer.getByRole("button", { name: "Save and Close Draft" }).click();
+  await page.reload();
+  await (await openFolders(page)).getByRole("button", { name: "Drafts" }).click();
+  await page.getByRole("button", { name: /Fwd: Welcome to ThreeStrands/ }).click();
+  await expect(body).toHaveText("Please see the original message below.");
+  await expect(frame.locator("strong")).toHaveText("ThreeStrands");
+  await expect(frame.locator("img")).not.toHaveAttribute("src");
+  await composer.getByRole("button", { name: /^Send / }).click();
+  await expect(composer).not.toBeVisible();
+  await page.getByRole("button", { name: "Undo Send", exact: true }).click();
+  await expect(body).toHaveText("Please see the original message below.");
+  await expect(frame.locator("strong")).toHaveText("ThreeStrands");
+  await expect(frame.locator("img")).not.toHaveAttribute("src");
+});
+
 for (const [key, heading] of [["r", "Reply"], ["a", "Reply All"]] as const) {
   test(`${key} quotes only selected email text`, async ({ page }) => {
     await page.goto("/");

@@ -11,6 +11,8 @@ export type Draft = {
   id: string; revision: number; account: string; mode: ComposeMode;
   sourceId: string | null; threadId: string | null; replyId: string | null; references: string[];
   to: string; cc: string; bcc: string; subject: string; body: string; bodyHtml?: string;
+  /** Preserved sender content, rendered only through SafeMessage and appended by native MIME assembly. */
+  forwardedContent?: { html: string; text: string } | null;
   followUpTaskId?: string | null;
   attachments: Attachment[]; updatedAt: number;
 };

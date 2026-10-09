@@ -10,6 +10,7 @@ import { matchesShortcut } from "./commands";
 import { logBackgroundFailure } from "./errors";
 import { draftWithSelectedQuote } from "./selectedMessageQuote";
 import { ICON_SIZE } from "./iconSizes";
+import type { MessageAppearance } from "./SafeMessage";
 import type { MailtoRequest } from "./mailtoLink";
 
 type ComposeOptions = {
@@ -29,6 +30,7 @@ export function useCorrespondence(
   onUpdateSnippet: (id: string, name: string, body: string) => Promise<Snippet>,
   onDeleteSnippet: (id: string) => Promise<void>,
   selectedThreadId: string | null,
+  messageAppearance?: MessageAppearance,
 ) {
   const [active, setActive] = useState<Draft | null>(null);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
@@ -220,6 +222,7 @@ export function useCorrespondence(
       ref={editor}
       draft={active}
       accounts={accounts}
+      messageAppearance={messageAppearance}
       snippets={snippets}
       onCreateSnippet={onCreateSnippet}
       onUpdateSnippet={onUpdateSnippet}

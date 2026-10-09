@@ -252,7 +252,7 @@ function GrowingTextarea(props:TextareaHTMLAttributes<HTMLTextAreaElement>){
 function ContactEnrichmentCard({suggestions,notice,enriching,emailsReviewed,moreAvailable,onEnrich,onApply,onOpenThread}:{suggestions:ContactFieldSuggestion[];notice:{text:string;failed:boolean}|null;enriching:boolean;emailsReviewed:number;moreAvailable:boolean;onEnrich(searchMore:boolean):void;onApply(item:ContactFieldSuggestion):void;onOpenThread(id:string):void}){
   const headingId=useId();
   return <section className="context-section contact-enrichment" aria-labelledby={headingId}>
-    <ContextSectionHeader title="Profile Suggestions" titleId={headingId} actions={<button type="button" className="btn btn-sm thread-assist-run" disabled={enriching} onClick={()=>onEnrich(false)}>{enriching?<LoaderCircle className="spin" size={ICON_SIZE.xs}/>:<Sparkles size={ICON_SIZE.xs}/>}Enhance with AI</button>}/>
+    <ContextSectionHeader title="Profile Suggestions" titleId={headingId} icon={<UserRound size={ICON_SIZE.xs}/>} actions={<button type="button" className="btn btn-sm thread-assist-run" disabled={enriching} onClick={()=>onEnrich(false)}>{enriching?<LoaderCircle className="spin" size={ICON_SIZE.xs}/>:<Sparkles size={ICON_SIZE.xs}/>}Enhance with AI</button>}/>
     {enriching?<p className="context-status">Reading emails…</p>:!notice&&!suggestions.length&&emailsReviewed===0?<p className="context-status">Fill empty fields from your emails with this person. Nothing changes until you use a suggestion.</p>:null}
     {notice?<p className={notice.failed?"context-status contacts-error":"context-status"} role={notice.failed?"alert":"status"}>{notice.text}</p>:null}
     {suggestions.map((item,index)=><article key={`${item.field}-${index}`} className="contact-suggestion">

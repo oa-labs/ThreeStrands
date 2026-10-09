@@ -70,6 +70,8 @@ export const EMAIL_QUOTE_FOLDING_LIMITS = {
   shingleWords: 4,
   /** Fraction of a line's words that matched shingles must cover for the line to count as repeated. */
   minSeenLineCoverage: 0.8,
+  /** Matched shingles required by native quote detection for a standalone repeated region. */
+  minRepeatedRegionShingles: 8,
   /** Matched shingles that let repeated text extend a structural fold or confirm a lone citation. */
   minCorroboratingShingles: 3,
 } as const;

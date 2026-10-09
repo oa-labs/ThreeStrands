@@ -38,18 +38,21 @@ function saveCollapsed(id: string, collapsed: boolean) {
 /**
  * The one heading layout every context panel section shares: an uppercase
  * label (optionally a collapse toggle) on the left, then the item count and
- * any section actions on the right. Labels carry no icons.
+ * any section actions on the right. A decorative icon can fill the glyph
+ * column when the section has no collapse toggle.
  */
-export function ContextSectionHeader({ title, titleId, count, toggle, actions }: {
+export function ContextSectionHeader({ title, titleId, count, toggle, icon, actions }: {
   title: ReactNode;
   /** Id on the label, for a section labelled by its heading. */
   titleId?: string;
   count?: number;
   /** Makes the label a collapse toggle for the element with id `controls`. */
   toggle?: { collapsed: boolean; controls: string; onToggle(): void };
+  /** A decorative glyph for a heading without a collapse toggle. */
+  icon?: ReactNode;
   actions?: ReactNode;
 }) {
-  // The chevron (or an empty slot) sits in the rows' glyph column, so every
+  // The chevron, icon, or empty slot sits in the rows' glyph column, so every
   // section label starts at the same edge as its rows' text.
   return (
     <header className="context-section-header">
@@ -59,7 +62,7 @@ export function ContextSectionHeader({ title, titleId, count, toggle, actions }:
             <span className="context-row-glyph" aria-hidden="true">{toggle.collapsed ? <ChevronRight size={ICON_SIZE.xs} /> : <ChevronDown size={ICON_SIZE.xs} />}</span>
             <span id={titleId}>{title}</span>
           </button>
-        ) : <><span className="context-row-glyph" aria-hidden="true" /><span id={titleId}>{title}</span></>}
+        ) : <><span className="context-row-glyph" aria-hidden="true">{icon}</span><span id={titleId}>{title}</span></>}
       </h3>
       {(count !== undefined && count > 0) || actions ? (
         <div className="context-section-header-actions">

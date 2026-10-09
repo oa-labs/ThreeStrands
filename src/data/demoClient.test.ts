@@ -206,6 +206,20 @@ describe("showcase dataset", () => {
     await client.discardDraft(draft.id);
   });
 
+  it("preserves the HTML alternative when creating and restoring a forward", async () => {
+    const client = createDemoClient(buildShowcaseDataset(now));
+    const detail = await client.getThread("launch-plan");
+    const source = detail.messages[0];
+    const forwarded = await client.createDraft("forward", source.id);
+    expect(forwarded.body).toBe("");
+    expect(forwarded.forwardedContent?.html).toContain(source.bodyHtml);
+    expect(forwarded.forwardedContent?.text).toContain(source.bodyText);
+    expect(forwarded.to).toBe("");
+    const saved = await client.saveDraft({ ...forwarded, body: "See below", bodyHtml: "<b>See below</b>" });
+    expect(await client.createDraft("forward", source.id)).toEqual(saved);
+    await client.discardDraft(saved.id);
+  });
+
   it("claims notification mail for its split inbox and keeps it out of the Inbox tab", async () => {
     const client = createDemoClient(buildShowcaseDataset(now));
     const inbox = await client.listThreads(SHOWCASE_WORK_ACCOUNT);

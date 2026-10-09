@@ -9,6 +9,7 @@ import {
   readAiProvider,
   readAiRequestConfig,
 } from "./aiSettings";
+import type { MessageAppearance } from "./SafeMessage";
 import { RecipientField } from "./RecipientField";
 import { Modal } from "./AppChrome";
 import { ComposeBodyEditor, type ComposeBodyEditorHandle } from "./ComposeBodyEditor";
@@ -35,6 +36,7 @@ export type ComposerHandle = {
 export const Composer = forwardRef<ComposerHandle, {
   draft: Draft;
   accounts: Account[];
+  messageAppearance?: MessageAppearance;
   snippets: Snippet[];
   onCreateSnippet(name: string, body: string): Promise<Snippet>;
   onUpdateSnippet(id: string, name: string, body: string): Promise<Snippet>;
@@ -45,7 +47,7 @@ export const Composer = forwardRef<ComposerHandle, {
   replyAssistInstruction?: string | null;
   /** Called with the draft as edits are made; body text arrives at each autosave. */
   onDraftChange?(draft: Draft): void;
-}>(function Composer({ draft: initial, accounts, snippets, onCreateSnippet, onUpdateSnippet, onDeleteSnippet, onClose, onQueued, availabilityText = null, replyAssistInstruction = null, onDraftChange }, ref) {
+}>(function Composer({ draft: initial, accounts, messageAppearance, snippets, onCreateSnippet, onUpdateSnippet, onDeleteSnippet, onClose, onQueued, availabilityText = null, replyAssistInstruction = null, onDraftChange }, ref) {
   const bodyEditor = useRef<ComposeBodyEditorHandle>(null);
   const captureChanges = useCallback(() => bodyEditor.current?.captureChanges() ?? null, []);
   const [error, setError] = useState("");
@@ -267,6 +269,8 @@ export const Composer = forwardRef<ComposerHandle, {
         <ComposeBodyEditor
           ref={bodyEditor}
           initial={initial}
+          attachments={draft.attachments}
+          messageAppearance={messageAppearance}
           busy={busy}
           recipientTo={draft.to}
           availabilityText={availabilityText}

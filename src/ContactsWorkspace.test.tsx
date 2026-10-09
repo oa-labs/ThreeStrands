@@ -420,9 +420,16 @@ describe("ContactsWorkspace",()=>{
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
     const rail=screen.getByRole("complementary",{name:"Contact context"});
-    expect(within(rail).getByRole("region",{name:"Profile Suggestions"})).toBeInTheDocument();
+    const suggestions=within(rail).getByRole("region",{name:"Profile Suggestions"});
+    const profileHeading=within(suggestions).getByRole("heading",{name:"Profile Suggestions"});
+    const profileGlyph=profileHeading.querySelector(".context-row-glyph");
+    expect(profileGlyph).toHaveAttribute("aria-hidden","true");
+    expect(profileGlyph?.querySelector("svg.lucide-user-round")).toBeInTheDocument();
+    expect(within(suggestions).queryByRole("button",{name:"Profile Suggestions"})).not.toBeInTheDocument();
     expect(within(rail).getByRole("button",{name:/Enhance with AI/})).toBeInTheDocument();
     const recent=await within(rail).findByRole("region",{name:"Recent emails"});
+    const caret=within(recent).getByRole("button",{name:"Recent emails"}).querySelector(".context-row-glyph svg");
+    expect(profileGlyph?.querySelector("svg")).toHaveAttribute("width",caret?.getAttribute("width"));
     expect(within(recent).getAllByRole("button",{name:/^Subject/})).toHaveLength(8);
     expect(within(recent).queryByRole("button",{name:"Load older emails"})).not.toBeInTheDocument();
     fireEvent.click(within(recent).getByRole("button",{name:"Show 12 more"}));
