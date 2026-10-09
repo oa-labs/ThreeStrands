@@ -1,18 +1,23 @@
 # IMAP/SMTP provider design
 
-Status: proposed. This is the design note `PLAN.MD` asks for before IMAP/SMTP
-work starts ("after its folder and threading behavior is designed"). IMAP now
+Status: accepted, with every open question resolved (2026-10-08).
+Implementation hasn't started; phase 1 of [Phasing](#phasing) is next.
+
+This is the design note `PLAN.MD` asks for before IMAP/SMTP work starts
+("after its folder and threading behavior is designed"). IMAP now
 comes before Microsoft 365. Microsoft 365 needs an Entra app registration, and
-the primary user's mail is on a generic ISP/hosting IMAP server, not Microsoft
-365.
+the primary user's mail is not on Microsoft 365. It is on Proton Mail, reached
+through Proton Mail Bridge, which runs a local IMAP/SMTP server on the user's
+machine. See [The primary account](#the-primary-account) for what that server
+advertises and how it changes the design.
 
 ## Decisions already made
 
 | Question | Decision |
 | --- | --- |
-| Which servers | Generic ISP and hosting IMAP servers, whose extension support isn't known in advance. The design has to work on a plain IMAP4rev1 server and use newer extensions when a server advertises them. |
+| Which servers | Any standards-compliant IMAP server, whose extension support isn't known in advance. That includes ISP and hosting servers and local bridges such as Proton Mail Bridge, which the primary user runs. The design has to work on a plain IMAP4rev1 server and use newer extensions when a server advertises them. Nothing branches on the server's identity. |
 | Authentication | Password or app password only in v1, stored in the OS keychain, TLS required. OAuth2 (XOAUTH2/OAUTHBEARER) can be added later inside the same credential envelope. |
-| Labels | System states use folders, user labels use keywords. Archive, Trash, Spam and Sent map to special-use folders. The user's existing folders appear as read-only locations with a Move action. ThreeStrands labels become IMAP keywords where the server allows custom keywords. |
+| Labels | System states use folders. Archive, Trash, Spam and Sent map to special-use folders. The user's existing folders appear as read-only locations with a Move action. ThreeStrands user labels are stored one of two ways, set per account: as IMAP keywords when `PERMANENTFLAGS` includes `\*`, or as **label folders**, copies in children of a container mailbox the user picks at setup. The primary account uses label folders (decided 2026-10-08). See [User labels](#user-labels). |
 | Calendar and contacts | Mail first. IMAP v1 covers mail and server search. CalDAV/CardDAV is a later step that needs a calendar provider interface. A Google Calendar connection still works alongside an IMAP mail account. |
 
 ## Guiding rules
@@ -21,8 +26,8 @@ the primary user's mail is on a generic ISP/hosting IMAP server, not Microsoft
    server's `CAPABILITY` response, `PERMANENTFLAGS` and `LIST` attributes, never
    from the server's hostname or brand. This is the same rule as the
    email-rendering policy in `AGENTS.md`. Matching mailbox names such as
-   "Sent Items" is allowed only as a fallback when a server lacks
-   `SPECIAL-USE`, and the user can always override the result.
+   "Sent Items" is allowed only as a fallback when `LIST` returns no
+   special-use attributes, and the user can always override the result.
 2. **The sync engine and UI stay provider-neutral.** The IMAP provider
    implements the existing `MailSync`/`MailFetch`/`MailMutate`/`MailSend`
    traits. It produces `RawMessage` envelopes with the same system label names
@@ -43,22 +48,49 @@ the primary user's mail is on a generic ISP/hosting IMAP server, not Microsoft
 
 | Concern | Recommendation | Why |
 | --- | --- | --- |
-| IMAP client | [`async-imap`](https://crates.io/crates/async-imap) on tokio, behind an internal `ImapSession` trait | It is maintained by the chatmail/Delta Chat team, whose product runs against exactly this mix of ISP servers. The trait boundary lets tests use a scripted fake and keeps a swap to `imap-next`/`imap-codec` cheap if a spike shows gaps in `QRESYNC`/`VANISHED` handling. |
-| SMTP | [`lettre`](https://crates.io/crates/lettre) (tokio, rustls) | Supports implicit TLS and STARTTLS, `AUTH PLAIN/LOGIN`, and XOAUTH2 for later. |
+| IMAP client | [`async-imap`](https://crates.io/crates/async-imap) 0.12 with `default-features = false, features = ["runtime-tokio"]`, behind an internal `ImapSession` trait | It is actively maintained (0.12.0 released 2026-09-30) and widely used: Delta Chat runs it against every kind of server. It has calls for everything the primary account offers: `idle()`, `uid_mv`, `uid_expunge`, `append`, `id()`, plus `select_condstore` for later. It wraps any `AsyncRead + AsyncWrite` stream, so STARTTLS and certificate pinning stay in our own rustls code. Its default runtime is async-std, so the feature flags matter. |
+| IMAP fallback | [`imap-codec`](https://crates.io/crates/imap-codec) 1.0 / [`imap-next`](https://crates.io/crates/imap-next) | The most complete typed model of the protocol, including `CONDSTORE`/`QRESYNC`/`VANISHED`. `imap-next` is low-level, so we would write the command flow ourselves. It's the replacement if `async-imap` turns out to be inadequate. The `ImapSession` trait keeps that swap local. |
+| SMTP | [`lettre`](https://crates.io/crates/lettre) 0.11 (tokio, rustls) | Supports implicit TLS and STARTTLS, `AUTH PLAIN/LOGIN`, and XOAUTH2 for later. It doesn't accept a custom certificate verifier. For a pinned certificate, use `CertificateStore::None` plus `add_root_certificate(pinned)`, which makes that one certificate the only trusted root. Never use `dangerous_accept_invalid_certs`. |
 | MIME | `mail-parser` / `mail-builder` (already dependencies) | Reuse. Raw `BODY.PEEK[]` bytes are parsed into `RawMessage`. |
-| TLS | rustls, with certificates always verified | The same stack `reqwest` already uses. Self-signed certificates are refused in v1 with a clear error (see open questions). |
+| TLS | rustls 0.23 with the `ring` provider (already a dependency), with certificates always verified | The same stack `reqwest` already uses. A certificate that doesn't chain to a trusted root is accepted only if it matches the certificate the user pinned at setup (see [Account setup](#account-setup)). On IMAP that's a custom `ServerCertVerifier` comparing the SHA-256 fingerprint. On SMTP it's lettre's root-store route above. Verification is never switched off. |
 | DNS SRV | `hickory-resolver` | Only needed for RFC 6186 autodiscovery. |
 
-**Spike before committing (about a day):** against a Dovecot container, check
-that `async-imap` can:
-- `SELECT … (QRESYNC (…))` and parse `VANISHED (EARLIER)`;
-- run `UID FETCH … (CHANGEDSINCE n)`;
-- issue `MOVE` and `UIDPLUS` commands and return the new UIDs from their
-  `COPYUID`/`APPENDUID` responses;
-- keep `IDLE` running across reconnects.
+Avoid the blocking [`imap`](https://crates.io/crates/imap) crate (2.4.1, last
+released Feb 2025; 3.0 has stayed in alpha) and
+[`imap-client`](https://crates.io/crates/imap-client) (0.3, a small user
+base). `imap-client` also discards `COPYUID` on move and creates its own TLS
+connection, which gets in the way of pinning.
 
-Anything missing goes through its raw-command escape hatch or decides the
-library choice.
+**Known `async-imap` gaps, and the plan for each:**
+- `uid_mv` and `append` return `()`, so the `COPYUID`/`APPENDUID` response
+  codes are thrown away. Send those commands through `run_command` and read the
+  tagged response code, which `imap-proto` already parses as `CopyUid`/`AppendUid`.
+  If that turns out to be awkward, fall back to finding the message by its
+  Message-ID on the next sync. That fallback already exists for servers without
+  `UIDPLUS`, and it's cheap on a local server.
+- `QRESYNC` and `VANISHED` aren't wrapped. The primary account doesn't offer
+  them, so the "neither" sync path ships first. `QRESYNC` support can follow
+  through raw commands without blocking v1.
+
+**Spike before committing (about a day).** Run it against the primary account's
+profile first (a Dovecot container restricted to
+`IMAP4rev1 IDLE MOVE UIDPLUS UNSELECT ID`, a self-signed certificate, and no
+custom keywords), then against Bridge itself. Check that:
+- STARTTLS works on a non-standard port over a stream we upgrade ourselves,
+  with a fingerprint-pinning `ServerCertVerifier`;
+- lettre with `CertificateStore::None` plus the pinned certificate connects to
+  a self-signed SMTP server whose certificate names the host only in its CN, or
+  only in an IP SAN, for `127.0.0.1`. If it can't, that changes the SMTP pinning
+  design;
+- `IDLE` survives the 25-minute re-issue and reconnects cleanly after the
+  server drops the connection;
+- `UID MOVE` and `APPEND` sent through `run_command` return `COPYUID` and
+  `APPENDUID`;
+- `UID STORE` of a flag that isn't in `PERMANENTFLAGS` is detected rather than
+  silently ignored.
+
+Anything that fails decides between the raw-command route and moving to
+`imap-next`.
 
 ## Server capabilities
 
@@ -72,16 +104,80 @@ the server advertises the extension and what it falls back to when it doesn't.
 | `QRESYNC` (RFC 7162) | Deletions arrive as `VANISHED`. Each mailbox resyncs in one round trip. | Find deletions with `UID SEARCH ALL` compared against local UIDs. This runs every poll for INBOX and less often for other folders. |
 | `MOVE` (RFC 6851) | Moves are atomic. | `COPY` + `\Deleted` + `UID EXPUNGE`, which needs `UIDPLUS`. |
 | `UIDPLUS` (RFC 4315) | New UIDs come back from `COPYUID`/`APPENDUID`. Targeted `UID EXPUNGE`. | No expunge. The source copy is only marked `\Deleted`, because a plain `EXPUNGE` would also remove other clients' deleted mail. The new location is found on the next sync. |
-| `SPECIAL-USE` (RFC 6154) | `\Sent`, `\Archive`, `\Junk`, `\Trash`, `\Drafts` come from `LIST`. | Common mailbox names are matched as a fallback. The user confirms the result at account setup. |
+| `SPECIAL-USE` (RFC 6154) | `\Sent`, `\Archive`, `\Junk`, `\Trash`, `\Drafts`, `\All`, `\Flagged` come from `LIST`. | Special-use attributes are still read from a plain `LIST` when present; some servers return them without advertising the extension. Only when none come back are common mailbox names matched, and the user confirms the result at account setup. |
 | `OBJECTID` (RFC 8474) | Message ID from `EMAILID`, thread ID from `THREADID` when the server returns it. | IDs are derived locally (next section). |
 | `ESEARCH` (RFC 4731) | Search returns compact result sets. | Plain `SEARCH` results. |
 | `LIST-STATUS` (RFC 5819) | One round trip for every mailbox's counters. | One `STATUS` command per mailbox. |
 | `ENABLE`, `UTF8=ACCEPT`, `ID` | Turned on when offered. `ID` is always sent; some servers expect it. | Mailbox names are decoded from modified UTF-7. |
 
-The **minimum requirement** is IMAP4rev1 over implicit TLS on port 993 or
-STARTTLS on port 143. If the server doesn't offer STARTTLS on port 143,
-connecting fails. There is no plaintext fallback, which closes off attacks that
+The **minimum requirement** is IMAP4rev1 over implicit TLS (usually port 993)
+or STARTTLS (usually port 143, but any port the user configures, such as
+Bridge's 1143). If a server set up for STARTTLS doesn't offer it, connecting
+fails. There is no plaintext fallback, which closes off attacks that
 strip STARTTLS.
+
+## The primary account
+
+The primary user's server, captured 2026-10-08 (Proton Mail Bridge, IMAP on
+`127.0.0.1:1143` over STARTTLS):
+
+```text
+before login: AUTH=PLAIN ID IDLE IMAP4rev1 STARTTLS
+after login:  AUTH=PLAIN ID IDLE IMAP4rev1 MOVE STARTTLS UIDPLUS UNSELECT
+certificate:  self-signed, CN=127.0.0.1, O=Proton AG
+```
+
+`LIST "" "*"` (no folders or labels created yet):
+
+```text
+* LIST (\Marked \Noinferiors \Trash) "/" "Trash"
+* LIST (\Noinferiors \Sent \Unmarked) "/" "Sent"
+* LIST (\Drafts \Noinferiors \Unmarked) "/" "Drafts"
+* LIST (\All \Marked \Noinferiors) "/" "All Mail"
+* LIST (\Noselect \Unmarked) "/" "Folders"
+* LIST (\Noselect \Unmarked) "/" "Labels"
+* LIST (\Marked \Noinferiors) "/" "INBOX"
+* LIST (\Flagged \Noinferiors \Unmarked) "/" "Starred"
+* LIST (\Archive \Marked \Noinferiors) "/" "Archive"
+* LIST (\Junk \Marked \Noinferiors) "/" "Spam"
+```
+
+`SELECT INBOX`:
+
+```text
+* FLAGS ($Forwarded Forwarded \Deleted \Flagged \Seen)
+* OK [PERMANENTFLAGS ($Forwarded Forwarded \Deleted \Flagged \Seen)] Flags permitted
+* OK [UIDNEXT 979] Predicted next UID
+* OK [UIDVALIDITY 95479608] UIDs valid
+a3 OK [READ-WRITE] SELECT
+```
+
+What this means for the design. Everything below follows from capabilities and
+`LIST` attributes, so none of it needs code that checks for Bridge:
+
+| Observation | Consequence |
+| --- | --- |
+| No `CONDSTORE` or `QRESYNC` | Every poll uses the "neither" sync path: re-fetch `FLAGS` over the sync window and compare `UID SEARCH ALL` with local UIDs to find deletions. This is the daily path, not a fallback, so the lowest capability tier gets the most test coverage. On a loopback server these round trips are cheap. |
+| `IDLE` | New INBOX mail arrives without polling. |
+| `MOVE` + `UIDPLUS` | Moves are atomic and return new UIDs through `COPYUID`. Archive, trash and spam don't wait for the next sync to learn where messages went. |
+| `SPECIAL-USE` not advertised, but plain `LIST` returns `\Sent`, `\Drafts`, `\Trash`, `\Junk`, `\Archive`, `\All` and `\Flagged` | Always send a plain `LIST` (`RETURN (SPECIAL-USE)` needs `LIST-EXTENDED`, which isn't advertised) and trust the attributes it returns. Every system mailbox is mapped from attributes, so no name matching is needed and setup has nothing to confirm. An Archive mailbox already exists, so creating one isn't needed here. |
+| `\Noselect` containers (`Folders`, `Labels`) | Mailboxes with `\Noselect` aren't locations and never become `folder:` labels. Only their selectable children do. |
+| `\All` (`All Mail`) and `\Flagged` (`Starred`) | Aggregate mailboxes, skipped by sync (see [Labels](#labels-in-the-rawmessage-envelope)). |
+| No `LIST-STATUS` | Counters come from one `STATUS` per synced mailbox. |
+| No `OBJECTID` | Message and thread IDs are derived locally (below). |
+| No `ENABLE` / `UTF8=ACCEPT` | Mailbox names are decoded from modified UTF-7. |
+| Self-signed certificate for `127.0.0.1` | Strict verification fails. Setup needs the fingerprint-pinning path (see [Account setup](#account-setup)). |
+| `PERMANENTFLAGS` has no `\*` | Custom keywords can't be stored, so ThreeStrands user labels can't be keywords on this account. The account uses label folders instead (see [User labels](#user-labels)). |
+| `PERMANENTFLAGS` has no `\Answered`, `\Draft`, `$Junk` or `$NotJunk` | Only flags listed in `PERMANENTFLAGS` (or any keyword when `\*` is present) are ever stored. The spam action skips the `$Junk`/`$NotJunk` hint here, and moving to `\Junk` is enough. Replies don't set `\Answered`. |
+| `$Forwarded` is permanent | Forwarding can set `$Forwarded`. It's a standard keyword and needs no custom-keyword support. |
+| A local server on a non-standard port | Autodiscovery from the email domain finds Proton's public hosts, not the local server. Manual setup has to be a normal path, not a hidden one. |
+
+User folders and labels will appear as children of the `Folders` and `Labels`
+containers once some exist.
+Proton labels are many-to-many, so a labelled message shows up both in its
+folder and under `Labels/…`. Because of the multi-location model, that needs no
+special case. ThreeStrands writes its own labels the same way, with `Labels`
+as the account's label container (see [User labels](#user-labels)).
 
 ## Data model
 
@@ -111,6 +207,7 @@ CREATE TABLE imap_mailboxes (
     uidvalidity INTEGER NOT NULL,
     uidnext INTEGER NOT NULL,
     highestmodseq INTEGER,           -- NULL without CONDSTORE
+    permanent_flags_json TEXT NOT NULL,  -- PERMANENTFLAGS as listed
     permanent_keywords INTEGER NOT NULL, -- PERMANENTFLAGS contains \*
     PRIMARY KEY (account_id, name)
 );
@@ -170,29 +267,102 @@ Labels are worked out from where a message is stored and its flags:
 | Message is in the `\Trash` mailbox | `TRASH` |
 | No `\Seen` flag | `UNREAD` |
 | `\Flagged` | `STARRED` |
-| Keyword `foo` | `kw:foo`, a user label |
+| Keyword `foo` (keyword mode) | `kw:foo`, a user label |
+| Copy in `<container>/foo` (label-folder mode) | `lf:foo`, a user label |
 | Message is in user folder `Clients/Acme` | `folder:Clients/Acme`, a new `kind: "folder"` label |
 
 A message stored only in the Archive mailbox therefore has no `INBOX` label.
 The existing rule "archived = no INBOX" in `db.rs` works without changes.
 
-`list_labels` returns keywords (`kind: "user"`) and folders
-(`kind: "folder"`). The frontend shows folders as locations, not as labels that
-can be toggled.
+**Aggregate mailboxes** are mailboxes with the RFC 6154 `\All` or `\Flagged`
+attribute (or a user-confirmed equivalent when `LIST` returns no attributes). They
+are views of mail stored elsewhere, so they don't contribute `folder:` labels
+and aren't synced as locations. Otherwise every message would get a
+`folder:All Mail` label and be fetched twice. `\Flagged` state comes from the
+`\Flagged` flag, not from membership in a starred mailbox.
+
+**`\Noselect` mailboxes** are containers in the hierarchy. They hold no
+messages, aren't synced and don't produce labels.
+
+**A message in several user folders** is already one message with several
+locations, so it gets several `folder:` labels. On servers that expose
+many-to-many labels as mailboxes, this is how those labels show up, without any
+name-based special case.
+
+`list_labels` returns user labels (`kind: "user"`, from keywords or label
+folders, depending on the account's mode) and folders (`kind: "folder"`). The
+frontend shows folders as locations, not as labels that can be toggled.
+
+### User labels
+
+Each account has a `label_storage` setting:
+
+- **`keywords`**: the default when INBOX's `PERMANENTFLAGS` includes `\*`.
+- **`folders`**: the user picks a container mailbox, either a `\Noselect`
+  container or a top-level folder (`Labels` on the primary account). Each child
+  of the container is one label. Nothing is detected by name. The choice is
+  shown at setup when keywords are unavailable, and it can be changed later in
+  account settings.
+
+When `PERMANENTFLAGS` lacks `\*` and the user hasn't picked a container, user
+labels are unavailable and the UI hides label actions for that account. It
+never pretends a label stuck.
+
+In label-folder mode:
+
+- **Reading:** a message's locations in the container's children become
+  `lf:<name>` user labels, not `folder:` labels. Labels added in other clients
+  (Proton's own apps, on the primary account) appear the same way. The
+  container and its children are left out of the Move-to-folder list.
+- **Adding a label:** `UID COPY` the thread's messages from one of their
+  current locations into `<container>/<name>`. If the server answers
+  `TRYCREATE`, create the mailbox and retry once. With `UIDPLUS`, the new
+  location comes from `COPYUID`; otherwise the next sync finds it.
+- **Removing a label:** in `<container>/<name>`, `UID STORE +FLAGS.SILENT
+  (\Deleted)` the copies, then `UID EXPUNGE` those UIDs only. This needs
+  `UIDPLUS`; without it, removing labels is unavailable, because a plain
+  `EXPUNGE` could remove mail flagged `\Deleted` by other clients. Only
+  locations inside the label mailbox are touched, never the message's other
+  locations.
+- **Creating, renaming and deleting labels:** `CREATE`, `RENAME` and `DELETE`
+  on the container's children. Deleting a label deletes only that label
+  mailbox.
+- **System actions don't touch label copies.** Archive, trash, spam and
+  move-to-folder act only on the message's locations outside the container.
+  On servers where label mailboxes are views of one stored message, as on the
+  primary account, the server keeps the views consistent. On servers where
+  they're real copies, a trashed message keeps its labels, the same as Gmail.
+- **Sync:** label mailboxes sync headers and flags like other user folders.
+  Bodies are shared through the stable message ID, so a labelled message is
+  never downloaded twice.
 
 ## Sync
 
 ### What gets synced
 
 - **Mailboxes:** INBOX, Sent, Archive, Junk and Trash are synced continuously.
-  Drafts are not, because ThreeStrands drafts are local. User folders are
+  Drafts are not, because ThreeStrands drafts are local. Aggregate mailboxes
+  (`\All`, `\Flagged`) are not synced; see above. User folders are
   listed. Their headers sync inside the window below, and bodies are fetched
   when a message is opened.
-- **Initial window:** in INBOX and Sent, the newest messages up to a limit on
-  count and age. In other folders, headers only. Older mail is reached through
-  search backfill, as with Gmail today. All of these limits go in one policy
-  module, following the pattern of `emailRenderingPolicy.ts`, with tests just
-  below, at and just above each limit.
+- **Initial window** (decided 2026-10-08, matching Gmail):
+  - **INBOX:** all of it. The inbox is a to-do list, and a cutoff would hide
+    old mail that still needs handling. A count limit applies only to inboxes
+    too large to sync in full.
+  - **Sent:** the newest 5,000 messages, filled in the background after the
+    first INBOX sync. This reuses the Gmail limit
+    (`MAX_SENT_BACKFILL_THREADS` in `sync.rs`), so the address book, contact
+    timelines and Keep in Touch see the same depth of history on both
+    providers.
+  - **Archive and user folders, including label folders:** headers for the
+    newest 2,000 messages in each, with bodies fetched when a message is
+    opened.
+  - **Junk and Trash:** headers inside the same per-folder limit.
+  - **Older mail** is reached through server search, as with Gmail today.
+
+  There is no age cutoff. All of these limits go in one policy module,
+  following the pattern of `emailRenderingPolicy.ts`, with tests just below, at
+  and just above each limit.
 - **Bodies:** message bodies never change in IMAP. Only flags and locations
   do. So `BODY.PEEK[]` is fetched once per message ID and cached. A flag change
   never re-downloads a thread. Messages above a size threshold fetch
@@ -212,6 +382,11 @@ SELECT/EXAMINE mailbox
                 UID FETCH <window> (FLAGS)            flag changes
                 UID SEARCH ALL vs local               deletions
 ```
+
+A `UIDVALIDITY` reset (a local bridge does this when it rebuilds its cache)
+throws away locations, not bodies. The body cache is keyed by the stable message
+ID, so a resync re-reads headers and flags but doesn't download every message
+again.
 
 New, changed and deleted locations are mapped to message IDs and then to
 thread IDs. These go back to the existing engine as `SyncBatch.changed_threads`.
@@ -248,33 +423,51 @@ current locations:
 | Archive (remove `INBOX`) | Move the thread's INBOX messages to the Archive mailbox. Sent copies stay in Sent. |
 | Move back to inbox (add `INBOX`) | Move the messages from Archive, Trash or Junk back to INBOX. |
 | Trash / untrash | Move to `\Trash` / move back to INBOX. |
-| Spam / not spam | Move to `\Junk` and set `$Junk`, clearing `$NotJunk`. The reverse moves to INBOX and sets `$NotJunk`. The keywords help server-side spam filters learn. |
+| Spam / not spam | Move to `\Junk` and set `$Junk`, clearing `$NotJunk`. The reverse moves to INBOX and sets `$NotJunk`. The keywords help server-side spam filters learn. They're set only when `PERMANENTFLAGS` allows them; otherwise the move alone counts. |
 | Read / unread | `UID STORE ±FLAGS.SILENT (\Seen)` |
 | Star | `±FLAGS.SILENT (\Flagged)` |
-| Add or remove a user label | `±FLAGS.SILENT (keyword)`. If `PERMANENTFLAGS` lacks `\*`, fail with `InvalidOperation` and a clear message. The UI hides keyword labels for that account. |
+| Add or remove a user label | Keyword mode: `±FLAGS.SILENT (keyword)`. Label-folder mode: copy into, or expunge from, `<container>/<label>` (see [User labels](#user-labels)). With neither mode available, fail with `InvalidOperation` and a clear message. |
 | Move to folder (new action) | Move to the chosen mailbox. |
 
+- **Only permanent flags:** a `STORE` is limited to flags the mailbox's
+  `PERMANENTFLAGS` allows. A label change the server can't keep fails with
+  `InvalidOperation` instead of appearing to work until the next reselect.
 - **Idempotent:** each change first checks where the message currently is, so
   retries from the outbox do no harm.
 - **New locations:** the new UID is recorded from `COPYUID` when available.
   Otherwise the next sync finds the moved message by its Message-ID.
-- **No Archive mailbox:** account setup offers to create one, `Archive`. See
-  open questions.
+- **No Archive mailbox** (decided 2026-10-08): the Archive mailbox is chosen
+  at setup, on the same mapping screen as the other system mailboxes.
+  1. If `LIST` marks a mailbox `\Archive`, it is used without asking.
+  2. Otherwise, a folder whose name matches a known archive name is
+     preselected (the existing name-matching fallback), and the user confirms
+     or changes it.
+  3. If no folder matches, the default is "Create `Archive`", and the user can
+     pick any existing folder instead.
+
+  The choice is saved as a mailbox override and can be changed in account
+  settings. Archive is never turned off for an account.
 
 ## Sending
 
-1. **Submit over SMTP** with `lettre`:
-   - Implicit TLS on port 465 is preferred (RFC 8314). STARTTLS on port 587
-     is accepted but required; there is no plaintext fallback.
+1. **Choose the From address** from the account's identities (see
+   [Identities](#identities)).
+2. **Submit over SMTP** with `lettre`:
+   - Implicit TLS on port 465 is preferred (RFC 8314). STARTTLS on port 587,
+     or any port the user sets (Bridge's default is 1025), is accepted but
+     required; there is no plaintext fallback.
+   - The SMTP connection uses the same certificate rules, including a pinned
+     fingerprint.
    - Same username and password as IMAP unless the user sets separate SMTP
      credentials.
-2. **Save the sent copy** with `APPEND` to `\Sent`, flagged `\Seen`. With
+3. **Save the sent copy** with `APPEND` to `\Sent`, flagged `\Seen`. With
    `UIDPLUS`, `APPENDUID` records the location immediately.
-3. **Avoid duplicate sent copies:** some hosts save submitted mail to Sent
+4. **Avoid duplicate sent copies:** some hosts save submitted mail to Sent
    themselves. After the first send on an account, look in Sent for the
    Message-ID. If it's already there, skip `APPEND` and remember
    `server_saves_sent` for that account. The user can override this in account
-   settings.
+   settings. Bridge is expected to save sent mail itself, so on the primary
+   account this detection runs on the first send.
 
 How this differs from Gmail's delivery:
 
@@ -292,10 +485,39 @@ How this differs from Gmail's delivery:
 - **Threading:** replies already set `In-Reply-To` and `References`
   (`correspondence.rs`), so local threading places the sent copy in its
   thread.
-- **Message-ID domain:** generated IDs use `@threestrands.local`. On SMTP that
-  domain is visible to receiving spam filters, so consider using the sender's
-  domain for IMAP accounts (open question). `find_sent_copy` would need to
-  match the change.
+- **Message-ID domain** (decided 2026-10-08): IMAP sends generate
+  `<uuid@sender-domain>`, where the domain comes from the From address
+  actually used, so it follows the identity choice. Today every send uses
+  `@threestrands.local` (`correspondence.rs`). That domain is reserved and owned
+  by no one, receiving spam filters can see it, and it reveals which client
+  sent the message. Gmail sends can switch to the same rule later, since it's
+  harmless there too. `find_sent_copy` compares the exact Message-ID value, so
+  it needs no change. Content-IDs for inline attachments are internal to one
+  message and keep `@threestrands.local`.
+
+### Identities
+
+The primary user sends from more than one Proton address over one Bridge login
+(Bridge's combined-addresses mode). Each IMAP account therefore has an ordered
+**identity list**: the login address first, then addresses the user adds in
+account settings. Each identity has an address and an optional display name.
+Nothing is discovered automatically, because IMAP has no standard way to list
+a login's addresses.
+
+- **Compose** shows a From picker only when the account has more than one
+  identity. A new message starts with the first identity.
+- **Replies and forwards** use whichever identity the original was sent to.
+  The match is checked against `To`, then `Cc`, then `Delivered-To`/`X-Original-To`
+  on the original message, comparing normalized addresses. If nothing
+  matches, the account's first identity is used.
+- **"Sent by me":** a message counts as yours for threading, the address book,
+  Keep in Touch and `find_sent_copy` when its `From` is any identity on the
+  account, not only the login address.
+- **Rejection:** if SMTP rejects the sender (for example `553` or `550` on
+  `MAIL FROM`), the error names the identity and suggests checking it in
+  account settings. Rejection is a permanent failure and is never retried.
+- The identity list is non-secret account settings, so it's included in
+  settings transfer and replicated sync.
 
 ## Server search
 
@@ -330,18 +552,31 @@ first:
    5. as a last resort, guesses such as `imap.<domain>` and `mail.<domain>`.
       A guess is only accepted if its TLS certificate matches the host.
 3. **Confirm before the password goes anywhere.** The user sees the discovered
-   hosts, ports and security settings and confirms or edits them. An
-   "advanced" form allows fully manual setup.
-4. **Connection test:** IMAP `CAPABILITY`, `LOGIN`, `LIST`, and the
+   hosts, ports and security settings and confirms or edits them. Manual setup
+   (host, port, implicit TLS or STARTTLS) is a first-class choice, not buried,
+   because local bridges and self-hosted servers can't be discovered from the
+   email domain.
+4. **Untrusted certificate:** if the certificate doesn't verify, setup stops
+   before `LOGIN`. It shows the certificate's subject, issuer and SHA-256
+   fingerprint and offers "Trust this certificate for this server", with a
+   prompt to compare the fingerprint against the server's own export, such as
+   Bridge's "Export TLS certificates". The pin is stored per host and port with
+   the server settings. If the certificate changes later, the account pauses
+   until the user reviews the new certificate; it is never re-pinned silently.
+   The pin covers one exact certificate. It never turns off hostname or
+   validity checks for other hosts.
+5. **Connection test:** IMAP `CAPABILITY`, `LOGIN`, `LIST`, and the
    special-use mapping. SMTP `EHLO` and `AUTH` without sending anything.
    Problems are reported in plain language: wrong password, app password
    required, certificate mismatch, port blocked.
-5. **Save:**
+6. **Save:**
    - The password goes in the keychain as a new
      `StoredCredential::ImapPassword { imap, smtp: Option<…> }` variant.
    - The non-secret server settings go in a new `imap_account_settings` table:
-     hosts, ports, security mode, usernames, mailbox overrides and
-     `server_saves_sent`.
+     hosts, ports, security mode, usernames, mailbox overrides,
+     the Archive choice, `label_storage` and its container mailbox, the
+     identity list, pinned
+     certificate fingerprints and `server_saves_sent`.
    - The account row is created with `adopt_mail_account(email,
      MailProviderKind::Imap)`.
 
@@ -358,8 +593,9 @@ keep working.
   sign-in.
 - **`MailProviderKind`** gets an `Imap` variant.
 - **`ProviderCapabilities`** gains `provided_threads` and a label-model flag
-  (labels vs. folders plus keywords) so the frontend can choose its label
-  actions.
+  (Gmail labels; IMAP folders plus keyword labels; IMAP folders plus
+  label folders; IMAP folders with no user labels) so the frontend can choose
+  its label actions.
 - **`DeliveryReceipt`** and the delivery state machine get the `Unverifiable`
   outcome described above.
 
@@ -395,13 +631,37 @@ or capability-driven:
 
 - **Unit tests** against a scripted fake `ImapSession`, run across a matrix of
   server capabilities: IMAP4rev1 only; plus `CONDSTORE`; plus `QRESYNC`; plus
-  `MOVE`/`UIDPLUS`; without `SPECIAL-USE`; without custom keywords. Cases:
+  `MOVE`/`UIDPLUS`; without special-use attributes; without custom keywords.
+  One profile copies the primary account exactly:
+  `IMAP4rev1 IDLE MOVE UIDPLUS UNSELECT ID`, no `CONDSTORE`/`QRESYNC`,
+  `SPECIAL-USE` not advertised but attributes returned by plain `LIST`, the
+  `LIST` response above, `PERMANENTFLAGS ($Forwarded Forwarded \Deleted
+  \Flagged \Seen)` (no custom keywords), and a self-signed certificate. Cases:
   - `UIDVALIDITY` changes;
   - another client moves, flags or expunges a message;
   - duplicate Message-IDs, and a missing Message-ID;
   - thread merges and alias resolution;
   - `TRYCREATE`, `AUTHENTICATIONFAILED` and `OVERQUOTA` responses;
-  - the connection drops partway through `IDLE`.
+  - the connection drops partway through `IDLE`;
+  - a `UIDVALIDITY` reset keeps cached bodies;
+  - a message in `INBOX`, an `\All` mailbox and two user folders becomes one
+    message with two `folder:` labels and no `\All` label;
+  - label-folder mode: adding a label copies into the container and handles
+    `TRYCREATE`; removing one expunges only the copy's UIDs and leaves the
+    INBOX location alone; a label added by another client is read as `lf:`;
+    the container's children are left out of Move-to-folder; label removal is
+    refused without `UIDPLUS`;
+  - keyword mode is never chosen when `PERMANENTFLAGS` lacks `\*`;
+  - `\Noselect` containers produce no labels, and their children do;
+  - special-use attributes are honoured when the capability isn't advertised;
+  - Archive choice at setup: `\Archive` used without asking, a name match
+    preselected, and "Create `Archive`" as the default when nothing matches;
+  - initial sync: all of INBOX; Sent stops at 5,000; other folders stop at the
+    per-folder header limit (below, at and above each limit);
+  - identities: reply identity chosen from `To`, `Cc`, then `Delivered-To`; a
+    message from any identity counts as sent by you; a rejected sender is a
+    permanent failure;
+  - the generated Message-ID uses the domain of the chosen From address.
 - **Integration tests:** Dovecot in Docker, with extensions removed through its
   `imap_capability` setting to cover the matrix, plus an SMTP sink such as
   Mailpit. They live in a separate cargo test target gated by
@@ -412,11 +672,14 @@ or capability-driven:
   - passwords never appear in logs, errors or exports;
   - a missing STARTTLS fails;
   - a certificate mismatch fails;
+  - an untrusted certificate fails until pinned, a pinned certificate
+    connects, and a changed certificate on a pinned host fails;
   - autodiscovery never contacts a host over plain HTTP.
-- **Settings transfer:** regression tests for importing a version 3 export.
+- **Settings transfer:** regression tests for importing a version 3 export,
+  and a round trip of the identity list, Archive choice and `label_storage`.
 - **End-to-end:** `pnpm test:e2e` covers triage on an IMAP-backed demo account:
-  folder labels, keyword labels, and archive moving the message to the Archive
-  mailbox.
+  folder labels, keyword labels, label-folder labels, archive moving the
+  message to the Archive mailbox, and a reply sent from a second identity.
 
 ## Phasing
 
@@ -426,14 +689,15 @@ or capability-driven:
    - the provider state store;
    - the `Unverifiable` delivery outcome;
    - the `SearchQuery` AST, with Gmail rendering it back to Gmail syntax.
-2. **Read-only IMAP:** account setup and autodiscovery, the password
-   credential, mailbox discovery, INBOX/Sent/Archive sync for all three
-   capability tiers, local threading, and label construction. Also the
-   `async-imap` spike.
-3. **Changes:** flags, moves, keywords, move to folder, creating an Archive
-   mailbox.
-4. **Sending:** SMTP submission, `APPEND` to Sent, detecting
-   `server_saves_sent`, uncertain-outcome handling.
+2. **Read-only IMAP:** account setup, manual setup and autodiscovery,
+   certificate pinning, the password credential, mailbox discovery,
+   INBOX/Sent/Archive sync for all three capability tiers, local threading, and
+   label construction. Also the `async-imap` spike.
+3. **Changes:** flags, moves, keyword labels, label-folder labels (including
+   the setup choice of container), move to folder, creating an Archive mailbox.
+4. **Sending:** SMTP submission, identities and the From picker, Message-IDs
+   on the sender's domain, `APPEND` to Sent, detecting `server_saves_sent`,
+   uncertain-outcome handling.
 5. **Server search:** turning the AST into IMAP `SEARCH`.
 6. **Settings transfer and UI:** transfer format version 4, replicated sync,
    the provider picker, the folder label kind, provider-neutral text.
@@ -442,30 +706,23 @@ or capability-driven:
 
 ## Open questions
 
-1. **What does your server advertise?** The design works without knowing, but
-   your server's capabilities decide which code path you'll use every day. To
-   see them (the password is typed into the TLS session, not into your shell
-   history):
+None right now. Decisions made while this note was being written:
 
-   ```sh
-   openssl s_client -quiet -crlf -connect imap.example.com:993
-   a1 CAPABILITY
-   a2 LOGIN "you@example.com" "app-password"
-   a3 CAPABILITY
-   a4 LIST "" "*" RETURN (SPECIAL-USE)
-   a5 LOGOUT
-   ```
-
-   The `CAPABILITY` list after login is the one that matters.
-2. **No Archive mailbox:** create `Archive` at setup (recommended), or let the
-   user pick an existing folder?
-3. **Initial sync window:** proposed 90 days or 5,000 messages for INBOX and
-   Sent, whichever is smaller. Is that enough history for correspondence
-   features like contact timelines?
-4. **Self-signed certificates:** refuse them in v1 (recommended), or offer
-   "trust this certificate's fingerprint" for self-hosted servers?
-5. **Aliases:** do you send from more than one address on one IMAP login?
-   That affects identity selection in compose and the `From` check in
-   `find_sent_copy`.
-6. **Message-ID domain:** switch IMAP sends from `@threestrands.local` to the
-   sender's domain?
+1. **Server survey** (2026-10-08): capabilities, `LIST` and `PERMANENTFLAGS`
+   are recorded in [The primary account](#the-primary-account).
+2. **No Archive mailbox** (2026-10-08): an `\Archive` mailbox, else a
+   confirmed name match, else "Create `Archive`" by default. See
+   [Changes](#changes-archive-read-star-labels).
+3. **Initial sync window** (2026-10-08): all of INBOX, the newest 5,000 Sent
+   messages, and headers for the newest 2,000 messages in other folders, with
+   no age cutoff. See [What gets synced](#what-gets-synced).
+4. **Self-signed certificates** (2026-10-08): fingerprint pinning. See
+   [Account setup](#account-setup).
+5. **Aliases** (2026-10-08): the primary user sends from several Proton
+   addresses, so each account has an identity list. See
+   [Identities](#identities).
+6. **Message-ID domain** (2026-10-08): the domain of the From address used.
+   See [Sending](#sending).
+7. **User labels without keywords** (2026-10-08): per-account
+   `label_storage`, with label folders on the primary account. See
+   [User labels](#user-labels).

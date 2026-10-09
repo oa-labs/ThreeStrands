@@ -30,6 +30,7 @@ mod quoted_history;
 mod replicated_sync;
 mod s3_transport;
 mod schema;
+mod search_query;
 mod sync;
 mod sync_connectors;
 mod sync_folder;

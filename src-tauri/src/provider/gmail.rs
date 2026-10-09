@@ -17,8 +17,9 @@ use crate::{
     mime::RawMessage,
     models::Label,
     provider::{
-        Delivery, DeliveryReceipt, MailFetch, MailMutate, MailProvider, MailSend, MailSync,
-        ProviderCapabilities, ProviderError, ProviderResult, SyncBatch, SyncCursor, ThreadPage,
+        Delivery, DeliveryReceipt, LabelModel, MailFetch, MailMutate, MailProvider, MailSend,
+        MailSync, ProviderCapabilities, ProviderError, ProviderResult, SyncBatch, SyncCursor,
+        ThreadPage,
     },
 };
 
@@ -628,6 +629,24 @@ mod tests {
 
         let done = third.after_page("261".into(), None);
         assert_eq!(done.encode(), SyncCursor::new("261"));
+    }
+
+    #[test]
+    fn capabilities_report_server_search_provided_threads_and_gmail_labels() {
+        // Gmail returns conversation ids and many-to-many labels; callers
+        // rely on these to skip local threading and offer label toggles.
+        let client = GmailClient::new(OAuthCredential::in_memory_for_test(
+            "http://127.0.0.1:9/token",
+            crate::auth::Tokens {
+                access_token: "access".into(),
+                refresh_token: Some("refresh".into()),
+                expires_at: u64::MAX,
+            },
+        ));
+        let capabilities = client.capabilities();
+        assert!(capabilities.server_search);
+        assert!(capabilities.provided_threads);
+        assert_eq!(capabilities.label_model, LabelModel::GmailLabels);
     }
 
     mod unauthorized_replay {
@@ -1342,6 +1361,10 @@ impl MailProvider for GmailClient {
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
             server_search: true,
+            // Gmail returns conversation ids, so threading is not computed
+            // locally.
+            provided_threads: true,
+            label_model: LabelModel::GmailLabels,
         }
     }
 }

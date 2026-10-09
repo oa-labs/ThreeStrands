@@ -99,19 +99,51 @@ pub struct SyncBatch {
     pub more: bool,
 }
 
+/// How a provider models the labels a user can see and toggle.
+///
+/// The frontend chooses which label actions to offer from this: Gmail-style
+/// many-to-many labels behave differently from IMAP folders with keyword or
+/// label-folder user labels, and some IMAP accounts have no user-label
+/// storage at all. Only the Gmail variant exists in this slice; the IMAP
+/// variants land with the IMAP provider (phases 2–3). Matches on this enum
+/// should list every variant rather than use a `_` arm, so adding the IMAP
+/// variants fails to compile until each caller decides how to handle them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LabelModel {
+    /// Many-to-many labels, as Gmail exposes them. A message can carry any
+    /// number of labels and they are toggled directly.
+    GmailLabels,
+    // IMAP: folders plus keyword user labels (`PERMANENTFLAGS` has `\*`).
+    // IMAP: folders plus label-folder user labels (copies under a container).
+    // IMAP: folders with no user-label storage available.
+    // These land with the IMAP provider in phases 2–3.
+}
+
 /// The provider differences callers genuinely have to branch on.
 ///
-/// Deliberately minimal: a flag earns a place here only once some code path
-/// behaves differently because of it. Two more are already mapped out and
-/// will land with their consumers rather than ahead of them — whether the
-/// provider supplies conversation ids or threading must be computed locally,
-/// and whether a message carries many labels or lives in exactly one folder.
+/// Deliberately minimal: every flag here is one that a code path branches on.
+/// `provided_threads` and `label_model` are the exception while the IMAP
+/// provider is being built: `docs/imap-design.md` (phase 1) adds them ahead
+/// of their consumers, local threading (phase 2) and the frontend's label
+/// actions (phases 3 and 6). Until those land they have no reader, so their
+/// dead-code allows are scoped to the two fields and removed with the first
+/// caller.
 #[derive(Clone, Copy, Debug)]
 pub struct ProviderCapabilities {
     /// Whether the provider can find mail the local cache has not ingested.
     /// When false the remote search backfill is skipped entirely rather than
     /// attempted and rejected.
     pub server_search: bool,
+    /// Whether the provider supplies thread ids itself (`true`) or threading
+    /// is computed locally from message references (`false`). Gmail returns
+    /// conversation ids, so it is `true`; the IMAP provider sets it `false`
+    /// when the server does not return `THREADID`.
+    #[allow(dead_code)]
+    pub provided_threads: bool,
+    /// How this provider models user-visible labels. Drives which label
+    /// actions the frontend offers. See [`LabelModel`].
+    #[allow(dead_code)]
+    pub label_model: LabelModel,
 }
 
 /// What a provider reports back after accepting a message for delivery.
