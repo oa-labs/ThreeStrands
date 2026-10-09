@@ -1,6 +1,9 @@
 //! Account persistence.
 
-use super::*;
+use super::{Database, DbResult};
+use crate::models::{Account, MailProviderKind};
+use chrono::Utc;
+use rusqlite::{params, OptionalExtension};
 
 impl Database {
     /// The account the compose pipeline defaults to and the legacy
@@ -258,3 +261,27 @@ impl Database {
         })
     }
 }
+
+/// Assigned to newly connected accounts in rotation, so each has a distinct
+/// color for switcher/thread-row indicators without asking the user to pick
+/// one up front.
+const ACCOUNT_COLORS: [&str; 8] = [
+    "#4285F4", "#34A853", "#EA4335", "#FBBC05", "#9C27B0", "#00ACC1", "#FF7043", "#5C6BC0",
+];
+
+fn account_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
+    Ok(Account {
+        email: row.get(0)?,
+        display_name: row.get(1)?,
+        color: row.get(2)?,
+        status: row.get(3)?,
+        provider: row.get(4)?,
+        sort_order: row.get(5)?,
+        connected_at: row.get(6)?,
+        last_synced_at: row.get(7)?,
+    })
+}
+
+#[cfg(test)]
+#[path = "tests/accounts.rs"]
+mod tests;

@@ -1,7 +1,10 @@
 //! Calendar account persistence. Calendar OAuth credentials stay in the OS
 //! keychain; SQLite stores only the identities needed to discover them again.
 
-use super::*;
+use super::{Database, DatabaseError, DbResult};
+use crate::models::CalendarAccount;
+use chrono::Utc;
+use rusqlite::{params, OptionalExtension};
 
 impl Database {
     pub fn list_calendar_accounts(&self) -> DbResult<Vec<CalendarAccount>> {

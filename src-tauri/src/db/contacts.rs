@@ -1,6 +1,11 @@
 //! Address book profiles and mail-derived contacts.
 
-use super::*;
+use super::{Database, DbResult};
+use crate::mime::NormalizedMessage;
+use chrono::Utc;
+use rusqlite::params;
+use std::collections::HashMap;
+use uuid::Uuid;
 use crate::models::{
     ContactActivity, ContactFile, ContactFiles, ContactProfile, ContactTimelineItem, DomainContext,
     DomainPerson, KeepInTouch, SaveContactRequest,
@@ -1090,3 +1095,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tests/contacts.rs"]
+mod regression_tests;

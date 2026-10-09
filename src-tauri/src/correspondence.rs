@@ -1545,7 +1545,7 @@ mod tests {
     }
     #[test]
     fn restart_keeps_drafts_and_never_retries_an_interrupted_send() {
-        let temp = crate::db::tests::TempDbPath::new();
+        let temp = crate::db::test_support::TempDbPath::new();
         let path = &temp.path;
         let id;
         {

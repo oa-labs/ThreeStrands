@@ -10,7 +10,10 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use super::*;
+use super::{Database, DbResult};
+use chrono::Utc;
+use rusqlite::{params, Connection, OptionalExtension};
+use uuid::Uuid;
 use crate::models::{ContactGroup, ContactGroupRecipients, ContactProfile, GroupRecipient, SaveContactRequest};
 
 pub(crate) const MAX_CONTACT_GROUPS: usize = 200;
