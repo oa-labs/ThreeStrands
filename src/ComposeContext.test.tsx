@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ComposeContext, ReplyChecks } from "./ComposeContext";
 import { mailClient } from "./data/client";
+import { ICON_SIZE } from "./iconSizes";
 import type { Draft } from "./correspondence";
 import type { Account, AvailabilityPreferences, ContactActivity, ContactProfile, ContactSuggestion } from "./domain";
 
@@ -139,9 +140,14 @@ describe("ComposeContext", () => {
     });
     const { props } = renderPanel({ calendarConnected: true, draft: { ...draft, to: "ann@partner.com" } });
     const section = screen.getByRole("region", { name: "Availability" });
+    const glyph = within(section).getByRole("heading", { name: "Availability" }).querySelector(".context-row-glyph");
+    expect(glyph).toHaveAttribute("aria-hidden", "true");
+    expect(glyph?.querySelector("svg.lucide-calendar-days")).toHaveAttribute("width", String(ICON_SIZE.xs));
+    const findTimes = within(section).getByRole("button", { name: "Find Times" });
+    expect(findTimes).toHaveClass("btn", "btn-sm");
     // Nothing is checked until asked.
     expect(mailClient.findAvailability).not.toHaveBeenCalled();
-    fireEvent.click(within(section).getByRole("button", { name: "Find Times" }));
+    fireEvent.click(findTimes);
     await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalledWith(expect.objectContaining({
       preferences: expect.objectContaining({ defaultDurationMinutes: 30 }),
       maxPerDay: 1,
@@ -152,6 +158,10 @@ describe("ComposeContext", () => {
       expect.objectContaining({ start: "2030-01-08T15:00:00Z" }),
     ]);
     expect(within(section).queryByRole("button", { name: /Draft Reply/ })).not.toBeInTheDocument();
+    const searchAgain = within(section).getByRole("button", { name: "Search Again" });
+    expect(searchAgain).toHaveClass("btn", "btn-sm");
+    fireEvent.click(searchAgain);
+    await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalledTimes(2));
   });
 
   it("leaves out availability without a connected calendar", () => {

@@ -1,11 +1,13 @@
 // Sections about the people a draft is going to, shared by a new message's panel and a reply's.
 
 import { useState } from "react";
+import { CalendarDays } from "lucide-react";
 import type { AvailabilityCandidate, AvailabilityPreferences, ContactActivity, ContactProfile } from "./domain";
 import { ContextSectionHeader } from "./ContextSections";
 import { describeActivity } from "./contactContext";
 import { MeetingScheduler, type ScheduleSlot } from "./MeetingScheduler";
 import { lookaheadRange } from "./scheduling";
+import { ICON_SIZE } from "./iconSizes";
 
 /** With several recipients, chooses whose history the panel shows. Left out for one or none. */
 export function RecipientChips({ recipients, selectedEmail, onSelect }: {
@@ -44,7 +46,8 @@ export function AvailabilitySection({ preferences, onInsertTimes, onAddToCalenda
     <section className="context-section compose-availability" aria-label="Availability">
       <ContextSectionHeader
         title="Availability"
-        actions={<button type="button" className="btn-link context-link-button" onClick={() => setSearch((current) => ({ key: (current?.key ?? 0) + 1, start: new Date() }))}>
+        icon={<CalendarDays size={ICON_SIZE.xs} />}
+        actions={<button type="button" className="btn btn-sm" onClick={() => setSearch((current) => ({ key: (current?.key ?? 0) + 1, start: new Date() }))}>
           {search ? "Search Again" : "Find Times"}
         </button>}
       />
