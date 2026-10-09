@@ -4,6 +4,7 @@ import { mailClient } from "./data/client";
 import { aiPriceKey, readAiPrices, saveAiPrice, type AiModelPrice, type AiProvider } from "./aiSettings";
 import { aiUsageTotals, formatTokens, formatUsd, localDay } from "./aiUsage";
 import { errorMessage } from "./errors";
+import { plural } from "./plural";
 
 /** Days of usage shown alongside today's total. */
 export const AI_USAGE_WINDOW_DAYS = 7;
@@ -36,7 +37,7 @@ export function AiUsageSummary({ provider, model, fastModel = "" }: { provider: 
   const todayTotals = rows ? aiUsageTotals(rows.filter((row) => row.day === today), prices) : null;
   const weekTotals = rows ? aiUsageTotals(rows, prices) : null;
   const describe = (totals: NonNullable<typeof todayTotals>) =>
-    `${totals.requests} ${totals.requests === 1 ? "request" : "requests"} · ${formatTokens(totals.inputTokens + totals.outputTokens)} tokens · ${formatUsd(totals.costUsd)}${totals.unpricedRequests > 0 ? "+" : ""}`;
+    `${plural(totals.requests, "request")} · ${formatTokens(totals.inputTokens + totals.outputTokens)} tokens · ${formatUsd(totals.costUsd)}${totals.unpricedRequests > 0 ? "+" : ""}`;
 
   return <section className="ai-usage" aria-label="AI usage">
     <h3>Usage</h3>
@@ -46,7 +47,7 @@ export function AiUsageSummary({ provider, model, fastModel = "" }: { provider: 
       <div><dt>Last {AI_USAGE_WINDOW_DAYS} days</dt><dd>{describe(weekTotals)}</dd></div>
     </dl> : !error ? <p className="settings-hint">Loading usage…</p> : null}
     {weekTotals && weekTotals.unpricedRequests > 0 ? <p className="settings-hint">
-      {weekTotals.unpricedRequests} {weekTotals.unpricedRequests === 1 ? "request has" : "requests have"} no price yet, so the cost shown is a lower bound. Enter your model&rsquo;s prices to estimate it.
+      {plural(weekTotals.unpricedRequests, "request has", "requests have")} no price yet, so the cost shown is a lower bound. Enter your model&rsquo;s prices to estimate it.
     </p> : null}
     {provider === "openrouter" ? <p className="settings-hint">OpenRouter reports the exact cost of each request.</p> : provider !== "none" ? models.map((name) =>
       <ModelPrices key={name} provider={provider} model={name} onSaved={() => setPrices(readAiPrices())} />) : null}

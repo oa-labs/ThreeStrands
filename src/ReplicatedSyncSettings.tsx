@@ -43,7 +43,8 @@ import {
 import { connectorDisplayName, ConnectorList } from "./SyncConnectors";
 import { queuePortablePreferencesAndWait } from "./syncedPreferences";
 import { ANY_OPERATION, useLiveStatus, useSettingsOperation } from "./settingsOperations";
-import { describeTransportHealth, Disclosure, InlineStatus, plural, type Operation, type Tone } from "./syncSettingsParts";
+import { plural } from "./plural";
+import { describeTransportHealth, Disclosure, InlineStatus, type Operation, type Tone } from "./syncSettingsParts";
 import { InlineConfirm } from "./InlineConfirm";
 
 export { describeTransportHealth, type Tone, type TransportHealthSummary } from "./syncSettingsParts";

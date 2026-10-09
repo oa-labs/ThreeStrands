@@ -708,8 +708,8 @@ export function App() {
         ? await mailClient.listAllMailPage(accountId, 0, SEARCH_PAGE_SIZE)
         : box === "trash"
           ? await mailClient.listTrashPage(accountId, 0, SEARCH_PAGE_SIZE)
-          : box === "split"
-            ? await mailClient.listSplitInboxPage(activeSplitInboxId as string, 0, SEARCH_PAGE_SIZE)
+          : box === "split" && activeSplitInboxId
+            ? await mailClient.listSplitInboxPage(activeSplitInboxId, 0, SEARCH_PAGE_SIZE)
             : await mailClient.listThreadsPage(accountId, 0, SEARCH_PAGE_SIZE);
       commitPage(page);
     } catch (error) {
@@ -791,8 +791,8 @@ export function App() {
           ? await mailClient.listAllMailPage(accountId, threads.length, SEARCH_PAGE_SIZE)
           : mailbox === "trash"
             ? await mailClient.listTrashPage(accountId, threads.length, SEARCH_PAGE_SIZE)
-            : mailbox === "split"
-              ? await mailClient.listSplitInboxPage(activeSplitInboxId as string, threads.length, SEARCH_PAGE_SIZE)
+            : mailbox === "split" && activeSplitInboxId
+              ? await mailClient.listSplitInboxPage(activeSplitInboxId, threads.length, SEARCH_PAGE_SIZE)
               : await mailClient.listThreadsPage(accountId, threads.length, SEARCH_PAGE_SIZE);
       if (requestId !== threadsRequest.current) return;
       setThreads((current) => [...current, ...page.threads]);

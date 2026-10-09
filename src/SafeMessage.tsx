@@ -27,6 +27,7 @@ import {
 import { LINKIFY_PATTERN, linkHrefFor, trimTrailingPunctuation } from "./linkify";
 import { fontFamilyStack, type FontFamily } from "./settings";
 import { ICON_SIZE } from "./iconSizes";
+import { closestFrom, isElement } from "./domTargets";
 
 export { collapseQuotedHistoryHtml, collapseQuotedHistoryText };
 
@@ -291,15 +292,9 @@ function linkifyTextNodes(root: Node): void {
   });
 }
 
-/**
- * The href of the link containing `target`, if any. Duck-typed rather than
- * `instanceof Element` because targets inside the message iframe belong to
- * that frame's realm, not the parent's.
- */
+/** The href of the link containing `target`, if any. */
 function linkHrefAt(target: EventTarget | null): string | null {
-  const closest = (target as Element | null)?.closest;
-  if (typeof closest !== "function") return null;
-  return (target as Element).closest("a[href]")?.getAttribute("href") ?? null;
+  return closestFrom(target, "a[href]")?.getAttribute("href") ?? null;
 }
 
 export function sanitizeMessageHtml(html: string): string {
@@ -647,7 +642,7 @@ export function SafeMessage({
     }
 
     const onClick = (event: MouseEvent) => {
-      const target = event.target as HTMLElement | null;
+      const target = isElement(event.target) ? event.target : null;
       const link = target?.closest("a");
       const href = link?.getAttribute("href");
       if (href) {

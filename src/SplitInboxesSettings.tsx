@@ -94,8 +94,9 @@ export function SplitInboxesSettings({
 
 
   const move = (index: number, direction: -1 | 1) => {
+    const splitInbox = splitInboxes[index];
     const next = moveItem(splitInboxes, index, direction);
-    if (next) runFor(splitInboxes[index]!.id, () => onReorder(next.map((splitInbox) => splitInbox.id)));
+    if (splitInbox && next) runFor(splitInbox.id, () => onReorder(next.map((item) => item.id)));
   };
 
   return (

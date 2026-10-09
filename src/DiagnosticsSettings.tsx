@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 import { clearLocalCrashReports, crashReportingEnabled, localCrashReports, setCrashReportingEnabled } from "./crashReporting";
 import type { RecoveryStatus, SyncStatus } from "./domain";
 import { useSettingsOperation } from "./settingsOperations";
+import { plural } from "./plural";
 import { ICON_SIZE } from "./iconSizes";
 import type { SyncDiagnosticsActions } from "./settingsPanelTypes";
 
@@ -28,10 +29,6 @@ function independentSyncErrors(status: SyncStatus | null): string[] {
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line && !failedErrors.some((error) => line === error || line.endsWith(`: ${error}`)));
-}
-
-function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
-  return `${count} ${count === 1 ? singular : pluralForm}`;
 }
 
 function DiagnosticsIssue({
@@ -157,7 +154,7 @@ export function DiagnosticsSettings({
                 {" · "}
                 {mutation.error}
                 <small>
-                  {mutation.attempts} {mutation.attempts === 1 ? "attempt" : "attempts"}
+                  {plural(mutation.attempts, "attempt")}
                   {" · "}
                   {new Date(mutation.createdAt).toLocaleString()}
                 </small>
@@ -224,7 +221,7 @@ export function DiagnosticsSettings({
           setReportCount(0);
         }}
       >
-        Clear {reportCount} local {reportCount === 1 ? "report" : "reports"}
+        Clear {plural(reportCount, "local report")}
       </button>
     </section>
   );

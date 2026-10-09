@@ -159,8 +159,9 @@ export function Settings({
                 const matches = availableSections.filter((item) =>
                   `${item.label} ${item.group} ${item.description} ${item.keywords}`.toLocaleLowerCase().includes(normalized)
                 );
-                if (matches.length > 0 && !matches.some((item) => item.id === section)) {
-                  onSectionChange(matches[0]!.id);
+                const [firstMatch] = matches;
+                if (firstMatch && !matches.some((item) => item.id === section)) {
+                  onSectionChange(firstMatch.id);
                 }
               }}
             />

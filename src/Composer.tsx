@@ -32,6 +32,7 @@ import { recordSnippetUsed } from "./settings";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
+import { closestFrom } from "./domTargets";
 
 export type ComposerHandle = {
   flush(): Promise<Draft>; prepareExit(): Promise<void>; send(afterQueued?: () => void, archiveOnSend?: boolean): void; attach(): void; close(): void; discard(): void; draftReplyWithAI(): void;
@@ -375,7 +376,7 @@ export const Composer = forwardRef<ComposerHandle, {
   } }));
   useEffect(() => {
     mounted.current = true;
-    const previous = document.activeElement as HTMLElement | null;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     [bodyEditor.current, quotedEditor.current].flatMap((editor) => Array.from(editor?.querySelectorAll<HTMLImageElement>("img") ?? [])).forEach((image) => {
       const source = image.getAttribute("src") ?? "";
       const attachment = source.startsWith("cid:")
@@ -466,7 +467,7 @@ export const Composer = forwardRef<ComposerHandle, {
       document.execCommand("insertHTML", false, linkifyPlainText(text));
     },
     onClick: (event: ReactMouseEvent<HTMLDivElement>) => {
-      const remove = (event.target as Element).closest<HTMLElement>("[data-compose-image-remove]");
+      const remove = closestFrom<HTMLElement>(event.target, "[data-compose-image-remove]");
       if (!remove) return;
       const wrapper = remove.closest<HTMLElement>("[data-compose-image]");
       const attachmentId = wrapper?.dataset.attachmentId;
@@ -480,7 +481,7 @@ export const Composer = forwardRef<ComposerHandle, {
       });
     },
     onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => {
-      const handle = (event.target as Element).closest<HTMLElement>("[data-compose-image-resize]");
+      const handle = closestFrom<HTMLElement>(event.target, "[data-compose-image-resize]");
       const wrapper = handle?.closest<HTMLElement>("[data-compose-image]");
       const image = wrapper?.querySelector("img");
       if (!handle || !wrapper || !image) return;
@@ -511,7 +512,7 @@ export const Composer = forwardRef<ComposerHandle, {
         setSnippetPickerOpen(true);
         return;
       }
-      const resize = (event.target as Element).closest<HTMLElement>("[data-compose-image-resize]");
+      const resize = closestFrom<HTMLElement>(event.target, "[data-compose-image-resize]");
       if (resize && ["ArrowLeft", "ArrowRight"].includes(event.key)) {
         const wrapper = resize.closest<HTMLElement>("[data-compose-image]");
         const image = wrapper?.querySelector("img");

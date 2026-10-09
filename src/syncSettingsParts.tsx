@@ -1,14 +1,11 @@
 import type { ReactNode } from "react";
 import type { ReplicatedSyncTransportStatus } from "./replicatedSync";
 import type { useSettingsOperation } from "./settingsOperations";
+import { plural } from "./plural";
 
 /** Shared building blocks for the Replicated Sync settings screens. */
 
 export type Operation = ReturnType<typeof useSettingsOperation>;
-
-export function plural(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
-}
 
 export function formatStorageEstimate(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

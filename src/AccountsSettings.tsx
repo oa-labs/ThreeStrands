@@ -38,8 +38,9 @@ export function AccountsSettings({
   const [confirmEmail, setConfirmEmail] = useState<string | null>(null);
 
   const move = (index: number, direction: -1 | 1) => {
+    const account = accounts[index];
     const next = moveItem(accounts, index, direction);
-    if (next) runFor(accounts[index]!.email, () => onReorder(next.map((account) => account.email)));
+    if (account && next) runFor(account.email, () => onReorder(next.map((item) => item.email)));
   };
 
   return (

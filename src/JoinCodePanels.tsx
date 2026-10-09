@@ -23,7 +23,8 @@ import {
   s3CredentialsFromDraft,
   type S3CredentialDraft,
 } from "./SyncConnectors";
-import { formatTimeUntil, InlineStatus, plural, type Operation } from "./syncSettingsParts";
+import { plural } from "./plural";
+import { formatTimeUntil, InlineStatus, type Operation } from "./syncSettingsParts";
 import { InlineConfirm } from "./InlineConfirm";
 
 /** How long a pasted code waits before it's parsed, like the recovery-phrase check. */
