@@ -116,6 +116,16 @@ describe("OpenedCalendarDialog", () => {
     expect(within(dialog).getByRole("button", { name: "Add to Calendar" })).toBeDisabled();
   });
 
+  it("will not add an event whose time zone could not be resolved", async () => {
+    vi.spyOn(mailClient, "findCalendarInvitation").mockResolvedValue(null);
+    const { dialog, onAddToCalendar } = renderDialog(file([{ ...invitation, start: "2026-10-12T15:00:00", end: "2026-10-12T16:00:00", timeZone: "Olympus Mons Time" }]));
+
+    expect(await within(dialog).findByText("Its time zone (Olympus Mons Time) isn’t recognized, so it can’t be added automatically.")).toBeInTheDocument();
+    expect(within(dialog).getByText(/Olympus Mons Time$/, { selector: ".calendar-when" })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add to Calendar" }));
+    expect(onAddToCalendar).not.toHaveBeenCalled();
+  });
+
   it("does not offer to add a cancelled event", async () => {
     vi.spyOn(mailClient, "findCalendarInvitation").mockResolvedValue(null);
     const { dialog } = renderDialog(file([{ ...invitation, status: "CANCELLED" }]));

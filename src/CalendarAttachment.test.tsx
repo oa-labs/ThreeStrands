@@ -187,6 +187,10 @@ describe("calendarEventRange", () => {
       .toEqual({ start: new Date(2026, 9, 12), end: new Date(2026, 9, 13) });
   });
 
+  it("has no range for wall-clock times in a zone that could not be resolved", () => {
+    expect(calendarEventRange({ ...event, start: "2026-10-12T15:00:00", end: "2026-10-12T16:00:00", timeZone: "Olympus Mons Time" })).toBeNull();
+  });
+
   it("has no range without a usable start", () => {
     expect(calendarEventRange({ ...event, start: null })).toBeNull();
     expect(calendarEventRange({ ...event, start: "soon" })).toBeNull();

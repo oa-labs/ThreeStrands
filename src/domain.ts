@@ -37,6 +37,11 @@ export type CalendarEventPreview = {
   start: string | null;
   end: string | null;
   allDay: boolean;
+  /**
+   * A time zone the native parser could not resolve. `start` and `end` are
+   * then wall-clock times in it rather than exact moments. Null when the
+   * times carry a UTC offset (or are floating or all-day).
+   */
   timeZone: string | null;
   location: string | null;
   description: string | null;

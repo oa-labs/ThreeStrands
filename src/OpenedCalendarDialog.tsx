@@ -87,7 +87,11 @@ function InvitationActions({ event, calendarConnected, onAddToCalendar }: {
   const range = calendarEventRange(event);
   return (
     <>
-      <span>{lookup.error ? <span className="form-error" role="alert">{lookup.error}</span> : "Not on your calendar yet."}</span>
+      <span>
+        {lookup.error ? <span className="form-error" role="alert">{lookup.error}</span>
+          : event.timeZone ? `Its time zone (${event.timeZone}) isn’t recognized, so it can’t be added automatically.`
+          : "Not on your calendar yet."}
+      </span>
       <button type="button" className="btn btn-sm" disabled={!range} onClick={() => onAddToCalendar(event)}>
         <CalendarPlus size={ICON_SIZE.sm} /> Add to Calendar
       </button>

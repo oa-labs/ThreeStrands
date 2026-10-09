@@ -237,9 +237,11 @@ function parsedDate(value: string | null): Date | null {
 /**
  * The time an invitation event covers, for prefilling a new calendar event.
  * A missing end means one hour (or, all day, one day) after the start.
- * Null when the invitation has no usable start.
+ * Null when the invitation has no usable start, or its times are wall-clock
+ * times in a zone that could not be resolved, which would land at a guess.
  */
 export function calendarEventRange(event: CalendarEventPreview): { start: Date; end: Date } | null {
+  if (event.timeZone) return null;
   const start = parsedDate(event.start);
   if (!start) return null;
   const end = parsedDate(event.end);

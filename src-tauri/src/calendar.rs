@@ -1,6 +1,6 @@
 use calcard::icalendar::{
-    ICalendar, ICalendarComponent, ICalendarComponentType, ICalendarEntry, ICalendarParameterName,
-    ICalendarParameterValue, ICalendarProperty, ICalendarValue,
+    timezone::TzResolver, ICalendar, ICalendarComponent, ICalendarComponentType, ICalendarEntry,
+    ICalendarParameterName, ICalendarParameterValue, ICalendarProperty, ICalendarValue,
 };
 use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use serde::{Deserialize, Serialize};
@@ -697,6 +697,10 @@ pub struct CalendarEventPreview {
     pub start: Option<String>,
     pub end: Option<String>,
     pub all_day: bool,
+    /// Set only when the start's TZID could not be resolved. `start` and
+    /// `end` are then wall-clock times in that zone, not exact moments, so
+    /// the zone is shown beside them and they must not be scheduled as-is.
+    /// A resolved zone instead gives `start` and `end` a UTC offset.
     pub time_zone: Option<String>,
     pub location: Option<String>,
     pub description: Option<String>,
@@ -712,6 +716,9 @@ pub fn parse(input: &[u8]) -> Result<CalendarPreview, String> {
     }
     let text = std::str::from_utf8(input).map_err(|_| "Calendar attachment is not valid UTF-8")?;
     let calendar = ICalendar::parse(text).map_err(|_| "Could not parse calendar attachment")?;
+    // Resolves IANA and Windows zone names, and the file's own VTIMEZONE
+    // definitions through their X-LIC-LOCATION or Exchange zone ID.
+    let time_zones = calendar.build_tz_resolver();
     let mut all_events = calendar
         .components
         .iter()
@@ -719,7 +726,7 @@ pub fn parse(input: &[u8]) -> Result<CalendarPreview, String> {
     let events = all_events
         .by_ref()
         .take(MAX_EVENTS)
-        .map(event_preview)
+        .map(|event| event_preview(event, &time_zones))
         .collect::<Vec<_>>();
     let truncated = all_events.next().is_some();
     if events.is_empty() {
@@ -728,21 +735,18 @@ pub fn parse(input: &[u8]) -> Result<CalendarPreview, String> {
     Ok(CalendarPreview { events, truncated })
 }
 
-fn event_preview(event: &ICalendarComponent) -> CalendarEventPreview {
+fn event_preview(event: &ICalendarComponent, time_zones: &TzResolver<&str>) -> CalendarEventPreview {
     let start_entry = event.property(&ICalendarProperty::Dtstart);
     let start_value = start_entry.and_then(date_value);
-    let time_zone =
-        start_entry.and_then(|entry| parameter_text(entry, ICalendarParameterName::Tzid));
+    let (start, time_zone) = entry_time(start_entry, time_zones);
+    let (end, _) = entry_time(event.property(&ICalendarProperty::Dtend), time_zones);
     CalendarEventPreview {
         uid: text_property(event, ICalendarProperty::Uid),
         title: text_property(event, ICalendarProperty::Summary)
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| "Untitled event".into()),
-        start: start_value.and_then(|value| display_date_time(value, time_zone.is_some())),
-        end: event
-            .property(&ICalendarProperty::Dtend)
-            .and_then(date_value)
-            .and_then(|value| display_date_time(value, time_zone.is_some())),
+        start,
+        end,
         all_day: start_value.is_some_and(|value| value.hour.is_none()),
         time_zone,
         location: text_property(event, ICalendarProperty::Location),
@@ -756,10 +760,40 @@ fn event_preview(event: &ICalendarComponent) -> CalendarEventPreview {
     }
 }
 
-fn display_date_time(
-    value: &calcard::common::PartialDateTime,
-    has_named_time_zone: bool,
-) -> Option<String> {
+/// A DTSTART or DTEND as display text: a date for all-day values, an exact
+/// moment with a UTC offset for UTC, offset, or resolvable TZID times, and
+/// otherwise local wall-clock time. The second value is a TZID that could not
+/// be resolved, which leaves the time as wall-clock time in that zone.
+fn entry_time(entry: Option<&ICalendarEntry>, time_zones: &TzResolver<&str>) -> (Option<String>, Option<String>) {
+    let Some(entry) = entry else {
+        return (None, None);
+    };
+    let Some(value) = date_value(entry) else {
+        return (None, None);
+    };
+    let Some(tz_id) = parameter_text(entry, ICalendarParameterName::Tzid) else {
+        return (display_date_time(value), None);
+    };
+    if value.hour.is_none() {
+        return (display_date_time(value), None);
+    }
+    let resolved = time_zones
+        .resolve(&tz_id)
+        .filter(|zone| !zone.is_floating())
+        .and_then(|zone| value.to_date_time_with_tz(zone));
+    match resolved {
+        Some(moment) => (
+            Some(moment.fixed_offset().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+            None,
+        ),
+        None => {
+            let wall_clock = calcard::common::PartialDateTime { tz_hour: None, tz_minute: None, tz_minus: false, ..value.clone() };
+            (display_date_time(&wall_clock), Some(tz_id))
+        }
+    }
+}
+
+fn display_date_time(value: &calcard::common::PartialDateTime) -> Option<String> {
     let date = format!("{:04}-{:02}-{:02}", value.year?, value.month?, value.day?);
     let Some(hour) = value.hour else {
         return Some(date);
@@ -769,17 +803,15 @@ fn display_date_time(
         value.minute.unwrap_or(0),
         value.second.unwrap_or(0)
     );
-    if !has_named_time_zone {
-        if let Some(offset_hour) = value.tz_hour {
-            if offset_hour == 0 && value.tz_minute.unwrap_or(0) == 0 && !value.tz_minus {
-                result.push('Z');
-            } else {
-                result.push(if value.tz_minus { '-' } else { '+' });
-                result.push_str(&format!(
-                    "{offset_hour:02}:{:02}",
-                    value.tz_minute.unwrap_or(0)
-                ));
-            }
+    if let Some(offset_hour) = value.tz_hour {
+        if offset_hour == 0 && value.tz_minute.unwrap_or(0) == 0 && !value.tz_minus {
+            result.push('Z');
+        } else {
+            result.push(if value.tz_minus { '-' } else { '+' });
+            result.push_str(&format!(
+                "{offset_hour:02}:{:02}",
+                value.tz_minute.unwrap_or(0)
+            ));
         }
     }
     Some(result)
@@ -856,13 +888,87 @@ mod tests {
         let event = &preview.events[0];
         assert_eq!(event.uid.as_deref(), Some("planning@example.com"));
         assert_eq!(event.title, "Quarterly planning");
-        assert_eq!(event.start.as_deref(), Some("2026-09-18T09:30:00"));
-        assert_eq!(event.time_zone.as_deref(), Some("America/New_York"));
+        assert_eq!(event.start.as_deref(), Some("2026-09-18T09:30:00-04:00"));
+        assert_eq!(event.end.as_deref(), Some("2026-09-18T10:30:00-04:00"));
+        assert_eq!(event.time_zone, None);
         assert_eq!(event.location.as_deref(), Some("Room 4B"));
         assert_eq!(event.organizer.as_deref(), Some("Jane Doe"));
         assert_eq!(event.attendee_count, 1);
         assert!(event.recurring);
         assert_eq!(event.status.as_deref(), Some("CONFIRMED"));
+    }
+
+    fn times_of(ics: &str) -> (Option<String>, Option<String>, Option<String>) {
+        let event = parse(ics.as_bytes()).unwrap().events.remove(0);
+        (event.start, event.end, event.time_zone)
+    }
+
+    fn event_with(lines: &str) -> String {
+        format!("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:zone@example.com\r\nSUMMARY:Zone check\r\n{lines}END:VEVENT\r\nEND:VCALENDAR\r\n")
+    }
+
+    #[test]
+    fn converts_iana_and_windows_zone_names_to_exact_moments() {
+        // Google and Apple send IANA names; Outlook and Exchange send Windows names.
+        for zone in ["America/New_York", "Eastern Standard Time"] {
+            assert_eq!(
+                times_of(&event_with(&format!("DTSTART;TZID={zone}:20260918T093000\r\nDTEND;TZID={zone}:20260918T103000\r\n"))),
+                (Some("2026-09-18T09:30:00-04:00".into()), Some("2026-09-18T10:30:00-04:00".into()), None),
+                "{zone}"
+            );
+        }
+    }
+
+    #[test]
+    fn applies_the_zone_offset_in_effect_on_the_event_date() {
+        assert_eq!(
+            times_of(&event_with("DTSTART;TZID=America/New_York:20261210T093000\r\n")).0.as_deref(),
+            Some("2026-12-10T09:30:00-05:00")
+        );
+    }
+
+    #[test]
+    fn resolves_a_zone_defined_inside_the_file() {
+        let ics = concat!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n",
+            "BEGIN:VTIMEZONE\r\nTZID:Office Time\r\nX-LIC-LOCATION:Europe/Berlin\r\n",
+            "BEGIN:STANDARD\r\nDTSTART:19701025T030000\r\nTZOFFSETFROM:+0200\r\nTZOFFSETTO:+0100\r\nEND:STANDARD\r\n",
+            "BEGIN:DAYLIGHT\r\nDTSTART:19700329T020000\r\nTZOFFSETFROM:+0100\r\nTZOFFSETTO:+0200\r\nEND:DAYLIGHT\r\n",
+            "END:VTIMEZONE\r\n",
+            "BEGIN:VEVENT\r\nUID:berlin@example.com\r\nSUMMARY:Standup\r\n",
+            "DTSTART;TZID=Office Time:20260918T093000\r\nDTEND;TZID=Office Time:20260918T094500\r\n",
+            "END:VEVENT\r\nEND:VCALENDAR\r\n",
+        );
+        assert_eq!(
+            times_of(ics),
+            (Some("2026-09-18T09:30:00+02:00".into()), Some("2026-09-18T09:45:00+02:00".into()), None)
+        );
+    }
+
+    #[test]
+    fn resolves_start_and_end_zones_independently() {
+        assert_eq!(
+            times_of(&event_with("DTSTART;TZID=America/New_York:20260918T090000\r\nDTEND;TZID=Europe/London:20260918T150000\r\n")),
+            (Some("2026-09-18T09:00:00-04:00".into()), Some("2026-09-18T15:00:00+01:00".into()), None)
+        );
+    }
+
+    #[test]
+    fn keeps_wall_clock_time_and_reports_a_zone_it_cannot_resolve() {
+        assert_eq!(
+            times_of(&event_with("DTSTART;TZID=Olympus Mons Time:20260918T093000\r\nDTEND;TZID=Olympus Mons Time:20260918T103000\r\n")),
+            (Some("2026-09-18T09:30:00".into()), Some("2026-09-18T10:30:00".into()), Some("Olympus Mons Time".into()))
+        );
+    }
+
+    #[test]
+    fn keeps_utc_floating_and_all_day_values_as_written() {
+        assert_eq!(times_of(&event_with("DTSTART:20260918T133000Z\r\n")).0.as_deref(), Some("2026-09-18T13:30:00Z"));
+        assert_eq!(times_of(&event_with("DTSTART:20260918T093000\r\n")), (Some("2026-09-18T09:30:00".into()), None, None));
+        assert_eq!(
+            times_of(&event_with("DTSTART;VALUE=DATE;TZID=America/New_York:20260918\r\n")),
+            (Some("2026-09-18".into()), None, None)
+        );
     }
 
     #[test]
