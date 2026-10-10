@@ -36,16 +36,20 @@
 #![allow(dead_code)]
 
 mod connection;
+mod delta;
 mod discovery;
 mod error;
 mod fetch;
 mod identity;
+mod labels;
 mod mailboxes;
 mod policy;
+mod provider;
 mod rfc822;
 mod session;
 mod settings;
 mod setup;
+mod threading;
 mod tls;
 
 // These are the connection layer's public surface for the later read slices
@@ -111,9 +115,17 @@ pub use fetch::{
     CachedBody, IdentityRow, SessionBodyFetcher, BODY_ITEMS, IDENTITY_ITEMS,
 };
 #[allow(unused_imports)]
+pub use fetch::{fetch_flags_only, resolve_and_cache_body, ResolvedBody, FLAGS_ITEMS};
+#[allow(unused_imports)]
 pub use identity::{derive_message_id, IdentityInputs};
 #[allow(unused_imports)]
 pub use rfc822::{attachment_bytes_from_raw, to_raw_message};
+#[allow(unused_imports)]
+pub use rfc822::{threading_headers_from_raw, ThreadingHeaders};
+
+// Slice 5a live-sync surface: the provider the engine drives, plus the pure
+// logic modules it is built from.
+pub use provider::{label_model_for, ImapProvider, ImapProviderConfig};
 
 use std::sync::Arc;
 
@@ -330,6 +342,366 @@ impl ImapStateStore {
             Ok(())
         })
     }
+
+    /// Every location row in one mailbox, ordered by UID. The sync round reads
+    /// this to build its local view for the delta.
+    pub fn locations_in_mailbox(&self, mailbox: &str) -> DbResult<Vec<ImapLocation>> {
+        self.database.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT mailbox, uidvalidity, uid, message_id, flags_json, modseq
+                 FROM imap_locations
+                 WHERE account_id = ?1 AND mailbox = ?2
+                 ORDER BY uid",
+            )?;
+            let rows = statement
+                .query_map(rusqlite::params![self.account_id, mailbox], |row| {
+                    Ok(ImapLocation {
+                        mailbox: row.get(0)?,
+                        uidvalidity: row.get(1)?,
+                        uid: row.get(2)?,
+                        message_id: row.get(3)?,
+                        flags_json: row.get(4)?,
+                        modseq: row.get(5)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+    }
+
+    /// Delete one UID's location row (expunged by another client). Bodies and
+    /// thread rows are untouched; a thread whose last location is gone resolves
+    /// to no messages and `fetch_thread` reports it absent.
+    pub fn delete_location(&self, mailbox: &str, uidvalidity: i64, uid: i64) -> DbResult<()> {
+        self.database.with_connection(|connection| {
+            connection.execute(
+                "DELETE FROM imap_locations
+                 WHERE account_id = ?1 AND mailbox = ?2 AND uidvalidity = ?3 AND uid = ?4",
+                rusqlite::params![self.account_id, mailbox, uidvalidity, uid],
+            )?;
+            Ok(())
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Slice 5a live-sync state: generation, change journal, thread grouping,
+    // and merge aliases (schema v58). These back the at-least-once sync cursor
+    // and local threading; see `docs/imap-design.md` ("Sync" / "Threading").
+    // -----------------------------------------------------------------------
+
+    /// The account's current sync generation (0 before any sync round).
+    pub fn generation(&self) -> DbResult<u64> {
+        self.database.with_connection(|connection| {
+            let generation: i64 = connection
+                .query_row(
+                    "SELECT generation FROM imap_sync_state WHERE account_id = ?1",
+                    [&self.account_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+            Ok(generation as u64)
+        })
+    }
+
+    /// Which local thread a message belongs to, if it has been threaded.
+    pub fn thread_of_message(&self, message_id: &str) -> DbResult<Option<String>> {
+        self.database.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT thread_id FROM imap_threads
+                     WHERE account_id = ?1 AND message_id = ?2",
+                    rusqlite::params![self.account_id, message_id],
+                    |row| row.get(0),
+                )
+                .ok())
+        })
+    }
+
+    /// The stable message ids currently grouped under one thread id.
+    pub fn messages_in_thread(&self, thread_id: &str) -> DbResult<Vec<String>> {
+        self.database.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT message_id FROM imap_threads
+                 WHERE account_id = ?1 AND thread_id = ?2 ORDER BY message_id",
+            )?;
+            let rows = statement
+                .query_map(rusqlite::params![self.account_id, thread_id], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+    }
+
+    /// Resolve an id through the alias chain to the surviving thread id. A
+    /// thread never merged resolves to itself. Bounded against a cyclic or
+    /// self-referential alias so a corrupt row cannot loop forever.
+    pub fn resolve_thread_alias(&self, thread_id: &str) -> DbResult<String> {
+        self.database.with_connection(|connection| {
+            let mut current = thread_id.to_string();
+            for _ in 0..64 {
+                let next: Option<String> = connection
+                    .query_row(
+                        "SELECT new_id FROM imap_thread_aliases
+                         WHERE account_id = ?1 AND old_id = ?2",
+                        rusqlite::params![self.account_id, current],
+                        |row| row.get(0),
+                    )
+                    .ok();
+                match next {
+                    Some(new_id) if new_id != current => current = new_id,
+                    _ => break,
+                }
+            }
+            Ok(current)
+        })
+    }
+
+    /// Every thread id recorded in the change journal with a generation
+    /// strictly greater than `since`, de-duplicated. This is the poll scan:
+    /// `poll(cursor=g)` returns these.
+    pub fn journal_since(&self, since: u64) -> DbResult<Vec<String>> {
+        self.database.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT DISTINCT thread_id FROM imap_change_journal
+                 WHERE account_id = ?1 AND generation > ?2 ORDER BY thread_id",
+            )?;
+            let rows = statement
+                .query_map(rusqlite::params![self.account_id, since as i64], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+    }
+
+    /// Every `(message_id, thread_id, created_generation)` row for this
+    /// account, ordered by message id. The sync round reads this to rebuild
+    /// the threader's prior state — including each thread's PERSISTED creation
+    /// generation, so a merge picks the genuinely older thread rather than a
+    /// hash ordering.
+    pub fn all_message_threads(&self) -> DbResult<Vec<(String, String, u64)>> {
+        self.database.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT message_id, thread_id, created_generation FROM imap_threads
+                 WHERE account_id = ?1 ORDER BY message_id",
+            )?;
+            let rows = statement
+                .query_map([&self.account_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)? as u64,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+    }
+
+    /// Thread ids currently located in a given mailbox (via the location ->
+    /// thread join). Used by `list_inbox`. Returned sorted and de-duplicated.
+    pub fn thread_ids_in_mailbox(&self, mailbox: &str) -> DbResult<Vec<String>> {
+        self.database.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT DISTINCT t.thread_id
+                 FROM imap_locations l JOIN imap_threads t
+                   ON t.account_id = l.account_id AND t.message_id = l.message_id
+                 WHERE l.account_id = ?1 AND l.mailbox = ?2
+                 ORDER BY t.thread_id",
+            )?;
+            let rows = statement
+                .query_map(rusqlite::params![self.account_id, mailbox], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+    }
+
+    /// Apply one sync round's writes in a SINGLE transaction. This is the
+    /// at-least-once anchor: locations, flag updates, deletions, thread
+    /// assignments, aliases, the journal append AND the generation bump all
+    /// commit together, so a round that fails before this call leaves durable
+    /// state exactly as the previous round left it (body-cache puts aside,
+    /// which are rebuildable and deduplicated by stable id).
+    ///
+    /// Each newly-assigned thread records a `created_generation` so thread age
+    /// is a persisted fact, not a hash ordering: a thread's creation
+    /// generation is the minimum across its messages, and an existing thread
+    /// keeps its earliest. Returns the new generation.
+    ///
+    /// An empty round (nothing changed) is a no-op that returns the CURRENT
+    /// generation without bumping it or writing the journal — see
+    /// [`SyncRoundWrite::is_empty`].
+    pub fn commit_sync_round(&self, round: &SyncRoundWrite) -> DbResult<u64> {
+        self.database.with_transaction(|transaction| {
+            let current: i64 = transaction
+                .query_row(
+                    "SELECT generation FROM imap_sync_state WHERE account_id = ?1",
+                    [&self.account_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+
+            // Idle round: do not bump the generation or touch the journal.
+            if round.is_empty() {
+                return Ok(current as u64);
+            }
+
+            let next = current + 1;
+            transaction.execute(
+                "INSERT INTO imap_sync_state (account_id, generation) VALUES (?1, ?2)
+                 ON CONFLICT(account_id) DO UPDATE SET generation = excluded.generation",
+                rusqlite::params![self.account_id, next],
+            )?;
+
+            // Location writes (new mail + flag updates) and deletions, so the
+            // next round's local view already reflects this round even if a
+            // LATER round fails: everything a round decides is applied together.
+            for location in &round.locations {
+                transaction.execute(
+                    "INSERT INTO imap_locations
+                        (account_id, mailbox, uidvalidity, uid, message_id, flags_json, modseq)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                     ON CONFLICT(account_id, mailbox, uidvalidity, uid) DO UPDATE SET
+                         message_id = excluded.message_id,
+                         flags_json = excluded.flags_json,
+                         modseq = excluded.modseq",
+                    rusqlite::params![
+                        self.account_id,
+                        location.mailbox,
+                        location.uidvalidity,
+                        location.uid,
+                        location.message_id,
+                        location.flags_json,
+                        location.modseq,
+                    ],
+                )?;
+            }
+            for (mailbox, uidvalidity, uid) in &round.deletions {
+                transaction.execute(
+                    "DELETE FROM imap_locations
+                     WHERE account_id = ?1 AND mailbox = ?2 AND uidvalidity = ?3 AND uid = ?4",
+                    rusqlite::params![self.account_id, mailbox, uidvalidity, uid],
+                )?;
+            }
+
+            for (message_id, thread_id) in &round.thread_assignments {
+                // A thread's creation generation is the earliest generation any
+                // of its messages was assigned: an existing thread keeps its
+                // recorded minimum; a brand-new thread is created at `next`.
+                let existing: Option<i64> = transaction
+                    .query_row(
+                        "SELECT MIN(created_generation) FROM imap_threads
+                         WHERE account_id = ?1 AND thread_id = ?2",
+                        rusqlite::params![self.account_id, thread_id],
+                        |row| row.get(0),
+                    )
+                    .ok()
+                    .flatten();
+                let created = existing.unwrap_or(next);
+                transaction.execute(
+                    "INSERT INTO imap_threads (account_id, message_id, thread_id, created_generation)
+                     VALUES (?1, ?2, ?3, ?4)
+                     ON CONFLICT(account_id, message_id) DO UPDATE SET
+                         thread_id = excluded.thread_id",
+                    rusqlite::params![self.account_id, message_id, thread_id, created],
+                )?;
+            }
+            for (old_id, new_id) in &round.aliases {
+                transaction.execute(
+                    "INSERT INTO imap_thread_aliases (account_id, old_id, new_id)
+                     VALUES (?1, ?2, ?3)
+                     ON CONFLICT(account_id, old_id) DO UPDATE SET new_id = excluded.new_id",
+                    rusqlite::params![self.account_id, old_id, new_id],
+                )?;
+            }
+            for thread_id in &round.changed_threads {
+                transaction.execute(
+                    "INSERT OR IGNORE INTO imap_change_journal
+                        (account_id, generation, thread_id) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![self.account_id, next, thread_id],
+                )?;
+            }
+            Ok(next as u64)
+        })
+    }
+
+    /// A thread's persisted creation generation (the minimum across its
+    /// messages), used to decide which of two threads is older on a merge. A
+    /// thread with no rows yet returns `None`.
+    pub fn thread_created_generation(&self, thread_id: &str) -> DbResult<Option<u64>> {
+        self.database.with_connection(|connection| {
+            let created: Option<i64> = connection
+                .query_row(
+                    "SELECT MIN(created_generation) FROM imap_threads
+                     WHERE account_id = ?1 AND thread_id = ?2",
+                    rusqlite::params![self.account_id, thread_id],
+                    |row| row.get(0),
+                )
+                .ok()
+                .flatten();
+            Ok(created.map(|value| value as u64))
+        })
+    }
+
+    /// Prune journal rows older than the retention bound relative to the
+    /// current generation, so the journal does not grow without limit. A
+    /// cursor pointing at a pruned generation is answered with
+    /// `InvalidCursor` by [`policy::journal_cursor_is_answerable`].
+    pub fn prune_journal(&self) -> DbResult<()> {
+        self.database.with_connection(|connection| {
+            let current: i64 = connection
+                .query_row(
+                    "SELECT generation FROM imap_sync_state WHERE account_id = ?1",
+                    [&self.account_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+            let oldest_kept =
+                current.saturating_sub(policy::JOURNAL_RETENTION_GENERATIONS as i64);
+            connection.execute(
+                "DELETE FROM imap_change_journal
+                 WHERE account_id = ?1 AND generation < ?2",
+                rusqlite::params![self.account_id, oldest_kept],
+            )?;
+            Ok(())
+        })
+    }
+}
+
+/// The writes one sync round applies atomically through
+/// [`ImapStateStore::commit_sync_round`].
+///
+/// Every mutation a round makes to durable sync state is carried here and
+/// applied in a SINGLE transaction, so a round that fails part-way (a dropped
+/// connection on a later batch) leaves NOTHING written: the next round sees the
+/// same prior state and redoes the work. Body-cache puts are the one exception
+/// — they happen eagerly during fetch because the cache is rebuildable and is
+/// keyed by the stable id, so a re-fetched body is deduplicated, never
+/// double-counted.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SyncRoundWrite {
+    /// Location rows to insert or update (new mail and flag changes alike).
+    pub locations: Vec<ImapLocation>,
+    /// `(mailbox, uidvalidity, uid)` location rows to delete (expunged).
+    pub deletions: Vec<(String, i64, i64)>,
+    /// `(message_id, thread_id)` rows to upsert into `imap_threads`.
+    pub thread_assignments: Vec<(String, String)>,
+    /// `(old_id, new_id)` merge aliases to record.
+    pub aliases: Vec<(String, String)>,
+    /// Thread ids whose content or labels changed this round, appended to the
+    /// journal under the new generation.
+    pub changed_threads: Vec<String>,
+}
+
+impl SyncRoundWrite {
+    /// Whether this round changed anything at all. An idle poll (no new mail,
+    /// no flag change, no deletion, no threading effect) produces an empty
+    /// round, and the provider skips the commit entirely so the generation and
+    /// journal do not move.
+    pub fn is_empty(&self) -> bool {
+        self.locations.is_empty()
+            && self.deletions.is_empty()
+            && self.thread_assignments.is_empty()
+            && self.aliases.is_empty()
+            && self.changed_threads.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -446,5 +818,95 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(mine.mailboxes().unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_empty_sync_round_is_a_no_op_and_does_not_bump_the_generation() {
+        // SLICE5A_FIXES item 5 at the store level: committing an empty round
+        // leaves the generation and journal untouched.
+        let store = store();
+        assert_eq!(store.generation().unwrap(), 0);
+        let unchanged = store.commit_sync_round(&SyncRoundWrite::default()).unwrap();
+        assert_eq!(unchanged, 0, "empty round returns the current generation");
+        assert_eq!(store.generation().unwrap(), 0, "no bump");
+        assert!(store.journal_since(0).unwrap().is_empty(), "no journal write");
+    }
+
+    #[test]
+    fn a_sync_round_applies_locations_deletions_and_journal_atomically() {
+        // SLICE5A_FIXES item 1 at the store level: a round's location writes,
+        // deletions, thread rows and journal all land together and bump the
+        // generation exactly once.
+        let store = store();
+        // Pre-existing location to be deleted by the round.
+        store
+            .upsert_location(&ImapLocation {
+                mailbox: "INBOX".into(),
+                uidvalidity: 1,
+                uid: 1,
+                message_id: "imap:me@example.com:old".into(),
+                flags_json: "[]".into(),
+                modseq: None,
+            })
+            .unwrap();
+        let round = SyncRoundWrite {
+            locations: vec![ImapLocation {
+                mailbox: "INBOX".into(),
+                uidvalidity: 1,
+                uid: 2,
+                message_id: "imap:me@example.com:new".into(),
+                flags_json: r#"["\\Seen"]"#.into(),
+                modseq: None,
+            }],
+            deletions: vec![("INBOX".into(), 1, 1)],
+            thread_assignments: vec![(
+                "imap:me@example.com:new".into(),
+                "imap:t:new".into(),
+            )],
+            changed_threads: vec!["imap:t:new".into()],
+            ..Default::default()
+        };
+        let generation = store.commit_sync_round(&round).unwrap();
+        assert_eq!(generation, 1);
+        // The new location exists, the old one is gone.
+        assert_eq!(
+            store.locations_for_message("imap:me@example.com:new").unwrap().len(),
+            1
+        );
+        assert!(store
+            .locations_for_message("imap:me@example.com:old")
+            .unwrap()
+            .is_empty());
+        // The thread was journaled under the new generation.
+        assert_eq!(store.journal_since(0).unwrap(), vec!["imap:t:new".to_string()]);
+    }
+
+    #[test]
+    fn a_thread_keeps_its_earliest_creation_generation() {
+        // SLICE5A_FIXES item 4 at the store level: a thread's creation
+        // generation is the minimum across its messages and never increases
+        // when a later message joins.
+        let store = store();
+        store
+            .commit_sync_round(&SyncRoundWrite {
+                thread_assignments: vec![("imap:me@example.com:m1".into(), "imap:t:x".into())],
+                changed_threads: vec!["imap:t:x".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(store.thread_created_generation("imap:t:x").unwrap(), Some(1));
+        // A later round adds a second message to the same thread.
+        store
+            .commit_sync_round(&SyncRoundWrite {
+                thread_assignments: vec![("imap:me@example.com:m2".into(), "imap:t:x".into())],
+                changed_threads: vec!["imap:t:x".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            store.thread_created_generation("imap:t:x").unwrap(),
+            Some(1),
+            "the thread keeps its earliest creation generation"
+        );
     }
 }

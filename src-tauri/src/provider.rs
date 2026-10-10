@@ -92,12 +92,6 @@ impl SyncCursor {
     /// A cursor carrying only a provider-neutral sync generation number, as
     /// the IMAP provider uses it. The decimal encoding keeps the persisted
     /// `sync_state.cursor` a plain string like every other provider's.
-    ///
-    /// The IMAP provider that mints and reads these lands in phase 2, so the
-    /// pair has no non-test caller yet; the `dead_code` allow is scoped to
-    /// them and removed with that first caller, matching how slice 1 scoped
-    /// the unused `ProviderCapabilities` fields.
-    #[allow(dead_code)]
     pub fn from_generation(generation: u64) -> Self {
         Self(generation.to_string())
     }
@@ -106,7 +100,6 @@ impl SyncCursor {
     /// string was not minted by [`SyncCursor::from_generation`] (for example
     /// a Gmail `historyId` cursor), so a caller can tell a generation cursor
     /// apart from any other provider's encoding rather than guessing.
-    #[allow(dead_code)]
     pub fn generation(&self) -> Option<u64> {
         self.0.parse().ok()
     }
@@ -146,10 +139,15 @@ pub enum LabelModel {
     /// Many-to-many labels, as Gmail exposes them. A message can carry any
     /// number of labels and they are toggled directly.
     GmailLabels,
-    // IMAP: folders plus keyword user labels (`PERMANENTFLAGS` has `\*`).
-    // IMAP: folders plus label-folder user labels (copies under a container).
-    // IMAP: folders with no user-label storage available.
-    // These land with the IMAP provider in phases 2–3.
+    /// IMAP folders plus keyword user labels (`PERMANENTFLAGS` has `\*`): user
+    /// labels are stored as IMAP keywords.
+    ImapKeywords,
+    /// IMAP folders plus label-folder user labels: user labels are copies
+    /// under a container mailbox the user picked at setup.
+    ImapLabelFolders,
+    /// IMAP folders with no user-label storage available (no `\*` and no
+    /// container chosen): the UI hides label actions for the account.
+    ImapNoUserLabels,
 }
 
 /// The provider differences callers genuinely have to branch on.

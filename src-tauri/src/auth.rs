@@ -1109,7 +1109,9 @@ mod tests {
             .unwrap();
         assert_eq!(auth.key(), "work@example.com");
         assert_eq!(auth.mail_provider(), MailProviderKind::Gmail);
-        assert!(auth.provider().capabilities().server_search);
+        // Gmail ignores the handle but the signature now requires one.
+        let database = std::sync::Arc::new(crate::db::Database::open_memory());
+        assert!(auth.provider(&database).unwrap().capabilities().server_search);
     }
 
     #[test]
@@ -1316,18 +1318,92 @@ impl AccountAuth {
     }
 
     /// The mail backend this credential authorizes access to.
-    pub fn provider(&self) -> std::sync::Arc<dyn crate::provider::MailProvider> {
+    ///
+    /// Takes the shared [`Database`](crate::db::Database) handle because the
+    /// IMAP provider (unlike Gmail, which is a stateless REST client) needs
+    /// account-scoped persistent state: its UID/location map, body cache and
+    /// sync-generation store all live in the database (`docs/imap-design.md`,
+    /// "Data model"). Gmail ignores the handle. Fallible because building the
+    /// IMAP provider reads the account's saved settings and keychain password,
+    /// either of which can be missing — Gmail is always `Ok`.
+    pub fn provider(
+        &self,
+        database: &std::sync::Arc<crate::db::Database>,
+    ) -> Result<std::sync::Arc<dyn crate::provider::MailProvider>, crate::provider::ProviderError> {
         match self {
-            Self::Gmail(credential) => std::sync::Arc::new(
+            Self::Gmail(credential) => Ok(std::sync::Arc::new(
                 crate::provider::gmail::GmailClient::new(credential.clone()),
-            ),
-            // The IMAP provider lands in phase 2. Startup keeps these accounts
-            // out of the runtime registry, and OAuth setup rejects them.
-            Self::Imap(_) => unreachable!(
-                "the IMAP MailProvider lands in phase 2; IMAP accounts must stay out of the runtime registry"
-            ),
+            )),
+            Self::Imap(credential) => {
+                Ok(std::sync::Arc::new(build_imap_provider(database, &credential.key())?))
+            }
         }
     }
+}
+
+/// Assemble a live [`ImapProvider`](crate::provider::imap::ImapProvider) for
+/// `account_id` from its saved non-secret settings and keychain password.
+///
+/// This is the "go live" plumbing (`SLICE5A_BRIEF.md` work item 5): the auth
+/// seam has no database handle of its own, so the handle is threaded through
+/// [`AccountAuth::provider`] from each caller (all of which already hold one).
+/// The password is read from the keychain here and handed to the provider at
+/// construction; it never flows through `AccountAuth` or any logged value.
+fn build_imap_provider(
+    database: &std::sync::Arc<crate::db::Database>,
+    account_id: &str,
+) -> Result<crate::provider::imap::ImapProvider, crate::provider::ProviderError> {
+    use crate::provider::imap::{
+        self, host_port_key, BodyCache, ImapProvider, ImapProviderConfig, ImapStateStore,
+    };
+    use crate::provider::ProviderError;
+
+    let settings = database
+        .imap_account_settings(account_id)
+        .map_err(|error| ProviderError::Other(error.to_string()))?
+        .ok_or_else(|| {
+            ProviderError::Other(format!("{account_id} has no saved IMAP settings"))
+        })?;
+    // The password lives only in the OS keychain, never in settings or logs.
+    // A keychain READ failure here is NOT an authentication failure: the
+    // polling loop already skips an account whose credential is unavailable
+    // (`auth.available()`), and only an explicit server authentication failure
+    // may pause an account with `ReauthenticationRequired`. Mapping a transient
+    // keychain miss (locked keyring, a momentary backend hiccup) to
+    // `TransientTransport` keeps a healthy account from being wrongly flagged
+    // `needs_reauth` — it is retried on the next poll instead.
+    let password = ImapCredential::for_account(account_id)
+        .load()
+        .map_err(|error| {
+            ProviderError::TransientTransport(format!(
+                "{account_id} IMAP password is unavailable: {error}"
+            ))
+        })?
+        .imap;
+
+    let pinned = settings
+        .pinned_fingerprints
+        .get(&host_port_key(&settings.imap_host, settings.imap_port))
+        .and_then(|hex| imap::parse_sha256_fingerprint(hex).ok());
+    let config = imap::ConnectionConfig {
+        host: settings.imap_host.clone(),
+        port: settings.imap_port,
+        tls_mode: settings.imap_security.tls_mode(),
+        pinned_fingerprint: pinned,
+    };
+    let manager = imap::ImapConnectionManager::new(config);
+    let store = ImapStateStore::new(database.clone(), account_id);
+    let cache = BodyCache::new(store.clone());
+    let label_model = imap::label_model_for(settings.label_storage);
+    Ok(ImapProvider::new(ImapProviderConfig {
+        account_id: account_id.to_string(),
+        username: settings.imap_username,
+        password,
+        manager,
+        store,
+        cache,
+        label_model,
+    }))
 }
 
 /// A password-authenticated IMAP/SMTP account's credential handle, persisted

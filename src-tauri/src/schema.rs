@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 57;
+pub(crate) const LATEST_VERSION: i64 = 58;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1575,6 +1575,71 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 58 {
+        // The IMAP provider's live-sync state (Phase 2 Slice 5a; see
+        // `docs/imap-design.md` "Sync" / "Threading"). These tables turn the
+        // Slice 0-4 connection/identity/body machinery into something the
+        // provider-neutral `sync.rs` engine can poll: a monotonic sync
+        // generation per account, a change journal of thread ids per
+        // generation (the at-least-once cursor's backing store), and the
+        // local thread grouping with its merge aliases.
+        //
+        //  * `imap_sync_state`  — one row per account carrying the current
+        //    monotonic `generation`. Bumped once per sync round; the opaque
+        //    `SyncCursor` is just this number as decimal text.
+        //  * `imap_change_journal` — `(account_id, generation, thread_id)`.
+        //    Every thread whose content or labels changed in a round is
+        //    appended here under that round's generation, so `poll(cursor=g)`
+        //    can return exactly the threads changed since generation `g`.
+        //    Indexed by `(account_id, generation)` for the poll scan.
+        //  * `imap_threads` — `(account_id, message_id, thread_id)`: which
+        //    local thread each message belongs to, indexed by thread so a
+        //    thread's messages resolve in one query. Thread ids are derived
+        //    from message references (`docs/imap-design.md` "Threading"),
+        //    never from subject.
+        //  * `imap_thread_aliases` — `(account_id, old_id, new_id)`: when a
+        //    late message merges two threads the older id survives and the
+        //    other's id is recorded here so holders of the old id resolve to
+        //    the survivor.
+        //
+        // All four are keyed by `account_id` and are provider-internal sync
+        // state: NO Gmail code path reads or writes them, and they are
+        // deliberately NOT part of the settings-transfer export (`transfer.rs`
+        // is untouched and its VERSION is unchanged) — losing them only forces
+        // a full resync. Reserve a new schema number for every later change to
+        // this shape rather than editing this block once it has shipped.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS imap_sync_state (
+                account_id TEXT PRIMARY KEY,
+                generation INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS imap_change_journal (
+                account_id TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                thread_id TEXT NOT NULL,
+                PRIMARY KEY (account_id, generation, thread_id)
+            );
+            CREATE INDEX IF NOT EXISTS imap_change_journal_by_generation
+                ON imap_change_journal(account_id, generation);
+            CREATE TABLE IF NOT EXISTS imap_threads (
+                account_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                created_generation INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (account_id, message_id)
+            );
+            CREATE INDEX IF NOT EXISTS imap_threads_by_thread
+                ON imap_threads(account_id, thread_id);
+            CREATE TABLE IF NOT EXISTS imap_thread_aliases (
+                account_id TEXT NOT NULL,
+                old_id TEXT NOT NULL,
+                new_id TEXT NOT NULL,
+                PRIMARY KEY (account_id, old_id)
+            );
+            PRAGMA user_version=58;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1896,6 +1961,94 @@ mod tests {
 
         // Re-running once more over the already-created table must not fail.
         upgraded.pragma_update(None, "user_version", 56).unwrap();
+        super::migrate(&mut upgraded).unwrap();
+        assert_eq!(
+            upgraded.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
+            super::LATEST_VERSION
+        );
+    }
+
+    #[test]
+    fn v58_adds_the_imap_sync_state_tables_and_reruns_cleanly() {
+        // A fresh database reaches the latest version with all four live-sync
+        // tables present and queryable.
+        let mut fresh = unmigrated_database_with_one_account();
+        super::migrate(&mut fresh).unwrap();
+        for stmt in [
+            "SELECT account_id, generation FROM imap_sync_state",
+            "SELECT account_id, generation, thread_id FROM imap_change_journal",
+            "SELECT account_id, message_id, thread_id FROM imap_threads",
+            "SELECT account_id, old_id, new_id FROM imap_thread_aliases",
+        ] {
+            fresh
+                .execute(stmt, [])
+                .unwrap_or_else(|error| panic!("{stmt} should run: {error}"));
+        }
+        assert_eq!(
+            fresh.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
+            super::LATEST_VERSION
+        );
+
+        // An upgraded database that stopped at v57 converges to the same
+        // schema: drop the four tables, step user_version back, re-run, and
+        // confirm they appear and accept rows with the design-doc columns.
+        let mut upgraded = unmigrated_database_with_one_account();
+        super::migrate(&mut upgraded).unwrap();
+        upgraded
+            .execute_batch(
+                "DROP INDEX imap_change_journal_by_generation;
+                 DROP INDEX imap_threads_by_thread;
+                 DROP TABLE imap_sync_state;
+                 DROP TABLE imap_change_journal;
+                 DROP TABLE imap_threads;
+                 DROP TABLE imap_thread_aliases;
+                 PRAGMA user_version=57;",
+            )
+            .unwrap();
+        super::migrate(&mut upgraded).unwrap();
+        upgraded
+            .execute(
+                "INSERT INTO imap_sync_state(account_id, generation) VALUES ('you@gmail.com', 7)",
+                [],
+            )
+            .unwrap();
+        upgraded
+            .execute(
+                "INSERT INTO imap_change_journal(account_id, generation, thread_id)
+                 VALUES ('you@gmail.com', 7, 'imap:you@gmail.com:t:abc')",
+                [],
+            )
+            .unwrap();
+        upgraded
+            .execute(
+                "INSERT INTO imap_threads(account_id, message_id, thread_id)
+                 VALUES ('you@gmail.com', 'imap:you@gmail.com:m1', 'imap:you@gmail.com:t:abc')",
+                [],
+            )
+            .unwrap();
+        upgraded
+            .execute(
+                "INSERT INTO imap_thread_aliases(account_id, old_id, new_id)
+                 VALUES ('you@gmail.com', 'imap:you@gmail.com:t:old', 'imap:you@gmail.com:t:abc')",
+                [],
+            )
+            .unwrap();
+        let (generation, thread_id, alias): (i64, String, String) = upgraded
+            .query_row(
+                "SELECT s.generation, j.thread_id, a.new_id
+                 FROM imap_sync_state s, imap_change_journal j, imap_thread_aliases a
+                 WHERE s.account_id='you@gmail.com' AND j.account_id='you@gmail.com'
+                   AND a.account_id='you@gmail.com'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(generation, 7);
+        assert_eq!(thread_id, "imap:you@gmail.com:t:abc");
+        assert_eq!(alias, "imap:you@gmail.com:t:abc");
+
+        // Re-running once more over the already-created tables must not fail.
+        upgraded.pragma_update(None, "user_version", 57).unwrap();
         super::migrate(&mut upgraded).unwrap();
         assert_eq!(
             upgraded.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),

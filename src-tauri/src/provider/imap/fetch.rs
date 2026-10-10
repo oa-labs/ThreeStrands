@@ -118,6 +118,26 @@ pub fn parse_email_id(fetch_line: &[u8]) -> Option<String> {
     }
 }
 
+/// Fetch just the flags for a UID set with [`FLAGS_ITEMS`] — no body, no
+/// headers, no size. Returns `(uid, wire flags)` per responded UID. The
+/// per-poll flag sweep uses this so it never re-fetches headers for a whole
+/// window of messages.
+pub async fn fetch_flags_only(
+    session: &mut dyn ImapSession,
+    uid_set: &str,
+) -> Result<Vec<(u32, Vec<String>)>, ProviderError> {
+    let fetches = session.uid_fetch(uid_set, FLAGS_ITEMS).await?;
+    let mut rows = Vec::with_capacity(fetches.len());
+    for fetch in &fetches {
+        let Some(uid) = fetch.uid else {
+            continue;
+        };
+        let flags = fetch.flags().map(|flag| flag_to_wire(&flag)).collect();
+        rows.push((uid, flags));
+    }
+    Ok(rows)
+}
+
 /// Collect identity rows for a UID set via the cheap identity pass. EMAILID is
 /// not read here (async-imap's `Fetch` cannot surface it); the id resolves via
 /// the mandatory hash route from the four headers plus RFC822.SIZE.
@@ -149,7 +169,7 @@ pub async fn fetch_identity(
 /// so this trait is also what lets `ensure_body` be unit-tested with a counting
 /// fake that returns bytes directly — proving "fetched once" without a server.
 #[async_trait::async_trait]
-pub trait BodyFetcher {
+pub trait BodyFetcher: Send {
     /// Return the raw RFC 5322 bytes for `uid`, or `None` if the server gave
     /// no body. Must use a bounded `BODY.PEEK[]` request so it never sets
     /// `\Seen` or requests an unbounded literal when RFC822.SIZE is missing.
@@ -356,6 +376,116 @@ fn db_to_provider(error: crate::db::DatabaseError) -> ProviderError {
     ProviderError::Other(error.to_string())
 }
 
+/// A FLAGS-only fetch item: no body, no header fields, no RFC822.SIZE. Used by
+/// the per-poll flag sweep, which only needs each UID's current flags and must
+/// not re-fetch headers for up to a full window of messages every poll
+/// ([`IDENTITY_ITEMS`] stays the new-mail identity pass). `UID` is implicit in
+/// a `UID FETCH` response but asked for so the response always carries it.
+pub const FLAGS_ITEMS: &str = "(UID FLAGS)";
+
+/// The outcome of resolving a message's id and caching its body WITHOUT
+/// writing its location row — the location is deferred to the atomic round
+/// commit so a mid-round failure writes nothing durable.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedBody {
+    /// The stable message id (sticky if already recorded, else derived).
+    pub message_id: String,
+    /// True when the body was skipped because it is oversize/understated: the
+    /// message is still recorded (location + thread) but has no cached body,
+    /// and the reason is logged. False when the body is cached (or was already).
+    pub body_skipped: bool,
+}
+
+/// Like [`ensure_body`], but it does NOT write the `imap_locations` row — it
+/// resolves the sticky-or-derived id and caches the body, and leaves the
+/// location write to the caller's atomic round commit. It also NEVER returns a
+/// policy rejection for an oversize message: such a message is recorded with
+/// `body_skipped = true` and a logged reason so one bad message cannot wedge a
+/// round (SLICE5A_FIXES item 2). Only a transport/auth error from the body
+/// fetch propagates.
+///
+/// `ensure_body`'s Slice-4 contract is untouched; this is the restructured
+/// variant the live sync routine uses.
+pub async fn resolve_and_cache_body(
+    body_fetcher: &mut dyn BodyFetcher,
+    store: &ImapStateStore,
+    cache: &BodyCache,
+    mailbox: &str,
+    uidvalidity: i64,
+    row: &IdentityRow,
+    fetched_at: i64,
+) -> Result<ResolvedBody, ProviderError> {
+    let uid = row.uid as i64;
+
+    // Sticky id: an existing location for this exact coordinate wins.
+    let existing = store
+        .location_message_id(mailbox, uidvalidity, uid)
+        .map_err(db_to_provider)?;
+    let message_id = match existing {
+        Some(id) => id,
+        None => derive_message_id(store.account_id(), &row.inputs),
+    };
+
+    // Body once: a cached id (reached from any mailbox) is never refetched.
+    if cache.contains(&message_id).map_err(db_to_provider)? {
+        return Ok(ResolvedBody {
+            message_id,
+            body_skipped: false,
+        });
+    }
+
+    // Advertised oversize: skip the body, record the message anyway.
+    if policy::check_raw_message_bytes(row.inputs.rfc822_size as usize).is_err() {
+        log::warn!(
+            "imap sync: skipping body for {message_id} (advertised {} bytes over cache limit)",
+            row.inputs.rfc822_size
+        );
+        return Ok(ResolvedBody {
+            message_id,
+            body_skipped: true,
+        });
+    }
+
+    match body_fetcher.fetch_raw_body(row.uid).await {
+        Ok(Some(raw)) => {
+            // A body larger than the limit despite an honest advertised size
+            // (understated/absent): skip it, do not fail the round.
+            if policy::check_raw_message_bytes(raw.len()).is_err() {
+                log::warn!(
+                    "imap sync: skipping body for {message_id} ({} bytes over cache limit)",
+                    raw.len()
+                );
+                return Ok(ResolvedBody {
+                    message_id,
+                    body_skipped: true,
+                });
+            }
+            cache
+                .put(&message_id, &raw, fetched_at)
+                .map_err(db_to_provider)?;
+            Ok(ResolvedBody {
+                message_id,
+                body_skipped: false,
+            })
+        }
+        Ok(None) => {
+            // The server listed this UID in UID SEARCH ALL but returned no
+            // body. That is anomalous — most often a connection dropped
+            // mid-fetch (async-imap ends the fetch stream on EOF without an
+            // error). Treat it as TRANSIENT so the round rolls back and
+            // retries, rather than silently recording a permanently body-less
+            // message. A genuine oversize was already handled above, before
+            // the fetch, so it never reaches here.
+            Err(ProviderError::TransientTransport(format!(
+                "no body returned for {message_id}; treating as a dropped fetch"
+            )))
+        }
+        // Only a transport/auth failure aborts the round; a policy rejection
+        // was already handled above, so anything here is genuine transport.
+        Err(error) => Err(error),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -373,6 +503,15 @@ mod tests {
                 "{items} must never contain a non-peek BODY["
             );
         }
+    }
+
+    #[test]
+    fn the_flags_only_item_fetches_no_body_at_all() {
+        // SLICE5A_FIXES item 3: the per-poll flag sweep must not re-fetch
+        // bodies or headers — FLAGS_ITEMS carries no BODY whatsoever.
+        assert_eq!(FLAGS_ITEMS, "(UID FLAGS)");
+        assert!(!FLAGS_ITEMS.contains("BODY"), "the flag sweep item has no BODY");
+        assert!(!FLAGS_ITEMS.contains("RFC822"), "and no RFC822.SIZE / headers");
     }
 
     #[test]
@@ -600,6 +739,106 @@ mod tests {
             assert_eq!(cache.total_size().unwrap(), 0);
         }
         assert_eq!(fetcher.fetches, 2);
+    }
+
+    #[tokio::test]
+    async fn resolve_and_cache_body_skips_an_oversize_message_without_erroring() {
+        // SLICE5A_FIXES item 2 core: resolve_and_cache_body never returns a
+        // policy rejection — an oversize message is reported body_skipped so a
+        // single bad message cannot abort/wedge a round. It also writes NO
+        // location (deferred to the atomic round commit).
+        let store = store();
+        let cache = BodyCache::new(store.clone());
+
+        // Advertised oversize: no body fetched, skipped, no location written.
+        let mut fetcher = CountingBodyFetcher {
+            body: b"small".to_vec(),
+            fetches: 0,
+        };
+        let mut big = row(7, "<huge@x>");
+        big.inputs.rfc822_size = (policy::MAX_RAW_MESSAGE_BYTES + 1) as u32;
+        let resolved = resolve_and_cache_body(&mut fetcher, &store, &cache, "INBOX", 1, &big, 1)
+            .await
+            .unwrap();
+        assert!(resolved.body_skipped, "advertised-oversize is skipped");
+        assert_eq!(fetcher.fetches, 0, "no body request for an advertised-oversize message");
+        assert!(!cache.contains(&resolved.message_id).unwrap(), "body not cached");
+        assert!(
+            store
+                .location_message_id("INBOX", 1, 7)
+                .unwrap()
+                .is_none(),
+            "no location written — that is deferred to the atomic round commit"
+        );
+
+        // Understated size: the body IS fetched, found oversize, and skipped —
+        // still no error, still no cached body.
+        let mut understated = CountingBodyFetcher {
+            body: vec![b'a'; policy::MAX_RAW_FETCH_BYTES],
+            fetches: 0,
+        };
+        let mut sneaky = row(8, "<sneaky@x>");
+        sneaky.inputs.rfc822_size = 10; // lies
+        let resolved = resolve_and_cache_body(
+            &mut understated,
+            &store,
+            &cache,
+            "INBOX",
+            1,
+            &sneaky,
+            1,
+        )
+        .await
+        .unwrap();
+        assert!(resolved.body_skipped, "understated oversize is skipped");
+        assert_eq!(understated.fetches, 1, "the body was fetched then rejected");
+        assert!(!cache.contains(&resolved.message_id).unwrap());
+    }
+
+    #[tokio::test]
+    async fn an_empty_body_for_a_known_uid_is_treated_as_a_dropped_fetch() {
+        // async-imap ends a fetch stream on a graceful mid-round connection
+        // close WITHOUT an error, so an empty body for a UID the server listed
+        // must be treated as TRANSIENT (the round rolls back and retries),
+        // never a silent permanent body-skip. A genuine oversize is handled
+        // BEFORE the fetch, so it never reaches this arm.
+        struct EmptyFetcher;
+        #[async_trait]
+        impl BodyFetcher for EmptyFetcher {
+            async fn fetch_raw_body(&mut self, _uid: u32) -> Result<Option<Vec<u8>>, ProviderError> {
+                Ok(None)
+            }
+        }
+        let store = store();
+        let cache = BodyCache::new(store.clone());
+        let mut fetcher = EmptyFetcher;
+        let row = row(5, "<x@x>");
+        let result =
+            resolve_and_cache_body(&mut fetcher, &store, &cache, "INBOX", 1, &row, 1).await;
+        assert!(
+            matches!(result, Err(ProviderError::TransientTransport(_))),
+            "an empty body for a known UID is a dropped fetch, not a skip: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_and_cache_body_propagates_a_transport_error() {
+        // A transport/auth failure from the body fetch DOES abort (so the
+        // round rolls back): only policy rejections are swallowed as skips.
+        struct FailingFetcher;
+        #[async_trait]
+        impl BodyFetcher for FailingFetcher {
+            async fn fetch_raw_body(&mut self, _uid: u32) -> Result<Option<Vec<u8>>, ProviderError> {
+                Err(ProviderError::TransientTransport("dropped".into()))
+            }
+        }
+        let store = store();
+        let cache = BodyCache::new(store.clone());
+        let mut fetcher = FailingFetcher;
+        let row = row(9, "<x@x>");
+        let result =
+            resolve_and_cache_body(&mut fetcher, &store, &cache, "INBOX", 1, &row, 1).await;
+        assert!(matches!(result, Err(ProviderError::TransientTransport(_))));
     }
 
     #[tokio::test]

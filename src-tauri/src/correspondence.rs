@@ -867,7 +867,7 @@ impl Correspondence {
         let auth = self.auth_for(account).await.ok_or_else(|| {
             format!("{account} is not connected. Reconnect it before continuing.")
         })?;
-        Ok(auth.provider())
+        auth.provider(&self.database).map_err(error)
     }
     /// The account the compose identity bootstrap runs against. Not the only
     /// account drafts can send from — see `auth_for`.
@@ -885,7 +885,8 @@ impl Correspondence {
             .await
             .ok_or("No mail account is configured")?;
         let identity = auth
-            .provider()
+            .provider(&self.database)
+            .map_err(error)?
             .sender_identity()
             .await
             .map_err(error)?;

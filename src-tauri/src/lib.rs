@@ -306,7 +306,7 @@ mod account_startup_tests {
     }
 
     #[test]
-    fn tested_imap_setup_saves_independent_pins_without_starting_sync() {
+    fn tested_imap_setup_saves_independent_pins_and_now_registers_the_account() {
         let database = Database::open_memory();
         let request = imap_setup_request();
         let incoming = super::imap::Sha256Fingerprint::from_bytes([1; 32]);
@@ -327,7 +327,15 @@ mod account_startup_tests {
             saved.pinned_fingerprints["outgoing.example.com:587"],
             outgoing.to_hex()
         );
-        assert!(startup_account_credentials(&database, &AuthConfig::google_for_test()).is_empty());
+        // Phase 2 Slice 5a INTENTIONALLY changes the previous contract: a
+        // set-up IMAP account now ENTERS the startup registry (it has a real
+        // provider and syncs), rather than being skipped. Its password is in
+        // the keychain from "test and save", so it starts ready to sync.
+        let credentials =
+            startup_account_credentials(&database, &AuthConfig::google_for_test());
+        let keys: Vec<_> = credentials.iter().map(|(key, _)| key.as_str()).collect();
+        assert_eq!(keys, ["imap@example.com"]);
+        assert_eq!(credentials[0].1.mail_provider(), MailProviderKind::Imap);
 
         // A CA-trusted SMTP endpoint has no pin even when IMAP needs one.
         super::save_tested_imap_settings(&database, &request, Some(incoming), None).unwrap();
@@ -449,13 +457,23 @@ mod account_startup_tests {
         assert!(startup_account_credentials(&database, &AuthConfig::default()).is_empty());
     }
 
+    // Phase 2 Slice 5a INTENTIONALLY changes the previous contract that IMAP
+    // accounts are skipped at startup: they now have a real `MailProvider`, so
+    // a catalogued IMAP account enters the runtime registry and syncs. (The
+    // provider itself is built lazily at sync time from saved settings + the
+    // keychain password; an account missing those reports needs-reauth there,
+    // not here, so it still cannot block startup.) Unlike Gmail, an IMAP
+    // account needs no configured Google OAuth app to start.
     #[test]
-    fn an_unimplemented_provider_stays_in_the_catalog_without_starting() {
+    fn an_imap_account_now_enters_the_startup_registry() {
         let database = Database::open_memory();
         database.adopt_mail_account("imap@example.com", MailProviderKind::Imap).unwrap();
 
         for config in [AuthConfig::default(), AuthConfig::google_for_test()] {
-            assert!(startup_account_credentials(&database, &config).is_empty());
+            let credentials = startup_account_credentials(&database, &config);
+            let keys = credentials.iter().map(|(key, _)| key.as_str()).collect::<Vec<_>>();
+            assert_eq!(keys, ["imap@example.com"], "IMAP accounts now start");
+            assert_eq!(credentials[0].1.mail_provider(), MailProviderKind::Imap);
         }
         assert_eq!(database.list_accounts().unwrap().len(), 1);
         assert_eq!(
@@ -464,17 +482,30 @@ mod account_startup_tests {
         );
     }
 
+    // The companion to the above: an IMAP PRIMARY account no longer keeps
+    // Gmail accounts out of the registry — but now, under the new contract,
+    // the IMAP account starts alongside Gmail rather than being skipped.
     #[test]
-    fn an_unimplemented_primary_provider_does_not_block_gmail_startup() {
+    fn an_imap_primary_provider_starts_alongside_gmail() {
         let database = Database::open_memory();
         database.adopt_mail_account("imap@example.com", MailProviderKind::Imap).unwrap();
         database.adopt_mail_account("work@example.com", MailProviderKind::Gmail).unwrap();
 
         assert_eq!(database.primary_account_id(), "imap@example.com");
         let credentials = startup_account_credentials(&database, &AuthConfig::google_for_test());
-        let keys = credentials.iter().map(|(key, _)| key.as_str()).collect::<Vec<_>>();
-        assert_eq!(keys, ["work@example.com"]);
-        assert_eq!(credentials[0].1.mail_provider(), MailProviderKind::Gmail);
+        let mut started: Vec<(&str, MailProviderKind)> = credentials
+            .iter()
+            .map(|(key, auth)| (key.as_str(), auth.mail_provider()))
+            .collect();
+        started.sort_by(|a, b| a.0.cmp(b.0));
+        assert_eq!(
+            started,
+            [
+                ("imap@example.com", MailProviderKind::Imap),
+                ("work@example.com", MailProviderKind::Gmail),
+            ],
+            "both the IMAP primary and the Gmail account start"
+        );
         assert_eq!(database.list_accounts().unwrap().len(), 2);
     }
 
@@ -3424,7 +3455,8 @@ async fn list_labels(
 ) -> Result<Vec<Label>, String> {
     let auth = resolve_account(&state, account_id.as_deref(), |account| account.auth.clone()).await?;
 
-    auth.provider()
+    auth.provider(&state.database)
+        .map_err(|error| error.to_string())?
         .list_labels()
         .await
         .map_err(|error| error.to_string())
@@ -4605,14 +4637,13 @@ fn startup_account_credentials(
             // Keep this match exhaustive so each new kind needs a decision.
             match provider {
                 MailProviderKind::Gmail => {}
-                MailProviderKind::Imap => {
-                    log::warn!(
-                        "skipping {}: mail provider {} is not implemented yet",
-                        account.email,
-                        provider.as_str()
-                    );
-                    return None;
-                }
+                // Phase 2 Slice 5a: IMAP accounts now have a real provider, so
+                // they enter the runtime registry and sync their INBOX like
+                // Gmail. An account with no saved settings or password is
+                // caught when its provider is built (it reports needs-reauth),
+                // not here — so a half-set-up account still does not block
+                // others.
+                MailProviderKind::Imap => {}
             }
             let auth = log_failure(
                 "starting a catalogued account",

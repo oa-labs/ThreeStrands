@@ -958,8 +958,16 @@ mod tests {
         candidate.validate().unwrap();
     }
 
+    // Phase 2 Slice 5a INTENTIONALLY changes the previous contract that an
+    // imported IMAP account stays out of the runtime registry: IMAP now has a
+    // real `MailProvider`, so a catalogued IMAP account enters the registry
+    // and syncs. An account imported without its password is still marked
+    // `needs_reauth` (the password lives only in the keychain and never
+    // travels in a transfer export), and the sync engine's `needs_reauth`
+    // guard keeps it from syncing until the user re-enters the password — so
+    // entering the registry is safe. This test now pins THAT contract.
     #[test]
-    fn an_imported_imap_account_stays_out_of_the_runtime_registry_after_restart() {
+    fn an_imported_imap_account_enters_the_registry_but_stays_needs_reauth() {
         let path = crate::db::test_support::TempDbPath::new();
         let mut candidate = payload();
         candidate.accounts[0].provider = "imap".to_string();
@@ -972,11 +980,22 @@ mod tests {
         let database = Database::open(&path.path).unwrap();
         let account = database.get_account("person@example.com").unwrap().unwrap();
         assert_eq!(account.provider, "imap");
+        // The password did not travel in the export, so the account must be
+        // flagged for reauthentication.
         assert_eq!(account.status, "needs_reauth");
-        assert!(crate::startup_account_credentials(
+        // The new contract: the IMAP account now DOES enter the startup
+        // registry (it is no longer skipped), so it can sync once the password
+        // is restored. The engine's needs_reauth guard keeps it idle until then.
+        let credentials = crate::startup_account_credentials(
             &database,
             &crate::auth::AuthConfig::google_for_test(),
-        ).is_empty());
+        );
+        let keys: Vec<_> = credentials.iter().map(|(key, _)| key.as_str()).collect();
+        assert_eq!(keys, ["person@example.com"]);
+        assert_eq!(
+            credentials[0].1.mail_provider(),
+            crate::models::MailProviderKind::Imap
+        );
     }
 
     #[test]

@@ -390,6 +390,56 @@ pub fn attachment_bytes_from_raw(
     transfer_decoded_bytes(owner, part).map(Some)
 }
 
+/// The reference headers Slice 5a threading needs, pulled from a message's raw
+/// bytes: `Message-ID`, `In-Reply-To`, and `References`.
+///
+/// `docs/imap-design.md` ("Threading") groups by these three headers. The
+/// cheap identity pass only fetches `Message-ID`/`Date`/`From`/`Subject`, so
+/// the sync routine reads `In-Reply-To`/`References` from the cached body here
+/// rather than widening the Slice 4 identity-fetch constant. Pure and
+/// panic-free: hostile bytes yield `None` fields, never an error — threading a
+/// message with no references just makes it a singleton.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ThreadingHeaders {
+    pub message_id: Option<String>,
+    pub in_reply_to: Option<String>,
+    pub references: Option<String>,
+}
+
+/// Extract [`ThreadingHeaders`] from raw RFC 5322 bytes. Reads only the
+/// top-level headers; never parses the body or recurses, so it is cheap even
+/// for a large message. A message that cannot be parsed yields empty headers.
+pub fn threading_headers_from_raw(raw: &[u8]) -> ThreadingHeaders {
+    let Some(message) = MessageParser::default().parse(raw) else {
+        return ThreadingHeaders::default();
+    };
+    // `References`/`In-Reply-To` can be a single id or a list; join a list
+    // back into the space-separated form the threader splits on.
+    let join_ids = |value: &HeaderValue<'_>| -> Option<String> {
+        if let Some(list) = value.as_text_list() {
+            let joined = list.join(" ");
+            if joined.trim().is_empty() {
+                None
+            } else {
+                Some(joined)
+            }
+        } else {
+            value
+                .as_text()
+                .map(|text| text.trim().to_string())
+                .filter(|text| !text.is_empty())
+        }
+    };
+    ThreadingHeaders {
+        message_id: message
+            .message_id()
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty()),
+        in_reply_to: join_ids(message.in_reply_to()),
+        references: join_ids(message.references()),
+    }
+}
+
 /// Resolve an IMAP section path to the flat part index within `message`,
 /// descending into `message/rfc822` sub-messages. The 1-based child numbers
 /// map onto the ordered children of each multipart.

@@ -274,7 +274,7 @@ impl SyncService {
 
     async fn sync_provider_reporting_changes_locked(&self) -> ProviderResult<(SyncStatus, bool)> {
         let account_id = self.account_id();
-        let provider = self.auth.provider();
+        let provider = self.auth.provider(&self.database)?;
         let _activity = self.activity.begin(&account_id);
         let result = sync_with(self.database.as_ref(), &account_id, provider.as_ref()).await;
         if let Ok(mut last_attempt) = self.last_attempt.lock() {
@@ -317,7 +317,7 @@ impl SyncService {
         }
         let flushed = self
             .exclusive(async {
-                let provider = self.auth.provider();
+                let provider = self.auth.provider(&self.database)?;
                 flush_pending_with(self.database.as_ref(), &account_id, provider.as_ref()).await
             })
             .await
@@ -339,7 +339,10 @@ impl SyncService {
         }
         self.exclusive(async {
             let account_id = self.account_id();
-            let provider = self.auth.provider();
+            let provider = self
+                .auth
+                .provider(&self.database)
+                .map_err(|error| error.to_string())?;
             // Local search still works without this; a provider that cannot
             // look past the local index simply has nothing to contribute, so
             // asking is a guaranteed round trip to an error.
@@ -363,7 +366,8 @@ impl SyncService {
     pub async fn create_label(&self, name: &str) -> Result<Label, String> {
         validate_label_name(name)?;
         self.auth
-            .provider()
+            .provider(&self.database)
+            .map_err(|error| error.to_string())?
             .create_label(name)
             .await
             .map_err(|error| error.to_string())
@@ -372,7 +376,8 @@ impl SyncService {
     pub async fn update_label(&self, id: &str, name: &str) -> Result<Label, String> {
         validate_label_name(name)?;
         self.auth
-            .provider()
+            .provider(&self.database)
+            .map_err(|error| error.to_string())?
             .update_label(id, name)
             .await
             .map_err(|error| error.to_string())
@@ -380,7 +385,8 @@ impl SyncService {
 
     pub async fn delete_label(&self, id: &str) -> Result<(), String> {
         self.auth
-            .provider()
+            .provider(&self.database)
+            .map_err(|error| error.to_string())?
             .delete_label(id)
             .await
             .map_err(|error| error.to_string())
@@ -450,7 +456,9 @@ impl SyncService {
             }
             let more = self
                 .exclusive(async {
-                    let provider = self.auth.provider();
+                    let Ok(provider) = self.auth.provider(&self.database) else {
+                        return false;
+                    };
                     if !provider.capabilities().server_search {
                         return false;
                     }
@@ -486,7 +494,9 @@ impl SyncService {
             return;
         }
         self.exclusive(async {
-            let provider = self.auth.provider();
+            let Ok(provider) = self.auth.provider(&self.database) else {
+                return;
+            };
             let _ = reconcile_and_mark(self.database.as_ref(), &account_id, provider.as_ref()).await;
         })
         .await;
@@ -1236,6 +1246,11 @@ mod tests {
         fail_mutation: bool,
         permanently_fail_mutation: bool,
         reauth_mutation: bool,
+        /// Return `InvalidOperation` from every mutation entry point — exactly
+        /// what the IMAP provider's phase-2 `MailMutate` stubs do. Used by the
+        /// mutation-queue regression test that pins the engine's handling of a
+        /// provider that cannot mutate.
+        invalid_operation_mutation: bool,
         thread_messages: Option<Vec<RawMessage>>,
     }
 
@@ -1250,6 +1265,7 @@ mod tests {
                 fail_mutation: false,
                 permanently_fail_mutation: false,
                 reauth_mutation: false,
+                invalid_operation_mutation: false,
                 thread_messages: None,
             }
         }
@@ -1350,6 +1366,10 @@ mod tests {
                 Err(ProviderError::PermanentClientRejection(
                     "invalid label".into(),
                 ))
+            } else if self.invalid_operation_mutation {
+                Err(ProviderError::InvalidOperation(
+                    "mutations not supported until phase 3".into(),
+                ))
             } else if self.reauth_mutation {
                 Err(ProviderError::ReauthenticationRequired(
                     "invalid_grant".into(),
@@ -1376,6 +1396,10 @@ mod tests {
             if self.permanently_fail_mutation {
                 Err(ProviderError::PermanentClientRejection(
                     "invalid label".into(),
+                ))
+            } else if self.invalid_operation_mutation {
+                Err(ProviderError::InvalidOperation(
+                    "mutations not supported until phase 3".into(),
                 ))
             } else if self.reauth_mutation {
                 Err(ProviderError::ReauthenticationRequired(
@@ -2069,6 +2093,60 @@ mod tests {
         assert_eq!(status.failed_mutations.len(), 1);
         assert_eq!(status.failed_mutations[0].kind, "archive");
         assert!(status.failed_mutations[0].error.contains("invalid label"));
+    }
+
+    // Regression pin for SLICE5A_BRIEF work item 5: a provider whose
+    // `MailMutate` returns `InvalidOperation` — exactly what the IMAP stubs do
+    // this phase — must make the queued local mutation roll back to a PERMANENT
+    // `failed` state, NOT retry forever and NOT wedge the queue. `InvalidOperation`
+    // is neither `retry_mutation()` nor `requires_reauthentication()`, so
+    // `deliver_mutations` rejects it with `next_attempt_at = None`, which
+    // `reject_mutation` records as `failed` (never re-claimed by
+    // `claim_mutations`, which only selects `pending`). This test fails loudly
+    // if that engine behaviour ever regresses into a retry loop.
+    #[tokio::test]
+    async fn an_invalid_operation_mutation_rolls_back_permanently_and_does_not_wedge() {
+        let database = Database::open_memory();
+        database
+            .mutate_thread(&ThreadMutation::Archive {
+                thread_id: "welcome".into(),
+                value: true,
+            })
+            .unwrap();
+        let provider = ContractProvider {
+            invalid_operation_mutation: true,
+            ..ContractProvider::normal()
+        };
+
+        // One delivery attempt: the mutation is tried once and rejected.
+        deliver_mutations(&database, "default", &provider)
+            .await
+            .unwrap();
+        assert_eq!(
+            provider.modifies.load(Ordering::SeqCst),
+            1,
+            "the mutation was attempted exactly once"
+        );
+
+        let status = database.sync_status("default").unwrap();
+        assert_eq!(status.pending_mutations, 0, "nothing is left pending/running");
+        assert_eq!(status.failed_mutations.len(), 1, "it failed permanently");
+        assert_eq!(status.failed_mutations[0].kind, "archive");
+
+        // A second delivery pass must NOT re-attempt it — a `failed` row is
+        // never re-claimed, so the queue is not wedged and does not retry.
+        deliver_mutations(&database, "default", &provider)
+            .await
+            .unwrap();
+        assert_eq!(
+            provider.modifies.load(Ordering::SeqCst),
+            1,
+            "a failed InvalidOperation mutation is never retried"
+        );
+        assert_eq!(
+            database.sync_status("default").unwrap().failed_mutations.len(),
+            1
+        );
     }
 
     #[tokio::test]
