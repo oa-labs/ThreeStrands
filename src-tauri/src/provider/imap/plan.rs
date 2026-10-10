@@ -13,12 +13,14 @@
 //! (reused, never duplicated). INBOX is matched case-insensitively by name
 //! (RFC 3501 reserves it; it carries no special-use role).
 //!
-//! ## What run 2 syncs
-//! INBOX, Trash and Junk are `synced_now`. **Sent is classified but NOT synced
-//! now** (`synced_now = false`) — it is run 3. Archive, user folders and
-//! label-folder children are classified `synced_now = false` (Slice 5b-2).
-//! `\All`, `\Flagged` (Proton "Starred" has `\Flagged` and NO role), `\Drafts`
-//! and the label container itself are `NotSynced`.
+//! ## What this run syncs
+//! INBOX, Sent, Trash and Junk are `synced_now`. Sent joins the synced set in
+//! run 3 (`synced_now = true` for the Sent role); its window is a non-evicting
+//! acquisition bound and the provider fills it in chunked background rounds
+//! after INBOX. Archive, user folders and label-folder children are classified
+//! `synced_now = false` (Slice 5b-2). `\All`, `\Flagged` (Proton "Starred" has
+//! `\Flagged` and NO role), `\Drafts` and the label container itself are
+//! `NotSynced`.
 //!
 //! Discovery never persists `\Noselect` containers (see `mailboxes.rs`), so a
 //! catalog row is always a selectable mailbox; the plan therefore does not need
@@ -77,7 +79,7 @@ impl PlanEntry {
 }
 
 /// The whole plan: the ordered mailbox entries. Order places INBOX first, then
-/// the other synced mailboxes (Trash, Junk this run), then the rest — so a
+/// the other synced mailboxes (Trash, Junk, then Sent), then the rest — so a
 /// caller can walk `synced_now` entries in a stable, INBOX-first order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SyncPlan {
@@ -215,9 +217,12 @@ pub fn build_plan(
             Some(MailboxRole::All) | Some(MailboxRole::Drafts) => {
                 (SyncWindowClass::NotSynced, LabelKind::None, false, false)
             }
-            // Sent: classified now, synced in run 3.
+            // Sent: synced THIS run (run 3), Sent class, SystemRole label.
+            // Its 5,000 is a non-evicting ACQUISITION bound (see
+            // SyncWindowClass::Sent / SyncLimits::sent), filled in chunked
+            // background rounds after INBOX; see provider.rs.
             Some(MailboxRole::Sent) => {
-                (SyncWindowClass::Sent, LabelKind::SystemRole, false, false)
+                (SyncWindowClass::Sent, LabelKind::SystemRole, true, true)
             }
             // Trash and Junk: synced THIS run, Folder class.
             Some(MailboxRole::Trash) | Some(MailboxRole::Junk) => {
@@ -245,8 +250,10 @@ pub fn build_plan(
         }
     }
 
-    // Stable order within the synced-non-INBOX bucket: Trash before Junk,
-    // then by name, so the per-poll walk is deterministic.
+    // Stable order within the synced-non-INBOX bucket: Trash, then Junk, then
+    // Sent, then by name, so the per-poll walk is deterministic. Sent sorts
+    // after Trash/Junk so its (potentially long, chunked) backfill never
+    // starves the cheap Trash/Junk rounds within one poll's folder budget.
     synced.sort_by(|a, b| {
         role_order(a.role)
             .cmp(&role_order(b.role))
@@ -260,12 +267,15 @@ pub fn build_plan(
     SyncPlan { entries }
 }
 
-/// A stable ordering key for the synced-mailbox walk: Trash before Junk.
+/// A stable ordering key for the synced-mailbox walk: Trash, Junk, then Sent.
+/// Sent is last so its chunked backfill cannot starve the cheap Trash/Junk
+/// rounds inside one poll's folder budget.
 fn role_order(role: Option<MailboxRole>) -> u8 {
     match role {
         Some(MailboxRole::Trash) => 0,
         Some(MailboxRole::Junk) => 1,
-        _ => 2,
+        Some(MailboxRole::Sent) => 2,
+        _ => 3,
     }
 }
 
@@ -342,11 +352,12 @@ mod tests {
             assert_eq!(e.label_kind, LabelKind::SystemRole);
         }
 
-        // Sent: classified, Sent class, NOT synced this run (run 3).
+        // Sent: classified, Sent class, synced THIS run (run 3).
         let sent = find("Sent");
         assert_eq!(sent.role, Some(MailboxRole::Sent));
         assert_eq!(sent.window_class, SyncWindowClass::Sent);
-        assert!(!sent.synced_now, "Sent is run 3, not synced now");
+        assert!(sent.synced_now, "Sent is synced in run 3");
+        assert_eq!(sent.label_kind, LabelKind::SystemRole);
 
         // Archive: classified, Folder class, NOT synced (5b-2).
         let archive = find("Archive");
@@ -382,9 +393,10 @@ mod tests {
         assert_eq!(acme.label_kind, LabelKind::UserFolder);
         assert!(!acme.synced_now);
 
-        // Exactly INBOX, Trash, Spam are synced, INBOX first.
+        // Exactly INBOX, Trash, Spam, Sent are synced, INBOX first and Sent
+        // last (its chunked backfill must not starve the cheap folder rounds).
         let synced: Vec<&str> = plan.synced().map(|e| e.mailbox.as_str()).collect();
-        assert_eq!(synced, vec!["INBOX", "Trash", "Spam"]);
+        assert_eq!(synced, vec!["INBOX", "Trash", "Spam", "Sent"]);
     }
 
     #[test]

@@ -256,6 +256,41 @@ impl ImapStateStore {
         })
     }
 
+    /// CATALOG-ONLY upsert: insert or update ONLY a mailbox's catalog
+    /// attributes — NAME, DELIMITER, SPECIAL_USE — never its counter or
+    /// write-capability columns (`uidvalidity`, `uidnext`, `highestmodseq`,
+    /// `permanent_flags_json`, `permanent_keywords`).
+    ///
+    /// This is the round-time catalog refresh (Slice 5b-1 run 3, item 3): a
+    /// periodic `LIST` notices a mailbox created after account setup (a new
+    /// Sent/Trash/Junk) and records it so the plan can pick it up. A NEW row is
+    /// born with ZERO counters, exactly as discovery's first pass leaves a
+    /// freshly-listed mailbox (the sync round then fills them from EXAMINE);
+    /// an EXISTING row keeps every counter and capability it already learned,
+    /// because `upsert_mailbox` would overwrite them and `ImapMailbox` cannot
+    /// carry "leave unchanged". `\Noselect` entries must never be passed here
+    /// (the caller filters them); this method does not re-check.
+    pub fn upsert_mailbox_catalog(
+        &self,
+        name: &str,
+        delimiter: Option<&str>,
+        special_use: Option<&str>,
+    ) -> DbResult<()> {
+        self.database.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO imap_mailboxes
+                    (account_id, name, delimiter, special_use, uidvalidity, uidnext,
+                     highestmodseq, permanent_flags_json, permanent_keywords)
+                 VALUES (?1, ?2, ?3, ?4, 0, 0, NULL, NULL, NULL)
+                 ON CONFLICT(account_id, name) DO UPDATE SET
+                     delimiter = excluded.delimiter,
+                     special_use = excluded.special_use",
+                rusqlite::params![self.account_id, name, delimiter, special_use],
+            )?;
+            Ok(())
+        })
+    }
+
     /// This account's mailboxes, ordered by name for a stable listing.
     pub fn mailboxes(&self) -> DbResult<Vec<ImapMailbox>> {
         self.database.with_connection(|connection| {
@@ -749,7 +784,7 @@ impl ImapStateStore {
 
     /// The stored `(last_exists, last_uidnext, last_sweep_at)` cadence counters
     /// for one mailbox, or `None` if it was never synced. `backfill_low_uid` is
-    /// reserved for run 3 and not surfaced here.
+    /// read separately via [`Self::sent_backfill_low_uid`].
     pub fn mailbox_sync_state(&self, mailbox: &str) -> DbResult<Option<(i64, i64, i64)>> {
         self.database.with_connection(|connection| {
             Ok(connection
@@ -761,6 +796,69 @@ impl ImapStateStore {
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
                 .ok())
+        })
+    }
+
+    /// The reserved `imap_mailbox_sync_state` pseudo-mailbox key that carries
+    /// the ACCOUNT-level periodic catalog-refresh clock (item 3). It uses a
+    /// control character no real IMAP mailbox name contains, so it never
+    /// collides with a mailbox and — because the sync plan is built from
+    /// `imap_mailboxes`, not this table — never appears in the plan.
+    const CATALOG_SWEEP_KEY: &str = "\u{0}catalog-sweep";
+
+    /// Whether the account is due for a periodic catalog refresh (`LIST` +
+    /// catalog-only upsert), given `now` (unix seconds). Never refreshed before
+    /// (no sentinel row) is always due — this is the "at baseline" case. The
+    /// cadence reuses [`policy::folder_sweep_due`] /
+    /// [`policy::FOLDER_SWEEP_INTERVAL_SECS`].
+    pub fn catalog_refresh_due(&self, now: i64) -> DbResult<bool> {
+        let last = self
+            .mailbox_sync_state(Self::CATALOG_SWEEP_KEY)?
+            .map(|(_, _, last_sweep_at)| last_sweep_at);
+        Ok(match last {
+            Some(last_sweep_at) => policy::folder_sweep_due(last_sweep_at, now),
+            None => true,
+        })
+    }
+
+    /// Record that a catalog refresh ran at `now`, so the next one is not due
+    /// until the sweep interval elapses. Stored on the reserved sentinel row.
+    pub fn record_catalog_refresh(&self, now: i64) -> DbResult<()> {
+        self.database.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO imap_mailbox_sync_state
+                    (account_id, mailbox, last_exists, last_uidnext, last_sweep_at)
+                 VALUES (?1, ?2, 0, 0, ?3)
+                 ON CONFLICT(account_id, mailbox) DO UPDATE SET
+                     last_sweep_at = excluded.last_sweep_at",
+                rusqlite::params![self.account_id, Self::CATALOG_SWEEP_KEY, now],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// The Sent backfill watermark for one mailbox: the lowest UID acquired so
+    /// far WHILE the backfill is incomplete, or `None` once the whole Sent
+    /// window is acquired (and `None` too when the mailbox has no sync-state
+    /// row yet). It is the pending marker [`policy::sent_backfill_incomplete`]
+    /// reads: a non-NULL value means cadence gating must NOT skip the mailbox,
+    /// because EXISTS/UIDNEXT being unchanged does not mean there is nothing
+    /// left to ACQUIRE. Returns `Ok(Some(None))` to mean "row exists, marker
+    /// NULL" vs `Ok(None)` for "no row": the outer Option is row presence, the
+    /// inner is the nullable column — flattened by the caller to "is there
+    /// pending work", so the two collapse to the same answer (not pending).
+    pub fn sent_backfill_low_uid(&self, mailbox: &str) -> DbResult<Option<i64>> {
+        self.database.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT backfill_low_uid
+                     FROM imap_mailbox_sync_state
+                     WHERE account_id = ?1 AND mailbox = ?2",
+                    rusqlite::params![self.account_id, mailbox],
+                    |row| row.get::<_, Option<i64>>(0),
+                )
+                .ok()
+                .flatten())
         })
     }
 
@@ -848,6 +946,7 @@ impl ImapStateStore {
                             last_sweep_at
                         ],
                     )?;
+                    Self::apply_sent_backfill_low_uid(transaction, &self.account_id, mailbox, round)?;
                 }
                 return Ok(current as u64);
             }
@@ -1001,9 +1100,32 @@ impl ImapStateStore {
                         last_sweep_at
                     ],
                 )?;
+                Self::apply_sent_backfill_low_uid(transaction, &self.account_id, mailbox, round)?;
             }
             Ok(next as u64)
         })
+    }
+
+    /// Apply a round's optional Sent backfill watermark to the mailbox's
+    /// `imap_mailbox_sync_state` row (already upserted by the caller). A `None`
+    /// request leaves the column untouched; `Some(value)` sets it (NULL marks
+    /// the backfill complete, a UID marks it in progress at that low-water
+    /// mark). Runs inside the round's transaction, so the watermark commits
+    /// atomically with the chunk's locations.
+    fn apply_sent_backfill_low_uid(
+        connection: &rusqlite::Connection,
+        account_id: &str,
+        mailbox: &str,
+        round: &SyncRoundWrite,
+    ) -> rusqlite::Result<()> {
+        if let Some(value) = round.sent_backfill_low_uid {
+            connection.execute(
+                "UPDATE imap_mailbox_sync_state SET backfill_low_uid = ?3
+                 WHERE account_id = ?1 AND mailbox = ?2",
+                rusqlite::params![account_id, mailbox, value],
+            )?;
+        }
+        Ok(())
     }
 
     pub fn thread_aliases(&self) -> DbResult<Vec<(String, String)>> {
@@ -1105,6 +1227,18 @@ pub struct SyncRoundWrite {
     /// an otherwise-empty round (an unchanged folder still records that it was
     /// examined / swept), WITHOUT bumping the generation.
     pub mailbox_state: Option<(String, i64, i64, i64)>,
+    /// Optional Sent backfill watermark write, applied to the SAME
+    /// `imap_mailbox_sync_state` row as `mailbox_state` and in the SAME
+    /// transaction as this round's acquired chunk (so progress is exactly as
+    /// crash-safe as the locations it accompanies). The outer `Option` is
+    /// "touch the column?"; the inner is the nullable value:
+    /// `None` → leave `backfill_low_uid` unchanged;
+    /// `Some(Some(uid))` → set it to `uid` (backfill still in progress, this
+    /// is the lowest UID acquired so far); `Some(None)` → set it NULL (the
+    /// whole Sent window is acquired, backfill complete). Requires
+    /// `mailbox_state` to be set for the same mailbox (the watermark lives on
+    /// that row); ignored otherwise.
+    pub sent_backfill_low_uid: Option<Option<i64>>,
 }
 
 impl SyncRoundWrite {

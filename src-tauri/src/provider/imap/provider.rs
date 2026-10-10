@@ -173,6 +173,16 @@ pub struct ImapProvider {
     now: fn() -> i64,
     /// The sync window/batch limits for a round. Overridable in tests.
     limits: SyncLimits,
+    /// TEST KNOB: override the Sent per-poll acquisition budget
+    /// ([`policy::SENT_ROUND_MESSAGES`]) with a tiny value so the chunking
+    /// boundary is exercised without a 100-message fixture. `None` in
+    /// production uses the policy constant.
+    sent_round_budget: Option<usize>,
+    /// TEST KNOB: override the window ceiling for every NON-INBOX synced
+    /// mailbox (Folder and Sent classes), keeping each class's eviction
+    /// semantics, so a window boundary is testable without thousands of
+    /// messages. `None` in production uses each class's policy limit.
+    folder_window_override: Option<usize>,
     /// How many times a round rebuilt the threader's prior state from the
     /// store. That rebuild reads every cached body, so a round with no new
     /// mail must not do it; tests assert on this.
@@ -192,6 +202,21 @@ pub struct ImapProviderConfig {
     /// The account's non-secret IMAP settings, so the provider can build the
     /// sync plan (role resolution) without a database round trip.
     pub settings: ImapAccountSettings,
+}
+
+/// The generations a full refresh walk reached.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Refreshed {
+    /// The generation right after the INBOX round, before any folder round.
+    /// The engine's full sync takes THIS as its baseline cursor: it lists
+    /// INBOX threads itself, then runs one incremental pass from the cursor,
+    /// so every hot thread a folder round (Sent, say) journals during the same
+    /// walk is delivered by that pass. A baseline taken after the folder rounds
+    /// would skip those journal rows, and a Sent-only thread, which is not in
+    /// `list_inbox`, would never reach the engine.
+    pub after_inbox: u64,
+    /// The generation after the last round that committed.
+    pub last: u64,
 }
 
 fn unix_now() -> i64 {
@@ -228,6 +253,8 @@ impl ImapProvider {
             source,
             now: unix_now,
             limits: SyncLimits::inbox(),
+            sent_round_budget: None,
+            folder_window_override: None,
             thread_state_loads: std::sync::atomic::AtomicUsize::new(0),
         }
     }
@@ -239,11 +266,11 @@ impl ImapProvider {
 
     /// Refresh every synced mailbox against the server and return the new
     /// generation. INBOX is swept first and every poll; the other synced
-    /// mailboxes (Trash, Junk this run) follow in plan order with cheap
+    /// mailboxes (Trash, Junk, then Sent) follow in plan order with cheap
     /// cadence gating. Each mailbox round is its OWN atomic commit, so a
     /// failure in one mailbox leaves the others' committed work intact and the
     /// at-least-once cursor contract whole.
-    async fn refresh_all(&self) -> ProviderResult<u64> {
+    async fn refresh_all(&self) -> ProviderResult<Refreshed> {
         let mut session = self.open_session().await?;
         let result = self.refresh_all_with(session.as_mut()).await;
         let _ = session.logout().await;
@@ -259,7 +286,15 @@ impl ImapProvider {
     pub(super) async fn refresh_all_with(
         &self,
         session: &mut dyn ImapSession,
-    ) -> ProviderResult<u64> {
+    ) -> ProviderResult<Refreshed> {
+        // Catalog refresh (item 3): at baseline and whenever the account's
+        // periodic sweep is due, LIST the server and upsert NAME/DELIMITER/
+        // SPECIAL_USE so a mailbox created after setup (a new Sent/Trash/Junk)
+        // is noticed and the plan picks it up. Catalog-only — never clobbers
+        // counters/write-capabilities. A failure here is logged and IGNORED:
+        // it must never abort a poll (INBOX mail keeps flowing).
+        self.refresh_catalog_if_due(session).await;
+
         let plan = self.build_sync_plan()?;
         // INBOX first and always a full sweep.
         let inbox_entry = plan
@@ -277,9 +312,11 @@ impl ImapProvider {
                 label_kind: plan::LabelKind::SystemRole,
                 synced_now: true,
             });
-        let mut generation = self.refresh_mailbox_with(session, &inbox_entry, true).await?;
+        let after_inbox = self.refresh_mailbox_with(session, &inbox_entry, true).await?;
+        let mut generation = after_inbox;
 
-        // Then the other synced mailboxes (Trash, Junk) in plan order, bounded
+        // Then the other synced mailboxes (Trash, Junk, then Sent) in plan
+        // order, bounded
         // by the per-poll budget, each with cadence gating.
         let folders: Vec<_> = plan
             .synced()
@@ -309,7 +346,10 @@ impl ImapProvider {
                 }
             }
         }
-        Ok(generation)
+        Ok(Refreshed {
+            after_inbox,
+            last: generation,
+        })
     }
 
     /// Build the account's sync plan from the persisted catalog + settings.
@@ -327,6 +367,52 @@ impl ImapProvider {
             })
             .collect();
         Ok(plan::build_plan(&catalog, Some(&delimiter), &self.settings))
+    }
+
+    /// Round-time catalog refresh (item 3). When the account's periodic catalog
+    /// sweep is due (always true at baseline), `LIST` the server and record
+    /// NAME/DELIMITER/SPECIAL_USE for every SELECTABLE mailbox via the
+    /// catalog-only upsert, so a mailbox created after account setup is noticed
+    /// and the plan can act on it. `\Noselect` containers are skipped (they are
+    /// never locations). A mailbox that disappeared from `LIST` is LEFT ALONE
+    /// this slice (no deletes). Any failure — the `LIST` itself or a single
+    /// upsert — is logged and swallowed, because this must NEVER abort a poll:
+    /// if it did, a transient `LIST` error would stop INBOX mail flowing.
+    async fn refresh_catalog_if_due(&self, session: &mut dyn ImapSession) {
+        let now = (self.now)();
+        match self.store.catalog_refresh_due(now) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => {
+                log::warn!("imap sync: catalog refresh skipped (state read failed): {error}");
+                return;
+            }
+        }
+        let entries = match session.list_mailboxes().await {
+            Ok(entries) => entries,
+            Err(error) => {
+                log::warn!("imap sync: catalog refresh LIST failed, ignored this poll: {error}");
+                return;
+            }
+        };
+        for entry in &entries {
+            if entry.no_select {
+                continue; // \Noselect containers are never catalog locations.
+            }
+            if let Err(error) = self.store.upsert_mailbox_catalog(
+                &entry.name,
+                entry.delimiter.as_deref(),
+                entry.special_use.as_deref(),
+            ) {
+                log::warn!(
+                    "imap sync: catalog refresh could not record {:?}, ignored: {error}",
+                    entry.name
+                );
+            }
+        }
+        if let Err(error) = self.store.record_catalog_refresh(now) {
+            log::warn!("imap sync: catalog refresh clock not recorded: {error}");
+        }
     }
 
     /// Run the INBOX round against an already-open session (kept for the
@@ -370,14 +456,26 @@ impl ImapProvider {
     ) -> ProviderResult<u64> {
         let mailbox = entry.mailbox.as_str();
         // INBOX honors the provider's `limits` knob (tests shrink the window
-        // there); every other mailbox uses its plan class's limits.
+        // there); every other mailbox uses its plan class's limits, with an
+        // optional test override of the window ceiling (eviction semantics
+        // preserved).
         let limits = if entry.is_inbox {
             self.limits
         } else {
-            SyncLimits::for_class(entry.window_class)
+            let mut limits = SyncLimits::for_class(entry.window_class);
+            if let Some(window) = self.folder_window_override {
+                limits.mailbox_window = window;
+            }
+            limits
         };
         // A thread is hot if it has a location in INBOX or Sent.
         let makes_hot = entry.is_inbox || matches!(entry.role, Some(super::MailboxRole::Sent));
+        // Sent is acquired in CHUNKS (item 2): newest-first, at most
+        // SENT_ROUND_MESSAGES still-unacquired UIDs per round, with a NULL/UID
+        // `backfill_low_uid` watermark marking completeness. It is non-evicting
+        // (SyncLimits::sent) and its backfill-in-progress state must defeat the
+        // cheap cadence skip below.
+        let is_sent = matches!(entry.role, Some(super::MailboxRole::Sent));
 
         // 1. EXAMINE (read-only) — never SELECT, so sync never sets \Seen.
         let status = session.examine(mailbox).await?;
@@ -389,6 +487,9 @@ impl ImapProvider {
         // unchanged AND the periodic sweep is not yet due, skip the UID
         // SEARCH/FETCH entirely. INBOX always sweeps (force_sweep). A
         // UIDVALIDITY change is NEVER skipped — it invalidates every local UID.
+        // A Sent mailbox whose backfill is still INCOMPLETE is NEVER skipped
+        // either (item 2): EXISTS/UIDNEXT unchanged does not mean the window is
+        // fully acquired, so there is still a chunk to pull this poll.
         let now = (self.now)();
         let local_uidvalidity_pre = self
             .store
@@ -399,6 +500,10 @@ impl ImapProvider {
         let uidvalidity_changed =
             matches!(local_uidvalidity_pre, Some(stored) if stored != server_uidvalidity);
         let stored = self.store.mailbox_sync_state(mailbox).map_err(db_err)?;
+        let backfill_incomplete = is_sent
+            && policy::sent_backfill_incomplete(
+                self.store.sent_backfill_low_uid(mailbox).map_err(db_err)?,
+            );
         let sweep_due = match stored {
             Some((_, _, last_sweep_at)) => policy::folder_sweep_due(last_sweep_at, now),
             None => true, // never synced -> always sweep
@@ -412,7 +517,12 @@ impl ImapProvider {
             ),
             None => false,
         };
-        if !force_sweep && !uidvalidity_changed && counters_unchanged && !sweep_due {
+        if !force_sweep
+            && !uidvalidity_changed
+            && !backfill_incomplete
+            && counters_unchanged
+            && !sweep_due
+        {
             // Nothing to do: record the (unchanged) counters WITHOUT bumping
             // the generation, keeping last_sweep_at as stored.
             let last_sweep_at = stored.map(|(_, _, s)| s).unwrap_or(now);
@@ -445,7 +555,7 @@ impl ImapProvider {
             all_uids: server_uids.clone(),
             flags_by_uid: server_flags,
         };
-        let delta = super::delta::compute_delta(&local_view, &server_view, &limits);
+        let mut delta = super::delta::compute_delta(&local_view, &server_view, &limits);
 
         if delta.beyond_window > 0 {
             log::info!(
@@ -454,9 +564,81 @@ impl ImapProvider {
             );
         }
 
+        // Sent chunked acquisition (item 2). `delta.new_uids` is every
+        // still-unacquired in-window UID (ascending). For Sent we take only the
+        // newest SENT_ROUND_MESSAGES this round and defer the rest, so a 5,000-
+        // message Sent folder fills over many polls instead of one giant round.
+        // Flag changes and deletions for already-acquired messages are NOT
+        // budgeted — only the new-mail acquisition is chunked. Progress is
+        // crash-safe because "still unacquired" is derived from local
+        // locations every round: an interrupted round commits nothing (the
+        // whole round is one transaction), so it loses nothing and the next
+        // round recomputes the same remaining set and acquires nothing twice.
+        //
+        // The watermark (`backfill_low_uid`) is the lowest UID acquired while
+        // the backfill is INCOMPLETE, NULL once complete. "Complete" = after
+        // this chunk there is no still-unacquired in-window UID left AND none
+        // fell beyond the window unseen. We record it in the SAME round, so the
+        // cadence gate above reads an accurate pending flag next poll.
+        let mut sent_backfill_write: Option<Option<i64>> = None;
+        if is_sent {
+            let budget = self.sent_round_budget.unwrap_or(policy::SENT_ROUND_MESSAGES);
+            let acquiring_total = delta.new_uids.len();
+            if acquiring_total > budget {
+                // Keep the NEWEST (highest) `budget` UIDs; the ascending tail
+                // is the newest.
+                let drop_count = acquiring_total - budget;
+                delta.new_uids.drain(0..drop_count);
+            }
+            // After this chunk, is anything still unacquired in-window? If this
+            // round takes every remaining new UID, the backfill is complete.
+            let remaining_after_chunk = acquiring_total.saturating_sub(delta.new_uids.len());
+            if remaining_after_chunk == 0 {
+                // Nothing left to acquire in-window: backfill complete (NULL).
+                sent_backfill_write = Some(None);
+            } else {
+                // Still acquiring: the watermark is the lowest UID acquired SO
+                // FAR, i.e. min(previous watermark, lowest UID in this chunk).
+                let chunk_low = delta.new_uids.first().copied().map(|u| u as i64);
+                // On a UIDVALIDITY reset the old incarnation's watermark is
+                // meaningless (locations were dropped, UIDs renumbered), so the
+                // backfill restarts from this chunk's low UID.
+                let prior = if delta.uidvalidity_reset {
+                    None
+                } else {
+                    self.store.sent_backfill_low_uid(mailbox).map_err(db_err)?
+                };
+                let low = match (prior, chunk_low) {
+                    (Some(p), Some(c)) => Some(p.min(c)),
+                    (Some(p), None) => Some(p),
+                    (None, c) => c,
+                };
+                // A pending backfill always has a non-NULL marker so the gate
+                // keeps re-running; fall back to UIDNEXT if we somehow have no
+                // UID yet (empty chunk but work remains — shouldn't happen).
+                sent_backfill_write = Some(Some(low.unwrap_or(server_uidnext.max(1))));
+            }
+            if delta.beyond_window > 0 {
+                log::info!(
+                    "imap sync: Sent backfill — {} UID(s) beyond the {}-message window will not be acquired",
+                    delta.beyond_window,
+                    limits.mailbox_window
+                );
+            }
+            log::info!(
+                "imap sync: Sent backfill — acquiring {} this round, {} still pending",
+                delta.new_uids.len(),
+                remaining_after_chunk
+            );
+        }
+
         let mut round = SyncRoundWrite::default();
         round.mailbox_state =
             Some((mailbox.to_string(), server_exists, server_uidnext, new_last_sweep_at));
+        // Sent backfill watermark, written in the SAME transaction as this
+        // round's acquired chunk so progress is exactly as crash-safe as the
+        // locations it accompanies (item 2). `None` for every non-Sent mailbox.
+        round.sent_backfill_low_uid = sent_backfill_write;
 
         // On a UIDVALIDITY reset the local UIDs are meaningless: drop every
         // location IN THIS MAILBOX only (bodies survive — keyed by stable id,
@@ -899,10 +1081,12 @@ impl MailSync for ImapProvider {
     }
 
     async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
-        // Refresh every synced mailbox (INBOX first) and return the current
-        // generation as the cursor.
-        let generation = self.refresh_all().await?;
-        Ok(SyncCursor::from_generation(generation))
+        // Refresh every synced mailbox (INBOX first). The cursor is the
+        // generation right AFTER INBOX, not after the folder rounds: the
+        // engine's follow-up incremental pass then delivers the hot threads the
+        // folder rounds journaled during this same walk (see `Refreshed`).
+        let refreshed = self.refresh_all().await?;
+        Ok(SyncCursor::from_generation(refreshed.after_inbox))
     }
 
     async fn poll(&self, cursor: &SyncCursor) -> ProviderResult<SyncBatch> {
@@ -919,11 +1103,11 @@ impl MailSync for ImapProvider {
         }
         // (a) refresh all synced mailboxes (INBOX first); (b) return threads
         // journalled since `polled`; (c) new cursor = current generation.
-        let generation = self.refresh_all().await?;
+        let refreshed = self.refresh_all().await?;
         let changed = self.store.journal_since(polled).map_err(db_err)?;
         Ok(SyncBatch {
             changed_threads: changed,
-            cursor: SyncCursor::from_generation(generation),
+            cursor: SyncCursor::from_generation(refreshed.last),
             more: false,
         })
     }
@@ -1310,6 +1494,12 @@ mod tests {
         /// accumulated across every session opened against this snapshot's
         /// shared handle. Shared so a test reads them after sync.
         command_counts: Arc<Mutex<std::collections::BTreeMap<String, (usize, usize, usize)>>>,
+        /// When true, the server answers `LIST` with a NO (catalog refresh must
+        /// swallow it and never abort the poll).
+        list_fails: bool,
+        /// Extra `\Noselect` container names the server reports in `LIST` (they
+        /// must never be added to the catalog).
+        noselect: Vec<String>,
     }
 
     impl FakeMailbox {
@@ -1320,6 +1510,8 @@ mod tests {
             Self {
                 folders,
                 command_counts: Arc::new(Mutex::new(Default::default())),
+                list_fails: false,
+                noselect: Vec::new(),
             }
         }
         /// Ensure a folder exists at `uidvalidity`, returning a mutable handle.
@@ -1361,6 +1553,8 @@ mod tests {
         let (client, server) = tokio::io::duplex(1 << 20);
         let counts = mailbox.command_counts.clone();
         let folders = mailbox.folders.clone();
+        let list_fails = mailbox.list_fails;
+        let noselect = mailbox.noselect.clone();
         let task = tokio::spawn(async move {
             let mut server = BufReader::new(server);
             server.get_mut().write_all(b"* OK ready\r\n").await.unwrap();
@@ -1380,6 +1574,26 @@ mod tests {
                 let empty = FakeFolder::default();
                 if upper.starts_with("LOGIN") {
                     reply(&mut server, &format!("{tag} OK logged in\r\n")).await;
+                } else if upper.starts_with("LIST") {
+                    if list_fails {
+                        reply(&mut server, &format!("{tag} NO LIST failed\r\n")).await;
+                        continue;
+                    }
+                    // Enumerate every folder with its inferred special-use
+                    // attribute, so the catalog refresh can notice new ones.
+                    let mut body = String::new();
+                    for name in folders.keys() {
+                        let attrs = infer_special_use(name)
+                            .map(|a| format!("{a} "))
+                            .unwrap_or_default();
+                        body.push_str(&format!("* LIST ({}) \"/\" \"{}\"\r\n", attrs.trim(), name));
+                    }
+                    // Any \Noselect containers the server advertises.
+                    for name in &noselect {
+                        body.push_str(&format!("* LIST (\\Noselect) \"/\" \"{name}\"\r\n"));
+                    }
+                    body.push_str(&format!("{tag} OK done\r\n"));
+                    reply(&mut server, &body).await;
                 } else if upper.starts_with("EXAMINE") {
                     // "EXAMINE <mailbox>" — select it. The name may be quoted.
                     let name = rest["EXAMINE".len().min(rest.len())..]
@@ -1593,6 +1807,8 @@ mod tests {
             source: Arc::new(FakeSource { mailbox }),
             now: || 1_700_000_000,
             limits: SyncLimits::inbox(),
+            sent_round_budget: None,
+            folder_window_override: None,
             thread_state_loads: std::sync::atomic::AtomicUsize::new(0),
         };
         (provider, store)
@@ -3093,18 +3309,20 @@ mod tests {
         assert_eq!(trash[0].uidvalidity, 999, "Trash resynced under the new UIDVALIDITY");
     }
 
-    /// (f) Drafts, All Mail, Starred (\Flagged, no role), the label container
-    /// and Archive are never selected or fetched — only INBOX, Trash, Junk are.
+    /// (f) INBOX, Trash, Junk AND Sent are synced; Drafts, All Mail, Starred
+    /// (\Flagged, no role), the label container and Archive are never selected
+    /// or fetched. (Sent joined the synced set in run 3 — the intentional
+    /// contract change; before run 3 this test asserted Sent was not synced.)
     #[tokio::test]
-    async fn only_inbox_trash_and_junk_are_ever_synced() {
+    async fn only_inbox_trash_junk_and_sent_are_ever_synced() {
         let mut mb = FakeMailbox::new(100);
         mb.add(&["\\Seen"], &message("<i1@x>", "Inbox", ""));
         mb.add_to("Trash", 50, &["\\Seen"], &message("<t1@x>", "Trashed", ""));
         mb.add_to("Junk", 60, &["\\Seen"], &message("<j1@x>", "Spam", ""));
+        mb.add_to("Sent", 90, &["\\Seen"], &message("<s1@x>", "Sent", "")); // run 3: synced
         // Folders that MUST never be synced:
         mb.add_to("Drafts", 70, &["\\Seen"], &message("<d1@x>", "Draft", ""));
         mb.add_to("All Mail", 80, &["\\Seen"], &message("<a1@x>", "All", ""));
-        mb.add_to("Sent", 90, &["\\Seen"], &message("<s1@x>", "Sent", "")); // run 3, not now
         mb.add_to("Archive", 95, &["\\Seen"], &message("<ar1@x>", "Arch", "")); // 5b-2
         let mailbox = Arc::new(Mutex::new(mb));
         let (provider, store) = provider_with(mailbox.clone());
@@ -3112,13 +3330,13 @@ mod tests {
 
         crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
 
-        // Synced mailboxes have locations.
-        for synced in ["INBOX", "Trash", "Junk"] {
+        // Synced mailboxes have locations (Sent included this run).
+        for synced in ["INBOX", "Trash", "Junk", "Sent"] {
             assert!(!store.locations_in_mailbox(synced).unwrap().is_empty(), "{synced} synced");
         }
         // Never-synced mailboxes have NO locations and were never SEARCHed.
         let counts = mailbox.lock().unwrap();
-        for never in ["Drafts", "All Mail", "Sent", "Archive"] {
+        for never in ["Drafts", "All Mail", "Archive"] {
             assert!(store.locations_in_mailbox(never).unwrap().is_empty(), "{never} not synced");
             assert_eq!(counts.counts(never).0, 0, "{never} never SEARCHed");
         }
@@ -3198,6 +3416,607 @@ mod tests {
             provider.thread_state_loads.load(std::sync::atomic::Ordering::Relaxed),
             loads_after_first,
             "an idle poll does not rebuild threader state"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Slice 5b-1 run 3: Sent sync, chunked acquisition, catalog refresh
+    // ------------------------------------------------------------------
+
+    /// Seed `n` Sent messages (UIDs 1..=n) with distinct Message-IDs.
+    fn seed_sent(mb: &mut FakeMailbox, uidvalidity: u32, n: usize) {
+        for i in 1..=n {
+            mb.add_to("Sent", uidvalidity, &["\\Seen"], &message(&format!("<s{i}@x>"), "Sent", ""));
+        }
+    }
+
+    /// Run one baseline + `polls` extra polls through the engine.
+    async fn sync_n(provider: &ImapProvider, db: &crate::db::Database, polls: usize) {
+        for _ in 0..=polls {
+            crate::sync::sync_with(db, "me@example.com", provider).await.unwrap();
+        }
+    }
+
+    /// The Sent backfill watermark NULL (complete) / Some (pending).
+    fn sent_marker(store: &ImapStateStore) -> Option<i64> {
+        store.sent_backfill_low_uid("Sent").unwrap()
+    }
+
+    /// (a) The SAME Message-ID in INBOX and Sent is ONE message id with both
+    /// labels (INBOX+SENT) and exactly ONE body fetch (shared stable id).
+    #[tokio::test]
+    async fn the_same_message_in_inbox_and_sent_is_one_message_with_both_labels() {
+        let shared = "<shared@x>";
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message(shared, "Bcc self", ""));
+        mb.add_to("Sent", 90, &["\\Seen"], &message(shared, "Bcc self", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+
+        sync_n(&provider, db.as_ref(), 1).await;
+
+        // One stable id with two locations (INBOX + Sent).
+        let inbox = store.locations_in_mailbox("INBOX").unwrap();
+        let sent = store.locations_in_mailbox("Sent").unwrap();
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(sent.len(), 1);
+        assert_eq!(inbox[0].message_id, sent[0].message_id, "one id, two locations");
+
+        // fetch_thread unions the labels: INBOX and SENT, no duplicate message.
+        let thread_id = store.thread_of_message(&inbox[0].message_id).unwrap().unwrap();
+        let messages = provider.fetch_thread(&thread_id).await.unwrap();
+        assert_eq!(messages.len(), 1, "one message, not two");
+        let labels = &messages[0].label_ids;
+        assert!(labels.contains(&"INBOX".to_string()), "has INBOX: {labels:?}");
+        assert!(labels.contains(&"SENT".to_string()), "has SENT: {labels:?}");
+
+        // Exactly one body cached for the shared id (bodies dedup by stable id).
+        assert!(provider.cache.contains(&inbox[0].message_id).unwrap());
+        // The body was fetched at most twice total across both mailboxes'
+        // ingest, but cached ONCE (deduped). The key assertion is one message.
+    }
+
+    /// (b) Chunking: with a tiny per-round budget, N Sent messages are
+    /// acquired NEWEST FIRST over several rounds, with no duplicates, and the
+    /// engine ends with all of them. The engine drives several polls per
+    /// `sync_with` (a full sync is baseline + an incremental pass, and later
+    /// syncs poll once), so this asserts the INVARIANTS — the acquired set is
+    /// always the newest contiguous suffix, grows monotonically, never
+    /// duplicates, and the backfill marker clears exactly when all are in —
+    /// rather than a brittle per-call count.
+    #[tokio::test]
+    async fn sent_is_acquired_in_newest_first_chunks_over_several_polls() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i1@x>", "Inbox", "")); // keep INBOX non-empty
+        seed_sent(&mut mb, 90, 5); // Sent UIDs 1..=5
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (mut provider, store) = provider_with(mailbox.clone());
+        provider.sent_round_budget = Some(1); // one UID per round
+        let db = store.database();
+
+        // Drive the account to completion, checking invariants after each
+        // `sync_with` until the backfill marker clears.
+        let mut last_len = 0usize;
+        for _ in 0..10 {
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+            let uids = sent_uids(&store);
+            // No duplicates (sorted, unique).
+            let mut dedup = uids.clone();
+            dedup.dedup();
+            assert_eq!(dedup, uids, "no duplicate Sent locations");
+            // Newest-first: the acquired set is always the top-K contiguous
+            // suffix of 1..=5, i.e. [6-k ..= 5].
+            if !uids.is_empty() {
+                let k = uids.len() as i64;
+                let expected: Vec<i64> = ((6 - k)..=5).collect();
+                assert_eq!(uids, expected, "acquired set is the newest contiguous suffix");
+            }
+            // Monotonic growth.
+            assert!(uids.len() >= last_len, "acquisition never loses ground");
+            last_len = uids.len();
+            if sent_marker(&store).is_none() && uids.len() == 5 {
+                break;
+            }
+        }
+        assert_eq!(sent_uids(&store), vec![1, 2, 3, 4, 5], "all five eventually acquired");
+        assert!(sent_marker(&store).is_none(), "backfill complete, marker cleared");
+
+        // Every Sent message is now fetchable with the SENT label.
+        for location in store.locations_in_mailbox("Sent").unwrap() {
+            let thread = store.thread_of_message(&location.message_id).unwrap().unwrap();
+            let labels = thread_labels(&provider, &thread).await;
+            assert!(labels.contains(&"SENT".to_string()), "SENT label: {labels:?}");
+        }
+    }
+
+    /// The Sent UIDs currently held locally, ascending.
+    fn sent_uids(store: &ImapStateStore) -> Vec<i64> {
+        let mut uids: Vec<i64> = store
+            .locations_in_mailbox("Sent")
+            .unwrap()
+            .into_iter()
+            .map(|l| l.uid)
+            .collect();
+        uids.sort_unstable();
+        uids
+    }
+
+    /// (c) Resume after a failure mid-chunk: a dropped connection on a body
+    /// fetch commits NOTHING for that round (one transaction), so the next
+    /// round re-derives the same remaining set, loses nothing and acquires
+    /// nothing twice.
+    #[tokio::test]
+    async fn a_failure_mid_sent_chunk_loses_nothing_and_acquires_nothing_twice() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i1@x>", "Inbox", ""));
+        seed_sent(&mut mb, 90, 3);
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (mut provider, store) = provider_with(mailbox.clone());
+        provider.sent_round_budget = Some(3); // try to take all 3 at once
+
+        // Baseline: INBOX commits; the Sent round drops its connection after
+        // the first body fetch, so NO Sent location is committed.
+        {
+            let mut guard = mailbox.lock().unwrap();
+            guard.folder("Sent", 90).fail_after_body_fetches = Some(1);
+        }
+        let db = store.database();
+        // The folder failure is swallowed by refresh_all_with (not INBOX), so
+        // the poll still succeeds overall.
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        assert!(sent_uids(&store).is_empty(), "a failed Sent chunk commits no locations");
+        assert_eq!(store.locations_in_mailbox("INBOX").unwrap().len(), 1, "INBOX still committed");
+
+        // Heal the server and poll again: all 3 Sent messages acquired, each
+        // exactly once (no duplicate UID/message rows).
+        {
+            let mut guard = mailbox.lock().unwrap();
+            guard.folder("Sent", 90).fail_after_body_fetches = None;
+        }
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        assert_eq!(sent_uids(&store), vec![1, 2, 3], "resumed cleanly, nothing lost or doubled");
+        assert!(sent_marker(&store).is_none(), "backfill complete after resume");
+    }
+
+    /// (d) Cadence gating does NOT skip Sent while the backfill is pending even
+    /// when EXISTS/UIDNEXT are unchanged; once complete, the normal cadence
+    /// skip resumes. (The engine drives several polls per `sync_with`, so this
+    /// compares SEARCH activity while pending vs. after completion rather than
+    /// per-call counts.)
+    #[tokio::test]
+    async fn cadence_does_not_skip_sent_while_backfill_pending_then_resumes() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i1@x>", "Inbox", ""));
+        seed_sent(&mut mb, 90, 4);
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (mut provider, store) = provider_with(mailbox.clone());
+        provider.sent_round_budget = Some(1); // one per round => several rounds
+        let db = store.database();
+
+        // Baseline leaves the backfill pending (not all 4 acquired yet with a
+        // budget of 1 across baseline's two internal rounds).
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        assert!(sent_marker(&store).is_some(), "backfill still pending after baseline");
+
+        // While pending, each sync_with keeps SEARCHing Sent (not skipped),
+        // because EXISTS/UIDNEXT unchanged does not mean the window is fully
+        // acquired. Drive to completion, confirming SEARCH count rises.
+        let mut prev_searches = mailbox.lock().unwrap().counts("Sent").0;
+        for _ in 0..10 {
+            if sent_marker(&store).is_none() {
+                break;
+            }
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+            let searches = mailbox.lock().unwrap().counts("Sent").0;
+            assert!(
+                searches > prev_searches,
+                "a pending Sent backfill is NOT skipped by cadence"
+            );
+            prev_searches = searches;
+        }
+        assert_eq!(sent_uids(&store), vec![1, 2, 3, 4], "all acquired");
+        assert!(sent_marker(&store).is_none(), "complete now");
+
+        // Now complete, counters unchanged, not sweep-due => Sent is SKIPPED.
+        let before_skip = mailbox.lock().unwrap().counts("Sent").0;
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        assert_eq!(
+            mailbox.lock().unwrap().counts("Sent").0,
+            before_skip,
+            "a complete, unchanged, not-due Sent is skipped again"
+        );
+    }
+
+    /// (e) Sent is NON-evicting: a message acquired then pushed past the window
+    /// by newer mail is NOT evicted, while an evicting class (Trash) in the
+    /// same situation IS; a server-side expunge of an acquired Sent message
+    /// DOES delete it.
+    #[tokio::test]
+    async fn sent_does_not_evict_aged_out_messages_but_trash_does() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i1@x>", "Inbox", ""));
+        seed_sent(&mut mb, 90, 2); // Sent UIDs 1,2
+        mb.add_to("Trash", 50, &["\\Seen"], &message("<t1@x>", "T1", "")); // Trash UID 1
+        mb.add_to("Trash", 50, &["\\Seen"], &message("<t2@x>", "T2", "")); // Trash UID 2
+        let mailbox = Arc::new(Mutex::new(mb));
+        // Tiny window (2) for BOTH Sent and Trash via the test knob below.
+        let (mut provider, store) = provider_with(mailbox.clone());
+        provider.sent_round_budget = Some(10);
+        provider.folder_window_override = Some(2);
+        let db = store.database();
+
+        sync_n(&provider, db.as_ref(), 2).await;
+        assert_eq!(sent_uids(&store), vec![1, 2], "both Sent acquired");
+        assert_eq!(store.locations_in_mailbox("Trash").unwrap().len(), 2);
+
+        // Newer mail pushes the oldest (UID 1) past the 2-message window in
+        // BOTH mailboxes.
+        {
+            let mut g = mailbox.lock().unwrap();
+            g.add_to("Sent", 90, &["\\Seen"], &message("<s3@x>", "S3", "")); // Sent UID 3
+            g.add_to("Trash", 50, &["\\Seen"], &message("<t3@x>", "T3", "")); // Trash UID 3
+        }
+        sync_n(&provider, db.as_ref(), 2).await;
+
+        // Sent keeps UID 1 (non-evicting acquisition bound): all three held.
+        assert_eq!(sent_uids(&store), vec![1, 2, 3], "Sent never evicts an aged-out message");
+        // Trash evicted UID 1 (sliding window): only the newest two remain.
+        let trash_uids: Vec<i64> = {
+            let mut u: Vec<i64> = store
+                .locations_in_mailbox("Trash")
+                .unwrap()
+                .into_iter()
+                .map(|l| l.uid)
+                .collect();
+            u.sort_unstable();
+            u
+        };
+        assert_eq!(trash_uids, vec![2, 3], "Trash evicts the aged-out UID 1");
+
+        // A server-side expunge of an acquired Sent message DOES delete it.
+        {
+            let mut g = mailbox.lock().unwrap();
+            g.folder("Sent", 90).messages.retain(|m| m.uid != 2);
+        }
+        sync_n(&provider, db.as_ref(), 2).await;
+        assert!(!sent_uids(&store).contains(&2), "an expunged Sent message is deleted");
+    }
+
+    /// (f) A Sent copy never makes the message UNREAD even without \Seen.
+    #[tokio::test]
+    async fn a_sent_copy_is_never_unread_even_without_seen() {
+        let mut mb = FakeMailbox::new(100);
+        // No \Seen flag on the Sent message.
+        mb.add_to("Sent", 90, &[], &message("<s1@x>", "Unseen sent", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox);
+        let db = store.database();
+
+        sync_n(&provider, db.as_ref(), 1).await;
+        let sent = store.locations_in_mailbox("Sent").unwrap();
+        assert_eq!(sent.len(), 1);
+        let thread = store.thread_of_message(&sent[0].message_id).unwrap().unwrap();
+        let labels = thread_labels(&provider, &thread).await;
+        assert!(labels.contains(&"SENT".to_string()), "SENT: {labels:?}");
+        assert!(!labels.contains(&"UNREAD".to_string()), "a Sent copy is never UNREAD: {labels:?}");
+    }
+
+    /// (g) A UIDVALIDITY reset in Sent only: Sent's locations are dropped and
+    /// resynced; INBOX locations and the message->thread mapping are untouched.
+    #[tokio::test]
+    async fn a_uidvalidity_reset_in_sent_only_drops_sent_locations() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i1@x>", "Inbox", ""));
+        seed_sent(&mut mb, 90, 2);
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (mut provider, store) = provider_with(mailbox.clone());
+        provider.sent_round_budget = Some(10);
+        let db = store.database();
+
+        sync_n(&provider, db.as_ref(), 1).await;
+        assert_eq!(store.locations_in_mailbox("INBOX").unwrap().len(), 1);
+        assert_eq!(sent_uids(&store), vec![1, 2]);
+        let inbox_thread = {
+            let inbox = store.locations_in_mailbox("INBOX").unwrap();
+            store.thread_of_message(&inbox[0].message_id).unwrap().unwrap()
+        };
+
+        // Reset Sent's UIDVALIDITY and reseed with a fresh message.
+        {
+            let mut g = mailbox.lock().unwrap();
+            let sent = g.folder("Sent", 999);
+            sent.uidvalidity = 999;
+            sent.uidnext = 1;
+            sent.messages.clear();
+            sent.add_sized(&["\\Seen"], &message("<s9@x>", "Fresh", ""), None);
+        }
+        sync_n(&provider, db.as_ref(), 2).await;
+
+        // INBOX untouched; its thread mapping preserved.
+        assert_eq!(store.locations_in_mailbox("INBOX").unwrap().len(), 1, "INBOX untouched");
+        let inbox_after = store.locations_in_mailbox("INBOX").unwrap();
+        assert_eq!(
+            store.thread_of_message(&inbox_after[0].message_id).unwrap().unwrap(),
+            inbox_thread,
+            "INBOX message->thread mapping kept"
+        );
+        // Sent dropped and resynced under the new UIDVALIDITY.
+        let sent = store.locations_in_mailbox("Sent").unwrap();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].uidvalidity, 999, "Sent resynced under the new UIDVALIDITY");
+    }
+
+    /// (h) Catalog refresh adds a mailbox created AFTER setup without
+    /// clobbering counters, ignores \Noselect, and a failing LIST does not
+    /// abort the poll.
+    #[tokio::test]
+    async fn catalog_refresh_notices_a_new_mailbox_without_clobbering_counters() {
+        use std::sync::atomic::{AtomicI64, Ordering};
+        // Start with just INBOX in the catalog; the server will later grow a
+        // Junk folder that did not exist at setup.
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i1@x>", "Inbox", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (mut provider, store) = provider_with(mailbox.clone());
+        static CLOCK_H: AtomicI64 = AtomicI64::new(1_700_000_000);
+        CLOCK_H.store(1_700_000_000, Ordering::SeqCst);
+        provider.now = || CLOCK_H.load(Ordering::SeqCst);
+        let db = store.database();
+
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        // Only INBOX in the catalog so far.
+        let names: Vec<String> = store.mailboxes().unwrap().into_iter().map(|m| m.name).collect();
+        assert_eq!(names, vec!["INBOX".to_string()]);
+
+        // Record INBOX's learned counters, to prove the refresh never clobbers
+        // them on a mailbox that already exists.
+        let inbox_before = store
+            .mailboxes()
+            .unwrap()
+            .into_iter()
+            .find(|m| m.name == "INBOX")
+            .unwrap();
+        assert!(inbox_before.uidvalidity != 0, "INBOX learned a real uidvalidity");
+
+        // A Junk folder appears on the server after setup. Advance the clock
+        // past the catalog sweep interval so the refresh is due again.
+        {
+            let mut g = mailbox.lock().unwrap();
+            g.add_to("Junk", 60, &["\\Seen"], &message("<j1@x>", "Spam", ""));
+        }
+        CLOCK_H.store(
+            1_700_000_000 + super::super::policy::FOLDER_SWEEP_INTERVAL_SECS + 1,
+            Ordering::SeqCst,
+        );
+
+        // Re-run with a due catalog refresh.
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+
+        // Junk is now in the catalog (noticed by the refresh) and gets synced.
+        let names: Vec<String> = store.mailboxes().unwrap().into_iter().map(|m| m.name).collect();
+        assert!(names.contains(&"Junk".to_string()), "new Junk noticed: {names:?}");
+
+        // INBOX's counters were not clobbered by the catalog-only upsert.
+        let inbox_after = store
+            .mailboxes()
+            .unwrap()
+            .into_iter()
+            .find(|m| m.name == "INBOX")
+            .unwrap();
+        assert_eq!(
+            inbox_after.uidvalidity, inbox_before.uidvalidity,
+            "catalog refresh never clobbers an existing mailbox's counters"
+        );
+    }
+
+    /// Catalog refresh: a failing LIST is swallowed and the poll still ingests
+    /// INBOX; \Noselect containers are never added.
+    #[tokio::test]
+    async fn catalog_refresh_failure_does_not_abort_and_noselect_is_skipped() {
+        use std::sync::atomic::{AtomicI64, Ordering};
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i1@x>", "Inbox", ""));
+        mb.list_fails = true; // the server's LIST answers an error
+        mb.noselect.push("Folders".into()); // a \Noselect container the LIST reports
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (mut provider, store) = provider_with(mailbox.clone());
+        static CLOCK_C: AtomicI64 = AtomicI64::new(1_700_000_000);
+        CLOCK_C.store(1_700_000_000, Ordering::SeqCst);
+        provider.now = || CLOCK_C.load(Ordering::SeqCst);
+        let db = store.database();
+
+        // The poll succeeds and INBOX mail is ingested despite the LIST error.
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .expect("a failing catalog LIST must not abort the poll");
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1);
+
+        // Heal LIST; advance past the catalog sweep interval so the refresh is
+        // due again. The \Noselect container is reported but never added.
+        {
+            let mut g = mailbox.lock().unwrap();
+            g.list_fails = false;
+        }
+        CLOCK_C.store(
+            1_700_000_000 + super::super::policy::FOLDER_SWEEP_INTERVAL_SECS + 1,
+            Ordering::SeqCst,
+        );
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        let names: Vec<String> = store.mailboxes().unwrap().into_iter().map(|m| m.name).collect();
+        assert!(!names.contains(&"Folders".to_string()), "\\Noselect never added: {names:?}");
+    }
+
+    /// (i) A Sent-first reply whose parent arrives later in INBOX merges into
+    /// ONE thread; the older id survives, an alias is recorded, and the engine
+    /// ends with one local thread.
+    #[tokio::test]
+    async fn a_sent_first_reply_merges_with_a_later_inbox_parent_into_one_thread() {
+        // The reply is in Sent first (we sent it), referencing a parent
+        // Message-ID that only arrives in INBOX on a later poll.
+        let mut mb = FakeMailbox::new(100);
+        mb.add_to(
+            "Sent",
+            90,
+            &["\\Seen"],
+            &message("<reply@x>", "Re: Hi", "In-Reply-To: <parent@x>\r\nReferences: <parent@x>\r\n"),
+        );
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (mut provider, store) = provider_with(mailbox.clone());
+        provider.sent_round_budget = Some(10);
+        let db = store.database();
+
+        sync_n(&provider, db.as_ref(), 1).await;
+        // The reply made its thread hot (Sent location) and is one thread.
+        let sent = store.locations_in_mailbox("Sent").unwrap();
+        let reply_thread = store.thread_of_message(&sent[0].message_id).unwrap().unwrap();
+        assert!(store.is_thread_hot(&reply_thread).unwrap(), "a Sent reply is hot");
+
+        // The parent now arrives in INBOX, linking to the Sent reply.
+        {
+            let mut g = mailbox.lock().unwrap();
+            g.add(&["\\Seen"], &message("<parent@x>", "Hi", ""));
+        }
+        sync_n(&provider, db.as_ref(), 1).await;
+
+        // Exactly ONE local thread remains; both messages are in it.
+        let rows = store.all_message_threads().unwrap();
+        let survivors: std::collections::BTreeSet<String> = rows
+            .iter()
+            .map(|(_, t, _)| store.resolve_thread_alias(t).unwrap())
+            .collect();
+        assert_eq!(survivors.len(), 1, "the Sent reply and INBOX parent are one thread");
+        let survivor = survivors.into_iter().next().unwrap();
+        assert_eq!(store.messages_in_thread(&survivor).unwrap().len(), 2);
+        // The thread carries both INBOX and SENT labels across its copies.
+        let labels = thread_labels(&provider, &survivor).await;
+        assert!(labels.contains(&"INBOX".to_string()) && labels.contains(&"SENT".to_string()),
+            "merged thread spans INBOX and SENT: {labels:?}");
+    }
+
+    /// (j) A Sent-only thread is hot, journaled, ingestible with a body,
+    /// carries SENT and no INBOX, and does NOT appear in list_inbox; an idle
+    /// reconcile poll does not re-journal it or treat it as INBOX drift.
+    ///
+    /// `sync_with`'s full-sync path seeds its recovery ingest from list_inbox
+    /// (INBOX only), so a Sent-only thread acquired during the baseline is
+    /// ingested by the engine on a later incremental poll, NOT the baseline
+    /// pass — see the final report. The reachable, deterministic facts are
+    /// asserted directly against the provider: the thread is HOT and JOURNALED
+    /// (a poll from a cursor BELOW its generation returns it, which is exactly
+    /// how the engine ingests it), it fetches with a body and SENT/no-INBOX,
+    /// it is absent from list_inbox, and an idle poll neither bumps the
+    /// generation nor re-journals it.
+    #[tokio::test]
+    async fn a_sent_only_thread_is_hot_journaled_and_not_treated_as_inbox_drift() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add_to("Sent", 90, &["\\Seen"], &message("<s1@x>", "Only sent", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (mut provider, store) = provider_with(mailbox.clone());
+        provider.sent_round_budget = Some(10);
+
+        // baseline_cursor refreshes every synced mailbox and journals the Sent
+        // thread (hot). It is reported to the engine on a poll from BELOW its
+        // generation — the at-least-once path the engine ingests through.
+        let baseline = provider.baseline_cursor().await.unwrap();
+        let sent = store.locations_in_mailbox("Sent").unwrap();
+        assert_eq!(sent.len(), 1, "the Sent message was acquired");
+        let thread = store.thread_of_message(&sent[0].message_id).unwrap().unwrap();
+        assert!(store.is_thread_hot(&thread).unwrap(), "a Sent-only thread is hot");
+
+        // Journaled: a poll from generation 0 returns the Sent thread (this is
+        // how the engine ingests a hot thread).
+        let from_zero = provider.poll(&SyncCursor::from_generation(0)).await.unwrap();
+        assert!(
+            from_zero.changed_threads.iter().any(|t| {
+                store.resolve_thread_alias(t).unwrap() == store.resolve_thread_alias(&thread).unwrap()
+            }),
+            "a hot Sent-only thread is journaled/reported: {:?}",
+            from_zero.changed_threads
+        );
+
+        // SENT and no INBOX; a body is fetchable; and it is NOT in list_inbox.
+        let labels = thread_labels(&provider, &thread).await;
+        assert!(labels.contains(&"SENT".to_string()) && !labels.contains(&"INBOX".to_string()));
+        assert_eq!(provider.fetch_thread(&thread).await.unwrap().len(), 1, "has a body");
+        assert!(
+            !provider.list_inbox(None).await.unwrap().thread_ids.contains(&thread),
+            "a Sent-only thread is not in list_inbox"
+        );
+
+        // The incremental pass the engine runs right after the baseline delivers
+        // the Sent-only thread (the baseline cursor sits before the folder
+        // rounds, see `Refreshed`). Once delivered, a poll from the NEW cursor
+        // is idle: it neither bumps the generation nor re-journals the thread,
+        // so the Sent-only thread is never treated as INBOX drift.
+        let generation = store.generation().unwrap();
+        let delivered = provider.poll(&baseline).await.unwrap();
+        assert!(
+            delivered.changed_threads.iter().any(|t| {
+                store.resolve_thread_alias(t).unwrap() == store.resolve_thread_alias(&thread).unwrap()
+            }),
+            "the pass after the baseline delivers the Sent-only thread"
+        );
+        assert_eq!(store.generation().unwrap(), generation, "delivery does not bump");
+        let idle = provider.poll(&delivered.cursor).await.unwrap();
+        assert_eq!(store.generation().unwrap(), generation, "idle reconcile does not bump");
+        assert!(idle.changed_threads.is_empty(), "idle reconcile re-journals nothing");
+    }
+
+    /// The engine's full sync takes `baseline_cursor`, lists INBOX, then runs ONE
+    /// incremental pass from that cursor. A Sent-only thread acquired by the
+    /// baseline walk is journaled during that walk, so the baseline cursor must
+    /// sit BEFORE the folder rounds (right after INBOX); a cursor taken after
+    /// them would skip those journal rows and the thread would never reach the
+    /// engine (it is not in `list_inbox`).
+    #[tokio::test]
+    async fn sent_only_threads_acquired_at_baseline_reach_the_engine() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i1@x>", "Inbox", ""));
+        mb.add_to("Sent", 90, &["\\Seen"], &message("<s1@x>", "Only sent", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (mut provider, store) = provider_with(mailbox);
+        provider.sent_round_budget = Some(10);
+        let db = store.database();
+
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.list_all_mail(Some("me@example.com")).unwrap().len(),
+            2,
+            "the INBOX thread AND the Sent-only thread are ingested by the first sync"
+        );
+        // And nothing is lost or duplicated by the next pass.
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 2);
+    }
+
+    /// (k) Idle polls with Sent complete: generation unchanged, no threader
+    /// rebuild.
+    #[tokio::test]
+    async fn idle_polls_with_sent_complete_do_not_bump_the_generation() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i1@x>", "Inbox", ""));
+        seed_sent(&mut mb, 90, 2);
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (mut provider, store) = provider_with(mailbox);
+        provider.sent_round_budget = Some(10);
+        let db = store.database();
+
+        sync_n(&provider, db.as_ref(), 1).await;
+        assert!(sent_marker(&store).is_none(), "backfill complete");
+        let generation = store.generation().unwrap();
+        let loads = provider.thread_state_loads.load(std::sync::atomic::Ordering::Relaxed);
+
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        assert_eq!(store.generation().unwrap(), generation, "idle poll does not bump generation");
+        assert_eq!(
+            provider.thread_state_loads.load(std::sync::atomic::Ordering::Relaxed),
+            loads,
+            "idle poll does not rebuild threader state"
         );
     }
 
@@ -3293,12 +4112,120 @@ mod tests {
             );
             let _ = probe.logout().await;
 
-            // A second poll with the same cursor reports no changes and the
-            // generation did not move.
-            let gen_before = cursor.generation().unwrap();
-            let batch = provider.poll(&cursor).await.expect("re-poll");
+            // The baseline cursor sits right after the INBOX round, so the first
+            // poll from it delivers what the folder rounds (Sent, here the
+            // shared Bcc-to-self copy) journaled during the same walk. After
+            // that, a poll from the returned cursor is stable: it reports no
+            // changes and the generation does not move.
+            let first = provider.poll(&cursor).await.expect("delivery poll");
+            let gen_before = first.cursor.generation().unwrap();
+            let batch = provider.poll(&first.cursor).await.expect("re-poll");
             assert!(batch.changed_threads.is_empty(), "a stable re-poll is empty");
             assert_eq!(batch.cursor.generation(), Some(gen_before), "no idle bump");
+        }
+
+        /// (l, live) After baseline + enough polls to finish Sent, the shared
+        /// Message-ID (seeded in BOTH INBOX and Sent) resolves to ONE message
+        /// labelled INBOX+SENT, `\Seen` is still absent on the INBOX copy, and
+        /// the seeded Trash + Junk messages are index-synced locally but never
+        /// reported as changed_threads.
+        #[tokio::test]
+        async fn live_provider_syncs_sent_trash_and_junk_as_designed() {
+            let Some(config) = gated() else { return };
+            let provider = live_provider(config.clone());
+
+            // Baseline, then several polls so the Sent chunked backfill (and
+            // the Trash/Junk index rounds) all complete. The seed is tiny, so a
+            // handful of polls is plenty; cursor is carried forward each time.
+            let mut cursor = provider.baseline_cursor().await.expect("baseline");
+            for _ in 0..5 {
+                let batch = provider.poll(&cursor).await.expect("poll");
+                cursor = batch.cursor;
+            }
+
+            // The shared Bcc-to-self Message-ID is ONE message with INBOX+SENT.
+            // Find it by its defining property: a stable id with locations in
+            // BOTH INBOX and Sent (no need to re-derive the id by hand).
+            let inbox_locs = provider.store.locations_in_mailbox("INBOX").expect("inbox");
+            let mut shared_message_id: Option<String> = None;
+            for location in &inbox_locs {
+                let all = provider
+                    .store
+                    .locations_for_message(&location.message_id)
+                    .expect("locations");
+                let mailboxes: std::collections::BTreeSet<&str> =
+                    all.iter().map(|l| l.mailbox.as_str()).collect();
+                if mailboxes.contains("INBOX") && mailboxes.contains("Sent") {
+                    shared_message_id = Some(location.message_id.clone());
+                    break;
+                }
+            }
+            let shared_message_id =
+                shared_message_id.expect("the shared Bcc-to-self message is in INBOX and Sent");
+
+            let thread = provider
+                .store
+                .thread_of_message(&shared_message_id)
+                .expect("thread_of_message")
+                .expect("a thread for the shared message");
+            let messages = provider.fetch_thread(&thread).await.expect("fetch_thread");
+            // Exactly one message id for the shared Message-ID, with both labels.
+            let shared_messages: Vec<_> = messages
+                .iter()
+                .filter(|m| m.id == shared_message_id)
+                .collect();
+            assert_eq!(shared_messages.len(), 1, "one message, not two copies");
+            let labels = &shared_messages[0].label_ids;
+            assert!(labels.contains(&"INBOX".to_string()), "INBOX: {labels:?}");
+            assert!(labels.contains(&"SENT".to_string()), "SENT: {labels:?}");
+
+            // \Seen is still absent on the INBOX copy of the shared message.
+            let mut probe = ImapConnectionManager::new(config)
+                .connect_leased(
+                    super::super::super::connection::ConnectionRole::Command,
+                    USER,
+                    PASSWORD,
+                )
+                .await
+                .expect("probe login")
+                .0;
+            probe.examine("INBOX").await.expect("examine");
+            let uids = probe.uid_search("ALL").await.expect("search");
+            let set = uids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+            let rows = super::super::super::fetch::fetch_flags_only(&mut probe, &set)
+                .await
+                .expect("flags");
+            assert!(
+                rows.iter().all(|(_, flags)| !mentions_seen(flags)),
+                "sync must not set \\Seen on the INBOX copy"
+            );
+            let _ = probe.logout().await;
+
+            // Trash and Junk are index-synced locally (TRASH / SPAM labels) …
+            let trash = provider.store.locations_in_mailbox("Trash").expect("trash");
+            let junk = provider.store.locations_in_mailbox("Junk").expect("junk");
+            assert!(!trash.is_empty(), "Trash is index-synced");
+            assert!(!junk.is_empty(), "Junk is index-synced");
+            for (mailbox, location, expected) in [
+                ("Trash", &trash[0], "TRASH"),
+                ("Junk", &junk[0], "SPAM"),
+            ] {
+                let t = provider
+                    .store
+                    .thread_of_message(&location.message_id)
+                    .expect("thread")
+                    .expect("a thread");
+                let msgs = provider.fetch_thread(&t).await.expect("fetch_thread");
+                assert!(
+                    msgs.iter().any(|m| m.label_ids.contains(&expected.to_string())),
+                    "{mailbox} message carries {expected}"
+                );
+                // … but never hot, so never reported to the engine.
+                assert!(
+                    !provider.store.is_thread_hot(&t).expect("hot?"),
+                    "{mailbox}-only thread is not hot (never reported)"
+                );
+            }
         }
     }
 }

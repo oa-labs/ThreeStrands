@@ -7,7 +7,8 @@
 #   - 2 INBOX messages (one plain, one with a Message-ID we also drop into Sent
 #     to exercise the "one message, two locations" identity rule);
 #   - 1 Sent message (the shared Message-ID);
-#   - 1 Archive message.
+#   - 1 Archive message;
+#   - 1 Trash message and 1 Junk message (index-synced, never reported).
 # Keep this in sync with the fixtures the Rust tests assert against.
 set -eu
 
@@ -69,6 +70,29 @@ Message-ID: <archive-old-0003@example.test>
 Date: Sun, 01 Jun 2025 12:00:00 +0000
 
 An older message in Archive, inside the per-folder header window.
+EOF
+
+# A Trash and a Junk message: run 3 syncs these as index-only locations
+# (TRASH / SPAM labels) but never reports them as changed_threads — the live
+# test asserts they are present locally yet not in any changed set.
+deliver "Trash" <<'EOF'
+From: dave@example.test
+To: test@threestrands.test
+Subject: A trashed message
+Message-ID: <trash-0004@example.test>
+Date: Mon, 06 Oct 2025 11:00:00 +0000
+
+A message in Trash, index-synced but not reported.
+EOF
+
+deliver "Junk" <<'EOF'
+From: spammer@example.test
+To: test@threestrands.test
+Subject: A junk message
+Message-ID: <junk-0005@example.test>
+Date: Mon, 06 Oct 2025 11:30:00 +0000
+
+A message in Junk, index-synced but not reported.
 EOF
 
 touch "$MARKER"

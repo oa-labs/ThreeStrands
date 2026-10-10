@@ -1703,15 +1703,17 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         // The IMAP provider's MULTI-MAILBOX sync machinery (Phase 2 Slice
         // 5b-1; see `docs/imap-design.md` "Sync" / "What gets synced"). Slice
         // 5a synced INBOX only; 5b-1 generalizes the round to a plan-driven
-        // set of mailboxes (INBOX, Trash, Junk now; Sent in 5b-2) and adds the
-        // two tables that machinery needs.
+        // set of mailboxes (INBOX, Trash, Junk, and Sent — the last added in
+        // run 3 on this same schema) and adds the two tables that machinery
+        // needs.
         //
         //  * `imap_mailbox_sync_state` — one row per synced mailbox carrying
         //    the cheap-cadence inputs: `last_exists`/`last_uidnext` from the
         //    previous EXAMINE (so an unchanged mailbox skips SEARCH/FETCH),
         //    `last_sweep_at` (the periodic full-sweep clock), and
-        //    `backfill_low_uid` — RESERVED for run 3's Sent backfill watermark
-        //    and left NULL here so run 3 needs no migration.
+        //    `backfill_low_uid` — the Sent chunked-backfill watermark (lowest
+        //    UID acquired while the backfill is incomplete, NULL when done),
+        //    which run 3 fills WITHOUT a new migration exactly as reserved here.
         //
         //  * `imap_hot_threads` — `(account_id, thread_id)`: a thread is "hot"
         //    when it has a location in INBOX or Sent, or was already hot. Only

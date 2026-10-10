@@ -171,8 +171,8 @@ impl SyncWindowClass {
     /// Gmail's Sent backfill scan, not a sliding window: once a Sent message is
     /// synced it is never evicted when newer sent mail pushes it past 5,000, so
     /// the address book never loses history. Deletions in Sent come only from
-    /// UIDs the server itself no longer has. (Run 2 does not sync Sent; this is
-    /// implemented and tested now so run 3 inherits it.)
+    /// UIDs the server itself no longer has. (Run 3 syncs Sent in chunked,
+    /// non-evicting background rounds; see `provider.rs`.)
     ///
     /// `NotSynced` is not applicable — nothing is ever in its window.
     pub const fn evicts_beyond_window(self) -> bool {
@@ -287,6 +287,40 @@ pub fn folder_sweep_due(last_sweep_at: i64, now: i64) -> bool {
     now.saturating_sub(last_sweep_at) >= FOLDER_SWEEP_INTERVAL_SECS
 }
 
+// ---------------------------------------------------------------------------
+// Slice 5b-1 run 3: Sent chunked acquisition
+// ---------------------------------------------------------------------------
+//
+// An initial sync of a 5,000-message Sent folder must NOT be one atomic round
+// that fetches 5,000 bodies. After INBOX is swept in the same walk, each poll's
+// Sent round ACQUIRES AT MOST [`SENT_ROUND_MESSAGES`] of the still-unacquired
+// UIDs inside the Sent window, NEWEST FIRST. Flag changes and deletions for
+// already-acquired Sent messages are not budgeted. Each chunk is one atomic
+// round (one `commit_sync_round` transaction), so an interrupted round loses
+// nothing and re-acquires nothing (progress is derived from local locations).
+
+/// The most still-unacquired Sent UIDs one poll's Sent round pulls bodies for.
+///
+/// Mirrors `sync.rs`'s Gmail Sent backfill cadence
+/// (`SENT_BACKFILL_FETCHES_PER_STEP` × `SENT_BACKFILL_STEPS_PER_POLL` =
+/// 25 × 4 = 100), so IMAP and Gmail fill their Sent history at the same pace.
+/// Those two constants are private to `sync.rs` (the brief forbids editing it),
+/// so this mirrors their PRODUCT as a documented literal; `the_sent_round_
+/// budget_mirrors_the_gmail_cadence` below pins the arithmetic (25 × 4 == 100)
+/// so a future reader cannot silently drift this away from that intent.
+pub const SENT_ROUND_MESSAGES: usize = 100;
+
+/// Whether a mailbox's Sent backfill is still INCOMPLETE, given the stored
+/// `backfill_low_uid` marker. The marker holds the lowest UID acquired so far
+/// while the backfill is in progress and is NULL once the whole Sent window has
+/// been acquired. So `Some(_)` means pending (cadence gating must NOT skip the
+/// mailbox even when EXISTS/UIDNEXT are unchanged), and `None` means complete
+/// (normal cadence resumes). A mailbox that has never been swept has no marker
+/// row at all; the first sweep establishes it.
+pub fn sent_backfill_incomplete(backfill_low_uid: Option<i64>) -> bool {
+    backfill_low_uid.is_some()
+}
+
 /// Whether a non-INBOX mailbox's cheap-cadence check says its UIDs are
 /// UNCHANGED since the last round: the server's EXISTS and UIDNEXT both match
 /// what was stored. When unchanged AND not sweep-due, the round skips the UID
@@ -391,8 +425,8 @@ impl SyncLimits {
         }
     }
 
-    /// Sent limits: the Sent acquisition bound, NON-evicting. (Run 3 wires the
-    /// Sent round; implemented and tested now.)
+    /// Sent limits: the Sent acquisition bound, NON-evicting. Run 3 drives the
+    /// Sent round in chunks of [`SENT_ROUND_MESSAGES`], newest first.
     pub const fn sent() -> Self {
         Self {
             mailbox_window: SENT_SYNC_WINDOW,
@@ -583,6 +617,32 @@ mod tests {
         assert_eq!(FOLDER_SWEEP_INTERVAL_SECS, 15 * 60);
         assert!(FOLDER_ROUNDS_PER_POLL > 0);
         assert_eq!(FOLDER_ROUNDS_PER_POLL, 8);
+    }
+
+    // The Sent per-poll acquisition budget mirrors Gmail's Sent backfill
+    // cadence in sync.rs (SENT_BACKFILL_FETCHES_PER_STEP ×
+    // SENT_BACKFILL_STEPS_PER_POLL = 25 × 4). Those two are private to sync.rs
+    // and the brief forbids editing it, so this pins the arithmetic locally so
+    // the mirrored literal cannot drift from its documented intent unnoticed.
+    #[test]
+    fn the_sent_round_budget_mirrors_the_gmail_cadence() {
+        const GMAIL_SENT_FETCHES_PER_STEP: usize = 25;
+        const GMAIL_SENT_STEPS_PER_POLL: usize = 4;
+        assert_eq!(
+            SENT_ROUND_MESSAGES,
+            GMAIL_SENT_FETCHES_PER_STEP * GMAIL_SENT_STEPS_PER_POLL
+        );
+        assert_eq!(SENT_ROUND_MESSAGES, 100);
+        assert!(SENT_ROUND_MESSAGES > 0);
+    }
+
+    #[test]
+    fn sent_backfill_pending_only_while_the_marker_is_present() {
+        // A present watermark (lowest UID acquired while incomplete) => pending.
+        assert!(sent_backfill_incomplete(Some(42)));
+        assert!(sent_backfill_incomplete(Some(1)));
+        // NULL => complete; normal cadence resumes.
+        assert!(!sent_backfill_incomplete(None));
     }
 
     #[test]
