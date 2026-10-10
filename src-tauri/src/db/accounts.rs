@@ -107,6 +107,30 @@ impl Database {
         self.adopt_mail_account(email, MailProviderKind::Gmail)
     }
 
+    /// Reads one account's non-secret IMAP settings, or `None` for a Gmail
+    /// account (or an IMAP account not yet set up on this device). The
+    /// password is never here — it lives only in the keychain.
+    pub fn imap_account_settings(
+        &self,
+        email: &str,
+    ) -> DbResult<Option<crate::provider::imap::ImapAccountSettings>> {
+        self.with_connection(|connection| {
+            crate::provider::imap::read_settings_row(connection, email)
+        })
+    }
+
+    /// Inserts or replaces one account's non-secret IMAP settings. Called by
+    /// the "test and save" setup command after a successful connection test.
+    pub fn save_imap_account_settings(
+        &self,
+        email: &str,
+        settings: &crate::provider::imap::ImapAccountSettings,
+    ) -> DbResult<()> {
+        self.with_connection(|connection| {
+            crate::provider::imap::write_settings_row(connection, email, settings)
+        })
+    }
+
     pub fn get_account(&self, email: &str) -> DbResult<Option<Account>> {
         self.with_connection(|connection| {
             Ok(connection

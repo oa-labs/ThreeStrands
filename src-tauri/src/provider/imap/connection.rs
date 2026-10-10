@@ -101,6 +101,85 @@ async fn upgrade_to_tls(
         .map_err(|io| map_imap_error(&async_imap::error::Error::Io(io)))
 }
 
+/// The outcome of a setup-time certificate probe: the certificate the server
+/// presented, and whether it already chains to a trusted public root (so no
+/// pin is needed) or must be explicitly trusted (self-signed, e.g. Bridge).
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CertificateProbe {
+    pub certificate: super::tls::CertificateInfo,
+    /// `true` when the leaf verifies against the platform trust store, so the
+    /// account can connect without pinning. `false` for a self-signed server,
+    /// which requires the user to review and pin the fingerprint.
+    pub trusted_by_platform: bool,
+}
+
+/// Probe a server's certificate WITHOUT logging in. Opens the socket, reaches
+/// TLS exactly as a real connection would (implicit, or plaintext greeting +
+/// STARTTLS), captures the presented leaf through
+/// [`CollectingCertVerifier`](super::tls::CollectingCertVerifier), then tears
+/// the connection down. No `LOGIN` is ever issued, so no credential is needed
+/// or sent — this is the "stop before LOGIN on an untrusted cert" step of
+/// `docs/imap-design.md` ("Account setup" step 4). The returned fingerprint is
+/// what the user compares against the server's own export before pinning.
+pub async fn probe_certificate(
+    config: &ConnectionConfig,
+) -> Result<CertificateProbe, ProviderError> {
+    use super::tls::{CertificateInfo, CollectingCertVerifier};
+
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let verifier = CollectingCertVerifier::new();
+    let tls_config = ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(verifier.clone())
+        .with_no_client_auth();
+
+    let tcp = TcpStream::connect((config.host.as_str(), config.port))
+        .await
+        .map_err(|io| map_imap_error(&async_imap::error::Error::Io(io)))?;
+
+    let tcp = match config.tls_mode {
+        TlsMode::Implicit => tcp,
+        TlsMode::StartTls => {
+            // Plaintext greeting then STARTTLS, exactly like `connect`, but we
+            // never go on to LOGIN.
+            let mut client = Client::new(tcp);
+            client
+                .read_response()
+                .await
+                .map_err(|io| map_imap_error(&async_imap::error::Error::Io(io)))?
+                .ok_or_else(|| map_imap_error(&async_imap::error::Error::ConnectionLost))?;
+            client
+                .run_command_and_check_ok("STARTTLS", None)
+                .await
+                .map_err(|e| map_imap_error(&e))?;
+            client.into_inner()
+        }
+    };
+
+    let connector = TlsConnector::from(Arc::new(tls_config));
+    let server_name = ServerName::try_from(config.host.clone())
+        .map_err(|e| ProviderError::InvalidOperation(format!("invalid server name: {e}")))?;
+    // The handshake must complete for the leaf to be captured. The collecting
+    // verifier accepts it (signature checks still run); we discard the stream
+    // immediately afterwards.
+    let _tls = connector
+        .connect(server_name, tcp)
+        .await
+        .map_err(|io| map_imap_error(&async_imap::error::Error::Io(io)))?;
+
+    let leaf = verifier.collected_leaf().ok_or_else(|| {
+        ProviderError::TransientTransport(
+            "the server completed TLS without presenting a certificate".into(),
+        )
+    })?;
+    let trusted_by_platform = verifier.chains_to_public_root(&config.host);
+    Ok(CertificateProbe {
+        certificate: CertificateInfo::from_leaf(&leaf),
+        trusted_by_platform,
+    })
+}
+
 /// Open a TLS-secured, verified IMAP session and LOGIN. Never sends
 /// credentials before TLS: implicit TLS wraps the socket before any IMAP
 /// command, STARTTLS upgrades the stream before LOGIN, and there is no

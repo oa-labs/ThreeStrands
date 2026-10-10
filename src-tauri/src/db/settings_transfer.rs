@@ -49,6 +49,14 @@ impl Database {
                             connected_at,
                         ],
                     )?;
+                // An IMAP account carries its non-secret server settings
+                // (format version 5). Persist them so a reconnect after the
+                // password is re-entered has the host/port/pins ready. A V4
+                // export, and every Gmail account, has `imap: None` and writes
+                // nothing here. The password is never in the transfer.
+                if let Some(imap) = &account.imap {
+                    crate::provider::imap::write_settings_row(&*transaction, &account.email, imap)?;
+                }
             }
 
             transaction

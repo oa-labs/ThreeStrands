@@ -662,6 +662,59 @@ export type AuthStatus = {
 /** A mail backend an account can authenticate and sync through. */
 export type MailProvider = "gmail" | "imap";
 
+/** How a mail connection reaches TLS. Mirrors the Rust `SecurityMode`. */
+export type ImapSecurityMode = "implicit_tls" | "starttls";
+
+/** How an IMAP account stores user labels. */
+export type ImapLabelStorage = "keywords" | "folders" | "none";
+
+/** One discovered server endpoint. */
+export type DiscoveredServer = {
+  host: string;
+  port: number;
+  security: ImapSecurityMode;
+  username: string;
+};
+
+/** Autodiscovery result: proposed IMAP + SMTP settings for confirmation. */
+export type ImapDiscoveryResult = {
+  imap: DiscoveredServer;
+  smtp: DiscoveredServer;
+  source: string;
+};
+
+/** What the cert-trust step shows about an untrusted certificate. */
+export type ImapCertificateInfo = {
+  subject: string;
+  issuer: string;
+  sha256Fingerprint: string;
+};
+
+/** The certificate probe outcome for the cert-trust step. */
+export type ImapCertificateProbe = {
+  certificate: ImapCertificateInfo;
+  /** True when the cert already chains to a public root (no pin needed). */
+  trustedByPlatform: boolean;
+};
+
+/** The payload the IMAP setup form sends for "test and save". */
+export type ImapSetupRequest = {
+  email: string;
+  imapHost: string;
+  imapPort: number;
+  imapSecurity: ImapSecurityMode;
+  imapUsername: string;
+  imapPassword: string;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecurity: ImapSecurityMode;
+  smtpUsername: string;
+  smtpPassword: string | null;
+  pinnedFingerprint: string | null;
+  labelStorage: ImapLabelStorage;
+  labelContainer: string | null;
+};
+
 export type Account = {
   email: string;
   displayName: string | null;

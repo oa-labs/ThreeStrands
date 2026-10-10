@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 54;
+pub(crate) const LATEST_VERSION: i64 = 55;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1477,6 +1477,47 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 55 {
+        // The IMAP provider's NON-SECRET account settings (see
+        // `docs/imap-design.md`, "Account setup" / "Save"). Phase 2 Slice 2
+        // (account setup) is the first writer. Everything here is safe to put
+        // in the local database and to carry in a settings export: hosts,
+        // ports, the security mode, the IMAP/SMTP usernames, mailbox-name
+        // overrides, the Archive-folder choice, the user-label storage mode
+        // and its container mailbox, the ordered identity list (JSON), the
+        // pinned leaf-certificate SHA-256 per `host:port` (JSON), and the
+        // `server_saves_sent` flag. The PASSWORD is deliberately absent — it
+        // lives only in the OS keychain as `StoredCredential::ImapPassword`,
+        // never in this table and never in the export. One row per account,
+        // keyed by the account's email, matching `accounts.email`.
+        //
+        // Inert until an IMAP account is set up: no Gmail code path reads or
+        // writes this table, so Gmail is untouched. Reserve a new schema
+        // number for every later change to this shape rather than editing this
+        // block once it has shipped.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS imap_account_settings (
+                account_id TEXT PRIMARY KEY,     -- the account's email (accounts.email)
+                imap_host TEXT NOT NULL,
+                imap_port INTEGER NOT NULL,
+                imap_security TEXT NOT NULL,     -- 'implicit_tls' | 'starttls'
+                imap_username TEXT NOT NULL,
+                smtp_host TEXT NOT NULL,
+                smtp_port INTEGER NOT NULL,
+                smtp_security TEXT NOT NULL,     -- 'implicit_tls' | 'starttls'
+                smtp_username TEXT NOT NULL,
+                mailbox_overrides_json TEXT NOT NULL DEFAULT '{}',  -- system-mailbox name overrides
+                archive_mailbox TEXT,            -- chosen Archive mailbox, or NULL to decide at Slice 3
+                label_storage TEXT NOT NULL,     -- 'keywords' | 'folders' | 'none'
+                label_container TEXT,            -- container mailbox for label-folder mode
+                identities_json TEXT NOT NULL DEFAULT '[]',  -- ordered [{address, displayName?}]
+                pinned_fingerprints_json TEXT NOT NULL DEFAULT '{}', -- {\"host:port\": \"SHA-256 hex\"}
+                server_saves_sent INTEGER NOT NULL DEFAULT 0
+            );
+            PRAGMA user_version=55;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1591,6 +1632,59 @@ mod tests {
         assert_eq!(message_id, "imap:you@gmail.com:abc");
         // Re-running once more over the already-created tables must not fail.
         upgraded.pragma_update(None, "user_version", 53).unwrap();
+        super::migrate(&mut upgraded).unwrap();
+        assert_eq!(
+            upgraded.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
+            super::LATEST_VERSION
+        );
+    }
+
+    #[test]
+    fn v55_adds_the_imap_account_settings_table_and_reruns_cleanly() {
+        // A fresh database reaches the latest version with the IMAP account-
+        // settings table present and queryable.
+        let mut fresh = unmigrated_database_with_one_account();
+        super::migrate(&mut fresh).unwrap();
+        fresh
+            .execute("SELECT * FROM imap_account_settings", [])
+            .unwrap_or_else(|error| panic!("imap_account_settings should exist and be queryable: {error}"));
+        assert_eq!(
+            fresh.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
+            super::LATEST_VERSION
+        );
+
+        // An upgraded database that stopped at v54 converges to the same
+        // schema: rebuild the v54 shape (drop the table, step user_version
+        // back), re-run, and confirm the table appears and accepts a row with
+        // the design-doc columns — password absent, as the design requires.
+        let mut upgraded = unmigrated_database_with_one_account();
+        super::migrate(&mut upgraded).unwrap();
+        upgraded
+            .execute_batch("DROP TABLE imap_account_settings; PRAGMA user_version=54;")
+            .unwrap();
+        super::migrate(&mut upgraded).unwrap();
+        upgraded
+            .execute(
+                "INSERT INTO imap_account_settings(
+                     account_id, imap_host, imap_port, imap_security, imap_username,
+                     smtp_host, smtp_port, smtp_security, smtp_username,
+                     label_storage, identities_json, pinned_fingerprints_json, server_saves_sent)
+                 VALUES ('you@gmail.com','127.0.0.1',1143,'starttls','you@proton.me',
+                     '127.0.0.1',1025,'starttls','you@proton.me',
+                     'folders','[{\"address\":\"you@proton.me\"}]','{\"127.0.0.1:1143\":\"AA\"}',0)",
+                [],
+            )
+            .unwrap();
+        let (host, security, label_storage): (String, String, String) = upgraded
+            .query_row(
+                "SELECT imap_host, imap_security, label_storage FROM imap_account_settings WHERE account_id='you@gmail.com'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((host.as_str(), security.as_str(), label_storage.as_str()), ("127.0.0.1", "starttls", "folders"));
+        // Re-running once more over the already-created table must not fail.
+        upgraded.pragma_update(None, "user_version", 54).unwrap();
         super::migrate(&mut upgraded).unwrap();
         assert_eq!(
             upgraded.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),

@@ -965,6 +965,39 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     async removeAccount(email) {
       accounts = accounts.filter((account) => account.email !== email);
     },
+    async discoverImapSettings() {
+      // The demo backend has no network; always fall through to manual setup.
+      return null;
+    },
+    async probeImapCertificate(host) {
+      // A plausible self-signed probe so the cert-trust UI can be exercised
+      // in the demo without a real server.
+      return {
+        certificate: {
+          subject: `CN=${host}`,
+          issuer: `CN=${host}`,
+          sha256Fingerprint:
+            "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:" +
+            "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99",
+        },
+        trustedByPlatform: false,
+      };
+    },
+    async testAndSaveImapAccount(request) {
+      const palette = ["#6D4AFF", "#00ACC1", "#FF7043", "#5C6BC0"];
+      const account: Account = {
+        email: request.email,
+        displayName: null,
+        color: palette[accounts.length % palette.length]!,
+        status: "connected",
+        provider: "imap",
+        sortOrder: accounts.length,
+        connectedAt: new Date().toISOString(),
+        lastSyncedAt: null,
+      };
+      accounts = [...accounts, account];
+      return structuredClone(account);
+    },
     async reconnectAccount(email) {
       const account = accounts.find((candidate) => candidate.email === email);
       if (!account) throw new Error("Account not found");

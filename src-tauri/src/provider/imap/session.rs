@@ -55,6 +55,21 @@ impl MailboxStatus {
     }
 }
 
+/// One mailbox from a `LIST` response: its decoded name, hierarchy delimiter,
+/// and any RFC 6154 special-use attribute the server returned (`\Sent`,
+/// `\Archive`, …). The special-use attribute is kept as a plain string so the
+/// mailbox-mapping slice (Slice 3) can act on it without this trait depending
+/// on an attribute enum.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MailboxEntry {
+    pub name: String,
+    pub delimiter: Option<String>,
+    /// `\Noselect` containers are not locations; Slice 3 skips them.
+    pub no_select: bool,
+    /// The special-use attribute, e.g. `\Sent`, if the server returned one.
+    pub special_use: Option<String>,
+}
+
 /// An authenticated IMAP session.
 ///
 /// Implemented for `async-imap` by [`AsyncImapSession`]; the trait keeps that
@@ -75,6 +90,17 @@ pub trait ImapSession: Send {
     /// raw `Fetch` responses collected. (The read slices turn these into
     /// `RawMessage`s; Slice 1 only proves the round-trip.)
     async fn uid_fetch(&mut self, uid_set: &str, items: &str) -> Result<Vec<Fetch>, ProviderError>;
+
+    /// The server's advertised capabilities (post-login `CAPABILITY`),
+    /// uppercased. Slice 2's "test and save" reads these to confirm the login
+    /// reached a real IMAP server; the sync slices branch on individual ones.
+    async fn capabilities(&mut self) -> Result<Vec<String>, ProviderError>;
+
+    /// `LIST "" "*"` — every mailbox with its hierarchy delimiter and the
+    /// RFC 6154 special-use attributes the server returns. Slice 2 uses it to
+    /// prove the account can enumerate mailboxes; mailbox discovery proper is
+    /// Slice 3.
+    async fn list_mailboxes(&mut self) -> Result<Vec<MailboxEntry>, ProviderError>;
 
     /// Run a raw tagged command and return the first response code's debug
     /// string, if any — the escape hatch for `COPYUID`/`APPENDUID` that typed
@@ -164,6 +190,56 @@ where
             .into_iter()
             .map(|f| f.map_err(|e| map_imap_error(&e)))
             .collect()
+    }
+
+    async fn capabilities(&mut self) -> Result<Vec<String>, ProviderError> {
+        let caps = self
+            .session
+            .capabilities()
+            .await
+            .map_err(|e| map_imap_error(&e))?;
+        Ok(caps
+            .iter()
+            .map(|cap| format!("{cap:?}").to_ascii_uppercase())
+            .collect())
+    }
+
+    async fn list_mailboxes(&mut self) -> Result<Vec<MailboxEntry>, ProviderError> {
+        use async_imap::imap_proto::NameAttribute;
+        let stream = self
+            .session
+            .list(Some(""), Some("*"))
+            .await
+            .map_err(|e| map_imap_error(&e))?;
+        let names: Vec<Result<async_imap::types::Name, _>> = stream.collect().await;
+        let mut entries = Vec::with_capacity(names.len());
+        for name in names {
+            let name = name.map_err(|e| map_imap_error(&e))?;
+            let mut no_select = false;
+            let mut special_use = None;
+            for attribute in name.attributes() {
+                match attribute {
+                    NameAttribute::NoSelect => no_select = true,
+                    // RFC 6154 special-use attributes map to the design's
+                    // backslash spelling; captured as-is for Slice 3.
+                    NameAttribute::All => special_use = Some("\\All".to_string()),
+                    NameAttribute::Archive => special_use = Some("\\Archive".to_string()),
+                    NameAttribute::Drafts => special_use = Some("\\Drafts".to_string()),
+                    NameAttribute::Flagged => special_use = Some("\\Flagged".to_string()),
+                    NameAttribute::Junk => special_use = Some("\\Junk".to_string()),
+                    NameAttribute::Sent => special_use = Some("\\Sent".to_string()),
+                    NameAttribute::Trash => special_use = Some("\\Trash".to_string()),
+                    _ => {}
+                }
+            }
+            entries.push(MailboxEntry {
+                name: name.name().to_string(),
+                delimiter: name.delimiter().map(str::to_string),
+                no_select,
+                special_use,
+            });
+        }
+        Ok(entries)
     }
 
     async fn run_command_capture_code(
@@ -480,6 +556,12 @@ mod tests {
                 unreachable!()
             }
             async fn uid_fetch(&mut self, _: &str, _: &str) -> Result<Vec<Fetch>, ProviderError> {
+                unreachable!()
+            }
+            async fn capabilities(&mut self) -> Result<Vec<String>, ProviderError> {
+                unreachable!()
+            }
+            async fn list_mailboxes(&mut self) -> Result<Vec<MailboxEntry>, ProviderError> {
                 unreachable!()
             }
             async fn run_command_capture_code(

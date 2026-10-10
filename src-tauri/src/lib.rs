@@ -59,6 +59,11 @@ use models::{
 };
 use sync::SyncService;
 use tauri::{async_runtime::JoinHandle, Manager, State};
+
+// Phase 2 Slice 2 account-setup surface (autodiscovery, cert probe,
+// non-secret settings, test-and-save). The provider connection/sync types
+// stay in `provider::imap`.
+use crate::provider::imap;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
@@ -2084,6 +2089,195 @@ async fn add_account(
     let account = state.database.adopt_mail_account(&email, provider)?;
     let connected = spawn_synced_account(state.database.clone(), auth, true, app);
     state.accounts.lock().await.insert(email, connected);
+    record_mail_account(&state, &account)?;
+    Ok(account)
+}
+
+/// Autodiscover IMAP/SMTP settings for an email address. Returns `None` when
+/// no HTTPS source answers, which the UI treats as "fall through to manual
+/// setup" — a first-class path, since Proton Bridge and self-hosted servers
+/// cannot be discovered from the email domain. The discovery fetches are
+/// SSRF-filtered and HTTPS-only (see `provider::imap::discovery`); the final
+/// user-chosen host is NOT filtered — that happens in `test_and_save_imap`.
+#[tauri::command]
+async fn discover_imap_settings(
+    email: String,
+) -> Result<Option<imap::DiscoveryResult>, String> {
+    imap::discover(&email)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Probe a user-entered IMAP server's certificate WITHOUT logging in, for the
+/// cert-trust step. Surfaces the leaf's subject / issuer / SHA-256 fingerprint
+/// and whether it already chains to a public root (so no pin is needed). The
+/// SSRF filter deliberately does NOT apply here: the host was entered by the
+/// user, so a LAN / Bridge / `127.0.0.1` server must be reachable.
+#[tauri::command]
+async fn probe_imap_certificate(
+    host: String,
+    port: u16,
+    security: imap::SecurityMode,
+) -> Result<imap::CertificateProbe, String> {
+    imap::probe_imap_certificate(&host, port, security)
+        .await
+        .map(|probe| probe) // CertificateProbe is Serialize
+        .map_err(|error| imap::plain_language(&error))
+}
+
+/// The payload the IMAP setup form sends for "test and save".
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImapSetupRequest {
+    email: String,
+    imap_host: String,
+    imap_port: u16,
+    imap_security: imap::SecurityMode,
+    imap_username: String,
+    imap_password: String,
+    smtp_host: String,
+    smtp_port: u16,
+    smtp_security: imap::SecurityMode,
+    smtp_username: String,
+    /// `None` when SMTP shares the IMAP password (the common case).
+    smtp_password: Option<String>,
+    /// The SHA-256 fingerprint the user chose to trust at the cert step, if
+    /// the server was not already CA-trusted. Hex (any separators).
+    pinned_fingerprint: Option<String>,
+    /// Whether this account stores user labels as keywords or label folders;
+    /// decided from the server's PERMANENTFLAGS at the cert/test step.
+    label_storage: imap::LabelStorage,
+    /// Container mailbox for label-folder mode.
+    label_container: Option<String>,
+}
+
+/// Test the entered IMAP + SMTP settings over the wire, and on success adopt
+/// the account, persist its non-secret settings, and store the password in the
+/// keychain. Nothing is written until BOTH the IMAP login and the SMTP AUTH
+/// dry-run succeed, so a failed test leaves no half-made account.
+///
+/// SSRF note: the user-entered mail host is used directly here, deliberately
+/// NOT through `net_safety`'s SSRF filter — a LAN server, a self-hosted box,
+/// or Proton Bridge on `127.0.0.1` MUST connect (`docs/imap-design.md`,
+/// "Account setup", final paragraph). The SSRF filter only guards the
+/// autodiscovery HTTPS fetches, which are driven by the email domain.
+#[tauri::command]
+async fn test_and_save_imap_account(
+    request: ImapSetupRequest,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Account, String> {
+    let pinned = match &request.pinned_fingerprint {
+        Some(hex) => Some(imap::parse_sha256_fingerprint(hex)?),
+        None => None,
+    };
+    let smtp_password = request
+        .smtp_password
+        .clone()
+        .unwrap_or_else(|| request.imap_password.clone());
+
+    // 1. Test IMAP: CAPABILITY / LOGIN / SELECT INBOX / LIST.
+    let (capabilities, mailbox_count, supports_keywords) = imap::test_imap(
+        &request.imap_host,
+        request.imap_port,
+        request.imap_security,
+        pinned,
+        &request.imap_username,
+        &request.imap_password,
+    )
+    .await
+    .map_err(|error| imap::plain_language(&error))?;
+
+    // 2. Test SMTP: EHLO / AUTH dry-run (no mail sent).
+    imap::test_smtp(
+        &request.smtp_host,
+        request.smtp_port,
+        request.smtp_security,
+        pinned,
+        &request.smtp_username,
+        &smtp_password,
+    )
+    .await
+    .map_err(|error| imap::plain_language(&error))?;
+
+    let _report = imap::TestReport {
+        imap_capabilities: capabilities,
+        mailbox_count,
+        supports_keywords,
+        smtp_ok: true,
+    };
+
+    // 3. Persist only after both tests pass. Password -> keychain; non-secret
+    //    settings -> the imap_account_settings table; account row adopted.
+    let mut pinned_fingerprints = std::collections::BTreeMap::new();
+    if let Some(fp) = pinned {
+        pinned_fingerprints.insert(
+            imap::host_port_key(&request.imap_host, request.imap_port),
+            fp.to_hex(),
+        );
+        // SMTP may be a different host:port; pin it too if the user trusted it.
+        pinned_fingerprints.insert(
+            imap::host_port_key(&request.smtp_host, request.smtp_port),
+            fp.to_hex(),
+        );
+    }
+    let settings = imap::ImapAccountSettings {
+        imap_host: request.imap_host.clone(),
+        imap_port: request.imap_port,
+        imap_security: request.imap_security,
+        imap_username: request.imap_username.clone(),
+        smtp_host: request.smtp_host.clone(),
+        smtp_port: request.smtp_port,
+        smtp_security: request.smtp_security,
+        smtp_username: request.smtp_username.clone(),
+        mailbox_overrides: std::collections::BTreeMap::new(),
+        archive_mailbox: None,
+        label_storage: request.label_storage,
+        label_container: request.label_container.clone(),
+        identities: vec![imap::Identity {
+            address: request.email.clone(),
+            display_name: None,
+        }],
+        pinned_fingerprints,
+        server_saves_sent: false,
+    };
+
+    // Store the password in the keychain under the account's address. The
+    // IMAP setup path does NOT go through `require_oauth_credential`:
+    // `AccountAuth::credential()` has been OAuth-optional since Phase 1 Slice 2.
+    let auth = state
+        .auth_config
+        .mail_account(MailProviderKind::Imap, &request.email)?;
+    let AccountAuth::Imap(credential) = &auth else {
+        return Err("expected an IMAP credential for an IMAP account".to_string());
+    };
+    credential.save(&crate::credentials::ImapPassword {
+        imap: request.imap_password.clone(),
+        smtp: request.smtp_password.clone(),
+    })?;
+
+    // Adopt the account row and persist the settings. If the settings write
+    // fails, roll back the credential so a retry starts clean.
+    let adopt_result = (|| -> Result<Account, String> {
+        let account = state
+            .database
+            .adopt_mail_account(&request.email, MailProviderKind::Imap)?;
+        state
+            .database
+            .save_imap_account_settings(&request.email, &settings)?;
+        Ok(account)
+    })();
+    let account = match adopt_result {
+        Ok(account) => account,
+        Err(error) => {
+            let _ = credential.disconnect();
+            return Err(error);
+        }
+    };
+
+    // Register the connected account so sync (later slices) can run.
+    let connected = spawn_synced_account(state.database.clone(), auth, true, app);
+    state.accounts.lock().await.insert(request.email.clone(), connected);
     record_mail_account(&state, &account)?;
     Ok(account)
 }
@@ -4291,6 +4485,9 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         disconnect_google,
         list_accounts,
         add_account,
+        discover_imap_settings,
+        probe_imap_certificate,
+        test_and_save_imap_account,
         remove_account,
         remove_synced_mail_account,
         reconnect_account,

@@ -24,7 +24,7 @@ use crate::{
 };
 
 const FORMAT: &str = "dispatch-settings";
-const VERSION: u32 = 4;
+const VERSION: u32 = 5;
 const EXTENSION: &str = "dispatch-settings";
 const ARGON_MEMORY_KIB: u32 = 19_456;
 const ARGON_ITERATIONS: u32 = 2;
@@ -195,6 +195,16 @@ pub(crate) struct TransferAccount {
     #[serde(default = "default_account_provider")]
     pub provider: String,
     pub sort_order: i64,
+    // IMAP account's NON-SECRET server settings. Added under format version 5.
+    // A V4 export (and every Gmail account) has no `imap` key, so this stays
+    // `None` and the account imports as a Gmail-shaped row exactly as before —
+    // the same optional-defaulted idiom as `provider` above. The PASSWORD is
+    // never here: it lives only in the keychain as
+    // `StoredCredential::ImapPassword`, so an IMAP account imported on another
+    // device is marked `needs_reauth` until the password is re-entered. See
+    // `docs/imap-design.md` ("Settings transfer and replicated sync").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imap: Option<crate::provider::imap::ImapAccountSettings>,
 }
 
 fn default_account_provider() -> String {
@@ -209,6 +219,9 @@ impl From<Account> for TransferAccount {
             color: account.color,
             provider: account.provider,
             sort_order: account.sort_order,
+            // An `Account` row carries no IMAP settings; `export` fills this in
+            // from the `imap_account_settings` table for IMAP accounts.
+            imap: None,
         }
     }
 }
@@ -487,8 +500,16 @@ pub fn export(
     let accounts = database
         .list_accounts()?
         .into_iter()
-        .map(TransferAccount::from)
-        .collect();
+        .map(|account| {
+            // IMAP accounts carry their non-secret server settings in the
+            // export (format version 5); Gmail accounts have none. The
+            // password is never read here — it lives only in the keychain.
+            let imap = database.imap_account_settings(&account.email)?;
+            let mut transfer = TransferAccount::from(account);
+            transfer.imap = imap;
+            Ok::<_, String>(transfer)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let split_inboxes = database
         .list_split_inboxes()?
         .into_iter()
@@ -730,6 +751,7 @@ mod tests {
                 color: "#4285F4".to_string(),
                 provider: "gmail".to_string(),
                 sort_order: 0,
+                imap: None,
             }],
             split_inboxes: vec![],
             snippets: vec![],
@@ -750,12 +772,12 @@ mod tests {
     }
 
     #[test]
-    fn current_envelope_uses_v4() {
+    fn current_envelope_uses_v5() {
         let encoded = encrypt(&payload(), "correct horse").unwrap();
         let envelope: EncryptedEnvelope = serde_json::from_slice(&encoded).unwrap();
 
         assert_eq!(envelope.format, "dispatch-settings");
-        assert_eq!(envelope.version, 4);
+        assert_eq!(envelope.version, 5);
         assert_eq!(envelope.version, VERSION);
         assert_eq!(
             decrypt(&encoded, "correct horse").unwrap().accounts[0].email,
@@ -1057,10 +1079,16 @@ mod tests {
     ///   A complete version-3 payload, so a version-3 export keeps full
     ///   round-trip regression coverage under the new version, as AGENTS.md
     ///   requires.
-    /// - `v4-current`: what this build exports. The only fixture with a
+    /// - `v4-final`: the last version-4 exporter's output, frozen when the
+    ///   format bumped to version 5 in Phase 2 slice 2 (IMAP account setup).
+    ///   A complete version-4 payload, so a version-4 export keeps full
+    ///   import regression coverage under version 5, as AGENTS.md requires.
+    /// - `v4-current`: the version-4 current fixture, now frozen (kept so the
+    ///   version-4 import path stays exercised with its original bytes).
+    /// - `v5-current`: what this build exports. The only fixture with a
     ///   regenerate helper (`regenerate_current_settings_transfer_fixture`).
     ///
-    /// Every file except `v4-current` is frozen: never regenerate or edit
+    /// Every file except `v5-current` is frozen: never regenerate or edit
     /// it, because it stands in for a file a user already has on disk.
     mod fixtures {
         pub(super) const PASSWORD: &str = "correct horse battery staple";
@@ -1080,11 +1108,26 @@ mod tests {
         /// bump. Its bytes are the pre-bump `v3-current` fixture verbatim.
         pub(super) const V3_FINAL: &[u8] =
             include_bytes!("../tests/fixtures/settings-transfer/v3-final.dispatch-settings");
+        /// The last complete version-4 export, frozen at the version 4->5
+        /// bump. Its bytes are the pre-bump `v4-current` fixture verbatim, so
+        /// a build that reads version 5 must still import a real version-4
+        /// file (AGENTS.md's settings-transfer compatibility rule).
+        pub(super) const V4_FINAL: &[u8] =
+            include_bytes!("../tests/fixtures/settings-transfer/v4-final.dispatch-settings");
         pub(super) const V4_CURRENT: &[u8] =
             include_bytes!("../tests/fixtures/settings-transfer/v4-current.dispatch-settings");
-        pub(super) const V4_CURRENT_PATH: &str = "tests/fixtures/settings-transfer/v4-current.dispatch-settings";
         pub(super) const V4_CURRENT_SALT: [u8; super::SALT_LEN] = [0x60; super::SALT_LEN];
         pub(super) const V4_CURRENT_NONCE: [u8; super::NONCE_LEN] = [0xe0; super::NONCE_LEN];
+        /// What this build exports (format version 5): adds an IMAP account
+        /// carrying its non-secret settings alongside the Gmail accounts, so
+        /// the fixture exercises the new `TransferAccount::imap` field end to
+        /// end. The only fixture with a regenerate helper
+        /// (`regenerate_current_settings_transfer_fixture`).
+        pub(super) const V5_CURRENT: &[u8] =
+            include_bytes!("../tests/fixtures/settings-transfer/v5-current.dispatch-settings");
+        pub(super) const V5_CURRENT_PATH: &str = "tests/fixtures/settings-transfer/v5-current.dispatch-settings";
+        pub(super) const V5_CURRENT_SALT: [u8; super::SALT_LEN] = [0x55; super::SALT_LEN];
+        pub(super) const V5_CURRENT_NONCE: [u8; super::NONCE_LEN] = [0xd5; super::NONCE_LEN];
         /// The webview's `readExportablePreferences()` shape, shared with
         /// `src/userPreferences.test.ts`.
         pub(super) const WEBVIEW_PREFERENCES: &str =
@@ -1386,6 +1429,7 @@ mod tests {
                     color: "#123ABC".to_string(),
                     provider: "gmail".to_string(),
                     sort_order: 0,
+                    imap: None,
                 },
                 TransferAccount {
                     email: "other@example.net".to_string(),
@@ -1393,6 +1437,41 @@ mod tests {
                     color: "#ABCDEF".to_string(),
                     provider: "gmail".to_string(),
                     sort_order: 1,
+                    imap: None,
+                },
+                // An IMAP account carrying its non-secret settings — the
+                // version-5 addition. No password: that is keychain-only.
+                TransferAccount {
+                    email: "me@proton.me".to_string(),
+                    display_name: Some("Proton".to_string()),
+                    color: "#6D4AFF".to_string(),
+                    provider: "imap".to_string(),
+                    sort_order: 2,
+                    imap: Some(crate::provider::imap::ImapAccountSettings {
+                        imap_host: "127.0.0.1".to_string(),
+                        imap_port: 1143,
+                        imap_security: crate::provider::imap::SecurityMode::StartTls,
+                        imap_username: "me@proton.me".to_string(),
+                        smtp_host: "127.0.0.1".to_string(),
+                        smtp_port: 1025,
+                        smtp_security: crate::provider::imap::SecurityMode::StartTls,
+                        smtp_username: "me@proton.me".to_string(),
+                        mailbox_overrides: std::collections::BTreeMap::new(),
+                        archive_mailbox: Some("Archive".to_string()),
+                        label_storage: crate::provider::imap::LabelStorage::Folders,
+                        label_container: Some("Labels".to_string()),
+                        identities: vec![crate::provider::imap::Identity {
+                            address: "me@proton.me".to_string(),
+                            display_name: Some("Me".to_string()),
+                        }],
+                        pinned_fingerprints: std::collections::BTreeMap::from([(
+                            "127.0.0.1:1143".to_string(),
+                            "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:\
+                             AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
+                                .to_string(),
+                        )]),
+                        server_saves_sent: true,
+                    }),
                 },
             ],
             split_inboxes: vec![TransferSplitInbox {
@@ -1443,13 +1522,13 @@ mod tests {
 
     fn seal_current_fixture() -> Vec<u8> {
         let plaintext = serde_json::to_vec(&current_fixture_payload()).unwrap();
-        seal(&plaintext, fixtures::PASSWORD, &fixtures::V4_CURRENT_SALT, &fixtures::V4_CURRENT_NONCE).unwrap()
+        seal(&plaintext, fixtures::PASSWORD, &fixtures::V5_CURRENT_SALT, &fixtures::V5_CURRENT_NONCE).unwrap()
     }
 
     #[test]
-    fn frozen_v4_current_export_imports_every_current_field() {
-        assert_eq!(envelope_version(fixtures::V4_CURRENT), VERSION);
-        let (database, result) = import_fixture(fixtures::V4_CURRENT);
+    fn frozen_v5_current_export_imports_every_current_field() {
+        assert_eq!(envelope_version(fixtures::V5_CURRENT), VERSION);
+        let (database, result) = import_fixture(fixtures::V5_CURRENT);
 
         let preferences = &result.preferences;
         assert_eq!(preferences.accent, "amber");
@@ -1468,7 +1547,8 @@ mod tests {
         assert_eq!(preferences.calendar_colors, current_fixture_payload().preferences.calendar_colors);
         assert_eq!(preferences.calendar_colors["current@example.com"]["team@group.calendar.google.com"], "coral");
 
-        assert_eq!((result.account_count, result.split_inbox_count, result.snippet_count, result.contact_count), (2, 1, 1, 1));
+        // Version 5 adds a third account (IMAP) carrying its settings.
+        assert_eq!((result.account_count, result.split_inbox_count, result.snippet_count, result.contact_count), (3, 1, 1, 1));
         assert_eq!(result.contact_group_count, 1);
         let groups = database.list_contact_groups().unwrap();
         assert_eq!(groups.len(), 1);
@@ -1481,8 +1561,27 @@ mod tests {
             vec![
                 ("current@example.com".into(), Some("Current".into()), "#123ABC".into(), "gmail".into(), 0),
                 ("other@example.net".into(), None, "#ABCDEF".into(), "gmail".into(), 1),
+                ("me@proton.me".into(), Some("Proton".into()), "#6D4AFF".into(), "imap".into(), 2),
             ]
         );
+        // The IMAP account's non-secret settings imported into the table; the
+        // password is NOT present anywhere in the export.
+        let imap = database.imap_account_settings("me@proton.me").unwrap().unwrap();
+        assert_eq!(imap.imap_host, "127.0.0.1");
+        assert_eq!(imap.imap_port, 1143);
+        assert_eq!(imap.imap_security, crate::provider::imap::SecurityMode::StartTls);
+        assert_eq!(imap.label_storage, crate::provider::imap::LabelStorage::Folders);
+        assert_eq!(imap.label_container.as_deref(), Some("Labels"));
+        assert_eq!(imap.identities.len(), 1);
+        assert_eq!(imap.identities[0].address, "me@proton.me");
+        assert_eq!(imap.pinned_fingerprints.len(), 1);
+        assert!(imap.server_saves_sent);
+        // The two Gmail accounts have no IMAP settings row.
+        assert!(database.imap_account_settings("current@example.com").unwrap().is_none());
+        // No password string leaked into the serialized export.
+        let plaintext = String::from_utf8(serde_json::to_vec(&current_fixture_payload()).unwrap()).unwrap();
+        assert!(!plaintext.contains("password"), "a password must never appear in the export");
+
         assert_eq!(
             split_owners_of(&database),
             vec![("split-current".into(), "pattern".into(), "build failed".into(), "other@example.net".into())]
@@ -1500,6 +1599,30 @@ mod tests {
         assert_eq!(kit.snoozed_at.as_deref(), Some("2026-09-28T09:00:00+00:00"));
         assert_eq!(kit.last_touch_at.as_deref(), Some("2026-09-15T09:00:00+00:00"));
         assert_eq!(database.retention_days().unwrap(), Some(365));
+    }
+
+    /// AGENTS.md's settings-transfer rule, exercised against the real frozen
+    /// bytes: a complete VERSION-4 export (produced before this slice existed,
+    /// so it has NO `imap` key on any account) must still import cleanly under
+    /// VERSION-5 code, defaulting every account to a Gmail-shaped row with no
+    /// IMAP settings. This is the regression test the brief requires for the
+    /// 4->5 bump.
+    #[test]
+    fn a_frozen_v4_export_still_imports_under_v5_code() {
+        // The frozen file is a genuine version-4 envelope, not version 5.
+        assert_eq!(envelope_version(fixtures::V4_FINAL), 4);
+        assert!(envelope_version(fixtures::V4_FINAL) < VERSION);
+        let (database, result) = import_fixture(fixtures::V4_FINAL);
+        // Both version-4 accounts import as Gmail with no IMAP settings row —
+        // the `imap` field defaulted to None exactly like a Gmail account.
+        assert_eq!(result.account_count, 2);
+        for account in database.list_accounts().unwrap() {
+            assert_eq!(account.provider, "gmail");
+            assert!(
+                database.imap_account_settings(&account.email).unwrap().is_none(),
+                "a version-4 account must import with no IMAP settings"
+            );
+        }
     }
 
     /// AGENTS.md requires a regression test for exports produced by the
@@ -1737,20 +1860,20 @@ mod tests {
     #[test]
     fn this_build_still_exports_the_current_fixture_bytes() {
         assert!(
-            seal_current_fixture() == fixtures::V4_CURRENT,
-            "the export shape changed; freeze the old v4-current fixture, then run \
+            seal_current_fixture() == fixtures::V5_CURRENT,
+            "the export shape changed; freeze the old v5-current fixture, then run \
              `cargo test --lib transfer::tests::regenerate_current_settings_transfer_fixture -- --ignored`"
         );
     }
 
-    /// Regenerates only `v4-current`. Run deliberately, after freezing the
+    /// Regenerates only `v5-current`. Run deliberately, after freezing the
     /// previous file (see `this_build_still_exports_the_current_fixture_bytes`):
     /// `cargo test --lib transfer::tests::regenerate_current_settings_transfer_fixture -- --ignored`.
     /// The older fixtures have no regenerate helper by design.
     #[test]
     #[ignore]
     fn regenerate_current_settings_transfer_fixture() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(fixtures::V4_CURRENT_PATH);
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(fixtures::V5_CURRENT_PATH);
         std::fs::write(path, seal_current_fixture()).unwrap();
     }
 

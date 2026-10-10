@@ -36,8 +36,11 @@
 #![allow(dead_code)]
 
 mod connection;
+mod discovery;
 mod error;
 mod session;
+mod settings;
+mod setup;
 mod tls;
 
 // These are the connection layer's public surface for the later read slices
@@ -53,6 +56,29 @@ pub use error::map_imap_error;
 pub use session::{ImapSession, MailboxStatus};
 #[allow(unused_imports)]
 pub use tls::{parse_sha256_fingerprint, PinnedCertVerifier, Sha256Fingerprint};
+
+// Slice 2 account-setup surface, consumed by the tauri commands in
+// `crate::lib`: autodiscovery, the non-secret settings store, and the
+// test-and-save / cert-probe orchestration.
+pub use discovery::{discover, DiscoveryResult};
+// `ImapSettingsStore` and `FingerprintDecision` are the live-provider seam the
+// read/mutation slices construct; they have no caller in Slice 2 yet, so the
+// allow is scoped here and removed with the first consumer — the same way the
+// connection-layer re-exports above scope it.
+pub use settings::{Identity, ImapAccountSettings, LabelStorage, SecurityMode};
+#[allow(unused_imports)]
+pub use settings::{FingerprintDecision, ImapSettingsStore};
+pub use settings::host_port_key;
+pub(crate) use settings::{read_settings_row, write_settings_row};
+pub use connection::CertificateProbe;
+pub use setup::{plain_language, probe_imap_certificate, test_imap, test_smtp, TestReport};
+// Port defaults and the certificate-info type are part of the setup surface
+// the frontend form reaches through commands added as the UI fills in; no
+// caller yet, so the allow is scoped and removed with it.
+#[allow(unused_imports)]
+pub use setup::{default_imap_port, default_smtp_port};
+#[allow(unused_imports)]
+pub use tls::CertificateInfo;
 
 use std::sync::Arc;
 

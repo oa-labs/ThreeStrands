@@ -67,6 +67,12 @@ import type {
   ProposedTimeCheck,
   MailProvider,
 } from "../domain";
+import type {
+  ImapDiscoveryResult,
+  ImapCertificateProbe,
+  ImapSecurityMode,
+  ImapSetupRequest,
+} from "../domain";
 import type { AiProvider, AiReasoning } from "../aiSettings";
 import { nativeCorrespondence, type CorrespondenceClient } from "../correspondence";
 import { demoClient } from "./demoClient";
@@ -210,6 +216,16 @@ export interface MailClient extends CorrespondenceClient {
   listAccounts(): Promise<Account[]>;
   /** Signs in a new account through `provider`'s OAuth flow. */
   addAccount(provider: MailProvider): Promise<Account>;
+  /** Autodiscover IMAP/SMTP settings for an email; null = use manual setup. */
+  discoverImapSettings(email: string): Promise<ImapDiscoveryResult | null>;
+  /** Probe a server's TLS certificate for the cert-trust step (no login). */
+  probeImapCertificate(
+    host: string,
+    port: number,
+    security: ImapSecurityMode,
+  ): Promise<ImapCertificateProbe>;
+  /** Test the entered IMAP + SMTP settings and, on success, save the account. */
+  testAndSaveImapAccount(request: ImapSetupRequest): Promise<Account>;
   removeAccount(email: string): Promise<void>;
   reconnectAccount(email: string): Promise<Account>;
   setAccountDisplayName(email: string, displayName: string | null): Promise<void>;
@@ -355,6 +371,11 @@ const tauriClient: MailClient = {
   disconnectGoogle: () => complete("disconnect_google"),
   listAccounts: () => read("list_accounts"),
   addAccount: (provider) => complete("add_account", { provider }),
+  discoverImapSettings: (email) => complete("discover_imap_settings", { email }),
+  probeImapCertificate: (host, port, security) =>
+    complete("probe_imap_certificate", { host, port, security }),
+  testAndSaveImapAccount: (request) =>
+    complete("test_and_save_imap_account", { request }),
   removeAccount: (email) => complete("remove_account", { email }),
   reconnectAccount: (email) => complete("reconnect_account", { email }),
   setAccountDisplayName: (email, displayName) => complete("set_account_display_name", { email, displayName }),

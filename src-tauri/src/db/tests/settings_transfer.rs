@@ -19,6 +19,7 @@ fn import_transfer_preserves_local_credentials_and_marks_new_accounts_for_connec
                     color: "#123456".to_string(),
                     provider: "gmail".to_string(),
                     sort_order: 0,
+                    imap: None,
                 },
                 TransferAccount {
                     email: "connected@example.com".to_string(),
@@ -26,6 +27,7 @@ fn import_transfer_preserves_local_credentials_and_marks_new_accounts_for_connec
                     color: "#654321".to_string(),
                     provider: "gmail".to_string(),
                     sort_order: 1,
+                    imap: None,
                 },
             ],
             &[TransferSplitInbox {
