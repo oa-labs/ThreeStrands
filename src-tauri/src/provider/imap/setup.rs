@@ -76,6 +76,25 @@ pub fn plain_language(error: &ProviderError) -> String {
     }
 }
 
+/// Open an authenticated IMAP session for an account that is ALREADY set up,
+/// using its stored, pinned settings and a password read from the keychain by
+/// the caller. Slice 3's mailbox-discovery and confirmed-mapping commands use
+/// this to reconnect without re-running the whole setup flow; it reuses Slice
+/// 1's connection layer, so there is no plaintext path and the pin is enforced.
+pub async fn connect_with_settings(
+    settings: &crate::provider::imap::ImapAccountSettings,
+    password: &str,
+) -> Result<connection::ConnectedSession, ProviderError> {
+    let pinned = settings.pinned_for(&settings.imap_host, settings.imap_port);
+    let config = ConnectionConfig {
+        host: settings.imap_host.clone(),
+        port: settings.imap_port,
+        tls_mode: settings.imap_security.tls_mode(),
+        pinned_fingerprint: pinned,
+    };
+    connection::connect(&config, &settings.imap_username, password).await
+}
+
 /// Probe the IMAP server's certificate without logging in, for the cert-trust
 /// step. Thin pass-through to the connection layer so the command module has
 /// one import surface.

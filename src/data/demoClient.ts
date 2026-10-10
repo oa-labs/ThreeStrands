@@ -26,6 +26,7 @@ import type {
   CreateTaskRequest,
   CreateGoalRequest,
   Goal,
+  ImapMailboxMapping,
   Label,
   Message,
   ReplyAssistContext,
@@ -1011,6 +1012,34 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       };
       accounts = [...accounts, account];
       return structuredClone(account);
+    },
+    async discoverImapMailboxes(_email): Promise<ImapMailboxMapping> {
+      // The demo backend has no IMAP server; return a plausible primary-account
+      // layout so the mapping screen can be exercised in browser preview. The
+      // roles come from attributes, like the real primary account's LIST.
+      return {
+        proposals: [
+          { role: "sent", mailbox: "Sent", source: "special_use" },
+          { role: "archive", mailbox: "Archive", source: "special_use" },
+          { role: "drafts", mailbox: "Drafts", source: "special_use" },
+          { role: "trash", mailbox: "Trash", source: "special_use" },
+          { role: "junk", mailbox: "Spam", source: "special_use" },
+          { role: "all", mailbox: "All Mail", source: "special_use" },
+        ],
+        selectable: [
+          { name: "INBOX", delimiter: "/", specialUse: null },
+          { name: "Sent", delimiter: "/", specialUse: "\\Sent" },
+          { name: "Archive", delimiter: "/", specialUse: "\\Archive" },
+          { name: "Drafts", delimiter: "/", specialUse: "\\Drafts" },
+          { name: "Trash", delimiter: "/", specialUse: "\\Trash" },
+          { name: "Spam", delimiter: "/", specialUse: "\\Junk" },
+          { name: "All Mail", delimiter: "/", specialUse: "\\All" },
+        ],
+      };
+    },
+    async commitImapMailboxMapping(_commit): Promise<void> {
+      // The demo has no settings row to persist into; accept and no-op so the
+      // confirm step completes in browser preview.
     },
     async reconnectAccount(email) {
       const account = accounts.find((candidate) => candidate.email === email);

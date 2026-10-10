@@ -8,6 +8,7 @@ import type { Account, ImapCertificateProbe } from "./domain";
 vi.mock("./data/client", () => ({ mailClient: {
   discoverImapSettings: vi.fn(), probeImapCertificate: vi.fn(),
   probeSmtpCertificate: vi.fn(), testAndSaveImapAccount: vi.fn(),
+  discoverImapMailboxes: vi.fn(), commitImapMailboxMapping: vi.fn(),
 } }));
 
 const account: Account = { email: "me@example.com", provider: "imap", displayName: null,
@@ -33,6 +34,12 @@ function trust(kind: "IMAP" | "SMTP") {
 async function save() {
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Test and save" })); });
 }
+async function confirmMapping() {
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Confirm mapping" })); });
+}
+async function skipMapping() {
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Skip for now" })); });
+}
 
 describe("IMAP account setup", () => {
   beforeEach(() => {
@@ -41,6 +48,8 @@ describe("IMAP account setup", () => {
     vi.mocked(mailClient.probeImapCertificate).mockResolvedValue(probe("incoming-pin"));
     vi.mocked(mailClient.probeSmtpCertificate).mockResolvedValue(probe("outgoing-pin"));
     vi.mocked(mailClient.testAndSaveImapAccount).mockResolvedValue(account);
+    vi.mocked(mailClient.discoverImapMailboxes).mockResolvedValue({ proposals: [], selectable: [] });
+    vi.mocked(mailClient.commitImapMailboxMapping).mockResolvedValue(undefined);
   });
   afterEach(cleanup);
 
@@ -57,9 +66,16 @@ describe("IMAP account setup", () => {
     fillManualSettings();
     await save();
     expect(mailClient.discoverImapSettings).not.toHaveBeenCalled();
+    // New contract (Slice 3): a successful test-and-save does NOT finish setup
+    // immediately — it discovers mailboxes and presents the mapping review.
+    // The saved-account refresh fires only once the user confirms or skips.
+    expect(mailClient.discoverImapMailboxes).toHaveBeenCalledWith("me@example.com");
+    expect(screen.getByRole("heading", { name: "Map your mailboxes" })).toBeInTheDocument();
+    expect(refresh).not.toHaveBeenCalled();
+    await skipMapping();
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("heading", { name: "Add an IMAP account" })).not.toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("Account saved. IMAP mail sync is not available yet.");
+    expect(screen.queryByRole("heading", { name: "Map your mailboxes" })).not.toBeInTheDocument();
     expect(onAdd).toHaveBeenCalledTimes(1);
   });
 
@@ -81,6 +97,11 @@ describe("IMAP account setup", () => {
       imapPinnedFingerprint: "incoming-pin", smtpPinnedFingerprint: "outgoing-pin",
       imapUsername: "me@example.com", smtpUsername: "me@example.com", imapPassword: "secret",
     }));
+    // New contract (Slice 3): the account is saved but onConnected is deferred
+    // until the user confirms the mailbox mapping.
+    expect(onConnected).not.toHaveBeenCalled();
+    await confirmMapping();
+    expect(mailClient.commitImapMailboxMapping).toHaveBeenCalled();
     expect(onConnected).toHaveBeenCalledWith(account);
   });
 

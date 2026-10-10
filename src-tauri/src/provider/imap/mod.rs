@@ -38,6 +38,7 @@
 mod connection;
 mod discovery;
 mod error;
+mod mailboxes;
 mod session;
 mod settings;
 mod setup;
@@ -71,9 +72,24 @@ pub use settings::{FingerprintDecision, ImapSettingsStore};
 pub use settings::host_port_key;
 pub(crate) use settings::{read_settings_row, write_settings_row};
 pub use connection::CertificateProbe;
+// Slice 3 mailbox-discovery surface, consumed by the tauri commands: the pure
+// mapping types the frontend renders and the discovery/create orchestration.
+// The nested proposal/mailbox/role/source types reach the frontend through
+// `MailboxMapping`'s fields rather than by name in Rust, so the allow is
+// scoped here exactly as the connection-layer re-exports above scope it.
+#[allow(unused_imports)]
+pub use mailboxes::{
+    create_mailbox_tolerant, discover_and_persist, DiscoveredMailbox, MailboxMapping, MailboxRole,
+    MappingSource, RoleProposal,
+};
 pub use setup::{
     plain_language, probe_imap_certificate, probe_smtp_certificate, test_imap, test_smtp, TestReport,
 };
+pub use setup::connect_with_settings;
+// Named only as `connect_with_settings`'s return type, so the re-export itself
+// reads as unused; scoped the same way as the other forward-looking exports.
+#[allow(unused_imports)]
+pub use connection::ConnectedSession;
 // Port defaults and the certificate-info type are part of the setup surface
 // the frontend form reaches through commands added as the UI fills in; no
 // caller yet, so the allow is scoped and removed with it.

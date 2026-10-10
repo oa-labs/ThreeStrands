@@ -64,6 +64,7 @@ use tauri::{async_runtime::JoinHandle, Manager, State};
 // non-secret settings, test-and-save). The provider connection/sync types
 // stay in `provider::imap`.
 use crate::provider::imap;
+use crate::provider::imap::ImapSession as _;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
@@ -2349,6 +2350,115 @@ fn save_tested_imap_settings(
     Ok(account)
 }
 
+/// Discover a set-up IMAP account's mailboxes and propose a special-use
+/// mapping (Phase 2 Slice 3). Reconnects with the account's stored, pinned
+/// settings and keychain password, runs a plain `LIST`, EXAMINEs each
+/// selectable mailbox read-only to persist the `imap_mailboxes` catalog, and
+/// returns the proposed role → mailbox mapping for the user to confirm on the
+/// mapping screen. Nothing in the settings row is written here — that is the
+/// confirm step (`commit_imap_mailbox_mapping`). Read-only on the server.
+#[tauri::command]
+async fn discover_imap_mailboxes(
+    email: String,
+    state: State<'_, AppState>,
+) -> Result<imap::MailboxMapping, String> {
+    let settings = state
+        .database
+        .imap_account_settings(&email)?
+        .ok_or_else(|| "This account has no saved IMAP settings.".to_string())?;
+    // The password lives only in the keychain.
+    let password = crate::auth::ImapCredential::for_account(&email)
+        .load()?
+        .imap;
+    let mut session = imap::connect_with_settings(&settings, &password)
+        .await
+        .map_err(|error| imap::plain_language(&error))?;
+    let store = imap::ImapStateStore::new(state.database.clone(), email.clone());
+    let mapping = imap::discover_and_persist(&mut session, &store)
+        .await
+        .map_err(|error| imap::plain_language(&error));
+    let _ = session.logout().await;
+    mapping
+}
+
+/// The confirmed/edited mapping the user committed on the mapping screen.
+/// `archive` names the Archive mailbox (or `createArchive` requests a new one);
+/// `mailboxOverrides` carries the other confirmed role → mailbox choices by
+/// role key (`sent`, `trash`, …); `labelContainer` updates the label-folder
+/// container if the user changed it.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImapMailboxMappingCommit {
+    email: String,
+    /// The chosen Archive mailbox name, if an existing one was selected.
+    archive: Option<String>,
+    /// Create a new Archive mailbox with this name instead of choosing one.
+    create_archive: Option<String>,
+    /// Confirmed role → mailbox-name choices, keyed by `MailboxRole::key`.
+    #[serde(default)]
+    mailbox_overrides: std::collections::BTreeMap<String, String>,
+    /// Updated label-folder container mailbox, if changed.
+    label_container: Option<String>,
+}
+
+/// Persist the user's confirmed mailbox mapping into the account's settings
+/// row (Phase 2 Slice 3): the Archive choice, the per-role overrides, and the
+/// label-folder container. When the user asked to create a new Archive
+/// mailbox, this is the ONE place Slice 3 creates a mailbox — a `CREATE` with
+/// the design's `TRYCREATE` create-then-retry tolerance — before recording it
+/// as the Archive override.
+#[tauri::command]
+async fn commit_imap_mailbox_mapping(
+    commit: ImapMailboxMappingCommit,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut settings = state
+        .database
+        .imap_account_settings(&commit.email)?
+        .ok_or_else(|| "This account has no saved IMAP settings.".to_string())?;
+
+    // Resolve the Archive mailbox: an explicit create wins (and actually
+    // creates it on the server), otherwise the chosen existing mailbox.
+    let archive = if let Some(name) = commit.create_archive.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+        let password = crate::auth::ImapCredential::for_account(&commit.email)
+            .load()?
+            .imap;
+        let mut session = imap::connect_with_settings(&settings, &password)
+            .await
+            .map_err(|error| imap::plain_language(&error))?;
+        let created = imap::create_mailbox_tolerant(&mut session, name)
+            .await
+            .map_err(|error| imap::plain_language(&error));
+        let _ = session.logout().await;
+        created?;
+        Some(name.to_string())
+    } else {
+        commit.archive.as_deref().map(str::trim).filter(|n| !n.is_empty()).map(str::to_string)
+    };
+
+    if let Some(archive) = archive {
+        settings.archive_mailbox = Some(archive);
+    }
+    // Merge the confirmed per-role overrides (role key -> mailbox name),
+    // dropping any blank values the UI may send for a cleared row.
+    for (role_key, mailbox) in commit.mailbox_overrides {
+        let mailbox = mailbox.trim();
+        if mailbox.is_empty() {
+            settings.mailbox_overrides.remove(&role_key);
+        } else {
+            settings.mailbox_overrides.insert(role_key, mailbox.to_string());
+        }
+    }
+    if let Some(container) = commit.label_container.as_deref().map(str::trim) {
+        settings.label_container = (!container.is_empty()).then(|| container.to_string());
+    }
+
+    state
+        .database
+        .save_imap_account_settings(&commit.email, &settings)?;
+    Ok(())
+}
+
 #[tauri::command]
 async fn remove_account(
     email: String,
@@ -4556,6 +4666,8 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         probe_imap_certificate,
         probe_smtp_certificate,
         test_and_save_imap_account,
+        discover_imap_mailboxes,
+        commit_imap_mailbox_mapping,
         remove_account,
         remove_synced_mail_account,
         reconnect_account,

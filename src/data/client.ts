@@ -72,6 +72,8 @@ import type {
   ImapCertificateProbe,
   ImapSecurityMode,
   ImapSetupRequest,
+  ImapMailboxMapping,
+  ImapMailboxMappingCommit,
 } from "../domain";
 import type { AiProvider, AiReasoning } from "../aiSettings";
 import { nativeCorrespondence, type CorrespondenceClient } from "../correspondence";
@@ -228,6 +230,10 @@ export interface MailClient extends CorrespondenceClient {
   probeSmtpCertificate(host: string, port: number, security: ImapSecurityMode): Promise<ImapCertificateProbe>;
   /** Test the entered IMAP + SMTP settings and, on success, save the account. */
   testAndSaveImapAccount(request: ImapSetupRequest): Promise<Account>;
+  /** Discover a set-up IMAP account's mailboxes and propose a special-use mapping (persists the catalog). */
+  discoverImapMailboxes(email: string): Promise<ImapMailboxMapping>;
+  /** Persist the user's confirmed mailbox mapping (Archive choice, per-role overrides, label container). */
+  commitImapMailboxMapping(commit: ImapMailboxMappingCommit): Promise<void>;
   removeAccount(email: string): Promise<void>;
   reconnectAccount(email: string): Promise<Account>;
   setAccountDisplayName(email: string, displayName: string | null): Promise<void>;
@@ -380,6 +386,8 @@ const tauriClient: MailClient = {
     complete("probe_smtp_certificate", { host, port, security }),
   testAndSaveImapAccount: (request) =>
     complete("test_and_save_imap_account", { request }),
+  discoverImapMailboxes: (email) => complete("discover_imap_mailboxes", { email }),
+  commitImapMailboxMapping: (commit) => complete("commit_imap_mailbox_mapping", { commit }),
   removeAccount: (email) => complete("remove_account", { email }),
   reconnectAccount: (email) => complete("reconnect_account", { email }),
   setAccountDisplayName: (email, displayName) => complete("set_account_display_name", { email, displayName }),

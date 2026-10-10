@@ -38,6 +38,11 @@ pub struct MailboxStatus {
     /// `PERMANENTFLAGS` contained `\*` — the server lets clients create
     /// arbitrary keywords (so this account can store keyword labels).
     pub permanent_keywords: bool,
+    /// `PERMANENTFLAGS` as the server listed them, each rendered to its
+    /// wire spelling (`\Seen`, `$Forwarded`, …). Slice 3 persists this JSON
+    /// into `imap_mailboxes.permanent_flags_json`; a `\*` wildcard, if
+    /// present, is reflected separately in `permanent_keywords`.
+    pub permanent_flags: Vec<String>,
 }
 
 impl MailboxStatus {
@@ -46,12 +51,37 @@ impl MailboxStatus {
             .permanent_flags
             .iter()
             .any(|flag| matches!(flag, async_imap::types::Flag::MayCreate));
+        let permanent_flags = mailbox
+            .permanent_flags
+            .iter()
+            .map(flag_to_wire)
+            .collect();
         Self {
             exists: mailbox.exists,
             uid_next: mailbox.uid_next,
             uid_validity: mailbox.uid_validity,
             permanent_keywords,
+            permanent_flags,
         }
+    }
+}
+
+/// Render an `async-imap` [`Flag`](async_imap::types::Flag) to its IMAP wire
+/// spelling (`\Seen`, `$Forwarded`, …). `async-imap`'s `Flag` has no
+/// `Display`, so the system-flag spellings are written out; a `Custom` keyword
+/// is used verbatim. `\*` (`MayCreate`) is reflected separately in
+/// `permanent_keywords` and is kept here too so the stored list is faithful.
+fn flag_to_wire(flag: &async_imap::types::Flag<'_>) -> String {
+    use async_imap::types::Flag;
+    match flag {
+        Flag::Seen => "\\Seen".to_string(),
+        Flag::Answered => "\\Answered".to_string(),
+        Flag::Flagged => "\\Flagged".to_string(),
+        Flag::Deleted => "\\Deleted".to_string(),
+        Flag::Draft => "\\Draft".to_string(),
+        Flag::Recent => "\\Recent".to_string(),
+        Flag::MayCreate => "\\*".to_string(),
+        Flag::Custom(name) => name.to_string(),
     }
 }
 
@@ -123,6 +153,14 @@ pub trait ImapSession: Send {
             "IDLE is not wired until Slice 5 (incremental sync)".into(),
         ))
     }
+
+    /// CREATE a mailbox. Used by Slice 3's confirmed-mapping commit when the
+    /// user chooses to create a missing Archive mailbox, and by the
+    /// `TRYCREATE` create-then-retry flow. Succeeds (or maps the server's
+    /// rejection to a [`ProviderError`]); creating a mailbox that already
+    /// exists is left to the caller to tolerate per the design's idempotence
+    /// rule.
+    async fn create_mailbox(&mut self, mailbox: &str) -> Result<(), ProviderError>;
 
     /// LOGOUT and close the session.
     async fn logout(&mut self) -> Result<(), ProviderError>;
@@ -307,6 +345,13 @@ where
 
     async fn noop(&mut self) -> Result<(), ProviderError> {
         self.session.noop().await.map_err(|e| map_imap_error(&e))
+    }
+
+    async fn create_mailbox(&mut self, mailbox: &str) -> Result<(), ProviderError> {
+        self.session
+            .create(mailbox)
+            .await
+            .map_err(|e| map_imap_error(&e))
     }
 
     async fn logout(&mut self) -> Result<(), ProviderError> {
@@ -571,6 +616,9 @@ mod tests {
                 unreachable!()
             }
             async fn noop(&mut self) -> Result<(), ProviderError> {
+                unreachable!()
+            }
+            async fn create_mailbox(&mut self, _: &str) -> Result<(), ProviderError> {
                 unreachable!()
             }
             async fn logout(&mut self) -> Result<(), ProviderError> {

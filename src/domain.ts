@@ -697,6 +697,45 @@ export type ImapCertificateProbe = {
   trustedByPlatform: boolean;
 };
 
+/** One of the app's system mailbox roles discovery maps a server mailbox onto. Mirrors the Rust `MailboxRole`. */
+export type ImapMailboxRole = "sent" | "archive" | "drafts" | "trash" | "junk" | "all";
+
+/** How a role's mailbox was chosen: an authoritative attribute, or a name guess to confirm. */
+export type ImapMappingSource = "special_use" | "name_match";
+
+/** One role's proposed mailbox and how it was chosen. */
+export type ImapRoleProposal = {
+  role: ImapMailboxRole;
+  mailbox: string;
+  source: ImapMappingSource;
+};
+
+/** One selectable mailbox, for the mapping screen's override pickers. */
+export type ImapDiscoveredMailbox = {
+  name: string;
+  delimiter: string | null;
+  specialUse: string | null;
+};
+
+/** The proposed role mapping plus the selectable-mailbox list the mapping screen renders. */
+export type ImapMailboxMapping = {
+  proposals: ImapRoleProposal[];
+  selectable: ImapDiscoveredMailbox[];
+};
+
+/** The confirmed/edited mapping the user commits on the mapping screen. */
+export type ImapMailboxMappingCommit = {
+  email: string;
+  /** The chosen Archive mailbox name, if an existing one was selected. */
+  archive: string | null;
+  /** Create a new Archive mailbox with this name instead of choosing one. */
+  createArchive: string | null;
+  /** Confirmed role → mailbox-name choices, keyed by role (`sent`, `trash`, …). */
+  mailboxOverrides: Record<string, string>;
+  /** Updated label-folder container mailbox, if changed. */
+  labelContainer: string | null;
+};
+
 /** The payload the IMAP setup form sends for "test and save". */
 export type ImapSetupRequest = {
   email: string;

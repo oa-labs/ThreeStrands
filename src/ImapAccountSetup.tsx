@@ -4,6 +4,8 @@ import type {
   Account,
   ImapCertificateProbe,
   ImapLabelStorage,
+  ImapMailboxMapping,
+  ImapMailboxRole,
   ImapSecurityMode,
   ImapSetupRequest,
 } from "./domain";
@@ -55,6 +57,11 @@ export function ImapAccountSetup({ onConnected }: { onConnected: (account: Accou
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  // After test-and-save succeeds, discovery runs and the flow moves to the
+  // mapping review step: the account is saved but we hold it here until the
+  // user confirms (or skips) the special-use mapping.
+  const [savedAccount, setSavedAccount] = useState<Account | null>(null);
+  const [mapping, setMapping] = useState<ImapMailboxMapping | null>(null);
   const imapEndpoint = endpointKey(imapHost, imapPort, imapSecurity);
   const smtpEndpoint = endpointKey(smtpHost, smtpPort, smtpSecurity);
   // A trust decision belongs to exactly the endpoint that was probed. Editing
@@ -132,8 +139,20 @@ export function ImapAccountSetup({ onConnected }: { onConnected: (account: Accou
     };
     try {
       const account = await mailClient.testAndSaveImapAccount(request);
-      setStatus("Account saved. IMAP mail sync is not available yet.");
-      await onConnected(account);
+      setSavedAccount(account);
+      // Account is saved; now discover its mailboxes and present the special-
+      // use mapping for confirmation. A discovery failure does not undo the
+      // save — the user can still finish with the (empty) proposed mapping.
+      setStatus("Account saved. Discovering mailboxes…");
+      try {
+        const discovered = await mailClient.discoverImapMailboxes(request.email);
+        setMapping(discovered);
+        setStatus("Review the mailbox mapping below, then confirm.");
+      } catch (discoveryError) {
+        setMapping({ proposals: [], selectable: [] });
+        setError(`Saved, but mailbox discovery failed: ${String(discoveryError)}. You can confirm with no mapping and set it later.`);
+        setStatus(null);
+      }
     } catch (e) {
       setError(String(e));
       setStatus(null);
@@ -143,6 +162,37 @@ export function ImapAccountSetup({ onConnected }: { onConnected: (account: Accou
   }
 
   return (
+    savedAccount && mapping ? (
+      <MailboxMappingReview
+        email={savedAccount.email}
+        labelStorage={labelStorage}
+        labelContainer={labelContainer}
+        mapping={mapping}
+        busy={busy}
+        error={error}
+        status={status}
+        onConfirm={async (commit) => {
+          setError(null);
+          setStatus("Saving the mailbox mapping…");
+          setBusy(true);
+          try {
+            await mailClient.commitImapMailboxMapping(commit);
+            setStatus("Mailbox mapping saved.");
+            await onConnected(savedAccount);
+          } catch (e) {
+            setError(String(e));
+            setStatus(null);
+          } finally {
+            setBusy(false);
+          }
+        }}
+        onSkip={async () => {
+          // The account is already saved; skipping just finishes setup
+          // without writing a mapping — the user can map mailboxes later.
+          await onConnected(savedAccount);
+        }}
+      />
+    ) : (
     <form
       className="imap-setup"
       onSubmit={(event) => {
@@ -308,6 +358,7 @@ export function ImapAccountSetup({ onConnected }: { onConnected: (account: Accou
         </p>
       )}
     </form>
+    )
   );
 }
 
@@ -339,4 +390,156 @@ function CertificateCheck({ kind, host, certificate, onProbe, onTrust }: {
       </button>
     </div>}
   </section>;
+}
+
+const ROLE_LABELS: Record<ImapMailboxRole, string> = {
+  sent: "Sent",
+  archive: "Archive",
+  drafts: "Drafts",
+  trash: "Trash",
+  junk: "Junk / Spam",
+  all: "All Mail (aggregate)",
+};
+const ROLE_ORDER: ImapMailboxRole[] = ["sent", "archive", "drafts", "trash", "junk", "all"];
+
+/**
+ * The discovery → review-mapping → confirm step (Phase 2 Slice 3).
+ *
+ * Shows each system role's proposed mailbox and whether it came from a
+ * certain special-use attribute or a name GUESS the user should check, lets
+ * the user override any role from the selectable-mailbox list, and offers
+ * "Create a new Archive mailbox" when no Archive was found (the design's
+ * default when nothing matches). Confirm persists the mapping; Skip finishes
+ * setup without writing one (the account is already saved).
+ */
+function MailboxMappingReview({
+  email,
+  labelStorage,
+  labelContainer,
+  mapping,
+  busy,
+  error,
+  status,
+  onConfirm,
+  onSkip,
+}: {
+  email: string;
+  labelStorage: ImapLabelStorage;
+  labelContainer: string;
+  mapping: ImapMailboxMapping;
+  busy: boolean;
+  error: string | null;
+  status: string | null;
+  onConfirm(commit: {
+    email: string;
+    archive: string | null;
+    createArchive: string | null;
+    mailboxOverrides: Record<string, string>;
+    labelContainer: string | null;
+  }): void;
+  onSkip(): void;
+}) {
+  const proposalFor = (role: ImapMailboxRole) =>
+    mapping.proposals.find((proposal) => proposal.role === role);
+  // Per-role selected mailbox, seeded from the proposal; "" means not mapped.
+  const [choices, setChoices] = useState<Record<string, string>>(() =>
+    Object.fromEntries(ROLE_ORDER.map((role) => [role, proposalFor(role)?.mailbox ?? ""])),
+  );
+  // Archive-specific: when no Archive mailbox exists, offer to create one.
+  const [createArchive, setCreateArchive] = useState(false);
+  const [newArchiveName, setNewArchiveName] = useState("Archive");
+
+  const selectableNames = mapping.selectable.map((mailbox) => mailbox.name);
+
+  function confirm() {
+    const mailboxOverrides: Record<string, string> = {};
+    for (const role of ROLE_ORDER) {
+      // Archive is carried in the dedicated `archive` field, not the overrides.
+      if (role === "archive") continue;
+      const value = choices[role]?.trim();
+      if (value) mailboxOverrides[role] = value;
+    }
+    const archiveChoice = choices.archive?.trim() || null;
+    onConfirm({
+      email,
+      archive: createArchive ? null : archiveChoice,
+      createArchive: createArchive ? newArchiveName.trim() || "Archive" : null,
+      mailboxOverrides,
+      labelContainer: labelStorage === "folders" ? labelContainer.trim() || null : null,
+    });
+  }
+
+  return (
+    <section className="imap-mailbox-mapping" aria-label="Mailbox mapping">
+      <h2>Map your mailboxes</h2>
+      <p>
+        We matched your account's system mailboxes. Choices from a certificate
+        attribute are reliable; a name guess is worth a quick check. Change any
+        of them below.
+      </p>
+      <dl>
+        {ROLE_ORDER.map((role) => {
+          const proposal = proposalFor(role);
+          const isArchive = role === "archive";
+          return (
+            <div key={role} className="imap-mapping-row">
+              <dt>{ROLE_LABELS[role]}</dt>
+              <dd>
+                <select
+                  value={choices[role] ?? ""}
+                  disabled={busy || (isArchive && createArchive)}
+                  onChange={(e) => setChoices((prev) => ({ ...prev, [role]: e.target.value }))}
+                >
+                  <option value="">Not mapped</option>
+                  {selectableNames.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+                {proposal && (
+                  <span className="imap-mapping-source">
+                    {proposal.source === "special_use" ? "from server attribute" : "name guess — please verify"}
+                  </span>
+                )}
+                {isArchive && (
+                  <label className="imap-mapping-create">
+                    <input
+                      type="checkbox"
+                      checked={createArchive}
+                      disabled={busy}
+                      onChange={(e) => setCreateArchive(e.target.checked)}
+                    />
+                    Create a new Archive mailbox
+                  </label>
+                )}
+                {isArchive && createArchive && (
+                  <input
+                    aria-label="New Archive mailbox name"
+                    value={newArchiveName}
+                    disabled={busy}
+                    onChange={(e) => setNewArchiveName(e.target.value)}
+                  />
+                )}
+              </dd>
+            </div>
+          );
+        })}
+      </dl>
+      <div className="imap-mapping-actions">
+        <button type="button" className="btn btn-primary" onClick={confirm} disabled={busy}>
+          Confirm mapping
+        </button>
+        <button type="button" className="btn" onClick={() => void onSkip()} disabled={busy}>
+          Skip for now
+        </button>
+      </div>
+      {status && <p className="imap-setup-status">{status}</p>}
+      {error && (
+        <p className="imap-setup-error" role="alert">
+          {error}
+        </p>
+      )}
+    </section>
+  );
 }
