@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 58;
+pub(crate) const LATEST_VERSION: i64 = 59;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1640,6 +1640,65 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 59 {
+        // The IMAP provider's PERSISTED threading tokens (Phase 2 Slice 5b-1;
+        // see `docs/imap-design.md` "Threading"). Before this version the
+        // provider rebuilt the threader's prior state by reading and parsing
+        // EVERY cached body on each new-mail round — O(all mail) in bytes per
+        // round, and impossible for an index-tier message that has no cached
+        // body at all. This table makes the token set of each threaded message
+        // a durable fact, so a round seeds only the threads the incoming batch
+        // actually touches without reading `imap_bodies`.
+        //
+        //  * `imap_message_tokens` — `(account_id, message_id, token)`: the
+        //    exact set of normalized tokens the threader uses for a message —
+        //    its stable id, its normalized `Message-ID` header, and the capped
+        //    `In-Reply-To`/`References` ancestry (`MAX_REFERENCES`). Covering
+        //    index on `(account_id, token)` for the "which messages share a
+        //    token" seed lookup, and on `(account_id, message_id)` for purge
+        //    and per-message reads. Tokens are written in the SAME atomic
+        //    transaction as the thread assignment (`commit_sync_round`).
+        //
+        //  * `imap_sync_state.tokens_backfilled` — a per-account flag for the
+        //    one-time upgrade backfill. A database that already holds threaded
+        //    messages from 0.94.x has NO token rows, so existing rows default
+        //    to 0 ("backfill needed") and a bounded, crash-resumable backfill
+        //    fills them from the cached bodies before the first threading that
+        //    needs tokens. A brand-new account never has token-less threads
+        //    (tokens are written at assignment), so its `imap_sync_state` row
+        //    is born with `tokens_backfilled = 1` ("done") in
+        //    `commit_sync_round`.
+        //
+        // Provider-internal sync state: NO Gmail code path reads or writes it,
+        // and it is deliberately NOT part of the settings-transfer export
+        // (`transfer.rs` is untouched and its VERSION is unchanged) — losing it
+        // only forces a re-derive from the bodies or a full resync. Reserve a
+        // new schema number for every later change to this shape rather than
+        // editing this block once it has shipped.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS imap_message_tokens (
+                account_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                token TEXT NOT NULL,
+                PRIMARY KEY (account_id, message_id, token)
+            );
+            CREATE INDEX IF NOT EXISTS imap_message_tokens_by_token
+                ON imap_message_tokens(account_id, token);
+            CREATE INDEX IF NOT EXISTS imap_message_tokens_by_message
+                ON imap_message_tokens(account_id, message_id);",
+        )
+        .map_err(error)?;
+        // Existing accounts default to "backfill needed" (0); the column add
+        // itself sets every pre-existing row to 0.
+        if !has_column(&tx, "imap_sync_state", "tokens_backfilled")? {
+            tx.execute_batch(
+                "ALTER TABLE imap_sync_state
+                    ADD COLUMN tokens_backfilled INTEGER NOT NULL DEFAULT 0;",
+            )
+            .map_err(error)?;
+        }
+        tx.execute_batch("PRAGMA user_version=59;").map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -2049,6 +2108,90 @@ mod tests {
 
         // Re-running once more over the already-created tables must not fail.
         upgraded.pragma_update(None, "user_version", 57).unwrap();
+        super::migrate(&mut upgraded).unwrap();
+        assert_eq!(
+            upgraded.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
+            super::LATEST_VERSION
+        );
+    }
+
+    #[test]
+    fn v59_adds_the_imap_message_tokens_table_and_reruns_cleanly() {
+        // A fresh database reaches the latest version with the token table and
+        // the backfill-tracking column present and queryable.
+        let mut fresh = unmigrated_database_with_one_account();
+        super::migrate(&mut fresh).unwrap();
+        fresh
+            .execute("SELECT account_id, message_id, token FROM imap_message_tokens", [])
+            .unwrap_or_else(|error| panic!("imap_message_tokens should exist: {error}"));
+        fresh
+            .execute("SELECT tokens_backfilled FROM imap_sync_state", [])
+            .unwrap_or_else(|error| panic!("tokens_backfilled column should exist: {error}"));
+        assert_eq!(
+            fresh.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
+            super::LATEST_VERSION
+        );
+
+        // An upgraded database that stopped at v58, holding a pre-existing
+        // sync-state row, converges to the same schema: the new column
+        // defaults EXISTING accounts to 0 ("backfill needed"), the token table
+        // appears and accepts rows, and the covering indexes exist.
+        let mut upgraded = unmigrated_database_with_one_account();
+        super::migrate(&mut upgraded).unwrap();
+        upgraded
+            .execute_batch(
+                "DROP INDEX imap_message_tokens_by_token;
+                 DROP INDEX imap_message_tokens_by_message;
+                 DROP TABLE imap_message_tokens;
+                 ALTER TABLE imap_sync_state DROP COLUMN tokens_backfilled;
+                 PRAGMA user_version=58;",
+            )
+            .unwrap();
+        // A v58 account that already synced (so it has token-less threads).
+        upgraded
+            .execute(
+                "INSERT INTO imap_sync_state(account_id, generation) VALUES ('you@gmail.com', 3)",
+                [],
+            )
+            .unwrap();
+        super::migrate(&mut upgraded).unwrap();
+        let backfilled: i64 = upgraded
+            .query_row(
+                "SELECT tokens_backfilled FROM imap_sync_state WHERE account_id='you@gmail.com'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(backfilled, 0, "an existing account defaults to backfill-needed");
+        upgraded
+            .execute(
+                "INSERT INTO imap_message_tokens(account_id, message_id, token)
+                 VALUES ('you@gmail.com','imap:you@gmail.com:m1','<m1@x>')",
+                [],
+            )
+            .unwrap();
+        let token: String = upgraded
+            .query_row(
+                "SELECT token FROM imap_message_tokens WHERE account_id='you@gmail.com' AND message_id='imap:you@gmail.com:m1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(token, "<m1@x>");
+        // The covering indexes exist.
+        for index in ["imap_message_tokens_by_token", "imap_message_tokens_by_message"] {
+            let present: i64 = upgraded
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
+                    [index],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(present, 1, "{index} should exist");
+        }
+
+        // Re-running once more over the already-created table must not fail.
+        upgraded.pragma_update(None, "user_version", 58).unwrap();
         super::migrate(&mut upgraded).unwrap();
         assert_eq!(
             upgraded.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),

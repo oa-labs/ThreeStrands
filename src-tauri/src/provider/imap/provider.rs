@@ -403,13 +403,23 @@ impl ImapProvider {
         // Thread the new messages, seeding prior thread state (with PERSISTED
         // creation generations) so a merge picks the genuinely older survivor.
         //
-        // Rebuilding that state reads and parses EVERY cached body, so it is
-        // done only when this round actually has new messages to thread. A
-        // flag change, a deletion or an idle round threads nothing.
+        // Seeding now reads PERSISTED threading tokens, not cached bodies: the
+        // loader queries `imap_message_tokens` for existing messages that share
+        // any token with THIS batch, resolves their threads, and seeds only
+        // those. A flag change, a deletion or an idle round threads nothing and
+        // loads nothing.
         let outcome = if threading_inputs.is_empty() {
             threading::ThreadingOutcome::default()
         } else {
-            let mut thread_state = self.load_thread_state()?;
+            // Before the first threading that needs tokens, run the one-time
+            // upgrade backfill (idempotent, bounded-batch, crash-resumable);
+            // this is the ONLY place that still parses cached bodies.
+            self.ensure_tokens_backfilled()?;
+            let batch_tokens: Vec<String> = threading_inputs
+                .iter()
+                .flat_map(|input| input.token_set())
+                .collect();
+            let mut thread_state = self.load_thread_state_from_tokens(&batch_tokens)?;
             threading::thread_batch(&mut thread_state, &threading_inputs)
         };
 
@@ -429,6 +439,12 @@ impl ImapProvider {
         round.thread_assignments = outcome.assignments;
         round.aliases = outcome.aliases;
         round.changed_threads = changed_threads.into_iter().collect();
+        // Persist each newly-threaded message's exact token set in the SAME
+        // atomic round as its assignment, so a failed round leaves no tokens.
+        round.message_tokens = threading_inputs
+            .iter()
+            .map(|input| (input.message_id.clone(), input.token_set()))
+            .collect();
 
         // Idle round: nothing changed. Do not bump the generation or journal
         // (item 5); return the current generation unchanged.
@@ -495,22 +511,96 @@ impl ImapProvider {
         Ok(out)
     }
 
-    /// Rebuild the threader's prior state from the store so a merge in this
-    /// round picks the genuinely OLDER thread as survivor. Each known thread is
-    /// seeded with the normalized `Message-ID` tokens of its messages (read
-    /// from the cached bodies — no network) and its PERSISTED creation
-    /// generation (the minimum `created_generation` across its messages). Thread
-    /// age is therefore a durable fact, not a hash ordering: on a merge the
-    /// lower creation generation survives, tie-broken by thread id, matching
-    /// the design's "older thread's id survives so references stay valid".
-    fn load_thread_state(&self) -> ProviderResult<ThreadState> {
+    /// Seed the threader's prior state from PERSISTED tokens — never from
+    /// cached bodies. Given the tokens the incoming batch carries, the store
+    /// finds existing messages that share any token, resolves their threads
+    /// through aliases, and returns each seeded thread's full token set plus
+    /// its persisted creation generation. Only the threads the batch can
+    /// actually touch are seeded, so cost scales with the batch, not with all
+    /// mail, and an index-tier message with no cached body threads fine.
+    ///
+    /// `thread_state_loads` still counts a real load here (an idle round
+    /// skips it, as before), so the 75f2704 counter test stays meaningful.
+    fn load_thread_state_from_tokens(&self, batch_tokens: &[String]) -> ProviderResult<ThreadState> {
         self.thread_state_loads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut state = ThreadState::new();
+        let seeded = self.store.seed_state_for_tokens(batch_tokens).map_err(db_err)?;
+        for (thread_id, (created_generation, tokens)) in seeded {
+            state.seed(&thread_id, created_generation, &tokens);
+        }
+        Ok(state)
+    }
+
+    /// Run the one-time, idempotent, bounded-batch, crash-resumable upgrade
+    /// backfill that fills `imap_message_tokens` for threads that predate v59
+    /// (a database with threaded mail from 0.94.x has no token rows). This is
+    /// the ONLY place that still parses cached bodies. A message with no cached
+    /// body gets only its stable-id token (matching c77fa3f's absent-body
+    /// behaviour). It runs just before the first threading that needs tokens;
+    /// a new account is already marked done, so this returns immediately.
+    ///
+    /// Each message's tokens are written in their own transaction and the
+    /// completion flag is set only after the queue drains, so a crash mid-way
+    /// leaves every finished message whole and the next run resumes from the
+    /// messages still missing tokens.
+    fn ensure_tokens_backfilled(&self) -> ProviderResult<()> {
+        if self.store.tokens_backfilled().map_err(db_err)? {
+            return Ok(());
+        }
+        use super::identity::normalize_message_id;
+        loop {
+            let batch = self
+                .store
+                .messages_missing_tokens(policy::TOKEN_BACKFILL_BATCH_SIZE)
+                .map_err(db_err)?;
+            if batch.is_empty() {
+                break;
+            }
+            for message_id in &batch {
+                // Reconstruct this message's token set from its cached body.
+                // No body (expunged, oversize-skipped, index-tier) => only the
+                // stable-id anchor, exactly as c77fa3f seeded such a message.
+                let tokens = match self.cache.get(message_id).map_err(db_err)? {
+                    Some(cached) => {
+                        let headers = super::rfc822::threading_headers_from_raw(&cached.raw);
+                        let input = ThreadingInput {
+                            message_id: message_id.clone(),
+                            message_id_header: headers
+                                .message_id
+                                .as_deref()
+                                .map(normalize_message_id)
+                                .or_else(|| Some(message_id.clone())),
+                            in_reply_to: headers.in_reply_to,
+                            references: headers.references,
+                        };
+                        input.token_set()
+                    }
+                    None => vec![message_id.clone()],
+                };
+                self.store
+                    .write_message_tokens(message_id, &tokens)
+                    .map_err(db_err)?;
+            }
+            // A full batch that returned fewer than the limit means the queue
+            // is drained; loop once more only if it was exactly the limit.
+            if batch.len() < policy::TOKEN_BACKFILL_BATCH_SIZE {
+                break;
+            }
+        }
+        self.store.mark_tokens_backfilled().map_err(db_err)?;
+        Ok(())
+    }
+
+    /// TEST-ONLY ORACLE: the pre-5b1 body-parsing seeder, kept verbatim so the
+    /// equivalence tests can assert the token loader threads identically. It
+    /// reads and parses every cached body (what 5b-1 removed from the hot
+    /// path); it must never be called from production.
+    #[cfg(test)]
+    fn load_thread_state(&self) -> ProviderResult<ThreadState> {
         use super::identity::normalize_message_id;
         let mut state = ThreadState::new();
         let rows = self.store.all_message_threads().map_err(db_err)?;
-        // Group messages by thread, tracking each thread's minimum creation
-        // generation as its persisted age.
         let mut by_thread: std::collections::BTreeMap<String, (u64, Vec<String>)> =
             std::collections::BTreeMap::new();
         for (message_id, thread_id, created) in rows {
@@ -527,9 +617,6 @@ impl ImapProvider {
         for (thread_id, (created_generation, message_ids)) in by_thread {
             let mut tokens: Vec<String> = Vec::new();
             for message_id in &message_ids {
-                // The stable id is always a valid token anchor; add the
-                // normalized Message-ID and capped ancestry from the cached
-                // body too. Absent parents must remain anchors across polls.
                 tokens.push(message_id.clone());
                 if let Some(cached) = self.cache.get(message_id).map_err(db_err)? {
                     let headers = super::rfc822::threading_headers_from_raw(&cached.raw);
@@ -1928,6 +2015,405 @@ mod tests {
             0,
             "removal must clear raw cached mail"
         );
+    }
+
+    // ---- SLICE5B1 item 3/5: the token loader threads like the body oracle --
+    //
+    // Each corpus below syncs a sequence of messages through the provider
+    // (which writes tokens at assignment and seeds from them), then threads one
+    // more "probe" message TWO ways against the resulting store: once with the
+    // production token loader and once with the retained body-parsing oracle.
+    // The two ThreadState seeds must drive thread_batch to the SAME assignment,
+    // aliases and changed-thread set — proving the token loader is equivalent
+    // to the body loader it replaced, without ever reading imap_bodies.
+
+    /// Thread `probe` against the store with BOTH loaders and assert the
+    /// outcomes are identical. Returns the (identical) outcome.
+    async fn assert_loaders_agree(
+        provider: &ImapProvider,
+        probe: ThreadingInput,
+    ) -> threading::ThreadingOutcome {
+        let batch_tokens = probe.token_set();
+        let mut token_state = provider
+            .load_thread_state_from_tokens(&batch_tokens)
+            .unwrap();
+        let mut oracle_state = provider.load_thread_state().unwrap();
+        let token_outcome = threading::thread_batch(&mut token_state, &[probe.clone()]);
+        let oracle_outcome = threading::thread_batch(&mut oracle_state, &[probe]);
+        assert_eq!(
+            token_outcome, oracle_outcome,
+            "token loader and body oracle must thread identically"
+        );
+        token_outcome
+    }
+
+    /// Sync a sequence of messages (each added, then one poll) so each lands in
+    /// its own round, exercising cross-round persistence.
+    async fn sync_each(provider: &ImapProvider, mailbox: &Arc<Mutex<FakeMailbox>>, msgs: &[String]) {
+        provider.baseline_cursor().await.unwrap();
+        for raw in msgs {
+            mailbox.lock().unwrap().add(&[], raw);
+            let cursor = SyncCursor::from_generation(provider.store.generation().unwrap());
+            provider.poll(&cursor).await.unwrap();
+        }
+    }
+
+    fn probe(id: &str, msgid: &str, in_reply_to: Option<&str>, references: Option<&str>) -> ThreadingInput {
+        ThreadingInput {
+            message_id: id.to_string(),
+            message_id_header: Some(msgid.to_string()),
+            in_reply_to: in_reply_to.map(str::to_string),
+            references: references.map(str::to_string),
+        }
+    }
+
+    #[tokio::test]
+    async fn loader_equivalence_late_parent() {
+        // A reply to an absent parent, then a sibling: a late parent probe must
+        // join the same thread under both loaders.
+        let mb = FakeMailbox::new(100);
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, _store) = provider_with(mailbox.clone());
+        sync_each(
+            &provider,
+            &mailbox,
+            &[
+                message("<reply@x>", "Reply", "References: <missing@x>\r\n"),
+                message("<sibling@x>", "Sibling", "References: <missing@x>\r\n"),
+            ],
+        )
+        .await;
+        assert_loaders_agree(&provider, probe("imap:p:late", "<missing@x>", None, None)).await;
+    }
+
+    #[tokio::test]
+    async fn loader_equivalence_absent_parent_siblings_across_rounds() {
+        let mb = FakeMailbox::new(100);
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, _store) = provider_with(mailbox.clone());
+        sync_each(
+            &provider,
+            &mailbox,
+            &[
+                message("<s1@x>", "S1", "In-Reply-To: <ghost@x>\r\n"),
+                message("<s2@x>", "S2", "In-Reply-To: <ghost@x>\r\n"),
+                message("<s3@x>", "S3", "References: <ghost@x>\r\n"),
+            ],
+        )
+        .await;
+        let outcome =
+            assert_loaders_agree(&provider, probe("imap:p:s4", "<s4@x>", Some("<ghost@x>"), None))
+                .await;
+        // All siblings share one thread, so the probe joins exactly it.
+        assert!(outcome.aliases.is_empty(), "no merge: all share one thread");
+    }
+
+    #[tokio::test]
+    async fn loader_equivalence_merge_of_two_persisted_threads() {
+        // Two unrelated roots become two persisted threads; a probe that
+        // references both must merge them identically under both loaders.
+        let mb = FakeMailbox::new(100);
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, _store) = provider_with(mailbox.clone());
+        sync_each(
+            &provider,
+            &mailbox,
+            &[message("<a@x>", "A", ""), message("<b@x>", "B", "")],
+        )
+        .await;
+        let outcome = assert_loaders_agree(
+            &provider,
+            probe("imap:p:link", "<link@x>", None, Some("<a@x> <b@x>")),
+        )
+        .await;
+        assert_eq!(outcome.aliases.len(), 1, "the probe merges the two threads");
+    }
+
+    #[tokio::test]
+    async fn loader_equivalence_capped_ancestry() {
+        // A seeded message whose References exceed the cap: the token set
+        // persisted is the capped set, and the loader must still thread a reply
+        // that points at the nearest (kept) ancestor identically.
+        let near = "<near@x>";
+        let huge: String = (0..policy::MAX_REFERENCES + 20)
+            .map(|i| {
+                if i == policy::MAX_REFERENCES + 19 {
+                    near.to_string()
+                } else {
+                    format!("<old{i}@x>")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mb = FakeMailbox::new(100);
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, _store) = provider_with(mailbox.clone());
+        sync_each(
+            &provider,
+            &mailbox,
+            &[
+                message(near, "Near", ""),
+                message("<capped@x>", "Capped", &format!("References: {huge}\r\n")),
+            ],
+        )
+        .await;
+        assert_loaders_agree(
+            &provider,
+            probe("imap:p:reply", "<reply2@x>", Some(near), None),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn loader_equivalence_duplicate_message_id() {
+        let mb = FakeMailbox::new(100);
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, _store) = provider_with(mailbox.clone());
+        // Same Message-ID header twice (distinct stable ids via distinct UIDs).
+        sync_each(
+            &provider,
+            &mailbox,
+            &[message("<dup@x>", "First", ""), message("<dup@x>", "Second", "")],
+        )
+        .await;
+        assert_loaders_agree(&provider, probe("imap:p:d", "<dup@x>", None, None)).await;
+    }
+
+    #[tokio::test]
+    async fn loader_threads_a_reply_to_a_message_with_no_cached_body() {
+        // An oversize message's body is skipped (never cached). At sync time it
+        // still threads on its IDENTITY-PASS Message-ID header, and 5b-1
+        // PERSISTS that token at assignment — so a later reply via that header
+        // joins its thread using tokens alone, with no body ever read.
+        //
+        // This is the one corpus case where the retained body-parsing oracle
+        // CANNOT match: reloading from bodies loses the header of a message
+        // whose body was never cached (the oracle sees only the stable id).
+        // That lossy reload is exactly the weakness 5b-1 removes, so here we
+        // assert the token loader's correct, non-lossy outcome directly rather
+        // than against the oracle.
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&[], &message("<normal@x>", "Normal", ""));
+        mb.add_sized(
+            &[],
+            &message("<nobody@x>", "NoBody", ""),
+            Some(policy::MAX_RAW_MESSAGE_BYTES + 1),
+        );
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        provider.baseline_cursor().await.unwrap();
+
+        // The oversize message really has no cached body.
+        let nobody_id = store
+            .locations_in_mailbox("INBOX")
+            .unwrap()
+            .into_iter()
+            .find(|l| !provider.cache.contains(&l.message_id).unwrap())
+            .map(|l| l.message_id)
+            .expect("the oversize message's body was skipped");
+
+        // Its persisted token set includes the identity-pass header AND its
+        // stable id — written at assignment, with no body read. The header is
+        // stored in the threader's NORMALIZED form (brackets/case stripped).
+        let tokens = store
+            .seed_state_for_tokens(&["nobody@x".to_string()])
+            .unwrap();
+        assert_eq!(tokens.len(), 1, "exactly the no-body message's thread is seeded");
+        let (_, (_, token_set)) = tokens.into_iter().next().unwrap();
+        assert!(token_set.contains(&"nobody@x".to_string()));
+        assert!(token_set.contains(&nobody_id));
+
+        // A reply via that header joins the no-body message's thread.
+        let mut state = provider
+            .load_thread_state_from_tokens(&["nobody@x".to_string()])
+            .unwrap();
+        let outcome = threading::thread_batch(
+            &mut state,
+            &[probe("imap:p:r", "<reply3@x>", Some("<nobody@x>"), None)],
+        );
+        let nobody_thread = store
+            .thread_of_message(&nobody_id)
+            .unwrap()
+            .map(|t| store.resolve_thread_alias(&t).unwrap())
+            .unwrap();
+        assert_eq!(
+            outcome.assignments[0].1, nobody_thread,
+            "the reply joins the no-body message's thread from tokens alone"
+        );
+    }
+
+    // ---- SLICE5B1 item 3: the hot path never reads imap_bodies -------------
+
+    #[tokio::test]
+    async fn the_round_loader_does_not_read_cached_bodies() {
+        // After an initial sync (which backfills + writes tokens), delete the
+        // whole body cache, then sync a NEW linking message. Threading must
+        // still merge correctly using ONLY persisted tokens — proving the per
+        // round loader reads no bodies. (The backfill already ran at the first
+        // threading round, so a later round never parses a body.)
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&[], &message("<a@x>", "A", ""));
+        mb.add(&[], &message("<b@x>", "B", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        provider.baseline_cursor().await.unwrap();
+        // Drop every cached body: a body read now would fail to find anything.
+        store
+            .database()
+            .with_connection(|c| {
+                c.execute("DELETE FROM imap_bodies", [])?;
+                Ok(())
+            })
+            .unwrap();
+        // A late linker referencing both roots arrives and is synced.
+        mailbox
+            .lock()
+            .unwrap()
+            .add(&[], &message("<c@x>", "Link", "References: <a@x> <b@x>\r\n"));
+        let cursor = SyncCursor::from_generation(store.generation().unwrap());
+        provider.poll(&cursor).await.unwrap();
+        // The two roots merged into one thread using tokens alone.
+        let rows = store.all_message_threads().unwrap();
+        let survivor = store.resolve_thread_alias(&rows[0].1).unwrap();
+        let members = store.messages_in_thread(&survivor).unwrap();
+        assert_eq!(members.len(), 3, "the merge happened from tokens, no body read");
+    }
+
+    // ---- SLICE5B1 item 4: the upgrade backfill ------------------------------
+
+    #[tokio::test]
+    async fn upgrade_backfill_fills_tokens_then_a_late_linker_threads_like_before() {
+        // Simulate a pre-5b1 (schema-58-era) database: threads + cached bodies
+        // exist but NO token rows, and the account is marked backfill-needed.
+        // Running a threading round must backfill tokens from the bodies, then
+        // thread a late linking message to the SAME result as the oracle.
+        let mb = FakeMailbox::new(100);
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+
+        // Insert two threaded messages WITH cached bodies but no tokens, via
+        // the store (as a 0.94.x database would hold them).
+        for (id, msgid, tid) in [
+            ("imap:me@example.com:a", "<a@x>", "imap:t:a"),
+            ("imap:me@example.com:b", "<b@x>", "imap:t:b"),
+        ] {
+            store
+                .commit_sync_round(&SyncRoundWrite {
+                    thread_assignments: vec![(id.into(), tid.into())],
+                    changed_threads: vec![tid.into()],
+                    // Deliberately NO message_tokens — the pre-5b1 shape.
+                    ..Default::default()
+                })
+                .unwrap();
+            provider
+                .cache
+                .put(id, message(msgid, "S", "").as_bytes(), 1)
+                .unwrap();
+        }
+        // Clear the token rows commit_sync_round would never have written here
+        // anyway, and force "backfill needed".
+        store
+            .database()
+            .with_connection(|c| {
+                c.execute("DELETE FROM imap_message_tokens", [])?;
+                c.execute(
+                    "UPDATE imap_sync_state SET tokens_backfilled = 0 WHERE account_id = ?1",
+                    ["me@example.com"],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(!store.tokens_backfilled().unwrap(), "set up as needing backfill");
+        assert_eq!(store.messages_missing_tokens(100).unwrap().len(), 2);
+
+        // A late message linking <a@x> and <b@x>. Threading it runs the
+        // backfill first, then merges from the now-present tokens.
+        let linker = probe("imap:me@example.com:link", "<link@x>", None, Some("<a@x> <b@x>"));
+        provider.ensure_tokens_backfilled().unwrap();
+        assert!(store.tokens_backfilled().unwrap(), "backfill marked done");
+        assert!(store.messages_missing_tokens(100).unwrap().is_empty());
+
+        // Now the token loader and body oracle agree, and the probe merges.
+        let outcome = assert_loaders_agree(&provider, linker).await;
+        assert_eq!(outcome.aliases.len(), 1, "the late linker merged both threads");
+    }
+
+    #[tokio::test]
+    async fn upgrade_backfill_is_idempotent_and_crash_resumable() {
+        let mb = FakeMailbox::new(100);
+        let (provider, store) = provider_with(Arc::new(Mutex::new(mb)));
+        // One threaded message with a body, no tokens, backfill needed.
+        store
+            .commit_sync_round(&SyncRoundWrite {
+                thread_assignments: vec![("imap:me@example.com:m".into(), "imap:t:m".into())],
+                changed_threads: vec!["imap:t:m".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        provider
+            .cache
+            .put("imap:me@example.com:m", message("<m@x>", "M", "").as_bytes(), 1)
+            .unwrap();
+        store
+            .database()
+            .with_connection(|c| {
+                c.execute("DELETE FROM imap_message_tokens", [])?;
+                c.execute("UPDATE imap_sync_state SET tokens_backfilled = 0", [])?;
+                Ok(())
+            })
+            .unwrap();
+
+        // Simulate a crash AFTER one message's tokens were written but BEFORE
+        // the done-flag was set: write the row directly, leave the flag off.
+        store
+            .write_message_tokens("imap:me@example.com:m", &["<m@x>".into()])
+            .unwrap();
+        assert!(!store.tokens_backfilled().unwrap());
+        // The queue is now empty (that message has tokens), so resume finishes
+        // and marks done without re-doing work.
+        assert!(store.messages_missing_tokens(100).unwrap().is_empty());
+        provider.ensure_tokens_backfilled().unwrap();
+        assert!(store.tokens_backfilled().unwrap());
+        // Running again is a no-op.
+        provider.ensure_tokens_backfilled().unwrap();
+        assert!(store.tokens_backfilled().unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_message_with_no_cached_body_backfills_only_its_stable_id() {
+        let mb = FakeMailbox::new(100);
+        let (provider, store) = provider_with(Arc::new(Mutex::new(mb)));
+        store
+            .commit_sync_round(&SyncRoundWrite {
+                thread_assignments: vec![("imap:me@example.com:nb".into(), "imap:t:nb".into())],
+                changed_threads: vec!["imap:t:nb".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        // No cache.put — the message has no cached body.
+        store
+            .database()
+            .with_connection(|c| {
+                c.execute("DELETE FROM imap_message_tokens", [])?;
+                c.execute("UPDATE imap_sync_state SET tokens_backfilled = 0", [])?;
+                Ok(())
+            })
+            .unwrap();
+        provider.ensure_tokens_backfilled().unwrap();
+        let tokens: Vec<String> = store
+            .database()
+            .with_connection(|c| {
+                let mut st = c.prepare(
+                    "SELECT token FROM imap_message_tokens WHERE message_id = 'imap:me@example.com:nb'",
+                )?;
+                let rows = st
+                    .query_map([], |r| r.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(rows)
+            })
+            .unwrap();
+        assert_eq!(tokens, vec!["imap:me@example.com:nb".to_string()],
+            "no body => only the stable-id anchor token");
     }
 
     // ---- SLICE5A_FIXES item 6: gated live test against the Dovecot harness --

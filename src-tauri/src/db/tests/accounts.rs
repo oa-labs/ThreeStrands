@@ -367,8 +367,9 @@ fn account_removal_and_local_disconnect_purge_only_that_accounts_imap_state() {
                 c.execute("INSERT INTO imap_locations VALUES (?1, 'INBOX', 1, 1, 'm', '[]', NULL)", [account])?;
                 c.execute("INSERT INTO imap_threads VALUES (?1, 'm', 't', 1)", [account])?;
                 c.execute("INSERT INTO imap_thread_aliases VALUES (?1, 'old', 't')", [account])?;
-                c.execute("INSERT INTO imap_sync_state VALUES (?1, 1)", [account])?;
+                c.execute("INSERT INTO imap_sync_state(account_id, generation) VALUES (?1, 1)", [account])?;
                 c.execute("INSERT INTO imap_change_journal VALUES (?1, 1, 't')", [account])?;
+                c.execute("INSERT INTO imap_message_tokens VALUES (?1, 'm', '<m@x>')", [account])?;
                 c.execute("INSERT INTO imap_mailboxes(account_id, name, uidvalidity, uidnext, permanent_flags_json, permanent_keywords)
                     VALUES (?1, 'INBOX', 1, 2, '[]', 0)", [account])?;
                 Ok(())
@@ -403,6 +404,7 @@ fn account_removal_and_local_disconnect_purge_only_that_accounts_imap_state() {
                     "imap_thread_aliases",
                     "imap_sync_state",
                     "imap_change_journal",
+                    "imap_message_tokens",
                     "imap_account_settings",
                 ] {
                     for account in ["remove@example.com", "keep@example.com"] {

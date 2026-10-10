@@ -230,6 +230,25 @@ pub const JOURNAL_RETENTION_GENERATIONS: u64 = 1_000;
 /// SIZE lives here; how the sync routine walks the batches is its own concern.
 pub const UID_BATCH_SIZE: usize = 500;
 
+/// Threading tokens bound per SQL statement when seeding the threader. Well
+/// below SQLite's bound-variable limit (999 on the oldest builds, 32,766 on
+/// the bundled one), so an initial sync that threads thousands of messages in
+/// one round queries the token set in chunks instead of failing the round.
+pub const TOKEN_QUERY_CHUNK: usize = 500;
+
+/// How many token-less messages the one-time upgrade backfill
+/// (`ImapProvider::ensure_tokens_backfilled`) processes per bounded batch
+/// before reading the next slice of the work queue.
+///
+/// The backfill parses one cached body per message to reconstruct its token
+/// set, so an unbounded sweep of a large mailbox would hold the whole queue
+/// and parse every body in one go. Draining in bounded batches keeps per-step
+/// memory and the per-transaction cost bounded and makes the sweep
+/// crash-resumable: each message's tokens commit in their own transaction, so
+/// a crash resumes from the messages still missing tokens. 500 matches the UID
+/// batch size — a round number generous for a step without being unbounded.
+pub const TOKEN_BACKFILL_BATCH_SIZE: usize = 500;
+
 /// The outcome of applying [`MAX_REFERENCES`] to a reference chain: the ids
 /// kept (newest first-to-last preserved in input order) and how many older
 /// ids were dropped.
@@ -512,6 +531,15 @@ mod tests {
     fn the_uid_batch_size_is_a_positive_bound() {
         assert!(UID_BATCH_SIZE > 0);
         assert_eq!(UID_BATCH_SIZE, 500);
+    }
+
+    #[test]
+    fn the_token_backfill_batch_size_is_a_positive_bound() {
+        assert!(TOKEN_BACKFILL_BATCH_SIZE > 0);
+        // One bound variable is the account id; the chunk plus it must stay
+        // under SQLite's oldest default limit of 999.
+        assert!(TOKEN_QUERY_CHUNK > 0 && TOKEN_QUERY_CHUNK + 1 <= 999);
+        assert_eq!(TOKEN_BACKFILL_BATCH_SIZE, 500);
     }
 
     #[test]

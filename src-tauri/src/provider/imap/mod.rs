@@ -495,6 +495,230 @@ impl ImapStateStore {
         })
     }
 
+    /// The threads (and their messages) that share ANY token with the incoming
+    /// batch's tokens — the targeted seed set for the new loader. Given the set
+    /// of tokens the incoming messages carry, this returns every existing
+    /// `(message_id, thread_id, created_generation, token)` row whose token is
+    /// in that set OR whose thread is reached through one of those matches,
+    /// resolving thread ids through the alias chain. It reads ONLY
+    /// `imap_message_tokens` + `imap_threads` + `imap_thread_aliases`; it never
+    /// touches `imap_bodies`.
+    ///
+    /// The join is done in two steps so the alias resolution stays in Rust
+    /// (the alias chain is bounded there): first find the DISTINCT message ids
+    /// that carry any batch token, then read every token of every thread those
+    /// messages belong to, so a seeded thread is seeded with ALL of its tokens
+    /// (not only the ones the batch happened to mention). This matters for a
+    /// merge: a late linker that references thread A's token must also see
+    /// thread B's tokens to merge them, which it does because A and B are
+    /// pulled in whole once any of their tokens matches.
+    ///
+    /// Returns `(thread_id -> (created_generation, [token, …]))`, thread ids
+    /// already resolved to their alias survivors and token lists
+    /// de-duplicated, ready to hand to [`threading::ThreadState::seed`].
+    pub fn seed_state_for_tokens(
+        &self,
+        batch_tokens: &[String],
+    ) -> DbResult<std::collections::BTreeMap<String, (u64, Vec<String>)>> {
+        use std::collections::{BTreeMap, BTreeSet};
+        if batch_tokens.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        // De-duplicate the batch tokens for a stable, bounded IN-list.
+        let unique: BTreeSet<&str> = batch_tokens.iter().map(String::as_str).collect();
+
+        self.database.with_connection(|connection| {
+            // Step 1: messages that carry any batch token, and their threads.
+            // Resolve each thread through the alias chain in Rust.
+            let mut threads: BTreeSet<String> = BTreeSet::new();
+            // SQLite caps bound variables per statement (32,766 in the bundled
+            // build, 999 in older ones), and an initial sync threads thousands
+            // of messages in one round, so query the token set in chunks.
+            let unique_tokens: Vec<&str> = unique.iter().copied().collect();
+            for chunk in unique_tokens.chunks(policy::TOKEN_QUERY_CHUNK) {
+                let placeholders = std::iter::repeat("?")
+                    .take(chunk.len())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let sql = format!(
+                    "SELECT DISTINCT t.thread_id
+                     FROM imap_message_tokens mt
+                     JOIN imap_threads t
+                       ON t.account_id = mt.account_id AND t.message_id = mt.message_id
+                     WHERE mt.account_id = ?1 AND mt.token IN ({placeholders})",
+                );
+                let mut statement = connection.prepare(&sql)?;
+                let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() + 1);
+                params.push(&self.account_id);
+                for token in chunk {
+                    params.push(token);
+                }
+                let rows = statement
+                    .query_map(params.as_slice(), |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                for thread in rows {
+                    threads.insert(self.resolve_thread_alias_conn(connection, &thread)?);
+                }
+            }
+            if threads.is_empty() {
+                return Ok(BTreeMap::new());
+            }
+
+            // Step 2: for every seeded thread, read ALL of its messages' tokens
+            // and the thread's persisted creation generation. A thread's rows
+            // may be filed under a pre-merge id; we matched on the resolved
+            // survivor, so gather tokens for every message whose RESOLVED
+            // thread is in `threads`.
+            let mut out: BTreeMap<String, (u64, Vec<String>)> = BTreeMap::new();
+            let mut dedup: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+
+            let mut thread_statement = connection.prepare(
+                "SELECT message_id, thread_id, created_generation
+                 FROM imap_threads WHERE account_id = ?1",
+            )?;
+            let all = thread_statement
+                .query_map([&self.account_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)? as u64,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let mut token_statement = connection.prepare(
+                "SELECT token FROM imap_message_tokens
+                 WHERE account_id = ?1 AND message_id = ?2",
+            )?;
+            for (message_id, raw_thread, created) in all {
+                let resolved = self.resolve_thread_alias_conn(connection, &raw_thread)?;
+                if !threads.contains(&resolved) {
+                    continue;
+                }
+                let entry = out.entry(resolved.clone()).or_insert((created, Vec::new()));
+                entry.0 = entry.0.min(created);
+                let bucket = dedup.entry(resolved.clone()).or_default();
+                // The stable id is always a token anchor, even if no token row
+                // was ever written for it (defensive; the writer always writes
+                // it). Then the persisted tokens.
+                bucket.insert(message_id.clone());
+                let tokens = token_statement
+                    .query_map(rusqlite::params![self.account_id, message_id], |row| {
+                        row.get::<_, String>(0)
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                for token in tokens {
+                    bucket.insert(token);
+                }
+            }
+            for (thread_id, tokens) in dedup {
+                if let Some(entry) = out.get_mut(&thread_id) {
+                    entry.1 = tokens.into_iter().collect();
+                }
+            }
+            Ok(out)
+        })
+    }
+
+    /// Resolve an alias chain on an already-held connection (so the targeted
+    /// seed can resolve many ids without reopening the guard per id). Mirrors
+    /// [`resolve_thread_alias`], bounded against a cyclic alias.
+    fn resolve_thread_alias_conn(
+        &self,
+        connection: &rusqlite::Connection,
+        thread_id: &str,
+    ) -> DbResult<String> {
+        let mut current = thread_id.to_string();
+        for _ in 0..64 {
+            let next: Option<String> = connection
+                .query_row(
+                    "SELECT new_id FROM imap_thread_aliases
+                     WHERE account_id = ?1 AND old_id = ?2",
+                    rusqlite::params![self.account_id, current],
+                    |row| row.get(0),
+                )
+                .ok();
+            match next {
+                Some(new_id) if new_id != current => current = new_id,
+                _ => break,
+            }
+        }
+        Ok(current)
+    }
+
+    /// Whether this account's one-time token backfill has completed. A row that
+    /// does not exist yet (brand-new account, no sync round) reports `true`:
+    /// such an account has no token-less threads, so there is nothing to
+    /// backfill. An existing (pre-v59) account's row defaults to `false` until
+    /// the backfill finishes.
+    pub fn tokens_backfilled(&self) -> DbResult<bool> {
+        self.database.with_connection(|connection| {
+            let done: Option<i64> = connection
+                .query_row(
+                    "SELECT tokens_backfilled FROM imap_sync_state WHERE account_id = ?1",
+                    [&self.account_id],
+                    |row| row.get(0),
+                )
+                .ok();
+            // No row => brand-new account => nothing to backfill => done.
+            Ok(done.map(|value| value != 0).unwrap_or(true))
+        })
+    }
+
+    /// Mark this account's token backfill complete. Creates the sync-state row
+    /// if it does not exist yet (so an account whose only state is token rows
+    /// still records completion), leaving the generation at its default.
+    pub fn mark_tokens_backfilled(&self) -> DbResult<()> {
+        self.database.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO imap_sync_state (account_id, generation, tokens_backfilled)
+                 VALUES (?1, 0, 1)
+                 ON CONFLICT(account_id) DO UPDATE SET tokens_backfilled = 1",
+                [&self.account_id],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Message ids that have a thread row but NO token row yet — the backfill's
+    /// work queue, bounded to `limit` for a crash-resumable, bounded-batch
+    /// sweep. Ordered by message id so progress is deterministic across runs.
+    pub fn messages_missing_tokens(&self, limit: usize) -> DbResult<Vec<String>> {
+        self.database.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT t.message_id FROM imap_threads t
+                 WHERE t.account_id = ?1
+                   AND NOT EXISTS (
+                     SELECT 1 FROM imap_message_tokens mt
+                     WHERE mt.account_id = t.account_id AND mt.message_id = t.message_id)
+                 ORDER BY t.message_id
+                 LIMIT ?2",
+            )?;
+            let rows = statement
+                .query_map(rusqlite::params![self.account_id, limit as i64], |row| {
+                    row.get::<_, String>(0)
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+    }
+
+    /// Write the token rows for one backfilled message, idempotently. Each call
+    /// is its own transaction so a crash mid-backfill leaves each completed
+    /// message whole and the sweep resumes from `messages_missing_tokens`.
+    pub fn write_message_tokens(&self, message_id: &str, tokens: &[String]) -> DbResult<()> {
+        self.database.with_transaction(|transaction| {
+            for token in tokens {
+                transaction.execute(
+                    "INSERT OR IGNORE INTO imap_message_tokens
+                        (account_id, message_id, token) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![self.account_id, message_id, token],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
     /// Thread ids currently located in a given mailbox (via the location ->
     /// thread join). Used by `list_inbox`. Returned sorted and de-duplicated.
     pub fn thread_ids_in_mailbox(&self, mailbox: &str) -> DbResult<Vec<String>> {
@@ -544,8 +768,13 @@ impl ImapStateStore {
             }
 
             let next = current + 1;
+            // A brand-new account's row is born `tokens_backfilled = 1`: this
+            // run writes tokens at assignment, so a new account never has
+            // token-less threads and must not trigger the upgrade backfill. An
+            // existing row keeps whatever the migration/backfill left.
             transaction.execute(
-                "INSERT INTO imap_sync_state (account_id, generation) VALUES (?1, ?2)
+                "INSERT INTO imap_sync_state (account_id, generation, tokens_backfilled)
+                 VALUES (?1, ?2, 1)
                  ON CONFLICT(account_id) DO UPDATE SET generation = excluded.generation",
                 rusqlite::params![self.account_id, next],
             )?;
@@ -602,6 +831,19 @@ impl ImapStateStore {
                          thread_id = excluded.thread_id",
                     rusqlite::params![self.account_id, message_id, thread_id, created],
                 )?;
+            }
+            // Persisted threading tokens for each newly-assigned message, in
+            // the SAME transaction as the assignment so a failed round writes
+            // no tokens. Keyed by message id (not thread id), so a merge that
+            // re-points threads below leaves these rows correct.
+            for (message_id, tokens) in &round.message_tokens {
+                for token in tokens {
+                    transaction.execute(
+                        "INSERT OR IGNORE INTO imap_message_tokens
+                            (account_id, message_id, token) VALUES (?1, ?2, ?3)",
+                        rusqlite::params![self.account_id, message_id, token],
+                    )?;
+                }
             }
             for (old_id, new_id) in &round.aliases {
                 // Move pre-existing members as well as this round's assignments.
@@ -707,6 +949,13 @@ pub struct SyncRoundWrite {
     pub deletions: Vec<(String, i64, i64)>,
     /// `(message_id, thread_id)` rows to upsert into `imap_threads`.
     pub thread_assignments: Vec<(String, String)>,
+    /// `(message_id, [token, …])` rows to upsert into `imap_message_tokens`:
+    /// the exact token set the threader used for each newly-assigned message
+    /// (its stable id, normalized `Message-ID`, and capped ancestry). Written
+    /// in the SAME transaction as the assignment, so a failed round leaves no
+    /// token rows (the at-least-once contract). A message already carrying
+    /// tokens from an earlier round need not reappear here.
+    pub message_tokens: Vec<(String, Vec<String>)>,
     /// `(old_id, new_id)` merge aliases to record.
     pub aliases: Vec<(String, String)>,
     /// Thread ids whose content or labels changed this round, appended to the
@@ -932,5 +1181,27 @@ mod tests {
             Some(1),
             "the thread keeps its earliest creation generation"
         );
+    }
+
+    /// An initial sync threads thousands of messages in ONE round, so the
+    /// incoming token set can far exceed SQLite's bound-variable limit. The
+    /// seeder must cope (chunked queries), not fail the round.
+    #[test]
+    fn seeding_copes_with_a_token_set_larger_than_sqlites_variable_limit() {
+        let store = store();
+        store
+            .commit_sync_round(&SyncRoundWrite {
+                thread_assignments: vec![("imap:me@example.com:m1".into(), "imap:t:x".into())],
+                message_tokens: vec![(
+                    "imap:me@example.com:m1".into(),
+                    vec!["imap:me@example.com:m1".into(), "tok-0".into()],
+                )],
+                changed_threads: vec!["imap:t:x".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        let tokens: Vec<String> = (0..100_000).map(|n| format!("tok-{n}")).collect();
+        let seeded = store.seed_state_for_tokens(&tokens).unwrap();
+        assert_eq!(seeded.len(), 1, "the one thread sharing tok-0 is seeded");
     }
 }

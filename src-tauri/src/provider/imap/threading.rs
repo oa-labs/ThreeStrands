@@ -113,6 +113,29 @@ impl ThreadingInput {
             .filter(|token| !token.is_empty())
             .unwrap_or_else(|| self.message_id.clone())
     }
+
+    /// The EXACT, de-duplicated token set this message contributes to the
+    /// threader: its stable id, its own normalized `Message-ID` token, and its
+    /// capped `In-Reply-To`/`References` ancestry. This is the single source of
+    /// truth for what gets persisted to `imap_message_tokens`, what the
+    /// targeted loader seeds a thread with, and what the upgrade backfill
+    /// writes — so the three can never disagree. Order is stable: stable id,
+    /// own token, then ancestry in reference order; duplicates removed.
+    pub(super) fn token_set(&self) -> Vec<String> {
+        let mut tokens: Vec<String> = Vec::new();
+        let push = |token: String, tokens: &mut Vec<String>| {
+            if !token.is_empty() && !tokens.contains(&token) {
+                tokens.push(token);
+            }
+        };
+        // The stable id is always a valid anchor (survives an absent header).
+        push(self.message_id.clone(), &mut tokens);
+        push(self.own_token(), &mut tokens);
+        for token in self.reference_tokens().0 {
+            push(token, &mut tokens);
+        }
+        tokens
+    }
 }
 
 /// The outcome of threading one batch of messages against the existing state.
