@@ -90,6 +90,109 @@ pub fn check_mime_part_count(count: usize) -> Result<usize, ProviderError> {
     Ok(count)
 }
 
+// ---------------------------------------------------------------------------
+// Sync window (docs/imap-design.md, "What gets synced" > "Initial window")
+// ---------------------------------------------------------------------------
+//
+// Unlike the ingest gates above, a sync window is a *selection*, not a
+// rejection: a mailbox with more mail than its window still syncs, but only
+// its newest messages are brought in. The "never silently clamp" rule still
+// holds, because [`select_window`] reports exactly how many messages fell
+// outside the window instead of dropping them without a trace. Callers must
+// carry `beyond_window` through to wherever sync progress is recorded.
+//
+// "Newest" means highest UID. Within one mailbox and `UIDVALIDITY`, UIDs are
+// strictly increasing in arrival order (RFC 3501 section 2.3.1.1), so this
+// needs no `INTERNALDATE` fetch and gives the same answer on every server.
+//
+// There is no age cutoff: the design decided against one.
+//
+// These items have no non-test caller until Slice 5 wires incremental sync,
+// so each carries a scoped `dead_code` allow, removed with that first caller.
+
+/// A ceiling on INBOX, not a normal window. The design syncs all of INBOX
+/// because it is a to-do list and a cutoff would hide old mail that still
+/// needs handling; "a count limit applies only to inboxes too large to sync in
+/// full". The owner chose 5,000, the same figure as Gmail's Sent backfill
+/// (`sync::MAX_SENT_BACKFILL_THREADS`), and a test below keeps them equal.
+/// Note Gmail itself has no INBOX cap, so this is stricter than Gmail's inbox
+/// sync. Reaching it is reported through [`WindowSelection::beyond_window`],
+/// never hidden.
+#[allow(dead_code)]
+pub const MAX_INBOX_SYNC_MESSAGES: usize = 5_000;
+
+/// Newest messages kept in sync from the `\Sent` mailbox. Matches the Gmail
+/// limit (`sync::MAX_SENT_BACKFILL_THREADS`) so the address book, contact
+/// timelines and Keep in Touch see the same depth of history on both
+/// providers; a test below fails if the two drift apart.
+#[allow(dead_code)]
+pub const SENT_SYNC_WINDOW: usize = 5_000;
+
+/// Newest messages whose headers are kept in sync from every other synced
+/// mailbox: Archive, Junk, Trash, user folders and label folders.
+#[allow(dead_code)]
+pub const FOLDER_SYNC_WINDOW: usize = 2_000;
+
+/// Which sync window applies to a mailbox. Deciding which class a given
+/// mailbox belongs to needs the account's role mapping and each mailbox's
+/// `LIST` attributes, so that lives with the sync code; this module owns only
+/// the numbers.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyncWindowClass {
+    /// INBOX: everything, up to [`MAX_INBOX_SYNC_MESSAGES`].
+    Inbox,
+    /// The `\Sent` mailbox: [`SENT_SYNC_WINDOW`].
+    Sent,
+    /// Archive, Junk, Trash, user folders and label folders:
+    /// [`FOLDER_SYNC_WINDOW`].
+    Folder,
+    /// Never synced: Drafts (drafts are local), `\All` and `\Flagged`
+    /// aggregates, and `\Noselect` containers. The window is zero, so nothing
+    /// is in it.
+    NotSynced,
+}
+
+impl SyncWindowClass {
+    /// The most messages this class keeps in sync.
+    #[allow(dead_code)]
+    pub const fn limit(self) -> usize {
+        match self {
+            Self::Inbox => MAX_INBOX_SYNC_MESSAGES,
+            Self::Sent => SENT_SYNC_WINDOW,
+            Self::Folder => FOLDER_SYNC_WINDOW,
+            Self::NotSynced => 0,
+        }
+    }
+}
+
+/// The outcome of applying a sync window to a mailbox's UIDs.
+#[allow(dead_code)]
+#[derive(Debug, PartialEq, Eq)]
+pub struct WindowSelection {
+    /// The newest UIDs, at most the window's limit, in ascending order.
+    pub in_window: Vec<u32>,
+    /// How many older UIDs fell outside the window. Zero when the whole
+    /// mailbox fits. Never discarded silently: callers record it.
+    pub beyond_window: usize,
+}
+
+/// Keeps the newest `limit` UIDs. Input order does not matter and duplicate
+/// UIDs collapse, so a caller can pass a raw `UID SEARCH` result directly.
+/// Exactly `limit` messages fit; one more pushes the oldest one beyond the
+/// window.
+#[allow(dead_code)]
+pub fn select_window(mut uids: Vec<u32>, limit: usize) -> WindowSelection {
+    uids.sort_unstable();
+    uids.dedup();
+    let beyond_window = uids.len().saturating_sub(limit);
+    let in_window = uids.split_off(beyond_window);
+    WindowSelection {
+        in_window,
+        beyond_window,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,5 +254,91 @@ mod tests {
     fn ingest_depth_limit_matches_the_shared_normalize_limit() {
         assert_eq!(MAX_MIME_DEPTH, crate::mime::MAX_MIME_DEPTH);
         assert!(MAX_MIME_PART_COUNT >= crate::mime::MAX_MIME_PARTS);
+    }
+
+    // --- sync window ---------------------------------------------------
+
+    /// UIDs 1..=n, deliberately not starting at zero (UIDs never are).
+    fn uids(n: usize) -> Vec<u32> {
+        (1..=n as u32).collect()
+    }
+
+    /// Below, exactly at, and just above `limit`: the boundary message is
+    /// kept, one more pushes the OLDEST (lowest UID) beyond the window, and
+    /// the count of what fell outside is reported rather than dropped.
+    fn assert_window_boundary(limit: usize) {
+        let below = select_window(uids(limit - 1), limit);
+        assert_eq!(below.in_window.len(), limit - 1);
+        assert_eq!(below.beyond_window, 0);
+
+        let exact = select_window(uids(limit), limit);
+        assert_eq!(exact.in_window.len(), limit);
+        assert_eq!(exact.beyond_window, 0);
+        assert_eq!(exact.in_window.first(), Some(&1), "boundary keeps the oldest too");
+
+        let above = select_window(uids(limit + 1), limit);
+        assert_eq!(above.in_window.len(), limit);
+        assert_eq!(above.beyond_window, 1);
+        assert_eq!(above.in_window.first(), Some(&2), "UID 1, the oldest, fell out");
+        assert_eq!(above.in_window.last(), Some(&(limit as u32 + 1)));
+    }
+
+    #[test]
+    fn inbox_window_is_applied_below_at_and_above_the_guard() {
+        assert_window_boundary(MAX_INBOX_SYNC_MESSAGES);
+    }
+
+    #[test]
+    fn sent_window_is_applied_below_at_and_above_the_limit() {
+        assert_window_boundary(SENT_SYNC_WINDOW);
+    }
+
+    #[test]
+    fn folder_window_is_applied_below_at_and_above_the_limit() {
+        assert_window_boundary(FOLDER_SYNC_WINDOW);
+    }
+
+    #[test]
+    fn window_classes_use_the_documented_limits() {
+        assert_eq!(SyncWindowClass::Sent.limit(), 5_000);
+        assert_eq!(SyncWindowClass::Folder.limit(), 2_000);
+        assert_eq!(SyncWindowClass::Inbox.limit(), MAX_INBOX_SYNC_MESSAGES);
+        assert_eq!(SyncWindowClass::NotSynced.limit(), 0);
+    }
+
+    #[test]
+    fn a_not_synced_class_puts_every_message_beyond_the_window() {
+        let selection = select_window(uids(3), SyncWindowClass::NotSynced.limit());
+        assert!(selection.in_window.is_empty());
+        assert_eq!(selection.beyond_window, 3);
+    }
+
+    #[test]
+    fn window_selection_accepts_raw_search_output() {
+        // A UID SEARCH result is unordered and a server may repeat a UID.
+        let selection = select_window(vec![40, 7, 7, 900, 13, 40], 3);
+        assert_eq!(selection.in_window, vec![13, 40, 900]);
+        assert_eq!(selection.beyond_window, 1, "only UID 7 is outside, once");
+    }
+
+    #[test]
+    fn an_empty_mailbox_has_an_empty_window() {
+        let selection = select_window(Vec::new(), FOLDER_SYNC_WINDOW);
+        assert!(selection.in_window.is_empty());
+        assert_eq!(selection.beyond_window, 0);
+    }
+
+    // The design says IMAP Sent depth matches Gmail's so the address book and
+    // Keep in Touch see the same history on both providers. Fail loudly if one
+    // side is changed without the other.
+    #[test]
+    fn sent_window_matches_the_gmail_sent_backfill_limit() {
+        assert_eq!(SENT_SYNC_WINDOW, crate::sync::MAX_SENT_BACKFILL_THREADS);
+    }
+
+    // The owner chose to hold the INBOX ceiling at the same figure.
+    #[test]
+    fn inbox_ceiling_matches_the_gmail_sent_backfill_limit() {
+        assert_eq!(MAX_INBOX_SYNC_MESSAGES, crate::sync::MAX_SENT_BACKFILL_THREADS);
     }
 }

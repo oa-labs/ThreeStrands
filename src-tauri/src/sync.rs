@@ -52,7 +52,7 @@ const REMOTE_SEARCH_SCAN_LIMIT: usize = 50;
 /// archived never become contacts. Trash and spam are left out.
 const SENT_BACKFILL_QUERY: &str = "in:sent -in:trash -in:spam";
 /// Newest sent threads scanned before the backfill stops for good.
-const MAX_SENT_BACKFILL_THREADS: usize = 5_000;
+pub(crate) const MAX_SENT_BACKFILL_THREADS: usize = 5_000;
 /// Thread fetches per backfill step. Each step holds the account's sync gate,
 /// so it stays short enough not to stall a manual refresh queued behind it.
 const SENT_BACKFILL_FETCHES_PER_STEP: usize = 25;
