@@ -21,7 +21,7 @@
 //! no mailbox-create path in Slice 1), so for now it maps to a
 //! `TransientTransport` carrying the retry intent, with a `// Slice 3` note.
 
-use async_imap::imap_proto::ResponseCode;
+use async_imap::imap_proto::{Response, ResponseCode};
 
 use crate::provider::ProviderError;
 
@@ -71,38 +71,73 @@ impl ImapFailure {
 }
 
 /// Classify an RFC 5530 response code (as `async-imap` parses it) plus the
-/// human-readable status text into an [`ImapFailure`]. A code we do not map
-/// specially falls through to text classification.
+/// human-readable status text into an [`ImapFailure`]. Recognized typed codes
+/// take precedence over diagnostic text. Codes imap-proto does not recognize
+/// remain at the start of the information field, including their brackets.
 pub fn classify_response_code(code: Option<&ResponseCode<'_>>, text: &str) -> ImapFailure {
     let text = text.trim();
     match code {
-        // async-imap's imap-proto does not expose a stable typed variant for
-        // every RFC 5530 code across versions, so we classify from the status
-        // text (where the bracketed code word always appears). An `Alert` is
-        // informational text, surfaced as a plain Bad.
-        Some(ResponseCode::Alert) => ImapFailure::Bad(text.to_string()),
-        _ => classify_status_text(text),
+        Some(ResponseCode::TryCreate) => ImapFailure::TryCreate(text.to_string()),
+        Some(_) => ImapFailure::Bad(text.to_string()),
+        None => {
+            let code = text
+                .strip_prefix('[')
+                .and_then(|rest| rest.split_once(']'))
+                .map(|(code, _)| code.to_ascii_uppercase());
+            match code.as_deref() {
+                Some("AUTHENTICATIONFAILED") => ImapFailure::AuthenticationFailed(text.to_string()),
+                Some("OVERQUOTA") => ImapFailure::OverQuota(text.to_string()),
+                Some("TRYCREATE") => ImapFailure::TryCreate(text.to_string()),
+                Some("UNAVAILABLE" | "INUSE") => ImapFailure::ServerUnavailable(text.to_string()),
+                _ => ImapFailure::Bad(text.to_string()),
+            }
+        }
     }
 }
 
-/// Classify from the status text. Servers put the RFC 5530 code word in the
-/// bracketed prefix (e.g. `[AUTHENTICATIONFAILED] ...`), so an uppercase
-/// substring match is a reliable, server-neutral signal that needs no
-/// per-server branching.
+/// Classify bracketed response text or a complete IMAP status line. Only the
+/// response-code position is significant; mailbox names and diagnostic text
+/// must never determine authentication or retry policy.
 pub fn classify_status_text(text: &str) -> ImapFailure {
-    let upper = text.to_ascii_uppercase();
-    let has = |needle: &str| upper.contains(needle);
-    if has("AUTHENTICATIONFAILED") {
-        ImapFailure::AuthenticationFailed(text.to_string())
-    } else if has("OVERQUOTA") {
-        ImapFailure::OverQuota(text.to_string())
-    } else if has("TRYCREATE") {
-        ImapFailure::TryCreate(text.to_string())
-    } else if has("UNAVAILABLE") || has("INUSE") {
-        ImapFailure::ServerUnavailable(text.to_string())
-    } else {
-        ImapFailure::Bad(text.to_string())
+    let text = text.trim();
+    if text.starts_with('[') {
+        return classify_response_code(None, text);
     }
+    let wire = format!("{text}\r\n");
+    if let Ok(([], Response::Done { outcome, .. } | Response::Data { outcome, .. })) =
+        Response::parse(wire.as_bytes())
+    {
+        return classify_response_code(
+            outcome.code.as_ref(),
+            outcome.information.as_deref().unwrap_or_default(),
+        );
+    }
+    ImapFailure::Bad(text.to_string())
+}
+
+/// async-imap 0.12 erases parsed outcomes into two debug-string formats:
+/// `check_status_ok` uses `code: ..., info: ...`, while SELECT/FETCH parsers
+/// use `outcome: Outcome { code: ..., information: ... }`. Inspect only their
+/// leading fields. Unknown codes survive at the start of the quoted
+/// information; recognized typed codes must not fall back to that text.
+fn classify_async_imap_status_text(text: &str) -> ImapFailure {
+    let fields = text
+        .strip_prefix("code: ")
+        .map(|fields| (fields, "None, info: Some(\""))
+        .or_else(|| {
+            text.strip_prefix("outcome: Outcome { code: ")
+                .map(|fields| (fields, "None, information: Some(\""))
+        });
+    if let Some((fields, information_prefix)) = fields {
+        if fields.starts_with("Some(TryCreate), ") {
+            return ImapFailure::TryCreate(text.to_string());
+        }
+        if let Some(information) = fields.strip_prefix(information_prefix) {
+            return classify_response_code(None, information);
+        }
+        return ImapFailure::Bad(text.to_string());
+    }
+    classify_status_text(text)
 }
 
 /// Map an `async-imap` error directly to a [`ProviderError`], classifying IO /
@@ -114,7 +149,7 @@ pub fn map_imap_error(err: &async_imap::error::Error) -> ProviderError {
     let failure = match err {
         // A `No`/`Bad` tagged response carries the server's status text, where
         // the RFC 5530 code word lives.
-        E::No(text) | E::Bad(text) => classify_status_text(text),
+        E::No(text) | E::Bad(text) => classify_async_imap_status_text(text),
         // Connection-level failures: dropped socket or IO error. All transient
         // transport.
         E::ConnectionLost => ImapFailure::TransportDropped("connection lost".to_string()),
@@ -223,5 +258,42 @@ mod tests {
             "[AUTHENTICATIONFAILED] nope".into(),
         ));
         assert!(matches!(err, ProviderError::ReauthenticationRequired(_)));
+    }
+
+    #[test]
+    fn diagnostic_text_and_partial_code_names_do_not_change_error_policy() {
+        for text in [
+            "[NONEXISTENT] Unknown mailbox: INUSE",
+            "[NONEXISTENT] Unknown mailbox: AUTHENTICATIONFAILED",
+            "Unknown mailbox: OVERQUOTA",
+            "Mailbox doesn't exist: [TRYCREATE]",
+            "[UNAVAILABLE-LATER] try again",
+            "[AUTHENTICATIONFAILED_EXTRA] unrelated code",
+            "[AUTHENTICATIONFAILED missing closing bracket",
+        ] {
+            assert!(
+                matches!(classify_status_text(text), ImapFailure::Bad(_)),
+                "diagnostic text must not be interpreted as a response code: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn typed_response_codes_take_precedence_over_diagnostic_text() {
+        assert!(matches!(
+            classify_response_code(Some(&ResponseCode::TryCreate), "AUTHENTICATIONFAILED"),
+            ImapFailure::TryCreate(_)
+        ));
+        assert!(matches!(
+            classify_response_code(
+                Some(&ResponseCode::Alert),
+                "[AUTHENTICATIONFAILED] diagnostic"
+            ),
+            ImapFailure::Bad(_)
+        ));
+        assert!(matches!(
+            classify_status_text("a1 NO [UNAVAILABLE] backend AUTHENTICATIONFAILED"),
+            ImapFailure::ServerUnavailable(_)
+        ));
     }
 }

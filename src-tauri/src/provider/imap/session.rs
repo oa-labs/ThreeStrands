@@ -25,7 +25,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::provider::ProviderError;
 
-use super::error::map_imap_error;
+use super::error::{classify_response_code, map_imap_error};
 
 /// A mailbox's post-SELECT status, the subset of `async-imap`'s `Mailbox` the
 /// later slices read: the UID counters a resync compares and whether arbitrary
@@ -58,9 +58,8 @@ impl MailboxStatus {
 /// An authenticated IMAP session.
 ///
 /// Implemented for `async-imap` by [`AsyncImapSession`]; the trait keeps that
-/// choice swappable (the design's `imap-next` fallback). Methods map every
-/// failure through [`map_imap_error`] so callers only ever see
-/// [`ProviderError`].
+/// choice swappable (the design's `imap-next` fallback). Methods use the shared
+/// IMAP error classification so callers only ever see [`ProviderError`].
 #[async_trait]
 pub trait ImapSession: Send {
     /// SELECT a mailbox for read/write and return its status.
@@ -75,15 +74,12 @@ pub trait ImapSession: Send {
     /// UID FETCH `items` for `uid_set` in the selected mailbox; returns the
     /// raw `Fetch` responses collected. (The read slices turn these into
     /// `RawMessage`s; Slice 1 only proves the round-trip.)
-    async fn uid_fetch(
-        &mut self,
-        uid_set: &str,
-        items: &str,
-    ) -> Result<Vec<Fetch>, ProviderError>;
+    async fn uid_fetch(&mut self, uid_set: &str, items: &str) -> Result<Vec<Fetch>, ProviderError>;
 
     /// Run a raw tagged command and return the first response code's debug
     /// string, if any — the escape hatch for `COPYUID`/`APPENDUID` that typed
     /// calls discard (Slice 0 spike finding). Later mutation slices use it.
+    /// Only a matching OK completion succeeds; NO/BAD return provider errors.
     async fn run_command_capture_code(
         &mut self,
         command: &str,
@@ -131,25 +127,33 @@ where
     T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug + Send,
 {
     async fn select(&mut self, mailbox: &str) -> Result<MailboxStatus, ProviderError> {
-        let mb = self.session.select(mailbox).await.map_err(|e| map_imap_error(&e))?;
+        let mb = self
+            .session
+            .select(mailbox)
+            .await
+            .map_err(|e| map_imap_error(&e))?;
         Ok(MailboxStatus::from_mailbox(&mb))
     }
 
     async fn examine(&mut self, mailbox: &str) -> Result<MailboxStatus, ProviderError> {
-        let mb = self.session.examine(mailbox).await.map_err(|e| map_imap_error(&e))?;
+        let mb = self
+            .session
+            .examine(mailbox)
+            .await
+            .map_err(|e| map_imap_error(&e))?;
         Ok(MailboxStatus::from_mailbox(&mb))
     }
 
     async fn uid_search(&mut self, query: &str) -> Result<Vec<u32>, ProviderError> {
-        let uids = self.session.uid_search(query).await.map_err(|e| map_imap_error(&e))?;
+        let uids = self
+            .session
+            .uid_search(query)
+            .await
+            .map_err(|e| map_imap_error(&e))?;
         Ok(uids.into_iter().collect())
     }
 
-    async fn uid_fetch(
-        &mut self,
-        uid_set: &str,
-        items: &str,
-    ) -> Result<Vec<Fetch>, ProviderError> {
+    async fn uid_fetch(&mut self, uid_set: &str, items: &str) -> Result<Vec<Fetch>, ProviderError> {
         let stream = self
             .session
             .uid_fetch(uid_set, items)
@@ -166,8 +170,12 @@ where
         &mut self,
         command: &str,
     ) -> Result<Option<String>, ProviderError> {
-        use async_imap::imap_proto::Response;
-        let id = self.session.run_command(command).await.map_err(|e| map_imap_error(&e))?;
+        use async_imap::imap_proto::{Response, Status};
+        let id = self
+            .session
+            .run_command(command)
+            .await
+            .map_err(|e| map_imap_error(&e))?;
         let mut captured: Option<String> = None;
         loop {
             let resp = self
@@ -177,13 +185,38 @@ where
                 .map_err(|io| map_imap_error(&async_imap::error::Error::Io(io)))?
                 .ok_or_else(|| map_imap_error(&async_imap::error::Error::ConnectionLost))?;
             match resp.parsed() {
+                Response::Data {
+                    status: Status::Bye,
+                    ..
+                } => {
+                    return Err(map_imap_error(&async_imap::error::Error::ConnectionLost));
+                }
                 Response::Data { outcome, .. } => {
                     if let Some(code) = outcome.code.as_ref() {
                         captured = Some(format!("{code:?}"));
                     }
                 }
-                Response::Done { tag, outcome, .. } => {
+                Response::Done {
+                    tag,
+                    status,
+                    outcome,
+                } => {
                     if tag.as_bytes() == id.as_bytes() {
+                        match status {
+                            Status::Ok => {}
+                            Status::No | Status::Bad => {
+                                return Err(classify_response_code(
+                                    outcome.code.as_ref(),
+                                    outcome.information.as_deref().unwrap_or_default(),
+                                )
+                                .into_provider_error());
+                            }
+                            _ => {
+                                return Err(ProviderError::InvalidOperation(format!(
+                                    "unexpected tagged IMAP status: {status:?}"
+                                )));
+                            }
+                        }
                         if let Some(code) = outcome.code.as_ref() {
                             captured = Some(format!("{code:?}"));
                         }
@@ -208,6 +241,206 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream};
+    use tokio::task::JoinHandle;
+
+    // Exercise async-imap's actual wire parser and error formatting without
+    // a network server. Each response uses the request's real tag.
+    fn scripted_client(
+        responses: Vec<&'static str>,
+    ) -> (async_imap::Client<DuplexStream>, JoinHandle<()>) {
+        let (client, server) = tokio::io::duplex(4096);
+        let task = tokio::spawn(async move {
+            let mut server = BufReader::new(server);
+            server
+                .get_mut()
+                .write_all(b"* OK test server ready\r\n")
+                .await
+                .unwrap();
+            for response in responses {
+                let mut command = String::new();
+                server.read_line(&mut command).await.unwrap();
+                let tag = command.split_whitespace().next().expect("a tagged command");
+                let response = format!("{}\r\n", response.replace("{tag}", tag));
+                server
+                    .get_mut()
+                    .write_all(response.as_bytes())
+                    .await
+                    .unwrap();
+            }
+        });
+        (async_imap::Client::new(client), task)
+    }
+
+    async fn scripted_session(
+        response: &'static str,
+    ) -> (AsyncImapSession<DuplexStream>, JoinHandle<()>) {
+        let (client, task) = scripted_client(vec!["{tag} OK logged in", response]);
+        let session = client.login("user", "password").await.unwrap();
+        (AsyncImapSession::new(session), task)
+    }
+
+    fn rejected_commands() -> Vec<(&'static str, ProviderError)> {
+        vec![
+            (
+                "{tag} NO [AUTHENTICATIONFAILED] Invalid credentials",
+                ProviderError::ReauthenticationRequired(String::new()),
+            ),
+            (
+                "{tag} NO [UNAVAILABLE] Backend AUTHENTICATIONFAILED",
+                ProviderError::TransientTransport(String::new()),
+            ),
+            (
+                "{tag} NO [INUSE] Mailbox busy",
+                ProviderError::TransientTransport(String::new()),
+            ),
+            (
+                "{tag} NO [OVERQUOTA] Storage exhausted",
+                ProviderError::PermanentClientRejection(String::new()),
+            ),
+            (
+                "{tag} NO [TRYCREATE] Missing mailbox",
+                ProviderError::TransientTransport(String::new()),
+            ),
+            (
+                "{tag} NO Permission denied",
+                ProviderError::InvalidOperation(String::new()),
+            ),
+            (
+                "{tag} BAD Command syntax error",
+                ProviderError::InvalidOperation(String::new()),
+            ),
+        ]
+    }
+
+    fn assert_error_category(actual: &ProviderError, expected: &ProviderError, response: &str) {
+        assert_eq!(
+            std::mem::discriminant(actual),
+            std::mem::discriminant(expected),
+            "wrong error category for {response}: {actual:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn raw_commands_map_no_and_bad_completions_to_provider_errors() {
+        for (response, expected) in rejected_commands() {
+            let (mut session, server) = scripted_session(response).await;
+            let err = session
+                .run_command_capture_code("UID COPY 1 Archive")
+                .await
+                .unwrap_err();
+            assert_error_category(&err, &expected, response);
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn raw_commands_preserve_successful_uid_response_codes() {
+        for (response, expected) in [
+            (
+                "{tag} OK [COPYUID 7 1 9] copied",
+                Some("CopyUid(7, [Uid(1)], [Uid(9)])"),
+            ),
+            (
+                "{tag} OK [APPENDUID 7 9] appended",
+                Some("AppendUid(7, [Uid(9)])"),
+            ),
+            ("{tag} OK complete", None),
+            ("other BAD unrelated command\r\n{tag} OK complete", None),
+        ] {
+            let (mut session, server) = scripted_session(response).await;
+            let code = session
+                .run_command_capture_code("UID COPY 1 Archive")
+                .await
+                .unwrap();
+            assert_eq!(code.as_deref(), expected, "{response}");
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn raw_commands_fail_when_the_server_sends_bye_or_drops_the_connection() {
+        for response in [
+            "* BYE [UNAVAILABLE] Shutting down",
+            "* OK No command completion",
+        ] {
+            let (mut session, server) = scripted_session(response).await;
+            let err = session
+                .run_command_capture_code("UID COPY 1 Archive")
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, ProviderError::TransientTransport(_)),
+                "{err:?}"
+            );
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn typed_commands_map_actual_async_imap_error_formats() {
+        for (response, expected) in rejected_commands() {
+            // LOGOUT uses `code: ..., info: ...`; SELECT uses `outcome: ...`.
+            let (mut session, server) = scripted_session(response).await;
+            let err = session.logout().await.unwrap_err();
+            assert_error_category(&err, &expected, response);
+            server.await.unwrap();
+
+            let (mut session, server) = scripted_session(response).await;
+            let err = session.select("INBOX").await.unwrap_err();
+            assert_error_category(&err, &expected, response);
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn login_maps_actual_async_imap_error_formats() {
+        for (response, expected) in rejected_commands() {
+            let (client, server) = scripted_client(vec![response]);
+            let (err, _) = client.login("user", "password").await.unwrap_err();
+            assert_error_category(&map_imap_error(&err), &expected, response);
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn mailbox_names_and_diagnostics_do_not_become_response_codes() {
+        for response in [
+            "{tag} NO [NONEXISTENT] Unknown mailbox: INUSE",
+            "{tag} NO [NONEXISTENT] Unknown mailbox: AUTHENTICATIONFAILED",
+            "{tag} NO Unknown mailbox: OVERQUOTA",
+            "{tag} NO Mailbox doesn't exist: [TRYCREATE]",
+            "{tag} NO [UNAVAILABLE-LATER] Unrecognized code",
+            "{tag} NO [ALERT] [AUTHENTICATIONFAILED] diagnostic only",
+        ] {
+            let (mut session, server) = scripted_session(response).await;
+            let err = session
+                .run_command_capture_code("UID COPY 1 INUSE")
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, ProviderError::InvalidOperation(_)),
+                "{response}: {err:?}"
+            );
+            server.await.unwrap();
+
+            let (mut session, server) = scripted_session(response).await;
+            let err = session.logout().await.unwrap_err();
+            assert!(
+                matches!(err, ProviderError::InvalidOperation(_)),
+                "{response}: {err:?}"
+            );
+            server.await.unwrap();
+
+            let (mut session, server) = scripted_session(response).await;
+            let err = session.select("INUSE").await.unwrap_err();
+            assert!(
+                matches!(err, ProviderError::InvalidOperation(_)),
+                "{response}: {err:?}"
+            );
+            server.await.unwrap();
+        }
+    }
 
     // `MailboxStatus` reads `\*` out of PERMANENTFLAGS as the keyword-storable
     // signal, independent of any live server.

@@ -14,7 +14,7 @@
 //!   the platform trust store is used. Verification is never disabled.
 //! * **Connections: at most two per account** — one idling on INBOX, one for
 //!   commands — with commands run one at a time. [`ImapConnectionManager`]
-//!   enforces that cap with two semaphore permits and a command mutex. ISP
+//!   enforces that cap with two semaphore permits and one mutex per role. ISP
 //!   servers often cap connections per user across all the user's devices, so
 //!   the client stays well under.
 //!
@@ -156,9 +156,9 @@ pub async fn connect(
 /// * A [`Semaphore`] with **2 permits** bounds total connections. Acquiring a
 ///   permit is how a caller reserves one of the account's two slots; dropping
 ///   it (when the connection closes) returns the slot.
-/// * A [`Mutex`] serializes commands so only one command connection runs a
-///   command at a time, leaving the second slot free for the long-lived IDLE
-///   connection.
+/// * A [`Mutex`] for each role allows only one command connection and one IDLE
+///   connection. A reservation takes its role lock before a global permit,
+///   so queued reservations never occupy the other role's slot.
 ///
 /// One manager per account. It mints connections through [`connect`] but does
 /// not itself hold them open — the later sync slices own connection lifecycle;
@@ -169,6 +169,8 @@ pub struct ImapConnectionManager {
     connections: Arc<Semaphore>,
     /// Held while a command runs, so commands serialize.
     command_lock: Arc<Mutex<()>>,
+    /// Held by the single long-lived IDLE connection.
+    idle_lock: Arc<Mutex<()>>,
 }
 
 /// The two connection roles, so a caller names which slot it is taking.
@@ -181,14 +183,12 @@ pub enum ConnectionRole {
 }
 
 /// A reserved connection slot. Holding this proves one of the account's two
-/// permits is taken; dropping it frees the slot. A `Command` reservation also
-/// holds the serialize-commands lock for its lifetime.
+/// permits is taken; dropping it frees the slot. Each reservation also holds
+/// its role's exclusive lock for its lifetime.
 pub struct ConnectionLease {
     role: ConnectionRole,
     _permit: OwnedSemaphorePermit,
-    // Held for a Command lease so only one command runs at a time; `None` for
-    // an Idle lease, which does not serialize against commands.
-    _command_guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+    _role_guard: tokio::sync::OwnedMutexGuard<()>,
 }
 
 impl ConnectionLease {
@@ -206,6 +206,7 @@ impl ImapConnectionManager {
             config,
             connections: Arc::new(Semaphore::new(Self::MAX_CONNECTIONS)),
             command_lock: Arc::new(Mutex::new(())),
+            idle_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -213,10 +214,14 @@ impl ImapConnectionManager {
         &self.config
     }
 
-    /// Reserve one of the two connection slots for `role`. Awaits a free slot;
-    /// a `Command` reservation additionally awaits the command lock so only
-    /// one command runs at a time. Returns a lease whose drop frees the slot.
+    /// Reserve the single slot for `role`. Await the role lock before taking
+    /// a global permit so a queued reservation cannot block the other role.
+    /// Returns a lease whose drop frees the slot and the role lock.
     pub async fn reserve(&self, role: ConnectionRole) -> ConnectionLease {
+        let role_guard = match role {
+            ConnectionRole::Command => self.command_lock.clone().lock_owned().await,
+            ConnectionRole::Idle => self.idle_lock.clone().lock_owned().await,
+        };
         // A permit cannot error unless the semaphore is closed, which we never
         // do; `expect` documents that invariant.
         let permit = self
@@ -225,14 +230,10 @@ impl ImapConnectionManager {
             .acquire_owned()
             .await
             .expect("connection semaphore is never closed");
-        let command_guard = match role {
-            ConnectionRole::Command => Some(self.command_lock.clone().lock_owned().await),
-            ConnectionRole::Idle => None,
-        };
         ConnectionLease {
             role,
             _permit: permit,
-            _command_guard: command_guard,
+            _role_guard: role_guard,
         }
     }
 
@@ -342,6 +343,67 @@ mod tests {
         .expect("the one idle + one command pairing is the intended steady state");
     }
 
+    #[tokio::test]
+    async fn queued_reservations_are_exclusive_per_role_and_leave_the_other_slot_free() {
+        for (role, other_role) in [
+            (ConnectionRole::Command, ConnectionRole::Idle),
+            (ConnectionRole::Idle, ConnectionRole::Command),
+        ] {
+            let mgr = ImapConnectionManager::new(config());
+            let first = mgr.reserve(role).await;
+            let queued = mgr.reserve(role);
+            tokio::pin!(queued);
+
+            assert!(
+                futures::poll!(&mut queued).is_pending(),
+                "a second {role:?} must wait"
+            );
+            assert_eq!(
+                mgr.available_slots(),
+                1,
+                "a queued {role:?} must not take a permit"
+            );
+            let other = tokio::time::timeout(
+                std::time::Duration::from_millis(50),
+                mgr.reserve(other_role),
+            )
+            .await
+            .expect("a queued reservation must leave the other role's slot free");
+            assert_eq!(mgr.available_slots(), 0);
+
+            drop(first);
+            let next = tokio::time::timeout(std::time::Duration::from_millis(50), &mut queued)
+                .await
+                .expect("dropping a lease releases its role for the queued reservation");
+            assert_eq!(next.role(), role);
+            assert_eq!(mgr.available_slots(), 0);
+            drop(next);
+            drop(other);
+            assert_eq!(mgr.available_slots(), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_queued_reservation_does_not_leak_a_slot_or_role_lock() {
+        for role in [ConnectionRole::Command, ConnectionRole::Idle] {
+            let mgr = ImapConnectionManager::new(config());
+            let first = mgr.reserve(role).await;
+            {
+                let queued = mgr.reserve(role);
+                tokio::pin!(queued);
+                assert!(futures::poll!(&mut queued).is_pending());
+            }
+            assert_eq!(mgr.available_slots(), 1);
+            drop(first);
+            let replacement =
+                tokio::time::timeout(std::time::Duration::from_millis(50), mgr.reserve(role))
+                    .await
+                    .expect("cancelling a waiter must leave the role available");
+            drop(replacement);
+            assert_eq!(mgr.available_slots(), 2);
+        }
+    }
+
     // Optional live integration coverage against the Dovecot test container.
     //
     // GATED on `DOVECOT_TEST_FP` so the default `cargo test` never needs
@@ -371,15 +433,24 @@ mod tests {
         };
         let mgr = ImapConnectionManager::new(cfg);
         let (mut session, _lease) = match mgr
-            .connect_leased(ConnectionRole::Command, "test@threestrands.test", "testpassword")
+            .connect_leased(
+                ConnectionRole::Command,
+                "test@threestrands.test",
+                "testpassword",
+            )
             .await
         {
             Ok(pair) => pair,
-            Err(e) => panic!("STARTTLS + pinned TLS + LOGIN should succeed against the live container: {e:?}"),
+            Err(e) => panic!(
+                "STARTTLS + pinned TLS + LOGIN should succeed against the live container: {e:?}"
+            ),
         };
         let status = session.select("INBOX").await.expect("SELECT INBOX");
         // The container's INBOX has UID counters; just prove we read them.
-        assert!(status.uid_validity.is_some(), "INBOX should report UIDVALIDITY");
+        assert!(
+            status.uid_validity.is_some(),
+            "INBOX should report UIDVALIDITY"
+        );
         let _ = session.logout().await;
     }
 
