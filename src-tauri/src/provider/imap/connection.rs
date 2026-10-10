@@ -173,7 +173,7 @@ pub async fn probe_certificate(
             "the server completed TLS without presenting a certificate".into(),
         )
     })?;
-    let trusted_by_platform = verifier.chains_to_public_root(&config.host);
+    let trusted_by_platform = verifier.trusted_by_platform();
     Ok(CertificateProbe {
         certificate: CertificateInfo::from_leaf(&leaf),
         trusted_by_platform,

@@ -71,7 +71,9 @@ pub use settings::{FingerprintDecision, ImapSettingsStore};
 pub use settings::host_port_key;
 pub(crate) use settings::{read_settings_row, write_settings_row};
 pub use connection::CertificateProbe;
-pub use setup::{plain_language, probe_imap_certificate, test_imap, test_smtp, TestReport};
+pub use setup::{
+    plain_language, probe_imap_certificate, probe_smtp_certificate, test_imap, test_smtp, TestReport,
+};
 // Port defaults and the certificate-info type are part of the setup surface
 // the frontend form reaches through commands added as the UI fills in; no
 // caller yet, so the allow is scoped and removed with it.

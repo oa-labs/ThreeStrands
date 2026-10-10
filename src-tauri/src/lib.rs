@@ -293,6 +293,51 @@ mod account_startup_tests {
     use crate::{auth::{self, AuthConfig}, db::Database, models::MailProviderKind};
 
     #[test]
+    fn tested_imap_setup_saves_independent_pins_without_starting_sync() {
+        let database = Database::open_memory();
+        let request: super::ImapSetupRequest = serde_json::from_value(serde_json::json!({
+            "email": "imap@example.com", "imapHost": "incoming.example.com", "imapPort": 993,
+            "imapSecurity": "implicit_tls", "imapUsername": "incoming", "imapPassword": "secret",
+            "smtpHost": "outgoing.example.com", "smtpPort": 587, "smtpSecurity": "start_tls",
+            "smtpUsername": "outgoing", "smtpPassword": null,
+            "imapPinnedFingerprint": null, "smtpPinnedFingerprint": null,
+            "labelStorage": "folders", "labelContainer": "Labels"
+        }))
+        .unwrap();
+        let incoming = super::imap::Sha256Fingerprint::from_bytes([1; 32]);
+        let outgoing = super::imap::Sha256Fingerprint::from_bytes([2; 32]);
+        let account =
+            super::save_tested_imap_settings(&database, &request, Some(incoming), Some(outgoing))
+                .unwrap();
+        assert_eq!(account.provider, "imap");
+        let saved = database
+            .imap_account_settings(&request.email)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            saved.pinned_fingerprints["incoming.example.com:993"],
+            incoming.to_hex()
+        );
+        assert_eq!(
+            saved.pinned_fingerprints["outgoing.example.com:587"],
+            outgoing.to_hex()
+        );
+        assert!(startup_account_credentials(&database, &AuthConfig::google_for_test()).is_empty());
+
+        // A CA-trusted SMTP endpoint has no pin even when IMAP needs one.
+        super::save_tested_imap_settings(&database, &request, Some(incoming), None).unwrap();
+        let saved = database
+            .imap_account_settings(&request.email)
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.pinned_fingerprints.len(), 1);
+        assert!(!saved
+            .pinned_fingerprints
+            .contains_key("outgoing.example.com:587"));
+        assert_eq!(database.list_accounts().unwrap().len(), 1);
+    }
+
+    #[test]
     fn a_fresh_install_starts_with_the_gmail_placeholder() {
         let database = Database::open_memory();
         let credentials = startup_account_credentials(&database, &AuthConfig::google_for_test());
@@ -2125,6 +2170,17 @@ async fn probe_imap_certificate(
         .map_err(|error| imap::plain_language(&error))
 }
 
+#[tauri::command]
+async fn probe_smtp_certificate(
+    host: String,
+    port: u16,
+    security: imap::SecurityMode,
+) -> Result<imap::CertificateProbe, String> {
+    imap::probe_smtp_certificate(&host, port, security)
+        .await
+        .map_err(|error| imap::plain_language(&error))
+}
+
 /// The payload the IMAP setup form sends for "test and save".
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2143,7 +2199,8 @@ struct ImapSetupRequest {
     smtp_password: Option<String>,
     /// The SHA-256 fingerprint the user chose to trust at the cert step, if
     /// the server was not already CA-trusted. Hex (any separators).
-    pinned_fingerprint: Option<String>,
+    imap_pinned_fingerprint: Option<String>,
+    smtp_pinned_fingerprint: Option<String>,
     /// Whether this account stores user labels as keywords or label folders;
     /// decided from the server's PERMANENTFLAGS at the cert/test step.
     label_storage: imap::LabelStorage,
@@ -2165,9 +2222,12 @@ struct ImapSetupRequest {
 async fn test_and_save_imap_account(
     request: ImapSetupRequest,
     state: State<'_, AppState>,
-    app: tauri::AppHandle,
 ) -> Result<Account, String> {
-    let pinned = match &request.pinned_fingerprint {
+    let imap_pinned = match &request.imap_pinned_fingerprint {
+        Some(hex) => Some(imap::parse_sha256_fingerprint(hex)?),
+        None => None,
+    };
+    let smtp_pinned = match &request.smtp_pinned_fingerprint {
         Some(hex) => Some(imap::parse_sha256_fingerprint(hex)?),
         None => None,
     };
@@ -2181,7 +2241,7 @@ async fn test_and_save_imap_account(
         &request.imap_host,
         request.imap_port,
         request.imap_security,
-        pinned,
+        imap_pinned,
         &request.imap_username,
         &request.imap_password,
     )
@@ -2193,7 +2253,7 @@ async fn test_and_save_imap_account(
         &request.smtp_host,
         request.smtp_port,
         request.smtp_security,
-        pinned,
+        smtp_pinned,
         &request.smtp_username,
         &smtp_password,
     )
@@ -2209,13 +2269,55 @@ async fn test_and_save_imap_account(
 
     // 3. Persist only after both tests pass. Password -> keychain; non-secret
     //    settings -> the imap_account_settings table; account row adopted.
+    // Store the password in the keychain under the account's address. The
+    // IMAP setup path does NOT go through `require_oauth_credential`:
+    // `AccountAuth::credential()` has been OAuth-optional since Phase 1 Slice 2.
+    let auth = state
+        .auth_config
+        .mail_account(MailProviderKind::Imap, &request.email)?;
+    let AccountAuth::Imap(credential) = &auth else {
+        return Err("expected an IMAP credential for an IMAP account".to_string());
+    };
+    credential.save(&crate::credentials::ImapPassword {
+        imap: request.imap_password.clone(),
+        smtp: request.smtp_password.clone(),
+    })?;
+
+    // Adopt the account row and persist the settings. If the settings write
+    // fails, roll back the credential so a retry starts clean.
+    let adopt_result = save_tested_imap_settings(&state.database, &request, imap_pinned, smtp_pinned);
+    let account = match adopt_result {
+        Ok(account) => account,
+        Err(error) => {
+            let _ = credential.disconnect();
+            return Err(error);
+        }
+    };
+
+    // IMAP's provider is not implemented yet. Keep this saved account in the
+    // catalog only, matching startup_account_credentials, without starting
+    // polling that would call the unreachable AccountAuth::Imap::provider.
+
+    record_mail_account(&state, &account)?;
+    Ok(account)
+}
+
+// Saving setup deliberately has no app handle or sync registry: IMAP stays
+// catalog-only until the provider implementation is available.
+fn save_tested_imap_settings(
+    database: &Database,
+    request: &ImapSetupRequest,
+    imap_pinned: Option<imap::Sha256Fingerprint>,
+    smtp_pinned: Option<imap::Sha256Fingerprint>,
+) -> Result<Account, String> {
     let mut pinned_fingerprints = std::collections::BTreeMap::new();
-    if let Some(fp) = pinned {
+    if let Some(fp) = imap_pinned {
         pinned_fingerprints.insert(
             imap::host_port_key(&request.imap_host, request.imap_port),
             fp.to_hex(),
         );
-        // SMTP may be a different host:port; pin it too if the user trusted it.
+    }
+    if let Some(fp) = smtp_pinned {
         pinned_fingerprints.insert(
             imap::host_port_key(&request.smtp_host, request.smtp_port),
             fp.to_hex(),
@@ -2242,43 +2344,8 @@ async fn test_and_save_imap_account(
         server_saves_sent: false,
     };
 
-    // Store the password in the keychain under the account's address. The
-    // IMAP setup path does NOT go through `require_oauth_credential`:
-    // `AccountAuth::credential()` has been OAuth-optional since Phase 1 Slice 2.
-    let auth = state
-        .auth_config
-        .mail_account(MailProviderKind::Imap, &request.email)?;
-    let AccountAuth::Imap(credential) = &auth else {
-        return Err("expected an IMAP credential for an IMAP account".to_string());
-    };
-    credential.save(&crate::credentials::ImapPassword {
-        imap: request.imap_password.clone(),
-        smtp: request.smtp_password.clone(),
-    })?;
-
-    // Adopt the account row and persist the settings. If the settings write
-    // fails, roll back the credential so a retry starts clean.
-    let adopt_result = (|| -> Result<Account, String> {
-        let account = state
-            .database
-            .adopt_mail_account(&request.email, MailProviderKind::Imap)?;
-        state
-            .database
-            .save_imap_account_settings(&request.email, &settings)?;
-        Ok(account)
-    })();
-    let account = match adopt_result {
-        Ok(account) => account,
-        Err(error) => {
-            let _ = credential.disconnect();
-            return Err(error);
-        }
-    };
-
-    // Register the connected account so sync (later slices) can run.
-    let connected = spawn_synced_account(state.database.clone(), auth, true, app);
-    state.accounts.lock().await.insert(request.email.clone(), connected);
-    record_mail_account(&state, &account)?;
+    let account = database.adopt_mail_account(&request.email, MailProviderKind::Imap)?;
+    database.save_imap_account_settings(&request.email, &settings)?;
     Ok(account)
 }
 
@@ -4487,6 +4554,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         add_account,
         discover_imap_settings,
         probe_imap_certificate,
+        probe_smtp_certificate,
         test_and_save_imap_account,
         remove_account,
         remove_synced_mail_account,

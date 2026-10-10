@@ -43,6 +43,7 @@ pub enum SecurityMode {
     ImplicitTls,
     /// Connect in the clear then `STARTTLS`-upgrade before any credential
     /// (classically port 143 / 587, or Bridge's 1143 / 1025).
+    #[serde(alias = "starttls")]
     StartTls,
 }
 
@@ -462,6 +463,23 @@ mod tests {
     fn store() -> ImapSettingsStore {
         let database = Arc::new(Database::open_memory());
         ImapSettingsStore::new(database, "me@proton.me")
+    }
+
+    #[test]
+    fn starttls_keeps_its_transfer_spelling_and_accepts_the_legacy_setup_spelling() {
+        assert_eq!(
+            serde_json::to_string(&SecurityMode::StartTls).unwrap(),
+            "\"start_tls\""
+        );
+        for value in ["\"start_tls\"", "\"starttls\""] {
+            assert_eq!(
+                serde_json::from_str::<SecurityMode>(value).unwrap(),
+                SecurityMode::StartTls
+            );
+        }
+        // Existing database rows retain their established spelling.
+        assert_eq!(SecurityMode::StartTls.as_str(), "starttls");
+        assert_eq!(SecurityMode::parse("starttls"), Some(SecurityMode::StartTls));
     }
 
     #[test]

@@ -278,7 +278,7 @@ fn parse_subject_issuer(_der: &[u8]) -> (String, String) {
 /// cannot present a cert it cannot prove it holds the key for.
 #[derive(Debug)]
 pub struct CollectingCertVerifier {
-    collected: std::sync::Mutex<Option<CertificateDer<'static>>>,
+    collected: std::sync::Mutex<Option<(CertificateDer<'static>, bool)>>,
     webpki: Arc<PlatformVerifier>,
 }
 
@@ -297,24 +297,21 @@ impl CollectingCertVerifier {
     /// The leaf certificate presented during the handshake, once one has been
     /// seen. `None` before the handshake completes.
     pub fn collected_leaf(&self) -> Option<CertificateDer<'static>> {
-        self.collected.lock().unwrap().clone()
+        self.collected
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|(leaf, _)| leaf.clone())
     }
 
-    /// Whether the collected leaf chains to a trusted public root. Used by the
-    /// probe to tell "real CA, no pin needed" from "self-signed, must pin".
-    pub fn chains_to_public_root(
-        &self,
-        server_name: &str,
-    ) -> bool {
-        let Some(leaf) = self.collected_leaf() else {
-            return false;
-        };
-        let Ok(name) = ServerName::try_from(server_name.to_string()) else {
-            return false;
-        };
-        self.webpki
-            .verify_server_cert(&leaf, &[], &name, &[], UnixTime::now())
-            .is_ok()
+    /// The platform verdict from the original handshake, including the full
+    /// intermediate chain, server name, OCSP response and verification time.
+    pub fn trusted_by_platform(&self) -> bool {
+        self.collected
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|(_, trusted)| *trusted)
     }
 }
 
@@ -322,12 +319,16 @@ impl ServerCertVerifier for CollectingCertVerifier {
     fn verify_server_cert(
         &self,
         end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: UnixTime,
+        intermediates: &[CertificateDer<'_>],
+        server_name: &ServerName<'_>,
+        ocsp_response: &[u8],
+        now: UnixTime,
     ) -> Result<ServerCertVerified, TlsError> {
-        *self.collected.lock().unwrap() = Some(end_entity.clone().into_owned());
+        let trusted = self
+            .webpki
+            .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
+            .is_ok();
+        *self.collected.lock().unwrap() = Some((end_entity.clone().into_owned(), trusted));
         Ok(ServerCertVerified::assertion())
     }
 
@@ -384,6 +385,80 @@ mod tests {
     ) -> Result<ServerCertVerified, TlsError> {
         let name = ServerName::try_from("127.0.0.1").unwrap();
         verifier.verify_server_cert(leaf, &[], &name, &[], UnixTime::now())
+    }
+
+    #[test]
+    fn the_probe_checks_the_full_presented_chain_and_hostname() {
+        use rcgen::{
+            BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer,
+            KeyPair, KeyUsagePurpose,
+        };
+        fn params(name: &str, ca: bool) -> CertificateParams {
+            let mut params = CertificateParams::new(vec![name.into()]).unwrap();
+            params.distinguished_name.push(DnType::CommonName, name);
+            params.not_before =
+                (std::time::SystemTime::now() - std::time::Duration::from_secs(86400)).into();
+            params.not_after =
+                (std::time::SystemTime::now() + std::time::Duration::from_secs(30 * 86400)).into();
+            params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+            params.use_authority_key_identifier_extension = true;
+            if ca {
+                params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+                params.key_usages.push(KeyUsagePurpose::KeyCertSign);
+                params.key_usages.push(KeyUsagePurpose::CrlSign);
+            } else {
+                params
+                    .extended_key_usages
+                    .push(ExtendedKeyUsagePurpose::ServerAuth);
+            }
+            params
+        }
+        let root_params = params("setup-test-root", true);
+        let root_key = KeyPair::generate().unwrap();
+        let root = root_params.self_signed(&root_key).unwrap();
+        let root_issuer = Issuer::new(root_params, root_key);
+        let intermediate_params = params("setup-test-intermediate", true);
+        let intermediate_key = KeyPair::generate().unwrap();
+        let intermediate = intermediate_params
+            .signed_by(&intermediate_key, &root_issuer)
+            .unwrap();
+        let intermediate_issuer = Issuer::new(intermediate_params, intermediate_key);
+        let leaf = params("mail.example.com", false)
+            .signed_by(&KeyPair::generate().unwrap(), &intermediate_issuer)
+            .unwrap();
+        let verifier = CollectingCertVerifier {
+            collected: std::sync::Mutex::new(None),
+            webpki: Arc::new(
+                PlatformVerifier::new_with_extra_roots(
+                    [root.der().clone()],
+                    Arc::new(ring_provider::default_provider()),
+                )
+                .unwrap(),
+            ),
+        };
+        let name = ServerName::try_from("mail.example.com").unwrap();
+        let chain = [intermediate.der().clone()];
+        // Control: the complete chain is trusted while the leaf alone is not.
+        verifier
+            .webpki
+            .verify_server_cert(leaf.der(), &chain, &name, &[], UnixTime::now())
+            .unwrap();
+        assert!(verifier
+            .webpki
+            .verify_server_cert(leaf.der(), &[], &name, &[], UnixTime::now())
+            .is_err());
+        verifier
+            .verify_server_cert(leaf.der(), &chain, &name, &[], UnixTime::now())
+            .unwrap();
+        assert!(verifier.trusted_by_platform());
+        let wrong_name = ServerName::try_from("other.example.com").unwrap();
+        verifier
+            .verify_server_cert(leaf.der(), &chain, &wrong_name, &[], UnixTime::now())
+            .unwrap();
+        assert!(
+            !verifier.trusted_by_platform(),
+            "probe must retain hostname verification"
+        );
     }
 
     #[test]
@@ -463,7 +538,7 @@ mod tests {
         );
         // A self-signed leaf must NOT be reported as chaining to a public root.
         assert!(
-            !verifier.chains_to_public_root("127.0.0.1"),
+            !verifier.trusted_by_platform(),
             "a self-signed cert must require an explicit pin, never pass as CA-trusted"
         );
     }

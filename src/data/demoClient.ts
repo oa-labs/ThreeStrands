@@ -983,6 +983,20 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         trustedByPlatform: false,
       };
     },
+    async probeSmtpCertificate(host) {
+      // A plausible self-signed probe so the cert-trust UI can be exercised
+      // in the demo without a real server.
+      return {
+        certificate: {
+          subject: `CN=${host}`,
+          issuer: `CN=${host}`,
+          sha256Fingerprint:
+            "BB:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:" +
+            "BB:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99",
+        },
+        trustedByPlatform: false,
+      };
+    },
     async testAndSaveImapAccount(request) {
       const palette = ["#6D4AFF", "#00ACC1", "#FF7043", "#5C6BC0"];
       const account: Account = {

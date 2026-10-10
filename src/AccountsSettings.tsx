@@ -11,6 +11,7 @@ import { formatTimeOnly } from "./threadPresentation";
 import { moveItem, useSettingsOperation } from "./settingsOperations";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
+import { ImapAccountSetup } from "./ImapAccountSetup";
 import { AccountStatusBadge, AccountDisconnectConfirm } from "./accountSettingsParts";
 
 export function AccountsSettings({
@@ -23,6 +24,7 @@ export function AccountsSettings({
   onSetDisplayName,
   onSetColor,
   onReorder,
+  onImapConnected,
 }: {
   authStatus: AuthStatus | null;
   accounts: Account[];
@@ -33,8 +35,11 @@ export function AccountsSettings({
   onSetDisplayName(email: string, displayName: string | null): Promise<void>;
   onSetColor(email: string, color: string): Promise<void>;
   onReorder(emails: string[]): Promise<void>;
+  onImapConnected?(): Promise<void>;
 }) {
   const { pending: busyEmail, error, setError, runFor } = useSettingsOperation();
+  const [showImapSetup, setShowImapSetup] = useState(false);
+  const [imapSaved, setImapSaved] = useState(false);
   const [confirmEmail, setConfirmEmail] = useState<string | null>(null);
 
   const move = (index: number, direction: -1 | 1) => {
@@ -63,6 +68,19 @@ export function AccountsSettings({
           {busyEmail === "__add__" ? "Waiting for Google…" : "Add Account"}
         </button>
       </div>
+      <button type="button" className="btn" disabled={busyEmail !== null}
+        onClick={() => { setShowImapSetup(true); setImapSaved(false); }}>
+        Add IMAP account
+      </button>
+      {showImapSetup && <div>
+        <ImapAccountSetup onConnected={async () => {
+          await onImapConnected?.();
+          setImapSaved(true);
+          setShowImapSetup(false);
+        }} />
+        <button type="button" className="btn" onClick={() => setShowImapSetup(false)}>Cancel IMAP setup</button>
+      </div>}
+      {imapSaved && <p role="status">Account saved. IMAP mail sync is not available yet.</p>}
       {accounts.length === 0 && authStatus && !authStatus.configured ? (
         <div className="notice accounts-config-notice">
           <CircleAlert size={ICON_SIZE.md} />

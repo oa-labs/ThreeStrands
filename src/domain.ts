@@ -663,7 +663,7 @@ export type AuthStatus = {
 export type MailProvider = "gmail" | "imap";
 
 /** How a mail connection reaches TLS. Mirrors the Rust `SecurityMode`. */
-export type ImapSecurityMode = "implicit_tls" | "starttls";
+export type ImapSecurityMode = "implicit_tls" | "start_tls";
 
 /** How an IMAP account stores user labels. */
 export type ImapLabelStorage = "keywords" | "folders" | "none";
@@ -710,7 +710,8 @@ export type ImapSetupRequest = {
   smtpSecurity: ImapSecurityMode;
   smtpUsername: string;
   smtpPassword: string | null;
-  pinnedFingerprint: string | null;
+  imapPinnedFingerprint: string | null;
+  smtpPinnedFingerprint: string | null;
   labelStorage: ImapLabelStorage;
   labelContainer: string | null;
 };

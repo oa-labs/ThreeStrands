@@ -49,6 +49,27 @@ describe("native account requests", () => {
     vi.mocked(invoke).mockResolvedValue({});
   });
 
+  it("probes each mail endpoint through its own certificate command", async () => {
+    await client.probeImapCertificate("incoming.example.com", 993, "implicit_tls");
+    await client.probeSmtpCertificate("outgoing.example.com", 587, "start_tls");
+    expect(vi.mocked(invoke).mock.calls).toEqual([
+      ["probe_imap_certificate", { host: "incoming.example.com", port: 993, security: "implicit_tls" }],
+      ["probe_smtp_certificate", { host: "outgoing.example.com", port: 587, security: "start_tls" }],
+    ]);
+  });
+
+  it("forwards independent IMAP and SMTP pins on test and save", async () => {
+    const request = {
+      email: "me@example.com", imapHost: "incoming.example.com", imapPort: 993,
+      imapSecurity: "implicit_tls" as const, imapUsername: "incoming", imapPassword: "secret",
+      smtpHost: "outgoing.example.com", smtpPort: 587, smtpSecurity: "start_tls" as const,
+      smtpUsername: "outgoing", smtpPassword: null, imapPinnedFingerprint: "incoming-pin",
+      smtpPinnedFingerprint: "outgoing-pin", labelStorage: "folders" as const, labelContainer: "Labels",
+    };
+    await client.testAndSaveImapAccount(request);
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("test_and_save_imap_account", { request });
+  });
+
   it("names the mail provider a new account signs in through", async () => {
     await client.addAccount("gmail");
     expect(vi.mocked(invoke).mock.calls.find(([name]) => name === "add_account")?.[1]).toEqual({ provider: "gmail" });

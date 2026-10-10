@@ -49,6 +49,7 @@ export type MailAccountSettings = {
   authStatus: AuthStatus | null;
   accounts: Account[];
   activeAccountId: string | null;
+  refresh?(): Promise<void>;
   add(): Promise<void>;
   remove(email: string): Promise<void>;
   removeEverywhere(email: string): Promise<void>;

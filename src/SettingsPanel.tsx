@@ -241,6 +241,7 @@ export function Settings({
               authStatus={mailAccounts.authStatus}
               accounts={mailAccounts.accounts}
               onAdd={mailAccounts.add}
+              onImapConnected={mailAccounts.refresh}
               onRemove={mailAccounts.remove}
               onRemoveEverywhere={mailAccounts.removeEverywhere}
               onReconnect={mailAccounts.reconnect}

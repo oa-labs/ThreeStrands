@@ -224,6 +224,8 @@ export interface MailClient extends CorrespondenceClient {
     port: number,
     security: ImapSecurityMode,
   ): Promise<ImapCertificateProbe>;
+  /** Probe SMTP independently; it may use a different certificate from IMAP. */
+  probeSmtpCertificate(host: string, port: number, security: ImapSecurityMode): Promise<ImapCertificateProbe>;
   /** Test the entered IMAP + SMTP settings and, on success, save the account. */
   testAndSaveImapAccount(request: ImapSetupRequest): Promise<Account>;
   removeAccount(email: string): Promise<void>;
@@ -374,6 +376,8 @@ const tauriClient: MailClient = {
   discoverImapSettings: (email) => complete("discover_imap_settings", { email }),
   probeImapCertificate: (host, port, security) =>
     complete("probe_imap_certificate", { host, port, security }),
+  probeSmtpCertificate: (host, port, security) =>
+    complete("probe_smtp_certificate", { host, port, security }),
   testAndSaveImapAccount: (request) =>
     complete("test_and_save_imap_account", { request }),
   removeAccount: (email) => complete("remove_account", { email }),

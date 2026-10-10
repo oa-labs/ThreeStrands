@@ -37,6 +37,7 @@ export function useSettingsIntegration({
     accounts,
     activeAccountId,
     add: addAccount,
+    refresh: refreshAccounts,
     remove: async (email) => {
       const { wasActive } = await removeAccount(email);
       void loadThreads(query, wasActive ? null : undefined);
@@ -55,7 +56,7 @@ export function useSettingsIntegration({
   }), [
     accounts, activeAccountId, addAccount, authStatus, loadThreads, query, reconnectAccount,
     removeAccount, removeAccountEverywhere, reorderAccounts, setAccountColor,
-    setAccountDisplayName,
+    setAccountDisplayName, refreshAccounts,
   ]);
 
   const applyImportedSettings = useCallback(async ({ preferences: imported }: SettingsImportResult) => {

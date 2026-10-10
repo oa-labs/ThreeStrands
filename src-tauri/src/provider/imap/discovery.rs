@@ -121,11 +121,25 @@ fn ssrf_safe_client() -> Result<reqwest::Client, String> {
     crate::http_client::builder()
         .dns_resolver(net_safety::dns_resolver())
         .https_only(true)
-        .redirect(reqwest::redirect::Policy::limited(5))
+        .redirect(discovery_redirect_policy())
         .connect_timeout(DISCOVERY_CONNECT_TIMEOUT)
         .timeout(DISCOVERY_REQUEST_TIMEOUT)
         .build()
         .map_err(|error| format!("Unable to prepare autodiscovery requests: {error}"))
+}
+
+fn discovery_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 5 || !allowed_discovery_url(attempt.url()) {
+            attempt.error("unsafe autodiscovery redirect")
+        } else {
+            attempt.follow()
+        }
+    })
+}
+
+fn allowed_discovery_url(url: &url::Url) -> bool {
+    url.scheme() == "https" && !net_safety::is_disallowed_url_host(url)
 }
 
 /// Fetch and parse one autoconfig XML document. Any failure (network, non-2xx,
@@ -137,6 +151,11 @@ async fn fetch_autoconfig(
     email: &str,
     source: &str,
 ) -> Option<DiscoveryResult> {
+    let url = url::Url::parse(url).ok()?;
+    // IP literals bypass reqwest's DNS resolver, so inspect every URL too.
+    if !allowed_discovery_url(&url) {
+        return None;
+    }
     let response = client.get(url).send().await.ok()?;
     if !response.status().is_success() {
         return None;
@@ -300,6 +319,118 @@ fn attr(tag: &quick_xml::events::BytesStart<'_>, key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovery_rejects_private_initial_and_redirect_urls_including_ip_literals() {
+        // The same guard is applied before the initial request and in the
+        // redirect policy; DNS resolution remains a separate connection guard.
+        for value in [
+            "https://127.0.0.1/config",
+            "https://10.0.0.1/config",
+            "https://169.254.169.254/config",
+            "https://[::1]/config",
+            "https://[::ffff:127.0.0.1]/config",
+            "https://[fd00::1]/config",
+            "https://localhost/config",
+            "https://host.local/config",
+            "http://mail.example.com/config",
+        ] {
+            assert!(
+                !allowed_discovery_url(&url::Url::parse(value).unwrap()),
+                "{value}"
+            );
+        }
+        assert!(allowed_discovery_url(
+            &url::Url::parse("https://mail.example.com/config").unwrap()
+        ));
+    }
+
+    #[tokio::test]
+    async fn redirect_policy_blocks_private_literals_and_https_downgrades_before_connecting() {
+        use rustls::pki_types::PrivatePkcs8KeyDer;
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+        };
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        for destination in [
+            "https://127.0.0.1",
+            "https://[::1]",
+            "https://[::ffff:127.0.0.1]",
+            "http://discovery.example.com",
+        ] {
+            let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let cert =
+                rcgen::generate_simple_self_signed(vec!["discovery.example.com".into()]).unwrap();
+            let config = rustls::ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(
+                    vec![cert.cert.der().clone()],
+                    PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()).into(),
+                )
+                .unwrap();
+            let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(config));
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let location = format!(
+                "{destination}:{}/config",
+                target.local_addr().unwrap().port()
+            );
+            let server = tokio::spawn(async move {
+                let (tcp, _) = listener.accept().await.unwrap();
+                let mut tls = acceptor.accept(tcp).await.unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    tls.read_exact(&mut byte).await.unwrap();
+                    request.push(byte[0]);
+                }
+                tls.write_all(format!("HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+                tls.shutdown().await.unwrap();
+            });
+            // Only this controlled fixture host resolves to the local server.
+            // Exercise the production redirect policy over a real HTTPS response.
+            let client = crate::http_client::builder()
+                .no_proxy()
+                .resolve("discovery.example.com", address)
+                .add_root_certificate(reqwest::Certificate::from_der(cert.cert.der()).unwrap())
+                .redirect(discovery_redirect_policy())
+                .timeout(Duration::from_secs(3))
+                .build()
+                .unwrap();
+            let error = client
+                .get(format!(
+                    "https://discovery.example.com:{}/start",
+                    address.port()
+                ))
+                .send()
+                .await
+                .unwrap_err();
+            assert!(error.is_redirect(), "{destination}: {error:?}");
+            server.await.unwrap();
+            assert!(
+                tokio::time::timeout(Duration::from_millis(25), target.accept())
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn discovery_does_not_open_a_socket_to_a_private_ip_literal() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("https://{}/config", listener.local_addr().unwrap());
+        assert!(
+            fetch_autoconfig(&ssrf_safe_client().unwrap(), &url, "me@example.com", "test")
+                .await
+                .is_none()
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), listener.accept())
+                .await
+                .is_err()
+        );
+    }
 
     #[test]
     fn email_domain_is_extracted_and_lowercased() {

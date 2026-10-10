@@ -30,7 +30,9 @@ use tokio::net::TcpStream;
 use crate::provider::imap::connection::{self, ConnectionConfig};
 use crate::provider::imap::session::ImapSession;
 use crate::provider::imap::settings::SecurityMode;
-use crate::provider::imap::tls::{PinnedCertVerifier, Sha256Fingerprint};
+use crate::provider::imap::tls::{
+    CertificateInfo, CollectingCertVerifier, PinnedCertVerifier, Sha256Fingerprint,
+};
 use crate::provider::ProviderError;
 
 /// How long the SMTP dry-run may take overall. Kept short; it is a probe.
@@ -151,11 +153,69 @@ async fn smtp_dry_run(
 ) -> Result<(), ProviderError> {
     use base64::{engine::general_purpose::STANDARD, Engine};
 
-    let _ = rustls::crypto::ring::default_provider().install_default();
     let verifier = match pinned {
         Some(fp) => PinnedCertVerifier::pinned(fp),
         None => PinnedCertVerifier::webpki_only(),
     };
+    let mut stream = connect_smtp_tls(host, port, security, verifier).await?;
+    smtp_command(&mut *stream, &format!("EHLO {}\r\n", ehlo_name()), 250).await?;
+
+    // AUTH LOGIN: base64 username then password. A rejection here is an
+    // authentication failure (SMTP 535), mapped to the same reauth category.
+    smtp_command(&mut *stream, "AUTH LOGIN\r\n", 334)
+        .await
+        .map_err(|_| {
+            ProviderError::InvalidOperation("the server did not offer AUTH LOGIN".into())
+        })?;
+    write_line(&mut *stream, &format!("{}\r\n", STANDARD.encode(username))).await?;
+    read_smtp_reply(&mut *stream, 334).await?;
+    write_line(&mut *stream, &format!("{}\r\n", STANDARD.encode(password))).await?;
+    match read_smtp_reply(&mut *stream, 235).await {
+        Ok(()) => {}
+        Err(_) => {
+            return Err(ProviderError::ReauthenticationRequired(
+                "the SMTP server rejected the credentials".into(),
+            ))
+        }
+    }
+
+    // Dry run: never send mail. QUIT cleanly.
+    let _ = write_line(&mut *stream, "QUIT\r\n").await;
+    Ok(())
+}
+
+/// Connect and inspect SMTP's certificate without ever sending credentials.
+pub async fn probe_smtp_certificate(
+    host: &str,
+    port: u16,
+    security: SecurityMode,
+) -> Result<connection::CertificateProbe, ProviderError> {
+    let probe = async {
+        let verifier = CollectingCertVerifier::new();
+        let stream = connect_smtp_tls(host, port, security, verifier.clone()).await?;
+        drop(stream);
+        let leaf = verifier.collected_leaf().ok_or_else(|| {
+            ProviderError::TransientTransport("the SMTP server presented no certificate".into())
+        })?;
+        Ok(connection::CertificateProbe {
+            certificate: CertificateInfo::from_leaf(&leaf),
+            trusted_by_platform: verifier.trusted_by_platform(),
+        })
+    };
+    tokio::time::timeout(SMTP_PROBE_TIMEOUT, probe)
+        .await
+        .map_err(|_| {
+            ProviderError::TransientTransport("the SMTP server did not respond in time".into())
+        })?
+}
+
+async fn connect_smtp_tls(
+    host: &str,
+    port: u16,
+    security: SecurityMode,
+    verifier: std::sync::Arc<dyn rustls::client::danger::ServerCertVerifier>,
+) -> Result<Box<dyn SmtpStream>, ProviderError> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let tls_config = rustls::ClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(verifier)
@@ -182,8 +242,8 @@ async fn smtp_dry_run(
         SecurityMode::StartTls => {
             let mut plain = tcp;
             read_smtp_reply(&mut plain, 220).await?; // greeting
-            smtp_command(&mut plain, &format!("EHLO {}\r\n", ehlo_name())).await?;
-            smtp_command(&mut plain, "STARTTLS\r\n").await?;
+            smtp_command(&mut plain, &format!("EHLO {}\r\n", ehlo_name()), 250).await?;
+            smtp_command(&mut plain, "STARTTLS\r\n", 220).await?;
             let tls = connector
                 .connect(server_name, plain)
                 .await
@@ -197,30 +257,7 @@ async fn smtp_dry_run(
     if matches!(security, SecurityMode::ImplicitTls) {
         read_smtp_reply(&mut *stream, 220).await?;
     }
-    smtp_command(&mut *stream, &format!("EHLO {}\r\n", ehlo_name())).await?;
-
-    // AUTH LOGIN: base64 username then password. A rejection here is an
-    // authentication failure (SMTP 535), mapped to the same reauth category.
-    smtp_command(&mut *stream, "AUTH LOGIN\r\n")
-        .await
-        .map_err(|_| {
-            ProviderError::InvalidOperation("the server did not offer AUTH LOGIN".into())
-        })?;
-    write_line(&mut *stream, &format!("{}\r\n", STANDARD.encode(username))).await?;
-    read_smtp_reply(&mut *stream, 334).await?;
-    write_line(&mut *stream, &format!("{}\r\n", STANDARD.encode(password))).await?;
-    match read_smtp_reply(&mut *stream, 235).await {
-        Ok(()) => {}
-        Err(_) => {
-            return Err(ProviderError::ReauthenticationRequired(
-                "the SMTP server rejected the credentials".into(),
-            ))
-        }
-    }
-
-    // Dry run: never send mail. QUIT cleanly.
-    let _ = write_line(&mut *stream, "QUIT\r\n").await;
-    Ok(())
+    Ok(stream)
 }
 
 /// A conservative EHLO identifier. The hostname is not security-relevant and
@@ -236,9 +273,10 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> SmtpStream 
 async fn smtp_command<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + ?Sized>(
     stream: &mut S,
     command: &str,
+    expected: u16,
 ) -> Result<(), ProviderError> {
     write_line(stream, command).await?;
-    read_smtp_reply(stream, 250).await
+    read_smtp_reply(stream, expected).await
 }
 
 async fn write_line<S: tokio::io::AsyncWrite + Unpin + ?Sized>(
@@ -325,6 +363,156 @@ pub fn default_smtp_port(security: SecurityMode) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Real TLS submission servers exercise the full dry-run and guarantee
+    // EHLO/STARTTLS are the only commands sent before encryption.
+    async fn smtp_server(
+        mode: SecurityMode,
+        reject_password: bool,
+        probe_only: bool,
+    ) -> (u16, Sha256Fingerprint, tokio::task::JoinHandle<()>) {
+        use rustls::pki_types::PrivatePkcs8KeyDer;
+        use tokio::net::TcpListener;
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let cert = rcgen::generate_simple_self_signed(vec!["127.0.0.1".into()]).unwrap();
+        let pin = Sha256Fingerprint::of_certificate(cert.cert.der());
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![cert.cert.der().clone()],
+                PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()).into(),
+            )
+            .unwrap();
+        let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(config));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let task = tokio::spawn(async move {
+            let (mut tcp, _) = listener.accept().await.unwrap();
+            if mode == SecurityMode::StartTls {
+                write_line(&mut tcp, "220 submission ready\r\n")
+                    .await
+                    .unwrap();
+                assert_eq!(read_command(&mut tcp).await, "EHLO threestrands.local\r\n");
+                write_line(&mut tcp, "250-submission\r\n250 STARTTLS\r\n")
+                    .await
+                    .unwrap();
+                assert_eq!(read_command(&mut tcp).await, "STARTTLS\r\n");
+                write_line(&mut tcp, "220 begin TLS\r\n").await.unwrap();
+            }
+            // A failed verification must disconnect before AUTH or secrets.
+            let Ok(mut tls) = acceptor.accept(tcp).await else {
+                return;
+            };
+            if mode == SecurityMode::ImplicitTls {
+                // A probing or rejected client can close while this is sent.
+                if write_line(&mut tls, "220 submission ready\r\n")
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            let first = read_command(&mut tls).await;
+            if probe_only {
+                assert!(
+                    first.is_empty(),
+                    "a probe must not send credentials: {first}"
+                );
+                return;
+            }
+            assert_eq!(first, "EHLO threestrands.local\r\n");
+            write_line(&mut tls, "250-submission\r\n250 AUTH LOGIN\r\n")
+                .await
+                .unwrap();
+            assert_eq!(read_command(&mut tls).await, "AUTH LOGIN\r\n");
+            write_line(&mut tls, "334 VXNlcm5hbWU6\r\n").await.unwrap();
+            assert_eq!(read_command(&mut tls).await, "dXNlcg==\r\n");
+            write_line(&mut tls, "334 UGFzc3dvcmQ6\r\n").await.unwrap();
+            assert_eq!(read_command(&mut tls).await, "c2VjcmV0\r\n");
+            if reject_password {
+                write_line(&mut tls, "535 bad credentials\r\n")
+                    .await
+                    .unwrap();
+            } else {
+                write_line(&mut tls, "235 authenticated\r\n").await.unwrap();
+                assert_eq!(read_command(&mut tls).await, "QUIT\r\n");
+            }
+        });
+        (port, pin, task)
+    }
+
+    async fn read_command<S: tokio::io::AsyncRead + Unpin>(stream: &mut S) -> String {
+        let mut line = Vec::new();
+        let mut byte = [0];
+        while let Ok(1) = stream.read(&mut byte).await {
+            line.push(byte[0]);
+            if byte[0] == b'\n' {
+                break;
+            }
+        }
+        String::from_utf8(line).unwrap()
+    }
+
+    async fn finish_server(task: tokio::task::JoinHandle<()>) {
+        tokio::time::timeout(Duration::from_secs(3), task)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn smtp_authenticates_with_protocol_status_codes_in_both_tls_modes() {
+        for mode in [SecurityMode::ImplicitTls, SecurityMode::StartTls] {
+            let (port, pin, server) = smtp_server(mode, false, false).await;
+            test_smtp("127.0.0.1", port, mode, Some(pin), "user", "secret")
+                .await
+                .unwrap();
+            finish_server(server).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn smtp_probes_collect_certificates_without_authenticating() {
+        for mode in [SecurityMode::ImplicitTls, SecurityMode::StartTls] {
+            let (port, pin, server) = smtp_server(mode, false, true).await;
+            let probe = probe_smtp_certificate("127.0.0.1", port, mode)
+                .await
+                .unwrap();
+            assert_eq!(probe.certificate.sha256_fingerprint, pin.to_hex());
+            assert!(!probe.trusted_by_platform);
+            finish_server(server).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn smtp_rejects_wrong_and_missing_pins_before_credentials() {
+        for mode in [SecurityMode::ImplicitTls, SecurityMode::StartTls] {
+            for pin in [None, Some(Sha256Fingerprint::from_bytes([0xAB; 32]))] {
+                let (port, _, server) = smtp_server(mode, false, true).await;
+                assert!(test_smtp("127.0.0.1", port, mode, pin, "user", "secret")
+                    .await
+                    .is_err());
+                finish_server(server).await;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn smtp_reports_rejected_credentials() {
+        let (port, pin, server) = smtp_server(SecurityMode::StartTls, true, false).await;
+        let error = test_smtp(
+            "127.0.0.1",
+            port,
+            SecurityMode::StartTls,
+            Some(pin),
+            "user",
+            "secret",
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, ProviderError::ReauthenticationRequired(_)));
+        finish_server(server).await;
+    }
 
     #[test]
     fn plain_language_maps_each_error_category_to_guidance() {
