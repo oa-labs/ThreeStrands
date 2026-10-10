@@ -34,6 +34,10 @@ use crate::provider::ProviderError;
 /// bytes before either runs.
 pub const MAX_RAW_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
 
+/// Ask for one extra byte so an unknown or understated RFC822.SIZE cannot
+/// cause us to cache a silently truncated message at the acceptance boundary.
+pub const MAX_RAW_FETCH_BYTES: usize = MAX_RAW_MESSAGE_BYTES + 1;
+
 /// Deepest MIME nesting the `rfc822` parser will build a tree for.
 ///
 /// Matches `mime::MAX_MIME_DEPTH` so a tree this gate accepts is never then

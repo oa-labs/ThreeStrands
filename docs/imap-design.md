@@ -376,6 +376,16 @@ In label-folder mode:
   `BODYSTRUCTURE` and their text parts first. Attachments are fetched lazily by
   MIME section number, which becomes the `attachment_bytes` handle.
 
+  The Slice 4 full-body path currently accepts raw messages up to 64 MiB.
+  It rejects an advertised `RFC822.SIZE` above that limit before requesting
+  the body, and uses a bounded `BODY.PEEK[]` partial request for the limit
+  plus one byte to detect missing or understated sizes. Oversize responses
+  are rejected whole, never cached as truncated messages. The
+  `BODYSTRUCTURE`/text-first fallback is still future read-path work.
+  Cached attachment downloads preserve transfer-decoded bytes, including
+  text files in their original charset and attached emails. Only display
+  bodies and encoded display headers are converted to Unicode.
+
 ### Incremental sync for one mailbox
 
 ```text

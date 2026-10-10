@@ -71,7 +71,7 @@ impl MailboxStatus {
 /// `Display`, so the system-flag spellings are written out; a `Custom` keyword
 /// is used verbatim. `\*` (`MayCreate`) is reflected separately in
 /// `permanent_keywords` and is kept here too so the stored list is faithful.
-fn flag_to_wire(flag: &async_imap::types::Flag<'_>) -> String {
+pub(super) fn flag_to_wire(flag: &async_imap::types::Flag<'_>) -> String {
     use async_imap::types::Flag;
     match flag {
         Flag::Seen => "\\Seen".to_string(),

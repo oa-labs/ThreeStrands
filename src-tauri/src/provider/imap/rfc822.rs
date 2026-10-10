@@ -8,7 +8,7 @@
 //! tree and performs no network I/O of any kind.
 //!
 //! Faithful structure (`AGENTS.md` "Email rendering"): the full multipart tree
-//! is preserved, every part's headers are carried through verbatim, and no part
+//! is preserved, MIME/security headers are carried through verbatim, and no part
 //! is dropped for being empty, whitespace-only or "redundant". Sanitisation is
 //! the renderer's job downstream, not this layer's.
 //!
@@ -17,9 +17,9 @@
 //! `mime::normalize` reads a leaf part's content from `MimeBody.data` by
 //! base64url-decoding it (`decode_body` / `decode_attachment_data` use
 //! `URL_SAFE_NO_PAD`), exactly as Gmail's REST payload delivers it. So this
-//! converter base64url-encodes each leaf part's ALREADY-DECODED bytes (mail-
-//! parser has undone the Content-Transfer-Encoding) into `data`. The pipeline
-//! then decodes once and sees the real content, identically to Gmail.
+//! converter base64url-encodes transfer-decoded attachment bytes into `data`,
+//! while display text is also converted to UTF-8. Encapsulated emails keep
+//! both their original transfer-decoded bytes and their parsed subtree.
 //!
 //! ## Hostile input
 //!
@@ -30,7 +30,7 @@
 //! `mail-parser` cannot parse at all is a typed error, not a panic.
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use mail_parser::{Message, MessageParser, MimeHeaders, PartType};
+use mail_parser::{Address, Encoding, HeaderValue, Message, MessageParser, MimeHeaders, PartType};
 
 use crate::mime::{MimeBody, MimeHeader, MimePart, RawMessage};
 use crate::provider::imap::policy;
@@ -63,7 +63,7 @@ pub fn to_raw_message(
     policy::check_mime_part_count(count)?;
     policy::check_mime_depth(depth)?;
 
-    let payload = build_part(&message, message_root(&message), raw)?;
+    let payload = build_part(&message, message_root(&message))?;
 
     // thread_id = the message id for now. Slice 5 owns threading
     // (`docs/imap-design.md` "Threading": thread ids are derived from message
@@ -117,19 +117,16 @@ fn tree_shape(message: &Message<'_>) -> (usize, usize) {
 }
 
 /// Build one `MimePart` (and its subtree) from the part at `idx` within
-/// `message`. `root_raw` is the ORIGINAL top-level message bytes: mail-parser
-/// keeps every part's `offset_header`/`offset_body` relative to that buffer,
-/// even for parts inside a nested `message/rfc822` (whose own
-/// `raw_message()` is a shorter slice with the SAME absolute offsets), so
-/// header reconstruction always slices `root_raw`. Recursion depth is bounded
-/// by the depth check already run in [`to_raw_message`].
-fn build_part(message: &Message<'_>, idx: usize, root_raw: &[u8]) -> Result<MimePart, ProviderError> {
+/// `message`. Offsets refer to that Message's backing buffer: unencoded nested
+/// messages share the outer buffer, while transfer-encoded messages own a
+/// decoded buffer. Recursion is bounded by the shape check in `to_raw_message`.
+fn build_part(message: &Message<'_>, idx: usize) -> Result<MimePart, ProviderError> {
     let Some(part) = message.parts.get(idx) else {
         // An id that points nowhere is a malformed tree, not a panic.
         return Ok(MimePart::default());
     };
 
-    let headers = reconstruct_headers(root_raw, part);
+    let headers = reconstruct_headers(message.raw_message.as_ref(), part);
     let mime_type = content_type_string(part);
     let filename = part.attachment_name().unwrap_or_default().to_string();
 
@@ -137,7 +134,7 @@ fn build_part(message: &Message<'_>, idx: usize, root_raw: &[u8]) -> Result<Mime
         PartType::Multipart(children) => {
             let mut parts = Vec::with_capacity(children.len());
             for &child in children {
-                parts.push(build_part(message, child as usize, root_raw)?);
+                parts.push(build_part(message, child as usize)?);
             }
             Ok(MimePart {
                 mime_type,
@@ -149,28 +146,52 @@ fn build_part(message: &Message<'_>, idx: usize, root_raw: &[u8]) -> Result<Mime
         }
         PartType::Message(sub) => {
             // A nested message/rfc822: its single child is the sub-message's
-            // own root, so the structure (and its own parts) is preserved. Its
-            // parts' offsets are still relative to root_raw.
-            let child = build_part(sub, 0, root_raw)?;
-            Ok(MimePart {
-                mime_type: if mime_type.is_empty() {
-                    "message/rfc822".to_string()
-                } else {
-                    mime_type
-                },
-                filename,
-                headers,
-                body: MimeBody::default(),
-                parts: vec![child],
-            })
+            // own root. Retain the original email bytes as well as its tree so
+            // a named .eml can be downloaded through the shared attachment API.
+            let child = build_part(sub, 0)?;
+            let bytes = transfer_decoded_bytes(message, part)?;
+            let mut result = leaf(mime_type, filename, headers, &bytes);
+            result.parts.push(child);
+            Ok(result)
         }
         PartType::Text(text) | PartType::Html(text) => {
-            Ok(leaf(mime_type, filename, headers, text.as_bytes()))
+            // Display bodies need UTF-8; downloads need the original charset's
+            // bytes after transfer decoding, never a Unicode re-encoding.
+            if filename.is_empty() && !is_attachment(part) {
+                Ok(leaf(mime_type, filename, headers, text.as_bytes()))
+            } else {
+                let bytes = transfer_decoded_bytes(message, part)?;
+                Ok(leaf(mime_type, filename, headers, &bytes))
+            }
         }
         PartType::Binary(bytes) | PartType::InlineBinary(bytes) => {
             Ok(leaf(mime_type, filename, headers, bytes.as_ref()))
         }
     }
+}
+
+fn is_attachment(part: &mail_parser::MessagePart<'_>) -> bool {
+    part.content_disposition()
+        .is_some_and(|value| value.c_type.eq_ignore_ascii_case("attachment"))
+}
+
+/// Decode transfer encoding only; charset conversion would corrupt a download.
+fn transfer_decoded_bytes(
+    message: &Message<'_>,
+    part: &mail_parser::MessagePart<'_>,
+) -> Result<Vec<u8>, ProviderError> {
+    let bytes = message
+        .raw_message
+        .get(part.offset_body as usize..part.offset_end as usize)
+        .ok_or_else(|| ProviderError::InvalidOperation("invalid MIME body offsets".into()))?;
+    let decoded = match part.encoding {
+        Encoding::None => Some(bytes.to_vec()),
+        Encoding::Base64 => mail_parser::decoders::base64::base64_decode(bytes),
+        Encoding::QuotedPrintable => {
+            mail_parser::decoders::quoted_printable::quoted_printable_decode(bytes)
+        }
+    };
+    decoded.ok_or_else(|| ProviderError::InvalidOperation("invalid MIME transfer encoding".into()))
 }
 
 /// Assemble a leaf `MimePart`, base64url-encoding its decoded content into
@@ -208,9 +229,9 @@ fn content_type_string(part: &mail_parser::MessagePart<'_>) -> String {
 }
 
 /// Reconstruct a part's headers from the raw bytes between its header offset
-/// and its body offset, so the sender's headers are carried through exactly as
-/// written (every header, in order), rather than re-serialized from the parsed
-/// forms. Folded continuation lines are unfolded into the preceding value.
+/// and its body offset, retaining every header in order and unfolding
+/// continuation lines. Only encoded display fields are then re-serialized;
+/// MIME and security fields retain their original values.
 ///
 /// Operating on the raw slice keeps this faithful and provider-neutral: the
 /// shared pipeline reads `Subject`/`From`/`To`/`Date`/`Content-ID`/
@@ -244,7 +265,87 @@ fn reconstruct_headers(raw: &[u8], part: &mail_parser::MessagePart<'_>) -> Vec<M
             });
         }
     }
+    for header in &mut headers {
+        decode_display_header(header);
+    }
     headers
+}
+
+/// Decode only presentation fields. Authentication, unsubscribe and MIME
+/// headers retain their raw semantics. Parse address lists before decoding
+/// names so encoded punctuation cannot turn one mailbox into several.
+fn decode_display_header(header: &mut MimeHeader) {
+    if !header.value.contains("=?") {
+        return;
+    }
+    let name = header.name.to_ascii_lowercase();
+    if !matches!(
+        name.as_str(),
+        "subject" | "from" | "to" | "cc" | "bcc" | "reply-to" | "sender"
+    ) {
+        return;
+    }
+    let raw = format!("{}: {}\r\n\r\n", header.name, header.value);
+    let Some(message) = MessageParser::default().parse(raw.as_bytes()) else {
+        return;
+    };
+    let Some(value) = message.header(header.name.as_str()) else {
+        return;
+    };
+    match value {
+        HeaderValue::Text(text) if name == "subject" => header.value = safe_header_text(text),
+        HeaderValue::Address(address) => {
+            header.value = match address {
+                Address::List(list) => list
+                    .iter()
+                    .map(display_address)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                Address::Group(groups) => groups
+                    .iter()
+                    .map(|group| {
+                        let members = group
+                            .addresses
+                            .iter()
+                            .map(display_address)
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        format!(
+                            "{}: {members};",
+                            quote_name(group.name.as_deref().unwrap_or_default())
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            };
+        }
+        _ => {}
+    }
+}
+
+fn safe_header_text(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}
+
+fn quote_name(name: &str) -> String {
+    let name = safe_header_text(name);
+    if name.contains([
+        '(', ')', '<', '>', '[', ']', ':', ';', '@', '\\', ',', '.', '"',
+    ]) {
+        format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        name
+    }
+}
+
+fn display_address(address: &mail_parser::Addr<'_>) -> String {
+    let email = safe_header_text(address.address.as_deref().unwrap_or_default());
+    match address.name.as_deref() {
+        Some(name) if !name.is_empty() => format!("{} <{email}>", quote_name(name)),
+        _ => email,
+    }
 }
 
 /// Re-slice an attachment out of cached raw bytes by its IMAP MIME section
@@ -254,18 +355,25 @@ fn reconstruct_headers(raw: &[u8], part: &mail_parser::MessagePart<'_>) -> Vec<M
 /// `docs/imap-design.md` ("Bodies"): attachments are fetched lazily by MIME
 /// section number, which becomes the `attachment_bytes` handle. This resolves
 /// that handle against the raw message we cached, so a later attachment read
-/// needs no second server fetch. Returns `None` when the section does not name
-/// a leaf content part; a typed error only when the bytes cannot be parsed or
-/// the path is malformed.
-pub fn attachment_bytes_from_raw(raw: &[u8], section: &str) -> Result<Option<Vec<u8>>, ProviderError> {
+/// needs no second server fetch. Returns `None` for a missing section or a
+/// multipart container. Encapsulated messages return their complete bytes.
+/// Malformed paths, decoding failures and policy violations are typed errors.
+pub fn attachment_bytes_from_raw(
+    raw: &[u8],
+    section: &str,
+) -> Result<Option<Vec<u8>>, ProviderError> {
+    policy::check_raw_message_bytes(raw.len())?;
     let message = MessageParser::default()
         .parse(raw)
         .ok_or_else(|| ProviderError::InvalidOperation("could not parse cached message".into()))?;
+    let (count, depth) = tree_shape(&message);
+    policy::check_mime_part_count(count)?;
+    policy::check_mime_depth(depth)?;
     let mut components = Vec::new();
     for token in section.split('.') {
-        let n: usize = token
-            .parse()
-            .map_err(|_| ProviderError::InvalidOperation(format!("invalid MIME section: {section}")))?;
+        let n: usize = token.parse().map_err(|_| {
+            ProviderError::InvalidOperation(format!("invalid MIME section: {section}"))
+        })?;
         if n == 0 {
             return Err(ProviderError::InvalidOperation(format!(
                 "MIME section is 1-based: {section}"
@@ -273,68 +381,53 @@ pub fn attachment_bytes_from_raw(raw: &[u8], section: &str) -> Result<Option<Vec
         }
         components.push(n);
     }
-    Ok(resolve_section(&message, 0, &components).and_then(part_decoded_bytes))
+    let Some((owner, part)) = resolve_message_section(&message, &components) else {
+        return Ok(None);
+    };
+    if matches!(part.body, PartType::Multipart(_)) {
+        return Ok(None);
+    }
+    transfer_decoded_bytes(owner, part).map(Some)
 }
 
 /// Resolve an IMAP section path to the flat part index within `message`,
 /// descending into `message/rfc822` sub-messages. The 1-based child numbers
 /// map onto the ordered children of each multipart.
-fn resolve_section<'a>(
-    message: &'a Message<'a>,
+fn resolve_message_section<'a>(
+    message: &'a Message<'_>,
+    components: &[usize],
+) -> Option<(&'a Message<'a>, &'a mail_parser::MessagePart<'a>)> {
+    let root = message.parts.first()?;
+    if matches!(root.body, PartType::Multipart(_)) {
+        resolve_part_section(message, 0, components)
+    } else {
+        // Every non-multipart message has a virtual section 1, including a
+        // single attachment or an encapsulated message's single body part.
+        let (&first, rest) = components.split_first()?;
+        (first == 1).then_some(())?;
+        resolve_part_section(message, 0, rest)
+    }
+}
+
+fn resolve_part_section<'a>(
+    message: &'a Message<'_>,
     idx: usize,
     components: &[usize],
-) -> Option<&'a mail_parser::MessagePart<'a>> {
+) -> Option<(&'a Message<'a>, &'a mail_parser::MessagePart<'a>)> {
     let part = message.parts.get(idx)?;
     let Some((&first, rest)) = components.split_first() else {
-        return Some(part);
+        return Some((message, part));
     };
     match &part.body {
         PartType::Multipart(children) => {
             let child = *children.get(first.checked_sub(1)?)?;
-            resolve_section(message, child as usize, rest)
+            resolve_part_section(message, child as usize, rest)
         }
         PartType::Message(sub) => {
-            // A singular message body: section 1 is its root, and any further
-            // components address inside the nested message.
-            if first != 1 {
-                return None;
-            }
-            resolve_section_in(sub, 0, rest)
+            // The next number addresses the enclosed message's body. A
+            // multipart root contributes no extra '.1' to the IMAP path.
+            resolve_message_section(sub, components)
         }
-        _ => None,
-    }
-}
-
-/// `resolve_section` over a borrowed nested message (separate lifetime).
-fn resolve_section_in<'a>(
-    message: &'a Message<'a>,
-    idx: usize,
-    components: &[usize],
-) -> Option<&'a mail_parser::MessagePart<'a>> {
-    let part = message.parts.get(idx)?;
-    let Some((&first, rest)) = components.split_first() else {
-        return Some(part);
-    };
-    match &part.body {
-        PartType::Multipart(children) => {
-            let child = *children.get(first.checked_sub(1)?)?;
-            resolve_section_in(message, child as usize, rest)
-        }
-        PartType::Message(sub) => {
-            if first != 1 {
-                return None;
-            }
-            resolve_section_in(sub, 0, rest)
-        }
-        _ => None,
-    }
-}
-
-/// The decoded content bytes of a leaf part, or `None` for a container.
-fn part_decoded_bytes(part: &mail_parser::MessagePart<'_>) -> Option<Vec<u8>> {
-    match &part.body {
-        PartType::Text(text) | PartType::Html(text) => Some(text.as_bytes().to_vec()),
-        PartType::Binary(bytes) | PartType::InlineBinary(bytes) => Some(bytes.as_ref().to_vec()),
         _ => None,
     }
 }
@@ -402,7 +495,10 @@ Content-Transfer-Encoding: base64\r\n\r\n{wire_b64}\r\n--R--\r\n"
         assert_eq!(image.body.data.as_deref(), Some(b64.as_str()));
         // normalize treats the referenced CID image as inline.
         let normalized = mime::normalize(&message).unwrap();
-        assert!(normalized.attachments.iter().any(|a| a.inline && a.content_id.as_deref() == Some("logo")));
+        assert!(normalized
+            .attachments
+            .iter()
+            .any(|a| a.inline && a.content_id.as_deref() == Some("logo")));
     }
 
     #[test]
@@ -449,9 +545,241 @@ Subject: Inner\r\nFrom: inner@x.com\r\n\r\ninner body\r\n--F--\r\n";
 Content-Type: text/plain; charset=iso-8859-1\r\n\r\ncaf\xe9\r\n";
         let message = raw_of("imap:me@x:acc", raw);
         let normalized = mime::normalize(&message).unwrap();
-        assert!(normalized.body_text.contains("caf"));
-        // The decoded content is valid UTF-8 after the pipeline runs.
-        assert!(normalized.body_text.chars().all(|c| c != '\u{fffd}') || normalized.body_text.contains('é'));
+        assert_eq!(normalized.body_text.trim_end(), "café");
+    }
+
+    #[test]
+    fn text_attachment_downloads_preserve_charset_bytes_for_every_transfer_encoding() {
+        for (encoding, wire) in [
+            ("8bit", &b"caf\xe9"[..]),
+            ("quoted-printable", &b"caf=E9"[..]),
+            ("base64", &b"Y2Fm6Q=="[..]),
+        ] {
+            for media_type in ["text/plain", "text/html"] {
+                let mut raw = format!(
+                    "Content-Type: multipart/mixed; boundary=T\r\n\r\n\
+                     --T\r\nContent-Type: text/plain; charset=iso-8859-1\r\n\r\ncaf=E9\r\n\
+                     --T\r\nContent-Type: {media_type}; charset=iso-8859-1\r\n\
+                     Content-Disposition: attachment; filename=note.txt\r\n\
+                     Content-Transfer-Encoding: {encoding}\r\n\r\n"
+                )
+                .into_bytes();
+                raw.extend_from_slice(wire);
+                raw.extend_from_slice(b"\r\n--T--\r\n");
+                let converted = raw_of("attachment", &raw);
+                let normalized = mime::normalize(&converted).unwrap();
+                assert_eq!(normalized.attachments[0].size, 4);
+                assert_eq!(decoded(&converted.payload.parts[1]), b"caf\xe9");
+                assert_eq!(
+                    mime::attachment_bytes_from_payload(&converted, "part:0.1")
+                        .unwrap()
+                        .unwrap(),
+                    b"caf\xe9"
+                );
+                assert_eq!(
+                    attachment_bytes_from_raw(&raw, "2").unwrap().unwrap(),
+                    b"caf\xe9"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn attached_emails_retain_download_bytes_and_the_nested_tree() {
+        let inner = b"Subject: Inner\r\nFrom: inner@example.com\r\n\r\ninner body";
+        for encoded in [false, true] {
+            let (media_type, encoding, body) = if encoded {
+                (
+                    "message/global",
+                    "base64",
+                    base64::engine::general_purpose::STANDARD.encode(inner),
+                )
+            } else {
+                (
+                    "message/rfc822",
+                    "8bit",
+                    String::from_utf8_lossy(inner).into_owned(),
+                )
+            };
+            let raw = format!(
+                "Subject: Outer\r\nContent-Type: multipart/mixed; boundary=E\r\n\r\n\
+                 --E\r\nContent-Type: text/plain\r\n\r\nouter\r\n\
+                 --E\r\nContent-Type: {media_type}\r\n\
+                 Content-Disposition: attachment; filename=forward.eml\r\n\
+                 Content-Transfer-Encoding: {encoding}\r\n\r\n{body}\r\n--E--\r\n"
+            );
+            let converted = raw_of("eml", raw.as_bytes());
+            let attachment = &converted.payload.parts[1];
+            assert_eq!(attachment.parts.len(), 1);
+            assert!(attachment.parts[0]
+                .headers
+                .iter()
+                .any(|h| h.name == "Subject" && h.value == "Inner"));
+            assert_eq!(decoded(attachment), inner);
+            let normalized = mime::normalize(&converted).unwrap();
+            assert_eq!(normalized.subject, "Outer");
+            assert_eq!(normalized.attachments[0].filename, "forward.eml");
+            assert_eq!(normalized.attachments[0].size, inner.len() as u64);
+            assert_eq!(
+                mime::attachment_bytes_from_payload(&converted, "part:0.1")
+                    .unwrap()
+                    .unwrap(),
+                inner
+            );
+            assert_eq!(
+                attachment_bytes_from_raw(raw.as_bytes(), "2")
+                    .unwrap()
+                    .unwrap(),
+                inner
+            );
+        }
+    }
+
+    #[test]
+    fn imap_sections_follow_singlepart_multipart_and_encapsulated_message_numbering() {
+        let single = b"Content-Type: application/pdf\r\n\r\n%PDF-content";
+        assert_eq!(
+            attachment_bytes_from_raw(single, "1").unwrap().unwrap(),
+            b"%PDF-content"
+        );
+        assert!(attachment_bytes_from_raw(single, "1.1").unwrap().is_none());
+        assert!(attachment_bytes_from_raw(single, "2").unwrap().is_none());
+
+        let inner_multipart = "Content-Type: multipart/mixed; boundary=I\r\n\r\n\
+            --I\r\nContent-Type: text/plain\r\n\r\nbody\r\n\
+            --I\r\nContent-Type: application/octet-stream\r\n\r\nFILE\r\n--I--";
+        for (inner, section, expected) in [
+            (inner_multipart, "1.2", &b"FILE"[..]),
+            (
+                "Content-Type: application/pdf\r\n\r\n%PDF-content",
+                "1.1",
+                &b"%PDF-content"[..],
+            ),
+        ] {
+            let raw = format!(
+                "Content-Type: multipart/mixed; boundary=O\r\n\r\n\
+                --O\r\nContent-Type: message/rfc822\r\n\r\n{inner}\r\n--O--\r\n"
+            );
+            assert_eq!(
+                attachment_bytes_from_raw(raw.as_bytes(), section)
+                    .unwrap()
+                    .unwrap(),
+                expected
+            );
+            assert!(attachment_bytes_from_raw(raw.as_bytes(), "1.3")
+                .unwrap()
+                .is_none());
+            assert!(attachment_bytes_from_raw(raw.as_bytes(), "1.1.2")
+                .unwrap()
+                .is_none());
+        }
+        // A message/rfc822 at the top level itself occupies virtual part 1.
+        let raw = format!("Content-Type: message/rfc822\r\n\r\n{inner_multipart}");
+        assert_eq!(
+            attachment_bytes_from_raw(raw.as_bytes(), "1.2")
+                .unwrap()
+                .unwrap(),
+            b"FILE"
+        );
+    }
+
+    #[test]
+    fn encoded_nested_messages_use_their_own_header_and_body_offsets() {
+        let inner = "Subject: Inner\r\nFrom: inner@example.com\r\nContent-Type: text/html\r\n\r\n<p>INNER</p>";
+        for (encoding, wire) in [
+            (
+                "base64",
+                base64::engine::general_purpose::STANDARD.encode(inner),
+            ),
+            (
+                "quoted-printable",
+                inner.replace('=', "=3D").replace('<', "=3C"),
+            ),
+        ] {
+            let raw = format!("Subject: Outer\r\nFrom: outer@example.com\r\n\
+                Content-Type: message/global\r\nContent-Transfer-Encoding: {encoding}\r\n\r\n{wire}");
+            let converted = raw_of("encoded", raw.as_bytes());
+            let nested = &converted.payload.parts[0];
+            for (name, value) in [
+                ("Subject", "Inner"),
+                ("From", "inner@example.com"),
+                ("Content-Type", "text/html"),
+            ] {
+                assert!(
+                    nested
+                        .headers
+                        .iter()
+                        .any(|h| h.name == name && h.value == value),
+                    "{encoding}: {name}"
+                );
+            }
+            assert_eq!(decoded(nested), b"<p>INNER</p>");
+            assert_eq!(
+                attachment_bytes_from_raw(raw.as_bytes(), "1.1")
+                    .unwrap()
+                    .unwrap(),
+                b"<p>INNER</p>"
+            );
+        }
+    }
+
+    #[test]
+    fn encoded_display_headers_decode_without_changing_mime_or_security_headers() {
+        for subject in ["=?UTF-8?B?Y2Fmw6k=?=", "=?ISO-8859-1?Q?caf=E9?="] {
+            let raw = format!(
+                "Subject: {subject}\r\n\
+                From: =?UTF-8?B?Sm9zw6k=?= <j@example.com>\r\n\
+                To: =?UTF-8?Q?Doe=2C_Jane?= <jane@example.com>, Other <other@example.com>\r\n\
+                Cc: =?UTF-8?Q?Ren=C3=A9?= <r@example.com>\r\n\
+                Reply-To: =?UTF-8?B?Sm9zw6k=?= <reply@example.com>\r\n\
+                Authentication-Results: mx.example; dkim=fail header.d=example.com\r\n\
+                List-Unsubscribe: <https://example.com/=?UTF-8?Q?literal?=>\r\n\
+                Content-Type: text/plain; charset=utf-8\r\n\r\nbody"
+            );
+            let converted = raw_of("headers", raw.as_bytes());
+            let normalized = mime::normalize(&converted).unwrap();
+            assert_eq!(normalized.subject, "café");
+            assert_eq!(normalized.from, "José <j@example.com>");
+            assert_eq!(
+                normalized.to,
+                ["Doe, Jane <jane@example.com>", "Other <other@example.com>"]
+            );
+            for (name, value) in [
+                ("Cc", "René <r@example.com>"),
+                ("Reply-To", "José <reply@example.com>"),
+                (
+                    "Authentication-Results",
+                    "mx.example; dkim=fail header.d=example.com",
+                ),
+                (
+                    "List-Unsubscribe",
+                    "<https://example.com/=?UTF-8?Q?literal?=>",
+                ),
+                ("Content-Type", "text/plain; charset=utf-8"),
+            ] {
+                assert!(converted
+                    .payload
+                    .headers
+                    .iter()
+                    .any(|h| h.name == name && h.value == value));
+            }
+        }
+    }
+
+    #[test]
+    fn decoded_header_controls_cannot_inject_headers_or_extra_recipients() {
+        let raw = b"Subject: =?UTF-8?Q?Hi=0D=0ABcc:_victim@example.com?=\r\n\
+            To: =?UTF-8?Q?Name=0D=0ABcc:_victim@example.com?= <real@example.com>\r\n\r\nbody";
+        let converted = raw_of("hostile", raw);
+        assert_eq!(converted.payload.headers.len(), 2);
+        assert!(converted
+            .payload
+            .headers
+            .iter()
+            .all(|h| !h.value.contains(['\r', '\n'])));
+        let normalized = mime::normalize(&converted).unwrap();
+        assert_eq!(normalized.to.len(), 1);
+        assert!(normalized.to[0].ends_with("<real@example.com>"));
     }
 
     #[test]

@@ -14,7 +14,8 @@
 //! 2. **Identity first, body once.** The cheap identity pass fetches
 //!    `UID FLAGS RFC822.SIZE` plus the four header fields; the stable id is
 //!    resolved from those (and sticky reuse); only then, and only if the body
-//!    is not already cached, is the full `BODY.PEEK[]` fetched.
+//!    is not already cached and its advertised size fits, is a bounded
+//!    `BODY.PEEK[]` fetched. One extra byte detects unadvertised oversize.
 //! 3. **Keep the `imap-next` swap cheap.** These helpers go THROUGH the
 //!    existing `ImapSession` trait rather than widening it. async-imap's
 //!    `Fetch` does not surface the RFC 8474 `EMAILID`, so on the live path the
@@ -38,7 +39,7 @@ use async_imap::imap_proto::{AttributeValue, Response};
 
 use super::identity::{derive_message_id, IdentityInputs};
 use super::policy;
-use super::session::ImapSession;
+use super::session::{flag_to_wire, ImapSession};
 use super::{ImapLocation, ImapStateStore};
 use crate::db::DbResult;
 use crate::provider::ProviderError;
@@ -48,9 +49,10 @@ use crate::provider::ProviderError;
 pub const IDENTITY_ITEMS: &str =
     "(UID FLAGS RFC822.SIZE BODY.PEEK[HEADER.FIELDS (MESSAGE-ID DATE FROM SUBJECT)])";
 
-/// The full-body pass. `BODY.PEEK[]` returns the whole RFC 5322 message with no
-/// side effect on `\Seen`.
-pub const BODY_ITEMS: &str = "(BODY.PEEK[])";
+/// A bounded full-body pass, with one sentinel byte beyond the cache ceiling
+/// to detect oversize instead of silently truncating. PEEK never sets `\Seen`.
+pub static BODY_ITEMS: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| format!("(UID BODY.PEEK[]<0.{}>)", policy::MAX_RAW_FETCH_BYTES));
 
 /// One message's identity/flags row from the cheap pass.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -106,10 +108,12 @@ pub fn parse_identity_headers(header_block: &[u8], rfc822_size: u32) -> Identity
 /// cannot surface the attribute on the live route (see the module doc).
 pub fn parse_email_id(fetch_line: &[u8]) -> Option<String> {
     match Response::parse(fetch_line) {
-        Ok((_rest, Response::Fetch(_seq, attrs))) => attrs.into_iter().find_map(|attr| match attr {
-            AttributeValue::EmailId(id) => Some(id.into_owned()),
-            _ => None,
-        }),
+        Ok((_rest, Response::Fetch(_seq, attrs))) => {
+            attrs.into_iter().find_map(|attr| match attr {
+                AttributeValue::EmailId(id) => Some(id.into_owned()),
+                _ => None,
+            })
+        }
         _ => None,
     }
 }
@@ -128,7 +132,7 @@ pub async fn fetch_identity(
             // A FETCH without a UID is not addressable; skip rather than guess.
             continue;
         };
-        let flags = fetch.flags().map(|flag| format!("{flag:?}")).collect();
+        let flags = fetch.flags().map(|flag| flag_to_wire(&flag)).collect();
         let header_block = fetch.header().unwrap_or_default();
         let inputs = parse_identity_headers(header_block, fetch.size.unwrap_or(0));
         rows.push(IdentityRow { uid, flags, inputs });
@@ -147,7 +151,8 @@ pub async fn fetch_identity(
 #[async_trait::async_trait]
 pub trait BodyFetcher {
     /// Return the raw RFC 5322 bytes for `uid`, or `None` if the server gave
-    /// no body. Must use `BODY.PEEK[]` so it never sets `\Seen`.
+    /// no body. Must use a bounded `BODY.PEEK[]` request so it never sets
+    /// `\Seen` or requests an unbounded literal when RFC822.SIZE is missing.
     async fn fetch_raw_body(&mut self, uid: u32) -> Result<Option<Vec<u8>>, ProviderError>;
 }
 
@@ -159,17 +164,29 @@ pub struct SessionBodyFetcher<'a> {
 #[async_trait::async_trait]
 impl BodyFetcher for SessionBodyFetcher<'_> {
     async fn fetch_raw_body(&mut self, uid: u32) -> Result<Option<Vec<u8>>, ProviderError> {
-        let fetches = self.session.uid_fetch(&uid.to_string(), BODY_ITEMS).await?;
+        let fetches = self
+            .session
+            .uid_fetch(&uid.to_string(), &BODY_ITEMS)
+            .await?;
         for fetch in &fetches {
             if fetch.uid == Some(uid) {
                 if let Some(body) = fetch.body() {
+                    policy::check_raw_message_bytes(body.len())?;
                     return Ok(Some(body.to_vec()));
                 }
             }
         }
-        // Fall back to the first body present (some servers omit UID in the
-        // single-UID body response), but never fabricate one.
-        Ok(fetches.iter().find_map(|f| f.body().map(<[u8]>::to_vec)))
+        // Some servers omit UID in the single-UID response. Accept that
+        // fallback, but never attribute a different UID's body to this one.
+        if let Some(body) = fetches
+            .iter()
+            .filter(|f| f.uid.is_none())
+            .find_map(|f| f.body())
+        {
+            policy::check_raw_message_bytes(body.len())?;
+            return Ok(Some(body.to_vec()));
+        }
+        Ok(None)
     }
 }
 
@@ -320,6 +337,10 @@ pub async fn ensure_body(
 
     // 4. Body once: a cached id (reached from any mailbox) is never refetched.
     if !cache.contains(&message_id).map_err(db_to_provider)? {
+        // The cheap pass already tells us when the body cannot fit. Do not
+        // issue any body request for it; the bounded request also protects
+        // against an absent or understated advertised size.
+        policy::check_raw_message_bytes(row.inputs.rfc822_size as usize)?;
         if let Some(raw) = body_fetcher.fetch_raw_body(row.uid).await? {
             policy::check_raw_message_bytes(raw.len())?;
             cache
@@ -344,7 +365,7 @@ mod tests {
 
     #[test]
     fn the_fetch_item_lists_are_peek_only() {
-        for items in [IDENTITY_ITEMS, BODY_ITEMS] {
+        for items in [IDENTITY_ITEMS, BODY_ITEMS.as_str()] {
             assert!(items.contains("BODY.PEEK["), "{items} must use BODY.PEEK");
             // No non-peek BODY[ fetch anywhere — that would set \Seen.
             assert!(
@@ -401,12 +422,184 @@ mod tests {
     fn row(uid: u32, message_id: &str) -> IdentityRow {
         IdentityRow {
             uid,
-            flags: vec!["Seen".into()],
+            flags: vec!["\\Seen".into()],
             inputs: IdentityInputs {
                 message_id: Some(message_id.into()),
                 ..Default::default()
             },
         }
+    }
+
+    async fn scripted_session(
+        exchanges: Vec<(String, String)>,
+    ) -> (
+        super::super::session::AsyncImapSession<tokio::io::DuplexStream>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        let (client, server) = tokio::io::duplex(4096);
+        let task = tokio::spawn(async move {
+            let mut server = BufReader::new(server);
+            server.get_mut().write_all(b"* OK ready\r\n").await.unwrap();
+            let exchanges = std::iter::once((
+                "LOGIN \"user\" \"password\"".to_owned(),
+                "{tag} OK logged in\r\n".to_owned(),
+            ))
+            .chain(exchanges);
+            for (expected, response) in exchanges {
+                let mut command = String::new();
+                server.read_line(&mut command).await.unwrap();
+                let (tag, command) = command.trim_end().split_once(' ').unwrap();
+                assert_eq!(command, expected);
+                server
+                    .get_mut()
+                    .write_all(response.replace("{tag}", tag).as_bytes())
+                    .await
+                    .unwrap();
+            }
+        });
+        let session = async_imap::Client::new(client)
+            .login("user", "password")
+            .await
+            .unwrap();
+        (super::super::session::AsyncImapSession::new(session), task)
+    }
+
+    #[tokio::test]
+    async fn wire_fetch_uses_bounded_peek_and_persists_wire_flags() {
+        let headers = "Message-ID: <wire@example.com>\r\nSubject: Wire\r\n\r\n";
+        let body = "Subject: Wire\r\n\r\nbody";
+        let (mut session, server) = scripted_session(vec![
+            (format!("UID FETCH 7 {IDENTITY_ITEMS}"), format!(
+                "* 1 FETCH (UID 7 FLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft \\Recent Project $Forwarded) RFC822.SIZE {} BODY[HEADER.FIELDS (MESSAGE-ID DATE FROM SUBJECT)] {{{}}}\r\n{headers})\r\n{{tag}} OK done\r\n", body.len(), headers.len()
+            )),
+            (format!("UID FETCH 7 {}", BODY_ITEMS.as_str()), format!(
+                "* 1 FETCH (UID 7 BODY[]<0> {{{}}}\r\n{body})\r\n{{tag}} OK done\r\n", body.len()
+            )),
+        ]).await;
+        let rows = fetch_identity(&mut session, "7").await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].inputs.message_id.as_deref(),
+            Some("<wire@example.com>")
+        );
+        assert_eq!(
+            rows[0].flags,
+            [
+                "\\Seen",
+                "\\Answered",
+                "\\Flagged",
+                "\\Deleted",
+                "\\Draft",
+                "\\Recent",
+                "Project",
+                "$Forwarded"
+            ]
+        );
+        assert_eq!(
+            BODY_ITEMS.as_str(),
+            format!("(UID BODY.PEEK[]<0.{}>)", policy::MAX_RAW_MESSAGE_BYTES + 1)
+        );
+        let store = store();
+        let cache = BodyCache::new(store.clone());
+        let mut fetcher = SessionBodyFetcher {
+            session: &mut session,
+        };
+        let id = ensure_body(&mut fetcher, &store, &cache, "INBOX", 1, &rows[0], 1)
+            .await
+            .unwrap();
+        assert_eq!(cache.get(&id).unwrap().unwrap().raw, body.as_bytes());
+        let locations = store.locations_for_message(&id).unwrap();
+        let stored_flags: Vec<String> = serde_json::from_str(&locations[0].flags_json).unwrap();
+        assert_eq!(stored_flags, rows[0].flags);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn advertised_size_is_checked_before_any_body_request() {
+        for size in [
+            policy::MAX_RAW_MESSAGE_BYTES - 1,
+            policy::MAX_RAW_MESSAGE_BYTES,
+            policy::MAX_RAW_MESSAGE_BYTES + 1,
+        ] {
+            let store = store();
+            let cache = BodyCache::new(store.clone());
+            let mut fetcher = CountingBodyFetcher {
+                body: b"Subject: Small\r\n\r\nbody".to_vec(),
+                fetches: 0,
+            };
+            let mut row = row(7, "<size@example.com>");
+            row.inputs.rfc822_size = size as u32;
+            let id = derive_message_id(store.account_id(), &row.inputs);
+            let result = ensure_body(&mut fetcher, &store, &cache, "INBOX", 1, &row, 1).await;
+            if size > policy::MAX_RAW_MESSAGE_BYTES {
+                assert!(matches!(
+                    result,
+                    Err(ProviderError::PermanentClientRejection(_))
+                ));
+                assert_eq!(fetcher.fetches, 0);
+                assert!(!cache.contains(&id).unwrap());
+            } else {
+                assert!(result.is_ok());
+                assert_eq!(fetcher.fetches, 1);
+                assert!(cache.contains(&id).unwrap());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn wire_body_size_boundary_accepts_complete_messages_and_rejects_the_sentinel() {
+        for (size, uid_attribute) in [
+            (policy::MAX_RAW_MESSAGE_BYTES - 1, "UID 7 "),
+            (policy::MAX_RAW_MESSAGE_BYTES, "UID 7 "),
+            (policy::MAX_RAW_FETCH_BYTES, "UID 7 "),
+            (policy::MAX_RAW_FETCH_BYTES, ""),
+        ] {
+            let body = "a".repeat(size);
+            let response = format!(
+                "* 1 FETCH ({uid_attribute}BODY[]<0> {{{size}}}\r\n{body})\r\n{{tag}} OK done\r\n"
+            );
+            drop(body);
+            let (mut session, server) = scripted_session(vec![(
+                format!("UID FETCH 7 {}", BODY_ITEMS.as_str()),
+                response,
+            )])
+            .await;
+            let mut fetcher = SessionBodyFetcher {
+                session: &mut session,
+            };
+            let result = fetcher.fetch_raw_body(7).await;
+            if size > policy::MAX_RAW_MESSAGE_BYTES {
+                assert!(matches!(
+                    result,
+                    Err(ProviderError::PermanentClientRejection(_))
+                ));
+            } else {
+                assert_eq!(result.unwrap().unwrap().len(), size);
+            }
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn understated_or_missing_size_cannot_cache_an_oversize_body() {
+        let store = store();
+        let cache = BodyCache::new(store.clone());
+        let mut fetcher = CountingBodyFetcher {
+            body: vec![b'a'; policy::MAX_RAW_FETCH_BYTES],
+            fetches: 0,
+        };
+        for advertised in [0, 10] {
+            let mut row = row(7, "<size@example.com>");
+            row.inputs.rfc822_size = advertised;
+            let result = ensure_body(&mut fetcher, &store, &cache, "INBOX", 1, &row, 1).await;
+            assert!(matches!(
+                result,
+                Err(ProviderError::PermanentClientRejection(_))
+            ));
+            assert_eq!(cache.total_size().unwrap(), 0);
+        }
+        assert_eq!(fetcher.fetches, 2);
     }
 
     #[tokio::test]
@@ -449,8 +642,12 @@ mod tests {
             fetches: 0,
         };
         let r = row(5, "<a@x>");
-        ensure_body(&mut fetcher, &store, &cache, "INBOX", 1, &r, 1).await.unwrap();
-        ensure_body(&mut fetcher, &store, &cache, "INBOX", 1, &r, 1).await.unwrap();
+        ensure_body(&mut fetcher, &store, &cache, "INBOX", 1, &r, 1)
+            .await
+            .unwrap();
+        ensure_body(&mut fetcher, &store, &cache, "INBOX", 1, &r, 1)
+            .await
+            .unwrap();
         assert_eq!(fetcher.fetches, 1);
     }
 
@@ -477,8 +674,13 @@ mod tests {
         };
         let mut r = row(7, "<would-derive-differently@x>");
         r.inputs.email_id = Some("NEWOBJECTID".into());
-        let id = ensure_body(&mut fetcher, &store, &cache, "INBOX", 1, &r, 1).await.unwrap();
-        assert_eq!(id, "imap:me@example.com:STICKY", "the recorded id is reused");
+        let id = ensure_body(&mut fetcher, &store, &cache, "INBOX", 1, &r, 1)
+            .await
+            .unwrap();
+        assert_eq!(
+            id, "imap:me@example.com:STICKY",
+            "the recorded id is reused"
+        );
     }
 
     #[test]
@@ -497,12 +699,17 @@ mod tests {
                 modseq: None,
             })
             .unwrap();
-        cache.put("imap:me@example.com:keep", b"raw bytes", 42).unwrap();
+        cache
+            .put("imap:me@example.com:keep", b"raw bytes", 42)
+            .unwrap();
 
         store.drop_mailbox_locations("INBOX").unwrap();
 
         assert!(
-            store.locations_for_message("imap:me@example.com:keep").unwrap().is_empty(),
+            store
+                .locations_for_message("imap:me@example.com:keep")
+                .unwrap()
+                .is_empty(),
             "the location was dropped on the UIDVALIDITY reset"
         );
         let body = cache.get("imap:me@example.com:keep").unwrap().unwrap();
@@ -516,7 +723,9 @@ mod tests {
         let database = Arc::new(Database::open_memory());
         let mine = BodyCache::new(ImapStateStore::new(database.clone(), "me@example.com"));
         let theirs = BodyCache::new(ImapStateStore::new(database, "other@example.com"));
-        theirs.put("imap:other@example.com:x", b"secret", 1).unwrap();
+        theirs
+            .put("imap:other@example.com:x", b"secret", 1)
+            .unwrap();
         assert!(mine.get("imap:other@example.com:x").unwrap().is_none());
         assert_eq!(mine.total_size().unwrap(), 0);
         assert_eq!(theirs.total_size().unwrap(), 6);
@@ -562,10 +771,9 @@ mod tests {
             )
         }
 
-        /// Does any flag in `flags` name `\Seen`? Flags are rendered via the
-        /// `Flag` Debug (e.g. `Seen`), so match on that spelling.
+        /// Flags use their IMAP wire spelling, including the system prefix.
         fn mentions_seen(flags: &[String]) -> bool {
-            flags.iter().any(|f| f.eq_ignore_ascii_case("Seen"))
+            flags.iter().any(|f| f.eq_ignore_ascii_case("\\Seen"))
         }
 
         #[tokio::test]
@@ -591,7 +799,9 @@ mod tests {
             );
 
             // A full BODY.PEEK[] fetch.
-            let mut fetcher = SessionBodyFetcher { session: &mut session };
+            let mut fetcher = SessionBodyFetcher {
+                session: &mut session,
+            };
             let body = fetcher.fetch_raw_body(uid).await.expect("BODY.PEEK[]");
             assert!(body.is_some(), "the server returns a body");
 
@@ -623,15 +833,31 @@ mod tests {
                 let status = session.select(mailbox).await.expect("SELECT");
                 let uidvalidity = status.uid_validity.unwrap_or(0) as i64;
                 let uids = session.uid_search("ALL").await.expect("UID SEARCH ALL");
-                let set = uids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
-                let rows = fetch_identity(&mut session, &set).await.expect("identity pass");
+                let set = uids
+                    .iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let rows = fetch_identity(&mut session, &set)
+                    .await
+                    .expect("identity pass");
                 for row in rows {
                     // SessionBodyFetcher borrows the session mutably only for
                     // the body fetch, released before the next loop turn.
-                    let mut fetcher = SessionBodyFetcher { session: &mut session };
-                    let id = ensure_body(&mut fetcher, &store, &cache, mailbox, uidvalidity, &row, 1_700_000_000)
-                        .await
-                        .expect("ensure_body");
+                    let mut fetcher = SessionBodyFetcher {
+                        session: &mut session,
+                    };
+                    let id = ensure_body(
+                        &mut fetcher,
+                        &store,
+                        &cache,
+                        mailbox,
+                        uidvalidity,
+                        &row,
+                        1_700_000_000,
+                    )
+                    .await
+                    .expect("ensure_body");
                     ids.insert(id);
                 }
             }
@@ -650,7 +876,10 @@ mod tests {
                 "the two copies are in INBOX and Sent: {mailboxes:?}"
             );
             // One id, one cached body — the second copy did not refetch.
-            assert!(cache.contains(shared).unwrap(), "the shared message's body is cached once");
+            assert!(
+                cache.contains(shared).unwrap(),
+                "the shared message's body is cached once"
+            );
         }
     }
 }
