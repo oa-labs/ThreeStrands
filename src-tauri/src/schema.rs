@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 60;
+pub(crate) const LATEST_VERSION: i64 = 61;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1760,6 +1760,17 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         .map_err(error)?;
         tx.execute_batch("PRAGMA user_version=60;").map_err(error)?;
     }
+    if version < 61 {
+        // Targeted thread-family lookups follow aliases backwards, both for
+        // token seeding and inherited hotness. Avoid scanning every alias in
+        // an account whenever a reply extends one existing thread.
+        tx.execute_batch(
+            "CREATE INDEX IF NOT EXISTS imap_thread_aliases_by_survivor
+                 ON imap_thread_aliases(account_id, new_id);
+             PRAGMA user_version=61;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -2335,6 +2346,46 @@ mod tests {
             upgraded.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
             super::LATEST_VERSION
         );
+    }
+
+    #[test]
+    fn v61_upgrades_v60_aliases_without_losing_state_and_reruns_cleanly() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP INDEX imap_thread_aliases_by_survivor;
+            PRAGMA user_version=60;
+            INSERT INTO imap_thread_aliases VALUES ('you@gmail.com','old','survivor');
+            INSERT INTO imap_hot_threads VALUES ('you@gmail.com','old');",
+            )
+            .unwrap();
+        for _ in 0..2 {
+            super::migrate(&mut connection).unwrap();
+            let columns: Vec<String> = connection
+                .prepare("PRAGMA index_info(imap_thread_aliases_by_survivor)")
+                .unwrap()
+                .query_map([], |row| row.get(2))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            assert_eq!(columns, ["account_id", "new_id"]);
+            let alias: String = connection.query_row(
+                "SELECT new_id FROM imap_thread_aliases WHERE account_id='you@gmail.com' AND old_id='old'",
+                [], |row| row.get(0)).unwrap();
+            assert_eq!(alias, "survivor");
+            let markers: i64 = connection.query_row(
+                "SELECT COUNT(*) FROM imap_hot_threads WHERE account_id='you@gmail.com' AND thread_id='old'",
+                [], |row| row.get(0)).unwrap();
+            assert_eq!(markers, 1);
+            assert_eq!(
+                connection
+                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                super::LATEST_VERSION
+            );
+            connection.pragma_update(None, "user_version", 60).unwrap();
+        }
     }
 
     #[test]

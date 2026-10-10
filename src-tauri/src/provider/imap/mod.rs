@@ -532,7 +532,9 @@ impl ImapStateStore {
 
         self.database.with_connection(|connection| {
             // Step 1: messages that carry any batch token, and their threads.
-            // Resolve each thread through the alias chain in Rust.
+            // Resolve each thread through the alias chain in Rust. CROSS JOIN
+            // preserves the selective outer lookup: SQLite may otherwise
+            // reorder these joins into an account-wide message or alias scan.
             let mut threads: BTreeSet<String> = BTreeSet::new();
             // SQLite caps bound variables per statement (32,766 in the bundled
             // build, 999 in older ones), and an initial sync threads thousands
@@ -545,8 +547,8 @@ impl ImapStateStore {
                     .join(",");
                 let sql = format!(
                     "SELECT DISTINCT t.thread_id
-                     FROM imap_message_tokens mt
-                     JOIN imap_threads t
+                     FROM imap_message_tokens mt INDEXED BY imap_message_tokens_by_token
+                     CROSS JOIN imap_threads t
                        ON t.account_id = mt.account_id AND t.message_id = mt.message_id
                      WHERE mt.account_id = ?1 AND mt.token IN ({placeholders})",
                 );
@@ -567,51 +569,51 @@ impl ImapStateStore {
                 return Ok(BTreeMap::new());
             }
 
-            // Step 2: for every seeded thread, read ALL of its messages' tokens
-            // and the thread's persisted creation generation. A thread's rows
-            // may be filed under a pre-merge id; we matched on the resolved
-            // survivor, so gather tokens for every message whose RESOLVED
-            // thread is in `threads`.
+            // Step 2: visit only the matched thread families. Reverse aliases
+            // and message membership both have account-scoped indexes, so a
+            // reply does not scan unrelated mail or resolve every stored row.
+            // CROSS JOIN keeps the family on the outer side of each lookup;
+            // UNION also terminates traversal if persisted aliases are cyclic.
             let mut out: BTreeMap<String, (u64, Vec<String>)> = BTreeMap::new();
             let mut dedup: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
-            let mut thread_statement = connection.prepare(
-                "SELECT message_id, thread_id, created_generation
-                 FROM imap_threads WHERE account_id = ?1",
+            let mut statement = connection.prepare(
+                "WITH RECURSIVE family(thread_id) AS (
+                     VALUES (?2)
+                     UNION
+                     SELECT a.old_id FROM family f
+                     CROSS JOIN imap_thread_aliases a ON a.new_id = f.thread_id
+                     WHERE a.account_id = ?1
+                 )
+                 SELECT t.message_id, t.created_generation, mt.token
+                 FROM family f
+                 CROSS JOIN imap_threads t
+                   ON t.account_id = ?1 AND t.thread_id = f.thread_id
+                 LEFT JOIN imap_message_tokens mt
+                   ON mt.account_id = t.account_id AND mt.message_id = t.message_id",
             )?;
-            let all = thread_statement
-                .query_map([&self.account_id], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, i64>(2)? as u64,
-                    ))
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
-
-            let mut token_statement = connection.prepare(
-                "SELECT token FROM imap_message_tokens
-                 WHERE account_id = ?1 AND message_id = ?2",
-            )?;
-            for (message_id, raw_thread, created) in all {
-                let resolved = self.resolve_thread_alias_conn(connection, &raw_thread)?;
-                if !threads.contains(&resolved) {
-                    continue;
-                }
-                let entry = out.entry(resolved.clone()).or_insert((created, Vec::new()));
-                entry.0 = entry.0.min(created);
-                let bucket = dedup.entry(resolved.clone()).or_default();
-                // The stable id is always a token anchor, even if no token row
-                // was ever written for it (defensive; the writer always writes
-                // it). Then the persisted tokens.
-                bucket.insert(message_id.clone());
-                let tokens = token_statement
-                    .query_map(rusqlite::params![self.account_id, message_id], |row| {
-                        row.get::<_, String>(0)
-                    })?
-                    .collect::<Result<Vec<_>, _>>()?;
-                for token in tokens {
-                    bucket.insert(token);
+            for thread_id in threads {
+                let rows =
+                    statement.query_map(rusqlite::params![self.account_id, thread_id], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, i64>(1)? as u64,
+                            row.get::<_, Option<String>>(2)?,
+                        ))
+                    })?;
+                for row in rows {
+                    let (message_id, created, token) = row?;
+                    let entry = out
+                        .entry(thread_id.clone())
+                        .or_insert((created, Vec::new()));
+                    entry.0 = entry.0.min(created);
+                    let bucket = dedup.entry(thread_id.clone()).or_default();
+                    // Retain the stable-id anchor even for a legacy member
+                    // that has no persisted tokens yet.
+                    bucket.insert(message_id);
+                    if let Some(token) = token {
+                        bucket.insert(token);
+                    }
                 }
             }
             for (thread_id, tokens) in dedup {
@@ -766,15 +768,35 @@ impl ImapStateStore {
     /// in INBOX or Sent).
     pub fn is_thread_hot(&self, thread_id: &str) -> DbResult<bool> {
         self.database.with_connection(|connection| {
-            let hot: Option<i64> = connection
-                .query_row(
-                    "SELECT 1 FROM imap_hot_threads WHERE account_id = ?1 AND thread_id = ?2",
-                    rusqlite::params![self.account_id, thread_id],
-                    |row| row.get(0),
-                )
-                .ok();
-            Ok(hot.is_some())
+            self.is_thread_hot_conn(connection, thread_id)
         })
+    }
+
+    /// A merge inherits hotness from any member, including a marker left on
+    /// a retired id by an earlier version. The reverse traversal is indexed
+    /// and UNION makes corrupt cycles finite.
+    fn is_thread_hot_conn(
+        &self,
+        connection: &rusqlite::Connection,
+        thread_id: &str,
+    ) -> DbResult<bool> {
+        let resolved = self.resolve_thread_alias_conn(connection, thread_id)?;
+        Ok(connection.query_row(
+            "WITH RECURSIVE family(thread_id) AS (
+                 VALUES (?2)
+                 UNION
+                 SELECT a.old_id FROM family f
+                 CROSS JOIN imap_thread_aliases a ON a.new_id = f.thread_id
+                 WHERE a.account_id = ?1
+             )
+             SELECT EXISTS (
+                 SELECT 1 FROM family f
+                 CROSS JOIN imap_hot_threads h
+                   ON h.account_id = ?1 AND h.thread_id = f.thread_id
+             )",
+            rusqlite::params![self.account_id, resolved],
+            |row| row.get(0),
+        )?)
     }
 
     /// Apply one sync round's writes in a SINGLE transaction. This is the
@@ -923,13 +945,6 @@ impl ImapStateStore {
                     rusqlite::params![self.account_id, old_id, new_id],
                 )?;
             }
-            for thread_id in &round.changed_threads {
-                transaction.execute(
-                    "INSERT OR IGNORE INTO imap_change_journal
-                        (account_id, generation, thread_id) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![self.account_id, next, thread_id],
-                )?;
-            }
             // Hot threads: a location in INBOX or Sent appeared this round.
             // Inserted in the SAME transaction as that location (item 5), so a
             // failed round records neither. Idempotent on the PK, and resolve
@@ -940,6 +955,32 @@ impl ImapStateStore {
                     "INSERT OR IGNORE INTO imap_hot_threads (account_id, thread_id)
                      VALUES (?1, ?2)",
                     rusqlite::params![self.account_id, resolved],
+                )?;
+            }
+            // Resolve hotness AFTER all aliases and newly-hot markers are in
+            // place. Both ids of a hot merge must reach the engine, even when
+            // the survivor was cold before this transaction. Materialize its
+            // inherited marker in the same atomic round as the merge.
+            let mut changed: std::collections::BTreeSet<String> =
+                round.changed_threads.iter().cloned().collect();
+            for (old_id, new_id) in &round.aliases {
+                let survivor = self.resolve_thread_alias_conn(transaction, new_id)?;
+                if self.is_thread_hot_conn(transaction, &survivor)? {
+                    transaction.execute(
+                        "INSERT OR IGNORE INTO imap_hot_threads (account_id, thread_id)
+                         VALUES (?1, ?2)",
+                        rusqlite::params![self.account_id, survivor],
+                    )?;
+                    changed.insert(old_id.clone());
+                    changed.insert(new_id.clone());
+                    changed.insert(survivor);
+                }
+            }
+            for thread_id in changed {
+                transaction.execute(
+                    "INSERT OR IGNORE INTO imap_change_journal
+                        (account_id, generation, thread_id) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![self.account_id, next, thread_id],
                 )?;
             }
             // Per-mailbox cadence counters, in the same atomic round.
@@ -1288,6 +1329,238 @@ mod tests {
             Some(1),
             "the thread keeps its earliest creation generation"
         );
+    }
+
+    #[test]
+    fn hotness_and_journaling_follow_chained_aliases_atomically() {
+        let store = store();
+        let initial = store
+            .commit_sync_round(&SyncRoundWrite {
+                thread_assignments: vec![("hot-message".into(), "hot".into())],
+                hot_threads: vec!["hot".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        // Fail after alias writes, while materializing inherited hotness.
+        store
+            .database()
+            .with_connection(|c| {
+                c.execute_batch(
+                    "CREATE TRIGGER reject_hot_survivor BEFORE INSERT ON imap_hot_threads
+                WHEN NEW.thread_id = 'survivor'
+                BEGIN SELECT RAISE(ABORT, 'injected hotness failure'); END;",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let round = SyncRoundWrite {
+            aliases: vec![
+                ("hot".into(), "middle".into()),
+                ("middle".into(), "survivor".into()),
+            ],
+            ..Default::default()
+        };
+        assert!(store.commit_sync_round(&round).is_err());
+        assert_eq!(store.generation().unwrap(), initial);
+        assert_eq!(
+            store.thread_of_message("hot-message").unwrap().as_deref(),
+            Some("hot")
+        );
+        assert_eq!(store.resolve_thread_alias("hot").unwrap(), "hot");
+        assert!(!store.is_thread_hot("survivor").unwrap());
+        assert!(store.journal_since(initial).unwrap().is_empty());
+        store
+            .database()
+            .with_connection(|c| {
+                c.execute_batch("DROP TRIGGER reject_hot_survivor;")?;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(store.commit_sync_round(&round).unwrap(), initial + 1);
+        assert_eq!(store.resolve_thread_alias("hot").unwrap(), "survivor");
+        assert!(store.is_thread_hot("survivor").unwrap());
+        assert_eq!(
+            store.journal_since(initial).unwrap(),
+            ["hot", "middle", "survivor"]
+        );
+        let canonical_markers: i64 = store
+            .database()
+            .with_connection(|c| {
+                Ok(c.query_row(
+                    "SELECT COUNT(*) FROM imap_hot_threads
+                WHERE account_id = ?1 AND thread_id = 'survivor'",
+                    [&store.account_id],
+                    |r| r.get(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(canonical_markers, 1);
+    }
+
+    #[test]
+    fn a_cold_merge_stays_index_only_and_does_not_inherit_another_accounts_hotness() {
+        let store = store();
+        let other = ImapStateStore::new(store.database().clone(), "other@example.com");
+        other
+            .commit_sync_round(&SyncRoundWrite {
+                hot_threads: vec!["old".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        let generation = store
+            .commit_sync_round(&SyncRoundWrite {
+                aliases: vec![("old".into(), "survivor".into())],
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(!store.is_thread_hot("survivor").unwrap());
+        assert!(store.journal_since(0).unwrap().is_empty());
+        assert_eq!(generation, 1);
+    }
+
+    #[test]
+    fn legacy_alias_families_keep_their_tokens_creation_order_and_hotness() {
+        let store = store();
+        // Earlier versions could leave the only hot marker on a retired id.
+        // Include members still stored under several raw ids, a tokenless
+        // member, and same-named aliases in another account.
+        store
+            .database()
+            .with_connection(|c| {
+                c.execute_batch(
+                    "INSERT INTO imap_threads VALUES
+                ('me@example.com','root-message','root',1),
+                ('me@example.com','old-message','old',3),
+                ('me@example.com','bare-message','middle',2),
+                ('other@example.com','foreign-message','root',0);
+                INSERT INTO imap_message_tokens VALUES
+                ('me@example.com','root-message','root-token'),
+                ('me@example.com','old-message','old-token'),
+                ('other@example.com','foreign-message','foreign-token');
+                INSERT INTO imap_thread_aliases VALUES
+                ('me@example.com','old','middle'),
+                ('me@example.com','middle','root'),
+                ('other@example.com','root','foreign-root');
+                INSERT INTO imap_hot_threads VALUES ('me@example.com','old');",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(store.is_thread_hot("root").unwrap());
+        assert!(store.is_thread_hot("middle").unwrap());
+        assert!(
+            !ImapStateStore::new(store.database().clone(), "other@example.com")
+                .is_thread_hot("root")
+                .unwrap()
+        );
+        for token in ["root-token", "old-token"] {
+            let seeded = store.seed_state_for_tokens(&[token.into()]).unwrap();
+            assert_eq!(seeded.len(), 1);
+            assert_eq!(seeded["root"].0, 1);
+            assert_eq!(
+                seeded["root"].1,
+                [
+                    "bare-message",
+                    "old-message",
+                    "old-token",
+                    "root-message",
+                    "root-token"
+                ]
+            );
+        }
+        // Corrupt cycles must still terminate in both reverse traversals.
+        store
+            .database()
+            .with_connection(|c| {
+                c.execute(
+                    "INSERT INTO imap_thread_aliases VALUES ('me@example.com','root','old')",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(store.is_thread_hot("root").unwrap());
+        assert_eq!(
+            store
+                .seed_state_for_tokens(&["root-token".into()])
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn token_seeding_work_does_not_grow_with_unrelated_messages_and_aliases() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let store = store();
+        store
+            .commit_sync_round(&SyncRoundWrite {
+                thread_assignments: vec![("reply-parent".into(), "target".into())],
+                message_tokens: vec![("reply-parent".into(), vec!["parent-token".into()])],
+                ..Default::default()
+            })
+            .unwrap();
+        let measured_seed = || {
+            let operations = Arc::new(AtomicUsize::new(0));
+            let counter = operations.clone();
+            store
+                .database()
+                .with_connection(|c| {
+                    c.progress_handler(
+                        1,
+                        Some(move || {
+                            counter.fetch_add(1, Ordering::Relaxed);
+                            false
+                        }),
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+            let seeded = store
+                .seed_state_for_tokens(&["parent-token".into()])
+                .unwrap();
+            store
+                .database()
+                .with_connection(|c| {
+                    c.progress_handler(0, None::<fn() -> bool>)?;
+                    Ok(())
+                })
+                .unwrap();
+            (seeded, operations.load(Ordering::Relaxed))
+        };
+        let (expected, small_work) = measured_seed();
+        // Populate history directly so the measurement covers just seeding,
+        // and not the cost of creating the unrelated fixture.
+        store
+            .database()
+            .with_transaction(|tx| {
+                for n in 0..2_000 {
+                    let message = format!("unrelated-message-{n}");
+                    let thread = format!("unrelated-thread-{n}");
+                    tx.execute(
+                        "INSERT INTO imap_threads VALUES (?1, ?2, ?3, 1)",
+                        rusqlite::params![store.account_id, message, thread],
+                    )?;
+                    tx.execute(
+                        "INSERT INTO imap_message_tokens VALUES (?1, ?2, ?3)",
+                        rusqlite::params![
+                            store.account_id,
+                            message,
+                            format!("unrelated-token-{n}")
+                        ],
+                    )?;
+                    tx.execute(
+                        "INSERT INTO imap_thread_aliases VALUES (?1, ?2, ?3)",
+                        rusqlite::params![store.account_id, format!("unrelated-old-{n}"), thread],
+                    )?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let (actual, large_work) = measured_seed();
+        assert_eq!(actual, expected);
+        assert!(large_work <= small_work * 2 + 100,
+            "seeding one thread must not scan unrelated history: {small_work} -> {large_work} VM operations");
     }
 
     /// An initial sync threads thousands of messages in ONE round, so the

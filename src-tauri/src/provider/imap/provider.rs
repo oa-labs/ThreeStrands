@@ -2871,6 +2871,94 @@ mod tests {
         assert!(!labels.contains(&"INBOX".to_string()), "no INBOX: {labels:?}");
     }
 
+    #[tokio::test]
+    async fn an_index_mailbox_merge_inherits_hotness_and_keeps_reporting_changes() {
+        for folder in ["Trash", "Junk"] {
+            let mut mb = FakeMailbox::new(100);
+            mb.add_to(folder, 50, &["\\Seen"], &message("<cold@x>", "Cold", ""));
+            let mailbox = Arc::new(Mutex::new(mb));
+            let (provider, store) = provider_with(mailbox.clone());
+            let db = store.database();
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+                .await
+                .unwrap();
+            let cold_id = store.locations_in_mailbox(folder).unwrap()[0]
+                .message_id
+                .clone();
+            let survivor = store.thread_of_message(&cold_id).unwrap().unwrap();
+            assert!(!store.is_thread_hot(&survivor).unwrap());
+
+            mailbox
+                .lock()
+                .unwrap()
+                .add(&["\\Seen"], &message("<hot@x>", "Hot", ""));
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+                .await
+                .unwrap();
+            let hot_id = store.locations_in_mailbox("INBOX").unwrap()[0]
+                .message_id
+                .clone();
+            let old_hot = store.thread_of_message(&hot_id).unwrap().unwrap();
+            assert!(store.is_thread_hot(&old_hot).unwrap());
+            let before_merge = store.generation().unwrap();
+
+            mailbox.lock().unwrap().add_to(
+                folder,
+                50,
+                &["\\Seen"],
+                &message("<link@x>", "Link", "References: <cold@x> <hot@x>\r\n"),
+            );
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+                .await
+                .unwrap();
+            assert_eq!(store.resolve_thread_alias(&old_hot).unwrap(), survivor);
+            assert!(
+                store.is_thread_hot(&survivor).unwrap(),
+                "{folder} merge retains hotness"
+            );
+            let changed = store.journal_since(before_merge).unwrap();
+            assert!(changed.contains(&old_hot), "retired hot id is journaled");
+            assert!(
+                changed.contains(&survivor),
+                "previously cold survivor is journaled"
+            );
+            let cached = db
+                .list_all_mail(Some("me@example.com"))
+                .unwrap()
+                .into_iter()
+                .chain(db.list_trash(Some("me@example.com")).unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(cached.len(), 1, "the engine ingests one surviving thread");
+            assert_eq!(cached[0].provider_thread_id, survivor);
+            assert_eq!(db.get_thread(&cached[0].id).unwrap().messages.len(), 3);
+
+            let after_merge = store.generation().unwrap();
+            mailbox.lock().unwrap().inbox().messages[0].flags =
+                vec!["\\Seen".into(), "\\Flagged".into()];
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+                .await
+                .unwrap();
+            assert!(
+                store
+                    .journal_since(after_merge)
+                    .unwrap()
+                    .contains(&survivor),
+                "later INBOX flag changes must still reach the engine"
+            );
+            let updated = db
+                .list_all_mail(Some("me@example.com"))
+                .unwrap()
+                .into_iter()
+                .chain(db.list_trash(Some("me@example.com")).unwrap())
+                .find(|thread| thread.provider_thread_id == survivor)
+                .unwrap();
+            assert!(
+                updated.starred,
+                "the engine applies the flag change after the merge"
+            );
+        }
+    }
+
     /// (b) A never-hot thread that only ever appears in Trash -> locations,
     /// threads and tokens recorded, NOT journaled, NOT ingested, no body
     /// fetched; fetch_thread still works (cache-miss server fetch).

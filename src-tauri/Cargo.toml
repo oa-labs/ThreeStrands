@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.95.0"
+version = "0.95.1"
 description = "A local-first, keyboard-driven email client"
 authors = ["OpenArc LLC"]
 license-file = "../LICENSE"
@@ -103,6 +103,9 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTType"] }
 
 [dev-dependencies]
+# Count SQLite VM operations in the token-seeding scalability regression;
+# wall-clock timing would be noisy and would not detect extra SQL reliably.
+rusqlite = { version = "0.40", features = ["hooks"] }
 # Test-only: backs the fake Kubo-compatible RPC server the IPFS RPC
 # transport's conformance and security tests run against, so the real
 # `reqwest`-based client code is exercised over real HTTP rather than
