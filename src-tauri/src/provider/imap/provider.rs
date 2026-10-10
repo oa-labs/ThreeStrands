@@ -168,6 +168,10 @@ pub struct ImapProvider {
     now: fn() -> i64,
     /// The sync window/batch limits for a round. Overridable in tests.
     limits: SyncLimits,
+    /// How many times a round rebuilt the threader's prior state from the
+    /// store. That rebuild reads every cached body, so a round with no new
+    /// mail must not do it; tests assert on this.
+    thread_state_loads: std::sync::atomic::AtomicUsize,
 }
 
 /// Everything needed to build an [`ImapProvider`] for one account, assembled by
@@ -215,6 +219,7 @@ impl ImapProvider {
             source,
             now: unix_now,
             limits: SyncLimits::inbox(),
+            thread_state_loads: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -397,8 +402,16 @@ impl ImapProvider {
 
         // Thread the new messages, seeding prior thread state (with PERSISTED
         // creation generations) so a merge picks the genuinely older survivor.
-        let mut thread_state = self.load_thread_state()?;
-        let outcome = threading::thread_batch(&mut thread_state, &threading_inputs);
+        //
+        // Rebuilding that state reads and parses EVERY cached body, so it is
+        // done only when this round actually has new messages to thread. A
+        // flag change, a deletion or an idle round threads nothing.
+        let outcome = if threading_inputs.is_empty() {
+            threading::ThreadingOutcome::default()
+        } else {
+            let mut thread_state = self.load_thread_state()?;
+            threading::thread_batch(&mut thread_state, &threading_inputs)
+        };
 
         // Changed thread ids: threading effects, plus the threads of any
         // flag-changed / deleted / dropped message.
@@ -491,6 +504,8 @@ impl ImapProvider {
     /// lower creation generation survives, tie-broken by thread id, matching
     /// the design's "older thread's id survives so references stay valid".
     fn load_thread_state(&self) -> ProviderResult<ThreadState> {
+        self.thread_state_loads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         use super::identity::normalize_message_id;
         let mut state = ThreadState::new();
         let rows = self.store.all_message_threads().map_err(db_err)?;
@@ -1103,6 +1118,7 @@ mod tests {
             source: Arc::new(FakeSource { mailbox }),
             now: || 1_700_000_000,
             limits: SyncLimits::inbox(),
+            thread_state_loads: std::sync::atomic::AtomicUsize::new(0),
         };
         (provider, store)
     }
@@ -1643,6 +1659,10 @@ mod tests {
         let journal_after_baseline = store.journal_since(0).unwrap();
 
         // Several idle polls (nothing changed on the server).
+        let loads_after_baseline = provider
+            .thread_state_loads
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(loads_after_baseline, 1, "the baseline threaded one new message");
         for _ in 0..3 {
             let batch = provider.poll(&baseline).await.unwrap();
             assert!(
@@ -1654,6 +1674,15 @@ mod tests {
             assert_eq!(store.journal_since(0).unwrap(), journal_after_baseline);
             // The returned cursor is the (unchanged) current generation.
             assert_eq!(batch.cursor.generation(), Some(gen_after_baseline));
+            // An idle round must not rebuild the threader state (which reads
+            // every cached body).
+            assert_eq!(
+                provider
+                    .thread_state_loads
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                loads_after_baseline,
+                "idle poll must not reload thread state"
+            );
         }
     }
 
