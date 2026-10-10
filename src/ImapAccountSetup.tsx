@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { mailClient } from "./data/client";
 import type {
   Account,
@@ -19,10 +19,6 @@ import type {
  * flow is: optionally autodiscover from the email, then (for an untrusted
  * self-signed certificate) review and trust its SHA-256 fingerprint, then
  * "test and save", which only persists after both IMAP and SMTP tests pass.
- *
- * Look-and-feel is deliberately plain — the developer owns polish. The logic
- * (discovery, cert-trust, test-and-save, error surfacing) is what this slice
- * delivers.
  */
 
 const SECURITY_OPTIONS: { value: ImapSecurityMode; label: string }[] = [
@@ -39,7 +35,13 @@ type CertificateState = { endpoint: string; probe: ImapCertificateProbe; pin: st
 const endpointKey = (host: string, port: number, security: ImapSecurityMode) =>
   JSON.stringify([host.trim(), port, security]);
 
-export function ImapAccountSetup({ onConnected }: { onConnected: (account: Account) => void | Promise<void> }) {
+export function ImapAccountSetup({ onConnected, onCancel }: {
+  onConnected: (account: Account) => void | Promise<void>;
+  onCancel?(): void;
+}) {
+  const hintId = useId();
+  const emailInput = useRef<HTMLInputElement>(null);
+  useEffect(() => { emailInput.current?.focus(); }, []);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [imapHost, setImapHost] = useState("");
@@ -195,17 +197,19 @@ export function ImapAccountSetup({ onConnected }: { onConnected: (account: Accou
     ) : (
     <form
       className="imap-setup"
+      data-shortcut-scope="modal"
       onSubmit={(event) => {
         event.preventDefault();
         void testAndSave();
       }}
     >
-      <h2>Add an IMAP account</h2>
+      <h2>Add an IMAP Account</h2>
       <p>Save and test your server settings. IMAP mail sync is not available yet.</p>
-      <fieldset disabled={busy}>
-        <label>
-          Email address
+      <fieldset className="imap-setup-fields" disabled={busy}>
+        <label className="settings-field settings-field-row">
+          <span>Email Address</span>
           <input
+            ref={emailInput}
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -213,18 +217,18 @@ export function ImapAccountSetup({ onConnected }: { onConnected: (account: Accou
             required
           />
         </label>
-        <button type="button" className="btn btn-primary" onClick={() => void runDiscovery()} disabled={busy || !email.trim()}>
-          Find settings automatically
+        <button type="button" className="btn settings-field-offset" onClick={() => void runDiscovery()} disabled={busy || !email.trim()}>
+          Find Settings Automatically
         </button>
 
-        <fieldset>
-          <legend>Incoming mail (IMAP)</legend>
-          <label>
-            Host
+        <fieldset className="imap-server-settings">
+          <legend>Incoming Mail (IMAP)</legend>
+          <label className="settings-field settings-field-row">
+            <span>Host</span>
             <input value={imapHost} onChange={(e) => setImapHost(e.target.value)} required />
           </label>
-          <label>
-            Port
+          <label className="settings-field settings-field-row">
+            <span>Port</span>
             <input
               type="number"
               value={imapPort}
@@ -232,8 +236,8 @@ export function ImapAccountSetup({ onConnected }: { onConnected: (account: Accou
               required
             />
           </label>
-          <label>
-            Security
+          <label className="settings-field settings-field-row">
+            <span>Security</span>
             <select
               value={imapSecurity}
               onChange={(e) => {
@@ -249,24 +253,25 @@ export function ImapAccountSetup({ onConnected }: { onConnected: (account: Accou
               ))}
             </select>
           </label>
-          <label>
-            Username (defaults to your email)
-            <input value={imapUsername} onChange={(e) => setImapUsername(e.target.value)} />
+          <label className="settings-field settings-field-row">
+            <span>Username</span>
+            <input value={imapUsername} aria-describedby={`${hintId}-imap-username`} onChange={(e) => setImapUsername(e.target.value)} />
           </label>
+          <p id={`${hintId}-imap-username`} className="settings-hint settings-field-detail">Defaults to your email address.</p>
         </fieldset>
 
         <CertificateCheck kind="IMAP" host={imapHost} certificate={imapTrust}
           onProbe={() => void probeCertificate("imap")}
           onTrust={() => { if (imapTrust) setImapCertificate({ ...imapTrust, pin: imapTrust.probe.certificate.sha256Fingerprint }); }} />
 
-        <fieldset>
-          <legend>Outgoing mail (SMTP)</legend>
-          <label>
-            Host
+        <fieldset className="imap-server-settings">
+          <legend>Outgoing Mail (SMTP)</legend>
+          <label className="settings-field settings-field-row">
+            <span>Host</span>
             <input value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} required />
           </label>
-          <label>
-            Port
+          <label className="settings-field settings-field-row">
+            <span>Port</span>
             <input
               type="number"
               value={smtpPort}
@@ -274,8 +279,8 @@ export function ImapAccountSetup({ onConnected }: { onConnected: (account: Accou
               required
             />
           </label>
-          <label>
-            Security
+          <label className="settings-field settings-field-row">
+            <span>Security</span>
             <select
               value={smtpSecurity}
               onChange={(e) => {
@@ -291,18 +296,19 @@ export function ImapAccountSetup({ onConnected }: { onConnected: (account: Accou
               ))}
             </select>
           </label>
-          <label>
-            SMTP username (defaults to your IMAP username)
-            <input value={smtpUsername} onChange={(e) => setSmtpUsername(e.target.value)} />
+          <label className="settings-field settings-field-row">
+            <span>Username</span>
+            <input value={smtpUsername} aria-describedby={`${hintId}-smtp-username`} onChange={(e) => setSmtpUsername(e.target.value)} />
           </label>
+          <p id={`${hintId}-smtp-username`} className="settings-hint settings-field-detail">Defaults to your IMAP username.</p>
         </fieldset>
 
         <CertificateCheck kind="SMTP" host={smtpHost} certificate={smtpTrust}
           onProbe={() => void probeCertificate("smtp")}
           onTrust={() => { if (smtpTrust) setSmtpCertificate({ ...smtpTrust, pin: smtpTrust.probe.certificate.sha256Fingerprint }); }} />
 
-        <label>
-          Password
+        <label className="settings-field settings-field-row">
+          <span>Password</span>
           <input
             type="password"
             value={password}
@@ -312,10 +318,10 @@ export function ImapAccountSetup({ onConnected }: { onConnected: (account: Accou
           />
         </label>
 
-        <fieldset>
+        <fieldset className="imap-server-settings">
           <legend>Labels</legend>
-          <label>
-            How this account stores labels
+          <label className="settings-field settings-field-row">
+            <span>Label Storage</span>
             <select
               value={labelStorage}
               onChange={(e) => setLabelStorage(e.target.value as ImapLabelStorage)}
@@ -326,28 +332,31 @@ export function ImapAccountSetup({ onConnected }: { onConnected: (account: Accou
             </select>
           </label>
           {labelStorage === "folders" && (
-            <label>
-              Container mailbox (e.g. Labels)
-              <input value={labelContainer} onChange={(e) => setLabelContainer(e.target.value)} />
+            <label className="settings-field settings-field-row">
+              <span>Container Mailbox</span>
+              <input value={labelContainer} placeholder="e.g. Labels" onChange={(e) => setLabelContainer(e.target.value)} />
             </label>
           )}
         </fieldset>
 
-        <button
-          type="submit"
-          className="btn btn-primary"
-          disabled={
-            busy ||
-            !email.trim() ||
-            !imapHost.trim() ||
-            !smtpHost.trim() ||
-            !password ||
-            // A self-signed server must be trusted before we send the password.
-            [imapTrust, smtpTrust].some((trust) => trust && !trust.probe.trustedByPlatform && !trust.pin)
-          }
-        >
-          Test and save
-        </button>
+        <div className="imap-setup-actions settings-field-detail">
+          {onCancel && <button type="button" className="btn" onClick={onCancel}>Cancel</button>}
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={
+              busy ||
+              !email.trim() ||
+              !imapHost.trim() ||
+              !smtpHost.trim() ||
+              !password ||
+              // A self-signed server must be trusted before we send the password.
+              [imapTrust, smtpTrust].some((trust) => trust && !trust.probe.trustedByPlatform && !trust.pin)
+            }
+          >
+            Test and Save
+          </button>
+        </div>
 
       </fieldset>
 
@@ -370,23 +379,23 @@ function CertificateCheck({ kind, host, certificate, onProbe, onTrust }: {
   onTrust(): void;
 }) {
   const probe = certificate?.probe;
-  return <section aria-label={`${kind} certificate`}>
+  return <section className="imap-certificate settings-field-detail" aria-label={`${kind} Certificate`}>
     <button type="button" className="btn" onClick={onProbe} disabled={!host.trim()}>
-      Check {kind} certificate
+      Check {kind} Certificate
     </button>
     {probe && !probe.trustedByPlatform && <div className="imap-cert-trust">
-      <h3>Review the {kind} server's certificate</h3>
+      <h4>Review the {kind} Server's Certificate</h4>
       <p>Compare this fingerprint with the one your server reports before trusting it.</p>
       <dl>
         <dt>Server</dt><dd>{host}</dd>
         <dt>Subject</dt><dd>{probe.certificate.subject}</dd>
         <dt>Issuer</dt><dd>{probe.certificate.issuer}</dd>
-        <dt>SHA-256 fingerprint</dt><dd><code>{probe.certificate.sha256Fingerprint}</code></dd>
+        <dt>SHA-256 Fingerprint</dt><dd><code>{probe.certificate.sha256Fingerprint}</code></dd>
       </dl>
       <button type="button" className="btn" onClick={onTrust}
         disabled={certificate?.pin === probe.certificate.sha256Fingerprint}>
         {certificate?.pin === probe.certificate.sha256Fingerprint
-          ? `${kind} certificate trusted` : `Trust this ${kind} certificate for this server`}
+          ? `${kind} Certificate Trusted` : `Trust This ${kind} Certificate for This Server`}
       </button>
     </div>}
   </section>;
@@ -398,7 +407,7 @@ const ROLE_LABELS: Record<ImapMailboxRole, string> = {
   drafts: "Drafts",
   trash: "Trash",
   junk: "Junk / Spam",
-  all: "All Mail (aggregate)",
+  all: "All Mail (Aggregate)",
 };
 const ROLE_ORDER: ImapMailboxRole[] = ["sent", "archive", "drafts", "trash", "junk", "all"];
 
@@ -439,6 +448,8 @@ function MailboxMappingReview({
   }): void;
   onSkip(): void;
 }) {
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { heading.current?.focus(); }, []);
   const proposalFor = (role: ImapMailboxRole) =>
     mapping.proposals.find((proposal) => proposal.role === role);
   // Per-role selected mailbox, seeded from the proposal; "" means not mapped.
@@ -471,8 +482,8 @@ function MailboxMappingReview({
   }
 
   return (
-    <section className="imap-mailbox-mapping" aria-label="Mailbox mapping">
-      <h2>Map your mailboxes</h2>
+    <section className="imap-mailbox-mapping" aria-label="Mailbox Mapping" data-shortcut-scope="modal">
+      <h2 ref={heading} tabIndex={-1}>Map Your Mailboxes</h2>
       <p>
         We matched your account's system mailboxes. Choices from a server
         attribute are reliable; a name guess is worth a quick check. Change any
@@ -487,7 +498,7 @@ function MailboxMappingReview({
               <dt>{ROLE_LABELS[role]}</dt>
               <dd>
                 <select
-                  aria-label={`${ROLE_LABELS[role]} mailbox`}
+                  aria-label={`${ROLE_LABELS[role]} Mailbox`}
                   value={choices[role] ?? ""}
                   disabled={busy || (isArchive && createArchive)}
                   onChange={(e) => setChoices((prev) => ({ ...prev, [role]: e.target.value }))}
@@ -512,12 +523,12 @@ function MailboxMappingReview({
                       disabled={busy}
                       onChange={(e) => setCreateArchive(e.target.checked)}
                     />
-                    Create a new Archive mailbox
+                    Create a New Archive Mailbox
                   </label>
                 )}
                 {isArchive && createArchive && (
                   <input
-                    aria-label="New Archive mailbox name"
+                    aria-label="New Archive Mailbox Name"
                     value={newArchiveName}
                     disabled={busy}
                     onChange={(e) => setNewArchiveName(e.target.value)}
@@ -529,8 +540,8 @@ function MailboxMappingReview({
         })}
       </dl>
       {labelStorage === "folders" && (
-        <label>
-          Label container mailbox
+        <label className="settings-field settings-field-row">
+          <span>Label Container Mailbox</span>
           <select value={chosenContainer} disabled={busy}
             onChange={(event) => setChosenContainer(event.target.value)}>
             <option value="">No label container</option>
@@ -546,10 +557,10 @@ function MailboxMappingReview({
       <div className="imap-mapping-actions">
         <button type="button" className="btn btn-primary" onClick={confirm}
           disabled={busy || (!createArchive && !choices.archive)}>
-          Confirm mapping
+          Confirm Mapping
         </button>
         <button type="button" className="btn" onClick={() => void onSkip()} disabled={busy}>
-          Skip for now
+          Skip for Now
         </button>
       </div>
       {status && <p className="imap-setup-status">{status}</p>}

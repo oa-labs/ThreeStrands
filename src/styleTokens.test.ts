@@ -83,6 +83,24 @@ describe("spacing", () => {
 });
 
 describe("form controls", () => {
+  it("gives every IMAP text control the same explicit height and border box", () => {
+    const selectors = [
+      ".imap-setup input", ".imap-setup select",
+      '.imap-mailbox-mapping input:not([type="checkbox"])', ".imap-mailbox-mapping select",
+    ];
+    for (const selector of selectors) {
+      const values = new Map<string, string>();
+      css.walkRules((rule) => {
+        if (rule.selectors.includes(selector)) rule.walkDecls((declaration) => { values.set(declaration.prop, declaration.value); });
+      });
+      expect(values.get("height"), selector).toBe("var(--control-h)");
+      expect(values.get("box-sizing"), selector).toBe("border-box");
+      expect(values.get("min-width"), selector).toBe("0");
+      expect(values.get("background-color"), selector).toBe("var(--input)");
+      expect(values.get("color"), selector).toBe("var(--text)");
+    }
+  });
+
   it("sizes text inputs, selects, and search fields from the shared control heights", () => {
     const raw: string[] = [];
     css.walkDecls(/^(height|min-height)$/, (declaration) => {

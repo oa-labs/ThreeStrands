@@ -326,6 +326,7 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
   await expect(settings).toBeVisible();
   await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   await settings.getByRole("button", { name: "Add Account" }).click();
+  await settings.getByRole("button", { name: "Gmail", exact: true }).click();
   await expect(settings.locator(".accounts-list li")).toHaveCount(2);
   await page.keyboard.press("Escape");
   await expect(settings).not.toBeVisible();
@@ -408,6 +409,7 @@ test("saves an independent sender name for each account", async ({ page }) => {
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   await settings.getByRole("button", { name: "Add Account" }).click();
+  await settings.getByRole("button", { name: "Gmail", exact: true }).click();
 
   const personalName = settings.getByRole("textbox", { name: "Sender name for demo@example.com" });
   await personalName.fill("Joel Reed");
@@ -433,6 +435,7 @@ test("reorders navbar accounts by dragging their icons", async ({ page }) => {
   const settings = page.getByRole("dialog", { name: "Settings" });
   await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   await settings.getByRole("button", { name: "Add Account" }).click();
+  await settings.getByRole("button", { name: "Gmail", exact: true }).click();
   await page.keyboard.press("Escape");
 
   const rail = page.getByRole("radiogroup", { name: "Filter by account" });
@@ -509,6 +512,7 @@ test("prompts to connect a Gmail account when none are connected", async ({ page
   await page.getByRole("button", { name: "Add Account" }).click();
   await expect(settings).toBeVisible();
   await settings.getByRole("button", { name: "Add Account" }).click();
+  await settings.getByRole("button", { name: "Gmail", exact: true }).click();
   await expect(settings.locator(".accounts-list li")).toHaveCount(1);
 });
 

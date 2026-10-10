@@ -5,7 +5,7 @@ import {
   Mail,
   Plus,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { Account, AuthStatus } from "./domain";
 import { formatTimeOnly } from "./threadPresentation";
 import { moveItem, useSettingsOperation } from "./settingsOperations";
@@ -38,9 +38,19 @@ export function AccountsSettings({
   onImapConnected?(): Promise<void>;
 }) {
   const { pending: busyEmail, error, setError, runFor } = useSettingsOperation();
-  const [showImapSetup, setShowImapSetup] = useState(false);
+  const [accountSetup, setAccountSetup] = useState<"provider" | "imap" | null>(null);
+  const accountSetupId = useId();
+  const addButton = useRef<HTMLButtonElement>(null);
+  const restoreAddFocus = useRef(false);
   const [imapSaved, setImapSaved] = useState(false);
   const [confirmEmail, setConfirmEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (restoreAddFocus.current && busyEmail === null) {
+      restoreAddFocus.current = false;
+      addButton.current?.focus();
+    }
+  }, [busyEmail]);
 
   const move = (index: number, direction: -1 | 1) => {
     const account = accounts[index];
@@ -59,27 +69,51 @@ export function AccountsSettings({
           </p>
         </div>
         <button
+          ref={addButton}
           type="button"
           className="btn btn-primary settings-add-account"
           disabled={busyEmail !== null}
-          onClick={() => runFor("__add__", onAdd)}
+          aria-expanded={accountSetup !== null}
+          aria-controls={accountSetupId}
+          onClick={() => {
+            setAccountSetup(accountSetup === null ? "provider" : null);
+            setImapSaved(false);
+          }}
         >
           <Plus size={ICON_SIZE.md} />
           {busyEmail === "__add__" ? "Waiting for Google…" : "Add Account"}
         </button>
       </div>
-      <button type="button" className="btn" disabled={busyEmail !== null}
-        onClick={() => { setShowImapSetup(true); setImapSaved(false); }}>
-        Add IMAP account
-      </button>
-      {showImapSetup && <div>
-        <ImapAccountSetup onConnected={async () => {
-          await onImapConnected?.();
-          setImapSaved(true);
-          setShowImapSetup(false);
-        }} />
-        <button type="button" className="btn" onClick={() => setShowImapSetup(false)}>Cancel IMAP setup</button>
-      </div>}
+      <div id={accountSetupId} className="account-setup-panel" hidden={accountSetup === null}>
+        {accountSetup === "provider" && (
+          <div className="account-provider-picker" role="group" aria-label="Choose an account type">
+            <span>Choose an account type:</span>
+            <button type="button" className="btn" disabled={busyEmail !== null}
+              onClick={() => runFor("__add__", async () => {
+                await onAdd();
+                restoreAddFocus.current = true;
+                setAccountSetup(null);
+              })}>
+              Gmail
+            </button>
+            <button type="button" className="btn" disabled={busyEmail !== null}
+              onClick={() => setAccountSetup("imap")}>
+              IMAP
+            </button>
+          </div>
+        )}
+        {accountSetup === "imap" && <div>
+          <ImapAccountSetup onCancel={() => {
+            setAccountSetup(null);
+            addButton.current?.focus();
+          }} onConnected={async () => {
+            await onImapConnected?.();
+            setImapSaved(true);
+            setAccountSetup(null);
+            addButton.current?.focus();
+          }} />
+        </div>}
+      </div>
       {imapSaved && <p role="status">Account saved. IMAP mail sync is not available yet.</p>}
       {accounts.length === 0 && authStatus && !authStatus.configured ? (
         <div className="notice accounts-config-notice">

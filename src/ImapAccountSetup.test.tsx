@@ -17,28 +17,28 @@ const probe = (fingerprint: string, trusted = false): ImapCertificateProbe => ({
   certificate: { subject: "test server", issuer: "test issuer", sha256Fingerprint: fingerprint },
   trustedByPlatform: trusted,
 });
-const incoming = () => within(screen.getByRole("group", { name: "Incoming mail (IMAP)" }));
-const outgoing = () => within(screen.getByRole("group", { name: "Outgoing mail (SMTP)" }));
+const incoming = () => within(screen.getByRole("group", { name: "Incoming Mail (IMAP)" }));
+const outgoing = () => within(screen.getByRole("group", { name: "Outgoing Mail (SMTP)" }));
 function fillManualSettings() {
-  fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "me@example.com" } });
+  fireEvent.change(screen.getByLabelText("Email Address"), { target: { value: "me@example.com" } });
   fireEvent.change(incoming().getByLabelText("Host"), { target: { value: "incoming.example.com" } });
   fireEvent.change(outgoing().getByLabelText("Host"), { target: { value: "outgoing.example.com" } });
   fireEvent.change(screen.getByLabelText("Password"), { target: { value: "secret" } });
 }
 async function check(kind: "IMAP" | "SMTP") {
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: `Check ${kind} certificate` })); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: `Check ${kind} Certificate` })); });
 }
 function trust(kind: "IMAP" | "SMTP") {
-  fireEvent.click(screen.getByRole("button", { name: `Trust this ${kind} certificate for this server` }));
+  fireEvent.click(screen.getByRole("button", { name: `Trust This ${kind} Certificate for This Server` }));
 }
 async function save() {
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Test and save" })); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Test and Save" })); });
 }
 async function confirmMapping() {
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Confirm mapping" })); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Confirm Mapping" })); });
 }
 async function skipMapping() {
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Skip for now" })); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Skip for Now" })); });
 }
 
 describe("IMAP account setup", () => {
@@ -53,6 +53,17 @@ describe("IMAP account setup", () => {
   });
   afterEach(cleanup);
 
+  it("uses aligned settings fields with separate username help and intentional initial focus", () => {
+    const { container } = render(<ImapAccountSetup onConnected={vi.fn()} />);
+    expect(screen.getByLabelText("Email Address")).toHaveFocus();
+    expect(incoming().getByLabelText("Username")).toHaveAccessibleDescription("Defaults to your email address.");
+    expect(outgoing().getByLabelText("Username")).toHaveAccessibleDescription("Defaults to your IMAP username.");
+    for (const control of container.querySelectorAll("input, select")) {
+      expect(control.closest("label")).toHaveClass("settings-field", "settings-field-row");
+    }
+    expect(mailClient.testAndSaveImapAccount).not.toHaveBeenCalled();
+  });
+
   it("opens manual IMAP setup from accounts settings and refreshes saved accounts while preserving Gmail sign-in", async () => {
     const onAdd = vi.fn().mockResolvedValue(undefined);
     const refresh = vi.fn().mockResolvedValue(undefined);
@@ -60,9 +71,12 @@ describe("IMAP account setup", () => {
       onRemove={vi.fn()} onRemoveEverywhere={vi.fn()} onReconnect={vi.fn()}
       onSetDisplayName={vi.fn()} onSetColor={vi.fn()} onReorder={vi.fn()} />);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Add Account" })); });
+    expect(onAdd).not.toHaveBeenCalled();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Gmail" })); });
     expect(onAdd).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole("button", { name: "Add IMAP account" }));
-    expect(screen.getByRole("heading", { name: "Add an IMAP account" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add Account" }));
+    fireEvent.click(screen.getByRole("button", { name: "IMAP" }));
+    expect(screen.getByRole("heading", { name: "Add an IMAP Account" })).toBeInTheDocument();
     fillManualSettings();
     await save();
     expect(mailClient.discoverImapSettings).not.toHaveBeenCalled();
@@ -70,12 +84,13 @@ describe("IMAP account setup", () => {
     // immediately — it discovers mailboxes and presents the mapping review.
     // The saved-account refresh fires only once the user confirms or skips.
     expect(mailClient.discoverImapMailboxes).toHaveBeenCalledWith("me@example.com");
-    expect(screen.getByRole("heading", { name: "Map your mailboxes" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Map Your Mailboxes" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Map Your Mailboxes" })).toHaveFocus();
     expect(refresh).not.toHaveBeenCalled();
     await skipMapping();
     expect(refresh).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole("heading", { name: "Add an IMAP account" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Map your mailboxes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Add an IMAP Account" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Map Your Mailboxes" })).not.toBeInTheDocument();
     expect(onAdd).toHaveBeenCalledTimes(1);
   });
 
@@ -84,12 +99,12 @@ describe("IMAP account setup", () => {
     render(<ImapAccountSetup onConnected={onConnected} />);
     fillManualSettings();
     await check("IMAP");
-    expect(screen.getByRole("button", { name: "Test and save" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Test and Save" })).toBeDisabled();
     trust("IMAP");
     await check("SMTP");
     expect(mailClient.probeImapCertificate).toHaveBeenCalledWith("incoming.example.com", 143, "start_tls");
     expect(mailClient.probeSmtpCertificate).toHaveBeenCalledWith("outgoing.example.com", 587, "start_tls");
-    expect(screen.getByRole("button", { name: "Test and save" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Test and Save" })).toBeDisabled();
     expect(mailClient.testAndSaveImapAccount).not.toHaveBeenCalled();
     trust("SMTP");
     await save();
@@ -105,11 +120,11 @@ describe("IMAP account setup", () => {
     expect(onConnected).toHaveBeenCalledWith(account);
   });
 
-  it("defaults to creating Archive when discovery finds no Archive mailbox", async () => {
+  it("defaults to creating Archive when discovery finds no Archive Mailbox", async () => {
     render(<ImapAccountSetup onConnected={vi.fn()} />);
     fillManualSettings();
     await save();
-    expect(screen.getByLabelText("Create a new Archive mailbox")).toBeChecked();
+    expect(screen.getByLabelText("Create a New Archive Mailbox")).toBeChecked();
     await confirmMapping();
     expect(mailClient.commitImapMailboxMapping).toHaveBeenCalledWith({
       email: account.email, archive: null, createArchive: "Archive",
@@ -126,8 +141,8 @@ describe("IMAP account setup", () => {
     render(<ImapAccountSetup onConnected={vi.fn()} />);
     fillManualSettings();
     await save();
-    expect(screen.getByLabelText("Create a new Archive mailbox")).not.toBeChecked();
-    expect(screen.getByRole("combobox", { name: "Archive mailbox" })).toHaveValue("Storage");
+    expect(screen.getByLabelText("Create a New Archive Mailbox")).not.toBeChecked();
+    expect(screen.getByRole("combobox", { name: "Archive Mailbox" })).toHaveValue("Storage");
     await confirmMapping();
     expect(mailClient.commitImapMailboxMapping).toHaveBeenCalledWith(expect.objectContaining({
       archive: "Storage", createArchive: null,
@@ -141,9 +156,9 @@ describe("IMAP account setup", () => {
     render(<ImapAccountSetup onConnected={vi.fn()} />);
     fillManualSettings();
     await save();
-    fireEvent.click(screen.getByLabelText("Create a new Archive mailbox"));
-    expect(screen.getByRole("button", { name: "Confirm mapping" })).toBeDisabled();
-    fireEvent.change(screen.getByRole("combobox", { name: "Archive mailbox" }), { target: { value: "Storage" } });
+    fireEvent.click(screen.getByLabelText("Create a New Archive Mailbox"));
+    expect(screen.getByRole("button", { name: "Confirm Mapping" })).toBeDisabled();
+    fireEvent.change(screen.getByRole("combobox", { name: "Archive Mailbox" }), { target: { value: "Storage" } });
     await confirmMapping();
     expect(mailClient.commitImapMailboxMapping).toHaveBeenCalledWith(expect.objectContaining({
       archive: "Storage", createArchive: null,
@@ -161,10 +176,10 @@ describe("IMAP account setup", () => {
     render(<ImapAccountSetup onConnected={vi.fn()} />);
     fillManualSettings();
     await save();
-    const container = screen.getByRole("combobox", { name: "Label container mailbox" });
+    const container = screen.getByRole("combobox", { name: "Label Container Mailbox" });
     expect(within(container).getByRole("option", { name: "Labels" })).toBeInTheDocument();
     expect(within(container).getByRole("option", { name: "Work" })).toBeInTheDocument();
-    expect(within(screen.getByRole("combobox", { name: "Sent mailbox" }))
+    expect(within(screen.getByRole("combobox", { name: "Sent Mailbox" }))
       .queryByRole("option", { name: "Labels" })).not.toBeInTheDocument();
     fireEvent.change(container, { target: { value: "Labels" } });
     await confirmMapping();
@@ -174,9 +189,9 @@ describe("IMAP account setup", () => {
   it.each(["keywords", "none"])("hides label-container selection in %s mode", async (mode) => {
     render(<ImapAccountSetup onConnected={vi.fn()} />);
     fillManualSettings();
-    fireEvent.change(screen.getByLabelText("How this account stores labels"), { target: { value: mode } });
+    fireEvent.change(screen.getByLabelText("Label Storage"), { target: { value: mode } });
     await save();
-    expect(screen.queryByRole("combobox", { name: "Label container mailbox" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Label Container Mailbox" })).not.toBeInTheDocument();
     await confirmMapping();
     expect(mailClient.commitImapMailboxMapping).toHaveBeenCalledWith(expect.objectContaining({ labelContainer: null }));
   });
@@ -193,10 +208,10 @@ describe("IMAP account setup", () => {
     vi.mocked(mailClient.discoverImapMailboxes).mockResolvedValue(mapping);
     render(<ImapAccountSetup onConnected={vi.fn()} />);
     fillManualSettings();
-    fireEvent.change(screen.getByLabelText("Container mailbox (e.g. Labels)"), { target: { value: " Labels " } });
+    fireEvent.change(screen.getByLabelText("Container Mailbox"), { target: { value: " Labels " } });
     await save();
     expect(mailClient.testAndSaveImapAccount).toHaveBeenCalledWith(expect.objectContaining({ labelContainer: " Labels " }));
-    fireEvent.change(screen.getByRole("combobox", { name: "Junk / Spam mailbox" }), { target: { value: " Junk" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Junk / Spam Mailbox" }), { target: { value: " Junk" } });
     await confirmMapping();
     expect(mailClient.commitImapMailboxMapping).toHaveBeenCalledWith({
       email: account.email, archive: " Archive ", createArchive: null,
@@ -207,9 +222,9 @@ describe("IMAP account setup", () => {
   it("preserves a manually entered container and lets the user clear it after discovery", async () => {
     render(<ImapAccountSetup onConnected={vi.fn()} />);
     fillManualSettings();
-    fireEvent.change(screen.getByLabelText("Container mailbox (e.g. Labels)"), { target: { value: "Custom" } });
+    fireEvent.change(screen.getByLabelText("Container Mailbox"), { target: { value: "Custom" } });
     await save();
-    const container = screen.getByRole("combobox", { name: "Label container mailbox" });
+    const container = screen.getByRole("combobox", { name: "Label Container Mailbox" });
     expect(container).toHaveValue("Custom");
     fireEvent.change(container, { target: { value: "" } });
     await confirmMapping();
@@ -220,7 +235,7 @@ describe("IMAP account setup", () => {
     render(<ImapAccountSetup onConnected={vi.fn()} />);
     fillManualSettings();
     await save();
-    fireEvent.change(screen.getByLabelText("New Archive mailbox name"), { target: { value: " Archive " } });
+    fireEvent.change(screen.getByLabelText("New Archive Mailbox Name"), { target: { value: " Archive " } });
     await confirmMapping();
     expect(mailClient.commitImapMailboxMapping).toHaveBeenCalledWith(expect.objectContaining({ createArchive: " Archive " }));
   });
@@ -243,7 +258,7 @@ describe("IMAP account setup", () => {
     await check("IMAP"); trust("IMAP");
     vi.mocked(mailClient.probeImapCertificate).mockResolvedValue(probe("changed-pin"));
     await check("IMAP");
-    expect(screen.getByRole("button", { name: "Test and save" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Test and Save" })).toBeDisabled();
     expect(screen.getByText("changed-pin")).toBeInTheDocument();
     trust("IMAP");
     await save();
@@ -258,7 +273,7 @@ describe("IMAP account setup", () => {
     fillManualSettings();
     await check("IMAP"); trust("IMAP");
     await check("SMTP");
-    expect(screen.queryByRole("button", { name: /Trust this SMTP/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Trust This SMTP/ })).not.toBeInTheDocument();
     await save();
     expect(mailClient.testAndSaveImapAccount).toHaveBeenCalledWith(expect.objectContaining({
       imapPinnedFingerprint: "incoming-pin", smtpPinnedFingerprint: null,
@@ -274,7 +289,7 @@ describe("IMAP account setup", () => {
     await check("IMAP"); trust("IMAP");
     await check("SMTP"); trust("SMTP");
     fireEvent.change((kind === "IMAP" ? incoming() : outgoing()).getByLabelText(label), { target: { value } });
-    expect(screen.queryByRole("heading", { name: `Review the ${kind} server's certificate` })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: `Review the ${kind} Server's Certificate` })).not.toBeInTheDocument();
     await save();
     expect(mailClient.testAndSaveImapAccount).toHaveBeenCalledWith(expect.objectContaining({
       imapPinnedFingerprint: kind === "IMAP" ? null : "incoming-pin",
@@ -289,7 +304,7 @@ describe("IMAP account setup", () => {
     });
     render(<ImapAccountSetup onConnected={vi.fn()} />);
     fillManualSettings();
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Find settings automatically" })); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Find Settings Automatically" })); });
     expect(incoming().getByLabelText("Host")).toHaveValue("imap.example.com");
     expect(outgoing().getByLabelText("Port")).toHaveValue(465);
     fireEvent.change(outgoing().getByLabelText("Host"), { target: { value: "manual.example.com" } });
@@ -304,7 +319,7 @@ describe("IMAP account setup", () => {
     vi.mocked(mailClient.probeImapCertificate).mockReturnValue(new Promise((done) => { resolve = done; }));
     render(<ImapAccountSetup onConnected={vi.fn()} />);
     fillManualSettings();
-    fireEvent.click(screen.getByRole("button", { name: "Check IMAP certificate" }));
+    fireEvent.click(screen.getByRole("button", { name: "Check IMAP Certificate" }));
     expect(incoming().getByLabelText("Host")).toBeDisabled();
     expect(outgoing().getByLabelText("Security")).toBeDisabled();
     await act(async () => { resolve(probe("incoming-pin")); });
@@ -318,6 +333,10 @@ describe("IMAP account setup", () => {
     fillManualSettings();
     await save();
     expect(screen.getByRole("alert")).toHaveTextContent("Wrong password");
+    expect(screen.getByLabelText("Email Address")).toHaveValue("me@example.com");
+    expect(incoming().getByLabelText("Host")).toHaveValue("incoming.example.com");
+    expect(outgoing().getByLabelText("Host")).toHaveValue("outgoing.example.com");
+    expect(screen.getByLabelText("Password")).toHaveValue("secret");
     expect(onConnected).not.toHaveBeenCalled();
   });
 });

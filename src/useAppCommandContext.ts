@@ -51,7 +51,7 @@ type Options = {
     setUnsubscribeMessageId: Dispatch<SetStateAction<string | null>>;
     setPaletteOpen: Dispatch<SetStateAction<boolean>>;
     setShortcutHelpOpen: Dispatch<SetStateAction<boolean>>;
-    openSettingsAt: (section: SettingsSection) => void;
+    openSettingsAt: (section?: SettingsSection) => void;
     adjustFontScale: (direction: 1 | -1) => void;
     toggleContextPanelFocus: () => void;
     selectAdjacentMessage: (direction: -1 | 1) => void;
@@ -241,7 +241,7 @@ export function useAppCommandContext({
     openLabels: () => setLabelTargetIds(selected ? [selected.id] : null),
     openPalette: () => setPaletteOpen(true),
     openShortcutHelp: () => setShortcutHelpOpen(true),
-    openSettings: () => openSettingsAt("appearance"),
+    openSettings: () => openSettingsAt(),
     openToday,
     openTasks,
     openMailView,

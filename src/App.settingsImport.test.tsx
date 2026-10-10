@@ -124,6 +124,95 @@ describe("settings section keyboard navigation", () => {
     vi.clearAllMocks();
   });
 
+  it("reopens the last section from the sidebar, keyboard shortcut, and command palette", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const settingsButton = screen.getByRole("button", { name: "Settings (⌘,)" });
+    settingsButton.focus();
+    fireEvent.click(settingsButton);
+    let dialog = await screen.findByRole("dialog", { name: "Settings" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Mail Accounts" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+
+    fireEvent.click(settingsButton);
+    dialog = await screen.findByRole("dialog", { name: "Settings" });
+    expect(within(dialog).getByRole("button", { name: "Mail Accounts" })).toHaveFocus();
+    expect(within(dialog).getByRole("region", { name: "Mail Accounts" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(settingsButton).toHaveFocus();
+
+    fireEvent.keyDown(window, { key: ",", metaKey: true });
+    dialog = await screen.findByRole("dialog", { name: "Settings" });
+    expect(within(dialog).getByRole("button", { name: "Mail Accounts" })).toHaveAttribute("aria-current", "true");
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Command Palette (⌘K)" }));
+    const palette = await screen.findByRole("dialog", { name: "Command Palette" });
+    fireEvent.click(within(palette).getByRole("button", { name: /Open Settings/ }));
+    dialog = await screen.findByRole("dialog", { name: "Settings" });
+    expect(within(dialog).getByRole("button", { name: "Mail Accounts" })).toHaveAttribute("aria-current", "true");
+  });
+
+  it("restores the last section after restarting the app", async () => {
+    const { unmount } = render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+    let dialog = await screen.findByRole("dialog", { name: "Settings" });
+    const appearance = within(dialog).getByRole("button", { name: "Appearance" });
+    fireEvent.keyDown(appearance, { key: "ArrowDown" });
+    expect(within(dialog).getByRole("button", { name: "Default Apps" })).toHaveAttribute("aria-current", "true");
+    unmount();
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+    dialog = await screen.findByRole("dialog", { name: "Settings" });
+    expect(within(dialog).getByRole("button", { name: "Default Apps" })).toHaveAttribute("aria-current", "true");
+    expect(within(dialog).getByRole("button", { name: "Default Apps" })).toHaveFocus();
+  });
+
+  it("searches for IMAP setup in Mail Accounts", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    fireEvent.change(within(dialog).getByRole("searchbox", { name: "Search Settings" }), { target: { value: "IMAP" } });
+    expect(within(dialog).getByRole("button", { name: "Mail Accounts" })).toHaveAttribute("aria-current", "true");
+    expect(within(dialog).getByRole("button", { name: "Add Account" })).toBeInTheDocument();
+  });
+
+  it("keeps IMAP entry inside the Settings modal keyboard boundary", async () => {
+    const { container } = render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const settingsButton = screen.getByRole("button", { name: "Settings (⌘,)" });
+    settingsButton.focus();
+    fireEvent.click(settingsButton);
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Mail Accounts" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add Account" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "IMAP" }));
+    const email = within(dialog).getByLabelText("Email Address");
+    expect(email).toHaveFocus();
+    expect(dialog).toHaveAttribute("data-shortcut-scope", "modal");
+    expect(container.inert).toBe(true);
+    expect(container).toHaveAttribute("aria-hidden", "true");
+
+    const close = within(dialog).getByRole("button", { name: "Close" });
+    const lastControl = within(dialog).getByRole("button", { name: "Disconnect…" });
+    lastControl.focus();
+    fireEvent.keyDown(lastControl, { key: "Tab" });
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
+    expect(lastControl).toHaveFocus();
+    email.focus();
+    fireEvent.keyDown(email, { key: "e" });
+    expect(within(dialog).getByLabelText("Email Address")).toHaveFocus();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
+    expect(settingsButton).toHaveFocus();
+    expect(container.inert).toBeFalsy();
+  });
+
   it("cycles between sections with the arrow keys, wrapping at each end", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });

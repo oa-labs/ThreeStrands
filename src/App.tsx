@@ -67,6 +67,7 @@ import { planChatAvailability } from "./scheduling";
 import { SearchField } from "./SearchField";
 import { readSelectedAccountId, readSelectedMailboxForAccount } from "./settings";
 import type { SettingsSection } from "./settingsPanelTypes";
+import { readSettingsSection, saveSettingsSection } from "./settingsNavigation";
 import { TaskEditorDialog } from "./TaskEditorDialog";
 import { TaskSidebar } from "./TaskSidebar";
 import { THREAD_ASSIST_ID, ThreadAssist } from "./ThreadAssist";
@@ -129,9 +130,10 @@ export function App() {
   } = preferences;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
-  const openSettingsAt = useCallback((section: SettingsSection) => {
-    setSettingsSection(section);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>(readSettingsSection);
+  useEffect(() => saveSettingsSection(settingsSection), [settingsSection]);
+  const openSettingsAt = useCallback((section?: SettingsSection) => {
+    if (section) setSettingsSection(section);
     setSettingsOpen(true);
   }, []);
 
