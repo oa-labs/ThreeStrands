@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 56;
+pub(crate) const LATEST_VERSION: i64 = 57;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1545,6 +1545,36 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 57 {
+        // The IMAP provider's on-disk BODY.PEEK[] cache (Phase 2 Slice 4; see
+        // `docs/imap-design.md` "Bodies"). A message body never changes in
+        // IMAP, so each is fetched once and served from here; a flag change or
+        // a UIDVALIDITY reset never re-downloads it. Keyed by the STABLE
+        // message id, NOT by (mailbox, uidvalidity, uid): that is why a
+        // `UIDVALIDITY` reset — which drops a mailbox's `imap_locations` rows —
+        // leaves cached bodies intact, and why the same message in two
+        // mailboxes shares one cached body.
+        //
+        // This is a rebuildable, provider-internal cache. It is NOT part of
+        // the settings-transfer export (`transfer.rs` is untouched and its
+        // VERSION is unchanged): losing it only forces a re-fetch. Inert until
+        // the IMAP provider's read path lands (Slice 5); no Gmail code path
+        // reads or writes it, so Gmail is untouched. Reserve a new schema
+        // number for every later change to this shape rather than editing this
+        // block once it has shipped.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS imap_bodies (
+                account_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,        -- the stable cross-account id
+                raw BLOB NOT NULL,               -- the whole RFC 5322 message
+                size INTEGER NOT NULL,           -- raw.len(), for cache accounting
+                fetched_at INTEGER NOT NULL,     -- unix seconds the body was cached
+                PRIMARY KEY (account_id, message_id)
+            );
+            PRAGMA user_version=57;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1794,6 +1824,82 @@ mod tests {
                 })
                 .unwrap(),
             Some(false)
+        );
+    }
+
+    #[test]
+    fn v57_adds_the_imap_bodies_cache_and_reruns_cleanly() {
+        // A fresh database reaches the latest version with the body-cache
+        // table present and queryable.
+        let mut fresh = unmigrated_database_with_one_account();
+        super::migrate(&mut fresh).unwrap();
+        fresh
+            .execute("SELECT account_id, message_id, raw, size, fetched_at FROM imap_bodies", [])
+            .unwrap_or_else(|error| panic!("imap_bodies should exist and be queryable: {error}"));
+        assert_eq!(
+            fresh.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
+            super::LATEST_VERSION
+        );
+
+        // An upgraded database that stopped at v56 converges to the same
+        // schema: drop the table, step user_version back, re-run, and confirm
+        // it appears and accepts a row keyed by the stable message id.
+        let mut upgraded = unmigrated_database_with_one_account();
+        super::migrate(&mut upgraded).unwrap();
+        upgraded
+            .execute_batch("DROP TABLE imap_bodies; PRAGMA user_version=56;")
+            .unwrap();
+        super::migrate(&mut upgraded).unwrap();
+        upgraded
+            .execute(
+                "INSERT INTO imap_bodies(account_id, message_id, raw, size, fetched_at)
+                 VALUES ('you@gmail.com','imap:you@gmail.com:abc', X'48656C6C6F', 5, 1700000000)",
+                [],
+            )
+            .unwrap();
+        let (size, fetched_at): (i64, i64) = upgraded
+            .query_row(
+                "SELECT size, fetched_at FROM imap_bodies WHERE message_id='imap:you@gmail.com:abc'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((size, fetched_at), (5, 1700000000));
+        let raw: Vec<u8> = upgraded
+            .query_row(
+                "SELECT raw FROM imap_bodies WHERE message_id='imap:you@gmail.com:abc'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(raw, b"Hello");
+
+        // A UIDVALIDITY reset drops a mailbox's locations but MUST NOT touch
+        // cached bodies — they are keyed by the stable message id, not the UID.
+        upgraded
+            .execute(
+                "INSERT INTO imap_locations(account_id,mailbox,uidvalidity,uid,message_id,flags_json,modseq)
+                 VALUES ('you@gmail.com','INBOX',1,42,'imap:you@gmail.com:abc','[]',NULL)",
+                [],
+            )
+            .unwrap();
+        upgraded
+            .execute("DELETE FROM imap_locations WHERE account_id='you@gmail.com' AND mailbox='INBOX'", [])
+            .unwrap();
+        assert_eq!(
+            upgraded
+                .query_row("SELECT COUNT(*) FROM imap_bodies", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            1,
+            "dropping a mailbox's locations must leave the body cache intact"
+        );
+
+        // Re-running once more over the already-created table must not fail.
+        upgraded.pragma_update(None, "user_version", 56).unwrap();
+        super::migrate(&mut upgraded).unwrap();
+        assert_eq!(
+            upgraded.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
+            super::LATEST_VERSION
         );
     }
 

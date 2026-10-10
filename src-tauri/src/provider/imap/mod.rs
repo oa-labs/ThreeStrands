@@ -38,7 +38,11 @@
 mod connection;
 mod discovery;
 mod error;
+mod fetch;
+mod identity;
 mod mailboxes;
+mod policy;
+mod rfc822;
 mod session;
 mod settings;
 mod setup;
@@ -97,6 +101,19 @@ pub use connection::ConnectedSession;
 pub use setup::{default_imap_port, default_smtp_port};
 #[allow(unused_imports)]
 pub use tls::CertificateInfo;
+
+// Slice 4 message-identity + body-cache surface. The read slices (Slice 5)
+// construct these; until then they have no non-test caller, so the re-exports
+// are forward-looking exactly like the connection-layer ones above.
+#[allow(unused_imports)]
+pub use fetch::{
+    ensure_body, fetch_identity, parse_email_id, parse_identity_headers, BodyCache, BodyFetcher,
+    CachedBody, IdentityRow, SessionBodyFetcher, BODY_ITEMS, IDENTITY_ITEMS,
+};
+#[allow(unused_imports)]
+pub use identity::{derive_message_id, IdentityInputs};
+#[allow(unused_imports)]
+pub use rfc822::{attachment_bytes_from_raw, to_raw_message};
 
 use std::sync::Arc;
 
@@ -160,6 +177,35 @@ impl ImapStateStore {
     /// The account this store is scoped to.
     pub fn account_id(&self) -> &str {
         &self.account_id
+    }
+
+    /// The shared database handle, for the sibling body cache
+    /// ([`crate::provider::imap::BodyCache`]) which owns its own table but
+    /// scopes every statement to this store's account.
+    pub(super) fn database(&self) -> &Arc<Database> {
+        &self.database
+    }
+
+    /// The stable message id already recorded for one `(mailbox, uidvalidity,
+    /// uid)` coordinate, if any. This is the sticky-id lookup `ensure_body`
+    /// does before deriving: a message we already know keeps its id even if the
+    /// server later begins advertising OBJECTID.
+    pub fn location_message_id(
+        &self,
+        mailbox: &str,
+        uidvalidity: i64,
+        uid: i64,
+    ) -> DbResult<Option<String>> {
+        self.database.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT message_id FROM imap_locations
+                     WHERE account_id = ?1 AND mailbox = ?2 AND uidvalidity = ?3 AND uid = ?4",
+                    rusqlite::params![self.account_id, mailbox, uidvalidity, uid],
+                    |row| row.get(0),
+                )
+                .ok())
+        })
     }
 
     /// Inserts or updates one mailbox's catalog row. Unknown write capabilities
