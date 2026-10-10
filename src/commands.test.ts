@@ -101,6 +101,7 @@ function noopContext(): CommandContext {
     increaseFontSize: () => {},
     decreaseFontSize: () => {},
     canUndoAction: false,
+    canUndoArchive: false,
     undoLastAction: () => {},
     showAllAccounts: () => {},
     switchAccount: () => {},
@@ -414,6 +415,30 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "thread.trash")?.keys).toEqual(["#"]);
     expect(commands.find((command) => command.id === "thread.spam")?.keys).toEqual(["!"]);
     expect(commands.find((command) => command.id === "thread.unsubscribe")?.keys).toEqual(["Mod+u"]);
+  });
+
+  it("offers Shift+E for the latest archive even without a selection, only in a mail reading context", async () => {
+    const command = commands.find((candidate) => candidate.id === "thread.unarchive")!;
+    const undoLastAction = vi.fn();
+    const context = { ...noopContext(), canUndoArchive: true, undoLastAction };
+    expect(command.enabled(context)).toBe(true);
+    await command.run(context);
+    expect(undoLastAction).toHaveBeenCalledOnce();
+    expect(command.enabled({ ...context, canUndoArchive: false })).toBe(false);
+    expect(command.enabled({ ...context, focusedPane: "tasks" })).toBe(false);
+    expect(command.enabled({ ...context, focusedPane: "contacts" })).toBe(false);
+    expect(command.enabled({ ...context, composerActive: true })).toBe(false);
+    expect(command.enabled({ ...context, mailbox: "drafts" })).toBe(false);
+    expect(command.enabled({ ...context, mailbox: "outbox" })).toBe(false);
+  });
+
+  it("preserves Shift+E for the selected archived conversation", async () => {
+    const command = commands.find((candidate) => candidate.id === "thread.unarchive")!;
+    const undoLastAction = vi.fn();
+    const markNotDoneSelected = vi.fn(async () => ({}));
+    await command.run({ ...noopContext(), selectedId: "archived-thread", selectedArchived: true, canUndoArchive: true, undoLastAction, markNotDoneSelected });
+    expect(markNotDoneSelected).toHaveBeenCalledOnce();
+    expect(undoLastAction).not.toHaveBeenCalled();
   });
 
   it("matches unsubscribe only with the desktop modifier", () => {

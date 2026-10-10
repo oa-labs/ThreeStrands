@@ -21,6 +21,7 @@ const context = (overrides: Partial<CommandContext> = {}): CommandContext => ({
   splitInboxCount: 0,
   aiSummaryAvailable: false,
   canUndoAction: false,
+  canUndoArchive: false,
   compose: vi.fn(),
   reply: vi.fn(),
   replyAll: vi.fn(),
@@ -108,6 +109,28 @@ afterEach(() => {
 });
 
 describe("useShortcutHandler", () => {
+  it("keeps Shift+E out of text fields and overlays, and ignores held-key repeats", () => {
+    const current = context({ canUndoArchive: true });
+    const execute = vi.fn();
+    const hook = renderHook(() => useShortcutHandler(current, execute));
+    const input = document.createElement("input");
+    document.body.append(input);
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "E", shiftKey: true, bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "E", shiftKey: true, repeat: true }));
+    expect(execute).not.toHaveBeenCalled();
+
+    const modal = document.createElement("div");
+    modal.dataset.shortcutScope = "modal";
+    document.body.append(modal);
+    modal.dispatchEvent(new KeyboardEvent("keydown", { key: "E", shiftKey: true, bubbles: true }));
+    expect(execute).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "E", shiftKey: true }));
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ id: "thread.unarchive" }));
+    hook.unmount();
+  });
+
   it("executes two-step mailbox shortcuts and clears them after a timeout", () => {
     vi.useFakeTimers();
     const current = context();

@@ -18,11 +18,13 @@ import { useShortcutHandler } from "./useShortcutHandler";
 export function useCommandUndo(setNotice: (notice: Notice | null) => void) {
   const lastUndo = useRef<{ command: Command; result: CommandResult } | null>(null);
   const [canUndoAction, setCanUndoAction] = useState(false);
+  const [canUndoArchive, setCanUndoArchive] = useState(false);
   const undoLastAction = useCallback(async () => {
     const pending = lastUndo.current;
     if (!pending?.command.undo) return;
     lastUndo.current = null;
     setCanUndoAction(false);
+    setCanUndoArchive(false);
     setNotice(null);
     try {
       await pending.command.undo(pending.result);
@@ -34,9 +36,10 @@ export function useCommandUndo(setNotice: (notice: Notice | null) => void) {
   const rememberUndo = useCallback((command: Command, result: CommandResult) => {
     lastUndo.current = { command, result };
     setCanUndoAction(true);
+    setCanUndoArchive(result.undoKind === "archive");
     setNotice({ message: result.message ?? command.title, undo: () => { void undoLastAction(); } });
   }, [setNotice, undoLastAction]);
-  return { canUndoAction, undoLastAction, rememberUndo };
+  return { canUndoAction, canUndoArchive, undoLastAction, rememberUndo };
 }
 
 type Options = {

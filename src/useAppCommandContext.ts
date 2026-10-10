@@ -77,7 +77,7 @@ export function useAppCommandContext({
   } = navigation;
   const { selected, selectedIndex, visibleThreads, toggleChecked, toggleMessageFilter } = selection;
   const { taskWorkspaceRef, taskLayout, selectedTaskStatus, selectedTaskHasThread, newTask } = tasks;
-  const { canUndoAction, undoLastAction } = undo;
+  const { canUndoAction, canUndoArchive, undoLastAction } = undo;
   const { includeArchived, setSearchOpen } = mailboxThreads;
   const { mailbox, setMailbox, setActiveSplitInboxId, activeAccountId, selectedId, setSelectedId, isTabbedMailbox } = view;
   const {
@@ -256,6 +256,7 @@ export function useAppCommandContext({
     increaseFontSize: () => adjustFontScale(1),
     decreaseFontSize: () => adjustFontScale(-1),
     canUndoAction,
+    canUndoArchive,
     undoLastAction: () => { void undoLastAction(); },
     switchAccount,
     showAllAccounts: () => switchAccount(null),
@@ -267,7 +268,7 @@ export function useAppCommandContext({
     goToPreviousSplitTab, goToSplitTab, taskLayout, selectedTaskStatus, selectedTaskHasThread,
     aiSummaryAvailable, refreshMail, openToday, openTasks, openMailView, openTasksView,
     openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, getSuggestions,
-    openThreadChat, newTask, canUndoAction, switchAccount, toggleMessageFilter, setRightWorkspace,
+    openThreadChat, newTask, canUndoAction, canUndoArchive, switchAccount, toggleMessageFilter, setRightWorkspace,
     mutateIds, openFolder, selectedIndex, visibleThreads, setSelectedId, selectAdjacentMessage,
     taskWorkspaceRef, setContactsView, latestMessage, setUnsubscribeMessageId, labelTargetIds,
     recordTriageEvent, includeArchived, toggleChecked, setMessageExpansionOverrides,

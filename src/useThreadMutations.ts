@@ -183,6 +183,7 @@ export function useThreadMutations({
 
     return {
       message,
+      undoKind: template.kind === "archive" && template.value ? "archive" : undefined,
       undoAction: async () => {
         // Undo can come long after the change, from another mailbox or
         // account. The server-side undo always runs, but the optimistic

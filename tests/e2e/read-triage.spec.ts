@@ -166,6 +166,10 @@ test("processes the inbox from the keyboard", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Your inbox stays local" })).toBeVisible();
 
   await expect(page.getByRole("status")).toBeHidden({ timeout: 10_000 });
+  await page.keyboard.press("Shift+E");
+  await expect(page.getByRole("heading", { name: "Phase 1: read and triage" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
+  await expect(page.getByRole("listbox").getByRole("option", { selected: true })).toContainText("Phase 1: read and triage");
 });
 
 test("keeps a sender contact card open while moving to its copy button", async ({ page }) => {

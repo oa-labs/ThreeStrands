@@ -123,6 +123,68 @@ describe("archive notice", () => {
 describe("undo", () => {
   useConversationFixture();
 
+  it.each([false, true])("unarchives the last email with Shift+E (notice expired: %s)", async (expireNotice) => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+
+    await archiveSelected();
+    await screen.findByRole("status");
+    expect(screen.queryByRole("option", { name: /Welcome to ThreeStrands/ })).not.toBeInTheDocument();
+    if (expireNotice) {
+      await advance(NOTICE_TIMEOUT_MS);
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    }
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "E", shiftKey: true }));
+    });
+
+    expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
+    expect((await mailClient.listThreads()).find((thread) => thread.id === "welcome")?.archived).toBe(false);
+    // Consuming the archive undo also consumes the generic Z undo.
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "z" }));
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "E", shiftKey: true }));
+    });
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("unarchives the last email with Shift+E when the inbox is empty", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    for (let index = 0; index < demoThreadIds.length; index++) {
+      await archiveSelected();
+      await screen.findByRole("status");
+    }
+    expect(screen.queryAllByRole("option")).toHaveLength(0);
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "E", shiftKey: true }));
+    });
+
+    expect(await screen.findByRole("heading", { name: "Your inbox stays local" })).toBeInTheDocument();
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+  });
+
+  it("does not use Shift+E to undo a different action that replaces the archive undo", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    await archiveSelected();
+    await screen.findByRole("status");
+    const mutateThreads = vi.spyOn(mailClient, "mutateThreads");
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "s" }));
+    });
+    await screen.findByRole("status");
+    mutateThreads.mockClear();
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "E", shiftKey: true }));
+    });
+
+    expect(mutateThreads).not.toHaveBeenCalled();
+    expect((await mailClient.listAllMail()).find((thread) => thread.id === "welcome")?.archived).toBe(true);
+  });
+
   it("undoes an archive and optimistically restores the conversation", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
@@ -1085,6 +1147,11 @@ describe("trash and batch actions", () => {
     expect(screen.queryByText("2 selected")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Welcome to ThreeStrands" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Phase 1: read and triage" })).not.toBeInTheDocument();
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "E", shiftKey: true }));
+    });
+    expect(await screen.findByRole("option", { name: /Welcome to ThreeStrands/ })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: /Phase 1: read and triage/ })).toBeInTheDocument();
   });
 
   it("multi-selects rows with Command-click and Shift-click, and a plain click resets", async () => {

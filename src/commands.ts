@@ -105,6 +105,7 @@ export type CommandContext = {
   increaseFontSize(): void;
   decreaseFontSize(): void;
   canUndoAction: boolean;
+  canUndoArchive: boolean;
   undoLastAction(): void;
   showAllAccounts(): void;
   switchAccount(email: string): void;
@@ -114,6 +115,8 @@ export type CommandContext = {
 export type CommandResult = {
   message?: string;
   undoAction?: () => Promise<void>;
+  /** Identifies an archive undo, including archives made through batch actions. */
+  undoKind?: "archive";
 };
 
 export type Command = {
@@ -377,11 +380,15 @@ export const commands: Command[] = [
   {
     id: "thread.unarchive",
     title: "Mark Not Done",
+    keywords: ["unarchive", "undo archive"],
     keys: ["Shift+e"],
     group: "Triage",
     enabled: (context) =>
-      context.selectedId !== null && context.selectedArchived && isThreadMailbox(context) && !context.composerActive,
-    run: (context) => context.markNotDoneSelected(),
+      isThreadMailbox(context) && !context.composerActive
+      && ((context.selectedId !== null && context.selectedArchived) || context.canUndoArchive),
+    run: (context) => context.selectedId !== null && context.selectedArchived
+      ? context.markNotDoneSelected()
+      : complete(context.undoLastAction),
     undo: undoResult,
   },
   {
