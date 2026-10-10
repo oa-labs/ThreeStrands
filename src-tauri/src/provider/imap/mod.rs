@@ -604,6 +604,13 @@ impl ImapStateStore {
                 )?;
             }
             for (old_id, new_id) in &round.aliases {
+                // Move pre-existing members as well as this round's assignments.
+                // Alias order follows merge order, so chained merges move again.
+                transaction.execute(
+                    "UPDATE imap_threads SET thread_id = ?3
+                     WHERE account_id = ?1 AND thread_id = ?2",
+                    rusqlite::params![self.account_id, old_id, new_id],
+                )?;
                 transaction.execute(
                     "INSERT INTO imap_thread_aliases (account_id, old_id, new_id)
                      VALUES (?1, ?2, ?3)
@@ -620,6 +627,23 @@ impl ImapStateStore {
             }
             Ok(next as u64)
         })
+    }
+
+    pub fn thread_aliases(&self) -> DbResult<Vec<(String, String)>> {
+        let old_ids = self.database.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT old_id FROM imap_thread_aliases WHERE account_id = ?1 ORDER BY old_id",
+            )?;
+            let rows = statement.query_map([&self.account_id], |row| row.get::<_, String>(0))?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })?;
+        old_ids
+            .into_iter()
+            .map(|old| {
+                let canonical = self.resolve_thread_alias(&old)?;
+                Ok((old, canonical))
+            })
+            .collect()
     }
 
     /// A thread's persisted creation generation (the minimum across its

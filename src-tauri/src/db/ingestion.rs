@@ -202,10 +202,43 @@ impl Database {
         account_id: &str,
         threads: &[(String, Vec<NormalizedMessage>, Vec<(String, String)>)],
     ) -> DbResult<()> {
+        self.apply_ingested_threads_with_aliases(account_id, threads, &[])
+    }
+
+    pub fn apply_ingested_threads_with_aliases(
+        &self,
+        account_id: &str,
+        threads: &[(String, Vec<NormalizedMessage>, Vec<(String, String)>)],
+        aliases: &[(String, String)],
+    ) -> DbResult<()> {
         if threads.is_empty() {
             return Ok(());
         }
         self.with_transaction(|transaction| {
+            // Retire old cached threads before inserting their members under
+            // the survivor, regardless of fetch order or batch boundaries.
+            // Do this only when that survivor was successfully fetched; a
+            // failed fetch leaves the old cache and workflow links intact.
+            for (old, survivor) in aliases {
+                if old == survivor || !threads.iter().any(|(id, messages, _)| {
+                    id == survivor || messages.iter().any(|m| &m.thread_id == survivor)
+                }) {
+                    continue;
+                }
+                let old_local = local_thread_id(account_id, old);
+                let survivor_local = local_thread_id(account_id, survivor);
+                transaction.execute(
+                    "UPDATE tasks SET thread_id = ?3 WHERE account_id = ?1 AND thread_id = ?2",
+                    params![account_id, old_local, survivor_local],
+                )?;
+                transaction.execute("DELETE FROM thread_search WHERE thread_id = ?1", [&old_local])?;
+                transaction.execute("DELETE FROM threads WHERE id = ?1 AND account_id = ?2",
+                    params![old_local, account_id])?;
+                transaction.execute(
+                    "DELETE FROM quarantined_messages WHERE account_id = ?1 AND provider_thread_id = ?2",
+                    params![account_id, old],
+                )?;
+            }
             for (provider_thread_id, messages, quarantined) in threads {
                 transaction.execute(
                     "DELETE FROM quarantined_messages

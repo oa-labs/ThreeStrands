@@ -210,6 +210,11 @@ impl Database {
             )?;
             transaction.execute("DELETE FROM triage_events WHERE account_id = ?1", [email])?;
             transaction.execute("DELETE FROM split_inboxes WHERE account_id = ?1", [email])?;
+            purge_imap_cache(transaction, email)?;
+            transaction.execute(
+                "DELETE FROM imap_account_settings WHERE account_id = ?1",
+                [email],
+            )?;
             transaction.execute("DELETE FROM accounts WHERE email = ?1", [email])?;
             Ok(())
         })
@@ -226,6 +231,8 @@ impl Database {
             for table in ["threads", "mutations", "sync_state", "pinned_contacts", "sync_recovery_threads", "sync_recovery", "quarantined_messages", "triage_events"] {
                 transaction.execute(&format!("DELETE FROM {table} WHERE account_id=?1"), [email])?;
             }
+            // Keep non-secret connection settings for reconnecting, but no mail.
+            purge_imap_cache(transaction, email)?;
             transaction.execute(
                 "UPDATE accounts SET status='needs_reauth',last_synced_at=NULL WHERE email=?1",
                 [email],
@@ -284,6 +291,25 @@ impl Database {
             Ok(())
         })
     }
+}
+
+// These provider caches have no foreign keys to the account catalog.
+fn purge_imap_cache(transaction: &rusqlite::Transaction<'_>, account: &str) -> DbResult<()> {
+    for table in [
+        "imap_bodies",
+        "imap_locations",
+        "imap_mailboxes",
+        "imap_threads",
+        "imap_thread_aliases",
+        "imap_change_journal",
+        "imap_sync_state",
+    ] {
+        transaction.execute(
+            &format!("DELETE FROM {table} WHERE account_id = ?1"),
+            [account],
+        )?;
+    }
+    Ok(())
 }
 
 /// Assigned to newly connected accounts in rotation, so each has a distinct

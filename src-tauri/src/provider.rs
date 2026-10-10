@@ -216,6 +216,13 @@ pub trait MailSync: Send + Sync {
     /// Every message in a thread.
     async fn fetch_thread(&self, id: &str) -> ProviderResult<Vec<RawMessage>>;
 
+    /// Merged thread ids and their current canonical ids. Providers with
+    /// immutable thread ids need no alias handling. Ingestion retires aliased
+    /// cached threads atomically with a successfully fetched survivor.
+    fn thread_aliases(&self) -> ProviderResult<Vec<(String, String)>> {
+        Ok(Vec::new())
+    }
+
     /// Server-side search, for finding mail the local index has never seen.
     /// Optional: providers without it report
     /// `server_search: false` and inherit this rejection.

@@ -160,6 +160,14 @@ pub async fn fetch_identity(
     Ok(rows)
 }
 
+/// A bounded wire read distinguishes policy limits from server rejections.
+/// The oversized literal is never cloned into an owned body.
+pub enum BodyRead {
+    Missing,
+    Bytes(Vec<u8>),
+    TooLarge(usize),
+}
+
 /// The single operation [`ensure_body`] needs from the wire: fetch one UID's
 /// whole body with `BODY.PEEK[]`.
 ///
@@ -174,6 +182,13 @@ pub trait BodyFetcher: Send {
     /// no body. Must use a bounded `BODY.PEEK[]` request so it never sets
     /// `\Seen` or requests an unbounded literal when RFC822.SIZE is missing.
     async fn fetch_raw_body(&mut self, uid: u32) -> Result<Option<Vec<u8>>, ProviderError>;
+
+    async fn read_for_sync(&mut self, uid: u32) -> Result<BodyRead, ProviderError> {
+        Ok(match self.fetch_raw_body(uid).await? {
+            Some(raw) => BodyRead::Bytes(raw),
+            None => BodyRead::Missing,
+        })
+    }
 }
 
 /// The production [`BodyFetcher`]: `BODY.PEEK[]` over a real [`ImapSession`].
@@ -184,29 +199,40 @@ pub struct SessionBodyFetcher<'a> {
 #[async_trait::async_trait]
 impl BodyFetcher for SessionBodyFetcher<'_> {
     async fn fetch_raw_body(&mut self, uid: u32) -> Result<Option<Vec<u8>>, ProviderError> {
+        match self.read_for_sync(uid).await? {
+            BodyRead::Missing => Ok(None),
+            BodyRead::Bytes(raw) => Ok(Some(raw)),
+            BodyRead::TooLarge(size) => {
+                policy::check_raw_message_bytes(size)?;
+                unreachable!("TooLarge always exceeds the raw body limit")
+            }
+        }
+    }
+
+    async fn read_for_sync(&mut self, uid: u32) -> Result<BodyRead, ProviderError> {
         let fetches = self
             .session
             .uid_fetch(&uid.to_string(), &BODY_ITEMS)
             .await?;
-        for fetch in &fetches {
-            if fetch.uid == Some(uid) {
-                if let Some(body) = fetch.body() {
-                    policy::check_raw_message_bytes(body.len())?;
-                    return Ok(Some(body.to_vec()));
-                }
-            }
-        }
-        // Some servers omit UID in the single-UID response. Accept that
-        // fallback, but never attribute a different UID's body to this one.
-        if let Some(body) = fetches
+        let body = fetches
             .iter()
-            .filter(|f| f.uid.is_none())
-            .find_map(|f| f.body())
-        {
-            policy::check_raw_message_bytes(body.len())?;
-            return Ok(Some(body.to_vec()));
-        }
-        Ok(None)
+            .find(|fetch| fetch.uid == Some(uid) && fetch.body().is_some())
+            .and_then(|fetch| fetch.body())
+            // Some servers omit UID in the single-UID response. Never accept
+            // a different UID's body as this message.
+            .or_else(|| {
+                fetches
+                    .iter()
+                    .filter(|fetch| fetch.uid.is_none())
+                    .find_map(|fetch| fetch.body())
+            });
+        Ok(match body {
+            Some(bytes) if policy::check_raw_message_bytes(bytes.len()).is_err() => {
+                BodyRead::TooLarge(bytes.len())
+            }
+            Some(bytes) => BodyRead::Bytes(bytes.to_vec()),
+            None => BodyRead::Missing,
+        })
     }
 }
 
@@ -401,8 +427,8 @@ pub struct ResolvedBody {
 /// location write to the caller's atomic round commit. It also NEVER returns a
 /// policy rejection for an oversize message: such a message is recorded with
 /// `body_skipped = true` and a logged reason so one bad message cannot wedge a
-/// round (SLICE5A_FIXES item 2). Only a transport/auth error from the body
-/// fetch propagates.
+/// round (SLICE5A_FIXES item 2). Genuine server/auth/transport errors from
+/// the body fetch still propagate.
 ///
 /// `ensure_body`'s Slice-4 contract is untouched; this is the restructured
 /// variant the live sync routine uses.
@@ -446,8 +472,15 @@ pub async fn resolve_and_cache_body(
         });
     }
 
-    match body_fetcher.fetch_raw_body(row.uid).await {
-        Ok(Some(raw)) => {
+    match body_fetcher.read_for_sync(row.uid).await {
+        Ok(BodyRead::TooLarge(size)) => {
+            log::warn!("imap sync: skipping body for {message_id} ({size} bytes over cache limit)");
+            Ok(ResolvedBody {
+                message_id,
+                body_skipped: true,
+            })
+        }
+        Ok(BodyRead::Bytes(raw)) => {
             // A body larger than the limit despite an honest advertised size
             // (understated/absent): skip it, do not fail the round.
             if policy::check_raw_message_bytes(raw.len()).is_err() {
@@ -468,7 +501,7 @@ pub async fn resolve_and_cache_body(
                 body_skipped: false,
             })
         }
-        Ok(None) => {
+        Ok(BodyRead::Missing) => {
             // The server listed this UID in UID SEARCH ALL but returned no
             // body. That is anomalous — most often a connection dropped
             // mid-fetch (async-imap ends the fetch stream on EOF without an
@@ -480,8 +513,8 @@ pub async fn resolve_and_cache_body(
                 "no body returned for {message_id}; treating as a dropped fetch"
             )))
         }
-        // Only a transport/auth failure aborts the round; a policy rejection
-        // was already handled above, so anything here is genuine transport.
+        // Preserve genuine server/auth/transport failures. Only the explicit
+        // local TooLarge result is safe to skip.
         Err(error) => Err(error),
     }
 }
@@ -761,13 +794,16 @@ mod tests {
             .await
             .unwrap();
         assert!(resolved.body_skipped, "advertised-oversize is skipped");
-        assert_eq!(fetcher.fetches, 0, "no body request for an advertised-oversize message");
-        assert!(!cache.contains(&resolved.message_id).unwrap(), "body not cached");
+        assert_eq!(
+            fetcher.fetches, 0,
+            "no body request for an advertised-oversize message"
+        );
         assert!(
-            store
-                .location_message_id("INBOX", 1, 7)
-                .unwrap()
-                .is_none(),
+            !cache.contains(&resolved.message_id).unwrap(),
+            "body not cached"
+        );
+        assert!(
+            store.location_message_id("INBOX", 1, 7).unwrap().is_none(),
             "no location written — that is deferred to the atomic round commit"
         );
 
@@ -839,6 +875,23 @@ mod tests {
         let result =
             resolve_and_cache_body(&mut fetcher, &store, &cache, "INBOX", 1, &row, 1).await;
         assert!(matches!(result, Err(ProviderError::TransientTransport(_))));
+    }
+
+    #[tokio::test]
+    async fn resolve_and_cache_body_preserves_a_permanent_server_rejection() {
+        struct RejectedFetcher;
+        #[async_trait]
+        impl BodyFetcher for RejectedFetcher {
+            async fn fetch_raw_body(&mut self, _: u32) -> Result<Option<Vec<u8>>, ProviderError> {
+                Err(ProviderError::PermanentClientRejection("server refused fetch".into()))
+            }
+        }
+        let store = store();
+        let cache = BodyCache::new(store.clone());
+        let result = resolve_and_cache_body(&mut RejectedFetcher, &store, &cache,
+            "INBOX", 1, &row(9, "<x@x>"), 1).await;
+        assert!(matches!(result, Err(ProviderError::PermanentClientRejection(_))));
+        assert_eq!(cache.total_size().unwrap(), 0);
     }
 
     #[tokio::test]

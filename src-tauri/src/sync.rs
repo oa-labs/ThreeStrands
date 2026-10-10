@@ -933,6 +933,7 @@ async fn ingest_threads(
     provider: &(impl MailSync + ?Sized),
     ids: Vec<String>,
 ) -> ProviderResult<()> {
+    let aliases = provider.thread_aliases()?;
     let mut ingested_threads = Vec::with_capacity(INGEST_FLUSH_BATCH_SIZE);
     let mut deleted = Vec::new();
     let mut pending_error = None;
@@ -961,16 +962,22 @@ async fn ingest_threads(
         let (normalized, quarantined) = normalize_thread(&messages);
         ingested_threads.push((id, normalized, quarantined));
         if ingested_threads.len() >= INGEST_FLUSH_BATCH_SIZE {
-            database
-                .apply_ingested_threads(account_id, &ingested_threads)
-                .map_err(database_provider_error)?;
+            if aliases.is_empty() {
+                database.apply_ingested_threads(account_id, &ingested_threads)
+            } else {
+                database.apply_ingested_threads_with_aliases(account_id, &ingested_threads, &aliases)
+            }
+            .map_err(database_provider_error)?;
             ingested_threads.clear();
         }
     }
     if !ingested_threads.is_empty() {
-        database
-            .apply_ingested_threads(account_id, &ingested_threads)
-                .map_err(database_provider_error)?;
+        if aliases.is_empty() {
+            database.apply_ingested_threads(account_id, &ingested_threads)
+        } else {
+            database.apply_ingested_threads_with_aliases(account_id, &ingested_threads, &aliases)
+        }
+        .map_err(database_provider_error)?;
     }
     for id in deleted {
         database

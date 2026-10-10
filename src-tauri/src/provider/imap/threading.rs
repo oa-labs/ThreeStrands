@@ -82,7 +82,7 @@ impl ThreadingInput {
     /// `Message-ID` is excluded here (keyed separately); these are the OTHER
     /// messages it points at. Returns the kept tokens and how many the cap
     /// dropped.
-    fn reference_tokens(&self) -> (Vec<String>, usize) {
+    pub(super) fn reference_tokens(&self) -> (Vec<String>, usize) {
         let mut raw: Vec<String> = Vec::new();
         if let Some(references) = self.references.as_deref() {
             for token in references.split_whitespace() {
@@ -230,6 +230,10 @@ pub fn thread_batch(state: &mut ThreadState, messages: &[ThreadingInput]) -> Thr
         changed.insert(thread_id.clone(), ());
     }
 
+    // A later message may merge threads assigned earlier in this batch.
+    for ((_, thread_id), message) in outcome.assignments.iter_mut().zip(messages) {
+        *thread_id = state.token_thread[&message.own_token()].clone();
+    }
     outcome.changed_threads = changed.into_keys().collect();
     outcome
 }
@@ -311,6 +315,38 @@ mod tests {
             .find(|(id, _)| id == message_id)
             .map(|(_, thread)| thread.as_str())
             .expect("message was assigned a thread")
+    }
+
+    #[test]
+    fn a_later_merge_rewrites_earlier_assignments_in_the_same_batch() {
+        let mut state = ThreadState::new();
+        let outcome = thread_batch(
+            &mut state,
+            &[
+                ThreadingInput {
+                    message_id: "a".into(),
+                    message_id_header: Some("<a@x>".into()),
+                    ..Default::default()
+                },
+                ThreadingInput {
+                    message_id: "b".into(),
+                    message_id_header: Some("<b@x>".into()),
+                    ..Default::default()
+                },
+                ThreadingInput {
+                    message_id: "c".into(),
+                    message_id_header: Some("<c@x>".into()),
+                    references: Some("<a@x> <b@x>".into()),
+                    ..Default::default()
+                },
+            ],
+        );
+        assert_eq!(outcome.assignments.len(), 3);
+        assert!(outcome
+            .assignments
+            .iter()
+            .all(|(_, thread)| thread == &outcome.assignments[0].1));
+        assert_eq!(outcome.aliases.len(), 1);
     }
 
     #[test]

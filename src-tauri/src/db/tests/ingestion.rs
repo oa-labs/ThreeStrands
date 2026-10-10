@@ -317,3 +317,66 @@ fn a_late_quarantine_failure_rolls_back_the_entire_ingestion_batch() {
 fn a_late_message_failure_rolls_back_the_entire_upsert_batch() {
     assert_ingestion_rolls_back(false);
 }
+
+#[test]
+fn ingesting_a_merge_reparents_tasks_and_rolls_back_on_failure() {
+    let database = database();
+    let account = "merge@example.com";
+    let a = message("a", "survivor", "2026-01-01T00:00:00Z", "root");
+    let b = message("b", "old", "2026-01-02T00:00:00Z", "other root");
+    database
+        .upsert_threads(account, &[vec![a.clone()], vec![b.clone()]])
+        .unwrap();
+    database.with_connection(|c| {
+        c.execute("INSERT INTO tasks(id, account_id, thread_id, title, kind, due_kind, status, created_at, updated_at)
+            VALUES ('task', ?1, ?2, 'Keep this task', 'action', 'none', 'open', 'now', 'now')",
+            params![account, local_thread_id(account, "old")])?;
+        Ok(())
+    }).unwrap();
+    let mut moved = b;
+    moved.thread_id = "survivor".into();
+    let aliases = vec![("old".into(), "survivor".into())];
+    // A duplicate message forces the ingestion transaction to fail after it
+    // attempted alias cleanup. Both roots and the task must remain intact.
+    assert!(database
+        .apply_ingested_threads_with_aliases(
+            account,
+            &[(
+                "survivor".into(),
+                vec![a.clone(), moved.clone(), moved.clone()],
+                vec![]
+            )],
+            &aliases
+        )
+        .is_err());
+    assert_eq!(database.list_all_mail(Some(account)).unwrap().len(), 2);
+    let task_thread = || {
+        database
+            .with_connection(|c| {
+                Ok(
+                    c.query_row("SELECT thread_id FROM tasks WHERE id = 'task'", [], |row| {
+                        row.get::<_, String>(0)
+                    })?,
+                )
+            })
+            .unwrap()
+    };
+    assert_eq!(task_thread(), local_thread_id(account, "old"));
+    database
+        .apply_ingested_threads_with_aliases(
+            account,
+            &[("survivor".into(), vec![a, moved], vec![])],
+            &aliases,
+        )
+        .unwrap();
+    assert_eq!(database.list_all_mail(Some(account)).unwrap().len(), 1);
+    assert_eq!(
+        database
+            .get_thread(&local_thread_id(account, "survivor"))
+            .unwrap()
+            .messages
+            .len(),
+        2
+    );
+    assert_eq!(task_thread(), local_thread_id(account, "survivor"));
+}

@@ -350,3 +350,79 @@ fn reorder_accounts_updates_sort_order_by_position() {
     assert_eq!(accounts[0].email, "second@gmail.com");
     assert_eq!(accounts[1].email, "first@gmail.com");
 }
+
+#[test]
+fn account_removal_and_local_disconnect_purge_only_that_accounts_imap_state() {
+    use crate::models::MailProviderKind;
+    for disconnect in [false, true] {
+        let database = database();
+        for account in ["remove@example.com", "keep@example.com"] {
+            database
+                .adopt_mail_account(account, MailProviderKind::Imap)
+                .unwrap();
+            database.with_connection(|c| {
+                c.execute("INSERT INTO imap_account_settings(account_id, imap_host, imap_port, imap_security, imap_username, smtp_host, smtp_port, smtp_security, smtp_username, label_storage)
+                    VALUES (?1, 'imap.example.com', 993, 'implicit_tls', ?1, 'smtp.example.com', 465, 'implicit_tls', ?1, 'none')", [account])?;
+                c.execute("INSERT INTO imap_bodies VALUES (?1, 'm', X'736563726574', 6, 1)", [account])?;
+                c.execute("INSERT INTO imap_locations VALUES (?1, 'INBOX', 1, 1, 'm', '[]', NULL)", [account])?;
+                c.execute("INSERT INTO imap_threads VALUES (?1, 'm', 't', 1)", [account])?;
+                c.execute("INSERT INTO imap_thread_aliases VALUES (?1, 'old', 't')", [account])?;
+                c.execute("INSERT INTO imap_sync_state VALUES (?1, 1)", [account])?;
+                c.execute("INSERT INTO imap_change_journal VALUES (?1, 1, 't')", [account])?;
+                c.execute("INSERT INTO imap_mailboxes(account_id, name, uidvalidity, uidnext, permanent_flags_json, permanent_keywords)
+                    VALUES (?1, 'INBOX', 1, 2, '[]', 0)", [account])?;
+                Ok(())
+            }).unwrap();
+        }
+        if disconnect {
+            database
+                .disconnect_account_locally("remove@example.com")
+                .unwrap();
+            assert_eq!(
+                database
+                    .get_account("remove@example.com")
+                    .unwrap()
+                    .unwrap()
+                    .status,
+                "needs_reauth"
+            );
+        } else {
+            database.remove_account("remove@example.com").unwrap();
+            assert!(database
+                .get_account("remove@example.com")
+                .unwrap()
+                .is_none());
+        }
+        database
+            .with_connection(|c| {
+                for table in [
+                    "imap_bodies",
+                    "imap_locations",
+                    "imap_mailboxes",
+                    "imap_threads",
+                    "imap_thread_aliases",
+                    "imap_sync_state",
+                    "imap_change_journal",
+                    "imap_account_settings",
+                ] {
+                    for account in ["remove@example.com", "keep@example.com"] {
+                        let count: i64 = c.query_row(
+                            &format!("SELECT COUNT(*) FROM {table} WHERE account_id = ?1"),
+                            [account],
+                            |row| row.get(0),
+                        )?;
+                        let expected = i64::from(
+                            account == "keep@example.com"
+                                || (disconnect && table == "imap_account_settings"),
+                        );
+                        assert_eq!(
+                            count, expected,
+                            "{table}, {account}, disconnect={disconnect}"
+                        );
+                    }
+                }
+                Ok(())
+            })
+            .unwrap();
+    }
+}

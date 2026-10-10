@@ -275,7 +275,7 @@ pub fn journal_cursor_is_answerable(cursor: u64, current: u64) -> bool {
 /// number to exercise the window boundary cheaply.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SyncLimits {
-    /// The window ceiling applied to a mailbox's new-UID set this round.
+    /// The window ceiling applied to a mailbox's newest UIDs before computing the delta.
     pub mailbox_window: usize,
 }
 

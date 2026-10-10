@@ -311,7 +311,7 @@ impl ImapProvider {
                 let mut fetcher = SessionBodyFetcher { session };
                 // resolve_and_cache_body resolves the id and caches the body
                 // but writes NO location and never fails the round for an
-                // oversize message (item 2) — only transport/auth propagates.
+                // oversize message (item 2); genuine wire errors propagate.
                 let resolved = super::fetch::resolve_and_cache_body(
                     &mut fetcher,
                     &self.store,
@@ -515,7 +515,11 @@ impl ImapProvider {
             std::collections::BTreeMap::new();
         for (message_id, thread_id, created) in rows {
             let entry = by_thread
-                .entry(thread_id)
+                .entry(
+                    self.store
+                        .resolve_thread_alias(&thread_id)
+                        .map_err(db_err)?,
+                )
                 .or_insert((created, Vec::new()));
             entry.0 = entry.0.min(created);
             entry.1.push(message_id);
@@ -524,11 +528,18 @@ impl ImapProvider {
             let mut tokens: Vec<String> = Vec::new();
             for message_id in &message_ids {
                 // The stable id is always a valid token anchor; add the
-                // normalized Message-ID header from the cached body too, so a
-                // later message referencing that header links to this thread.
+                // normalized Message-ID and capped ancestry from the cached
+                // body too. Absent parents must remain anchors across polls.
                 tokens.push(message_id.clone());
                 if let Some(cached) = self.cache.get(message_id).map_err(db_err)? {
                     let headers = super::rfc822::threading_headers_from_raw(&cached.raw);
+                    let input = ThreadingInput {
+                        message_id: message_id.clone(),
+                        message_id_header: headers.message_id.clone(),
+                        in_reply_to: headers.in_reply_to,
+                        references: headers.references,
+                    };
+                    tokens.extend(input.reference_tokens().0);
                     if let Some(raw_id) = headers.message_id {
                         let normalized = normalize_message_id(&raw_id);
                         if !normalized.is_empty() {
@@ -567,6 +578,10 @@ fn db_err(error: crate::db::DatabaseError) -> ProviderError {
 
 #[async_trait]
 impl MailSync for ImapProvider {
+    fn thread_aliases(&self) -> ProviderResult<Vec<(String, String)>> {
+        self.store.thread_aliases().map_err(db_err)
+    }
+
     async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
         // Refresh INBOX and return the current generation as the cursor.
         let generation = self.refresh_inbox().await?;
@@ -701,7 +716,12 @@ impl ImapProvider {
         let Some(location) = locations.into_iter().find(|l| l.mailbox == INBOX) else {
             return Ok(None);
         };
-        session.examine(INBOX).await?;
+        let status = session.examine(INBOX).await?;
+        if status.uid_validity.map(i64::from) != Some(location.uidvalidity) {
+            return Err(ProviderError::TransientTransport(
+                "mailbox UIDVALIDITY changed; sync must refresh locations before fetching".into(),
+            ));
+        }
         let mut fetcher = SessionBodyFetcher { session };
         use super::fetch::BodyFetcher;
         let raw = fetcher.fetch_raw_body(location.uid as u32).await?;
@@ -1684,6 +1704,230 @@ mod tests {
                 "idle poll must not reload thread state"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn merge_moves_all_existing_messages() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&[], &message("<a@x>", "A", ""));
+        mb.add(&[], &message("<b@x>", "B", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        provider.baseline_cursor().await.unwrap();
+        mailbox.lock().unwrap().add(
+            &[],
+            &message("<c@x>", "Link", "References: <a@x> <b@x>\r\n"),
+        );
+        let cursor = SyncCursor::from_generation(store.generation().unwrap());
+        provider.poll(&cursor).await.unwrap();
+        let rows = store.all_message_threads().unwrap();
+        let survivor = store.resolve_thread_alias(&rows[0].1).unwrap();
+        let fetched = provider.fetch_thread(&survivor).await.unwrap();
+        assert_eq!(
+            fetched.len(),
+            3,
+            "merging two threads must retain both roots and the linker"
+        );
+    }
+
+    #[tokio::test]
+    async fn merged_threads_ingest_atomically_and_replay_through_the_engine() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&[], &message("<a@x>", "A", ""));
+        mb.add(&[], &message("<b@x>", "B", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
+        let previous_cursor = db.cursor("me@example.com").unwrap().unwrap();
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 2);
+        mailbox.lock().unwrap().add(
+            &[],
+            &message("<c@x>", "Link", "References: <a@x> <b@x>\r\n"),
+        );
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
+        let threads = db.list_all_mail(Some("me@example.com")).unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(db.get_thread(&threads[0].id).unwrap().messages.len(), 3);
+        // Replay the journal after a simulated crash before cursor storage.
+        db.with_connection(|connection| {
+            connection.execute(
+                "UPDATE sync_state SET cursor = ?1 WHERE account_id = ?2",
+                rusqlite::params![previous_cursor, "me@example.com"],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1);
+        assert_eq!(db.get_thread(&threads[0].id).unwrap().messages.len(), 3);
+        // A later reply to either original root reaches the same survivor.
+        mailbox
+            .lock()
+            .unwrap()
+            .add(&[], &message("<d@x>", "Reply", "In-Reply-To: <b@x>\r\n"));
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1);
+        assert_eq!(db.get_thread(&threads[0].id).unwrap().messages.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn out_of_order_references_survive_between_rounds() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(
+            &[],
+            &message("<reply@x>", "Reply", "References: <missing@x>\r\n"),
+        );
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let cursor = provider.baseline_cursor().await.unwrap();
+        mailbox.lock().unwrap().add(
+            &[],
+            &message("<sibling@x>", "Sibling", "References: <missing@x>\r\n"),
+        );
+        provider.poll(&cursor).await.unwrap();
+        assert_eq!(
+            store.thread_ids_in_mailbox("INBOX").unwrap().len(),
+            1,
+            "replies to the same absent parent are one thread across polls"
+        );
+        mailbox.lock().unwrap().add(
+            &[],
+            &message("<third@x>", "Third", "In-Reply-To: <missing@x>\r\n"),
+        );
+        provider.poll(&cursor).await.unwrap();
+        mailbox
+            .lock()
+            .unwrap()
+            .add(&[], &message("<missing@x>", "Late parent", ""));
+        provider.poll(&cursor).await.unwrap();
+        let threads = store.thread_ids_in_mailbox("INBOX").unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(provider.fetch_thread(&threads[0]).await.unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn window_bounds_the_mailbox_across_polls() {
+        let mut mb = FakeMailbox::new(100);
+        for n in 1..=3 {
+            mb.add(&[], &message(&format!("<m{n}@x>"), "Subject", ""));
+        }
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (mut provider, store) = provider_with(mailbox.clone());
+        provider.limits.mailbox_window = 2;
+        let cursor = provider.baseline_cursor().await.unwrap();
+        assert_eq!(store.locations_in_mailbox("INBOX").unwrap().len(), 2);
+        provider.poll(&cursor).await.unwrap();
+        assert_eq!(
+            store.locations_in_mailbox("INBOX").unwrap().len(),
+            2,
+            "an unchanged mailbox must stay within its window"
+        );
+        mailbox
+            .lock()
+            .unwrap()
+            .add(&[], &message("<m4@x>", "Fourth", ""));
+        provider.poll(&cursor).await.unwrap();
+        let uids: Vec<_> = store
+            .locations_in_mailbox("INBOX")
+            .unwrap()
+            .iter()
+            .map(|l| l.uid)
+            .collect();
+        assert_eq!(uids, vec![3, 4]);
+    }
+
+    #[tokio::test]
+    async fn cache_miss_checks_uidvalidity_before_fetching() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&[], &message("<original@x>", "Original", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        provider.baseline_cursor().await.unwrap();
+        let id = store.locations_in_mailbox("INBOX").unwrap()[0]
+            .message_id
+            .clone();
+        store
+            .database()
+            .with_connection(|c| {
+                c.execute("DELETE FROM imap_bodies", [])?;
+                Ok(())
+            })
+            .unwrap();
+        let mut reset = FakeMailbox::new(200);
+        reset.add(&[], &message("<different@x>", "Different", ""));
+        *mailbox.lock().unwrap() = reset;
+        let result = provider.fetch_message(&id).await;
+        assert!(
+            result.is_err(),
+            "a stale UID must not load another message as the original: {result:?}"
+        );
+        assert!(!provider.cache.contains(&id).unwrap());
+        provider.baseline_cursor().await.unwrap();
+        let new_id = &store.locations_in_mailbox("INBOX").unwrap()[0].message_id;
+        assert_ne!(new_id, &id);
+        let raw = provider.fetch_message(new_id).await.unwrap();
+        assert_eq!(crate::mime::normalize(&raw).unwrap().body_text, "Different body");
+    }
+
+    #[tokio::test]
+    async fn understated_oversize_does_not_abort_the_round() {
+        for advertised_size in [Some(10), None] {
+            let mut mb = FakeMailbox::new(100);
+            mb.add(&[], &message("<ok@x>", "Good", ""));
+            let mut huge = format!(
+                "Message-ID: <huge@x>\r\n\r\n{}",
+                "x".repeat(policy::MAX_RAW_MESSAGE_BYTES)
+            );
+            huge.truncate(policy::MAX_RAW_FETCH_BYTES);
+            mb.add_sized(&[], &huge, advertised_size);
+            let (provider, store) = provider_with(Arc::new(Mutex::new(mb)));
+            let result = provider.baseline_cursor().await;
+            assert!(
+                result.is_ok(),
+                "oversize should be skipped, not abort sync: {result:?}"
+            );
+            let locations = store.locations_in_mailbox("INBOX").unwrap();
+            assert_eq!(locations.len(), 2);
+            assert!(provider.cache.contains(&locations[0].message_id).unwrap());
+            assert!(!provider.cache.contains(&locations[1].message_id).unwrap());
+            let generation = store.generation().unwrap();
+            provider
+                .poll(&SyncCursor::from_generation(generation))
+                .await
+                .unwrap();
+            assert_eq!(store.generation().unwrap(), generation);
+        }
+    }
+
+    #[tokio::test]
+    async fn removing_account_purges_live_provider_state() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&[], &message("<private@x>", "Private mail", ""));
+        let (provider, store) = provider_with(Arc::new(Mutex::new(mb)));
+        provider.baseline_cursor().await.unwrap();
+        store.database().remove_account("me@example.com").unwrap();
+        assert!(
+            store.all_message_threads().unwrap().is_empty(),
+            "removal must clear provider thread mappings"
+        );
+        assert!(
+            store.locations_in_mailbox("INBOX").unwrap().is_empty(),
+            "removal must clear provider locations"
+        );
+        assert_eq!(
+            provider.cache.total_size().unwrap(),
+            0,
+            "removal must clear raw cached mail"
+        );
     }
 
     // ---- SLICE5A_FIXES item 6: gated live test against the Dovecot harness --

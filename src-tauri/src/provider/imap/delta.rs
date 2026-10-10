@@ -15,11 +15,11 @@
 //!   new, but a comparison against the full local set also catches a UID we
 //!   never recorded).
 //! * **Flag changes** — UIDs present both sides whose flags differ.
-//! * **Deletions** — UIDs we have locally that the server's `UID SEARCH ALL`
-//!   no longer returns (expunged by another client).
+//! * **Deletions** — local UIDs expunged by another client or aged out of
+//!   the newest-message window.
 //!
-//! The window ([`policy::select_window`]) is applied to the NEW-UID set so an
-//! over-window mailbox syncs only its newest mail; over-window UIDs are
+//! The window ([`policy::select_window`]) is applied to the entire server
+//! mailbox so an over-window mailbox syncs only its newest mail. Older UIDs are
 //! reported through [`MailboxDelta::beyond_window`], never silently dropped.
 //!
 //! Everything here is a set comparison over `u32` UIDs and `Vec<String>`
@@ -65,16 +65,16 @@ pub struct MailboxDelta {
     pub new_uids: Vec<u32>,
     /// UIDs present both sides whose flags changed, ascending.
     pub flag_changed_uids: Vec<u32>,
-    /// UIDs we held that the server no longer has (expunged elsewhere),
+    /// Local UIDs expunged elsewhere or now outside the mailbox window,
     /// ascending.
     pub deleted_uids: Vec<u32>,
-    /// How many new UIDs fell outside the window (recorded, never dropped
+    /// How many server UIDs fell outside the window (recorded, never dropped
     /// silently).
     pub beyond_window: usize,
 }
 
 /// Compute the delta for one mailbox. `limits` carries the window ceiling to
-/// apply to the new-UID set, so tests pass a tiny limit instead of a 5000-
+/// apply to the mailbox, so tests pass a tiny limit instead of a 5000-
 /// message fixture; production passes the policy constant for the mailbox's
 /// class.
 pub fn compute_delta(
@@ -97,20 +97,24 @@ pub fn compute_delta(
         };
     }
 
-    let server_set: BTreeSet<u32> = server.all_uids.iter().copied().collect();
+    let selection = policy::select_window(server.all_uids.clone(), limits.mailbox_window);
+    let server_set: BTreeSet<u32> = selection.in_window.into_iter().collect();
     let local_set: BTreeSet<u32> = local.flags_by_uid.keys().copied().collect();
 
-    // New: on the server, not local. Windowed.
-    let new_raw: Vec<u32> = server_set.difference(&local_set).copied().collect();
-    let selection = policy::select_window(new_raw, limits.mailbox_window);
+    // Select the mailbox window BEFORE diffing so repeated idle polls cannot
+    // backfill older mail, and newly arriving mail ages older locations out.
+    let new_uids: Vec<u32> = server_set.difference(&local_set).copied().collect();
 
-    // Deleted: local, not on the server.
+    // Deleted: expunged or now outside the mailbox window.
     let deleted_uids: Vec<u32> = local_set.difference(&server_set).copied().collect();
 
     // Flag changes: present both sides, flags differ. Compared only for UIDs
     // whose flags the server actually fetched this round.
     let mut flag_changed_uids = Vec::new();
     for (&uid, server_flags) in &server.flags_by_uid {
+        if !server_set.contains(&uid) {
+            continue;
+        }
         if let Some(local_flags) = local.flags_by_uid.get(&uid) {
             if flags_differ(local_flags, server_flags) {
                 flag_changed_uids.push(uid);
@@ -121,7 +125,7 @@ pub fn compute_delta(
 
     MailboxDelta {
         uidvalidity_reset: false,
-        new_uids: selection.in_window,
+        new_uids,
         flag_changed_uids,
         deleted_uids,
         beyond_window: selection.beyond_window,
@@ -228,7 +232,7 @@ mod tests {
     }
 
     #[test]
-    fn the_window_is_applied_to_new_uids_below_at_and_above_the_limit() {
+    fn the_window_is_applied_to_the_mailbox_below_at_and_above_the_limit() {
         let limits = SyncLimits { mailbox_window: 3 };
 
         // Below: 2 new, all kept.
