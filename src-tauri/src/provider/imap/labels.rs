@@ -1,54 +1,78 @@
-//! Pure label construction — turn a message's mailbox + IMAP flags into the
-//! system `label_ids` the rest of the app understands. No I/O.
+//! Pure label construction — turn a message copy's RESOLVED mailbox role and
+//! IMAP flags into the system `label_ids` the rest of the app understands. No
+//! I/O.
 //!
 //! `docs/imap-design.md` ("Labels in the `RawMessage` envelope"). Labels are
-//! worked out from WHERE a message is stored and its flags. This slice (5a)
-//! covers INBOX only; the full mapping (SENT / SPAM / TRASH / `folder:` /
-//! `lf:` / `kw:`) is Slice 5b. The design table, for the states this slice
+//! worked out from WHAT ROLE the mailbox a message is stored in plays, and the
+//! copy's flags — never from the mailbox NAME. Slice 5a covered INBOX only;
+//! Slice 5b-1 adds Sent/Junk/Trash. The design table for the roles this slice
 //! produces:
 //!
-//! | IMAP state                | `label_ids` entry |
+//! | Resolved role / flag      | `label_ids` entry |
 //! | ------------------------- | ----------------- |
-//! | Message is in `INBOX`     | `INBOX`           |
+//! | INBOX                     | `INBOX`           |
+//! | Sent (`\Sent`)            | `SENT`            |
+//! | Junk (`\Junk`)            | `SPAM`            |
+//! | Trash (`\Trash`)          | `TRASH`           |
 //! | No `\Seen` flag           | `UNREAD`          |
 //! | `\Flagged`                | `STARRED`         |
 //!
-//! The function is written so Slice 5b adds the remaining mailbox roles and
-//! the user-label kinds by extending the mailbox->label mapping and the flag
-//! rules, WITHOUT restructuring: a mailbox maps to zero or more location
-//! labels through [`MailboxLabel`], and flags add state labels on top. INBOX
-//! is simply the one `MailboxLabel::Inbox` case wired this slice.
+//! Classifying by ROLE (resolved once by the sync plan via user override >
+//! RFC 6154 attribute > name match) rather than by name is the AGENTS.md
+//! provider-neutral invariant: nothing here branches on a sender, host or
+//! brand, and a mailbox literally named "Trash" that the plan did not resolve
+//! to the Trash role contributes NO location label.
+//!
+//! The INBOX->Trash move the brief calls out falls out of this naturally: when
+//! a hot message's INBOX location is deleted and a Trash location appears, the
+//! union of its per-copy labels is `TRASH` WITHOUT `INBOX`, and the caller
+//! journals its thread so the engine re-ingests it — it is never silently
+//! "archived".
 
 /// Which system label a mailbox contributes by virtue of a message being
-/// stored in it. Only [`MailboxLabel::Inbox`] is produced this slice; the
-/// other roles are reserved so Slice 5b fills them in without changing the
-/// call shape. A mailbox that contributes no location label (an aggregate or
-/// a `\Noselect` container) is simply never classified as one of these.
+/// stored in it, keyed by the mailbox's RESOLVED role. A mailbox that
+/// contributes no location label (an aggregate `\All`/`\Flagged`, Drafts, or a
+/// `\Noselect` container) is simply never one of these.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MailboxLabel {
     /// INBOX -> `INBOX`.
     Inbox,
-    // Slice 5b: Sent -> SENT, Junk -> SPAM, Trash -> TRASH, user folders ->
-    // folder:<name>, label folders -> lf:<name>.
+    /// `\Sent` -> `SENT`.
+    Sent,
+    /// `\Junk` -> `SPAM`.
+    Junk,
+    /// `\Trash` -> `TRASH`.
+    Trash,
+    // Slice 5b-2: user folders -> folder:<name>, label folders -> lf:<name>.
 }
 
 impl MailboxLabel {
     /// The canonical system label id a mailbox role contributes.
-    fn label_id(self) -> &'static str {
+    pub fn label_id(self) -> &'static str {
         match self {
             Self::Inbox => "INBOX",
+            Self::Sent => "SENT",
+            Self::Junk => "SPAM",
+            Self::Trash => "TRASH",
         }
     }
 
-    /// Classify a mailbox by name/special-use into a location label, if it is
-    /// one this slice knows. INBOX is matched case-insensitively (RFC 3501
-    /// reserves the name). Everything else returns `None` this slice — Slice
-    /// 5b extends this to special-use roles and user folders.
-    pub fn classify(mailbox_name: &str, _special_use: Option<&str>) -> Option<Self> {
-        if mailbox_name.eq_ignore_ascii_case("INBOX") {
-            Some(Self::Inbox)
-        } else {
-            None
+    /// Whether this is the Sent role. A Sent-role copy never contributes
+    /// `UNREAD` (your own sent mail is not "unread").
+    fn is_sent(self) -> bool {
+        matches!(self, Self::Sent)
+    }
+
+    /// The location label a resolved [`MailboxRole`](super::MailboxRole)
+    /// contributes, if any. `\Archive`, `\All` (aggregate), `\Drafts` and the
+    /// label container contribute none this slice.
+    pub fn for_role(role: super::MailboxRole) -> Option<Self> {
+        use super::MailboxRole;
+        match role {
+            MailboxRole::Sent => Some(Self::Sent),
+            MailboxRole::Junk => Some(Self::Junk),
+            MailboxRole::Trash => Some(Self::Trash),
+            MailboxRole::Archive | MailboxRole::Drafts | MailboxRole::All => None,
         }
     }
 }
@@ -63,22 +87,23 @@ fn is_flagged(flags: &[String]) -> bool {
     flags.iter().any(|flag| flag.eq_ignore_ascii_case("\\Flagged"))
 }
 
-/// Build the system `label_ids` for one message copy from the mailbox it is in
-/// and that copy's flags. Deterministic order: the location label first, then
-/// state labels (`UNREAD`, `STARRED`) in a fixed order so two runs produce
-/// byte-identical lists. Never produces duplicates.
+/// Build the system `label_ids` for one message copy from the mailbox's
+/// RESOLVED label (if any) and that copy's flags. Deterministic order: the
+/// location label first, then state labels (`UNREAD`, `STARRED`) in a fixed
+/// order so two runs produce byte-identical lists. Never produces duplicates.
 ///
-/// This slice: an INBOX copy yields `INBOX`; the absence of `\Seen` adds
-/// `UNREAD`; `\Flagged` adds `STARRED`. A copy in a mailbox this slice does
-/// not classify (anything but INBOX) yields only its state labels — which is
-/// exactly the forward-compatible shape Slice 5b extends.
-pub fn labels_for(mailbox_name: &str, special_use: Option<&str>, flags: &[String]) -> Vec<String> {
+/// A Sent-role copy never contributes `UNREAD`. `STARRED` comes from `\Flagged`
+/// on any copy. A copy whose role contributes no location label (Archive,
+/// Drafts, an aggregate, or an unresolved mailbox) yields only its state
+/// labels — the forward-compatible shape Slice 5b-2 extends.
+pub fn labels_for(location: Option<MailboxLabel>, flags: &[String]) -> Vec<String> {
     let mut labels = Vec::new();
-    if let Some(location) = MailboxLabel::classify(mailbox_name, special_use) {
+    if let Some(location) = location {
         labels.push(location.label_id().to_string());
     }
-    // State labels come from flags, independent of mailbox.
-    if !is_seen(flags) {
+    // A Sent copy is never "unread".
+    let suppress_unread = location.map(MailboxLabel::is_sent).unwrap_or(false);
+    if !suppress_unread && !is_seen(flags) {
         labels.push("UNREAD".to_string());
     }
     if is_flagged(flags) {
@@ -107,6 +132,7 @@ pub fn merge_label_sets(per_copy: &[Vec<String>]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::imap::MailboxRole;
 
     fn flags(list: &[&str]) -> Vec<String> {
         list.iter().map(|f| f.to_string()).collect()
@@ -114,49 +140,89 @@ mod tests {
 
     #[test]
     fn an_inbox_message_carries_the_inbox_label() {
-        assert_eq!(labels_for("INBOX", None, &flags(&["\\Seen"])), vec!["INBOX"]);
-        // Case-insensitive mailbox name match.
-        assert_eq!(labels_for("inbox", None, &flags(&["\\Seen"])), vec!["INBOX"]);
-    }
-
-    #[test]
-    fn an_unseen_message_is_unread() {
-        // No \Seen flag -> UNREAD; order is INBOX then UNREAD.
-        assert_eq!(labels_for("INBOX", None, &flags(&[])), vec!["INBOX", "UNREAD"]);
-        // \Seen present -> no UNREAD.
-        assert_eq!(labels_for("INBOX", None, &flags(&["\\Seen"])), vec!["INBOX"]);
-    }
-
-    #[test]
-    fn a_flagged_message_is_starred() {
         assert_eq!(
-            labels_for("INBOX", None, &flags(&["\\Seen", "\\Flagged"])),
-            vec!["INBOX", "STARRED"]
-        );
-        // Unseen AND flagged: INBOX, UNREAD, STARRED, in that fixed order.
-        assert_eq!(
-            labels_for("INBOX", None, &flags(&["\\Flagged"])),
-            vec!["INBOX", "UNREAD", "STARRED"]
-        );
-    }
-
-    #[test]
-    fn flag_matching_is_case_insensitive_and_ignores_unrelated_flags() {
-        assert_eq!(
-            labels_for("INBOX", None, &flags(&["\\seen", "$Forwarded", "Project"])),
+            labels_for(Some(MailboxLabel::Inbox), &flags(&["\\Seen"])),
             vec!["INBOX"]
         );
     }
 
     #[test]
-    fn a_non_inbox_mailbox_contributes_no_location_label_this_slice() {
-        // Slice 5a is INBOX-only: a Sent/Archive copy yields only state
-        // labels, never a location label, and never panics on special-use.
-        assert_eq!(labels_for("Sent", Some("\\Sent"), &flags(&[])), vec!["UNREAD"]);
+    fn an_unseen_message_is_unread() {
+        // No \Seen flag -> UNREAD; order is INBOX then UNREAD.
         assert_eq!(
-            labels_for("Archive", Some("\\Archive"), &flags(&["\\Seen", "\\Flagged"])),
-            vec!["STARRED"]
+            labels_for(Some(MailboxLabel::Inbox), &flags(&[])),
+            vec!["INBOX", "UNREAD"]
         );
+        // \Seen present -> no UNREAD.
+        assert_eq!(
+            labels_for(Some(MailboxLabel::Inbox), &flags(&["\\Seen"])),
+            vec!["INBOX"]
+        );
+    }
+
+    #[test]
+    fn a_flagged_message_is_starred() {
+        assert_eq!(
+            labels_for(Some(MailboxLabel::Inbox), &flags(&["\\Seen", "\\Flagged"])),
+            vec!["INBOX", "STARRED"]
+        );
+        // Unseen AND flagged: INBOX, UNREAD, STARRED, in that fixed order.
+        assert_eq!(
+            labels_for(Some(MailboxLabel::Inbox), &flags(&["\\Flagged"])),
+            vec!["INBOX", "UNREAD", "STARRED"]
+        );
+    }
+
+    #[test]
+    fn sent_junk_and_trash_roles_map_to_their_system_labels() {
+        assert_eq!(labels_for(Some(MailboxLabel::Sent), &flags(&["\\Seen"])), vec!["SENT"]);
+        assert_eq!(labels_for(Some(MailboxLabel::Junk), &flags(&["\\Seen"])), vec!["SPAM"]);
+        assert_eq!(labels_for(Some(MailboxLabel::Trash), &flags(&["\\Seen"])), vec!["TRASH"]);
+    }
+
+    #[test]
+    fn a_sent_copy_is_never_unread_but_can_be_starred() {
+        // No \Seen, but a Sent copy must NOT be UNREAD.
+        assert_eq!(labels_for(Some(MailboxLabel::Sent), &flags(&[])), vec!["SENT"]);
+        // \Flagged still produces STARRED on a Sent copy.
+        assert_eq!(
+            labels_for(Some(MailboxLabel::Sent), &flags(&["\\Flagged"])),
+            vec!["SENT", "STARRED"]
+        );
+    }
+
+    #[test]
+    fn a_trash_copy_without_an_inbox_copy_yields_trash_not_inbox() {
+        // The INBOX->Trash move: once the INBOX location is gone the only copy
+        // is in Trash, so the union is TRASH, never INBOX.
+        let per_copy = vec![labels_for(Some(MailboxLabel::Trash), &flags(&["\\Seen"]))];
+        assert_eq!(merge_label_sets(&per_copy), vec!["TRASH"]);
+    }
+
+    #[test]
+    fn flag_matching_is_case_insensitive_and_ignores_unrelated_flags() {
+        assert_eq!(
+            labels_for(Some(MailboxLabel::Inbox), &flags(&["\\seen", "$Forwarded", "Project"])),
+            vec!["INBOX"]
+        );
+    }
+
+    #[test]
+    fn an_unclassified_mailbox_contributes_no_location_label() {
+        // A copy whose role contributes no location label (Archive/Drafts/an
+        // aggregate / an unresolved mailbox) yields only state labels.
+        assert_eq!(labels_for(None, &flags(&[])), vec!["UNREAD"]);
+        assert_eq!(labels_for(None, &flags(&["\\Seen", "\\Flagged"])), vec!["STARRED"]);
+    }
+
+    #[test]
+    fn role_to_label_mapping_covers_the_synced_roles_and_skips_the_rest() {
+        assert_eq!(MailboxLabel::for_role(MailboxRole::Sent), Some(MailboxLabel::Sent));
+        assert_eq!(MailboxLabel::for_role(MailboxRole::Junk), Some(MailboxLabel::Junk));
+        assert_eq!(MailboxLabel::for_role(MailboxRole::Trash), Some(MailboxLabel::Trash));
+        assert_eq!(MailboxLabel::for_role(MailboxRole::Archive), None);
+        assert_eq!(MailboxLabel::for_role(MailboxRole::Drafts), None);
+        assert_eq!(MailboxLabel::for_role(MailboxRole::All), None);
     }
 
     #[test]
@@ -169,14 +235,5 @@ mod tests {
             merge_label_sets(&per_copy),
             vec!["INBOX", "UNREAD", "STARRED"]
         );
-    }
-
-    #[test]
-    fn classification_is_extensible_without_touching_callers() {
-        // Only INBOX is a known location label this slice; anything else is
-        // deliberately unclassified so Slice 5b can add roles here alone.
-        assert_eq!(MailboxLabel::classify("INBOX", None), Some(MailboxLabel::Inbox));
-        assert_eq!(MailboxLabel::classify("Sent", Some("\\Sent")), None);
-        assert_eq!(MailboxLabel::classify("Clients/Acme", None), None);
     }
 }

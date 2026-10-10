@@ -105,8 +105,17 @@ pub fn compute_delta(
     // backfill older mail, and newly arriving mail ages older locations out.
     let new_uids: Vec<u32> = server_set.difference(&local_set).copied().collect();
 
-    // Deleted: expunged or now outside the mailbox window.
-    let deleted_uids: Vec<u32> = local_set.difference(&server_set).copied().collect();
+    // Deleted: expunged (gone from the server entirely) and, for an EVICTING
+    // class, also local UIDs that aged out of the window as newer mail arrived.
+    // A NON-evicting class (Sent's acquisition bound) keeps an aged-out UID: it
+    // is only deleted when the SERVER no longer has it, so we subtract from the
+    // full server UID set, not the windowed one.
+    let deleted_uids: Vec<u32> = if limits.evicts {
+        local_set.difference(&server_set).copied().collect()
+    } else {
+        let server_all: BTreeSet<u32> = server.all_uids.iter().copied().collect();
+        local_set.difference(&server_all).copied().collect()
+    };
 
     // Flag changes: present both sides, flags differ. Compared only for UIDs
     // whose flags the server actually fetched this round.
@@ -168,6 +177,7 @@ mod tests {
     fn wide() -> SyncLimits {
         SyncLimits {
             mailbox_window: MAX_INBOX_SYNC_MESSAGES,
+            evicts: true,
         }
     }
 
@@ -233,7 +243,7 @@ mod tests {
 
     #[test]
     fn the_window_is_applied_to_the_mailbox_below_at_and_above_the_limit() {
-        let limits = SyncLimits { mailbox_window: 3 };
+        let limits = SyncLimits { mailbox_window: 3, evicts: true };
 
         // Below: 2 new, all kept.
         let below = compute_delta(
@@ -268,11 +278,53 @@ mod tests {
         // The exactly-at-ceiling INBOX case the brief calls out, with the real
         // ceiling via a tiny stand-in to avoid a 5000-UID fixture: equal to
         // the window, nothing is beyond it.
-        let limits = SyncLimits { mailbox_window: 4 };
+        let limits = SyncLimits { mailbox_window: 4, evicts: true };
         let all: Vec<u32> = (1..=4).collect();
         let delta = compute_delta(&local(Some(1), &[]), &server(1, &all, &[]), &limits);
         assert_eq!(delta.new_uids, all);
         assert_eq!(delta.beyond_window, 0);
+    }
+
+    /// A non-evicting class (Sent's acquisition bound) does NOT delete a UID
+    /// that aged out of the window as newer mail arrived: it is kept until the
+    /// SERVER no longer has it. An evicting class in the same situation DOES
+    /// delete it.
+    #[test]
+    fn a_non_evicting_class_keeps_aged_out_uids_an_evicting_one_deletes_them() {
+        // Local holds UID 1; the server now has 1,2,3,4 but the window is 3,
+        // so UID 1 ages out of the window.
+        let local_view = local(Some(5), &[(1, &["\\Seen"])]);
+        let server_view = server(5, &[1, 2, 3, 4], &[]);
+
+        // Evicting (INBOX/Folder): UID 1 aged out of the window -> deleted.
+        let evicting =
+            compute_delta(&local_view, &server_view, &SyncLimits { mailbox_window: 3, evicts: true });
+        assert_eq!(evicting.deleted_uids, vec![1], "evicting class deletes the aged-out UID");
+
+        // Non-evicting (Sent): UID 1 is still on the server, so it is KEPT even
+        // though it aged out of the acquisition window.
+        let sent =
+            compute_delta(&local_view, &server_view, &SyncLimits { mailbox_window: 3, evicts: false });
+        assert!(
+            sent.deleted_uids.is_empty(),
+            "Sent keeps an aged-out UID the server still has"
+        );
+
+        // But a Sent UID the server genuinely expunged IS deleted.
+        let expunged_local = LocalMailboxView {
+            uidvalidity: Some(5),
+            flags_by_uid: [(99u32, flags(&["\\Seen"]))].into_iter().collect(),
+        };
+        let expunged = compute_delta(
+            &expunged_local,
+            &server(5, &[1, 2, 3, 4], &[]),
+            &SyncLimits { mailbox_window: 3, evicts: false },
+        );
+        assert_eq!(
+            expunged.deleted_uids,
+            vec![99],
+            "Sent still deletes a server-expunged UID"
+        );
     }
 
     #[test]

@@ -52,10 +52,11 @@ use crate::provider::{
 use super::connection::{ConnectionRole, ImapConnectionManager};
 use super::fetch::{fetch_identity, BodyCache, SessionBodyFetcher};
 use super::labels::{labels_for, merge_label_sets};
+use super::plan::{self, CatalogMailbox, SyncPlan};
 use super::policy::{self, SyncLimits};
 use super::rfc822::{attachment_bytes_from_raw, to_raw_message};
 use super::session::ImapSession;
-use super::settings::LabelStorage;
+use super::settings::{ImapAccountSettings, LabelStorage};
 use super::threading::{self, ThreadState, ThreadingInput};
 use super::{ImapLocation, ImapStateStore, SyncRoundWrite};
 
@@ -162,6 +163,10 @@ pub struct ImapProvider {
     cache: BodyCache,
     username: String,
     label_model: LabelModel,
+    /// The account's non-secret IMAP settings — the plan needs its mailbox
+    /// overrides, archive mailbox, label container and label storage to resolve
+    /// roles. Carried here so no call reaches back for a database handle.
+    settings: ImapAccountSettings,
     source: std::sync::Arc<dyn ImapSessionSource>,
     /// Injected clock for deterministic `fetched_at` in tests; wall clock in
     /// production.
@@ -184,6 +189,9 @@ pub struct ImapProviderConfig {
     pub store: ImapStateStore,
     pub cache: BodyCache,
     pub label_model: LabelModel,
+    /// The account's non-secret IMAP settings, so the provider can build the
+    /// sync plan (role resolution) without a database round trip.
+    pub settings: ImapAccountSettings,
 }
 
 fn unix_now() -> i64 {
@@ -216,6 +224,7 @@ impl ImapProvider {
             cache: config.cache,
             username: config.username,
             label_model: config.label_model,
+            settings: config.settings,
             source,
             now: unix_now,
             limits: SyncLimits::inbox(),
@@ -228,68 +237,231 @@ impl ImapProvider {
         self.source.open().await
     }
 
-    /// Refresh INBOX against the server and return the new generation. The
-    /// at-least-once contract lives here: every round is a full reconcile that
-    /// is safe to repeat.
-    async fn refresh_inbox(&self) -> ProviderResult<u64> {
+    /// Refresh every synced mailbox against the server and return the new
+    /// generation. INBOX is swept first and every poll; the other synced
+    /// mailboxes (Trash, Junk this run) follow in plan order with cheap
+    /// cadence gating. Each mailbox round is its OWN atomic commit, so a
+    /// failure in one mailbox leaves the others' committed work intact and the
+    /// at-least-once cursor contract whole.
+    async fn refresh_all(&self) -> ProviderResult<u64> {
         let mut session = self.open_session().await?;
-        let generation = self.refresh_inbox_with(session.as_mut()).await;
+        let result = self.refresh_all_with(session.as_mut()).await;
         let _ = session.logout().await;
-        generation
+        result
     }
 
-    /// The sync round against an already-open session, factored out so the
-    /// engine-level test can drive it over a fake session.
-    ///
-    /// Every durable write this round decides — new/updated locations,
-    /// deletions, thread assignments, aliases, the journal and the generation
-    /// bump — is collected into one [`SyncRoundWrite`] and applied in a SINGLE
-    /// transaction at the end (`commit_sync_round`). A failure before that
-    /// commit (a dropped connection on a later batch) writes NOTHING durable,
-    /// so the next round sees the same prior state and redoes the work — the
-    /// at-least-once contract. Body-cache puts happen eagerly during fetch
-    /// because the cache is rebuildable and deduplicated by stable id.
+    /// The full plan walk against an already-open session. INBOX first (always
+    /// a full sweep), then each other `synced_now` mailbox in plan order up to
+    /// the per-poll budget, each with cadence gating. The last-committed
+    /// generation is returned. INBOX failures propagate (nothing is ingested
+    /// without INBOX); a failing folder is logged and skipped, since mailboxes
+    /// that already committed are durable and the folder is retried next poll.
+    pub(super) async fn refresh_all_with(
+        &self,
+        session: &mut dyn ImapSession,
+    ) -> ProviderResult<u64> {
+        let plan = self.build_sync_plan()?;
+        // INBOX first and always a full sweep.
+        let inbox_entry = plan
+            .entries
+            .iter()
+            .find(|e| e.is_inbox)
+            .cloned()
+            // If the catalog has no INBOX row yet (first ever sync before
+            // discovery persisted it), synthesize an INBOX plan entry.
+            .unwrap_or(plan::PlanEntry {
+                mailbox: INBOX.to_string(),
+                role: None,
+                is_inbox: true,
+                window_class: policy::SyncWindowClass::Inbox,
+                label_kind: plan::LabelKind::SystemRole,
+                synced_now: true,
+            });
+        let mut generation = self.refresh_mailbox_with(session, &inbox_entry, true).await?;
+
+        // Then the other synced mailboxes (Trash, Junk) in plan order, bounded
+        // by the per-poll budget, each with cadence gating.
+        let folders: Vec<_> = plan
+            .synced()
+            .filter(|e| !e.is_inbox)
+            .take(policy::FOLDER_ROUNDS_PER_POLL)
+            .cloned()
+            .collect();
+        for entry in folders {
+            // Cadence gating decides whether a full sweep is needed. Only INBOX
+            // may abort a poll: the engine ingests a poll's changes only after
+            // the whole poll succeeds, so a folder that cannot be synced (its
+            // mailbox renamed or deleted on the server, say) must not stop mail
+            // flowing. A folder failure is logged and retried next poll, and a
+            // dropped connection ends the folder walk (INBOX already committed).
+            // Only a credential rejection, which pauses the account, propagates.
+            match self.refresh_mailbox_with(session, &entry, false).await {
+                Ok(committed) => generation = committed,
+                Err(error) if error.requires_reauthentication() => return Err(error),
+                Err(error) => {
+                    log::warn!(
+                        "imap sync: skipping mailbox {:?} this poll: {error}",
+                        entry.mailbox
+                    );
+                    if is_transient(&error) {
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(generation)
+    }
+
+    /// Build the account's sync plan from the persisted catalog + settings.
+    fn build_sync_plan(&self) -> ProviderResult<SyncPlan> {
+        let rows = self.store.mailboxes().map_err(db_err)?;
+        let delimiter = rows
+            .iter()
+            .find_map(|row| row.delimiter.clone())
+            .unwrap_or_else(|| "/".to_string());
+        let catalog: Vec<CatalogMailbox> = rows
+            .iter()
+            .map(|row| CatalogMailbox {
+                name: row.name.clone(),
+                special_use: row.special_use.clone(),
+            })
+            .collect();
+        Ok(plan::build_plan(&catalog, Some(&delimiter), &self.settings))
+    }
+
+    /// Run the INBOX round against an already-open session (kept for the
+    /// engine-level tests and callers that drive INBOX directly). Equivalent to
+    /// a forced full sweep of the INBOX plan entry.
     pub(super) async fn refresh_inbox_with(
         &self,
         session: &mut dyn ImapSession,
     ) -> ProviderResult<u64> {
-        // 1. EXAMINE (read-only) — never SELECT, so sync never sets \Seen.
-        let status = session.examine(INBOX).await?;
-        let server_uidvalidity = status.uid_validity.unwrap_or(0) as i64;
+        let entry = plan::PlanEntry {
+            mailbox: INBOX.to_string(),
+            role: None,
+            is_inbox: true,
+            window_class: policy::SyncWindowClass::Inbox,
+            label_kind: plan::LabelKind::SystemRole,
+            synced_now: true,
+        };
+        self.refresh_mailbox_with(session, &entry, true).await
+    }
 
-        // 2. Local view: stored UIDVALIDITY + per-UID flags for INBOX.
-        let local_locations = self.inbox_locations()?;
+    /// The sync round for ONE mailbox against an already-open session, driven
+    /// by its plan entry. INBOX passes `force_sweep = true` (swept every poll);
+    /// a non-INBOX mailbox passes `false` and the cheap cadence check decides
+    /// whether to do the full SEARCH/FETCH or skip to just recording its
+    /// counters.
+    ///
+    /// Every durable write this round decides — new/updated locations,
+    /// deletions, thread assignments, aliases, newly-hot threads, the journal,
+    /// the mailbox cadence counters and the generation bump — is collected into
+    /// one [`SyncRoundWrite`] and applied in a SINGLE transaction at the end
+    /// (`commit_sync_round`). A failure before that commit writes NOTHING
+    /// durable for THIS mailbox, so the next round redoes only its work — the
+    /// at-least-once contract, now per mailbox. Body-cache puts happen eagerly
+    /// during fetch because the cache is rebuildable and deduplicated by stable
+    /// id. EXAMINE only, so sync never sets `\Seen`.
+    pub(super) async fn refresh_mailbox_with(
+        &self,
+        session: &mut dyn ImapSession,
+        entry: &plan::PlanEntry,
+        force_sweep: bool,
+    ) -> ProviderResult<u64> {
+        let mailbox = entry.mailbox.as_str();
+        // INBOX honors the provider's `limits` knob (tests shrink the window
+        // there); every other mailbox uses its plan class's limits.
+        let limits = if entry.is_inbox {
+            self.limits
+        } else {
+            SyncLimits::for_class(entry.window_class)
+        };
+        // A thread is hot if it has a location in INBOX or Sent.
+        let makes_hot = entry.is_inbox || matches!(entry.role, Some(super::MailboxRole::Sent));
+
+        // 1. EXAMINE (read-only) — never SELECT, so sync never sets \Seen.
+        let status = session.examine(mailbox).await?;
+        let server_uidvalidity = status.uid_validity.unwrap_or(0) as i64;
+        let server_exists = status.exists as i64;
+        let server_uidnext = status.uid_next.unwrap_or(0) as i64;
+
+        // Cadence gating for a non-INBOX mailbox: if the EXAMINE counters are
+        // unchanged AND the periodic sweep is not yet due, skip the UID
+        // SEARCH/FETCH entirely. INBOX always sweeps (force_sweep). A
+        // UIDVALIDITY change is NEVER skipped — it invalidates every local UID.
+        let now = (self.now)();
+        let local_uidvalidity_pre = self
+            .store
+            .locations_in_mailbox(mailbox)
+            .map_err(db_err)?
+            .first()
+            .map(|l| l.uidvalidity);
+        let uidvalidity_changed =
+            matches!(local_uidvalidity_pre, Some(stored) if stored != server_uidvalidity);
+        let stored = self.store.mailbox_sync_state(mailbox).map_err(db_err)?;
+        let sweep_due = match stored {
+            Some((_, _, last_sweep_at)) => policy::folder_sweep_due(last_sweep_at, now),
+            None => true, // never synced -> always sweep
+        };
+        let counters_unchanged = match stored {
+            Some((last_exists, last_uidnext, _)) => policy::folder_counters_unchanged(
+                last_exists,
+                last_uidnext,
+                server_exists,
+                server_uidnext,
+            ),
+            None => false,
+        };
+        if !force_sweep && !uidvalidity_changed && counters_unchanged && !sweep_due {
+            // Nothing to do: record the (unchanged) counters WITHOUT bumping
+            // the generation, keeping last_sweep_at as stored.
+            let last_sweep_at = stored.map(|(_, _, s)| s).unwrap_or(now);
+            let mut round = SyncRoundWrite::default();
+            round.mailbox_state =
+                Some((mailbox.to_string(), server_exists, server_uidnext, last_sweep_at));
+            return self.store.commit_sync_round(&round).map_err(db_err);
+        }
+        // A full sweep is happening now: advance the sweep clock when due (or
+        // when forced for a non-INBOX mailbox); INBOX does not track a sweep
+        // clock meaningfully but recording `now` is harmless.
+        let new_last_sweep_at = if sweep_due || force_sweep {
+            now
+        } else {
+            stored.map(|(_, _, s)| s).unwrap_or(now)
+        };
+
+        // 2. Local view: stored UIDVALIDITY + per-UID flags for this mailbox.
+        let local_locations = self.store.locations_in_mailbox(mailbox).map_err(db_err)?;
         let local_uidvalidity = local_locations.first().map(|l| l.uidvalidity);
 
-        // 3. UID SEARCH ALL — the server's full UID set for INBOX.
+        // 3. UID SEARCH ALL — the server's full UID set for this mailbox.
         let server_uids = session.uid_search("ALL").await?;
 
-        // Flag sweep uses a FLAGS-ONLY fetch (no body, no headers) over the
-        // window, so an over-window mailbox is not re-headered every poll.
         let local_view = self.local_view(local_uidvalidity, &local_locations);
-        let flag_window = self.flag_window(&server_uids);
+        let flag_window = policy::select_window(server_uids.clone(), limits.mailbox_window).in_window;
         let server_flags = self.fetch_flags(session, &flag_window).await?;
         let server_view = super::delta::ServerMailboxView {
             uidvalidity: server_uidvalidity,
             all_uids: server_uids.clone(),
             flags_by_uid: server_flags,
         };
-        let delta = super::delta::compute_delta(&local_view, &server_view, &self.limits);
+        let delta = super::delta::compute_delta(&local_view, &server_view, &limits);
 
         if delta.beyond_window > 0 {
             log::info!(
-                "imap sync: {} INBOX messages beyond the sync window",
+                "imap sync: {} {mailbox} messages beyond the sync window",
                 delta.beyond_window
             );
         }
 
-        // Everything this round will write is COLLECTED, not applied, until the
-        // atomic commit below.
         let mut round = SyncRoundWrite::default();
+        round.mailbox_state =
+            Some((mailbox.to_string(), server_exists, server_uidnext, new_last_sweep_at));
 
         // On a UIDVALIDITY reset the local UIDs are meaningless: drop every
-        // INBOX location in the same transaction (bodies survive — keyed by the
-        // stable id). The reset's "new" set is the whole windowed server view.
+        // location IN THIS MAILBOX only (bodies survive — keyed by stable id,
+        // and other mailboxes' locations and message->thread mappings are
+        // untouched). The reset's "new" set is the whole windowed server view.
         let dropped_message_ids: Vec<String> = if delta.uidvalidity_reset {
             round.deletions = local_locations
                 .iter()
@@ -302,63 +474,107 @@ impl ImapProvider {
 
         let mut threading_inputs: Vec<ThreadingInput> = Vec::new();
         let mut changed_message_ids: Vec<String> = Vec::new();
+        // Message ids newly located in this mailbox this round (new mail), used
+        // to compute hotness and label transitions.
+        let mut new_message_ids: Vec<String> = Vec::new();
 
-        // New mail: identity pass, sticky id, body once (deferred location).
+        // New mail: identity pass. Only INBOX+Sent (hot) mailboxes fetch
+        // bodies at ingest; a non-hot (Trash/Junk) mailbox is index-only, so
+        // its threading inputs come from the INDEX identity pass headers and no
+        // body is fetched.
         for batch in chunk(&delta.new_uids, policy::UID_BATCH_SIZE) {
             let set = uid_set(batch);
-            let rows = fetch_identity(session, &set).await?;
-            for row in rows {
-                let mut fetcher = SessionBodyFetcher { session };
-                // resolve_and_cache_body resolves the id and caches the body
-                // but writes NO location and never fails the round for an
-                // oversize message (item 2); genuine wire errors propagate.
-                let resolved = super::fetch::resolve_and_cache_body(
-                    &mut fetcher,
-                    &self.store,
-                    &self.cache,
-                    INBOX,
-                    server_uidvalidity,
-                    &row,
-                    (self.now)(),
-                )
-                .await?;
-                let message_id = resolved.message_id;
-                // The location row for this new UID is part of the atomic round.
-                round.locations.push(ImapLocation {
-                    mailbox: INBOX.to_string(),
-                    uidvalidity: server_uidvalidity,
-                    uid: row.uid as i64,
-                    message_id: message_id.clone(),
-                    flags_json: serde_json::to_string(&row.flags)
-                        .unwrap_or_else(|_| "[]".to_string()),
-                    modseq: None,
-                });
-                // Threading inputs: references come from the cached body when
-                // present; a skipped-body message anchors on its identity-pass
-                // Message-ID header (item 2) so it still threads.
-                let headers = if resolved.body_skipped {
-                    super::rfc822::ThreadingHeaders {
-                        message_id: row.inputs.message_id.clone(),
-                        ..Default::default()
-                    }
-                } else {
-                    match self.cache.get(&message_id).map_err(db_err)? {
-                        Some(cached) => super::rfc822::threading_headers_from_raw(&cached.raw),
-                        None => super::rfc822::ThreadingHeaders {
+            if makes_hot {
+                // Hot mailbox: identity pass + body once (deferred location).
+                let rows = fetch_identity(session, &set).await?;
+                for row in rows {
+                    let mut fetcher = SessionBodyFetcher { session };
+                    let resolved = super::fetch::resolve_and_cache_body(
+                        &mut fetcher,
+                        &self.store,
+                        &self.cache,
+                        mailbox,
+                        server_uidvalidity,
+                        &row,
+                        (self.now)(),
+                    )
+                    .await?;
+                    let message_id = resolved.message_id;
+                    round.locations.push(ImapLocation {
+                        mailbox: mailbox.to_string(),
+                        uidvalidity: server_uidvalidity,
+                        uid: row.uid as i64,
+                        message_id: message_id.clone(),
+                        flags_json: serde_json::to_string(&row.flags)
+                            .unwrap_or_else(|_| "[]".to_string()),
+                        modseq: None,
+                    });
+                    let headers = if resolved.body_skipped {
+                        super::rfc822::ThreadingHeaders {
                             message_id: row.inputs.message_id.clone(),
                             ..Default::default()
-                        },
-                    }
-                };
-                threading_inputs.push(ThreadingInput {
-                    message_id: message_id.clone(),
-                    message_id_header: headers
-                        .message_id
-                        .or_else(|| row.inputs.message_id.clone()),
-                    in_reply_to: headers.in_reply_to,
-                    references: headers.references,
-                });
-                changed_message_ids.push(message_id);
+                        }
+                    } else {
+                        match self.cache.get(&message_id).map_err(db_err)? {
+                            Some(cached) => super::rfc822::threading_headers_from_raw(&cached.raw),
+                            None => super::rfc822::ThreadingHeaders {
+                                message_id: row.inputs.message_id.clone(),
+                                ..Default::default()
+                            },
+                        }
+                    };
+                    threading_inputs.push(ThreadingInput {
+                        message_id: message_id.clone(),
+                        message_id_header: headers
+                            .message_id
+                            .or_else(|| row.inputs.message_id.clone()),
+                        in_reply_to: headers.in_reply_to,
+                        references: headers.references,
+                    });
+                    changed_message_ids.push(message_id.clone());
+                    new_message_ids.push(message_id);
+                }
+            } else {
+                // Index-tier mailbox: INDEX identity pass (headers carry the
+                // threading triple); NO body fetched. The stable id is derived
+                // the same way, so a message in INBOX and in Trash is ONE id.
+                let rows = super::fetch::fetch_identity_index(session, &set).await?;
+                for (row, threading) in rows {
+                    let message_id = {
+                        // Sticky id: an id already recorded for this coordinate
+                        // wins; otherwise derive it from the identity inputs.
+                        match self
+                            .store
+                            .location_message_id(mailbox, server_uidvalidity, row.uid as i64)
+                            .map_err(db_err)?
+                        {
+                            Some(existing) => existing,
+                            None => super::identity::derive_message_id(
+                                self.store.account_id(),
+                                &row.inputs,
+                            ),
+                        }
+                    };
+                    round.locations.push(ImapLocation {
+                        mailbox: mailbox.to_string(),
+                        uidvalidity: server_uidvalidity,
+                        uid: row.uid as i64,
+                        message_id: message_id.clone(),
+                        flags_json: serde_json::to_string(&row.flags)
+                            .unwrap_or_else(|_| "[]".to_string()),
+                        modseq: None,
+                    });
+                    threading_inputs.push(ThreadingInput {
+                        message_id: message_id.clone(),
+                        message_id_header: threading
+                            .message_id
+                            .or_else(|| row.inputs.message_id.clone()),
+                        in_reply_to: threading.in_reply_to,
+                        references: threading.references,
+                    });
+                    changed_message_ids.push(message_id.clone());
+                    new_message_ids.push(message_id);
+                }
             }
         }
 
@@ -368,11 +584,11 @@ impl ImapProvider {
                 if let Some(flags) = server_view.flags_by_uid.get(&uid) {
                     if let Some(message_id) = self
                         .store
-                        .location_message_id(INBOX, server_uidvalidity, uid as i64)
+                        .location_message_id(mailbox, server_uidvalidity, uid as i64)
                         .map_err(db_err)?
                     {
                         round.locations.push(ImapLocation {
-                            mailbox: INBOX.to_string(),
+                            mailbox: mailbox.to_string(),
                             uidvalidity: server_uidvalidity,
                             uid: uid as i64,
                             message_id: message_id.clone(),
@@ -389,31 +605,22 @@ impl ImapProvider {
             for &uid in &delta.deleted_uids {
                 if let Some(message_id) = self
                     .store
-                    .location_message_id(INBOX, server_uidvalidity, uid as i64)
+                    .location_message_id(mailbox, server_uidvalidity, uid as i64)
                     .map_err(db_err)?
                 {
                     round
                         .deletions
-                        .push((INBOX.to_string(), server_uidvalidity, uid as i64));
+                        .push((mailbox.to_string(), server_uidvalidity, uid as i64));
                     changed_message_ids.push(message_id);
                 }
             }
         }
 
-        // Thread the new messages, seeding prior thread state (with PERSISTED
-        // creation generations) so a merge picks the genuinely older survivor.
-        //
-        // Seeding now reads PERSISTED threading tokens, not cached bodies: the
-        // loader queries `imap_message_tokens` for existing messages that share
-        // any token with THIS batch, resolves their threads, and seeds only
-        // those. A flag change, a deletion or an idle round threads nothing and
-        // loads nothing.
+        // Thread the new messages, seeding prior thread state from PERSISTED
+        // tokens (never cached bodies), so index-tier messages thread fine.
         let outcome = if threading_inputs.is_empty() {
             threading::ThreadingOutcome::default()
         } else {
-            // Before the first threading that needs tokens, run the one-time
-            // upgrade backfill (idempotent, bounded-batch, crash-resumable);
-            // this is the ONLY place that still parses cached bodies.
             self.ensure_tokens_backfilled()?;
             let batch_tokens: Vec<String> = threading_inputs
                 .iter()
@@ -423,6 +630,14 @@ impl ImapProvider {
             threading::thread_batch(&mut thread_state, &threading_inputs)
         };
 
+        // Resolve each message's thread id after this round's assignments, so
+        // hotness and journaling see the final grouping.
+        let mut assignment_of: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for (message_id, thread_id) in &outcome.assignments {
+            assignment_of.insert(message_id.clone(), thread_id.clone());
+        }
+
         // Changed thread ids: threading effects, plus the threads of any
         // flag-changed / deleted / dropped message.
         let mut changed_threads: std::collections::BTreeSet<String> =
@@ -431,39 +646,60 @@ impl ImapProvider {
             if let Some(thread) = self.store.thread_of_message(message_id).map_err(db_err)? {
                 changed_threads.insert(thread);
             }
+            if let Some(thread) = assignment_of.get(message_id) {
+                changed_threads.insert(thread.clone());
+            }
         }
         for (_, thread_id) in &outcome.assignments {
             changed_threads.insert(thread_id.clone());
         }
 
+        // Hotness (item 5): a thread with a NEW location in INBOX/Sent is hot.
+        // Resolve each new message to its (post-assignment) thread id. A merge
+        // survivor is carried across aliases by commit_sync_round's resolver.
+        let mut hot_threads: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
+        if makes_hot {
+            for message_id in &new_message_ids {
+                let thread = match assignment_of.get(message_id) {
+                    Some(thread) => Some(thread.clone()),
+                    None => self.store.thread_of_message(message_id).map_err(db_err)?,
+                };
+                if let Some(thread) = thread {
+                    hot_threads.insert(thread);
+                }
+            }
+        }
+
         round.thread_assignments = outcome.assignments;
         round.aliases = outcome.aliases;
-        round.changed_threads = changed_threads.into_iter().collect();
-        // Persist each newly-threaded message's exact token set in the SAME
-        // atomic round as its assignment, so a failed round leaves no tokens.
         round.message_tokens = threading_inputs
             .iter()
             .map(|input| (input.message_id.clone(), input.token_set()))
             .collect();
+        round.hot_threads = hot_threads.into_iter().collect();
 
-        // Idle round: nothing changed. Do not bump the generation or journal
-        // (item 5); return the current generation unchanged.
-        if round.is_empty() {
-            return self.store.generation().map_err(db_err);
+        // Journaling (item 5): only HOT threads are reported to the engine. A
+        // changed thread that is not hot (and does not become hot this round)
+        // is recorded but NOT journaled, so a Trash/Junk-only thread never
+        // reaches the engine. A thread made hot THIS round is journaled.
+        let newly_hot: std::collections::BTreeSet<&String> = round.hot_threads.iter().collect();
+        let mut journaled: Vec<String> = Vec::new();
+        for thread_id in &changed_threads {
+            let resolved = self.store.resolve_thread_alias(thread_id).map_err(db_err)?;
+            let already_hot = self.store.is_thread_hot(&resolved).map_err(db_err)?;
+            if already_hot || newly_hot.contains(&resolved) || newly_hot.contains(thread_id) {
+                journaled.push(thread_id.clone());
+            }
         }
+        round.changed_threads = journaled;
 
-        // Atomic commit: locations, deletions, threads, aliases, journal and
-        // the generation bump all in ONE transaction (item 1).
+        // Idle round: nothing content-changed. Still persist cadence counters
+        // (item 4) without bumping the generation. commit_sync_round handles
+        // the mailbox_state write on an empty round.
         let generation = self.store.commit_sync_round(&round).map_err(db_err)?;
         self.store.prune_journal().map_err(db_err)?;
         Ok(generation)
-    }
-
-    /// INBOX locations held locally, ordered by UID.
-    fn inbox_locations(&self) -> ProviderResult<Vec<ImapLocation>> {
-        self.store
-            .locations_in_mailbox(INBOX)
-            .map_err(db_err)
     }
 
     fn local_view(
@@ -481,13 +717,6 @@ impl ImapProvider {
             uidvalidity,
             flags_by_uid,
         }
-    }
-
-    /// Which UIDs to fetch flags for this round: the window of the server's
-    /// full set (newest first), so an over-window mailbox still sweeps its
-    /// in-window flags without a per-message request.
-    fn flag_window(&self, server_uids: &[u32]) -> Vec<u32> {
-        policy::select_window(server_uids.to_vec(), self.limits.mailbox_window).in_window
     }
 
     /// Fetch FLAGS for a UID set, batched, returning uid -> wire flags. Uses
@@ -670,8 +899,9 @@ impl MailSync for ImapProvider {
     }
 
     async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
-        // Refresh INBOX and return the current generation as the cursor.
-        let generation = self.refresh_inbox().await?;
+        // Refresh every synced mailbox (INBOX first) and return the current
+        // generation as the cursor.
+        let generation = self.refresh_all().await?;
         Ok(SyncCursor::from_generation(generation))
     }
 
@@ -687,9 +917,9 @@ impl MailSync for ImapProvider {
         if !policy::journal_cursor_is_answerable(polled, before) {
             return Err(ProviderError::InvalidCursor);
         }
-        // (a) refresh INBOX; (b) return threads journalled since `polled`;
-        // (c) new cursor = current generation; more = false.
-        let generation = self.refresh_inbox().await?;
+        // (a) refresh all synced mailboxes (INBOX first); (b) return threads
+        // journalled since `polled`; (c) new cursor = current generation.
+        let generation = self.refresh_all().await?;
         let changed = self.store.journal_since(polled).map_err(db_err)?;
         Ok(SyncBatch {
             changed_threads: changed,
@@ -717,6 +947,7 @@ impl MailSync for ImapProvider {
             // copy.
             return Err(ProviderError::NotFound);
         }
+        let plan = self.build_sync_plan()?;
 
         let mut messages = Vec::new();
         for message_id in &message_ids {
@@ -728,18 +959,19 @@ impl MailSync for ImapProvider {
                 // The message's last location was expunged; skip it.
                 continue;
             }
-            // Labels: the union across every copy of the message.
+            // Labels: the union across every copy, each classified by the
+            // mailbox's RESOLVED ROLE (never its name).
             let per_copy: Vec<Vec<String>> = locations
                 .iter()
                 .map(|location| {
                     let flags: Vec<String> =
                         serde_json::from_str(&location.flags_json).unwrap_or_default();
-                    labels_for(&location.mailbox, None, &flags)
+                    labels_for(plan.label_for_mailbox(&location.mailbox), &flags)
                 })
                 .collect();
             let label_ids = merge_label_sets(&per_copy);
 
-            // Body: cache first, network only if missing.
+            // Body: cache first, else fetch from the best live location.
             let raw = match self.cache.get(message_id).map_err(db_err)? {
                 Some(cached) => cached.raw,
                 None => {
@@ -800,14 +1032,36 @@ impl ImapProvider {
             .store
             .locations_for_message(message_id)
             .map_err(db_err)?;
-        let Some(location) = locations.into_iter().find(|l| l.mailbox == INBOX) else {
+        if locations.is_empty() {
             return Ok(None);
+        }
+        // Best live location: prefer INBOX, then Sent, then any other mailbox.
+        let plan = self.build_sync_plan()?;
+        let rank = |mailbox: &str| -> u8 {
+            if mailbox.eq_ignore_ascii_case(INBOX) {
+                0
+            } else if matches!(
+                plan.entry_for(mailbox).and_then(|e| e.role),
+                Some(super::MailboxRole::Sent)
+            ) {
+                1
+            } else {
+                2
+            }
         };
-        let status = session.examine(INBOX).await?;
+        let mut ordered = locations;
+        ordered.sort_by_key(|l| rank(&l.mailbox));
+        let location = ordered.into_iter().next().expect("non-empty");
+
+        // Per-mailbox UIDVALIDITY check before fetching (generalized from the
+        // INBOX-only c77fa3f check): EXAMINE the location's mailbox and confirm
+        // its UIDVALIDITY still matches before trusting the stored UID.
+        let status = session.examine(&location.mailbox).await?;
         if status.uid_validity.map(i64::from) != Some(location.uidvalidity) {
-            return Err(ProviderError::TransientTransport(
-                "mailbox UIDVALIDITY changed; sync must refresh locations before fetching".into(),
-            ));
+            return Err(ProviderError::TransientTransport(format!(
+                "{} UIDVALIDITY changed; sync must refresh locations before fetching",
+                location.mailbox
+            )));
         }
         let mut fetcher = SessionBodyFetcher { session };
         use super::fetch::BodyFetcher;
@@ -828,12 +1082,13 @@ impl MailFetch for ImapProvider {
         if locations.is_empty() {
             return Err(ProviderError::NotFound);
         }
+        let plan = self.build_sync_plan()?;
         let per_copy: Vec<Vec<String>> = locations
             .iter()
             .map(|location| {
                 let flags: Vec<String> =
                     serde_json::from_str(&location.flags_json).unwrap_or_default();
-                labels_for(&location.mailbox, None, &flags)
+                labels_for(plan.label_for_mailbox(&location.mailbox), &flags)
             })
             .collect();
         let label_ids = merge_label_sets(&per_copy);
@@ -897,11 +1152,27 @@ impl MailMutate for ImapProvider {
     }
 
     async fn list_labels(&self) -> ProviderResult<Vec<Label>> {
-        // INBOX-only system labels this slice; no user labels yet.
+        // System labels this slice (no user labels yet). Slice 5b-1 adds the
+        // Sent/Spam/Trash roles alongside INBOX.
         Ok(vec![
             Label {
                 id: "INBOX".into(),
                 name: "Inbox".into(),
+                kind: "system".into(),
+            },
+            Label {
+                id: "SENT".into(),
+                name: "Sent".into(),
+                kind: "system".into(),
+            },
+            Label {
+                id: "SPAM".into(),
+                name: "Spam".into(),
+                kind: "system".into(),
+            },
+            Label {
+                id: "TRASH".into(),
+                name: "Trash".into(),
                 kind: "system".into(),
             },
             Label {
@@ -973,9 +1244,9 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream};
 
-    /// One seeded message in the fake server's INBOX: its UID, flags, and raw
-    /// RFC 5322 bytes. `advertised_size`, when set, overrides the RFC822.SIZE
-    /// the identity pass reports (used to simulate an oversize message without
+    /// One seeded message in a fake folder: its UID, flags, and raw RFC 5322
+    /// bytes. `advertised_size`, when set, overrides the RFC822.SIZE the
+    /// identity pass reports (used to simulate an oversize message without
     /// allocating 64 MiB).
     #[derive(Clone)]
     struct FakeMessage {
@@ -985,33 +1256,29 @@ mod tests {
         advertised_size: Option<usize>,
     }
 
-    /// A tiny in-memory INBOX the scripted server serves. Shared (Arc<Mutex>)
-    /// so a test can mutate it (add mail, change a flag, expunge) between
-    /// polls and the next opened session sees the change.
-    ///
-    /// `fail_after_body_fetches`, when set, makes the scripted server DROP the
-    /// connection after that many whole-body (`BODY.PEEK[]`) fetches in one
-    /// session — a mid-round transient failure, so the at-least-once contract
-    /// can be exercised.
+    /// One named mailbox (folder) on the fake server: its UIDVALIDITY, next
+    /// UID, and messages. `fail_after_body_fetches`, when set, makes the server
+    /// DROP the connection after that many whole-body fetches in one session.
     #[derive(Clone, Default)]
-    struct FakeMailbox {
+    struct FakeFolder {
         uidvalidity: u32,
         uidnext: u32,
         messages: Vec<FakeMessage>,
         fail_after_body_fetches: Option<usize>,
+        /// EXAMINE of this folder answers `NO [NONEXISTENT]` (a catalog row
+        /// whose mailbox was renamed or deleted on the server).
+        examine_fails: bool,
     }
 
-    impl FakeMailbox {
+    impl FakeFolder {
         fn new(uidvalidity: u32) -> Self {
             Self {
                 uidvalidity,
                 uidnext: 1,
                 messages: Vec::new(),
                 fail_after_body_fetches: None,
+                examine_fails: false,
             }
-        }
-        fn add(&mut self, flags: &[&str], raw: &str) -> u32 {
-            self.add_sized(flags, raw, None)
         }
         fn add_sized(&mut self, flags: &[&str], raw: &str, advertised_size: Option<usize>) -> u32 {
             let uid = self.uidnext;
@@ -1026,17 +1293,80 @@ mod tests {
         }
     }
 
+    /// A tiny in-memory server with one or more named mailboxes, shared
+    /// (Arc<Mutex>) so a test can mutate it (add mail, change a flag, expunge,
+    /// move a message between folders) between polls and the next opened
+    /// session sees the change. `FakeMailbox::new` creates an INBOX, and the
+    /// backward-compatible `add`/`add_sized` operate on INBOX, so the Slice 5a
+    /// tests are unchanged; Slice 5b-1 tests add Trash/Junk/Sent folders.
+    ///
+    /// `command_counts` records how many SEARCH / whole-body / identity fetches
+    /// the server answered per mailbox, so a cadence test can assert that an
+    /// unchanged, not-due folder issued no SEARCH/FETCH.
+    #[derive(Clone, Default)]
+    struct FakeMailbox {
+        folders: std::collections::BTreeMap<String, FakeFolder>,
+        /// Per-mailbox `(searches, body_fetches, identity_fetches)` counters,
+        /// accumulated across every session opened against this snapshot's
+        /// shared handle. Shared so a test reads them after sync.
+        command_counts: Arc<Mutex<std::collections::BTreeMap<String, (usize, usize, usize)>>>,
+    }
+
+    impl FakeMailbox {
+        /// A server with just an INBOX at the given UIDVALIDITY.
+        fn new(uidvalidity: u32) -> Self {
+            let mut folders = std::collections::BTreeMap::new();
+            folders.insert("INBOX".to_string(), FakeFolder::new(uidvalidity));
+            Self {
+                folders,
+                command_counts: Arc::new(Mutex::new(Default::default())),
+            }
+        }
+        /// Ensure a folder exists at `uidvalidity`, returning a mutable handle.
+        fn folder(&mut self, name: &str, uidvalidity: u32) -> &mut FakeFolder {
+            self.folders
+                .entry(name.to_string())
+                .or_insert_with(|| FakeFolder::new(uidvalidity))
+        }
+        /// Mutable INBOX handle (always present).
+        fn inbox(&mut self) -> &mut FakeFolder {
+            self.folders.get_mut("INBOX").expect("INBOX always present")
+        }
+        fn add(&mut self, flags: &[&str], raw: &str) -> u32 {
+            self.inbox().add_sized(flags, raw, None)
+        }
+        fn add_sized(&mut self, flags: &[&str], raw: &str, advertised_size: Option<usize>) -> u32 {
+            self.inbox().add_sized(flags, raw, advertised_size)
+        }
+        /// Add a message to a named folder (created at `uidvalidity` if new).
+        fn add_to(&mut self, mailbox: &str, uidvalidity: u32, flags: &[&str], raw: &str) -> u32 {
+            self.folder(mailbox, uidvalidity).add_sized(flags, raw, None)
+        }
+        /// The command counts seen for a mailbox so far.
+        fn counts(&self, mailbox: &str) -> (usize, usize, usize) {
+            self.command_counts
+                .lock()
+                .unwrap()
+                .get(mailbox)
+                .copied()
+                .unwrap_or((0, 0, 0))
+        }
+    }
+
     /// A scripted IMAP server that answers EXAMINE / UID SEARCH / UID FETCH /
-    /// LOGOUT from a `FakeMailbox` snapshot, over a tokio duplex stream. It
-    /// understands the exact command shapes this provider issues, parsing them
-    /// by type rather than a fixed sequence, so it is robust to the order and
-    /// batching of commands.
+    /// LOGOUT from a `FakeMailbox` snapshot, over a tokio duplex stream.
+    /// EXAMINE selects the active folder; subsequent SEARCH/FETCH act on it. It
+    /// parses commands by TYPE, so it is robust to order and batching.
     fn spawn_server(mailbox: FakeMailbox) -> (DuplexStream, tokio::task::JoinHandle<()>) {
         let (client, server) = tokio::io::duplex(1 << 20);
+        let counts = mailbox.command_counts.clone();
+        let folders = mailbox.folders.clone();
         let task = tokio::spawn(async move {
             let mut server = BufReader::new(server);
             server.get_mut().write_all(b"* OK ready\r\n").await.unwrap();
             let mut body_fetches = 0usize;
+            // The currently EXAMINEd folder; defaults to INBOX.
+            let mut selected = "INBOX".to_string();
             loop {
                 let mut line = String::new();
                 if server.read_line(&mut line).await.unwrap() == 0 {
@@ -1047,38 +1377,56 @@ mod tests {
                     continue;
                 };
                 let upper = rest.to_ascii_uppercase();
+                let empty = FakeFolder::default();
                 if upper.starts_with("LOGIN") {
                     reply(&mut server, &format!("{tag} OK logged in\r\n")).await;
                 } else if upper.starts_with("EXAMINE") {
+                    // "EXAMINE <mailbox>" — select it. The name may be quoted.
+                    let name = rest["EXAMINE".len().min(rest.len())..]
+                        .trim()
+                        .trim_matches('"')
+                        .to_string();
+                    selected = if name.is_empty() { "INBOX".into() } else { name };
+                    let folder = folders.get(&selected).unwrap_or(&empty);
+                    if folder.examine_fails {
+                        reply(
+                            &mut server,
+                            &format!("{tag} NO [NONEXISTENT] Mailbox does not exist\r\n"),
+                        )
+                        .await;
+                        continue;
+                    }
                     let body = format!(
                         "* {} EXISTS\r\n* OK [UIDVALIDITY {}] .\r\n* OK [UIDNEXT {}] .\r\n{tag} OK [READ-ONLY] done\r\n",
-                        mailbox.messages.len(),
-                        mailbox.uidvalidity,
-                        mailbox.uidnext
+                        folder.messages.len(),
+                        folder.uidvalidity,
+                        folder.uidnext
                     );
                     reply(&mut server, &body).await;
                 } else if upper.starts_with("UID SEARCH") {
+                    let folder = folders.get(&selected).unwrap_or(&empty);
+                    counts.lock().unwrap().entry(selected.clone()).or_default().0 += 1;
                     let uids: Vec<String> =
-                        mailbox.messages.iter().map(|m| m.uid.to_string()).collect();
+                        folder.messages.iter().map(|m| m.uid.to_string()).collect();
                     let body = format!("* SEARCH {}\r\n{tag} OK done\r\n", uids.join(" "));
                     reply(&mut server, &body).await;
                 } else if upper.starts_with("UID FETCH") {
-                    // "UID FETCH <set> (<items>)". Decide the kind by items:
-                    // whole body (BODY.PEEK[]), FLAGS-only ((UID FLAGS)), or the
-                    // identity pass (header fields).
+                    let folder = folders.get(&selected).unwrap_or(&empty);
                     let wants_body = upper.contains("BODY.PEEK[]");
+                    let is_identity = upper.contains("HEADER.FIELDS");
+                    {
+                        let mut c = counts.lock().unwrap();
+                        let entry = c.entry(selected.clone()).or_default();
+                        if wants_body {
+                            entry.1 += 1;
+                        } else if is_identity {
+                            entry.2 += 1;
+                        }
+                    }
                     if wants_body {
-                        // Inject a mid-round transient failure after N body
-                        // fetches: a tagged NO [UNAVAILABLE] the client maps to
-                        // TransientTransport, aborting the round.
-                        if let Some(limit) = mailbox.fail_after_body_fetches {
+                        if let Some(limit) = folder.fail_after_body_fetches {
                             if body_fetches >= limit {
-                                // A mid-transfer connection loss: announce a
-                                // body literal, then send NONE of it and close.
-                                // async-imap errors reading the truncated
-                                // literal (unexpected EOF), which propagates as
-                                // a transport error and aborts the round.
-                                let uid = parse_uid_set(rest, &mailbox)
+                                let uid = parse_uid_set(rest, folder)
                                     .first()
                                     .copied()
                                     .unwrap_or(0);
@@ -1092,11 +1440,11 @@ mod tests {
                         }
                         body_fetches += 1;
                     }
-                    let flags_only = !wants_body && !upper.contains("HEADER.FIELDS");
-                    let set = parse_uid_set(rest, &mailbox);
+                    let flags_only = !wants_body && !is_identity;
+                    let set = parse_uid_set(rest, folder);
                     let mut out = String::new();
                     for (seq, uid) in set.iter().enumerate() {
-                        if let Some(message) = mailbox.messages.iter().find(|m| &m.uid == uid) {
+                        if let Some(message) = folder.messages.iter().find(|m| &m.uid == uid) {
                             out.push_str(&fetch_response(
                                 seq as u32 + 1,
                                 message,
@@ -1122,15 +1470,15 @@ mod tests {
         server.get_mut().write_all(text.as_bytes()).await.unwrap();
     }
 
-    /// Expand a UID set token ("1", "1,2,3") against the mailbox.
-    fn parse_uid_set(command: &str, mailbox: &FakeMailbox) -> Vec<u32> {
+    /// Expand a UID set token ("1", "1,2,3") against a folder.
+    fn parse_uid_set(command: &str, folder: &FakeFolder) -> Vec<u32> {
         // The set is the token after "UID FETCH ".
         let after = command["UID FETCH ".len().min(command.len())..].trim_start();
         let set_token = after.split_whitespace().next().unwrap_or("");
         let mut uids = Vec::new();
         for part in set_token.split(',') {
             if let Ok(uid) = part.parse::<u32>() {
-                if mailbox.messages.iter().any(|m| m.uid == uid) {
+                if folder.messages.iter().any(|m| m.uid == uid) {
                     uids.push(uid);
                 }
             }
@@ -1207,27 +1555,83 @@ mod tests {
     }
 
     /// Build an ImapProvider backed by the shared fake mailbox and an
-    /// in-memory database.
+    /// in-memory database. Seeds a catalog row for every folder present on the
+    /// fake server (inferring the special-use attribute from the folder name)
+    /// so the sync plan resolves Trash/Junk/Sent roles exactly as discovery
+    /// would. INBOX-only tests get an INBOX catalog row and nothing else.
     fn provider_with(mailbox: Arc<Mutex<FakeMailbox>>) -> (ImapProvider, ImapStateStore) {
         let database = Arc::new(Database::open_memory());
-        // The engine ingests into the shared threads/messages tables, which
-        // reference the account; adopt it exactly as account setup would.
         database
             .adopt_mail_account("me@example.com", crate::models::MailProviderKind::Imap)
             .unwrap();
         let store = ImapStateStore::new(database.clone(), "me@example.com");
+
+        // Seed the catalog from the fake server's folders.
+        for (name, folder) in &mailbox.lock().unwrap().folders {
+            let special_use = infer_special_use(name);
+            store
+                .upsert_mailbox(&super::super::ImapMailbox {
+                    name: name.clone(),
+                    delimiter: Some("/".into()),
+                    special_use,
+                    uidvalidity: folder.uidvalidity as i64,
+                    uidnext: folder.uidnext as i64,
+                    highestmodseq: None,
+                    permanent_flags_json: None,
+                    permanent_keywords: None,
+                })
+                .unwrap();
+        }
+
         let cache = BodyCache::new(store.clone());
         let provider = ImapProvider {
             store: store.clone(),
             cache,
             username: "me@example.com".into(),
             label_model: LabelModel::ImapLabelFolders,
+            settings: test_settings(),
             source: Arc::new(FakeSource { mailbox }),
             now: || 1_700_000_000,
             limits: SyncLimits::inbox(),
             thread_state_loads: std::sync::atomic::AtomicUsize::new(0),
         };
         (provider, store)
+    }
+
+    /// Infer an RFC 6154 attribute from a well-known folder name for the test
+    /// catalog (so the plan resolves roles by attribute, the primary path).
+    fn infer_special_use(name: &str) -> Option<String> {
+        match name {
+            "Trash" => Some("\\Trash".into()),
+            "Junk" | "Spam" => Some("\\Junk".into()),
+            "Sent" => Some("\\Sent".into()),
+            "Archive" => Some("\\Archive".into()),
+            "Drafts" => Some("\\Drafts".into()),
+            "All Mail" => Some("\\All".into()),
+            _ => None,
+        }
+    }
+
+    /// Minimal non-secret settings for the fake provider.
+    fn test_settings() -> ImapAccountSettings {
+        use super::super::settings::SecurityMode;
+        ImapAccountSettings {
+            imap_host: "127.0.0.1".into(),
+            imap_port: 1143,
+            imap_security: SecurityMode::StartTls,
+            imap_username: "me@example.com".into(),
+            smtp_host: "127.0.0.1".into(),
+            smtp_port: 1025,
+            smtp_security: SecurityMode::StartTls,
+            smtp_username: "me@example.com".into(),
+            mailbox_overrides: Default::default(),
+            archive_mailbox: None,
+            label_storage: LabelStorage::Folders,
+            label_container: Some("Labels".into()),
+            identities: vec![],
+            pinned_fingerprints: Default::default(),
+            server_saves_sent: false,
+        }
     }
 
     fn message(message_id: &str, subject: &str, extra_headers: &str) -> String {
@@ -1282,10 +1686,10 @@ mod tests {
         {
             let mut mb = mailbox.lock().unwrap();
             mb.add(&[], &message("<m3@x>", "Three", ""));
-            if let Some(first) = mb.messages.iter_mut().find(|m| m.uid == 1) {
+            if let Some(first) = mb.inbox().messages.iter_mut().find(|m| m.uid == 1) {
                 first.flags = vec!["\\Seen".into()];
             }
-            mb.messages.retain(|m| m.uid != uid2);
+            mb.inbox().messages.retain(|m| m.uid != uid2);
         }
 
         // Second sync ingests the delta.
@@ -1370,9 +1774,9 @@ mod tests {
         // Bump UIDVALIDITY and re-seed the SAME message at a new UID.
         {
             let mut mb = mailbox.lock().unwrap();
-            mb.uidvalidity = 200;
-            mb.uidnext = 1;
-            mb.messages.clear();
+            mb.inbox().uidvalidity = 200;
+            mb.inbox().uidnext = 1;
+            mb.inbox().messages.clear();
             mb.add(&[], &message("<m1@x>", "One", ""));
         }
         provider.baseline_cursor().await.unwrap();
@@ -1474,10 +1878,11 @@ mod tests {
             Err(ProviderError::InvalidOperation(_)) => {}
             other => panic!("expected InvalidOperation, got {:?}", other.err()),
         }
-        // list_labels still returns the INBOX-only system labels.
+        // list_labels returns the system labels including the Slice 5b-1
+        // Sent/Spam/Trash roles.
         let labels = provider.list_labels().await.unwrap();
         let ids: Vec<_> = labels.iter().map(|l| l.id.as_str()).collect();
-        assert_eq!(ids, ["INBOX", "UNREAD", "STARRED"]);
+        assert_eq!(ids, ["INBOX", "SENT", "SPAM", "TRASH", "UNREAD", "STARRED"]);
     }
 
     #[test]
@@ -1517,7 +1922,7 @@ mod tests {
 
         // Inject the mid-round drop.
         let mut failing = mb.clone();
-        failing.fail_after_body_fetches = Some(1);
+        failing.inbox().fail_after_body_fetches = Some(1);
         let mut session = open_scripted_session(failing).await;
         let result = provider.refresh_inbox_with(session.as_mut()).await;
         assert!(result.is_err(), "a dropped connection fails the round");
@@ -1555,10 +1960,10 @@ mod tests {
         // drops the connection on m2's body fetch, after the flag change was
         // computed but before the atomic commit.
         let mut next = mb.clone();
-        next.messages[0].flags = vec!["\\Seen".into()];
+        next.inbox().messages[0].flags = vec!["\\Seen".into()];
         next.add(&[], &message("<m2@x>", "Two", ""));
         let mut failing = next.clone();
-        failing.fail_after_body_fetches = Some(0); // drop on the first body fetch
+        failing.inbox().fail_after_body_fetches = Some(0); // drop on the first body fetch
         let mut session = open_scripted_session(failing).await;
         assert!(provider.refresh_inbox_with(session.as_mut()).await.is_err());
 
@@ -1595,10 +2000,10 @@ mod tests {
 
         // m2 expunged, m3 new; drop on m3's body fetch.
         let mut next = mb.clone();
-        next.messages.retain(|m| m.uid != 2);
+        next.inbox().messages.retain(|m| m.uid != 2);
         next.add(&[], &message("<m3@x>", "Three", ""));
         let mut failing = next.clone();
-        failing.fail_after_body_fetches = Some(0);
+        failing.inbox().fail_after_body_fetches = Some(0);
         let mut session = open_scripted_session(failing).await;
         assert!(provider.refresh_inbox_with(session.as_mut()).await.is_err());
 
@@ -2418,6 +2823,296 @@ mod tests {
 
     // ---- SLICE5A_FIXES item 6: gated live test against the Dovecot harness --
     //
+    // ------------------------------------------------------------------
+    // Slice 5b-1: multi-mailbox machinery + Trash/Junk
+    // ------------------------------------------------------------------
+
+    /// Labels the engine ended up with for a thread, via fetch_thread's union.
+    async fn thread_labels(provider: &ImapProvider, thread_id: &str) -> Vec<String> {
+        let messages = provider.fetch_thread(thread_id).await.unwrap();
+        messages.into_iter().flat_map(|m| m.label_ids).collect()
+    }
+
+    /// (a) A hot INBOX message moved to Trash by another client -> TRASH, no
+    /// INBOX, and its thread is re-journaled so the engine re-ingests it.
+    #[tokio::test]
+    async fn a_hot_inbox_message_moved_to_trash_becomes_trash_and_is_rejournaled() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<m1@x>", "Hello", ""));
+        mb.folder("Trash", 50); // present but empty for now
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+
+        // First sync: m1 is in INBOX, hot, ingested.
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        let threads = provider.list_inbox(None).await.unwrap();
+        assert_eq!(threads.thread_ids.len(), 1);
+        let thread_id = threads.thread_ids[0].clone();
+        assert!(store.is_thread_hot(&thread_id).unwrap(), "an INBOX thread is hot");
+        assert_eq!(thread_labels(&provider, &thread_id).await, vec!["INBOX"]);
+
+        // Another client moves m1 from INBOX to Trash (same Message-ID -> same
+        // stable id, so it is the same message in a new mailbox).
+        {
+            let mut mb = mailbox.lock().unwrap();
+            mb.inbox().messages.retain(|m| m.uid != 1);
+            mb.add_to("Trash", 50, &["\\Seen"], &message("<m1@x>", "Hello", ""));
+        }
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+
+        // The INBOX location is gone; the Trash location is present.
+        assert!(store.locations_in_mailbox("INBOX").unwrap().is_empty());
+        assert_eq!(store.locations_in_mailbox("Trash").unwrap().len(), 1);
+        // The thread was already hot, so it was journaled and re-ingested; its
+        // labels are now TRASH WITHOUT INBOX — never silently "archived".
+        let labels = thread_labels(&provider, &thread_id).await;
+        assert!(labels.contains(&"TRASH".to_string()), "has TRASH: {labels:?}");
+        assert!(!labels.contains(&"INBOX".to_string()), "no INBOX: {labels:?}");
+    }
+
+    /// (b) A never-hot thread that only ever appears in Trash -> locations,
+    /// threads and tokens recorded, NOT journaled, NOT ingested, no body
+    /// fetched; fetch_thread still works (cache-miss server fetch).
+    #[tokio::test]
+    async fn a_never_hot_trash_only_thread_is_recorded_but_not_journaled() {
+        let mut mb = FakeMailbox::new(100); // empty INBOX
+        mb.add_to("Trash", 50, &["\\Seen"], &message("<t1@x>", "Trashed", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox);
+        let db = store.database();
+
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+
+        // Recorded: a Trash location + a thread + tokens.
+        let trash = store.locations_in_mailbox("Trash").unwrap();
+        assert_eq!(trash.len(), 1);
+        let message_id = trash[0].message_id.clone();
+        let thread_id = store.thread_of_message(&message_id).unwrap().unwrap();
+        assert!(!store.is_thread_hot(&thread_id).unwrap(), "a Trash-only thread is not hot");
+
+        // NOT journaled: the engine saw no mail.
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 0);
+
+        // No body was fetched during index-only sync.
+        assert!(provider.cache.get(&message_id).unwrap().is_none(), "no body cached at ingest");
+
+        // fetch_thread still works: it fetches the body from Trash on demand.
+        let messages = provider.fetch_thread(&thread_id).await.unwrap();
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].label_ids.contains(&"TRASH".to_string()));
+    }
+
+    /// (c) Junk likewise, with the SPAM label.
+    #[tokio::test]
+    async fn a_never_hot_junk_only_thread_is_recorded_with_the_spam_label() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add_to("Junk", 60, &["\\Seen"], &message("<j1@x>", "Spammy", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox);
+        let db = store.database();
+
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        let junk = store.locations_in_mailbox("Junk").unwrap();
+        assert_eq!(junk.len(), 1);
+        let thread_id = store.thread_of_message(&junk[0].message_id).unwrap().unwrap();
+        assert!(!store.is_thread_hot(&thread_id).unwrap());
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 0, "not journaled");
+
+        let labels = thread_labels(&provider, &thread_id).await;
+        assert!(labels.contains(&"SPAM".to_string()), "SPAM label: {labels:?}");
+    }
+
+    /// (d) Cadence gating: an unchanged, not-due folder issues no SEARCH/FETCH
+    /// on the second poll; when the sweep is due a full sweep runs again and
+    /// catches an external flag change.
+    #[tokio::test]
+    async fn cadence_gating_skips_an_unchanged_folder_until_the_sweep_is_due() {
+        use std::sync::atomic::{AtomicI64, Ordering};
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i1@x>", "Inbox", ""));
+        mb.add_to("Trash", 50, &["\\Seen"], &message("<t1@x>", "Trashed", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (mut provider, store) = provider_with(mailbox.clone());
+
+        // A controllable clock so we can advance past the sweep interval.
+        static CLOCK: AtomicI64 = AtomicI64::new(1_700_000_000);
+        CLOCK.store(1_700_000_000, Ordering::SeqCst);
+        provider.now = || CLOCK.load(Ordering::SeqCst);
+        let db = store.database();
+
+        // First sync sweeps Trash once (counts: 1 search).
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        let after_first = mailbox.lock().unwrap().counts("Trash").0;
+        assert_eq!(after_first, 1, "Trash swept once on the baseline");
+
+        // Second poll, counters unchanged and not sweep-due: NO new Trash
+        // SEARCH is issued.
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        assert_eq!(
+            mailbox.lock().unwrap().counts("Trash").0,
+            after_first,
+            "an unchanged, not-due Trash issues no SEARCH"
+        );
+
+        // An external client marks the Trash message \Flagged — this moves
+        // NEITHER EXISTS nor UIDNEXT, so only the periodic sweep catches it.
+        mailbox.lock().unwrap().folder("Trash", 50).messages[0].flags =
+            vec!["\\Seen".into(), "\\Flagged".into()];
+        // Advance the clock past the sweep interval.
+        CLOCK.store(1_700_000_000 + super::super::policy::FOLDER_SWEEP_INTERVAL_SECS + 1, Ordering::SeqCst);
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        assert!(
+            mailbox.lock().unwrap().counts("Trash").0 > after_first,
+            "the due sweep issues a SEARCH again"
+        );
+        // The flag change is now reflected locally.
+        let trash = store.locations_in_mailbox("Trash").unwrap();
+        let flags: Vec<String> = serde_json::from_str(&trash[0].flags_json).unwrap();
+        assert!(flags.iter().any(|f| f == "\\Flagged"), "the sweep caught the flag change");
+    }
+
+    /// (e) A UIDVALIDITY reset in Trash drops ONLY Trash's locations; INBOX is
+    /// untouched.
+    #[tokio::test]
+    async fn a_uidvalidity_reset_in_trash_only_drops_trash_locations() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i1@x>", "Inbox", ""));
+        mb.add_to("Trash", 50, &["\\Seen"], &message("<t1@x>", "Trashed", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        assert_eq!(store.locations_in_mailbox("INBOX").unwrap().len(), 1);
+        assert_eq!(store.locations_in_mailbox("Trash").unwrap().len(), 1);
+
+        // Reset Trash's UIDVALIDITY (new mailbox incarnation) and force a sweep.
+        {
+            let mut mb = mailbox.lock().unwrap();
+            let trash = mb.folder("Trash", 999);
+            trash.uidvalidity = 999;
+            trash.uidnext = 1;
+            trash.messages.clear();
+            trash.add_sized(&["\\Seen"], &message("<t2@x>", "FreshTrash", ""), None);
+        }
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+
+        // INBOX is untouched; Trash was dropped and resynced to the new UID.
+        assert_eq!(store.locations_in_mailbox("INBOX").unwrap().len(), 1, "INBOX untouched");
+        let trash = store.locations_in_mailbox("Trash").unwrap();
+        assert_eq!(trash.len(), 1);
+        assert_eq!(trash[0].uidvalidity, 999, "Trash resynced under the new UIDVALIDITY");
+    }
+
+    /// (f) Drafts, All Mail, Starred (\Flagged, no role), the label container
+    /// and Archive are never selected or fetched — only INBOX, Trash, Junk are.
+    #[tokio::test]
+    async fn only_inbox_trash_and_junk_are_ever_synced() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i1@x>", "Inbox", ""));
+        mb.add_to("Trash", 50, &["\\Seen"], &message("<t1@x>", "Trashed", ""));
+        mb.add_to("Junk", 60, &["\\Seen"], &message("<j1@x>", "Spam", ""));
+        // Folders that MUST never be synced:
+        mb.add_to("Drafts", 70, &["\\Seen"], &message("<d1@x>", "Draft", ""));
+        mb.add_to("All Mail", 80, &["\\Seen"], &message("<a1@x>", "All", ""));
+        mb.add_to("Sent", 90, &["\\Seen"], &message("<s1@x>", "Sent", "")); // run 3, not now
+        mb.add_to("Archive", 95, &["\\Seen"], &message("<ar1@x>", "Arch", "")); // 5b-2
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+
+        // Synced mailboxes have locations.
+        for synced in ["INBOX", "Trash", "Junk"] {
+            assert!(!store.locations_in_mailbox(synced).unwrap().is_empty(), "{synced} synced");
+        }
+        // Never-synced mailboxes have NO locations and were never SEARCHed.
+        let counts = mailbox.lock().unwrap();
+        for never in ["Drafts", "All Mail", "Sent", "Archive"] {
+            assert!(store.locations_in_mailbox(never).unwrap().is_empty(), "{never} not synced");
+            assert_eq!(counts.counts(never).0, 0, "{never} never SEARCHed");
+        }
+    }
+
+    /// (g) A folder that cannot be synced (its mailbox was renamed or deleted on
+    /// the server, so EXAMINE answers NO) must NOT wedge the account. INBOX is
+    /// the only mailbox whose failure aborts a poll: the engine ingests only
+    /// after a poll succeeds, so an aborted poll would stop ALL mail flowing
+    /// because of an index-tier folder. Folder failures are skipped (and
+    /// logged) and retried next poll.
+    #[tokio::test]
+    async fn a_failing_folder_does_not_wedge_inbox_sync() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i1@x>", "Inbox", ""));
+        mb.folder("Trash", 50).examine_fails = true;
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+
+        // Initial sync succeeds and INBOX mail is ingested despite Trash failing.
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .expect("a broken folder must not fail the sync");
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1);
+
+        // New INBOX mail keeps flowing on later polls while Trash stays broken.
+        mailbox
+            .lock()
+            .unwrap()
+            .add(&["\\Seen"], &message("<i2@x>", "Second", ""));
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .expect("still not wedged");
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 2);
+
+        // And once Trash is fixed it syncs on a later poll (retried, not dropped).
+        {
+            let mut mb = mailbox.lock().unwrap();
+            let trash = mb.folder("Trash", 50);
+            trash.examine_fails = false;
+        }
+        mailbox
+            .lock()
+            .unwrap()
+            .add_to("Trash", 50, &["\\Seen"], &message("<t1@x>", "Trashed", ""));
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .unwrap();
+        assert_eq!(store.locations_in_mailbox("Trash").unwrap().len(), 1);
+    }
+
+    /// (i) Idle polls do not bump the generation or rebuild threader state,
+    /// even with Trash/Junk present (the multi-mailbox walk stays idle-safe).
+    #[tokio::test]
+    async fn idle_polls_with_folders_present_do_not_bump_the_generation() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i1@x>", "Inbox", ""));
+        mb.add_to("Trash", 50, &["\\Seen"], &message("<t1@x>", "Trashed", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox);
+        let db = store.database();
+
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        let generation_after_first = store.generation().unwrap();
+        let loads_after_first =
+            provider.thread_state_loads.load(std::sync::atomic::Ordering::Relaxed);
+
+        // An idle re-sync: nothing changed anywhere.
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        assert_eq!(
+            store.generation().unwrap(),
+            generation_after_first,
+            "an idle multi-mailbox poll does not bump the generation"
+        );
+        assert_eq!(
+            provider.thread_state_loads.load(std::sync::atomic::Ordering::Relaxed),
+            loads_after_first,
+            "an idle poll does not rebuild threader state"
+        );
+    }
+
     // Compiles always; runs only when THREESTRANDS_IMAP_IT=1 AND the Dovecot
     // container's fingerprint is in DOVECOT_TEST_FP. Skips cleanly otherwise,
     // exactly like the Slice 4 live tests in fetch.rs. The orchestrator runs it
@@ -2463,6 +3158,7 @@ mod tests {
                 store,
                 cache,
                 label_model: LabelModel::ImapLabelFolders,
+                settings: super::test_settings(),
             })
         }
 

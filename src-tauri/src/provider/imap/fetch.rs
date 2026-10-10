@@ -49,6 +49,16 @@ use crate::provider::ProviderError;
 pub const IDENTITY_ITEMS: &str =
     "(UID FLAGS RFC822.SIZE BODY.PEEK[HEADER.FIELDS (MESSAGE-ID DATE FROM SUBJECT)])";
 
+/// The index-tier identity pass (Phase 2 Slice 5b-1): the same cheap,
+/// `\Seen`-safe `BODY.PEEK[HEADER.FIELDS (...)]` as [`IDENTITY_ITEMS`] but
+/// also carrying the two threading headers (`IN-REPLY-TO`, `REFERENCES`), so a
+/// mailbox synced index-only (no body fetched) still threads from headers
+/// alone. The hash inputs ([`derive_message_id`](super::derive_message_id):
+/// message-id/date/from/subject/size) are unchanged, so the same message keeps
+/// ONE stable id whether it is fetched via this pass or [`IDENTITY_ITEMS`].
+pub const INDEX_IDENTITY_ITEMS: &str =
+    "(UID FLAGS RFC822.SIZE BODY.PEEK[HEADER.FIELDS (MESSAGE-ID IN-REPLY-TO REFERENCES DATE FROM SUBJECT)])";
+
 /// A bounded full-body pass, with one sentinel byte beyond the cache ceiling
 /// to detect oversize instead of silently truncating. PEEK never sets `\Seen`.
 pub static BODY_ITEMS: std::sync::LazyLock<String> =
@@ -158,6 +168,67 @@ pub async fn fetch_identity(
         rows.push(IdentityRow { uid, flags, inputs });
     }
     Ok(rows)
+}
+
+/// Collect index-tier rows for a UID set via [`INDEX_IDENTITY_ITEMS`], pairing
+/// each identity row with the threading headers (`IN-REPLY-TO`, `REFERENCES`,
+/// and the `Message-ID` for the threader) parsed from the SAME header block.
+/// For a mailbox synced index-only (no body fetched) these headers are the
+/// threading inputs; the hash inputs in [`IdentityRow`] are identical to
+/// [`fetch_identity`], so the stable id is the same.
+pub async fn fetch_identity_index(
+    session: &mut dyn ImapSession,
+    uid_set: &str,
+) -> Result<Vec<(IdentityRow, super::rfc822::ThreadingHeaders)>, ProviderError> {
+    let fetches = session.uid_fetch(uid_set, INDEX_IDENTITY_ITEMS).await?;
+    let mut rows = Vec::with_capacity(fetches.len());
+    for fetch in &fetches {
+        let Some(uid) = fetch.uid else {
+            continue;
+        };
+        let flags = fetch.flags().map(|flag| flag_to_wire(&flag)).collect();
+        let header_block = fetch.header().unwrap_or_default();
+        let inputs = parse_identity_headers(header_block, fetch.size.unwrap_or(0));
+        let threading = parse_threading_headers(header_block);
+        rows.push((IdentityRow { uid, flags, inputs }, threading));
+    }
+    Ok(rows)
+}
+
+/// Parse `Message-ID`, `In-Reply-To` and `References` out of a
+/// `BODY.PEEK[HEADER.FIELDS (...)]` block into [`ThreadingHeaders`]. Unfolds
+/// continuation lines; panic-free on hostile bytes. Mirrors the header parsing
+/// `parse_identity_headers` does, but keeps the threading triple rather than
+/// the identity quad.
+pub fn parse_threading_headers(header_block: &[u8]) -> super::rfc822::ThreadingHeaders {
+    let text = String::from_utf8_lossy(header_block);
+    let mut headers: Vec<(String, String)> = Vec::new();
+    for line in text.split('\n') {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with([' ', '\t']) {
+            if let Some(last) = headers.last_mut() {
+                last.1.push(' ');
+                last.1.push_str(line.trim());
+            }
+            continue;
+        }
+        if let Some((name, value)) = line.split_once(':') {
+            headers.push((name.trim().to_ascii_lowercase(), value.trim().to_string()));
+        }
+    }
+    let mut out = super::rfc822::ThreadingHeaders::default();
+    for (name, value) in headers {
+        match name.as_str() {
+            "message-id" => out.message_id = Some(value),
+            "in-reply-to" => out.in_reply_to = Some(value),
+            "references" => out.references = Some(value),
+            _ => {}
+        }
+    }
+    out
 }
 
 /// A bounded wire read distinguishes policy limits from server rejections.
@@ -528,7 +599,7 @@ mod tests {
 
     #[test]
     fn the_fetch_item_lists_are_peek_only() {
-        for items in [IDENTITY_ITEMS, BODY_ITEMS.as_str()] {
+        for items in [IDENTITY_ITEMS, INDEX_IDENTITY_ITEMS, BODY_ITEMS.as_str()] {
             assert!(items.contains("BODY.PEEK["), "{items} must use BODY.PEEK");
             // No non-peek BODY[ fetch anywhere — that would set \Seen.
             assert!(
@@ -536,6 +607,27 @@ mod tests {
                 "{items} must never contain a non-peek BODY["
             );
         }
+    }
+
+    #[test]
+    fn the_index_identity_pass_carries_the_threading_headers() {
+        // The index-tier pass adds IN-REPLY-TO and REFERENCES to the identity
+        // quad so a body-less mailbox still threads from headers.
+        for field in ["MESSAGE-ID", "IN-REPLY-TO", "REFERENCES", "DATE", "FROM", "SUBJECT"] {
+            assert!(
+                INDEX_IDENTITY_ITEMS.contains(field),
+                "{field} must be in the index identity pass"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_threading_headers_unfolds_and_extracts_the_triple() {
+        let block = b"Message-ID: <m@x>\r\nIn-Reply-To: <p@x>\r\nReferences: <a@x>\r\n <b@x>\r\nSubject: hi\r\n\r\n";
+        let headers = parse_threading_headers(block);
+        assert_eq!(headers.message_id.as_deref(), Some("<m@x>"));
+        assert_eq!(headers.in_reply_to.as_deref(), Some("<p@x>"));
+        assert_eq!(headers.references.as_deref(), Some("<a@x> <b@x>"));
     }
 
     #[test]

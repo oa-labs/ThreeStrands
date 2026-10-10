@@ -99,6 +99,21 @@ impl MailboxRole {
         Self::ALL.into_iter().find(|role| role.key() == key)
     }
 
+    /// The role a mailbox name conservatively matches (case-insensitive, on the
+    /// hierarchy leaf), or `None`. This is the SAME name-match logic
+    /// `propose_mapping` uses, exposed so the sync plan (`plan.rs`) reuses it
+    /// rather than duplicating the candidate lists. A name match is a guess;
+    /// the plan only reaches it after a user override and an RFC 6154 attribute
+    /// have both missed.
+    pub fn match_by_name(name: &str, delimiter: Option<&str>) -> Option<Self> {
+        let leaf = leaf(name, delimiter);
+        Self::ALL.into_iter().find(|role| {
+            role.name_candidates()
+                .iter()
+                .any(|candidate| leaf.eq_ignore_ascii_case(candidate))
+        })
+    }
+
     /// Case-insensitive leaf names that match this role when no attribute is
     /// present. Kept conservative — common, unambiguous folder names only.
     fn name_candidates(self) -> &'static [&'static str] {

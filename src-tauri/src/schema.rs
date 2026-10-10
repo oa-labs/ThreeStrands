@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 59;
+pub(crate) const LATEST_VERSION: i64 = 60;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1699,6 +1699,67 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         }
         tx.execute_batch("PRAGMA user_version=59;").map_err(error)?;
     }
+    if version < 60 {
+        // The IMAP provider's MULTI-MAILBOX sync machinery (Phase 2 Slice
+        // 5b-1; see `docs/imap-design.md` "Sync" / "What gets synced"). Slice
+        // 5a synced INBOX only; 5b-1 generalizes the round to a plan-driven
+        // set of mailboxes (INBOX, Trash, Junk now; Sent in 5b-2) and adds the
+        // two tables that machinery needs.
+        //
+        //  * `imap_mailbox_sync_state` — one row per synced mailbox carrying
+        //    the cheap-cadence inputs: `last_exists`/`last_uidnext` from the
+        //    previous EXAMINE (so an unchanged mailbox skips SEARCH/FETCH),
+        //    `last_sweep_at` (the periodic full-sweep clock), and
+        //    `backfill_low_uid` — RESERVED for run 3's Sent backfill watermark
+        //    and left NULL here so run 3 needs no migration.
+        //
+        //  * `imap_hot_threads` — `(account_id, thread_id)`: a thread is "hot"
+        //    when it has a location in INBOX or Sent, or was already hot. Only
+        //    hot threads are journaled (reported to the engine); a Trash/Junk-
+        //    only thread that was never hot is index-only. Set in the same
+        //    atomic round as the location that makes it hot.
+        //
+        // UPGRADE SEEDING: every existing account is INBOX-only and all of its
+        // mail was already ingested (journaled) under 5a, so every thread that
+        // has a message with an INBOX location becomes hot here, in SQL, so no
+        // already-reported thread is silently demoted to index-only on upgrade.
+        //
+        // Provider-internal sync state: NO Gmail code path reads or writes it,
+        // and it is deliberately NOT part of the settings-transfer export
+        // (`transfer.rs` is untouched and its VERSION is unchanged) — losing it
+        // only forces a re-derive or a full resync. Reserve a new schema number
+        // for every later change to this shape rather than editing this block.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS imap_mailbox_sync_state (
+                account_id TEXT NOT NULL,
+                mailbox TEXT NOT NULL,
+                last_exists INTEGER NOT NULL DEFAULT 0,
+                last_uidnext INTEGER NOT NULL DEFAULT 0,
+                last_sweep_at INTEGER NOT NULL DEFAULT 0,
+                backfill_low_uid INTEGER,
+                PRIMARY KEY (account_id, mailbox)
+            );
+            CREATE TABLE IF NOT EXISTS imap_hot_threads (
+                account_id TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                PRIMARY KEY (account_id, thread_id)
+            );",
+        )
+        .map_err(error)?;
+        // Seed hotness for every pre-existing INBOX-located thread. Idempotent
+        // (INSERT OR IGNORE on the PK), so a rerun of this migration is a
+        // no-op; it reads imap_locations + imap_threads only.
+        tx.execute_batch(
+            "INSERT OR IGNORE INTO imap_hot_threads(account_id, thread_id)
+             SELECT DISTINCT t.account_id, t.thread_id
+             FROM imap_threads t
+             JOIN imap_locations l
+               ON l.account_id = t.account_id AND l.message_id = t.message_id
+             WHERE l.mailbox = 'INBOX';",
+        )
+        .map_err(error)?;
+        tx.execute_batch("PRAGMA user_version=60;").map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -2193,6 +2254,83 @@ mod tests {
         // Re-running once more over the already-created table must not fail.
         upgraded.pragma_update(None, "user_version", 58).unwrap();
         super::migrate(&mut upgraded).unwrap();
+        assert_eq!(
+            upgraded.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
+            super::LATEST_VERSION
+        );
+    }
+
+    #[test]
+    fn v60_adds_the_multi_mailbox_tables_seeds_hot_threads_and_reruns_cleanly() {
+        // A fresh database reaches v60 with both new tables present and the
+        // reserved backfill column queryable.
+        let mut fresh = unmigrated_database_with_one_account();
+        super::migrate(&mut fresh).unwrap();
+        fresh
+            .execute(
+                "SELECT account_id, mailbox, last_exists, last_uidnext, last_sweep_at, backfill_low_uid
+                 FROM imap_mailbox_sync_state",
+                [],
+            )
+            .unwrap_or_else(|error| panic!("imap_mailbox_sync_state should exist: {error}"));
+        fresh
+            .execute("SELECT account_id, thread_id FROM imap_hot_threads", [])
+            .unwrap_or_else(|error| panic!("imap_hot_threads should exist: {error}"));
+        assert_eq!(
+            fresh.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
+            super::LATEST_VERSION
+        );
+
+        // An upgraded database stopped at v59 that holds threads with INBOX
+        // locations seeds exactly those threads as hot; a Trash-only thread is
+        // NOT seeded hot.
+        let mut upgraded = unmigrated_database_with_one_account();
+        super::migrate(&mut upgraded).unwrap();
+        upgraded
+            .execute_batch(
+                "DROP TABLE imap_mailbox_sync_state;
+                 DROP TABLE imap_hot_threads;
+                 PRAGMA user_version=59;",
+            )
+            .unwrap();
+        // t_inbox has an INBOX location -> hot after upgrade.
+        // t_trash has only a Trash location -> NOT hot.
+        upgraded
+            .execute_batch(
+                "INSERT INTO imap_threads(account_id, message_id, thread_id, created_generation)
+                   VALUES ('you@gmail.com','m_in','t_inbox',1),
+                          ('you@gmail.com','m_tr','t_trash',1);
+                 INSERT INTO imap_locations(account_id, mailbox, uidvalidity, uid, message_id, flags_json, modseq)
+                   VALUES ('you@gmail.com','INBOX',1,1,'m_in','[]',NULL),
+                          ('you@gmail.com','Trash',1,2,'m_tr','[]',NULL);",
+            )
+            .unwrap();
+        super::migrate(&mut upgraded).unwrap();
+        let hot: Vec<String> = {
+            let mut stmt = upgraded
+                .prepare("SELECT thread_id FROM imap_hot_threads WHERE account_id='you@gmail.com' ORDER BY thread_id")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            rows
+        };
+        assert_eq!(hot, vec!["t_inbox".to_string()], "only the INBOX-located thread is seeded hot");
+
+        // Re-running once more over the already-created tables must not fail
+        // and must not duplicate the seeded hot row (INSERT OR IGNORE on PK).
+        upgraded.pragma_update(None, "user_version", 59).unwrap();
+        super::migrate(&mut upgraded).unwrap();
+        let hot_count: i64 = upgraded
+            .query_row(
+                "SELECT COUNT(*) FROM imap_hot_threads WHERE account_id='you@gmail.com'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(hot_count, 1, "rerun does not duplicate the seeded hot thread");
         assert_eq!(
             upgraded.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
             super::LATEST_VERSION

@@ -159,6 +159,30 @@ impl SyncWindowClass {
             Self::NotSynced => 0,
         }
     }
+
+    /// Whether a UID that ages out of this class's window becomes a DELETION.
+    ///
+    /// INBOX and Folder (Archive/Junk/Trash/user folders) are sliding eviction
+    /// windows: when newer mail pushes an old UID past the window it is
+    /// reported as a deletion, keeping the local store bounded to the newest
+    /// mail (the owner's c77fa3f behaviour).
+    ///
+    /// **Sent is false.** Its 5,000 is a one-time ACQUISITION bound mirroring
+    /// Gmail's Sent backfill scan, not a sliding window: once a Sent message is
+    /// synced it is never evicted when newer sent mail pushes it past 5,000, so
+    /// the address book never loses history. Deletions in Sent come only from
+    /// UIDs the server itself no longer has. (Run 2 does not sync Sent; this is
+    /// implemented and tested now so run 3 inherits it.)
+    ///
+    /// `NotSynced` is not applicable — nothing is ever in its window.
+    pub const fn evicts_beyond_window(self) -> bool {
+        match self {
+            Self::Inbox => true,
+            Self::Folder => true,
+            Self::Sent => false,
+            Self::NotSynced => false,
+        }
+    }
 }
 
 /// The outcome of applying a sync window to a mailbox's UIDs.
@@ -230,6 +254,53 @@ pub const JOURNAL_RETENTION_GENERATIONS: u64 = 1_000;
 /// SIZE lives here; how the sync routine walks the batches is its own concern.
 pub const UID_BATCH_SIZE: usize = 500;
 
+// ---------------------------------------------------------------------------
+// Slice 5b-1: non-INBOX mailbox cadence
+// ---------------------------------------------------------------------------
+//
+// INBOX is swept on every poll (it is the to-do list). A non-INBOX synced
+// mailbox (Trash, Junk) is cheaper: its EXAMINE result (EXISTS + UIDNEXT) is
+// stored in `imap_mailbox_sync_state`, and the UID SEARCH/FETCH is SKIPPED when
+// both are unchanged AND the periodic full sweep is not yet due. A flag change
+// by another client moves neither EXISTS nor UIDNEXT, so the periodic sweep is
+// what eventually catches it. Each limit below has below/exact/above coverage.
+
+/// How long (seconds) between periodic full sweeps of a non-INBOX synced
+/// mailbox. Between sweeps an unchanged EXAMINE (same EXISTS + UIDNEXT) skips
+/// the SEARCH/FETCH entirely; a sweep is forced at least this often so a flag
+/// change another client made (which moves neither counter) is still picked
+/// up. 15 minutes balances freshness against the per-poll cost of a full
+/// windowed flag sweep on a large folder.
+pub const FOLDER_SWEEP_INTERVAL_SECS: i64 = 15 * 60;
+
+/// The most non-INBOX synced mailboxes whose rounds one poll will run. INBOX
+/// is always run first and does not count against this. Bounds how much work a
+/// single poll does when several folders changed at once; the rest are picked
+/// up on the next poll. Run 2 syncs only Trash + Junk, well under this, but the
+/// bound is in place for 5b-2's larger mailbox set.
+pub const FOLDER_ROUNDS_PER_POLL: usize = 8;
+
+/// Whether a mailbox is due for its periodic full sweep given the last sweep
+/// time and now (both unix seconds). A mailbox never swept (`last_sweep_at`
+/// 0 / absent) is always due. Exactly at the interval boundary is due.
+pub fn folder_sweep_due(last_sweep_at: i64, now: i64) -> bool {
+    now.saturating_sub(last_sweep_at) >= FOLDER_SWEEP_INTERVAL_SECS
+}
+
+/// Whether a non-INBOX mailbox's cheap-cadence check says its UIDs are
+/// UNCHANGED since the last round: the server's EXISTS and UIDNEXT both match
+/// what was stored. When unchanged AND not sweep-due, the round skips the UID
+/// SEARCH/FETCH. New mail bumps UIDNEXT; an expunge changes EXISTS; a flag
+/// change by another client moves neither (hence the periodic sweep).
+pub fn folder_counters_unchanged(
+    stored_exists: i64,
+    stored_uidnext: i64,
+    server_exists: i64,
+    server_uidnext: i64,
+) -> bool {
+    stored_exists == server_exists && stored_uidnext == server_uidnext
+}
+
 /// Threading tokens bound per SQL statement when seeding the threader. Well
 /// below SQLite's bound-variable limit (999 on the oldest builds, 32,766 on
 /// the bundled one), so an initial sync that threads thousands of messages in
@@ -296,14 +367,45 @@ pub fn journal_cursor_is_answerable(cursor: u64, current: u64) -> bool {
 pub struct SyncLimits {
     /// The window ceiling applied to a mailbox's newest UIDs before computing the delta.
     pub mailbox_window: usize,
+    /// Whether a UID aged out of the window becomes a deletion (true for
+    /// INBOX/Folder sliding windows; false for Sent's acquisition bound). See
+    /// [`SyncWindowClass::evicts_beyond_window`].
+    pub evicts: bool,
 }
 
 impl SyncLimits {
-    /// INBOX limits — the only mailbox class this slice syncs. The window is
-    /// the INBOX ceiling. Slice 5b adds `Sent`/`Folder` constructors.
+    /// INBOX limits: the INBOX ceiling, sliding (evicts).
     pub const fn inbox() -> Self {
         Self {
             mailbox_window: MAX_INBOX_SYNC_MESSAGES,
+            evicts: true,
+        }
+    }
+
+    /// Folder limits (Archive/Junk/Trash/user folders): the folder window,
+    /// sliding (evicts). Trash and Junk are Folder-class in run 2.
+    pub const fn folder() -> Self {
+        Self {
+            mailbox_window: FOLDER_SYNC_WINDOW,
+            evicts: true,
+        }
+    }
+
+    /// Sent limits: the Sent acquisition bound, NON-evicting. (Run 3 wires the
+    /// Sent round; implemented and tested now.)
+    pub const fn sent() -> Self {
+        Self {
+            mailbox_window: SENT_SYNC_WINDOW,
+            evicts: false,
+        }
+    }
+
+    /// The limits for a [`SyncWindowClass`]. `NotSynced` yields a zero window
+    /// that evicts nothing (nothing is ever in it).
+    pub const fn for_class(class: SyncWindowClass) -> Self {
+        Self {
+            mailbox_window: class.limit(),
+            evicts: class.evicts_beyond_window(),
         }
     }
 }
@@ -425,6 +527,62 @@ mod tests {
         assert_eq!(SyncWindowClass::Folder.limit(), 2_000);
         assert_eq!(SyncWindowClass::Inbox.limit(), MAX_INBOX_SYNC_MESSAGES);
         assert_eq!(SyncWindowClass::NotSynced.limit(), 0);
+    }
+
+    #[test]
+    fn eviction_is_true_for_sliding_windows_and_false_for_sent_acquisition() {
+        // INBOX and Folder are sliding eviction windows (c77fa3f behaviour).
+        assert!(SyncWindowClass::Inbox.evicts_beyond_window());
+        assert!(SyncWindowClass::Folder.evicts_beyond_window());
+        // Sent's 5,000 is an acquisition bound: an aged-out message stays.
+        assert!(!SyncWindowClass::Sent.evicts_beyond_window());
+        // NotSynced never has anything in its window.
+        assert!(!SyncWindowClass::NotSynced.evicts_beyond_window());
+    }
+
+    #[test]
+    fn sync_limits_constructors_match_their_classes() {
+        assert_eq!(SyncLimits::inbox(), SyncLimits::for_class(SyncWindowClass::Inbox));
+        assert_eq!(SyncLimits::folder(), SyncLimits::for_class(SyncWindowClass::Folder));
+        assert_eq!(SyncLimits::sent(), SyncLimits::for_class(SyncWindowClass::Sent));
+        assert_eq!(SyncLimits::inbox().mailbox_window, MAX_INBOX_SYNC_MESSAGES);
+        assert!(SyncLimits::inbox().evicts);
+        assert_eq!(SyncLimits::folder().mailbox_window, FOLDER_SYNC_WINDOW);
+        assert!(SyncLimits::folder().evicts);
+        assert_eq!(SyncLimits::sent().mailbox_window, SENT_SYNC_WINDOW);
+        assert!(!SyncLimits::sent().evicts, "Sent does not evict");
+    }
+
+    #[test]
+    fn folder_sweep_due_below_at_and_above_the_interval() {
+        let now = 1_000_000i64;
+        // Just inside the interval: not yet due.
+        assert!(!folder_sweep_due(now - (FOLDER_SWEEP_INTERVAL_SECS - 1), now));
+        // Exactly at the interval: due.
+        assert!(folder_sweep_due(now - FOLDER_SWEEP_INTERVAL_SECS, now));
+        // Past the interval: due.
+        assert!(folder_sweep_due(now - (FOLDER_SWEEP_INTERVAL_SECS + 1), now));
+        // Never swept (0): always due.
+        assert!(folder_sweep_due(0, now));
+    }
+
+    #[test]
+    fn folder_counters_unchanged_detects_new_mail_and_expunges_but_not_flag_changes() {
+        // Both counters equal => unchanged (a flag change by another client
+        // moves neither, so it reads as unchanged — the sweep catches it).
+        assert!(folder_counters_unchanged(3, 9, 3, 9));
+        // New mail bumps UIDNEXT => changed.
+        assert!(!folder_counters_unchanged(3, 9, 3, 10));
+        // An expunge changes EXISTS => changed.
+        assert!(!folder_counters_unchanged(3, 9, 2, 9));
+    }
+
+    #[test]
+    fn the_folder_cadence_constants_are_positive_bounds() {
+        assert!(FOLDER_SWEEP_INTERVAL_SECS > 0);
+        assert_eq!(FOLDER_SWEEP_INTERVAL_SECS, 15 * 60);
+        assert!(FOLDER_ROUNDS_PER_POLL > 0);
+        assert_eq!(FOLDER_ROUNDS_PER_POLL, 8);
     }
 
     #[test]

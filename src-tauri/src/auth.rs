@@ -1397,12 +1397,13 @@ fn build_imap_provider(
     let label_model = imap::label_model_for(settings.label_storage);
     Ok(ImapProvider::new(ImapProviderConfig {
         account_id: account_id.to_string(),
-        username: settings.imap_username,
+        username: settings.imap_username.clone(),
         password,
         manager,
         store,
         cache,
         label_model,
+        settings,
     }))
 }
 

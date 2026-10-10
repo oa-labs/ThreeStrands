@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.94.3"
+version = "0.95.0"
 description = "A local-first, keyboard-driven email client"
 authors = ["OpenArc LLC"]
 license-file = "../LICENSE"

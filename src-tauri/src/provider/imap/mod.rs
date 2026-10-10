@@ -43,6 +43,7 @@ mod fetch;
 mod identity;
 mod labels;
 mod mailboxes;
+mod plan;
 mod policy;
 mod provider;
 mod rfc822;
@@ -116,6 +117,8 @@ pub use fetch::{
 };
 #[allow(unused_imports)]
 pub use fetch::{fetch_flags_only, resolve_and_cache_body, ResolvedBody, FLAGS_ITEMS};
+#[allow(unused_imports)]
+pub use fetch::{fetch_identity_index, parse_threading_headers, INDEX_IDENTITY_ITEMS};
 #[allow(unused_imports)]
 pub use identity::{derive_message_id, IdentityInputs};
 #[allow(unused_imports)]
@@ -737,6 +740,43 @@ impl ImapStateStore {
         })
     }
 
+    // -----------------------------------------------------------------------
+    // Slice 5b-1 multi-mailbox state: per-mailbox cadence counters, hot
+    // threads (schema v60).
+    // -----------------------------------------------------------------------
+
+    /// The stored `(last_exists, last_uidnext, last_sweep_at)` cadence counters
+    /// for one mailbox, or `None` if it was never synced. `backfill_low_uid` is
+    /// reserved for run 3 and not surfaced here.
+    pub fn mailbox_sync_state(&self, mailbox: &str) -> DbResult<Option<(i64, i64, i64)>> {
+        self.database.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT last_exists, last_uidnext, last_sweep_at
+                     FROM imap_mailbox_sync_state
+                     WHERE account_id = ?1 AND mailbox = ?2",
+                    rusqlite::params![self.account_id, mailbox],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .ok())
+        })
+    }
+
+    /// Whether a thread is currently marked hot (has, or ever had, a location
+    /// in INBOX or Sent).
+    pub fn is_thread_hot(&self, thread_id: &str) -> DbResult<bool> {
+        self.database.with_connection(|connection| {
+            let hot: Option<i64> = connection
+                .query_row(
+                    "SELECT 1 FROM imap_hot_threads WHERE account_id = ?1 AND thread_id = ?2",
+                    rusqlite::params![self.account_id, thread_id],
+                    |row| row.get(0),
+                )
+                .ok();
+            Ok(hot.is_some())
+        })
+    }
+
     /// Apply one sync round's writes in a SINGLE transaction. This is the
     /// at-least-once anchor: locations, flag updates, deletions, thread
     /// assignments, aliases, the journal append AND the generation bump all
@@ -764,6 +804,29 @@ impl ImapStateStore {
 
             // Idle round: do not bump the generation or touch the journal.
             if round.is_empty() {
+                // Still persist per-mailbox cadence counters so an unchanged
+                // folder records that it was examined/swept — this does NOT
+                // move the generation (item 4).
+                if let Some((mailbox, last_exists, last_uidnext, last_sweep_at)) =
+                    &round.mailbox_state
+                {
+                    transaction.execute(
+                        "INSERT INTO imap_mailbox_sync_state
+                            (account_id, mailbox, last_exists, last_uidnext, last_sweep_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5)
+                         ON CONFLICT(account_id, mailbox) DO UPDATE SET
+                             last_exists = excluded.last_exists,
+                             last_uidnext = excluded.last_uidnext,
+                             last_sweep_at = excluded.last_sweep_at",
+                        rusqlite::params![
+                            self.account_id,
+                            mailbox,
+                            last_exists,
+                            last_uidnext,
+                            last_sweep_at
+                        ],
+                    )?;
+                }
                 return Ok(current as u64);
             }
 
@@ -867,6 +930,37 @@ impl ImapStateStore {
                     rusqlite::params![self.account_id, next, thread_id],
                 )?;
             }
+            // Hot threads: a location in INBOX or Sent appeared this round.
+            // Inserted in the SAME transaction as that location (item 5), so a
+            // failed round records neither. Idempotent on the PK, and resolve
+            // through the alias chain so a survivor of a merge stays hot.
+            for thread_id in &round.hot_threads {
+                let resolved = self.resolve_thread_alias_conn(transaction, thread_id)?;
+                transaction.execute(
+                    "INSERT OR IGNORE INTO imap_hot_threads (account_id, thread_id)
+                     VALUES (?1, ?2)",
+                    rusqlite::params![self.account_id, resolved],
+                )?;
+            }
+            // Per-mailbox cadence counters, in the same atomic round.
+            if let Some((mailbox, last_exists, last_uidnext, last_sweep_at)) = &round.mailbox_state {
+                transaction.execute(
+                    "INSERT INTO imap_mailbox_sync_state
+                        (account_id, mailbox, last_exists, last_uidnext, last_sweep_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)
+                     ON CONFLICT(account_id, mailbox) DO UPDATE SET
+                         last_exists = excluded.last_exists,
+                         last_uidnext = excluded.last_uidnext,
+                         last_sweep_at = excluded.last_sweep_at",
+                    rusqlite::params![
+                        self.account_id,
+                        mailbox,
+                        last_exists,
+                        last_uidnext,
+                        last_sweep_at
+                    ],
+                )?;
+            }
             Ok(next as u64)
         })
     }
@@ -961,19 +1055,32 @@ pub struct SyncRoundWrite {
     /// Thread ids whose content or labels changed this round, appended to the
     /// journal under the new generation.
     pub changed_threads: Vec<String>,
+    /// Thread ids that became (or are confirmed) HOT this round — a location in
+    /// INBOX or Sent appeared. Inserted into `imap_hot_threads` in the SAME
+    /// transaction as the location that makes them hot (Slice 5b-1).
+    pub hot_threads: Vec<String>,
+    /// Optional per-mailbox cadence state to persist this round:
+    /// `(mailbox, last_exists, last_uidnext, last_sweep_at)`. Written even for
+    /// an otherwise-empty round (an unchanged folder still records that it was
+    /// examined / swept), WITHOUT bumping the generation.
+    pub mailbox_state: Option<(String, i64, i64, i64)>,
 }
 
 impl SyncRoundWrite {
-    /// Whether this round changed anything at all. An idle poll (no new mail,
-    /// no flag change, no deletion, no threading effect) produces an empty
-    /// round, and the provider skips the commit entirely so the generation and
-    /// journal do not move.
+    /// Whether this round changed anything that must bump the generation /
+    /// touch the journal. An idle poll (no new mail, no flag change, no
+    /// deletion, no threading effect, no newly-hot thread) is empty — the
+    /// provider skips the generation/journal work. `mailbox_state` is
+    /// DELIBERATELY not counted here: persisting a folder's cadence counters is
+    /// not a content change and must not bump the generation (item 4 / idle
+    /// rounds), so it is written separately in `commit_sync_round`.
     pub fn is_empty(&self) -> bool {
         self.locations.is_empty()
             && self.deletions.is_empty()
             && self.thread_assignments.is_empty()
             && self.aliases.is_empty()
             && self.changed_threads.is_empty()
+            && self.hot_threads.is_empty()
     }
 }
 
