@@ -117,8 +117,9 @@ pub struct ImapMailbox {
     pub uidvalidity: i64,
     pub uidnext: i64,
     pub highestmodseq: Option<i64>,
-    pub permanent_flags_json: String,
-    pub permanent_keywords: bool,
+    /// Unknown until a writable SELECT reports PERMANENTFLAGS.
+    pub permanent_flags_json: Option<String>,
+    pub permanent_keywords: Option<bool>,
 }
 
 /// Where one message copy lives: a `(mailbox, uidvalidity, uid)` coordinate
@@ -161,7 +162,8 @@ impl ImapStateStore {
         &self.account_id
     }
 
-    /// Inserts or replaces one mailbox's catalog row.
+    /// Inserts or updates one mailbox's catalog row. Unknown write capabilities
+    /// from read-only discovery preserve values learned by a writable SELECT.
     pub fn upsert_mailbox(&self, mailbox: &ImapMailbox) -> DbResult<()> {
         self.database.with_connection(|connection| {
             connection.execute(
@@ -175,8 +177,8 @@ impl ImapStateStore {
                      uidvalidity = excluded.uidvalidity,
                      uidnext = excluded.uidnext,
                      highestmodseq = excluded.highestmodseq,
-                     permanent_flags_json = excluded.permanent_flags_json,
-                     permanent_keywords = excluded.permanent_keywords",
+                     permanent_flags_json = COALESCE(excluded.permanent_flags_json, imap_mailboxes.permanent_flags_json),
+                     permanent_keywords = COALESCE(excluded.permanent_keywords, imap_mailboxes.permanent_keywords)",
                 rusqlite::params![
                     self.account_id,
                     mailbox.name,
@@ -186,7 +188,7 @@ impl ImapStateStore {
                     mailbox.uidnext,
                     mailbox.highestmodseq,
                     mailbox.permanent_flags_json,
-                    mailbox.permanent_keywords as i64,
+                    mailbox.permanent_keywords.map(i64::from),
                 ],
             )?;
             Ok(())
@@ -211,7 +213,7 @@ impl ImapStateStore {
                         uidnext: row.get(4)?,
                         highestmodseq: row.get(5)?,
                         permanent_flags_json: row.get(6)?,
-                        permanent_keywords: row.get::<_, i64>(7)? != 0,
+                        permanent_keywords: row.get::<_, Option<i64>>(7)?.map(|value| value != 0),
                     })
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
@@ -317,8 +319,8 @@ mod tests {
             uidvalidity: 95479608,
             uidnext: 979,
             highestmodseq: None,
-            permanent_flags_json: r#"["\\Seen","\\Flagged"]"#.into(),
-            permanent_keywords: false,
+            permanent_flags_json: Some(r#"["\\Seen","\\Flagged"]"#.into()),
+            permanent_keywords: Some(false),
         };
         store.upsert_mailbox(&inbox).unwrap();
         // A second upsert updates in place rather than duplicating.

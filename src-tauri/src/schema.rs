@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 55;
+pub(crate) const LATEST_VERSION: i64 = 56;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1518,6 +1518,33 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 56 {
+        // Discovery previously persisted EXAMINE's read-only permissions as
+        // write capabilities. Invalidate that unreliable metadata and allow
+        // NULL until a writable SELECT supplies real PERMANENTFLAGS. This
+        // provider-internal catalog is not part of settings transfer.
+        tx.execute_batch(
+            "CREATE TABLE imap_mailboxes_v56 (
+                account_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                delimiter TEXT,
+                special_use TEXT,
+                uidvalidity INTEGER NOT NULL,
+                uidnext INTEGER NOT NULL,
+                highestmodseq INTEGER,
+                permanent_flags_json TEXT,
+                permanent_keywords INTEGER,
+                PRIMARY KEY (account_id, name)
+            );
+            INSERT INTO imap_mailboxes_v56
+                SELECT account_id, name, delimiter, special_use, uidvalidity,
+                       uidnext, highestmodseq, NULL, NULL FROM imap_mailboxes;
+            DROP TABLE imap_mailboxes;
+            ALTER TABLE imap_mailboxes_v56 RENAME TO imap_mailboxes;
+            PRAGMA user_version=56;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1689,6 +1716,84 @@ mod tests {
         assert_eq!(
             upgraded.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
             super::LATEST_VERSION
+        );
+    }
+
+    #[test]
+    fn v56_invalidates_examine_permissions_without_losing_catalog_or_locations() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        // Reconstruct the preceding schema, including its misleading stored
+        // EXAMINE permissions, rather than starting from the nullable shape.
+        connection
+            .execute_batch(
+                "DROP TABLE imap_mailboxes;
+             CREATE TABLE imap_mailboxes (
+                 account_id TEXT NOT NULL, name TEXT NOT NULL, delimiter TEXT,
+                 special_use TEXT, uidvalidity INTEGER NOT NULL, uidnext INTEGER NOT NULL,
+                 highestmodseq INTEGER, permanent_flags_json TEXT NOT NULL,
+                 permanent_keywords INTEGER NOT NULL, PRIMARY KEY (account_id, name)
+             );
+             INSERT INTO imap_mailboxes VALUES ('imap@example.com',' Sent ','/','\\Sent',7,9,11,'[]',0);
+             INSERT INTO imap_locations VALUES ('imap@example.com',' Sent ',7,1,'message','[]',NULL);
+             PRAGMA user_version=55;",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let row = connection
+            .query_row(
+                "SELECT name, delimiter, special_use, uidvalidity, uidnext, highestmodseq,
+                    permanent_flags_json, permanent_keywords FROM imap_mailboxes",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, Option<String>>(6)?,
+                        row.get::<_, Option<bool>>(7)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            row,
+            (
+                " Sent ".into(),
+                "/".into(),
+                "\\Sent".into(),
+                7,
+                9,
+                11,
+                None,
+                None
+            )
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT message_id FROM imap_locations", [], |row| row
+                    .get::<_, String>(0))
+                .unwrap(),
+            "message"
+        );
+        connection
+            .execute(
+                "UPDATE imap_mailboxes SET permanent_flags_json='[]', permanent_keywords=0",
+                [],
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        // A normal restart preserves capabilities subsequently learned by SELECT.
+        assert_eq!(
+            connection
+                .query_row("SELECT permanent_keywords FROM imap_mailboxes", [], |row| {
+                    row.get::<_, Option<bool>>(0)
+                })
+                .unwrap(),
+            Some(false)
         );
     }
 

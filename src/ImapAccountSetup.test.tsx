@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ImapAccountSetup } from "./ImapAccountSetup";
 import { AccountsSettings } from "./AccountsSettings";
 import { mailClient } from "./data/client";
-import type { Account, ImapCertificateProbe } from "./domain";
+import type { Account, ImapCertificateProbe, ImapMailboxMapping } from "./domain";
 
 vi.mock("./data/client", () => ({ mailClient: {
   discoverImapSettings: vi.fn(), probeImapCertificate: vi.fn(),
@@ -48,7 +48,7 @@ describe("IMAP account setup", () => {
     vi.mocked(mailClient.probeImapCertificate).mockResolvedValue(probe("incoming-pin"));
     vi.mocked(mailClient.probeSmtpCertificate).mockResolvedValue(probe("outgoing-pin"));
     vi.mocked(mailClient.testAndSaveImapAccount).mockResolvedValue(account);
-    vi.mocked(mailClient.discoverImapMailboxes).mockResolvedValue({ proposals: [], selectable: [] });
+    vi.mocked(mailClient.discoverImapMailboxes).mockResolvedValue({ proposals: [], selectable: [], labelContainers: [] });
     vi.mocked(mailClient.commitImapMailboxMapping).mockResolvedValue(undefined);
   });
   afterEach(cleanup);
@@ -102,6 +102,138 @@ describe("IMAP account setup", () => {
     expect(onConnected).not.toHaveBeenCalled();
     await confirmMapping();
     expect(mailClient.commitImapMailboxMapping).toHaveBeenCalled();
+    expect(onConnected).toHaveBeenCalledWith(account);
+  });
+
+  it("defaults to creating Archive when discovery finds no Archive mailbox", async () => {
+    render(<ImapAccountSetup onConnected={vi.fn()} />);
+    fillManualSettings();
+    await save();
+    expect(screen.getByLabelText("Create a new Archive mailbox")).toBeChecked();
+    await confirmMapping();
+    expect(mailClient.commitImapMailboxMapping).toHaveBeenCalledWith({
+      email: account.email, archive: null, createArchive: "Archive",
+      mailboxOverrides: {}, labelContainer: null,
+    });
+  });
+
+  it.each(["special_use", "name_match"] as const)("keeps an existing %s Archive proposal", async (source) => {
+    vi.mocked(mailClient.discoverImapMailboxes).mockResolvedValue({
+      proposals: [{ role: "archive", mailbox: "Storage", source }],
+      selectable: [{ name: "Storage", delimiter: "/", specialUse: null }],
+      labelContainers: [],
+    });
+    render(<ImapAccountSetup onConnected={vi.fn()} />);
+    fillManualSettings();
+    await save();
+    expect(screen.getByLabelText("Create a new Archive mailbox")).not.toBeChecked();
+    expect(screen.getByRole("combobox", { name: "Archive mailbox" })).toHaveValue("Storage");
+    await confirmMapping();
+    expect(mailClient.commitImapMailboxMapping).toHaveBeenCalledWith(expect.objectContaining({
+      archive: "Storage", createArchive: null,
+    }));
+  });
+
+  it("requires an Archive choice when the user turns off creation", async () => {
+    vi.mocked(mailClient.discoverImapMailboxes).mockResolvedValue({
+      proposals: [], selectable: [{ name: "Storage", delimiter: "/", specialUse: null }], labelContainers: [],
+    });
+    render(<ImapAccountSetup onConnected={vi.fn()} />);
+    fillManualSettings();
+    await save();
+    fireEvent.click(screen.getByLabelText("Create a new Archive mailbox"));
+    expect(screen.getByRole("button", { name: "Confirm mapping" })).toBeDisabled();
+    fireEvent.change(screen.getByRole("combobox", { name: "Archive mailbox" }), { target: { value: "Storage" } });
+    await confirmMapping();
+    expect(mailClient.commitImapMailboxMapping).toHaveBeenCalledWith(expect.objectContaining({
+      archive: "Storage", createArchive: null,
+    }));
+  });
+
+  it("offers non-selectable label containers separately from system mailboxes", async () => {
+    vi.mocked(mailClient.discoverImapMailboxes).mockResolvedValue({
+      proposals: [], selectable: [{ name: "Work", delimiter: "/", specialUse: null }],
+      labelContainers: [
+        { name: "Labels", delimiter: "/", specialUse: null },
+        { name: "Work", delimiter: "/", specialUse: null },
+      ],
+    });
+    render(<ImapAccountSetup onConnected={vi.fn()} />);
+    fillManualSettings();
+    await save();
+    const container = screen.getByRole("combobox", { name: "Label container mailbox" });
+    expect(within(container).getByRole("option", { name: "Labels" })).toBeInTheDocument();
+    expect(within(container).getByRole("option", { name: "Work" })).toBeInTheDocument();
+    expect(within(screen.getByRole("combobox", { name: "Sent mailbox" }))
+      .queryByRole("option", { name: "Labels" })).not.toBeInTheDocument();
+    fireEvent.change(container, { target: { value: "Labels" } });
+    await confirmMapping();
+    expect(mailClient.commitImapMailboxMapping).toHaveBeenCalledWith(expect.objectContaining({ labelContainer: "Labels" }));
+  });
+
+  it.each(["keywords", "none"])("hides label-container selection in %s mode", async (mode) => {
+    render(<ImapAccountSetup onConnected={vi.fn()} />);
+    fillManualSettings();
+    fireEvent.change(screen.getByLabelText("How this account stores labels"), { target: { value: mode } });
+    await save();
+    expect(screen.queryByRole("combobox", { name: "Label container mailbox" })).not.toBeInTheDocument();
+    await confirmMapping();
+    expect(mailClient.commitImapMailboxMapping).toHaveBeenCalledWith(expect.objectContaining({ labelContainer: null }));
+  });
+
+  it("preserves selected mailbox identifiers including surrounding whitespace", async () => {
+    const mapping: ImapMailboxMapping = {
+      proposals: [
+        { role: "archive", mailbox: " Archive ", source: "special_use" },
+        { role: "sent", mailbox: "Sent ", source: "special_use" },
+      ],
+      selectable: [" Archive ", "Sent ", " Junk"].map((name) => ({ name, delimiter: "/", specialUse: null })),
+      labelContainers: [{ name: " Labels ", delimiter: "/", specialUse: null }],
+    };
+    vi.mocked(mailClient.discoverImapMailboxes).mockResolvedValue(mapping);
+    render(<ImapAccountSetup onConnected={vi.fn()} />);
+    fillManualSettings();
+    fireEvent.change(screen.getByLabelText("Container mailbox (e.g. Labels)"), { target: { value: " Labels " } });
+    await save();
+    expect(mailClient.testAndSaveImapAccount).toHaveBeenCalledWith(expect.objectContaining({ labelContainer: " Labels " }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Junk / Spam mailbox" }), { target: { value: " Junk" } });
+    await confirmMapping();
+    expect(mailClient.commitImapMailboxMapping).toHaveBeenCalledWith({
+      email: account.email, archive: " Archive ", createArchive: null,
+      mailboxOverrides: { sent: "Sent ", junk: " Junk" }, labelContainer: " Labels ",
+    });
+  });
+
+  it("preserves a manually entered container and lets the user clear it after discovery", async () => {
+    render(<ImapAccountSetup onConnected={vi.fn()} />);
+    fillManualSettings();
+    fireEvent.change(screen.getByLabelText("Container mailbox (e.g. Labels)"), { target: { value: "Custom" } });
+    await save();
+    const container = screen.getByRole("combobox", { name: "Label container mailbox" });
+    expect(container).toHaveValue("Custom");
+    fireEvent.change(container, { target: { value: "" } });
+    await confirmMapping();
+    expect(mailClient.commitImapMailboxMapping).toHaveBeenCalledWith(expect.objectContaining({ labelContainer: null }));
+  });
+
+  it("preserves the exact name requested for Archive creation", async () => {
+    render(<ImapAccountSetup onConnected={vi.fn()} />);
+    fillManualSettings();
+    await save();
+    fireEvent.change(screen.getByLabelText("New Archive mailbox name"), { target: { value: " Archive " } });
+    await confirmMapping();
+    expect(mailClient.commitImapMailboxMapping).toHaveBeenCalledWith(expect.objectContaining({ createArchive: " Archive " }));
+  });
+
+  it("lets the user finish without creating anything when discovery fails and mapping is skipped", async () => {
+    vi.mocked(mailClient.discoverImapMailboxes).mockRejectedValue("Unavailable");
+    const onConnected = vi.fn();
+    render(<ImapAccountSetup onConnected={onConnected} />);
+    fillManualSettings();
+    await save();
+    expect(screen.getByRole("alert")).toHaveTextContent("mailbox discovery failed");
+    await skipMapping();
+    expect(mailClient.commitImapMailboxMapping).not.toHaveBeenCalled();
     expect(onConnected).toHaveBeenCalledWith(account);
   });
 

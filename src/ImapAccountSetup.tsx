@@ -135,7 +135,7 @@ export function ImapAccountSetup({ onConnected }: { onConnected: (account: Accou
       imapPinnedFingerprint: imapTrust?.pin ?? null,
       smtpPinnedFingerprint: smtpTrust?.pin ?? null,
       labelStorage,
-      labelContainer: labelStorage === "folders" ? labelContainer.trim() || null : null,
+      labelContainer: labelStorage === "folders" ? labelContainer || null : null,
     };
     try {
       const account = await mailClient.testAndSaveImapAccount(request);
@@ -149,8 +149,8 @@ export function ImapAccountSetup({ onConnected }: { onConnected: (account: Accou
         setMapping(discovered);
         setStatus("Review the mailbox mapping below, then confirm.");
       } catch (discoveryError) {
-        setMapping({ proposals: [], selectable: [] });
-        setError(`Saved, but mailbox discovery failed: ${String(discoveryError)}. You can confirm with no mapping and set it later.`);
+        setMapping({ proposals: [], selectable: [], labelContainers: [] });
+        setError(`Saved, but mailbox discovery failed: ${String(discoveryError)}. You can skip mapping for now.`);
         setStatus(null);
       }
     } catch (e) {
@@ -446,8 +446,9 @@ function MailboxMappingReview({
     Object.fromEntries(ROLE_ORDER.map((role) => [role, proposalFor(role)?.mailbox ?? ""])),
   );
   // Archive-specific: when no Archive mailbox exists, offer to create one.
-  const [createArchive, setCreateArchive] = useState(false);
+  const [createArchive, setCreateArchive] = useState(() => !proposalFor("archive"));
   const [newArchiveName, setNewArchiveName] = useState("Archive");
+  const [chosenContainer, setChosenContainer] = useState(labelContainer);
 
   const selectableNames = mapping.selectable.map((mailbox) => mailbox.name);
 
@@ -456,16 +457,16 @@ function MailboxMappingReview({
     for (const role of ROLE_ORDER) {
       // Archive is carried in the dedicated `archive` field, not the overrides.
       if (role === "archive") continue;
-      const value = choices[role]?.trim();
+      const value = choices[role];
       if (value) mailboxOverrides[role] = value;
     }
-    const archiveChoice = choices.archive?.trim() || null;
+    const archiveChoice = choices.archive || null;
     onConfirm({
       email,
       archive: createArchive ? null : archiveChoice,
-      createArchive: createArchive ? newArchiveName.trim() || "Archive" : null,
+      createArchive: createArchive ? newArchiveName || "Archive" : null,
       mailboxOverrides,
-      labelContainer: labelStorage === "folders" ? labelContainer.trim() || null : null,
+      labelContainer: labelStorage === "folders" ? chosenContainer || null : null,
     });
   }
 
@@ -473,7 +474,7 @@ function MailboxMappingReview({
     <section className="imap-mailbox-mapping" aria-label="Mailbox mapping">
       <h2>Map your mailboxes</h2>
       <p>
-        We matched your account's system mailboxes. Choices from a certificate
+        We matched your account's system mailboxes. Choices from a server
         attribute are reliable; a name guess is worth a quick check. Change any
         of them below.
       </p>
@@ -486,11 +487,12 @@ function MailboxMappingReview({
               <dt>{ROLE_LABELS[role]}</dt>
               <dd>
                 <select
+                  aria-label={`${ROLE_LABELS[role]} mailbox`}
                   value={choices[role] ?? ""}
                   disabled={busy || (isArchive && createArchive)}
                   onChange={(e) => setChoices((prev) => ({ ...prev, [role]: e.target.value }))}
                 >
-                  <option value="">Not mapped</option>
+                  <option value="">{isArchive ? "Choose a mailbox" : "Not mapped"}</option>
                   {selectableNames.map((name) => (
                     <option key={name} value={name}>
                       {name}
@@ -526,8 +528,24 @@ function MailboxMappingReview({
           );
         })}
       </dl>
+      {labelStorage === "folders" && (
+        <label>
+          Label container mailbox
+          <select value={chosenContainer} disabled={busy}
+            onChange={(event) => setChosenContainer(event.target.value)}>
+            <option value="">No label container</option>
+            {chosenContainer && !mapping.labelContainers.some((mailbox) => mailbox.name === chosenContainer) && (
+              <option value={chosenContainer}>{chosenContainer}</option>
+            )}
+            {mapping.labelContainers.map((mailbox) => (
+              <option key={mailbox.name} value={mailbox.name}>{mailbox.name}</option>
+            ))}
+          </select>
+        </label>
+      )}
       <div className="imap-mapping-actions">
-        <button type="button" className="btn btn-primary" onClick={confirm} disabled={busy}>
+        <button type="button" className="btn btn-primary" onClick={confirm}
+          disabled={busy || (!createArchive && !choices.archive)}>
           Confirm mapping
         </button>
         <button type="button" className="btn" onClick={() => void onSkip()} disabled={busy}>

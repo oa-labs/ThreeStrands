@@ -721,6 +721,8 @@ export type ImapDiscoveredMailbox = {
 export type ImapMailboxMapping = {
   proposals: ImapRoleProposal[];
   selectable: ImapDiscoveredMailbox[];
+  /** Potential label containers, including non-selectable hierarchy nodes. */
+  labelContainers: ImapDiscoveredMailbox[];
 };
 
 /** The confirmed/edited mapping the user commits on the mapping screen. */

@@ -207,8 +207,8 @@ CREATE TABLE imap_mailboxes (
     uidvalidity INTEGER NOT NULL,
     uidnext INTEGER NOT NULL,
     highestmodseq INTEGER,           -- NULL without CONDSTORE
-    permanent_flags_json TEXT NOT NULL,  -- PERMANENTFLAGS as listed
-    permanent_keywords INTEGER NOT NULL, -- PERMANENTFLAGS contains \*
+    permanent_flags_json TEXT,       -- writable SELECT flags; NULL until known
+    permanent_keywords INTEGER,     -- writable SELECT permits \*; NULL until known
     PRIMARY KEY (account_id, name)
 );
 
@@ -230,6 +230,13 @@ the opaque `SyncCursor`: the UID-to-ID map and each mailbox's counters. It gets
 a narrow `ImapStateStore` handle onto these tables when it is constructed. The
 cursor itself stays small, holding only a sync generation number. The Gmail
 provider is unaffected.
+
+Mailbox write capabilities remain unknown until a writable `SELECT` supplies
+`PERMANENTFLAGS`. Read-only discovery uses `EXAMINE` for counters and preserves
+any known write capabilities; its read-only permissions never replace them.
+Database migration 56 invalidates the unreliable EXAMINE-derived permissions
+stored by earlier versions while preserving the catalog and message locations.
+This provider-internal metadata is not part of settings transfer.
 
 ### Threading
 

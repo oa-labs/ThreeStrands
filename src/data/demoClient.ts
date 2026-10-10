@@ -1026,6 +1026,10 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
           { role: "junk", mailbox: "Spam", source: "special_use" },
           { role: "all", mailbox: "All Mail", source: "special_use" },
         ],
+        labelContainers: [
+          { name: "Labels", delimiter: "/", specialUse: null },
+          { name: "Projects", delimiter: "/", specialUse: null },
+        ],
         selectable: [
           { name: "INBOX", delimiter: "/", specialUse: null },
           { name: "Sent", delimiter: "/", specialUse: "\\Sent" },

@@ -39,9 +39,9 @@ pub struct MailboxStatus {
     /// arbitrary keywords (so this account can store keyword labels).
     pub permanent_keywords: bool,
     /// `PERMANENTFLAGS` as the server listed them, each rendered to its
-    /// wire spelling (`\Seen`, `$Forwarded`, …). Slice 3 persists this JSON
-    /// into `imap_mailboxes.permanent_flags_json`; a `\*` wildcard, if
-    /// present, is reflected separately in `permanent_keywords`.
+    /// wire spelling (`\Seen`, `$Forwarded`, …). Only a writable SELECT can
+    /// supply persisted write capabilities; EXAMINE flags are read-only.
+    /// A `\*` wildcard is reflected separately in `permanent_keywords`.
     pub permanent_flags: Vec<String>,
 }
 

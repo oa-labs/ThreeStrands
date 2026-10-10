@@ -293,10 +293,8 @@ mod account_startup_tests {
     use super::{catalogued_mail_provider, startup_account_credentials};
     use crate::{auth::{self, AuthConfig}, db::Database, models::MailProviderKind};
 
-    #[test]
-    fn tested_imap_setup_saves_independent_pins_without_starting_sync() {
-        let database = Database::open_memory();
-        let request: super::ImapSetupRequest = serde_json::from_value(serde_json::json!({
+    fn imap_setup_request() -> super::ImapSetupRequest {
+        serde_json::from_value(serde_json::json!({
             "email": "imap@example.com", "imapHost": "incoming.example.com", "imapPort": 993,
             "imapSecurity": "implicit_tls", "imapUsername": "incoming", "imapPassword": "secret",
             "smtpHost": "outgoing.example.com", "smtpPort": 587, "smtpSecurity": "start_tls",
@@ -304,7 +302,13 @@ mod account_startup_tests {
             "imapPinnedFingerprint": null, "smtpPinnedFingerprint": null,
             "labelStorage": "folders", "labelContainer": "Labels"
         }))
-        .unwrap();
+        .unwrap()
+    }
+
+    #[test]
+    fn tested_imap_setup_saves_independent_pins_without_starting_sync() {
+        let database = Database::open_memory();
+        let request = imap_setup_request();
         let incoming = super::imap::Sha256Fingerprint::from_bytes([1; 32]);
         let outgoing = super::imap::Sha256Fingerprint::from_bytes([2; 32]);
         let account =
@@ -336,6 +340,77 @@ mod account_startup_tests {
             .pinned_fingerprints
             .contains_key("outgoing.example.com:587"));
         assert_eq!(database.list_accounts().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn confirmed_mailbox_mapping_preserves_identifiers_in_saved_settings() {
+        let database = Database::open_memory();
+        let request = imap_setup_request();
+        super::save_tested_imap_settings(&database, &request, None, None).unwrap();
+        let settings = database
+            .imap_account_settings(&request.email)
+            .unwrap()
+            .unwrap();
+        let commit: super::ImapMailboxMappingCommit = serde_json::from_value(serde_json::json!({
+            "email": request.email, "archive": " Archive ", "createArchive": null,
+            "mailboxOverrides": { "sent": "Sent ", "junk": " Junk", "all": " " },
+            "labelContainer": " Labels "
+        }))
+        .unwrap();
+        super::save_imap_mailbox_mapping(&database, settings, commit).unwrap();
+        let settings = database
+            .imap_account_settings(&request.email)
+            .unwrap()
+            .unwrap();
+        assert_eq!(settings.archive_mailbox.as_deref(), Some(" Archive "));
+        assert_eq!(settings.mailbox_overrides["sent"], "Sent ");
+        assert_eq!(settings.mailbox_overrides["junk"], " Junk");
+        assert_eq!(settings.mailbox_overrides["all"], " ");
+        assert_eq!(settings.label_container.as_deref(), Some(" Labels "));
+
+        let commit: super::ImapMailboxMappingCommit = serde_json::from_value(serde_json::json!({
+            "email": request.email, "archive": null, "createArchive": " New Archive ",
+            "mailboxOverrides": { "sent": "" }, "labelContainer": null
+        }))
+        .unwrap();
+        assert_eq!(commit.archive_choice().unwrap(), " New Archive ");
+        super::save_imap_mailbox_mapping(&database, settings, commit).unwrap();
+        let settings = database
+            .imap_account_settings(&request.email)
+            .unwrap()
+            .unwrap();
+        assert_eq!(settings.archive_mailbox.as_deref(), Some(" New Archive "));
+        assert!(!settings.mailbox_overrides.contains_key("sent"));
+        assert_eq!(settings.mailbox_overrides["junk"], " Junk");
+        assert_eq!(settings.label_container, None);
+    }
+
+    #[test]
+    fn confirming_without_an_archive_choice_leaves_settings_unchanged() {
+        let database = Database::open_memory();
+        let request = imap_setup_request();
+        super::save_tested_imap_settings(&database, &request, None, None).unwrap();
+        let before = database
+            .imap_account_settings(&request.email)
+            .unwrap()
+            .unwrap();
+        for archive in [None, Some("")] {
+            let commit = super::ImapMailboxMappingCommit {
+                email: request.email.clone(),
+                archive: archive.map(str::to_string),
+                create_archive: None,
+                mailbox_overrides: Default::default(),
+                label_container: None,
+            };
+            assert!(super::save_imap_mailbox_mapping(&database, before.clone(), commit).is_err());
+            assert_eq!(
+                database
+                    .imap_account_settings(&request.email)
+                    .unwrap()
+                    .unwrap(),
+                before
+            );
+        }
     }
 
     #[test]
@@ -2401,6 +2476,36 @@ struct ImapMailboxMappingCommit {
     label_container: Option<String>,
 }
 
+impl ImapMailboxMappingCommit {
+    fn archive_choice(&self) -> Result<&str, String> {
+        self.create_archive
+            .as_deref()
+            .filter(|name| !name.is_empty())
+            .or(self.archive.as_deref().filter(|name| !name.is_empty()))
+            .ok_or_else(|| "Choose an Archive mailbox or create one.".to_string())
+    }
+}
+
+fn save_imap_mailbox_mapping(
+    database: &Database,
+    mut settings: imap::ImapAccountSettings,
+    commit: ImapMailboxMappingCommit,
+) -> Result<(), String> {
+    // Mailbox names are opaque server identifiers. Only the empty string is
+    // a cleared choice; whitespace can be part of an existing mailbox name.
+    settings.archive_mailbox = Some(commit.archive_choice()?.to_string());
+    for (role_key, mailbox) in commit.mailbox_overrides {
+        if mailbox.is_empty() {
+            settings.mailbox_overrides.remove(&role_key);
+        } else {
+            settings.mailbox_overrides.insert(role_key, mailbox);
+        }
+    }
+    settings.label_container = commit.label_container.filter(|name| !name.is_empty());
+    database.save_imap_account_settings(&commit.email, &settings)?;
+    Ok(())
+}
+
 /// Persist the user's confirmed mailbox mapping into the account's settings
 /// row (Phase 2 Slice 3): the Archive choice, the per-role overrides, and the
 /// label-folder container. When the user asked to create a new Archive
@@ -2412,51 +2517,33 @@ async fn commit_imap_mailbox_mapping(
     commit: ImapMailboxMappingCommit,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let mut settings = state
+    let settings = state
         .database
         .imap_account_settings(&commit.email)?
         .ok_or_else(|| "This account has no saved IMAP settings.".to_string())?;
 
     // Resolve the Archive mailbox: an explicit create wins (and actually
     // creates it on the server), otherwise the chosen existing mailbox.
-    let archive = if let Some(name) = commit.create_archive.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+    let archive = commit.archive_choice()?;
+    if commit
+        .create_archive
+        .as_deref()
+        .is_some_and(|name| !name.is_empty())
+    {
         let password = crate::auth::ImapCredential::for_account(&commit.email)
             .load()?
             .imap;
         let mut session = imap::connect_with_settings(&settings, &password)
             .await
             .map_err(|error| imap::plain_language(&error))?;
-        let created = imap::create_mailbox_tolerant(&mut session, name)
+        let created = imap::create_mailbox_tolerant(&mut session, archive)
             .await
             .map_err(|error| imap::plain_language(&error));
         let _ = session.logout().await;
         created?;
-        Some(name.to_string())
-    } else {
-        commit.archive.as_deref().map(str::trim).filter(|n| !n.is_empty()).map(str::to_string)
-    };
-
-    if let Some(archive) = archive {
-        settings.archive_mailbox = Some(archive);
-    }
-    // Merge the confirmed per-role overrides (role key -> mailbox name),
-    // dropping any blank values the UI may send for a cleared row.
-    for (role_key, mailbox) in commit.mailbox_overrides {
-        let mailbox = mailbox.trim();
-        if mailbox.is_empty() {
-            settings.mailbox_overrides.remove(&role_key);
-        } else {
-            settings.mailbox_overrides.insert(role_key, mailbox.to_string());
-        }
-    }
-    if let Some(container) = commit.label_container.as_deref().map(str::trim) {
-        settings.label_container = (!container.is_empty()).then(|| container.to_string());
     }
 
-    state
-        .database
-        .save_imap_account_settings(&commit.email, &settings)?;
-    Ok(())
+    save_imap_mailbox_mapping(&state.database, settings, commit)
 }
 
 #[tauri::command]

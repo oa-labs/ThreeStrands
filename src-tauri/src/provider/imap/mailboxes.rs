@@ -12,7 +12,7 @@
 //!    that attribute decides the role with no guessing and nothing to confirm.
 //! 2. **Fall back to conservative, case-insensitive name matching** only for
 //!    roles no attribute claimed. `Sent` / `Sent Mail` / `Sent Items`,
-//!    `Archive`, `All Mail`, `Drafts`, `Trash` / `Deleted` / `Deleted Items`,
+//!    `Archive`, `Drafts`, `Trash` / `Deleted` / `Deleted Items`,
 //!    `Junk` / `Spam`. The match is delimiter-aware: `[Gmail]/Sent Mail`
 //!    matches on its leaf. A name match is a GUESS, surfaced for the user to
 //!    confirm or override on the mapping screen — never silently committed.
@@ -104,7 +104,7 @@ impl MailboxRole {
     fn name_candidates(self) -> &'static [&'static str] {
         match self {
             MailboxRole::Sent => &["sent", "sent mail", "sent items", "sent messages"],
-            MailboxRole::Archive => &["archive", "archives", "all mail"],
+            MailboxRole::Archive => &["archive", "archives"],
             MailboxRole::Drafts => &["drafts", "draft"],
             MailboxRole::Trash => &["trash", "deleted", "deleted items", "deleted messages", "bin"],
             MailboxRole::Junk => &["junk", "spam", "junk email", "junk e-mail", "bulk mail"],
@@ -156,6 +156,9 @@ pub struct MailboxMapping {
     pub proposals: Vec<RoleProposal>,
     /// Every selectable (non-`\Noselect`) mailbox, for override pickers.
     pub selectable: Vec<DiscoveredMailbox>,
+    /// Label containers may be selectable folders or `\Noselect` hierarchy nodes.
+    /// Listing them separately keeps hierarchy nodes out of system-role pickers.
+    pub label_containers: Vec<DiscoveredMailbox>,
 }
 
 impl MailboxMapping {
@@ -213,9 +216,8 @@ pub fn propose_mapping(entries: &[MailboxEntry]) -> MailboxMapping {
         }
     }
 
-    // Mailboxes already claimed by an attribute are not reused for a name
-    // guess of a different role.
-    let claimed: std::collections::BTreeSet<String> =
+    // Each mailbox can supply at most one proposed role, including name guesses.
+    let mut claimed: std::collections::BTreeSet<String> =
         by_role.values().map(|proposal| proposal.mailbox.clone()).collect();
 
     // Pass 2: name matching for roles no attribute claimed.
@@ -230,6 +232,7 @@ pub fn propose_mapping(entries: &[MailboxEntry]) -> MailboxMapping {
                         .eq_ignore_ascii_case(candidate)
                 })
         }) {
+            claimed.insert(entry.name.clone());
             by_role.insert(
                 role,
                 RoleProposal {
@@ -256,12 +259,21 @@ pub fn propose_mapping(entries: &[MailboxEntry]) -> MailboxMapping {
         })
         .collect();
 
-    MailboxMapping { proposals, selectable }
+    let label_containers = entries
+        .iter()
+        .map(|entry| DiscoveredMailbox {
+            name: entry.name.clone(),
+            delimiter: entry.delimiter.clone(),
+            special_use: entry.special_use.clone(),
+        })
+        .collect();
+
+    MailboxMapping { proposals, selectable, label_containers }
 }
 
 /// Discover an account's mailboxes end to end over an authenticated session:
 /// `LIST "" "*"`, EXAMINE each selectable mailbox read-only for its UID
-/// counters and permanent flags, upsert the catalog into `imap_mailboxes`, and
+/// counters, upsert the catalog into `imap_mailboxes`, and
 /// return the proposed role mapping for the user to confirm.
 ///
 /// EXAMINE (not SELECT) is deliberate: discovery is read-only and must not set
@@ -269,7 +281,9 @@ pub fn propose_mapping(entries: &[MailboxEntry]) -> MailboxMapping {
 /// "Mailbox discovery"). A mailbox that cannot be EXAMINEd (it vanished
 /// between the LIST and the EXAMINE, or is momentarily busy) is skipped rather
 /// than failing the whole discovery — its catalog row is simply not refreshed
-/// this round.
+/// this round. EXAMINE's PERMANENTFLAGS describe this read-only selection,
+/// not the mailbox's write capabilities. Those remain unknown until a writable
+/// SELECT supplies them; discovery preserves capabilities already learned there.
 pub async fn discover_and_persist(
     session: &mut dyn super::session::ImapSession,
     store: &super::ImapStateStore,
@@ -284,8 +298,6 @@ pub async fn discover_and_persist(
             Ok(status) => status,
             Err(_) => continue,
         };
-        let permanent_flags_json = serde_json::to_string(&status.permanent_flags)
-            .unwrap_or_else(|_| "[]".to_string());
         let row = super::ImapMailbox {
             name: entry.name.clone(),
             delimiter: entry.delimiter.clone(),
@@ -296,8 +308,8 @@ pub async fn discover_and_persist(
             uidvalidity: status.uid_validity.unwrap_or(0) as i64,
             uidnext: status.uid_next.unwrap_or(0) as i64,
             highestmodseq: None, // CONDSTORE is a later slice.
-            permanent_flags_json,
-            permanent_keywords: status.permanent_keywords,
+            permanent_flags_json: None,
+            permanent_keywords: None,
         };
         store
             .upsert_mailbox(&row)
@@ -496,6 +508,43 @@ mod tests {
         let mapping = propose_mapping(&entries);
         assert_eq!(mapping.mailbox_for(MailboxRole::Archive), None);
         assert!(mapping.selectable.iter().all(|mailbox| mailbox.name != "Archive"));
+        assert!(mapping.label_containers.iter().any(|mailbox| mailbox.name == "Archive"));
+        assert!(mapping.label_containers.iter().any(|mailbox| mailbox.name == "INBOX"));
+    }
+
+    #[test]
+    fn all_mail_name_fallback_is_an_aggregate_never_an_archive_destination() {
+        for (name, delimiter) in [("All Mail", "/"), ("INBOX.All Mail", ".")] {
+            let mapping = propose_mapping(&[entry(name, delimiter, None, false)]);
+            assert_eq!(mapping.mailbox_for(MailboxRole::All), Some(name));
+            assert_eq!(mapping.mailbox_for(MailboxRole::Archive), None);
+        }
+        let mapping = propose_mapping(&[
+            entry("Archive", "/", None, false),
+            entry("Views/All Mail", "/", None, false),
+        ]);
+        assert_eq!(mapping.mailbox_for(MailboxRole::Archive), Some("Archive"));
+        assert_eq!(
+            mapping.mailbox_for(MailboxRole::All),
+            Some("Views/All Mail")
+        );
+        let names: std::collections::BTreeSet<_> = mapping
+            .proposals
+            .iter()
+            .map(|proposal| &proposal.mailbox)
+            .collect();
+        assert_eq!(names.len(), mapping.proposals.len());
+    }
+
+    #[test]
+    fn attribute_mapping_preserves_exact_mailbox_and_container_names() {
+        let mapping = propose_mapping(&[
+            entry(" Sent ", "/", Some("\\Sent"), false),
+            entry(" Labels ", "/", None, true),
+        ]);
+        assert_eq!(mapping.mailbox_for(MailboxRole::Sent), Some(" Sent "));
+        assert_eq!(mapping.selectable[0].name, " Sent ");
+        assert_eq!(mapping.label_containers[1].name, " Labels ");
     }
 
     /// A role nothing matches is simply absent — the UI then offers "choose a
@@ -637,7 +686,7 @@ mod discovery_tests {
     }
 
     /// Discovery EXAMINEs each selectable mailbox, persists the catalog with
-    /// its counters and permanent-flags, skips `\Noselect` containers, and
+    /// its counters and unknown write capabilities, skips `\Noselect` containers, and
     /// returns the attribute-sourced mapping.
     #[tokio::test]
     async fn discovery_persists_the_catalog_and_proposes_the_mapping() {
@@ -664,7 +713,7 @@ mod discovery_tests {
         assert_eq!(mapping.mailbox_for(MailboxRole::Archive), Some("Archive"));
 
         // The catalog persisted exactly the three selectable mailboxes, with
-        // the EXAMINE counters and the permanent-flags list — never the
+        // the EXAMINE counters, but not read-only permissions — never the
         // \Noselect container.
         let rows = store.mailboxes().unwrap();
         let names: Vec<_> = rows.iter().map(|m| m.name.as_str()).collect();
@@ -672,11 +721,8 @@ mod discovery_tests {
         let inbox = rows.iter().find(|m| m.name == "INBOX").unwrap();
         assert_eq!(inbox.uidvalidity, 95479608);
         assert_eq!(inbox.uidnext, 979);
-        assert_eq!(
-            inbox.permanent_flags_json,
-            serde_json::to_string(&vec!["\\Seen", "$Forwarded"]).unwrap()
-        );
-        assert!(!inbox.permanent_keywords);
+        assert_eq!(inbox.permanent_flags_json, None);
+        assert_eq!(inbox.permanent_keywords, None);
     }
 
     /// A mailbox that fails EXAMINE (vanished or busy) is skipped, not fatal:
@@ -700,6 +746,42 @@ mod discovery_tests {
         assert_eq!(mapping.mailbox_for(MailboxRole::Sent), Some("Sent"));
         let names: Vec<_> = store.mailboxes().unwrap().iter().map(|m| m.name.clone()).collect();
         assert_eq!(names, vec!["INBOX".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn read_only_discovery_preserves_known_write_capabilities() {
+        for keywords in [false, true] {
+            let store = store();
+            let known = super::super::ImapMailbox {
+                name: "INBOX".into(),
+                delimiter: Some("/".into()),
+                special_use: None,
+                uidvalidity: 1,
+                uidnext: 2,
+                highestmodseq: None,
+                permanent_flags_json: Some(
+                    if keywords {
+                        r#"["\\Seen","\\*"]"#
+                    } else {
+                        r#"["\\Seen"]"#
+                    }
+                    .into(),
+                ),
+                permanent_keywords: Some(keywords),
+            };
+            store.upsert_mailbox(&known).unwrap();
+            let mut session = FakeSession {
+                list: vec![entry("INBOX", None, false)],
+                examine: [("INBOX".into(), Ok(status(1, 9, &[], false)))].into(),
+                creates: Default::default(),
+                create_calls: Default::default(),
+            };
+            discover_and_persist(&mut session, &store).await.unwrap();
+            let rows = store.mailboxes().unwrap();
+            assert_eq!(rows[0].uidnext, 9);
+            assert_eq!(rows[0].permanent_flags_json, known.permanent_flags_json);
+            assert_eq!(rows[0].permanent_keywords, Some(keywords));
+        }
     }
 
     /// A plain CREATE that succeeds creates exactly once.
