@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.89.3"
+version = "0.90.0"
 description = "A local-first, keyboard-driven email client"
 authors = ["OpenArc LLC"]
 license-file = "../LICENSE"
@@ -77,6 +77,19 @@ threestrands-sync-protocol = { path = "../crates/sync-protocol" }
 threestrands-sync-transport = { path = "../crates/sync-transport" }
 tauri-plugin-updater = "2"
 csv = "1"
+# --- Phase 2 IMAP (Slice 1: connection + STARTTLS cert pinning) ----------
+# Promoted from [dev-dependencies] (where they backed the Slice 0 spike) to
+# real dependencies now that the connection layer ships. `async-imap` is the
+# IMAP client (behind our internal `ImapSession` trait so `imap-next` stays a
+# local fallback); `tokio-rustls` upgrades the stream we own for STARTTLS and
+# wraps implicit-TLS; `futures` drives the FETCH response stream;
+# `rustls-platform-verifier` is the WebPKI fallback for the pinning verifier
+# (a real-CA server with no pin). See `docs/imap-design.md` "Recommended
+# stack". rustls itself is already a dependency (ring provider).
+async-imap = { version = "0.12", default-features = false, features = ["runtime-tokio"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls-platform-verifier = "0.7"
+futures = "0.3"
 
 [target.'cfg(unix)'.dependencies]
 xattr = "1"
@@ -97,17 +110,16 @@ objc2-uniform-type-identifiers = { version = "0.3", default-features = false, fe
 axum = { version = "0.8", features = ["multipart"] }
 # Test-only: paused tokio time for the polling loop's wait tests.
 tokio = { version = "1", features = ["test-util"] }
-# --- Phase 2 Slice 0 spike (THROWAWAY, dev-only) -------------------------
-# These back `examples/imap_spike.rs` only. They are dev-dependencies so they
-# do NOT ship in the lib/bin: cargo examples compile against dev-deps, and the
-# default `cargo build`/release build never pulls them. Pinned to the stack
-# `docs/imap-design.md` recommends so the spike exercises exactly what Phase 2
-# would use. Delete this block (and the [[example]] stanza) when the spike's
-# verdict is recorded and the throwaway code is removed.
-async-imap = { version = "0.12", default-features = false, features = ["runtime-tokio"] }
-tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+# Test-only: generates a throwaway self-signed leaf so the IMAP pinning
+# verifier's reject/accept tests run against real DER bytes rather than a
+# hand-rolled fixture (src/provider/imap/tls.rs).
+rcgen = "0.14"
+# --- Phase 2 IMAP spike (THROWAWAY, dev-only) ----------------------------
+# `examples/imap_spike.rs` (the Slice 0 probe) imports `rustls_pki_types`
+# directly; the client/TLS crates it shares with the shipped connection layer
+# now live in [dependencies]. This one stays dev-only. Delete with the example
+# when the throwaway spike is removed.
 rustls-pki-types = "1"
-futures = "0.3"
 
 # The spike probe is a cargo EXAMPLE, not part of the lib/bin, so it is never
 # linked into the shipped app. Run it with:

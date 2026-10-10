@@ -1,26 +1,58 @@
-//! The IMAP provider's own persistent sync state.
+//! The IMAP provider: connection layer and persistent sync state.
 //!
-//! `docs/imap-design.md` ("Data model") gives the IMAP provider a narrow
-//! handle onto two tables that the opaque [`SyncCursor`](super::SyncCursor)
-//! deliberately does not carry: the per-account mailbox catalog
-//! (`imap_mailboxes`, each mailbox's UID counters) and the UID-to-message-id
-//! location map (`imap_locations`). The cursor "stays small, holding only a
-//! sync generation number"; everything heavier lives here.
+//! This module roots everything IMAP. Two concerns live under it:
 //!
-//! This is the seam only. No IMAP network protocol lives here, and no Gmail
-//! code path reads or writes these tables, so Gmail's own sync state is
-//! untouched. The IMAP provider (phase 2) is constructed with an
-//! [`ImapStateStore`] onto the shared database and does its UID bookkeeping
-//! through it.
+//! * **Persistent sync state** (this file). `docs/imap-design.md`
+//!   ("Data model") gives the IMAP provider a narrow handle onto two tables
+//!   that the opaque [`SyncCursor`](super::SyncCursor) deliberately does not
+//!   carry: the per-account mailbox catalog (`imap_mailboxes`, each mailbox's
+//!   UID counters) and the UID-to-message-id location map (`imap_locations`).
+//!   The cursor "stays small, holding only a sync generation number";
+//!   everything heavier lives in [`ImapStateStore`]. No Gmail code path reads
+//!   or writes these tables, so Gmail's own sync state is untouched. The
+//!   tables themselves are created by schema migration v54; see
+//!   `crate::schema`.
 //!
-//! The tables themselves are created by schema migration v54; see
-//! `crate::schema`.
+//! * **The connection layer** (Phase 2 Slice 1, submodules below). The first
+//!   shipped IMAP wire code: a TLS-secured, fingerprint-pinned session behind
+//!   the internal [`ImapSession`] trait, the connection-cap policy, and the
+//!   RFC 5530 -> [`ProviderError`](super::ProviderError) mapping. It is
+//!   infrastructure the later read slices build on. It implements NO sync,
+//!   fetch, mailbox discovery, account setup, or SMTP yet, and it is NOT wired
+//!   into live provider dispatch: no account can construct an IMAP provider
+//!   until Slice 2's account setup lands. Gmail is unchanged.
+//!
+//! The connection code lifts the patterns the Slice 0 spike
+//! (`examples/imap_spike.rs`) proved — STARTTLS over a stream we own, the
+//! pinning `rustls` `ServerCertVerifier`, `run_command` for response codes —
+//! into the real crate; the spike stays as a throwaway example.
 
-// The IMAP provider that drives this seam lands in phase 2; until then the
-// store type and its rows have no non-test caller. The allow is scoped to
-// this module and removed with that first caller, matching how slice 1
-// scoped the unused `ProviderCapabilities` fields.
+// The IMAP provider that drives this seam lands across phase 2; until each
+// piece has its live caller (Slice 2 account setup constructs sessions; the
+// read slices call fetch/search) the connection types and the state store
+// have no non-test caller. The allow is scoped to this module tree and
+// removed with those first callers, matching how slice 1 scoped the unused
+// `ProviderCapabilities` fields.
 #![allow(dead_code)]
+
+mod connection;
+mod error;
+mod session;
+mod tls;
+
+// These are the connection layer's public surface for the later read slices
+// (Slice 2 account setup constructs a manager + sessions; the read slices call
+// the session methods and the error mapper). Until those callers land the
+// re-exports are unused, so the allow is scoped here and removed with the
+// first consumer — matching how the module scopes `dead_code`.
+#[allow(unused_imports)]
+pub use connection::{ConnectionConfig, ImapConnectionManager, TlsMode};
+#[allow(unused_imports)]
+pub use error::map_imap_error;
+#[allow(unused_imports)]
+pub use session::{ImapSession, MailboxStatus};
+#[allow(unused_imports)]
+pub use tls::{parse_sha256_fingerprint, PinnedCertVerifier, Sha256Fingerprint};
 
 use std::sync::Arc;
 
