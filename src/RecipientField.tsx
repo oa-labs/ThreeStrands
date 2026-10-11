@@ -82,6 +82,8 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestId = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const groupsLoaded = useRef(false);
+  const groupsLoading = useRef(false);
 
   useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current); }, []);
 
@@ -131,8 +133,7 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
   const visible = !dismissed && optionCount > 0;
   const effectiveActiveIndex = optionCount > 0 ? Math.min(Math.max(activeIndex, 0), optionCount - 1) : -1;
 
-  function fetchSuggestions(forToken: string) {
-    const thisRequest = ++requestId.current;
+  function fetchSuggestions(forToken: string, thisRequest = ++requestId.current) {
     void mailClient
       .listContactSuggestions(account, forToken, 8)
       .then((results) => {
@@ -144,16 +145,23 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
 
   function query(nextDraftText: string) {
     if (debounce.current) clearTimeout(debounce.current);
+    // Invalidate immediately, including during the next debounce and on clear.
+    const thisRequest = ++requestId.current;
     const token = nextDraftText.trim();
     if (!token || !account) {
       setSuggestions([]);
       return;
     }
-    debounce.current = setTimeout(() => fetchSuggestions(token), 150);
+    debounce.current = setTimeout(() => fetchSuggestions(token, thisRequest), 150);
   }
 
   function loadGroups() {
-    void mailClient.listContactGroupRecipients().then(setGroups).catch(logBackgroundFailure("Contact group lookup"));
+    if (groupsLoaded.current || groupsLoading.current) return;
+    groupsLoading.current = true;
+    void mailClient.listContactGroupRecipients().then((result) => {
+      groupsLoaded.current = true;
+      setGroups(result);
+    }).catch(logBackgroundFailure("Contact group lookup")).finally(() => { groupsLoading.current = false; });
   }
 
   function selectGroup(group: ContactGroupRecipients) {

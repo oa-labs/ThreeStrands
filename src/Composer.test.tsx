@@ -1058,6 +1058,35 @@ describe("Composer recipient autocomplete", () => {
     pinned: false,
   };
 
+  it("ignores outdated autocomplete responses during debounce and after clearing", async () => {
+    const old = deferred<typeof contact[]>();
+    const current = deferred<typeof contact[]>();
+    const suggest = vi.spyOn(mailClient, "listContactSuggestions")
+      .mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise);
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const to = screen.getByRole("textbox", { name: "To" });
+    fireEvent.change(to, { target: { value: "ja" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(150); });
+    fireEvent.change(to, { target: { value: "jo" } });
+    await act(async () => { old.resolve([contact]); });
+    expect(screen.queryByRole("option", { name: /Jane Doe/ })).not.toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(150); });
+    expect(suggest).toHaveBeenCalledTimes(2);
+    fireEvent.change(to, { target: { value: "" } });
+    await act(async () => { current.resolve([contact]); });
+    expect(screen.queryByRole("option", { name: /Jane Doe/ })).not.toBeInTheDocument();
+  });
+
+  it("loads contact groups once while a composer remains open", async () => {
+    const groups = vi.spyOn(mailClient, "listContactGroupRecipients").mockResolvedValue([]);
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const to = screen.getByRole("textbox", { name: "To" });
+    await act(async () => { to.focus(); });
+    const subject = screen.getByRole("textbox", { name: "Subject" });
+    await act(async () => { subject.focus(); to.focus(); });
+    expect(groups).toHaveBeenCalledTimes(1);
+  });
+
   it("suggests a past correspondent from local history and fills the field on selection", async () => {
     const suggest = vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([contact]);
     render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);

@@ -72,6 +72,21 @@ describe("ComposeContext", () => {
     renderPanel();
     expect(screen.getByRole("complementary", { name: "Compose context" })).toHaveTextContent("Add a recipient to see your history with them.");
     expect(mailClient.resolveContactIds).not.toHaveBeenCalled();
+    expect(mailClient.listContactSuggestions).not.toHaveBeenCalled();
+    expect(mailClient.listContactGroupRecipients).not.toHaveBeenCalled();
+  });
+
+  it("defers history queries until a complete recipient and reuses them during editing", async () => {
+    const { props, rerender } = renderPanel();
+    rerender(<ComposeContext {...props} draft={{ ...draft, to: "an" }} />);
+    expect(mailClient.listContactSuggestions).not.toHaveBeenCalled();
+    expect(mailClient.listContactGroupRecipients).not.toHaveBeenCalled();
+    rerender(<ComposeContext {...props} draft={{ ...draft, to: "ann@partner.com" }} />);
+    await waitFor(() => expect(mailClient.listContactSuggestions).toHaveBeenCalledTimes(2));
+    expect(mailClient.listContactGroupRecipients).toHaveBeenCalledTimes(1);
+    rerender(<ComposeContext {...props} draft={{ ...draft, to: "ann@partner.com", subject: "Updated", body: "Typing" }} />);
+    expect(mailClient.listContactSuggestions).toHaveBeenCalledTimes(2);
+    expect(mailClient.listContactGroupRecipients).toHaveBeenCalledTimes(1);
   });
 
   it("shows what the user saved about the recipient, and recent emails with them", async () => {

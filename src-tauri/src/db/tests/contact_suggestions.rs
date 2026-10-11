@@ -131,6 +131,50 @@ fn compose_contact_name_uses_the_most_recent_nonempty_message_name() {
 }
 
 #[test]
+fn autocomplete_candidate_filter_preserves_counts_name_precedence_pins_and_suppression() {
+    let database = database();
+    for (index, name) in ["Historical Match", "Current Name", ""].into_iter().enumerate() {
+        let mut sent = message(&format!("candidate-{index}"), &format!("candidate-thread-{index}"), &format!("2026-0{}-01T00:00:00Z", index + 1), "body");
+        sent.from = "you@example.com".into();
+        sent.to = vec![if name.is_empty() { "person@partner.test".into() } else { format!("{name} <person@partner.test>") }];
+        database.upsert_thread("you@example.com", &[sent]).unwrap();
+    }
+    database.connection().unwrap().execute_batch(
+        "INSERT INTO pinned_contacts(account_id,email,display_name,pinned_at) VALUES
+         ('you@example.com','person@partner.test','Pinned Override','2026-01-01'),
+         ('you@example.com','pinned@example.test','Pinned Only','2026-01-01');
+         INSERT INTO contacts(id,display_name,favorite,updated_at) VALUES
+         ('candidate-profile','Profile Override',1,'2026-01-01'),
+         ('candidate-new','Profile Only',1,'2026-01-01');
+         INSERT INTO contact_addresses(contact_id,email) VALUES
+         ('candidate-profile','person@partner.test'), ('candidate-new','profile@new.test');"
+    ).unwrap();
+    for query in ["CURRENT", "person", "partner", "Pinned Only", "Profile Only"] {
+        let suggestions = database.list_contact_suggestions("you@example.com", query, 10).unwrap();
+        assert_eq!(suggestions.len(), 1, "query {query:?}");
+        let suggestion = &suggestions[0];
+        assert!(suggestion.pinned);
+        if suggestion.email == "person@partner.test" {
+            assert_eq!(suggestion.sent_count, 3, "counts must include non-matching history");
+            assert_eq!(suggestion.display_name.as_deref(), Some("Current Name"));
+        }
+    }
+    for query in ["Historical", "Pinned Override", "Profile Override", "unmatched"] {
+        assert!(database.list_contact_suggestions("you@example.com", query, 10).unwrap().is_empty(), "query {query:?}");
+    }
+    database.set_contact_suppressed("person@partner.test", true).unwrap();
+    assert!(database.list_contact_suggestions("you@example.com", "current", 10).unwrap().is_empty());
+    assert_eq!(database.contact_suggestions_including_suppressed("you@example.com", "current", 10).unwrap()[0].sent_count, 3);
+    assert!(database.list_contact_suggestions("other@example.com", "profile override", 10).unwrap().is_empty());
+    database.set_contact_suppressed("person@partner.test", false).unwrap();
+    // Personal address-book entries remain available on another account; its
+    // history and pins must not contribute to that account's counts.
+    let other = database.list_contact_suggestions("other@example.com", "profile override", 10).unwrap();
+    assert_eq!(other.len(), 1);
+    assert_eq!(other[0].sent_count, 0);
+}
+
+#[test]
 fn contact_suggestions_exclude_automated_senders_unless_sent_to_or_pinned() {
     let database = database();
     let mut newsletter = message(

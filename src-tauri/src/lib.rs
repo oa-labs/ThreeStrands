@@ -4418,6 +4418,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         root,
         gate: Arc::new(tokio::sync::Mutex::new(())),
         edits: Arc::new(tokio::sync::Mutex::new(())),
+        scheduling: Arc::new(tokio::sync::Mutex::new(())),
     };
     let worker = correspondence.clone();
     tauri::async_runtime::spawn(async move {

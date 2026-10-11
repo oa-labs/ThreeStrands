@@ -1,5 +1,24 @@
 import { expect, test } from "@playwright/test";
 
+test("C opens a focused composer and autosave and polling preserve the body caret", async ({ page }) => {
+  await page.clock.install();
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "New Message (c)" })).toBeVisible();
+  await page.keyboard.press("c");
+  const composer = page.getByRole("dialog", { name: "New Message" });
+  await expect(composer.getByRole("textbox", { name: "To", exact: true })).toBeFocused();
+  const body = composer.getByRole("textbox", { name: "Message Body" });
+  await body.fill("Typed immediately after launch");
+  await body.press("End");
+  await page.clock.fastForward(10_000);
+  await expect(body).toBeFocused();
+  await expect(body).toHaveText("Typed immediately after launch");
+  expect(await body.evaluate((element) => {
+    const selection = window.getSelection();
+    return Boolean(selection?.isCollapsed && element.contains(selection.anchorNode));
+  })).toBe(true);
+});
+
 async function openFolders(page: import("@playwright/test").Page) {
   await page.getByRole("button", { name: /Choose folder, current folder/ }).click();
   return page.getByRole("group", { name: "Folders" });

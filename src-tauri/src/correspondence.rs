@@ -862,6 +862,8 @@ pub struct Correspondence {
     pub root: PathBuf,
     pub gate: Arc<tokio::sync::Mutex<()>>,
     pub edits: Arc<tokio::sync::Mutex<()>>,
+    /// Serializes identity creation and schedule edits without blocking compose.
+    pub scheduling: Arc<tokio::sync::Mutex<()>>,
 }
 impl Correspondence {
     pub fn resume_schedules(&self) -> Result<(),String> {
@@ -873,7 +875,10 @@ impl Correspondence {
         self.database.pause_ready_sends_for_owned(account,&owner)
     }
     fn schedule_owner(&self, create: bool) -> Result<String,String> {
-        let has_schedules = self.database.outbox()?.iter().any(|o|o.schedule.is_some());
+        let has_schedules = self.database.connection()?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM outbox_messages WHERE schedule_json IS NOT NULL)",
+            [], |row| row.get::<_, bool>(0),
+        ).map_err(error)?;
         if !create && !has_schedules { return Err("No scheduled messages".into()); }
         (self.sending_identity)(create && !has_schedules)
     }
@@ -884,6 +889,24 @@ impl Correspondence {
             if schedule.report.owner_installation_id != owner { return Err("This message belongs to another sending computer".into()); }
             Ok(owner)
         } else { Ok(String::new()) }
+    }
+    async fn authorize_schedule_async(&self, id: &str) -> Result<String, String> {
+        let service = self.clone();
+        let id = id.to_string();
+        crate::run_database_task(move || service.authorize_schedule(&id)).await
+    }
+    fn listed_outbox(&self) -> Result<serde_json::Value, String> {
+        let owner = self.schedule_owner(false).ok();
+        if let Some(owner) = &owner { self.database.refresh_schedule_reports(owner, now())?; }
+        let mut items = self.database.outbox()?;
+        for item in &mut items {
+            if let Some(schedule) = &mut item.schedule {
+                schedule.can_manage = owner.as_deref() == Some(&schedule.report.owner_installation_id);
+                if !schedule.can_manage { schedule.report.blocked_reason = Some("owner_unavailable".into()); }
+                schedule.visibility = self.database.schedule_visibility(schedule)?;
+            }
+        }
+        serde_json::to_value(items).map_err(error)
     }
     async fn auth_for(&self, account: &str) -> Option<AccountAuth> {
         self.accounts
@@ -935,6 +958,27 @@ impl Correspondence {
         Ok(identity)
     }
     pub async fn request(&self, request: Request) -> Result<serde_json::Value, String> {
+        use Request::*;
+        // Reads and reconciliation do not edit browser-owned drafts. In particular,
+        // a slow or locked keychain during polling must not stall create/save.
+        match &request {
+            ListOutbox => {
+                let service = self.clone();
+                return crate::run_database_task(move || service.listed_outbox()).await;
+            }
+            ListDrafts | ListScheduledSummaries => {
+                let database = self.database.clone();
+                return crate::run_database_task(move || match request {
+                    ListDrafts => serde_json::to_value(database.drafts()?).map_err(error),
+                    _ => serde_json::to_value(database.scheduled_summaries()?).map_err(error),
+                }).await;
+            }
+            Reconcile { id } => {
+                self.reconcile(id).await?;
+                return Ok(serde_json::Value::Null);
+            }
+            _ => {}
+        }
         // Never hold a data lock while a user is choosing files; undo remains responsive.
         let selected_files = if matches!(&request, Request::Attach { .. }) {
             rfd::AsyncFileDialog::new()
@@ -944,8 +988,29 @@ impl Correspondence {
         } else {
             Vec::new()
         };
+        let schedule_target = match &request {
+            Schedule { id, revision, .. } => Some((id.clone(), Some(*revision))),
+            Reschedule { id, .. } | SendScheduledNow { id, .. } | Cancel { id } | Recover { id } => Some((id.clone(), None)),
+            _ => None,
+        };
+        // Keep first-time identity creation serialized through the schedule commit.
+        // Never cache this authority: a missing/replaced keychain entry must still
+        // pause persisted jobs rather than authorize them as a new installation.
+        let _scheduling = if schedule_target.is_some() { Some(self.scheduling.lock().await) } else { None };
+        let schedule_owner = if let Some((id, revision)) = schedule_target {
+            let service = self.clone();
+            crate::run_database_task(move || {
+                if let Some(revision) = revision {
+                    if let Some(item) = service.database.outbox()?.into_iter().find(|o| o.draft.id == id && o.draft.revision == revision) {
+                        return service.authorize_schedule(&item.id);
+                    }
+                    service.schedule_owner(true)
+                } else {
+                    service.authorize_schedule(&id)
+                }
+            }).await?
+        } else { String::new() };
         let _edits = self.edits.lock().await;
-        use Request::*;
         match request {
             Identity => {
                 let identity = self.database.compose_identity().map_err(|_| {
@@ -953,21 +1018,7 @@ impl Correspondence {
                 });
                 Ok(serde_json::to_value(identity?).map_err(error)?)
             }
-            ListDrafts => Ok(serde_json::to_value(self.database.drafts()?).map_err(error)?),
-            ListOutbox => {
-                let owner=self.schedule_owner(false).ok();
-                if let Some(owner)=&owner { self.database.refresh_schedule_reports(owner,now())?; }
-                let mut items=self.database.outbox()?;
-                for item in &mut items {
-                    if let Some(schedule)=&mut item.schedule {
-                        schedule.can_manage=owner.as_deref()==Some(&schedule.report.owner_installation_id);
-                        if !schedule.can_manage { schedule.report.blocked_reason=Some("owner_unavailable".into()); }
-                        schedule.visibility=self.database.schedule_visibility(schedule)?;
-                    }
-                }
-                Ok(serde_json::to_value(items).map_err(error)?)
-            }
-            ListScheduledSummaries => Ok(serde_json::to_value(self.database.scheduled_summaries()?).map_err(error)?),
+            ListDrafts | ListOutbox | ListScheduledSummaries | Reconcile { .. } => unreachable!("handled before the compose lock"),
             SchedulingInfo => {
                 let label=self.database.device_roster().map_err(error)?.into_iter().find(|d|d.is_self).and_then(|d|d.label).unwrap_or_else(||gethostname::gethostname().to_string_lossy().chars().take(60).collect());
                 Ok(serde_json::json!({"deviceName":label,"sharing":self.database.cross_device_sync_enrolled().map_err(error)?}))
@@ -975,21 +1026,20 @@ impl Correspondence {
             ScheduleChoices {local_time,time_zone} => Ok(serde_json::to_value(crate::scheduled_send::choices(&local_time,&time_zone)?).map_err(error)?),
             Schedule {id,revision,selection} => {
                 if let Some(item)=self.database.outbox()?.into_iter().find(|o|o.draft.id==id && o.draft.revision==revision) {
-                    self.authorize_schedule(&item.id)?;
                     return Ok(serde_json::to_value(item).map_err(error)?);
                 }
                 let draft=self.database.draft(&id)?;
                 if !self.provider_for(&draft.account).await?.capabilities().send_supported { return Err("Scheduled sending is not supported for this account yet".into()); }
-                let owner=self.schedule_owner(true)?;
+                let owner=schedule_owner;
                 Ok(serde_json::to_value(self.database.schedule_draft(&id,revision,&selection,&owner,&self.root,now())?).map_err(error)?)
             }
             Reschedule {id,revision,selection} => {
-                let owner=self.authorize_schedule(&id)?;
+                let owner=schedule_owner;
                 self.database.manage_schedule(&id,revision,Some(&selection),false,&owner,now())?;
                 Ok(serde_json::Value::Null)
             }
             SendScheduledNow {id,revision} => {
-                let owner=self.authorize_schedule(&id)?;
+                let owner=schedule_owner;
                 self.database.manage_schedule(&id,revision,None,true,&owner,now())?;
                 Ok(serde_json::Value::Null)
             }
@@ -1061,16 +1111,10 @@ impl Correspondence {
             )?)
             .map_err(error)?),
             Cancel { id } => {
-                self.authorize_schedule(&id)?;
                 Ok(serde_json::to_value(self.database.cancel_send(&id, false)?).map_err(error)?)
             }
             Recover { id } => {
-                self.authorize_schedule(&id)?;
                 Ok(serde_json::to_value(self.database.cancel_send(&id, true)?).map_err(error)?)
-            }
-            Reconcile { id } => {
-                self.reconcile(&id).await?;
-                Ok(serde_json::Value::Null)
             }
             Attach { id } => {
                 let mut d = self.database.draft(&id)?;
@@ -1301,7 +1345,7 @@ impl Correspondence {
         if item.state != "uncertain" {
             return Ok(());
         }
-        self.authorize_schedule(id)?;
+        self.authorize_schedule_async(id).await?;
         let provider = self.provider_for(&item.draft.account).await?;
         self.reconcile_with_provider(&item, provider.as_ref()).await
     }
@@ -1320,7 +1364,8 @@ impl Correspondence {
             .await
             .map_err(error)?
         {
-            self.database.change_outbox("UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2 AND state='uncertain'",params![message.provider_message_id,id],id,&self.authorize_schedule(id)?,now())?;
+            let owner = self.authorize_schedule_async(id).await?;
+            self.database.change_outbox("UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2 AND state='uncertain'",params![message.provider_message_id,id],id,&owner,now())?;
             if let Some(thread_id) = message.thread_id.as_deref() {
                 if self.database.archive_on_send(&item.id)? {
                     let _ = provider
@@ -1351,7 +1396,8 @@ impl Correspondence {
     }
     pub async fn tick(&self) -> Result<(), String> {
         let _guard = self.gate.lock().await;
-        let owner=self.schedule_owner(false).ok();
+        let service = self.clone();
+        let owner=crate::run_database_task(move || service.schedule_owner(false)).await.ok();
         self.database.overdue_schedules_owned(now(),false,owner.as_deref().unwrap_or(""))?;
         if let Some(owner)=&owner { self.database.refresh_schedule_reports(owner,now())?; }
         let items = self.database.outbox()?;
@@ -1467,7 +1513,7 @@ impl Correspondence {
             )
             .map_err(error)?
         };
-        let owner=if item.schedule.is_some() { self.authorize_schedule(&item.id)? } else {String::new()};
+        let owner=if item.schedule.is_some() { self.authorize_schedule_async(&item.id).await? } else {String::new()};
         let claimed=self.database.change_outbox("UPDATE outbox_messages SET state='sending',attempts=attempts+1,last_attempt_at=?2,error=NULL WHERE id=?1 AND state IN ('undo_pending','ready','scheduled') AND deadline<=?2 AND (state!='scheduled' OR deadline>=?3) AND (schedule_json IS NULL OR (json_extract(schedule_json,'$.report.reportRevision')=?4 AND json_extract(schedule_json,'$.report.ownerInstallationId')=?5))",params![item.id,at,at.saturating_sub(crate::scheduled_send::DISPATCH_GRACE_MS),item.schedule.as_ref().map(|s|s.report.report_revision),owner],&item.id,&owner,at)?;
         if claimed != 1 {
             return Ok(None);
@@ -2323,6 +2369,7 @@ mod tests {
             root: PathBuf::from("/unused"),
             gate: Arc::new(tokio::sync::Mutex::new(())),
             edits: Arc::new(tokio::sync::Mutex::new(())),
+            scheduling: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
     #[tokio::test]
@@ -2509,6 +2556,68 @@ mod tests {
     fn scheduled(service: &Correspondence) -> OutboxItem {
         let d=saved(&service.database);
         service.database.schedule_draft(&d.id,d.revision,&crate::scheduled_send::Selection {local_time:"2030-01-01T09:00".into(),time_zone:"America/New_York".into(),offset_seconds:None},"00000000-0000-4000-8000-000000000001",&service.root,1_800_000_000_000).unwrap()
+    }
+
+    #[tokio::test]
+    async fn blocked_keychain_poll_and_schedule_edit_leave_compose_responsive() {
+        for polling in [true, false] {
+            let mut service = service();
+            let item = scheduled(&service);
+            let (entered, waiting) = tokio::sync::oneshot::channel();
+            let entered = std::sync::Mutex::new(Some(entered));
+            let (release, blocked) = std::sync::mpsc::channel();
+            let blocked = std::sync::Mutex::new(blocked);
+            service.sending_identity = Arc::new(move |_| {
+                if let Some(entered) = entered.lock().unwrap().take() { let _ = entered.send(()); }
+                blocked.lock().unwrap().recv_timeout(Duration::from_secs(5)).unwrap();
+                Ok("00000000-0000-4000-8000-000000000001".into())
+            });
+            let background = service.clone();
+            let request = if polling { Request::ListOutbox } else { Request::Cancel { id: item.id } };
+            let background = tokio::spawn(async move { background.request(request).await });
+            tokio::time::timeout(Duration::from_secs(2), waiting).await.unwrap().unwrap();
+            let editing = tokio::time::timeout(Duration::from_secs(1), async {
+                let value = service.request(Request::Create { mode: "new".into(), source_id: None, account: None }).await?;
+                let mut draft: Draft = serde_json::from_value(value).map_err(error)?;
+                draft.body = "Typed while the keychain was locked".into();
+                service.request(Request::Save { draft }).await
+            }).await;
+            // Always release the worker before asserting, so failures cannot strand it.
+            release.send(()).unwrap();
+            background.await.unwrap().unwrap();
+            let saved = editing.expect("keychain must not delay create/save").unwrap();
+            assert_eq!(saved["body"], "Typed while the keychain was locked");
+        }
+    }
+
+    #[tokio::test]
+    async fn schedule_requests_reject_foreign_or_missing_identity_before_any_mutation() {
+        for missing in [false, true] {
+            let mut service = service();
+            let item = scheduled(&service);
+            let revision = item.schedule.as_ref().unwrap().report.report_revision;
+            service.sending_identity = Arc::new(move |_| if missing {
+                Err("keychain unavailable".into())
+            } else {
+                Ok("00000000-0000-4000-8000-000000000002".into())
+            });
+            let selection = || crate::scheduled_send::Selection { local_time: "2030-01-02T09:00".into(), time_zone: "America/New_York".into(), offset_seconds: None };
+            for request in [
+                Request::Cancel { id: item.id.clone() },
+                Request::Recover { id: item.id.clone() },
+                Request::SendScheduledNow { id: item.id.clone(), revision },
+                Request::Reschedule { id: item.id.clone(), revision, selection: selection() },
+                Request::Schedule { id: item.draft.id.clone(), revision: item.draft.revision, selection: selection() },
+            ] {
+                assert!(service.request(request).await.is_err());
+                let current = service.database.outbox().unwrap().remove(0);
+                assert_eq!(current.state, "scheduled");
+                assert_eq!(current.deadline, item.deadline);
+                assert_eq!(current.schedule.unwrap().report.report_revision, revision);
+            }
+            let listed = service.request(Request::ListOutbox).await.unwrap();
+            assert_eq!(listed[0]["schedule"]["canManage"], false);
+        }
     }
 
     #[tokio::test]

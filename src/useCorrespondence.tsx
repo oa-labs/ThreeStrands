@@ -23,6 +23,41 @@ type ComposeOptions = {
   prefill?: MailtoRequest;
 };
 
+function sameDraft(left: Draft, right: Draft): boolean {
+  // Persisted revisions cover body, headers, attachments, and account changes.
+  return left.id === right.id && left.revision === right.revision && left.updatedAt === right.updatedAt;
+}
+
+function sameOutbox(left: OutboxItem, right: OutboxItem): boolean {
+  return left.id === right.id && sameDraft(left.draft, right.draft)
+    && left.state === right.state && left.deadline === right.deadline
+    && left.error === right.error && left.providerId === right.providerId
+    && JSON.stringify(left.schedule) === JSON.stringify(right.schedule);
+}
+
+function retainUnchanged<T>(current: T[], next: T[], equal: (left: T, right: T) => boolean): T[] {
+  return current.length === next.length && current.every((item, index) => equal(item, next[index])) ? current : next;
+}
+
+function sameSummary(left: ScheduledSendReport, right: ScheduledSendReport): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function useCorrespondenceList<T>(equal: (left: T, right: T) => boolean) {
+  const [items, setItems] = useState<T[]>([]);
+  const latest = useRef(items);
+  const publish = useCallback((update: T[] | ((current: T[]) => T[])) => {
+    const next = typeof update === "function" ? update(latest.current) : update;
+    const retained = retainUnchanged(latest.current, next, equal);
+    if (retained === latest.current) return;
+    latest.current = retained;
+    // Compare before calling React: even an updater returning the same array
+    // can cause an extra render after a previous state change.
+    setItems(retained);
+  }, [equal]);
+  return [items, publish] as const;
+}
+
 export function useCorrespondence(
   accounts: Account[],
   sourceId: string | undefined,
@@ -42,9 +77,9 @@ export function useCorrespondence(
   const [activeFollowUpTaskId, setActiveFollowUpTaskId] = useState<string | null>(null);
   // The open draft as the composer last reported it, for the context panel.
   const [liveDraft, setLiveDraft] = useState<Draft | null>(null);
-  const [drafts, setDrafts] = useState<Draft[]>([]);
-  const [outbox, setOutbox] = useState<OutboxItem[]>([]);
-  const [summaries, setSummaries] = useState<ScheduledSendReport[]>([]);
+  const [drafts, setDrafts] = useCorrespondenceList(sameDraft);
+  const [outbox, setOutbox] = useCorrespondenceList(sameOutbox);
+  const [summaries, setSummaries] = useCorrespondenceList(sameSummary);
   const [error, setError] = useState("");
   const [closing, setClosing] = useState(false);
   const editor = useRef<ComposerHandle>(null);
@@ -53,13 +88,24 @@ export function useCorrespondence(
   const [clock, setClock] = useState(Date.now());
   const [pendingOutboxActions, setPendingOutboxActions] = useState<ReadonlySet<string>>(new Set());
   const pendingOutboxActionsRef = useRef<ReadonlySet<string>>(new Set());
-  const refreshing = useRef(false);
-  const refresh = useCallback(async () => {
-    if (refreshing.current) return;
-    refreshing.current = true;
-    try { const [d, o, reports] = await Promise.all([mailClient.listDrafts(), mailClient.listOutbox(), mailClient.listScheduledSummaries?.() ?? Promise.resolve([])]); setDrafts(d); setOutbox(o); setSummaries(reports); }
-    finally { refreshing.current = false; }
-  }, []);
+  const refreshing = useRef<Promise<void> | null>(null);
+  const refresh = useCallback(function refresh(includeDrafts = true): Promise<void> {
+    // An explicit refresh after editing/sending must not be dropped behind a poll.
+    if (refreshing.current) return includeDrafts
+      ? refreshing.current.then(() => refresh(), () => refresh())
+      : refreshing.current;
+    const pending = Promise.all([
+      includeDrafts ? mailClient.listDrafts() : Promise.resolve(null),
+      mailClient.listOutbox(),
+      mailClient.listScheduledSummaries?.() ?? Promise.resolve([]),
+    ]).then(([d, o, reports]) => {
+      if (d) setDrafts(d);
+      setOutbox(o);
+      setSummaries(reports);
+    }).finally(() => { refreshing.current = null; });
+    refreshing.current = pending;
+    return pending;
+  }, [setDrafts, setOutbox, setSummaries]);
   useEffect(() => { void refresh().catch((e) => setError(String(e))); }, [refresh]);
   useEffect(() => {
     if (!("__TAURI_INTERNALS__" in window)) return;
@@ -141,19 +187,21 @@ export function useCorrespondence(
   }, [refresh, withOutboxActionGuard]);
   const reconcileSend = useCallback((id: string) => {
     if (pendingOutboxActionsRef.current.has(id)) return;
-    withOutboxActionGuard(id, () => mailClient.reconcileSend(id).then(refresh).catch((e: unknown) => setError(String(e))));
+    withOutboxActionGuard(id, () => mailClient.reconcileSend(id).then(() => refresh()).catch((e: unknown) => setError(String(e))));
   }, [refresh, withOutboxActionGuard]);
   useEffect(() => { if (closing) document.querySelector<HTMLElement>(".exit-notice")?.focus(); }, [closing]);
   const pending = outbox.find((o) => ["undo_pending", "ready"].includes(o.state));
   const pendingId = pending?.id ?? null;
-  const hasActiveDelivery = outbox.some((o) => ["undo_pending", "ready", "scheduled", "overdue", "uncertain", "sending"].includes(o.state));
+  const hasActiveDelivery = outbox.some((o) => ["undo_pending", "ready", "uncertain", "sending"].includes(o.state));
   useEffect(() => {
     const timer = window.setInterval(() => {
-      setClock(Date.now());
-      void refresh().catch(logBackgroundFailure("Outbox refresh"));
+      // Only an immediate send has a live countdown. Idle and future-scheduled
+      // messages do not need a clock update that re-renders the entire app.
+      if (pendingId) setClock(Date.now());
+      void refresh(false).catch(logBackgroundFailure("Outbox refresh"));
     }, hasActiveDelivery ? 1000 : 5000);
     return () => window.clearInterval(timer);
-  }, [hasActiveDelivery, refresh]);
+  }, [hasActiveDelivery, pendingId, refresh]);
 
   const compose = useCallback(() => { void start("new"); }, [start]);
   // Links can arrive together (several opened while the app launched), so
@@ -230,7 +278,7 @@ export function useCorrespondence(
   // composer so pending edits are flushed before it is removed.
   const discardListedDraft = useCallback((draft: Draft) => {
     if (active?.id === draft.id) { editor.current?.discard(); return; }
-    void mailClient.discardDraft(draft.id).then(refresh).catch((e: unknown) => setError(String(e)));
+    void mailClient.discardDraft(draft.id).then(() => refresh()).catch((e: unknown) => setError(String(e)));
   }, [active?.id, refresh]);
   const composer = active ? (
     <Composer

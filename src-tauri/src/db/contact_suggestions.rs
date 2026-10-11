@@ -5,6 +5,22 @@ use crate::models::ContactSuggestion;
 use rusqlite::params;
 use std::collections::HashMap;
 
+// A superset of matching addresses: historical names can nominate a candidate,
+// but the final filter below still uses its current effective display name.
+// Filtering before aggregation lets SQLite seek (account_id,email) for the
+// few autocomplete candidates rather than group the entire message history.
+const MATCHING_EMAILS: &str = "WITH matching_emails AS (
+    SELECT email FROM contact_interactions WHERE account_id=?1 AND (
+        instr(email,?2)=1 OR (instr(email,'@')>0 AND instr(substr(email,instr(email,'@')+1),?2)>0)
+        OR instr(lower(display_name),?2)>0)
+    UNION SELECT email FROM pinned_contacts WHERE account_id=?1 AND (
+        instr(email,?2)=1 OR (instr(email,'@')>0 AND instr(substr(email,instr(email,'@')+1),?2)>0)
+        OR instr(lower(display_name),?2)>0)
+    UNION SELECT lower(a.email) FROM contact_addresses a JOIN contacts c ON c.id=a.contact_id WHERE
+        instr(lower(a.email),?2)=1 OR (instr(a.email,'@')>0 AND instr(lower(substr(a.email,instr(a.email,'@')+1)),?2)>0)
+        OR instr(lower(c.display_name),?2)>0
+)";
+
 impl Database {
     /// Ranks past correspondents for compose autocomplete. Deliberately
     /// doesn't import Google's address book: every suggestion is mined from
@@ -14,9 +30,8 @@ impl Database {
     /// excluded from the "heard from" side when its message carries
     /// unsubscribe metadata (List-Unsubscribe/one-click) — that marks
     /// bulk/automated mail, not a real correspondent — unless the account
-    /// also sent that address mail directly or pinned it. Bounded to the
-    /// most recent messages so a large mailbox can't make every keystroke
-    /// re-parse years of history.
+    /// also sent that address mail directly or pinned it. Autocomplete selects
+    /// candidate addresses before aggregating their indexed interactions.
     pub fn list_contact_suggestions(
         &self,
         account_id: &str,
@@ -43,6 +58,7 @@ impl Database {
         hide_suppressed: bool,
     ) -> DbResult<Vec<ContactSuggestion>> {
         let limit = limit.clamp(1, 5_000);
+        let needle = query.trim().to_ascii_lowercase();
         self.with_connection(|connection| {
             struct Agg {
                 display_name: Option<String>,
@@ -53,16 +69,19 @@ impl Database {
             }
             let mut by_email: HashMap<String, Agg> = HashMap::new();
 
-            let mut statement = connection.prepare(
-                "SELECT i.email,
+            let candidate_cte = if needle.is_empty() { "" } else { MATCHING_EMAILS };
+            let candidate_filter = if needle.is_empty() { "" } else { "AND i.email IN (SELECT email FROM matching_emails)" };
+            let mut statement = connection.prepare(&format!(
+                "{candidate_cte} SELECT i.email,
                     (SELECT recent.display_name FROM contact_interactions recent
                      WHERE recent.account_id=i.account_id AND recent.email=i.email
                        AND recent.display_name IS NOT NULL AND recent.display_name<>''
                      ORDER BY recent.sent_at DESC,recent.message_id DESC LIMIT 1),
                     SUM(i.direction='sent'), SUM(i.direction='received'), MAX(i.sent_at)
-                 FROM contact_interactions i WHERE i.account_id=?1 GROUP BY i.account_id,i.email",
-            )?;
-            let rows = statement.query_map(params![account_id], |row| {
+                 FROM contact_interactions i WHERE i.account_id=?1 {candidate_filter} GROUP BY i.account_id,i.email",
+            ))?;
+            let parameters = if needle.is_empty() { vec![account_id] } else { vec![account_id, needle.as_str()] };
+            let rows = statement.query_map(rusqlite::params_from_iter(parameters), |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, String>(4)?))
             })?;
             for row in rows {
@@ -104,7 +123,6 @@ impl Database {
             let mut suppressed_statement = connection.prepare("SELECT email FROM contact_suggestion_suppressions")?;
             let suppressed = suppressed_statement.query_map([], |row| row.get::<_, String>(0))?
                 .collect::<Result<std::collections::HashSet<_>, _>>()?;
-            let needle = query.trim().to_ascii_lowercase();
             let mut suggestions: Vec<ContactSuggestion> = by_email
                 .into_iter()
                 .filter(|(email, agg)| {

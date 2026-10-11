@@ -43,6 +43,92 @@ afterEach(() => {
 });
 
 describe("useCorrespondence", () => {
+  it.each(["idle", "scheduled"])("polls %s mail without reloading drafts or re-rendering unchanged state", async (state) => {
+    vi.useFakeTimers();
+    const listDrafts = vi.spyOn(mailClient, "listDrafts").mockResolvedValue([draft]);
+    const items: OutboxItem[] = state === "idle" ? [] : [{ ...outbox, state: "scheduled", deadline: Date.now() + 60_000 }];
+    const listOutbox = vi.spyOn(mailClient, "listOutbox").mockImplementation(async () => structuredClone(items));
+    vi.spyOn(mailClient, "listScheduledSummaries").mockResolvedValue([]);
+    let renders = 0;
+    const { result } = renderHook(() => {
+      renders++;
+      return useCorrespondence([], undefined, undefined, ...snippetArgs, null);
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const stableOutbox = result.current.outbox;
+    const clock = result.current.clock;
+    const initialRenders = renders;
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+    expect(listDrafts).toHaveBeenCalledTimes(1);
+    expect(listOutbox).toHaveBeenCalledTimes(4);
+    expect(result.current.outbox).toBe(stableOutbox);
+    expect(result.current.clock).toBe(clock);
+    expect(renders).toBe(initialRenders);
+  });
+
+  it("keeps countdowns live and publishes delivery changes without polling draft bodies", async () => {
+    vi.useFakeTimers();
+    const listDrafts = vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
+    let current: OutboxItem = { ...outbox, deadline: Date.now() + 10_000 };
+    vi.spyOn(mailClient, "listOutbox").mockImplementation(async () => [structuredClone(current)]);
+    vi.spyOn(mailClient, "listScheduledSummaries").mockResolvedValue([]);
+    const { result } = renderHook(() => useCorrespondence([], undefined, undefined, ...snippetArgs, null));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const clock = result.current.clock;
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(result.current.clock).toBe(clock + 1000);
+    current = { ...current, state: "sent", providerId: "delivered" };
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(result.current.sentCount).toBe(1);
+    expect(result.current.context.canUndoSend).toBe(false);
+    expect(listDrafts).toHaveBeenCalledTimes(1);
+  });
+
+  it("publishes ownership and peer status changes even when message revisions are unchanged", async () => {
+    vi.useFakeTimers();
+    const report: ScheduledSendReport = {
+      operationId: outbox.id, ownerInstallationId: "self", ownerSyncDeviceId: null,
+      ownerNameAtCreation: "Desktop", account: draft.account, subject: draft.subject,
+      scheduledAt: Date.now() + 60_000, timeZone: "UTC", state: "scheduled",
+      blockedReason: null, reportRevision: 1, statusChangedAt: Date.now(),
+    };
+    let item: OutboxItem = { ...outbox, state: "scheduled", schedule: { report, canManage: true, visibility: "local" } };
+    let peer: ScheduledSendReport = { ...report, operationId: "remote", ownerInstallationId: "peer", ownerName: "Laptop", lastContactAt: 1 };
+    vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listOutbox").mockImplementation(async () => [structuredClone(item)]);
+    vi.spyOn(mailClient, "listScheduledSummaries").mockImplementation(async () => [structuredClone(peer)]);
+    const { result } = renderHook(() => useCorrespondence([], undefined, undefined, ...snippetArgs, null));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    item = { ...item, schedule: { report: { ...report, blockedReason: "owner_unavailable" }, canManage: false, visibility: "pending" } };
+    peer = { ...peer, ownerName: "Renamed laptop", lastContactAt: 2 };
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(result.current.outbox[0].schedule).toMatchObject({ canManage: false, visibility: "pending", report: { blockedReason: "owner_unavailable" } });
+    expect(result.current.summaries[0]).toMatchObject({ ownerName: "Renamed laptop", lastContactAt: 2 });
+  });
+
+  it.each([false, true])("refreshes edited drafts after an outstanding poll (poll fails: %s)", async (fails) => {
+    vi.useFakeTimers();
+    const listDrafts = vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
+    const listOutbox = vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listScheduledSummaries").mockResolvedValue([]);
+    const { result } = renderHook(() => useCorrespondence([], undefined, undefined, ...snippetArgs, null));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    let release!: (items: OutboxItem[]) => void;
+    let reject!: (reason: Error) => void;
+    listOutbox.mockReturnValueOnce(new Promise((resolve, fail) => { release = resolve; reject = fail; }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    listDrafts.mockResolvedValue([{ ...draft, revision: draft.revision + 1, body: "New edits" }]);
+    const refreshed = result.current.refresh();
+    await act(async () => {
+      if (fails) reject(new Error("Temporary outbox read failure"));
+      else release([]);
+      await refreshed;
+    });
+    expect(listDrafts).toHaveBeenCalledTimes(2);
+    expect(result.current.drafts[0].body).toBe("New edits");
+    expect(result.current.drafts[0].revision).toBe(draft.revision + 1);
+  });
+
   it("loads drafts and outbox and starts each compose mode through the client", async () => {
     vi.spyOn(mailClient, "listDrafts").mockResolvedValue([draft]);
     vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);

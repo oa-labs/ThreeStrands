@@ -16,34 +16,36 @@ import { errorMessage, logBackgroundFailure } from "./errors";
  * while a draft is open. Null until loaded or when loading failed, which
  * leaves out the checks that need history.
  */
-export function useKnownCorrespondents(accountEmails: string[]): KnownCorrespondents | null {
-  const key = accountEmails.map((email) => email.toLocaleLowerCase()).sort().join("\n");
-  const [known, setKnown] = useState<KnownCorrespondents | null>(null);
+export function useKnownCorrespondents(accountEmails: string[], enabled = true): KnownCorrespondents | null {
+  const key = enabled ? accountEmails.map((email) => email.toLocaleLowerCase()).sort().join("\n") : "";
+  const [loaded, setLoaded] = useState<{ key: string; known: KnownCorrespondents } | null>(null);
   useEffect(() => {
+    if (!key) return;
     const emails = key ? key.split("\n") : [];
     let active = true;
     Promise.all(emails.map((email) => mailClient.listContactSuggestions(email, "", KNOWN_ADDRESS_LIMIT)))
-      .then((lists) => { if (active) setKnown(Object.fromEntries(emails.map((email, index) => [email, knownAddressMap(lists[index])]))); })
+      .then((lists) => { if (active) setLoaded({ key, known: Object.fromEntries(emails.map((email, index) => [email, knownAddressMap(lists[index])])) }); })
       .catch((reason: unknown) => {
         logBackgroundFailure("Known correspondent lookup")(reason);
-        if (active) setKnown(null);
+        if (active) setLoaded(null);
       });
     return () => { active = false; };
   }, [key]);
-  return known;
+  return loaded?.key === key ? loaded.known : null;
 }
 
 /** Every contact group with its members' addresses, loaded once while a draft is open. Null until loaded. */
-export function useContactGroupRecipients(): ContactGroupRecipients[] | null {
+export function useContactGroupRecipients(enabled = true): ContactGroupRecipients[] | null {
   const [groups, setGroups] = useState<ContactGroupRecipients[] | null>(null);
   useEffect(() => {
+    if (!enabled) return;
     let active = true;
     mailClient.listContactGroupRecipients()
       .then((result) => { if (active) setGroups(result); })
       .catch(logBackgroundFailure("Contact group lookup"));
     return () => { active = false; };
-  }, []);
-  return groups;
+  }, [enabled]);
+  return enabled ? groups : null;
 }
 
 function checkRow(check: ComposeCheck, actions: {
@@ -97,8 +99,9 @@ export function ComposeChecksSection({ draft, accounts, known, onAttach, onRepla
   onMoveToBcc(emails: string[]): void;
 }) {
   const ownEmails = useMemo(() => accounts.map((account) => account.email), [accounts]);
-  const groups = useContactGroupRecipients();
-  const checks = composeChecks({ draft, ownEmails, known, groups });
+  const hasRecipients = draftRecipients(draft, ownEmails).length > 0;
+  const groups = useContactGroupRecipients(hasRecipients);
+  const checks = useMemo(() => composeChecks({ draft, ownEmails, known, groups }), [draft, ownEmails, known, groups]);
   if (checks.length === 0) return null;
   return (
     <ContextSection
@@ -166,8 +169,8 @@ export function ComposeContext({
   review?: ReactNode;
 }) {
   const ownEmails = useMemo(() => accounts.map((account) => account.email), [accounts]);
-  const known = useKnownCorrespondents(ownEmails);
   const recipients = draftRecipients(draft, ownEmails);
+  const known = useKnownCorrespondents(ownEmails, recipients.length > 0);
   const [picked, setPicked] = useState<string | null>(null);
   const selected = recipients.find((recipient) => recipient.email === picked) ?? recipients[0] ?? null;
   const email = selected?.email ?? "";
@@ -261,6 +264,6 @@ export function ComposeContext({
 /** The checks for a reply in the open conversation, above the conversation's own sections. */
 export function ReplyChecks(props: Omit<Parameters<typeof ComposeChecksSection>[0], "known">) {
   const ownEmails = useMemo(() => props.accounts.map((account) => account.email), [props.accounts]);
-  const known = useKnownCorrespondents(ownEmails);
+  const known = useKnownCorrespondents(ownEmails, draftRecipients(props.draft, ownEmails).length > 0);
   return <ComposeChecksSection {...props} known={known} />;
 }
