@@ -70,6 +70,16 @@ describe("isManageableLabel", () => {
     expect(isManageableLabel({ id: "IMPORTANT", kind: "system" })).toBe(true);
   });
 
+  it("excludes folder labels: a mailbox a conversation lives in is a location, not a toggle", () => {
+    expect(isManageableLabel({ id: "folder:Folders/Projects", kind: "folder" })).toBe(false);
+    // Even a folder whose id happens to match nothing special stays out.
+    expect(isManageableLabel({ id: "anything", kind: "folder" })).toBe(false);
+  });
+
+  it("keeps IMAP label folders (kind user) manageable like any user label", () => {
+    expect(isManageableLabel({ id: "lf:Clients", kind: "user" })).toBe(true);
+  });
+
   it("excludes system labels that already have a dedicated control elsewhere", () => {
     for (const id of ["INBOX", "SENT", "DRAFT", "TRASH", "SPAM", "UNREAD", "STARRED", "CHAT"]) {
       expect(isManageableLabel({ id, kind: "system" })).toBe(false);
@@ -106,6 +116,27 @@ describe("conversationLabelGroups", () => {
     const result = conversationLabelGroups(["some-custom-id"], catalog);
     expect(result.systemLabelNames).toEqual(["some-custom-id"]);
     expect(result.userLabels).toEqual([]);
+  });
+
+  it("shows IMAP label folders as user labels and folders as plain context, by display name", () => {
+    const imap = [
+      ...catalog,
+      { id: "lf:Clients", name: "Clients", kind: "user" as const },
+      { id: "folder:Folders/Projects", name: "Folders/Projects", kind: "folder" as const },
+    ];
+    const result = conversationLabelGroups(["INBOX", "lf:Clients", "folder:Folders/Projects"], imap);
+    expect(result.userLabels).toEqual([{ id: "lf:Clients", name: "Clients", kind: "user" }]);
+    expect(result.systemLabelNames).toEqual(["Inbox", "Folders/Projects"]);
+  });
+
+  it("drops unresolved IMAP dynamic ids instead of flashing them, like opaque Gmail ids", () => {
+    for (const labelIds of [["INBOX", "lf:Clients"], ["INBOX", "folder:Folders/Projects"], ["INBOX", "LF:Clients"]]) {
+      const result = conversationLabelGroups(labelIds, catalog);
+      expect(result.systemLabelNames).toEqual(["Inbox"]);
+      expect(result.userLabels).toEqual([]);
+    }
+    const noCatalog = conversationLabelGroups(["INBOX", "lf:Clients"], undefined);
+    expect(noCatalog.systemLabelNames).toEqual(["INBOX"]);
   });
 
   it("handles a missing catalog by falling back to raw system ids", () => {

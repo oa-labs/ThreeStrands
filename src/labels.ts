@@ -50,10 +50,19 @@ const NON_MANAGEABLE_SYSTEM_LABEL_IDS = new Set([
 
 /** Whether a label belongs in the "Manage labels" screen: every user label,
  * plus Gmail system labels (like IMPORTANT and the CATEGORY_* labels) that
- * don't already have a dedicated control elsewhere. */
+ * don't already have a dedicated control elsewhere. A `folder` label (an IMAP
+ * mailbox a conversation lives in) is a location, not something to toggle:
+ * applying or removing it would silently move mail, so it never appears here. */
 export function isManageableLabel(label: Pick<Label, "id" | "kind">): boolean {
+  if (label.kind === "folder") return false;
   return label.kind === "user" || !NON_MANAGEABLE_SYSTEM_LABEL_IDS.has(label.id);
 }
+
+// Opaque provider ids that mean nothing to a reader until the account catalog
+// has resolved them to a name: Gmail's `Label_18`, and IMAP's dynamic
+// `lf:<label folder>` / `folder:<mailbox>` ids (the catalog carries the display
+// name). Showing the raw id while the catalog loads would flash `lf:Clients`.
+const OPAQUE_LABEL_ID = /^(label_\d+|lf:.*|folder:.*)$/i;
 
 export type ConversationLabelGroups = {
   /** Gmail system/category labels, formatted for display (e.g. "UPDATES"). */
@@ -80,9 +89,10 @@ export function conversationLabelGroups(
       userLabels.push(label);
     } else if (label) {
       systemLabelNames.push(formatLabelName(label));
-    } else if (!/^label_\d+$/i.test(id)) {
-      // Opaque Gmail user-label ids (e.g. "Label_18") are not useful UI;
-      // wait for the account catalog instead of briefly flashing the id.
+    } else if (!OPAQUE_LABEL_ID.test(id)) {
+      // Opaque provider ids (Gmail "Label_18", IMAP "lf:Clients" / "folder:X")
+      // are not useful UI; wait for the account catalog instead of briefly
+      // flashing the id.
       systemLabelNames.push(id);
     }
   }
