@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 65;
+pub(crate) const LATEST_VERSION: i64 = 66;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1895,6 +1895,13 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 66 {
+        if !has_column(&tx, "accounts", "nickname")? {
+            tx.execute_batch("ALTER TABLE accounts ADD COLUMN nickname TEXT;")
+                .map_err(error)?;
+        }
+        tx.execute_batch("PRAGMA user_version=66;").map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1911,6 +1918,28 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use rusqlite::Connection;
+
+    #[test]
+    fn v66_adds_optional_account_nicknames_and_preserves_account_identity() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection.execute_batch(
+            "UPDATE accounts SET display_name='Joel Reed';
+             ALTER TABLE accounts DROP COLUMN nickname;
+             PRAGMA user_version=65;",
+        ).unwrap();
+        super::migrate(&mut connection).unwrap();
+        let (email, sender, nickname): (String, String, Option<String>) = connection.query_row(
+            "SELECT email,display_name,nickname FROM accounts", [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(email, "you@gmail.com");
+        assert_eq!(sender, "Joel Reed");
+        assert!(nickname.is_none());
+        connection.execute("UPDATE accounts SET nickname='Work'", []).unwrap();
+        super::migrate(&mut connection).unwrap();
+        assert_eq!(connection.query_row("SELECT nickname FROM accounts", [], |row| row.get::<_, String>(0)).unwrap(), "Work");
+    }
 
     /// A pre-v21 database: `INITIAL_SCHEMA` alone, with no `migrate()` run
     /// yet, so `PRAGMA user_version` is still 0 and `accounts` lacks

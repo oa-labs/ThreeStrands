@@ -87,6 +87,11 @@ impl EntityType {
                 required_string(object, "email", 320)?;
                 required_string(object, "provider", 40)?;
                 required_string(object, "color", 20)?;
+                optional_string(object, "nickname", 200)?;
+                if object.get("nickname").and_then(Value::as_str)
+                    .is_some_and(|name| name.trim().is_empty() || name.chars().any(char::is_control)) {
+                    return Err("nickname is invalid".to_string());
+                }
             }
             Self::CalendarAccount => required_string(object, "email", 320)?,
             Self::CalendarSelection => {
@@ -318,6 +323,20 @@ mod tests {
         assert!(EntityType::Task.validate_payload(&valid).is_ok());
         let invalid = json!({ "title": "x", "kind": "action", "dueKind": "none", "status": "lost" });
         assert!(EntityType::Task.validate_payload(&invalid).is_err());
+    }
+
+    #[test]
+    fn mail_account_nicknames_are_optional_and_validated() {
+        let mut account = json!({"email":"you@example.com","provider":"gmail","color":"#123456"});
+        EntityType::MailAccount.validate_payload(&account).unwrap();
+        for nickname in [Value::Null, json!("Work"), json!("é".repeat(200))] {
+            account["nickname"] = nickname;
+            EntityType::MailAccount.validate_payload(&account).unwrap();
+        }
+        for nickname in [json!("é".repeat(201)), json!("Work\nPersonal"), json!("  "), json!(42)] {
+            account["nickname"] = nickname;
+            assert!(EntityType::MailAccount.validate_payload(&account).is_err());
+        }
     }
 
     #[test]

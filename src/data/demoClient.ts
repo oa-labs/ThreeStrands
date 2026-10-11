@@ -1071,6 +1071,15 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       }
       account.displayName = normalized;
     },
+    async setAccountNickname(email, nickname) {
+      const account = accounts.find((candidate) => candidate.email === email);
+      if (!account) throw new Error("Account not found");
+      const normalized = nickname?.trim() || null;
+      if (normalized && (Array.from(normalized).length > 200 || /\p{Cc}/u.test(normalized))) {
+        throw new Error("Account nickname must be 200 characters or fewer and cannot contain control characters");
+      }
+      account.nickname = normalized;
+    },
     async setAccountColor(email, color) {
       const account = accounts.find((candidate) => candidate.email === email);
       if (!account) throw new Error("Account not found");

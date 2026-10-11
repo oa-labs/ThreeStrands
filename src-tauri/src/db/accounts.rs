@@ -26,7 +26,7 @@ impl Database {
     pub fn list_accounts(&self) -> DbResult<Vec<Account>> {
         self.with_connection(|connection| {
             let mut statement = connection.prepare(
-                "SELECT email, display_name, color, status, provider, sort_order, connected_at, last_synced_at
+                "SELECT email, display_name, color, status, provider, sort_order, connected_at, last_synced_at, nickname
                  FROM accounts ORDER BY sort_order",
             )?;
             let rows = statement.query_map([], account_from_row)?;
@@ -139,7 +139,7 @@ impl Database {
         self.with_connection(|connection| {
             let account = connection
                 .query_row(
-                    "SELECT email, display_name, color, status, provider, sort_order, connected_at, last_synced_at
+                    "SELECT email, display_name, color, status, provider, sort_order, connected_at, last_synced_at, nickname
                      FROM accounts WHERE email = ?1",
                     [email],
                     account_from_row,
@@ -302,6 +302,25 @@ impl Database {
             Ok(())
         })
     }
+
+    pub fn set_account_nickname(&self, email: &str, nickname: Option<&str>) -> DbResult<()> {
+        let normalized = nickname.map(str::trim).filter(|name| !name.is_empty());
+        if normalized.is_some_and(|name| name.chars().count() > 200 || name.chars().any(char::is_control)) {
+            return Err(DatabaseError::invalid(
+                "Account nickname must be 200 characters or fewer and cannot contain control characters",
+            ));
+        }
+        let changed = self.with_connection(|connection| {
+            Ok(connection.execute(
+                "UPDATE accounts SET nickname = ?1 WHERE email = ?2",
+                params![normalized, email],
+            )?)
+        })?;
+        if changed == 0 {
+            return Err(DatabaseError::NotFound("Account"));
+        }
+        Ok(())
+    }
 }
 
 // These provider caches have no foreign keys to the account catalog.
@@ -338,6 +357,7 @@ fn account_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
     Ok(Account {
         email: row.get(0)?,
         display_name: row.get(1)?,
+        nickname: row.get(8)?,
         color: row.get(2)?,
         status: row.get(3)?,
         provider: row.get(4)?,

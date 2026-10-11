@@ -69,7 +69,7 @@ describe("IMAP account setup", () => {
     const refresh = vi.fn().mockResolvedValue(undefined);
     render(<AccountsSettings authStatus={null} accounts={[]} onAdd={onAdd} onImapConnected={refresh}
       onRemove={vi.fn()} onRemoveEverywhere={vi.fn()} onReconnect={vi.fn()}
-      onSetDisplayName={vi.fn()} onSetColor={vi.fn()} onReorder={vi.fn()} />);
+      onSetDisplayName={vi.fn()} onSetNickname={vi.fn()} onSetColor={vi.fn()} onReorder={vi.fn()} />);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Add Account" })); });
     expect(onAdd).not.toHaveBeenCalled();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Gmail" })); });

@@ -8,6 +8,18 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it("refreshes nickname changes for the account switcher", async () => {
+  const [account] = await mailClient.listAccounts();
+  vi.spyOn(mailClient, "listAccounts").mockResolvedValue([{ ...account!, nickname: null }]);
+  const save = vi.spyOn(mailClient, "setAccountNickname").mockResolvedValue();
+  const { result } = renderHook(() => useAccounts(false));
+  await waitFor(() => expect(result.current.accounts.length).toBeGreaterThan(0));
+  vi.mocked(mailClient.listAccounts).mockResolvedValue([{ ...account!, nickname: "Work" }]);
+  await act(async () => result.current.setAccountNickname(account!.email, "Work"));
+  expect(save).toHaveBeenCalledWith(account!.email, "Work");
+  expect(result.current.accounts[0]?.nickname).toBe("Work");
+});
+
 it("refreshes an open account manager when credentials need reconnection", async () => {
   const [account] = await mailClient.listAccounts();
   let status: "connected" | "needs_reauth" = "connected";

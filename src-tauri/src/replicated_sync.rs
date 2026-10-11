@@ -220,6 +220,7 @@ impl Database {
             let payload = json!({
                 "email": account.email,
                 "displayName": account.display_name,
+                "nickname": account.nickname,
                 "color": account.color,
                 "provider": account.provider,
                 "sortOrder": account.sort_order,
@@ -2363,6 +2364,35 @@ mod tests {
             )
             .unwrap();
         assert_eq!(readiness, ProjectionReadiness::Ready);
+    }
+
+    #[test]
+    fn account_nicknames_reconcile_project_and_clear_without_changing_sender_names() {
+        let source = Database::open_memory();
+        source.adopt_account("you@example.com").unwrap();
+        source.set_account_display_name("you@example.com", Some("Joel Reed")).unwrap();
+        source.set_account_nickname("you@example.com", Some("Work")).unwrap();
+        source.reconcile_replicated_sync_backlog().unwrap();
+        assert_eq!(source.resolve_field_winner(EntityType::MailAccount, "you@example.com", "nickname").unwrap(), Some(json!("Work")));
+
+        let destination = Database::open_memory();
+        let mut payload = json!({"email":"you@example.com","displayName":"Joel Reed","nickname":"Work","color":"#123456","provider":"gmail","sortOrder":0});
+        destination.materialize_entity(EntityType::MailAccount, "you@example.com", Some(&payload), false).unwrap();
+        let account = destination.get_account("you@example.com").unwrap().unwrap();
+        assert_eq!(account.nickname.as_deref(), Some("Work"));
+        assert_eq!(account.display_name.as_deref(), Some("Joel Reed"));
+        assert_eq!(account.status, "needs_reauth");
+        destination.adopt_account("you@example.com").unwrap();
+        payload["nickname"] = Value::Null;
+        destination.materialize_entity(EntityType::MailAccount, "you@example.com", Some(&payload), false).unwrap();
+        let account = destination.get_account("you@example.com").unwrap().unwrap();
+        assert!(account.nickname.is_none());
+        assert_eq!(account.display_name.as_deref(), Some("Joel Reed"));
+        assert_eq!(account.status, "connected");
+        // A payload produced before this field existed remains readable.
+        payload.as_object_mut().unwrap().remove("nickname");
+        destination.materialize_entity(EntityType::MailAccount, "you@example.com", Some(&payload), false).unwrap();
+        assert!(destination.get_account("you@example.com").unwrap().unwrap().nickname.is_none());
     }
 
     #[test]

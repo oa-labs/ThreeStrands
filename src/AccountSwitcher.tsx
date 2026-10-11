@@ -63,12 +63,14 @@ export function AccountSwitcher({
         </button>
       </HoverTooltip> : null}
       {accounts.map((account) => {
-        const name = account.displayName ?? account.email;
+        const nickname = account.nickname?.trim();
+        const name = nickname || account.displayName || account.email;
+        const identity = nickname ? `${nickname} (${account.email})` : account.email;
         const unreadCount = unreadCounts[account.email] ?? 0;
         const needsReconnect = account.status === "needs_reauth";
         const selected = activeAccountId === account.email || (accounts.length === 1 && activeAccountId === null);
         return (
-          <HoverTooltip key={account.email} label={needsReconnect ? `${account.email} · Needs reconnect in Mail Accounts` : account.email}>
+          <HoverTooltip key={account.email} label={needsReconnect ? `${identity} · Needs reconnect in Mail Accounts` : identity}>
             <button
               type="button"
               role="radio"

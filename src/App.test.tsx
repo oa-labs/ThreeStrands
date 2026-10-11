@@ -1492,6 +1492,28 @@ describe("account selection persistence", () => {
     expect(screen.getByRole("tooltip", { name: account!.email, hidden: true })).toBeInTheDocument();
     expect(screen.queryByRole("radio", { name: /^All accounts/i })).not.toBeInTheDocument();
   });
+
+  it("uses nickname initials and email tooltips for accounts with the same sender name", async () => {
+    const [account] = await mailClient.listAccounts();
+    const onSwitch = vi.fn();
+    const accounts = [
+      { ...account!, email: "joel@openarc.net", displayName: "Joel Reed", nickname: "Work" },
+      { ...account!, email: "joelreed@gmail.com", displayName: "Joel Reed", nickname: "Personal", status: "needs_reauth" as const },
+    ];
+    const { rerender } = render(<AccountSwitcher accounts={accounts} unreadCounts={{ "joel@openarc.net": 10 }}
+      activeAccountId="joel@openarc.net" onSwitch={onSwitch} onShowAll={vi.fn()} onReorder={vi.fn()} />);
+    const work = screen.getByRole("radio", { name: "Work, 10 unread" });
+    expect(work).toHaveTextContent("W10");
+    expect(work).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "Personal, Needs reconnect" })).toHaveTextContent("P");
+    expect(screen.getByRole("tooltip", { name: "Work (joel@openarc.net)", hidden: true })).toBeInTheDocument();
+    expect(screen.getByRole("tooltip", { name: "Personal (joelreed@gmail.com) · Needs reconnect in Mail Accounts", hidden: true })).toBeInTheDocument();
+    fireEvent.click(work);
+    expect(onSwitch).toHaveBeenCalledWith("joel@openarc.net");
+    rerender(<AccountSwitcher accounts={[{ ...accounts[0]!, nickname: null }]} unreadCounts={{}}
+      activeAccountId={null} onSwitch={onSwitch} onShowAll={vi.fn()} onReorder={vi.fn()} />);
+    expect(screen.getByRole("radio", { name: "Joel Reed" })).toHaveTextContent("J");
+  });
 });
 
 describe("returning from a jump to another conversation", () => {

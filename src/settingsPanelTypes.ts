@@ -55,6 +55,7 @@ export type MailAccountSettings = {
   removeEverywhere(email: string): Promise<void>;
   reconnect(email: string): Promise<void>;
   setDisplayName(email: string, displayName: string | null): Promise<void>;
+  setNickname(email: string, nickname: string | null): Promise<void>;
   setColor(email: string, color: string): Promise<void>;
   reorder(emails: string[]): Promise<void>;
 };

@@ -22,7 +22,7 @@ export function useSettingsIntegration({
 }: Options) {
   const {
     accounts, activeAccountId, authStatus, addAccount, removeAccount, removeAccountEverywhere,
-    reconnectAccount, setAccountDisplayName, setAccountColor, reorderAccounts, setActiveAccountId,
+    reconnectAccount, setAccountDisplayName, setAccountNickname, setAccountColor, reorderAccounts, setActiveAccountId,
     refreshAccounts, setAuthStatus,
   } = mailAccounts;
   const {
@@ -51,12 +51,13 @@ export function useSettingsIntegration({
       }
     },
     setDisplayName: setAccountDisplayName,
+    setNickname: setAccountNickname,
     setColor: setAccountColor,
     reorder: reorderAccounts,
   }), [
     accounts, activeAccountId, addAccount, authStatus, loadThreads, query, reconnectAccount,
     removeAccount, removeAccountEverywhere, reorderAccounts, setAccountColor,
-    setAccountDisplayName, refreshAccounts,
+    setAccountDisplayName, setAccountNickname, refreshAccounts,
   ]);
 
   const applyImportedSettings = useCallback(async ({ preferences: imported }: SettingsImportResult) => {

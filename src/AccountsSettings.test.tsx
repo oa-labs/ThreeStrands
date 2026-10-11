@@ -30,7 +30,7 @@ function renderAccounts(
     onRemove={vi.fn()}
     onRemoveEverywhere={vi.fn()}
     onReconnect={vi.fn()}
-    onSetDisplayName={vi.fn()}
+    onSetDisplayName={vi.fn()} onSetNickname={vi.fn()}
     onSetColor={onSetColor}
     onReorder={vi.fn()}
     {...overrides}
@@ -42,6 +42,51 @@ describe("mail account settings", () => {
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
+  });
+
+  it("saves a trimmed nickname separately from the outgoing sender name", async () => {
+    const onSetNickname = vi.fn().mockResolvedValue(undefined);
+    const onSetDisplayName = vi.fn();
+    renderAccounts(vi.fn(), { onSetNickname, onSetDisplayName, accounts: [{ ...account, displayName: "Joel Reed" }] });
+    const input = screen.getByRole("textbox", { name: `Account nickname for ${account.email}` });
+    expect(input).toHaveAccessibleDescription(/Work or Personal/);
+    expect(screen.getByRole("button", { name: "Save Nickname" })).toBeDisabled();
+    fireEvent.change(input, { target: { value: "  Work  " } });
+    await act(async () => { fireEvent.submit(input.closest("form")!); });
+    expect(onSetNickname).toHaveBeenCalledWith(account.email, "Work");
+    expect(onSetDisplayName).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: `Sender name for ${account.email}` })).toHaveValue("Joel Reed");
+  });
+
+  it("shows the nickname and its initial while retaining the email and allows clearing it", async () => {
+    const onSetNickname = vi.fn().mockResolvedValue(undefined);
+    const { container } = renderAccounts(vi.fn(), {
+      onSetNickname, accounts: [{ ...account, nickname: "Personal", displayName: "Joel Reed" }],
+    });
+    expect(screen.getByText("Personal", { selector: "strong" })).toBeVisible();
+    expect(container.querySelector(".account-card-avatar")).toHaveTextContent("P");
+    expect(container.querySelector(".account-card-email")).toHaveTextContent(account.email);
+    const input = screen.getByRole("textbox", { name: `Account nickname for ${account.email}` });
+    fireEvent.change(input, { target: { value: "   " } });
+    await act(async () => { fireEvent.submit(input.closest("form")!); });
+    expect(onSetNickname).toHaveBeenCalledWith(account.email, null);
+  });
+
+  it("keeps nickname edits available after a failed save and prevents duplicate saves", async () => {
+    let reject!: (reason: Error) => void;
+    const onSetNickname = vi.fn(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+    renderAccounts(vi.fn(), { onSetNickname });
+    const input = screen.getByRole("textbox", { name: `Account nickname for ${account.email}` });
+    fireEvent.change(input, { target: { value: "Work" } });
+    fireEvent.submit(input.closest("form")!);
+    expect(input).toBeDisabled();
+    fireEvent.submit(input.closest("form")!);
+    expect(onSetNickname).toHaveBeenCalledTimes(1);
+    await act(async () => reject(new Error("Could not save nickname")));
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not save nickname");
+    expect(input).toBeEnabled();
+    expect(input).toHaveValue("Work");
+    expect(screen.getByRole("button", { name: "Save Nickname" })).toBeEnabled();
   });
 
   it("styles provider badges like Connected while keeping reconnect status distinct", () => {

@@ -6,6 +6,22 @@ import { goalIsStale, goalsToReview } from "../goals";
 
 const OTHER_ACCOUNT_ID = "other@example.com";
 
+describe("demoClient account nicknames", () => {
+  it("saves, validates, and clears nicknames independently of sender names", async () => {
+    const client = createDemoClient(defaultDemoDataset());
+    await client.setAccountDisplayName(DEMO_ACCOUNT_ID, "Joel Reed");
+    await client.setAccountNickname(DEMO_ACCOUNT_ID, "  Work  ");
+    expect((await client.listAccounts())[0]).toMatchObject({ nickname: "Work", displayName: "Joel Reed" });
+    await client.setAccountNickname(DEMO_ACCOUNT_ID, "é".repeat(200));
+    for (const invalid of ["é".repeat(201), "Work\nPersonal", "Work\u0085Personal"]) {
+      await expect(client.setAccountNickname(DEMO_ACCOUNT_ID, invalid)).rejects.toThrow("Account nickname");
+    }
+    await client.setAccountNickname(DEMO_ACCOUNT_ID, "   ");
+    expect((await client.listAccounts())[0]).toMatchObject({ nickname: null, displayName: "Joel Reed" });
+    await expect(client.setAccountNickname(OTHER_ACCOUNT_ID, "Personal")).rejects.toThrow("Account not found");
+  });
+});
+
 describe("demoClient split inbox exclusion", () => {
   afterEach(async () => {
     const splits = await demoClient.listSplitInboxes();

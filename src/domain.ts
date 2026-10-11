@@ -774,6 +774,8 @@ export type ImapSetupRequest = {
 export type Account = {
   email: string;
   displayName: string | null;
+  /** Private label for this account; independent of the outgoing sender name. */
+  nickname?: string | null;
   color: string;
   status: "connected" | "needs_reauth";
   /** Which backend this account authenticates and syncs through. */

@@ -237,6 +237,7 @@ export interface MailClient extends CorrespondenceClient {
   removeAccount(email: string): Promise<void>;
   reconnectAccount(email: string): Promise<Account>;
   setAccountDisplayName(email: string, displayName: string | null): Promise<void>;
+  setAccountNickname(email: string, nickname: string | null): Promise<void>;
   setAccountColor(email: string, color: string): Promise<void>;
   reorderAccounts(emails: string[]): Promise<void>;
   listCalendarAccounts(): Promise<CalendarAccount[]>;
@@ -391,6 +392,7 @@ const tauriClient: MailClient = {
   removeAccount: (email) => complete("remove_account", { email }),
   reconnectAccount: (email) => complete("reconnect_account", { email }),
   setAccountDisplayName: (email, displayName) => complete("set_account_display_name", { email, displayName }),
+  setAccountNickname: (email, nickname) => complete("set_account_nickname", { email, nickname }),
   setAccountColor: (email, color) => complete("set_account_color", { email, color }),
   reorderAccounts: (emails) => complete("reorder_accounts", { emails }),
   listCalendarAccounts: () => read("list_calendar_accounts"),

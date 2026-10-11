@@ -22,6 +22,7 @@ export function AccountsSettings({
   onRemoveEverywhere,
   onReconnect,
   onSetDisplayName,
+  onSetNickname,
   onSetColor,
   onReorder,
   onImapConnected,
@@ -33,6 +34,7 @@ export function AccountsSettings({
   onRemoveEverywhere(email: string): Promise<void>;
   onReconnect(email: string): Promise<void>;
   onSetDisplayName(email: string, displayName: string | null): Promise<void>;
+  onSetNickname(email: string, nickname: string | null): Promise<void>;
   onSetColor(email: string, color: string): Promise<void>;
   onReorder(emails: string[]): Promise<void>;
   onImapConnected?(): Promise<void>;
@@ -137,19 +139,20 @@ export function AccountsSettings({
       ) : (
         <ul className="accounts-list">
           {accounts.map((account, index) => {
+            const name = account.nickname?.trim() || account.displayName || account.email;
             const secondaryLine = [
-              account.displayName ? account.email : null,
+              name !== account.email ? account.email : null,
               account.lastSyncedAt ? `Last synced ${formatTimeOnly(account.lastSyncedAt)}` : "Not synced yet",
             ].filter(Boolean).join(" · ");
             return (
             <li className="account-card" key={account.email}>
               <div className="account-card-row">
                 <span className="account-card-avatar" aria-hidden="true" style={{ background: account.color }}>
-                  {(account.displayName ?? account.email).charAt(0).toUpperCase()}
+                  {name.charAt(0).toUpperCase()}
                 </span>
                 <div className="account-card-identity">
                   <div className="account-card-heading">
-                    <strong title={account.displayName ?? account.email}>{account.displayName ?? account.email}</strong>
+                    <strong title={name}>{name}</strong>
                     <AccountStatusBadge status={account.status} />
                   </div>
                   <span className="account-card-email" title={secondaryLine}>{secondaryLine}</span>
@@ -169,9 +172,22 @@ export function AccountsSettings({
                 </span>
               </div>
               <div className="account-card-controls">
-                <AccountSenderNameInput
+                <AccountNameInput
+                  email={account.email}
+                  name={account.nickname ?? null}
+                  label="Account nickname"
+                  saveLabel="Save Nickname"
+                  hint="For example, Work or Personal. Used for account icons; only visible in ThreeStrands."
+                  onCommit={(nickname) => onSetNickname(account.email, nickname).catch((reason: unknown) => {
+                    setError(errorMessage(reason));
+                    throw reason;
+                  })}
+                />
+                <AccountNameInput
                   email={account.email}
                   name={account.displayName}
+                  label="Sender name"
+                  saveLabel="Save Name"
                   onCommit={(name) =>
                     onSetDisplayName(account.email, name).catch((reason: unknown) => {
                       setError(errorMessage(reason));
@@ -247,17 +263,25 @@ export function AccountsSettings({
   );
 }
 
-function AccountSenderNameInput({
+function AccountNameInput({
   email,
   name,
+  label,
+  saveLabel,
+  hint,
   onCommit,
 }: {
   email: string;
   name: string | null;
+  label: string;
+  saveLabel: string;
+  hint?: string;
   onCommit(name: string | null): Promise<void>;
 }) {
   const [value, setValue] = useState(name ?? "");
   const [saving, setSaving] = useState(false);
+  const inputId = useId();
+  const hintId = useId();
   const normalized = value.trim();
   const saved = name?.trim() ?? "";
 
@@ -265,25 +289,33 @@ function AccountSenderNameInput({
 
   return (
     <form
-      className="account-sender-name"
+      className="account-name-field"
       onSubmit={(event) => {
         event.preventDefault();
         if (saving || normalized === saved) return;
         setSaving(true);
-        void onCommit(normalized || null).finally(() => setSaving(false));
+        void onCommit(normalized || null)
+          .catch(logBackgroundFailure("Account name save"))
+          .finally(() => setSaving(false));
       }}
     >
-      <input
-        aria-label={`Sender name for ${email}`}
-        value={value}
-        maxLength={200}
-        placeholder="Sender name"
-        disabled={saving}
-        onChange={(event) => setValue(event.target.value)}
-      />
-      <button className="btn btn-primary" type="submit" disabled={saving || normalized === saved}>
-        {saving ? "Saving…" : "Save Name"}
-      </button>
+      <label htmlFor={inputId}>{label}</label>
+      <div className="account-sender-name">
+        <input
+          id={inputId}
+          aria-label={`${label} for ${email}`}
+          aria-describedby={hint ? hintId : undefined}
+          value={value}
+          maxLength={200}
+          placeholder={label === "Account nickname" ? "Work, Personal…" : label}
+          disabled={saving}
+          onChange={(event) => setValue(event.target.value)}
+        />
+        <button className="btn btn-primary" type="submit" disabled={saving || normalized === saved}>
+          {saving ? "Saving…" : saveLabel}
+        </button>
+      </div>
+      {hint ? <small id={hintId}>{hint}</small> : null}
     </form>
   );
 }

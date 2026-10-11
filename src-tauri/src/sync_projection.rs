@@ -249,6 +249,7 @@ impl Database {
         let item: Account = serde_json::from_value(json!({
             "email": value["email"],
             "displayName": value.get("displayName").cloned().unwrap_or(Value::Null),
+            "nickname": value.get("nickname").cloned().unwrap_or(Value::Null),
             "color": value["color"],
             "status": "needs_reauth",
             "provider": value["provider"],
@@ -259,8 +260,8 @@ impl Database {
         .map_err(serialization_error)?;
         self.with_connection(|connection| {
             connection.execute(
-                "INSERT INTO accounts(email,display_name,color,status,provider,sort_order,connected_at) VALUES(?1,?2,?3,'needs_reauth',?4,?5,?6) ON CONFLICT(email) DO UPDATE SET display_name=excluded.display_name,color=excluded.color,provider=excluded.provider,sort_order=excluded.sort_order",
-                params![item.email, item.display_name, item.color, item.provider, item.sort_order, item.connected_at],
+                "INSERT INTO accounts(email,display_name,color,status,provider,sort_order,connected_at,nickname) VALUES(?1,?2,?3,'needs_reauth',?4,?5,?6,?7) ON CONFLICT(email) DO UPDATE SET display_name=excluded.display_name,nickname=excluded.nickname,color=excluded.color,provider=excluded.provider,sort_order=excluded.sort_order",
+                params![item.email, item.display_name, item.color, item.provider, item.sort_order, item.connected_at, item.nickname],
             )?;
             Ok(())
         })

@@ -12,7 +12,7 @@ Current exports contain:
 - appearance, reading, remote-image, selected-account, and non-secret AI
   preferences from the typed allowlist in `src/userPreferences.ts`;
 - availability preferences and calendar colors;
-- account email addresses, provider identifiers, display names, colors, and order;
+- account email addresses, provider identifiers, sender names, nicknames, colors, and order;
 - local Split Inbox definitions and reusable snippets;
 - saved contact profiles, ordered linked addresses, photos, favorites, birthdays,
   and Keep in Touch settings;
@@ -25,6 +25,12 @@ that field preserves the destination's groups. Account metadata merges by
 email address. An already connected account keeps its connection status; an
 account present only in the export is created with `needs_reauth` and shown
 as “Connect on this device.”
+
+In Settings → Mail Accounts, an **Account nickname** such as “Work” or
+“Personal” labels the account and supplies its icon's initial. Nicknames are
+private to ThreeStrands and sync with the account catalog. **Sender name**
+continues to control the name on outgoing mail. Clearing a nickname restores
+the sender-name or email fallback.
 
 ## Excluded data and trust boundary
 
@@ -44,9 +50,9 @@ or writes the keychain during transfer.
 
 ## Format and compatibility
 
-Current exports use version **3**, with the JSON envelope marker
+Current exports use version **5**, with the JSON envelope marker
 `dispatch-settings` and base64-encoded salt, nonce, and ciphertext. Imports
-continue to accept versions 1 and 2 with compatibility defaults and migrations.
+continue to accept versions 1–4 with compatibility defaults and migrations.
 The `.dispatch-settings` extension retains the former product name; new
 exports default to `threestrands-settings.dispatch-settings`.
 
@@ -57,6 +63,8 @@ fields, unsupported values or versions, invalid limits, and oversized files
 are rejected before SQLite changes.
 
 Fields added under the same version require backward-compatible defaults.
+Account `nickname`, added in 0.102.0, is optional and defaults to absent for
+earlier exports. The frozen `v5-0.101` fixture covers the preceding schema.
 Incompatible changes require an intentional version bump and continued import
 support for earlier versions. Frozen historical fixtures cover those contracts.
 CSV/vCard interchange, profile merging, and device-local suggestion suppression

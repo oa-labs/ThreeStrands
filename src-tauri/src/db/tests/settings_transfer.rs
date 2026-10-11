@@ -15,6 +15,7 @@ fn import_transfer_preserves_local_credentials_and_marks_new_accounts_for_connec
             &[
                 TransferAccount {
                     email: "new@example.com".to_string(),
+                    nickname: Some("Personal".to_string()),
                     display_name: Some("New account".to_string()),
                     color: "#123456".to_string(),
                     provider: "gmail".to_string(),
@@ -23,6 +24,7 @@ fn import_transfer_preserves_local_credentials_and_marks_new_accounts_for_connec
                 },
                 TransferAccount {
                     email: "connected@example.com".to_string(),
+                    nickname: Some("Work".to_string()),
                     display_name: Some("Connected account".to_string()),
                     color: "#654321".to_string(),
                     provider: "gmail".to_string(),
@@ -51,6 +53,8 @@ fn import_transfer_preserves_local_credentials_and_marks_new_accounts_for_connec
         )
         .unwrap();
 
+    assert_eq!(database.get_account("new@example.com").unwrap().unwrap().nickname.as_deref(), Some("Personal"));
+    assert_eq!(database.get_account("connected@example.com").unwrap().unwrap().nickname.as_deref(), Some("Work"));
     assert_eq!(
         database
             .get_account("connected@example.com")

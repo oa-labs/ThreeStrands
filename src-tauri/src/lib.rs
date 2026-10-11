@@ -1837,6 +1837,7 @@ fn record_mail_account(state: &State<'_, AppState>, account: &Account) -> Result
         &serde_json::json!({
             "email": account.email,
             "displayName": account.display_name,
+            "nickname": account.nickname,
             "color": account.color,
             "provider": account.provider,
             "sortOrder": account.sort_order,
@@ -3304,7 +3305,7 @@ fn set_account_color(
     state.database.set_account_color(&email, &color)?;
     let account = state.database.get_account(&email)?.ok_or_else(|| "Account not found".to_string())?;
     record_synced_value(&state, threestrands_sync_protocol::EntityType::MailAccount, &email.to_ascii_lowercase(),
-        &serde_json::json!({"email":account.email,"displayName":account.display_name,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
+        &serde_json::json!({"email":account.email,"displayName":account.display_name,"nickname":account.nickname,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
         Some(std::collections::BTreeSet::from(["color".to_string()])))
 }
 
@@ -3319,8 +3320,21 @@ fn set_account_display_name(
         .set_account_display_name(&email, display_name.as_deref())?;
     let account = state.database.get_account(&email)?.ok_or_else(|| "Account not found".to_string())?;
     record_synced_value(&state, threestrands_sync_protocol::EntityType::MailAccount, &email.to_ascii_lowercase(),
-        &serde_json::json!({"email":account.email,"displayName":account.display_name,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
+        &serde_json::json!({"email":account.email,"displayName":account.display_name,"nickname":account.nickname,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
         Some(std::collections::BTreeSet::from(["displayName".to_string()])))
+}
+
+#[tauri::command(async)]
+fn set_account_nickname(
+    email: String,
+    nickname: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.database.set_account_nickname(&email, nickname.as_deref())?;
+    let account = state.database.get_account(&email)?.ok_or_else(|| "Account not found".to_string())?;
+    record_synced_value(&state, threestrands_sync_protocol::EntityType::MailAccount, &email.to_ascii_lowercase(),
+        &serde_json::json!({"email":account.email,"displayName":account.display_name,"nickname":account.nickname,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
+        Some(std::collections::BTreeSet::from(["nickname".to_string()])))
 }
 
 #[tauri::command(async)]
@@ -3328,7 +3342,7 @@ fn reorder_accounts(emails: Vec<String>, state: State<'_, AppState>) -> Result<(
     state.database.reorder_accounts(&emails)?;
     for account in state.database.list_accounts()? {
         record_synced_value(&state, threestrands_sync_protocol::EntityType::MailAccount, &account.email.to_ascii_lowercase(),
-            &serde_json::json!({"email":account.email,"displayName":account.display_name,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
+            &serde_json::json!({"email":account.email,"displayName":account.display_name,"nickname":account.nickname,"color":account.color,"provider":account.provider,"sortOrder":account.sort_order}),
             Some(std::collections::BTreeSet::from(["sortOrder".to_string()])))?;
     }
     Ok(())
@@ -4793,6 +4807,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         remove_synced_mail_account,
         reconnect_account,
         set_account_display_name,
+        set_account_nickname,
         set_account_color,
         reorder_accounts,
         // Calendar and scheduling

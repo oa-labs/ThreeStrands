@@ -1085,6 +1085,9 @@ pub struct AuthStatus {
 pub struct Account {
     pub email: String,
     pub display_name: Option<String>,
+    /// App-only account label; never used as the outgoing sender name.
+    #[serde(default)]
+    pub nickname: Option<String>,
     pub color: String,
     pub status: String,
     /// Which backend this account authenticates and syncs through, e.g.

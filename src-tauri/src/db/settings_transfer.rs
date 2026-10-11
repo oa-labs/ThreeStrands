@@ -34,10 +34,11 @@ impl Database {
                 transaction
                     .execute(
                         "INSERT INTO accounts(
-                             email, display_name, color, status, provider, sort_order, connected_at, last_synced_at
-                         ) VALUES (?1, ?2, ?3, 'needs_reauth', ?4, ?5, ?6, NULL)
+                             email, display_name, color, status, provider, sort_order, connected_at, last_synced_at, nickname
+                         ) VALUES (?1, ?2, ?3, 'needs_reauth', ?4, ?5, ?6, NULL, ?7)
                          ON CONFLICT(email) DO UPDATE SET
                              display_name = excluded.display_name,
+                             nickname = excluded.nickname,
                              color = excluded.color,
                              sort_order = excluded.sort_order",
                         params![
@@ -47,6 +48,7 @@ impl Database {
                             account.provider,
                             account.sort_order,
                             connected_at,
+                            account.nickname,
                         ],
                     )?;
                 // An IMAP account carries its non-secret server settings

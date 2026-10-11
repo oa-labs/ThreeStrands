@@ -246,6 +246,7 @@ export function Settings({
               onRemoveEverywhere={mailAccounts.removeEverywhere}
               onReconnect={mailAccounts.reconnect}
               onSetDisplayName={mailAccounts.setDisplayName}
+              onSetNickname={mailAccounts.setNickname}
               onSetColor={mailAccounts.setColor}
               onReorder={mailAccounts.reorder}
             />

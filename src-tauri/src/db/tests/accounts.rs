@@ -383,6 +383,31 @@ fn sender_display_name_can_be_saved_cleared_and_cannot_inject_headers() {
 }
 
 #[test]
+fn account_nicknames_are_optional_validated_and_independent_of_sender_names() {
+    let database = database();
+    assert!(database.adopt_account("you@gmail.com").unwrap().nickname.is_none());
+    database.set_account_display_name("you@gmail.com", Some("Joel Reed")).unwrap();
+    database.set_account_nickname("you@gmail.com", Some("  Work  ")).unwrap();
+    let account = database.get_account("you@gmail.com").unwrap().unwrap();
+    assert_eq!(account.nickname.as_deref(), Some("Work"));
+    assert_eq!(account.display_name.as_deref(), Some("Joel Reed"));
+    // Reconnecting preserves the private label.
+    assert_eq!(database.adopt_account("you@gmail.com").unwrap().nickname.as_deref(), Some("Work"));
+    for length in [199, 200] {
+        database.set_account_nickname("you@gmail.com", Some(&"é".repeat(length))).unwrap();
+    }
+    for invalid in ["é".repeat(201), "Work\nPersonal".into(), "Work\u{0085}Personal".into()] {
+        assert!(database.set_account_nickname("you@gmail.com", Some(&invalid)).is_err());
+    }
+    assert_eq!(database.list_accounts().unwrap()[0].nickname.as_deref(), Some("é".repeat(200).as_str()));
+    for empty in [Some("   "), None] {
+        database.set_account_nickname("you@gmail.com", empty).unwrap();
+        assert!(database.get_account("you@gmail.com").unwrap().unwrap().nickname.is_none());
+    }
+    assert!(database.set_account_nickname("missing@gmail.com", Some("Work")).is_err());
+}
+
+#[test]
 fn primary_account_id_tracks_the_first_account_and_falls_back_to_the_placeholder() {
     let database = database();
     // Before anything is connected the catalog is empty, so the primary

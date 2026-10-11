@@ -112,6 +112,11 @@ export function useAccounts(settingsOpen: boolean) {
     await refreshAccounts();
   }, [refreshAccounts]);
 
+  const setAccountNickname = useCallback(async (email: string, nickname: string | null) => {
+    await mailClient.setAccountNickname(email, nickname);
+    await refreshAccounts();
+  }, [refreshAccounts]);
+
   useEffect(() => {
     saveSelectedAccountId(activeAccountId);
   }, [activeAccountId]);
@@ -155,6 +160,7 @@ export function useAccounts(settingsOpen: boolean) {
     removeAccountEverywhere,
     reconnectAccount,
     setAccountDisplayName,
+    setAccountNickname,
     setAccountColor,
     reorderAccounts,
   };

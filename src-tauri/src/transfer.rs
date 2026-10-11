@@ -187,6 +187,9 @@ fn validate_calendar_colors(colors: &CalendarColors) -> Result<(), String> {
 pub(crate) struct TransferAccount {
     pub email: String,
     pub display_name: Option<String>,
+    // Optional so exports made before account nicknames still import.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nickname: Option<String>,
     pub color: String,
     // Every account exported before this field existed authenticated
     // through Gmail, so an absent value defaults to it rather than an empty
@@ -216,6 +219,7 @@ impl From<Account> for TransferAccount {
         Self {
             email: account.email,
             display_name: account.display_name,
+            nickname: account.nickname,
             color: account.color,
             provider: account.provider,
             sort_order: account.sort_order,
@@ -375,6 +379,11 @@ impl TransferPayload {
             }
             if let Some(name) = &account.display_name {
                 validate_required_text("account display name", name, 200)?;
+            }
+            if let Some(nickname) = &account.nickname {
+                if nickname.trim().is_empty() || nickname.chars().count() > 200 || nickname.chars().any(char::is_control) {
+                    return Err("The transfer contains an invalid account nickname".to_string());
+                }
             }
             if account.color.len() != 7
                 || !account.color.starts_with('#')
@@ -747,6 +756,7 @@ mod tests {
             },
             accounts: vec![TransferAccount {
                 email: "person@example.com".to_string(),
+                nickname: None,
                 display_name: Some("Person".to_string()),
                 color: "#4285F4".to_string(),
                 provider: "gmail".to_string(),
@@ -1444,6 +1454,7 @@ mod tests {
             accounts: vec![
                 TransferAccount {
                     email: "current@example.com".to_string(),
+                    nickname: Some("Work".to_string()),
                     display_name: Some("Current".to_string()),
                     color: "#123ABC".to_string(),
                     provider: "gmail".to_string(),
@@ -1452,6 +1463,7 @@ mod tests {
                 },
                 TransferAccount {
                     email: "other@example.net".to_string(),
+                    nickname: None,
                     display_name: None,
                     color: "#ABCDEF".to_string(),
                     provider: "gmail".to_string(),
@@ -1462,6 +1474,7 @@ mod tests {
                 // version-5 addition. No password: that is keychain-only.
                 TransferAccount {
                     email: "me@proton.me".to_string(),
+                    nickname: None,
                     display_name: Some("Proton".to_string()),
                     color: "#6D4AFF".to_string(),
                     provider: "imap".to_string(),
@@ -1548,6 +1561,7 @@ mod tests {
     fn frozen_v5_current_export_imports_every_current_field() {
         assert_eq!(envelope_version(fixtures::V5_CURRENT), VERSION);
         let (database, result) = import_fixture(fixtures::V5_CURRENT);
+        assert_eq!(database.get_account("current@example.com").unwrap().unwrap().nickname.as_deref(), Some("Work"));
 
         let preferences = &result.preferences;
         assert_eq!(preferences.accent, "amber");
@@ -1870,11 +1884,40 @@ mod tests {
         assert_eq!(database.retention_days().unwrap(), Some(365));
     }
 
+    #[test]
+    fn frozen_pre_nickname_v5_export_imports_with_no_nicknames() {
+        let bytes = include_bytes!("../tests/fixtures/settings-transfer/v5-0.101.dispatch-settings");
+        assert_eq!(envelope_version(bytes), VERSION);
+        let (database, result) = import_fixture(bytes);
+        assert_eq!(result.account_count, 3);
+        assert!(database.list_accounts().unwrap().iter().all(|account| account.nickname.is_none()));
+        assert_eq!(database.get_account("current@example.com").unwrap().unwrap().display_name.as_deref(), Some("Current"));
+        assert!(database.imap_account_settings("me@proton.me").unwrap().is_some());
+    }
+
+    #[test]
+    fn account_nicknames_round_trip_and_reject_invalid_transfer_values() {
+        let mut payload = current_fixture_payload();
+        for length in [199, 200] {
+            payload.accounts[0].nickname = Some("é".repeat(length));
+            payload.validate().unwrap();
+        }
+        let plaintext = serde_json::to_vec(&payload).unwrap();
+        let sealed = seal(&plaintext, fixtures::PASSWORD, &fixtures::V5_CURRENT_SALT, &fixtures::V5_CURRENT_NONCE).unwrap();
+        let database = Database::open_memory();
+        apply_import(&database, decrypt(&sealed, fixtures::PASSWORD).unwrap()).unwrap();
+        assert_eq!(database.get_account("current@example.com").unwrap().unwrap().nickname, payload.accounts[0].nickname);
+        for invalid in ["é".repeat(201), "Work\nPersonal".into(), "   ".into()] {
+            payload.accounts[0].nickname = Some(invalid);
+            assert!(payload.validate().is_err());
+        }
+    }
+
     /// Fails whenever this build's export bytes drift from the checked-in
     /// current fixture. That is intended: any change to the export shape
     /// must be deliberate. Before regenerating, copy the existing
-    /// `v4-current.dispatch-settings` to a new frozen file (for example
-    /// `v4-<release>.dispatch-settings`) with its own import test, so the
+    /// `v5-current.dispatch-settings` to a new frozen file (for example
+    /// `v5-<release>.dispatch-settings`) with its own import test, so the
     /// preceding schema keeps regression coverage as AGENTS.md requires.
     #[test]
     fn this_build_still_exports_the_current_fixture_bytes() {
