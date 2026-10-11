@@ -15,5 +15,7 @@
 # without the keyword grant is expressed by omitting the keyword right. This
 # file is verified empirically at build time (see README) — the exact right
 # string that drops \* while keeping \Seen writable is pinned below.
+# `k` (create mailbox) is granted because Phase 3 write tests create scratch
+# mailboxes; it does not affect PERMANENTFLAGS (keyword creation rides on `w`).
 # Format: <mailbox-pattern> <identifier> <rights>
-* owner lrstiepxa
+* owner lrstiepxka

@@ -593,6 +593,70 @@ impl Default for SyncLimits {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 3 run 1: write-command construction limits
+// ---------------------------------------------------------------------------
+//
+// The write layer (`write.rs`) builds every mutating IMAP command. Three
+// numeric limits bound what one command may carry, each with below/exact/above
+// coverage below and each enforced by a helper that returns a typed
+// `ProviderError` rather than truncating — the same "never silently clamp"
+// rule the ingest gates above follow. These have their first non-test caller
+// in Phase 3 run 2 (flags/moves/labels), so until then `write.rs`'s callers
+// are tests; the limits themselves are plain data and need no `dead_code`
+// allow.
+
+/// Longest mailbox NAME, in bytes of its decoded (pre-UTF-7) form, that the
+/// write layer will build a command for.
+///
+/// RFC 3501 does not fix a mailbox-name length, but a hostile or buggy caller
+/// could hand us a megabyte-long name that bloats the command line and the
+/// server's parse buffer. 1024 bytes is far longer than any real mailbox path
+/// (even a deep `Labels/Clients/Acme/2026/Invoices` hierarchy) while bounding
+/// one command. Measured on the DECODED name's UTF-8 length, before modified
+/// UTF-7 expansion, so the limit is about the name the user sees, not its wire
+/// spelling. Over the limit is a typed rejection — nothing is sent.
+pub const MAX_MAILBOX_NAME_BYTES: usize = 1024;
+
+/// Most flags one `UID STORE` command may set or clear at once.
+///
+/// A STORE carries a parenthesised flag list; a caller asking to set hundreds
+/// of distinct keywords in one command is never legitimate (ThreeStrands sets
+/// at most a handful of system flags plus one label keyword). 64 is generous
+/// for any real change while bounding the flag-list length. Over the limit is
+/// a typed rejection, not a silent drop of the overflow.
+pub const MAX_FLAGS_PER_COMMAND: usize = 64;
+
+/// Most UIDs packed into one write command's UID set, after range
+/// compression. This is the WRITE-side analogue of [`UID_BATCH_SIZE`] (which
+/// bounds read fetches): a relocate or store over a larger set is split into
+/// batches of at most this many UIDs. Set equal to [`UID_BATCH_SIZE`] so read
+/// and write batch the same way; a test pins the two together.
+pub const MAX_UIDS_PER_COMMAND: usize = UID_BATCH_SIZE;
+
+/// Reject a mailbox name whose decoded UTF-8 length exceeds
+/// [`MAX_MAILBOX_NAME_BYTES`]. Returns the length unchanged when within the
+/// limit (including exactly at it).
+pub fn check_mailbox_name_len(len: usize) -> Result<usize, ProviderError> {
+    if len > MAX_MAILBOX_NAME_BYTES {
+        return Err(ProviderError::InvalidOperation(format!(
+            "mailbox name is {len} bytes, over the {MAX_MAILBOX_NAME_BYTES}-byte limit"
+        )));
+    }
+    Ok(len)
+}
+
+/// Reject a flag count over [`MAX_FLAGS_PER_COMMAND`]. Returns the count
+/// unchanged when within the limit (including exactly at it).
+pub fn check_flags_per_command(count: usize) -> Result<usize, ProviderError> {
+    if count > MAX_FLAGS_PER_COMMAND {
+        return Err(ProviderError::InvalidOperation(format!(
+            "{count} flags in one command, over the {MAX_FLAGS_PER_COMMAND}-flag limit"
+        )));
+    }
+    Ok(count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1131,5 +1195,54 @@ mod tests {
     fn sync_limits_default_to_the_inbox_ceiling() {
         assert_eq!(SyncLimits::default(), SyncLimits::inbox());
         assert_eq!(SyncLimits::default().mailbox_window, MAX_INBOX_SYNC_MESSAGES);
+    }
+
+    // --- Phase 3 run 1: write-command limits ---------------------------
+
+    #[test]
+    fn mailbox_name_len_accepts_up_to_the_limit_and_rejects_above_it() {
+        assert_eq!(check_mailbox_name_len(0).unwrap(), 0);
+        assert_eq!(
+            check_mailbox_name_len(MAX_MAILBOX_NAME_BYTES - 1).unwrap(),
+            MAX_MAILBOX_NAME_BYTES - 1
+        );
+        assert_eq!(
+            check_mailbox_name_len(MAX_MAILBOX_NAME_BYTES).unwrap(),
+            MAX_MAILBOX_NAME_BYTES
+        );
+        let err = check_mailbox_name_len(MAX_MAILBOX_NAME_BYTES + 1).unwrap_err();
+        assert!(
+            matches!(err, ProviderError::InvalidOperation(_)),
+            "over-limit is a typed rejection, not a clamp: {err:?}"
+        );
+    }
+
+    #[test]
+    fn flags_per_command_accepts_up_to_the_limit_and_rejects_above_it() {
+        assert_eq!(check_flags_per_command(0).unwrap(), 0);
+        assert_eq!(
+            check_flags_per_command(MAX_FLAGS_PER_COMMAND - 1).unwrap(),
+            MAX_FLAGS_PER_COMMAND - 1
+        );
+        assert_eq!(
+            check_flags_per_command(MAX_FLAGS_PER_COMMAND).unwrap(),
+            MAX_FLAGS_PER_COMMAND
+        );
+        assert!(matches!(
+            check_flags_per_command(MAX_FLAGS_PER_COMMAND + 1).unwrap_err(),
+            ProviderError::InvalidOperation(_)
+        ));
+    }
+
+    #[test]
+    fn the_write_command_limits_are_positive_bounds() {
+        assert!(MAX_MAILBOX_NAME_BYTES > 0);
+        assert_eq!(MAX_MAILBOX_NAME_BYTES, 1024);
+        assert!(MAX_FLAGS_PER_COMMAND > 0);
+        assert_eq!(MAX_FLAGS_PER_COMMAND, 64);
+        // The write-side UID batch mirrors the read-side one, so a relocate and
+        // a fetch split a large UID set identically.
+        assert_eq!(MAX_UIDS_PER_COMMAND, UID_BATCH_SIZE);
+        assert!(MAX_UIDS_PER_COMMAND > 0);
     }
 }

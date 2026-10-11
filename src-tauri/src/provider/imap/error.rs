@@ -296,4 +296,54 @@ mod tests {
             ImapFailure::ServerUnavailable(_)
         ));
     }
+
+    // Phase 3 run 1: the classification the WRITE paths rely on, driven through
+    // the SAME RFC 5530 map. Each row is the server response a store / copy /
+    // move / expunge can draw, mapped to the ProviderError whose retry policy
+    // is correct for a mutation: OVERQUOTA and a read-only / no-permission
+    // selection are PERMANENT (retrying cannot succeed); UNAVAILABLE and a
+    // dropped connection are TRANSIENT (the engine retries); NONEXISTENT is a
+    // permanent InvalidOperation (the target is simply gone — distinct from
+    // TRYCREATE, which the write layer surfaces as its own typed outcome).
+    #[test]
+    fn write_path_response_codes_classify_with_the_right_retry_policy() {
+        use crate::provider::ProviderError;
+        let cases: &[(&str, fn(&ProviderError) -> bool)] = &[
+            // OVERQUOTA — permanent, the user must free space.
+            ("a1 NO [OVERQUOTA] mailbox full", |e| {
+                matches!(e, ProviderError::PermanentClientRejection(_))
+            }),
+            // A read-only / no-permission selection — writes are impossible,
+            // permanent. (These arrive without a recognised RFC 5530 code word,
+            // so they map to InvalidOperation, which the engine treats as a
+            // permanent mutation failure — never a retry.)
+            ("a2 NO [READ-ONLY] mailbox is read-only", |e| {
+                matches!(e, ProviderError::InvalidOperation(_))
+            }),
+            ("a3 NO [NOPERM] insufficient rights", |e| {
+                matches!(e, ProviderError::InvalidOperation(_))
+            }),
+            // NONEXISTENT — the target mailbox is gone (NOT TryCreate).
+            ("a4 NO [NONEXISTENT] no such mailbox", |e| {
+                matches!(e, ProviderError::InvalidOperation(_))
+            }),
+            // UNAVAILABLE — transient, retry.
+            ("a5 NO [UNAVAILABLE] try later", |e| {
+                matches!(e, ProviderError::TransientTransport(_))
+            }),
+        ];
+        for (response, ok) in cases {
+            let err = classify_status_text(response).into_provider_error();
+            assert!(ok(&err), "{response} classified wrongly: {err:?}");
+            // None of these pauses the account (only AUTHENTICATIONFAILED does).
+            assert!(!err.requires_reauthentication(), "{response}");
+        }
+        // A dropped connection mid-write is transient.
+        let dropped = map_imap_error(&async_imap::error::Error::ConnectionLost);
+        assert!(matches!(dropped, ProviderError::TransientTransport(_)));
+        // A read-only / no-permission mutation is a PERMANENT failure, so the
+        // mutation queue rolls back rather than retrying forever.
+        let read_only = classify_status_text("a2 NO [READ-ONLY] x").into_provider_error();
+        assert!(!read_only.retry_mutation(), "read-only is a permanent write failure");
+    }
 }

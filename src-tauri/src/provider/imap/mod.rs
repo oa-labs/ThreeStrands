@@ -52,6 +52,7 @@ mod settings;
 mod setup;
 mod threading;
 mod tls;
+mod write;
 
 // These are the connection layer's public surface for the later read slices
 // (Slice 2 account setup constructs a manager + sessions; the read slices call
@@ -64,6 +65,16 @@ pub use connection::{ConnectionConfig, ImapConnectionManager, TlsMode};
 pub use error::map_imap_error;
 #[allow(unused_imports)]
 pub use session::{ImapSession, MailboxStatus};
+// Phase 3 run 1 write surface: the typed, injection-safe, capability-aware
+// write primitives. Their first caller is Phase 3 run 2 (flags/moves/labels),
+// so the re-exports are forward-looking exactly like the connection-layer ones
+// above; the allow is removed with that first consumer.
+#[allow(unused_imports)]
+pub use write::{
+    build_mailbox_arg, build_uid_set, build_uid_set_batches, relocate_uids, select_for_write,
+    validate_flag, validate_flags, verified_store, CopyOutcome, CopyUid, ImapWriteSession,
+    RelocateOutcome, RelocationStrategy, StoreOp, WriteCaps, WriteContext, WriteError, WriteResult,
+};
 #[allow(unused_imports)]
 pub use tls::{parse_sha256_fingerprint, PinnedCertVerifier, Sha256Fingerprint};
 
@@ -288,6 +299,34 @@ impl ImapStateStore {
                 rusqlite::params![self.account_id, name, delimiter, special_use],
             )?;
             Ok(())
+        })
+    }
+
+    /// WRITE-CAPABILITY-ONLY update: set a mailbox's learned writable
+    /// `PERMANENTFLAGS` (and the keyword wildcard) and nothing else. It is a
+    /// single-statement `UPDATE`, so it can neither seed counters for a mailbox
+    /// the catalog does not know (no row, no effect) nor overwrite
+    /// `uidvalidity`/`uidnext`/`highestmodseq` with a stale value read earlier
+    /// — the sync gate trusts those columns. Returns whether a row matched.
+    pub fn set_mailbox_write_capabilities(
+        &self,
+        name: &str,
+        permanent_flags_json: &str,
+        permanent_keywords: bool,
+    ) -> DbResult<bool> {
+        self.database.with_connection(|connection| {
+            let changed = connection.execute(
+                "UPDATE imap_mailboxes
+                    SET permanent_flags_json = ?3, permanent_keywords = ?4
+                  WHERE account_id = ?1 AND name = ?2",
+                rusqlite::params![
+                    self.account_id,
+                    name,
+                    permanent_flags_json,
+                    i64::from(permanent_keywords),
+                ],
+            )?;
+            Ok(changed > 0)
         })
     }
 

@@ -359,6 +359,181 @@ where
     }
 }
 
+/// The outcome of a raw write command that may carry a UIDPLUS `COPYUID`:
+/// whether it completed OK, and the first typed `CopyUid` seen (from either an
+/// untagged `* OK [COPYUID ...]` — MOVE — or the tagged completion — COPY).
+struct RawWriteOutcome {
+    copyuid: Option<super::write::CopyUid>,
+}
+
+impl<T> AsyncImapSession<T>
+where
+    T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug + Send,
+{
+    /// Run a raw tagged write command, capturing a typed `COPYUID` from either
+    /// an UNTAGGED `* OK [COPYUID ...]` data response (the shape `UID MOVE`
+    /// sends, before its `* n EXPUNGE` lines) or the TAGGED completion (the
+    /// shape `UID COPY` sends). A tagged `NO [TRYCREATE]` becomes
+    /// [`write::WriteError::TryCreate`] so the write layer can create the
+    /// target and retry; every other `NO`/`BAD` is classified through the RFC
+    /// 5530 map. The response codes borrow from the read buffer, so each is
+    /// copied into an owned [`write::CopyUid`] before the next `read_response`.
+    async fn run_write_command(
+        &mut self,
+        command: &str,
+    ) -> Result<RawWriteOutcome, super::write::WriteError> {
+        use async_imap::imap_proto::{Response, ResponseCode, Status};
+        let id = self
+            .session
+            .run_command(command)
+            .await
+            .map_err(|e| super::write::WriteError::Provider(map_imap_error(&e)))?;
+        let mut copyuid: Option<super::write::CopyUid> = None;
+        loop {
+            let resp = self
+                .session
+                .read_response()
+                .await
+                .map_err(|io| {
+                    super::write::WriteError::Provider(map_imap_error(
+                        &async_imap::error::Error::Io(io),
+                    ))
+                })?
+                .ok_or_else(|| {
+                    super::write::WriteError::Provider(map_imap_error(
+                        &async_imap::error::Error::ConnectionLost,
+                    ))
+                })?;
+            match resp.parsed() {
+                Response::Data {
+                    status: Status::Bye,
+                    ..
+                } => {
+                    return Err(super::write::WriteError::Provider(map_imap_error(
+                        &async_imap::error::Error::ConnectionLost,
+                    )));
+                }
+                // Untagged data: MOVE's COPYUID arrives here. Keep the first.
+                Response::Data { outcome, .. } => {
+                    if copyuid.is_none() {
+                        if let Some(code) = outcome.code.as_ref() {
+                            copyuid = super::write::copyuid_from_code(code);
+                        }
+                    }
+                }
+                Response::Done {
+                    tag,
+                    status,
+                    outcome,
+                } => {
+                    if tag.as_bytes() != id.as_bytes() {
+                        continue;
+                    }
+                    match status {
+                        Status::Ok => {
+                            if copyuid.is_none() {
+                                if let Some(code) = outcome.code.as_ref() {
+                                    copyuid = super::write::copyuid_from_code(code);
+                                }
+                            }
+                            return Ok(RawWriteOutcome { copyuid });
+                        }
+                        Status::No | Status::Bad => {
+                            // A TRYCREATE is a distinct, typed outcome.
+                            if matches!(outcome.code, Some(ResponseCode::TryCreate)) {
+                                return Err(super::write::WriteError::TryCreate(
+                                    outcome
+                                        .information
+                                        .as_deref()
+                                        .unwrap_or("TRYCREATE")
+                                        .to_string(),
+                                ));
+                            }
+                            return Err(super::write::WriteError::Provider(
+                                classify_response_code(
+                                    outcome.code.as_ref(),
+                                    outcome.information.as_deref().unwrap_or_default(),
+                                )
+                                .into_provider_error(),
+                            ));
+                        }
+                        _ => {
+                            return Err(super::write::WriteError::Provider(
+                                ProviderError::InvalidOperation(format!(
+                                    "unexpected tagged IMAP status: {status:?}"
+                                )),
+                            ));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Run a raw tagged write command that carries no COPYUID (STORE, EXPUNGE),
+    /// mapping any `NO`/`BAD` through the RFC 5530 map. A `TRYCREATE` here would
+    /// be unexpected (STORE/EXPUNGE do not create mailboxes), so it is left to
+    /// the generic classifier.
+    async fn run_write_command_plain(&mut self, command: &str) -> Result<(), ProviderError> {
+        match self.run_write_command(command).await {
+            Ok(_) => Ok(()),
+            Err(error) => Err(error.into_provider_error()),
+        }
+    }
+}
+
+#[async_trait]
+impl<T> super::write::ImapWriteSession for AsyncImapSession<T>
+where
+    T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug + Send,
+{
+    async fn uid_store(
+        &mut self,
+        uid_set: &str,
+        op: super::write::StoreOp,
+        flags: &[String],
+    ) -> Result<(), ProviderError> {
+        let item = match op {
+            super::write::StoreOp::Add => "+FLAGS.SILENT",
+            super::write::StoreOp::Remove => "-FLAGS.SILENT",
+        };
+        let command = format!("UID STORE {uid_set} {item} ({})", flags.join(" "));
+        self.run_write_command_plain(&command).await
+    }
+
+    async fn uid_copy(
+        &mut self,
+        uid_set: &str,
+        dest: &str,
+    ) -> super::write::WriteResult<super::write::CopyOutcome> {
+        let outcome = self
+            .run_write_command(&format!("UID COPY {uid_set} {dest}"))
+            .await?;
+        Ok(super::write::CopyOutcome {
+            copyuid: outcome.copyuid,
+        })
+    }
+
+    async fn uid_move(
+        &mut self,
+        uid_set: &str,
+        dest: &str,
+    ) -> super::write::WriteResult<super::write::CopyOutcome> {
+        let outcome = self
+            .run_write_command(&format!("UID MOVE {uid_set} {dest}"))
+            .await?;
+        Ok(super::write::CopyOutcome {
+            copyuid: outcome.copyuid,
+        })
+    }
+
+    async fn uid_expunge(&mut self, uid_set: &str) -> Result<(), ProviderError> {
+        self.run_write_command_plain(&format!("UID EXPUNGE {uid_set}"))
+            .await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

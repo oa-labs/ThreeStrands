@@ -152,6 +152,35 @@ impl ImapSession for LeasedSession {
     }
 }
 
+#[async_trait]
+impl super::write::ImapWriteSession for LeasedSession {
+    async fn uid_store(
+        &mut self,
+        uid_set: &str,
+        op: super::write::StoreOp,
+        flags: &[String],
+    ) -> ProviderResult<()> {
+        self.session.uid_store(uid_set, op, flags).await
+    }
+    async fn uid_copy(
+        &mut self,
+        uid_set: &str,
+        dest: &str,
+    ) -> super::write::WriteResult<super::write::CopyOutcome> {
+        self.session.uid_copy(uid_set, dest).await
+    }
+    async fn uid_move(
+        &mut self,
+        uid_set: &str,
+        dest: &str,
+    ) -> super::write::WriteResult<super::write::CopyOutcome> {
+        self.session.uid_move(uid_set, dest).await
+    }
+    async fn uid_expunge(&mut self, uid_set: &str) -> ProviderResult<()> {
+        self.session.uid_expunge(uid_set).await
+    }
+}
+
 /// A live IMAP account provider.
 ///
 /// Holds the account-scoped state store and body cache, the session source,
