@@ -7698,17 +7698,19 @@ mod tests {
                 .await
                 .expect("worker login")
                 .0;
-            // Make a scratch copy inside INBOX; capture its new UID from COPYUID.
-            worker.run_command_capture_code("SELECT INBOX").await.expect("select inbox");
-            let copy_code = worker
-                .run_command_capture_code(&format!("UID COPY {source_uid} INBOX"))
+            // Make a scratch copy inside INBOX; read its new UID from the TYPED
+            // COPYUID (the Debug string of the code is not parseable).
+            use super::super::super::write::ImapWriteSession as _;
+            worker.select("INBOX").await.expect("select inbox");
+            let scratch_uid: u32 = worker
+                .uid_copy(&source_uid.to_string(), "INBOX")
                 .await
                 .expect("scratch copy")
-                .expect("COPYUID for the scratch copy");
-            // COPYUID <validity> <src> <dst>: the scratch UID is the dst member.
-            let scratch_uid: u32 = copy_code
-                .rsplit(|c: char| c == ' ' || c == ']')
-                .find_map(|tok| tok.trim().parse::<u32>().ok())
+                .copyuid
+                .expect("the harness advertises UIDPLUS, so COPYUID is returned")
+                .dest
+                .first()
+                .copied()
                 .expect("a scratch UID from COPYUID");
 
             // A scratch label name unlikely to collide with a fixture.
