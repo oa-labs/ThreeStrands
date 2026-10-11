@@ -201,7 +201,7 @@ that stays stable across moves. It must also be unique across accounts, because
 ```sql
 CREATE TABLE imap_mailboxes (
     account_id TEXT NOT NULL,
-    name TEXT NOT NULL,              -- decoded; delimiter kept separately
+    name TEXT NOT NULL,              -- LIST wire name; delimiter kept separately
     delimiter TEXT,
     special_use TEXT,                -- \Sent, \Archive, … or NULL
     uidvalidity INTEGER NOT NULL,
@@ -224,6 +224,19 @@ CREATE TABLE imap_locations (
 );
 CREATE INDEX imap_locations_by_message ON imap_locations(account_id, message_id);
 ```
+
+Mailbox coordinates and dynamic label IDs retain the modified UTF-7 spelling
+returned by LIST, matching the existing persisted state. Commands quote those
+names without encoding them again. Newly typed label names are encoded once
+before creating their mailbox; label display names are decoded separately.
+This preserves existing mailbox coordinates, settings and label associations.
+
+Before COPY, `imap_copy_intents` durably records the account, message,
+destination and normal sync identity. The intent remains until the destination
+location is saved. After a lost reply or restart, retry scans the destination's
+identity headers in bounded PEEK batches before copying again. Servers that omit
+COPYUID use the same reconciliation before reporting success. This recovery
+state is local to the provider and excluded from settings transfer.
 
 **Seam change:** the IMAP provider needs persistent state that can't fit in
 the opaque `SyncCursor`: the UID-to-ID map and each mailbox's counters. It gets
@@ -466,6 +479,12 @@ current locations:
 - **Only permanent flags:** a `STORE` is limited to flags the mailbox's
   `PERMANENTFLAGS` allows. A label change the server can't keep fails with
   `InvalidOperation` instead of appearing to work until the next reselect.
+  This includes `\Deleted`: fallback moves and label removals require it,
+  verify the STORE, and confirm the targeted UIDs disappeared after expunge.
+- **Deleting a label mailbox:** every known message must have another synced
+  copy, and the server's UIDVALIDITY and actual UID set must match the local
+  locations. Matching message counts alone cannot establish that all mail is
+  known. A mismatch refuses deletion until the mailbox is resynced.
 - **Idempotent:** each change first checks where the message currently is, so
   retries from the outbox do no harm.
 - **New locations:** the new UID is recorded from `COPYUID` when available.

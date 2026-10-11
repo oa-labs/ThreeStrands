@@ -239,6 +239,50 @@ pub fn build_mailbox_arg(name: &str) -> Result<String, ProviderError> {
     Ok(format!("\"{escaped}\""))
 }
 
+/// Catalog, location and settings mailbox names retain LIST's wire spelling.
+/// Quote those names without encoding them a second time. Keeping this
+/// representation also preserves existing folder/label IDs across upgrades.
+pub(super) fn build_wire_mailbox_arg(name: &str) -> Result<String, ProviderError> {
+    reject_control_chars(name, "mailbox name")?;
+    policy::check_mailbox_name_len(decode_modified_utf7(name)?.len())?;
+    Ok(format!(
+        "\"{}\"",
+        name.replace('\\', "\\\\").replace('"', "\\\"")
+    ))
+}
+
+/// Decode only for display (IDs and persisted coordinates keep wire names).
+/// Malformed modified UTF-7 is rejected rather than identifying another mailbox.
+pub(super) fn decode_modified_utf7(input: &str) -> Result<String, ProviderError> {
+    use base64::Engine;
+    let invalid = || ProviderError::InvalidOperation("invalid modified UTF-7 mailbox name".into());
+    let mut remaining = input;
+    let mut out = String::new();
+    while let Some(start) = remaining.find('&') {
+        out.push_str(&remaining[..start]);
+        remaining = &remaining[start + 1..];
+        let end = remaining.find('-').ok_or_else(invalid)?;
+        if end == 0 {
+            out.push('&');
+        } else {
+            let bytes = base64::engine::general_purpose::STANDARD_NO_PAD
+                .decode(remaining[..end].replace(',', "/"))
+                .map_err(|_| invalid())?;
+            if bytes.len() % 2 != 0 {
+                return Err(invalid());
+            }
+            let units: Vec<u16> = bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+                .collect();
+            out.push_str(&String::from_utf16(&units).map_err(|_| invalid())?);
+        }
+        remaining = &remaining[end + 1..];
+    }
+    out.push_str(remaining);
+    Ok(out)
+}
+
 /// Reject a string that carries CR, LF or NUL — the bytes a command-injection
 /// payload (`a\r\nA1 DELETE INBOX`) needs to start a new command line, and the
 /// NUL an attacker uses to truncate a C-side parse. `what` names the field for
@@ -376,12 +420,19 @@ fn format_run(start: u32, end: u32) -> String {
 /// normalised across the whole input before batching, so the batches partition
 /// the distinct UIDs in ascending order. Empty input yields no batches.
 pub fn build_uid_set_batches(uids: &[u32]) -> Vec<String> {
-    let mut sorted: Vec<u32> = uids.to_vec();
+    uid_batches(uids)
+        .iter()
+        .filter_map(|batch| build_uid_set(batch))
+        .collect()
+}
+
+fn uid_batches(uids: &[u32]) -> Vec<Vec<u32>> {
+    let mut sorted = uids.to_vec();
     sorted.sort_unstable();
     sorted.dedup();
     sorted
         .chunks(policy::MAX_UIDS_PER_COMMAND)
-        .filter_map(build_uid_set)
+        .map(<[u32]>::to_vec)
         .collect()
 }
 
@@ -390,7 +441,7 @@ pub fn build_uid_set_batches(uids: &[u32]) -> Vec<String> {
 /// verbatim except that `&` becomes `&-`; any other run of characters is
 /// encoded as `&<modified-base64 of its UTF-16BE bytes>-`. The modified base64
 /// alphabet replaces `/` with `,` and uses no padding.
-fn encode_modified_utf7(input: &str) -> String {
+pub(super) fn encode_modified_utf7(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut shifted: Vec<u16> = Vec::new();
 
@@ -607,7 +658,7 @@ impl WriteCaps {
 /// flag or strategy decision is made against the mailbox actually selected.
 #[derive(Clone, Debug)]
 pub struct WriteContext {
-    /// The mailbox name, decoded (as the caller passed it).
+    /// The mailbox's LIST wire name, as used in persisted coordinates.
     pub mailbox: String,
     /// The UIDVALIDITY confirmed at selection.
     pub uidvalidity: u32,
@@ -818,9 +869,9 @@ pub struct RelocateOutcome {
 /// `TRYCREATE` on the COPY/MOVE surfaces as [`WriteError::TryCreate`], not a
 /// retryable transport error.
 ///
-/// `dest` is the DECODED destination mailbox name; it is encoded through
-/// [`build_mailbox_arg`] here. `uids` is the raw UID list, compressed/batched
-/// through the one audited builder.
+/// `dest` is the destination's persisted LIST wire name, quoted through
+/// [`build_wire_mailbox_arg`] without a second modified UTF-7 encoding.
+/// `uids` is compressed/batched through the one audited builder.
 pub async fn relocate_uids(
     session: &mut dyn ImapWriteSession,
     ctx: &WriteContext,
@@ -830,7 +881,7 @@ pub async fn relocate_uids(
     if uids.is_empty() {
         return Ok(RelocateOutcome::default());
     }
-    let dest_arg = build_mailbox_arg(dest).map_err(WriteError::Provider)?;
+    let dest_arg = build_wire_mailbox_arg(dest).map_err(WriteError::Provider)?;
 
     match ctx.caps.relocation_strategy() {
         RelocationStrategy::Move => {
@@ -848,9 +899,11 @@ pub async fn relocate_uids(
             })
         }
         RelocationStrategy::CopyDeleteExpunge => {
+            require_targeted_delete(ctx).map_err(WriteError::Provider)?;
             let mut merged = CopyUid::default();
             let mut saw_copyuid = false;
-            for batch in build_uid_set_batches(uids) {
+            for batch_uids in uid_batches(uids) {
+                let batch = build_uid_set(&batch_uids).expect("non-empty batch");
                 // 1. COPY. A TRYCREATE here is the typed outcome (dest absent).
                 let outcome = session.uid_copy(&batch, &dest_arg).await?;
                 if let Some(copyuid) = outcome.copyuid {
@@ -860,7 +913,9 @@ pub async fn relocate_uids(
                 // 2. Mark the SOURCE copies \Deleted. The COPY already
                 // succeeded, so a failure now is a PARTIAL state.
                 let deleted = vec!["\\Deleted".to_string()];
-                if let Err(error) = session.uid_store(&batch, StoreOp::Add, &deleted).await {
+                if let Err(error) =
+                    verified_store(session, ctx, &batch_uids, StoreOp::Add, &deleted).await
+                {
                     return Err(WriteError::Provider(partial_relocate_error(
                         &ctx.mailbox,
                         dest,
@@ -872,7 +927,7 @@ pub async fn relocate_uids(
                 // 3. Expunge ONLY the named UIDs (UIDPLUS). Still partial if it
                 // fails: the copies exist in both places and the source ones
                 // are flagged \Deleted.
-                if let Err(error) = session.uid_expunge(&batch).await {
+                if let Err(error) = verified_expunge(session, &batch).await {
                     return Err(WriteError::Provider(partial_relocate_error(
                         &ctx.mailbox,
                         dest,
@@ -914,7 +969,7 @@ fn partial_relocate_error(
 /// `UNAVAILABLE` as a permanent `InvalidOperation` would roll the mutation
 /// back and strand the message in both mailboxes. Only a cause that is itself
 /// permanent stays permanent.
-fn classified_partial_relocate_error(
+pub(super) fn classified_partial_relocate_error(
     source: &str,
     dest: &str,
     uid_set: &str,
@@ -991,7 +1046,7 @@ pub async fn relocate_uids_recording(
     if uids.is_empty() {
         return Ok(RelocateOutcome::default());
     }
-    let dest_arg = match build_mailbox_arg(dest) {
+    let dest_arg = match build_wire_mailbox_arg(dest) {
         Ok(arg) => arg,
         Err(error) => {
             return Err(RelocateFailure {
@@ -1029,9 +1084,16 @@ pub async fn relocate_uids_recording(
             })
         }
         RelocationStrategy::CopyDeleteExpunge => {
+            if let Err(error) = require_targeted_delete(ctx) {
+                return Err(RelocateFailure {
+                    copyuid: None,
+                    error: error.into(),
+                });
+            }
             let mut merged = CopyUid::default();
             let mut saw_copyuid = false;
-            for batch in build_uid_set_batches(uids) {
+            for batch_uids in uid_batches(uids) {
+                let batch = build_uid_set(&batch_uids).expect("non-empty batch");
                 // 1. COPY. A TRYCREATE here (dest absent) means NOTHING landed.
                 let outcome = match session.uid_copy(&batch, &dest_arg).await {
                     Ok(outcome) => outcome,
@@ -1049,7 +1111,9 @@ pub async fn relocate_uids_recording(
                 // 2. Mark the SOURCE copies \Deleted. The COPY landed, so a
                 // failure now is a PARTIAL state the caller must record.
                 let deleted = vec!["\\Deleted".to_string()];
-                if let Err(error) = session.uid_store(&batch, StoreOp::Add, &deleted).await {
+                if let Err(error) =
+                    verified_store(session, ctx, &batch_uids, StoreOp::Add, &deleted).await
+                {
                     return Err(RelocateFailure {
                         copyuid: saw_copyuid.then(|| merged.clone()),
                         error: WriteError::Provider(classified_partial_relocate_error(
@@ -1062,7 +1126,7 @@ pub async fn relocate_uids_recording(
                     });
                 }
                 // 3. Expunge ONLY the named UIDs. Still partial if it fails.
-                if let Err(error) = session.uid_expunge(&batch).await {
+                if let Err(error) = verified_expunge(session, &batch).await {
                     return Err(RelocateFailure {
                         copyuid: saw_copyuid.then(|| merged.clone()),
                         error: WriteError::Provider(classified_partial_relocate_error(
@@ -1099,13 +1163,37 @@ pub async fn relocate_uids_recording(
 /// UID is a harmless no-op the server accepts.
 pub async fn expunge_source_copies(
     session: &mut dyn ImapWriteSession,
-    _ctx: &WriteContext,
+    ctx: &WriteContext,
     uids: &[u32],
 ) -> Result<(), ProviderError> {
+    require_targeted_delete(ctx)?;
+    let deleted = vec!["\\Deleted".to_string()];
+    verified_store(session, ctx, uids, StoreOp::Add, &deleted).await?;
     for batch in build_uid_set_batches(uids) {
-        let deleted = vec!["\\Deleted".to_string()];
-        session.uid_store(&batch, StoreOp::Add, &deleted).await?;
-        session.uid_expunge(&batch).await?;
+        verified_expunge(session, &batch).await?;
+    }
+    Ok(())
+}
+
+async fn verified_expunge(
+    session: &mut dyn ImapWriteSession,
+    batch: &str,
+) -> Result<(), ProviderError> {
+    session.uid_expunge(batch).await?;
+    if !session.uid_fetch(batch, "FLAGS").await?.is_empty() {
+        return Err(ProviderError::TransientTransport(
+            "UID EXPUNGE left requested copies present; resync before retrying".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn require_targeted_delete(ctx: &WriteContext) -> Result<(), ProviderError> {
+    if !ctx.caps.can_expunge_uids() || !ctx.caps.can_store_flag("\\Deleted") {
+        return Err(ProviderError::InvalidOperation(format!(
+            "cannot delete copies in {:?}: UIDPLUS and permanent \\Deleted are required",
+            ctx.mailbox
+        )));
     }
     Ok(())
 }
@@ -1192,6 +1280,24 @@ mod tests {
         assert_eq!(encode_modified_utf7("\u{00e9}"), "&AOk-"); // é
         // An astral char (emoji) uses a surrogate pair.
         assert_eq!(encode_modified_utf7("\u{1F600}"), "&2D3eAA-");
+    }
+
+    #[test]
+    fn mailbox_wire_names_round_trip_without_double_encoding() {
+        for name in ["R&D", "Café", "日本語", "😀", "a\\b\"c", "&AOk-"] {
+            let encoded = encode_modified_utf7(name);
+            assert_eq!(decode_modified_utf7(&encoded).unwrap(), name);
+            assert_eq!(
+                build_wire_mailbox_arg(&encoded).unwrap(),
+                build_mailbox_arg(name).unwrap()
+            );
+        }
+        for invalid in ["&", "&AA-", "&2AA-", "&!!!-"] {
+            assert!(decode_modified_utf7(invalid).is_err(), "{invalid}");
+        }
+        for hostile in ["a\r\nA1 DELETE INBOX", "a\0b"] {
+            assert!(build_wire_mailbox_arg(hostile).is_err());
+        }
     }
 
     // ---- mailbox arg construction ------------------------------------

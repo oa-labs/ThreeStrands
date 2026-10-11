@@ -64,7 +64,7 @@ pub enum LabelKind {
 /// kind it contributes, and whether this run syncs it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlanEntry {
-    /// The mailbox's exact (decoded) catalog name.
+    /// The mailbox's exact LIST wire name, also used in saved coordinates.
     pub mailbox: String,
     /// Its resolved role, or `None` for INBOX (reserved name) and for a
     /// mailbox that resolves to no system role.

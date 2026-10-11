@@ -85,7 +85,7 @@ pub(super) fn flag_to_wire(flag: &async_imap::types::Flag<'_>) -> String {
     }
 }
 
-/// One mailbox from a `LIST` response: its decoded name, hierarchy delimiter,
+/// One mailbox from a `LIST` response: its wire name, hierarchy delimiter,
 /// and any RFC 6154 special-use attribute the server returned (`\Sent`,
 /// `\Archive`, …). The special-use attribute is kept as a plain string so the
 /// mailbox-mapping slice (Slice 3) can act on it without this trait depending

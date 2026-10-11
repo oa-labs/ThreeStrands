@@ -145,13 +145,15 @@ use std::sync::Arc;
 
 use crate::db::{Database, DbResult};
 
-/// One IMAP mailbox's catalog row: its decoded name, hierarchy delimiter,
+/// One IMAP mailbox's catalog row: its LIST wire name, hierarchy delimiter,
 /// special-use attribute, and the UID counters a resync compares against.
 ///
 /// Mirrors the `imap_mailboxes` columns in `docs/imap-design.md`. The
 /// permanent-flags list is stored as its JSON text exactly as the server
 /// listed it, and `permanent_keywords` records whether `PERMANENTFLAGS`
 /// contained `\*` (so the account can store arbitrary keyword labels).
+/// Names retain modified UTF-7 to preserve existing location coordinates and
+/// dynamic label IDs. User-label display names are decoded at the UI boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImapMailbox {
     pub name: String,
@@ -203,6 +205,48 @@ impl ImapStateStore {
     /// The account this store is scoped to.
     pub fn account_id(&self) -> &str {
         &self.account_id
+    }
+
+    /// Persist BEFORE COPY and retain until its destination location is
+    /// durable. INSERT OR IGNORE preserves the original identity on retries.
+    pub fn begin_copy(&self, message: &str, destination: &str, identity: &str) -> DbResult<()> {
+        self.database.with_connection(|connection| {
+            connection.execute(
+                "INSERT OR IGNORE INTO imap_copy_intents
+                    (account_id, message_id, destination, identity_id) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![self.account_id, message, destination, identity],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn pending_copy_identity(
+        &self,
+        message: &str,
+        destination: &str,
+    ) -> DbResult<Option<String>> {
+        use rusqlite::OptionalExtension;
+        self.database.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT identity_id FROM imap_copy_intents
+                 WHERE account_id = ?1 AND message_id = ?2 AND destination = ?3",
+                    rusqlite::params![self.account_id, message, destination],
+                    |row| row.get(0),
+                )
+                .optional()?)
+        })
+    }
+
+    pub fn complete_copy(&self, message: &str, destination: &str) -> DbResult<()> {
+        self.database.with_connection(|connection| {
+            connection.execute(
+                "DELETE FROM imap_copy_intents
+                 WHERE account_id = ?1 AND message_id = ?2 AND destination = ?3",
+                rusqlite::params![self.account_id, message, destination],
+            )?;
+            Ok(())
+        })
     }
 
     /// The shared database handle, for the sibling body cache
@@ -1772,6 +1816,46 @@ mod tests {
     fn store() -> ImapStateStore {
         let database = Arc::new(Database::open_memory());
         ImapStateStore::new(database, "me@example.com")
+    }
+
+    #[test]
+    fn copy_intents_survive_reopen_and_are_account_and_destination_scoped() {
+        let temp = crate::db::test_support::TempDbPath::new();
+        {
+            let database = Arc::new(Database::open(&temp.path).unwrap());
+            let store = ImapStateStore::new(database.clone(), "me@example.com");
+            store.begin_copy("m", "Labels/A", "original").unwrap();
+            store.begin_copy("m", "Labels/A", "replacement").unwrap();
+            store.begin_copy("m", "Labels/B", "other-label").unwrap();
+            ImapStateStore::new(database, "other@example.com")
+                .begin_copy("m", "Labels/A", "other-account")
+                .unwrap();
+        }
+        let database = Arc::new(Database::open(&temp.path).unwrap());
+        let store = ImapStateStore::new(database.clone(), "me@example.com");
+        assert_eq!(
+            store
+                .pending_copy_identity("m", "Labels/A")
+                .unwrap()
+                .as_deref(),
+            Some("original")
+        );
+        store.complete_copy("m", "Labels/A").unwrap();
+        assert_eq!(store.pending_copy_identity("m", "Labels/A").unwrap(), None);
+        assert_eq!(
+            store
+                .pending_copy_identity("m", "Labels/B")
+                .unwrap()
+                .as_deref(),
+            Some("other-label")
+        );
+        assert_eq!(
+            ImapStateStore::new(database, "other@example.com")
+                .pending_copy_identity("m", "Labels/A")
+                .unwrap()
+                .as_deref(),
+            Some("other-account")
+        );
     }
 
     #[test]

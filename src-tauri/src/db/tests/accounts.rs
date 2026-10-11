@@ -443,6 +443,7 @@ fn account_removal_and_local_disconnect_purge_only_that_accounts_imap_state() {
                 c.execute("INSERT INTO imap_mailbox_sync_state(account_id, mailbox, last_exists, last_uidnext, last_sweep_at, backfill_low_uid, last_visited_at)
                     VALUES (?1, 'Trash', 3, 9, 100, NULL, 200)", [account])?;
                 c.execute("INSERT INTO imap_hot_threads(account_id, thread_id, emptied_at_walk) VALUES (?1, 't', 2)", [account])?;
+                c.execute("INSERT INTO imap_copy_intents VALUES (?1, 'm', 'Labels/A', 'identity')", [account])?;
                 c.execute("INSERT INTO imap_mailboxes(account_id, name, uidvalidity, uidnext, permanent_flags_json, permanent_keywords)
                     VALUES (?1, 'INBOX', 1, 2, '[]', 0)", [account])?;
                 Ok(())
@@ -480,6 +481,7 @@ fn account_removal_and_local_disconnect_purge_only_that_accounts_imap_state() {
                     "imap_message_tokens",
                     "imap_mailbox_sync_state",
                     "imap_hot_threads",
+                    "imap_copy_intents",
                     "imap_account_settings",
                 ] {
                     for account in ["remove@example.com", "keep@example.com"] {

@@ -140,6 +140,7 @@ async fn serve(server: DuplexStream, script: ServerScript, log: WireLog) {
     // re-fetch. Only the simple cases the tests use are tracked; FETCH reports
     // exactly these.
     let mut stored_flags: Vec<String> = vec!["\\Seen".into()];
+    let mut expunged = false;
     loop {
         let mut line = String::new();
         if server.read_line(&mut line).await.unwrap() == 0 {
@@ -213,6 +214,10 @@ async fn serve(server: DuplexStream, script: ServerScript, log: WireLog) {
             }
             reply(&mut server, &format!("{tag} OK STORE done\r\n")).await;
         } else if upper.starts_with("UID FETCH") {
+            if expunged {
+                reply(&mut server, &format!("{tag} OK FETCH done\r\n")).await;
+                continue;
+            }
             let flags = stored_flags.join(" ");
             reply(
                 &mut server,
@@ -244,7 +249,12 @@ async fn serve(server: DuplexStream, script: ServerScript, log: WireLog) {
             if let Some(text) = &script.fail_expunge {
                 reply(&mut server, &format!("{tag} NO {text}\r\n")).await;
             } else {
-                reply(&mut server, &format!("* 1 EXPUNGE\r\n{tag} OK EXPUNGE done\r\n")).await;
+                expunged = stored_flags.iter().any(|flag| flag == "\\Deleted");
+                reply(
+                    &mut server,
+                    &format!("* 1 EXPUNGE\r\n{tag} OK EXPUNGE done\r\n"),
+                )
+                .await;
             }
         } else if upper.starts_with("LOGOUT") {
             reply(&mut server, &format!("* BYE\r\n{tag} OK logout\r\n")).await;

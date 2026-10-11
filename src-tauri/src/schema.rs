@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 64;
+pub(crate) const LATEST_VERSION: i64 = 65;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1878,6 +1878,23 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         tx.execute_batch("CREATE TABLE IF NOT EXISTS scheduled_send_summaries (id TEXT PRIMARY KEY, report TEXT NOT NULL);
             PRAGMA user_version=64;").map_err(error)?;
     }
+    if version < 65 {
+        // Durable intent precedes COPY. A response or process can be lost after
+        // the server copied the message but before its destination was saved.
+        // Retry reconciles by the same stable identity used by normal sync.
+        // Provider-local recovery state; excluded from settings transfer.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS imap_copy_intents (
+                account_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                destination TEXT NOT NULL,
+                identity_id TEXT NOT NULL,
+                PRIMARY KEY (account_id, message_id, destination)
+            );
+            PRAGMA user_version=65;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1924,6 +1941,40 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap()
+    }
+
+    #[test]
+    fn upgrading_v64_adds_copy_recovery_without_changing_existing_imap_state() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection.execute_batch(
+            "DROP TABLE imap_copy_intents;
+             INSERT INTO imap_locations VALUES ('you@gmail.com', 'Labels/Caf&AOk-', 7, 9, 'm', '[]', NULL);
+             PRAGMA user_version=64;"
+        ).unwrap();
+        super::migrate(&mut connection).unwrap();
+        super::migrate(&mut connection).unwrap();
+        let location: (String, i64, i64, String) = connection
+            .query_row(
+                "SELECT mailbox, uidvalidity, uid, message_id FROM imap_locations",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(location, ("Labels/Caf&AOk-".into(), 7, 9, "m".into()));
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM imap_copy_intents", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            super::LATEST_VERSION
+        );
     }
 
     #[test]
