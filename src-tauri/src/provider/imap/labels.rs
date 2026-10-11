@@ -1,29 +1,35 @@
-//! Pure label construction — turn a message copy's RESOLVED mailbox role and
-//! IMAP flags into the system `label_ids` the rest of the app understands. No
-//! I/O.
+//! Pure label construction — turn a message copy's RESOLVED location label ids
+//! and IMAP flags into the system/user `label_ids` the rest of the app
+//! understands. No I/O.
 //!
 //! `docs/imap-design.md` ("Labels in the `RawMessage` envelope"). Labels are
-//! worked out from WHAT ROLE the mailbox a message is stored in plays, and the
-//! copy's flags — never from the mailbox NAME. Slice 5a covered INBOX only;
-//! Slice 5b-1 adds Sent/Junk/Trash. The design table for the roles this slice
-//! produces:
+//! worked out from WHAT the mailbox a message is stored in contributes — a
+//! system role (INBOX / SENT / SPAM / TRASH), a user folder
+//! (`folder:<name>`), or a label folder (`lf:<name>`) — plus the copy's flags,
+//! never from the mailbox NAME parsed ad hoc. The sync plan (`plan.rs`)
+//! resolves each mailbox to the OWNED location label id string it contributes
+//! (fact 4: a `Copy` enum of static ids cannot carry a dynamic
+//! `folder:<name>`), and this module unions those per-copy ids with the
+//! flag-derived state labels. The design table for the location labels:
 //!
-//! | Resolved role / flag      | `label_ids` entry |
-//! | ------------------------- | ----------------- |
-//! | INBOX                     | `INBOX`           |
-//! | Sent (`\Sent`)            | `SENT`            |
-//! | Junk (`\Junk`)            | `SPAM`            |
-//! | Trash (`\Trash`)          | `TRASH`           |
-//! | No `\Seen` flag           | `UNREAD`          |
-//! | `\Flagged`                | `STARRED`         |
+//! | Mailbox the copy is in         | location `label_ids` entry   |
+//! | ------------------------------ | ---------------------------- |
+//! | INBOX                          | `INBOX`                      |
+//! | `\Sent` role mailbox           | `SENT`                       |
+//! | `\Junk` role mailbox           | `SPAM`                       |
+//! | `\Trash` role mailbox          | `TRASH`                      |
+//! | user folder `Clients/Acme`     | `folder:Clients/Acme`        |
+//! | label folder `<container>/Foo` | `lf:Foo`                     |
+//! | No `\Seen` flag                | `UNREAD`                     |
+//! | `\Flagged`                     | `STARRED`                    |
 //!
-//! Classifying by ROLE (resolved once by the sync plan via user override >
-//! RFC 6154 attribute > name match) rather than by name is the AGENTS.md
+//! Classifying by the plan's resolved location (user override > RFC 6154
+//! attribute > name match for roles; container membership for `lf:`; otherwise
+//! a user folder) rather than by an ad-hoc name parse is the AGENTS.md
 //! provider-neutral invariant: nothing here branches on a sender, host or
-//! brand, and a mailbox literally named "Trash" that the plan did not resolve
-//! to the Trash role contributes NO location label. The `\Archive` role is
-//! synced from Slice 5b-2 but contributes NO location label either: an
-//! archived message is simply not in INBOX and carries no system label.
+//! brand. The `\Archive` role and the label container contribute NO location
+//! label (an archived message is simply not in INBOX; the container itself is
+//! not a label).
 //!
 //! The INBOX->Trash move the brief calls out falls out of this naturally: when
 //! a hot message's INBOX location is deleted and a Trash location appears, the
@@ -45,7 +51,12 @@ pub enum MailboxLabel {
     Junk,
     /// `\Trash` -> `TRASH`.
     Trash,
-    // Slice 5b-2: user folders -> folder:<name>, label folders -> lf:<name>.
+    // Slice 5b-2 run B adds dynamic location labels (user folders ->
+    // `folder:<name>`, label folders -> `lf:<name>`). Those are owned
+    // STRINGS, not enum variants (a `Copy` enum cannot carry a dynamic name),
+    // so they live on `plan::PlanEntry::location_label_id` and flow through
+    // `labels_for_location_ids`, not through this enum. This enum stays the
+    // typed spelling of the fixed SYSTEM roles for the plan's own tests.
 }
 
 impl MailboxLabel {
@@ -130,6 +141,35 @@ pub fn merge_label_sets(per_copy: &[Vec<String>]) -> Vec<String> {
         }
     }
     out
+}
+
+/// Build the `label_ids` for one message copy from the OWNED location label
+/// ids the plan resolved for the copy's mailbox (zero or more — system
+/// `INBOX`/`SENT`/… or dynamic `folder:<name>`/`lf:<name>`) and that copy's
+/// flags. This is the owned-string model (fact 4): a `folder:<name>` id can
+/// live here because the input is strings, not a `Copy` enum.
+///
+/// Deterministic order: the location ids first (in the order given), then the
+/// state labels (`UNREAD`, `STARRED`) in a fixed order, so two runs produce
+/// byte-identical lists. Never produces duplicates. A `SENT` location
+/// suppresses `UNREAD` (your own sent mail is not "unread"), exactly as the
+/// role model did. A copy with no location id yields only its state labels.
+pub fn labels_for_location_ids(location_ids: &[String], flags: &[String]) -> Vec<String> {
+    let mut labels: Vec<String> = Vec::new();
+    for id in location_ids {
+        if !labels.contains(id) {
+            labels.push(id.clone());
+        }
+    }
+    // A Sent copy is never "unread".
+    let suppress_unread = location_ids.iter().any(|id| id == "SENT");
+    if !suppress_unread && !is_seen(flags) && !labels.iter().any(|l| l == "UNREAD") {
+        labels.push("UNREAD".to_string());
+    }
+    if is_flagged(flags) && !labels.iter().any(|l| l == "STARRED") {
+        labels.push("STARRED".to_string());
+    }
+    labels
 }
 
 #[cfg(test)]
@@ -238,5 +278,85 @@ mod tests {
             merge_label_sets(&per_copy),
             vec!["INBOX", "UNREAD", "STARRED"]
         );
+    }
+
+    // ----- owned-string model: labels_for_location_ids (Slice 5b-2 fact 4) ---
+
+    fn ids(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn owned_location_ids_prepend_before_state_labels() {
+        // INBOX + unseen -> INBOX, UNREAD in fixed order.
+        assert_eq!(
+            labels_for_location_ids(&ids(&["INBOX"]), &flags(&[])),
+            vec!["INBOX", "UNREAD"]
+        );
+        // \Seen -> no UNREAD; \Flagged -> STARRED last.
+        assert_eq!(
+            labels_for_location_ids(&ids(&["INBOX"]), &flags(&["\\Seen", "\\Flagged"])),
+            vec!["INBOX", "STARRED"]
+        );
+    }
+
+    #[test]
+    fn a_sent_location_id_suppresses_unread_but_not_starred() {
+        // SENT, unseen -> no UNREAD (your own sent mail is not unread).
+        assert_eq!(labels_for_location_ids(&ids(&["SENT"]), &flags(&[])), vec!["SENT"]);
+        // \Flagged still STARRED.
+        assert_eq!(
+            labels_for_location_ids(&ids(&["SENT"]), &flags(&["\\Flagged"])),
+            vec!["SENT", "STARRED"]
+        );
+    }
+
+    #[test]
+    fn dynamic_folder_and_lf_ids_round_trip_verbatim() {
+        // A `folder:` id with spaces/colon/non-ASCII and an `lf:` id carry
+        // through unchanged, with state labels appended (test (i)).
+        assert_eq!(
+            labels_for_location_ids(&ids(&["folder:Projektübersicht: Q3"]), &flags(&[])),
+            vec!["folder:Projektübersicht: Q3", "UNREAD"]
+        );
+        assert_eq!(
+            labels_for_location_ids(&ids(&["lf:Zoë's: tag"]), &flags(&["\\Seen"])),
+            vec!["lf:Zoë's: tag"]
+        );
+    }
+
+    #[test]
+    fn empty_location_ids_yield_only_state_labels() {
+        assert_eq!(labels_for_location_ids(&[], &flags(&[])), vec!["UNREAD"]);
+        assert_eq!(
+            labels_for_location_ids(&[], &flags(&["\\Seen", "\\Flagged"])),
+            vec!["STARRED"]
+        );
+    }
+
+    #[test]
+    fn owned_location_ids_never_duplicate() {
+        // Duplicate location ids and a pre-present state label do not duplicate.
+        assert_eq!(
+            labels_for_location_ids(&ids(&["INBOX", "INBOX", "UNREAD"]), &flags(&[])),
+            vec!["INBOX", "UNREAD"]
+        );
+    }
+
+    #[test]
+    fn owned_model_matches_the_role_model_for_system_labels() {
+        // The refactor keeps the role model's output: INBOX+UNREAD, SENT (no
+        // UNREAD), and a Trash-only copy -> TRASH without INBOX, all identical.
+        assert_eq!(
+            labels_for_location_ids(&ids(&["INBOX"]), &flags(&[])),
+            labels_for(Some(MailboxLabel::Inbox), &flags(&[]))
+        );
+        assert_eq!(
+            labels_for_location_ids(&ids(&["SENT"]), &flags(&[])),
+            labels_for(Some(MailboxLabel::Sent), &flags(&[]))
+        );
+        let trash_only =
+            merge_label_sets(&[labels_for_location_ids(&ids(&["TRASH"]), &flags(&["\\Seen"]))]);
+        assert_eq!(trash_only, vec!["TRASH"]);
     }
 }

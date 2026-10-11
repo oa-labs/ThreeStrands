@@ -853,6 +853,155 @@ impl ImapStateStore {
         })
     }
 
+    /// TEST-ONLY: make the next catalog refresh DUE by clearing the sentinel
+    /// sweep clock. The fake provider pins `now` to a constant, so after the
+    /// baseline records the sweep clock a second refresh would never be due;
+    /// tests that exercise the catalog refresh (vanished-mailbox retirement)
+    /// use this to re-arm it.
+    #[cfg(test)]
+    pub fn force_catalog_refresh_due_for_test(&self) {
+        self.database
+            .with_connection(|connection| {
+                connection.execute(
+                    "DELETE FROM imap_mailbox_sync_state WHERE account_id = ?1 AND mailbox = ?2",
+                    rusqlite::params![self.account_id, Self::CATALOG_SWEEP_KEY],
+                )?;
+                Ok(())
+            })
+            .expect("clear catalog sweep sentinel");
+    }
+
+    /// Retire catalog rows for mailboxes that VANISHED from the server (item 5
+    /// / fact 5). Call this ONLY after a SUCCESSFUL `LIST`, passing the exact
+    /// set of selectable mailbox names the server returned. Any catalog row
+    /// whose name is absent from `present` (and is not INBOX) is a mailbox the
+    /// user deleted on the server (a Proton label/folder); left in place it
+    /// fails EXAMINE forever and, under the coverage-epoch grace, holds the
+    /// epoch open forever so truly-expunged hot threads are never garbage-
+    /// collected. For each retired mailbox, in ONE transaction, this:
+    ///   * deletes its `imap_mailboxes` catalog row,
+    ///   * deletes its `imap_mailbox_sync_state` row,
+    ///   * deletes its `imap_locations`,
+    ///   * journals every HOT thread that lost a location (so the engine
+    ///     re-ingests it: a hot thread left with no locations then flows
+    ///     through the existing emptied-thread grace in `fetch_thread`).
+    /// Bodies and threading tokens are untouched — a mailbox that re-appears
+    /// later is simply re-added and its messages re-sync normally.
+    ///
+    /// SAFETY (all tested): never retires on an EMPTY `present` while the
+    /// catalog is non-empty (an empty LIST is treated by the caller as a
+    /// failure and must not reach here, but this guards it too); never retires
+    /// INBOX; and because the whole thing is one transaction, a failure writes
+    /// nothing. Returns the retired mailbox names (sorted) for logging.
+    pub fn retire_vanished_mailboxes(&self, present: &[String]) -> DbResult<Vec<String>> {
+        self.database.with_transaction(|transaction| {
+            // Current catalog names.
+            let catalog: Vec<String> = {
+                let mut statement = transaction.prepare(
+                    "SELECT name FROM imap_mailboxes WHERE account_id = ?1 ORDER BY name",
+                )?;
+                let rows = statement
+                    .query_map([&self.account_id], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                rows
+            };
+            // SAFETY: an empty present-set against a non-empty catalog is a
+            // failure signal, never "everything vanished" — retire nothing.
+            if present.is_empty() && !catalog.is_empty() {
+                return Ok(Vec::new());
+            }
+            let present_set: std::collections::BTreeSet<&str> =
+                present.iter().map(String::as_str).collect();
+            let to_retire: Vec<String> = catalog
+                .into_iter()
+                .filter(|name| !name.eq_ignore_ascii_case(plan::INBOX))
+                .filter(|name| !present_set.contains(name.as_str()))
+                .collect();
+            if to_retire.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            // Hot threads that will lose a location: gather BEFORE deleting the
+            // locations, resolving each through the alias chain so a merge
+            // survivor is journaled. We journal exactly the hot ones (cold
+            // threads are never reported to the engine).
+            let mut affected_hot: std::collections::BTreeSet<String> =
+                std::collections::BTreeSet::new();
+            for mailbox in &to_retire {
+                let threads: Vec<String> = {
+                    let mut statement = transaction.prepare(
+                        "SELECT DISTINCT t.thread_id
+                         FROM imap_locations l JOIN imap_threads t
+                           ON t.account_id = l.account_id AND t.message_id = l.message_id
+                         WHERE l.account_id = ?1 AND l.mailbox = ?2",
+                    )?;
+                    let rows = statement
+                        .query_map(rusqlite::params![self.account_id, mailbox], |row| {
+                            row.get::<_, String>(0)
+                        })?
+                        .collect::<Result<Vec<_>, _>>()?;
+                    rows
+                };
+                for thread_id in threads {
+                    let resolved = self.resolve_thread_alias_conn(transaction, &thread_id)?;
+                    if self.is_thread_hot_conn(transaction, &resolved)? {
+                        affected_hot.insert(resolved);
+                    }
+                }
+            }
+
+            // Delete catalog row, sync-state row and locations for each retired
+            // mailbox.
+            for mailbox in &to_retire {
+                transaction.execute(
+                    "DELETE FROM imap_locations WHERE account_id = ?1 AND mailbox = ?2",
+                    rusqlite::params![self.account_id, mailbox],
+                )?;
+                transaction.execute(
+                    "DELETE FROM imap_mailbox_sync_state WHERE account_id = ?1 AND mailbox = ?2",
+                    rusqlite::params![self.account_id, mailbox],
+                )?;
+                transaction.execute(
+                    "DELETE FROM imap_mailboxes WHERE account_id = ?1 AND name = ?2",
+                    rusqlite::params![self.account_id, mailbox],
+                )?;
+            }
+
+            // Journal the affected hot threads under a bumped generation so the
+            // engine re-ingests them (a thread that lost its only location then
+            // flows through the emptied-thread grace). Only bump when there is
+            // something to journal — a retirement that touched no hot thread is
+            // a catalog-only change the engine need not see.
+            if !affected_hot.is_empty() {
+                let current: i64 = transaction
+                    .query_row(
+                        "SELECT generation FROM imap_sync_state WHERE account_id = ?1",
+                        [&self.account_id],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(0);
+                let next = current + 1;
+                transaction.execute(
+                    "INSERT INTO imap_sync_state (account_id, generation, tokens_backfilled)
+                     VALUES (?1, ?2, 1)
+                     ON CONFLICT(account_id) DO UPDATE SET generation = excluded.generation",
+                    rusqlite::params![self.account_id, next],
+                )?;
+                for thread_id in &affected_hot {
+                    transaction.execute(
+                        "INSERT OR IGNORE INTO imap_change_journal
+                            (account_id, generation, thread_id) VALUES (?1, ?2, ?3)",
+                        rusqlite::params![self.account_id, next, thread_id],
+                    )?;
+                }
+            }
+
+            let mut retired = to_retire;
+            retired.sort();
+            Ok(retired)
+        })
+    }
+
     /// The Sent backfill watermark for one mailbox: the lowest UID acquired so
     /// far WHILE the backfill is incomplete, or `None` once the whole Sent
     /// window is acquired (and `None` too when the mailbox has no sync-state
@@ -1993,5 +2142,102 @@ mod tests {
         let tokens: Vec<String> = (0..100_000).map(|n| format!("tok-{n}")).collect();
         let seeded = store.seed_state_for_tokens(&tokens).unwrap();
         assert_eq!(seeded.len(), 1, "the one thread sharing tok-0 is seeded");
+    }
+
+    // ---- Slice 5b-2 run B: vanished-mailbox retirement safety rules --------
+
+    fn catalog_mb(store: &ImapStateStore, name: &str) {
+        store
+            .upsert_mailbox(&ImapMailbox {
+                name: name.into(),
+                delimiter: Some("/".into()),
+                special_use: None,
+                uidvalidity: 1,
+                uidnext: 1,
+                highestmodseq: None,
+                permanent_flags_json: None,
+                permanent_keywords: None,
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn retirement_never_touches_inbox_and_an_empty_list_retires_nothing() {
+        let store = store();
+        catalog_mb(&store, "INBOX");
+        catalog_mb(&store, "Clients/Acme");
+
+        // An empty present-set against a non-empty catalog is a FAILURE signal:
+        // retire nothing (safety rule).
+        let retired = store.retire_vanished_mailboxes(&[]).unwrap();
+        assert!(retired.is_empty(), "an empty LIST retires nothing");
+        assert_eq!(store.mailboxes().unwrap().len(), 2, "catalog untouched");
+
+        // A successful LIST missing Clients/Acme retires exactly it; INBOX is
+        // never retired even though it, too, is "present" only implicitly.
+        let retired = store
+            .retire_vanished_mailboxes(&["INBOX".to_string()])
+            .unwrap();
+        assert_eq!(retired, vec!["Clients/Acme".to_string()]);
+        let names: Vec<String> = store.mailboxes().unwrap().into_iter().map(|m| m.name).collect();
+        assert_eq!(names, vec!["INBOX".to_string()], "only INBOX remains");
+
+        // A LIST that still omits INBOX never retires it.
+        let retired = store.retire_vanished_mailboxes(&["Something/Else".to_string()]).unwrap();
+        assert!(retired.is_empty(), "INBOX is never retired");
+        assert!(store.mailboxes().unwrap().iter().any(|m| m.name == "INBOX"));
+    }
+
+    #[test]
+    fn retirement_deletes_locations_and_sync_state_and_journals_hot_threads() {
+        let store = store();
+        catalog_mb(&store, "INBOX");
+        catalog_mb(&store, "Clients/Acme");
+        // A hot thread with a location in INBOX and in the user folder.
+        store
+            .commit_sync_round(&SyncRoundWrite {
+                locations: vec![
+                    ImapLocation {
+                        mailbox: "INBOX".into(),
+                        uidvalidity: 1,
+                        uid: 1,
+                        message_id: "imap:me@example.com:m1".into(),
+                        flags_json: "[]".into(),
+                        modseq: None,
+                    },
+                    ImapLocation {
+                        mailbox: "Clients/Acme".into(),
+                        uidvalidity: 1,
+                        uid: 2,
+                        message_id: "imap:me@example.com:m1".into(),
+                        flags_json: "[]".into(),
+                        modseq: None,
+                    },
+                ],
+                thread_assignments: vec![("imap:me@example.com:m1".into(), "imap:t:1".into())],
+                hot_threads: vec!["imap:t:1".into()],
+                changed_threads: vec!["imap:t:1".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        // Give the user folder a sync-state row too.
+        store.record_catalog_refresh(0).unwrap();
+        let gen_before = store.generation().unwrap();
+
+        let retired = store
+            .retire_vanished_mailboxes(&["INBOX".to_string()])
+            .unwrap();
+        assert_eq!(retired, vec!["Clients/Acme".to_string()]);
+        // Locations, sync-state and catalog row for the folder are gone.
+        assert!(store.locations_in_mailbox("Clients/Acme").unwrap().is_empty());
+        assert!(store.mailbox_sync_state("Clients/Acme").unwrap().is_none());
+        assert!(!store.mailboxes().unwrap().iter().any(|m| m.name == "Clients/Acme"));
+        // The INBOX copy survives, so the thread is still hot and present.
+        assert!(store.is_thread_hot("imap:t:1").unwrap());
+        assert!(!store.locations_in_mailbox("INBOX").unwrap().is_empty());
+        // The affected hot thread was journaled under a bumped generation.
+        let gen_after = store.generation().unwrap();
+        assert!(gen_after > gen_before, "a hot-thread retirement bumps the generation");
+        assert!(store.journal_since(gen_before).unwrap().contains(&"imap:t:1".to_string()));
     }
 }

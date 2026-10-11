@@ -51,7 +51,7 @@ use crate::provider::{
 
 use super::connection::{ConnectionRole, ImapConnectionManager};
 use super::fetch::{fetch_identity, BodyCache, SessionBodyFetcher};
-use super::labels::{labels_for, merge_label_sets};
+use super::labels::{labels_for_location_ids, merge_label_sets};
 use super::plan::{self, CatalogMailbox, SyncPlan};
 use super::policy::{self, SyncLimits};
 use super::rfc822::{attachment_bytes_from_raw, to_raw_message};
@@ -320,6 +320,7 @@ impl ImapProvider {
                 is_inbox: true,
                 window_class: policy::SyncWindowClass::Inbox,
                 label_kind: plan::LabelKind::SystemRole,
+                location_label_id: Some("INBOX".to_string()),
                 synced_now: true,
             });
         let mut generation = self.refresh_mailbox_with(session, &inbox_entry, true).await?;
@@ -436,9 +437,12 @@ impl ImapProvider {
             // Coverage still open this epoch: the emptied-thread grace cannot
             // advance until these mailboxes are successfully visited. This
             // fires at most once per poll and only while coverage is genuinely
-            // incomplete (KNOWN LIMITATION: a permanently broken folder holds
-            // the epoch — and the grace — open indefinitely; no escape hatch
-            // this run).
+            // incomplete. A mailbox that VANISHED from the server no longer
+            // holds the epoch open forever — the catalog refresh retires it
+            // (item 5 / `retire_vanished_mailboxes`), so it drops out of the
+            // synced set. A mailbox that is still LISTed but transiently fails
+            // EXAMINE legitimately holds the epoch open until it recovers (the
+            // safe direction: the grace never advances early).
             log::warn!(
                 "imap sync: coverage epoch still open — {} mailbox(es) not yet visited this epoch: {:?}",
                 outstanding.len(),
@@ -474,21 +478,27 @@ impl ImapProvider {
                     entry.synced_now = true;
                     entry.label_kind = plan::LabelKind::UserFolder;
                     entry.window_class = policy::SyncWindowClass::Folder;
+                    entry.location_label_id = Some(format!("folder:{}", entry.mailbox));
                 }
             }
         }
         Ok(plan)
     }
 
-    /// Round-time catalog refresh (item 3). When the account's periodic catalog
-    /// sweep is due (always true at baseline), `LIST` the server and record
-    /// NAME/DELIMITER/SPECIAL_USE for every SELECTABLE mailbox via the
-    /// catalog-only upsert, so a mailbox created after account setup is noticed
-    /// and the plan can act on it. `\Noselect` containers are skipped (they are
-    /// never locations). A mailbox that disappeared from `LIST` is LEFT ALONE
-    /// this slice (no deletes). Any failure — the `LIST` itself or a single
-    /// upsert — is logged and swallowed, because this must NEVER abort a poll:
-    /// if it did, a transient `LIST` error would stop INBOX mail flowing.
+    /// Round-time catalog refresh (item 3) + vanished-mailbox retirement
+    /// (item 5). When the account's periodic catalog sweep is due (always true
+    /// at baseline), `LIST` the server and record NAME/DELIMITER/SPECIAL_USE
+    /// for every SELECTABLE mailbox via the catalog-only upsert, so a mailbox
+    /// created after account setup is noticed and the plan can act on it.
+    /// `\Noselect` containers are skipped (they are never locations). After a
+    /// SUCCESSFUL non-empty `LIST`, any catalog row the server no longer lists
+    /// (and that is not INBOX) is RETIRED — its catalog row, sync-state row and
+    /// locations are deleted and its hot threads journaled — so a deleted
+    /// Proton label/folder stops failing EXAMINE forever and holding the
+    /// coverage epoch open. An empty `LIST` is treated as a failure and retires
+    /// nothing. Any failure — the `LIST` itself, a single upsert, or the
+    /// retirement — is logged and swallowed, because this must NEVER abort a
+    /// poll: if it did, a transient `LIST` error would stop INBOX mail flowing.
     async fn refresh_catalog_if_due(&self, session: &mut dyn ImapSession) {
         let now = (self.now)();
         match self.store.catalog_refresh_due(now) {
@@ -506,6 +516,15 @@ impl ImapProvider {
                 return;
             }
         };
+        // The SELECTABLE mailboxes the server reported this LIST (the catalog
+        // only ever holds selectable rows; `\Noselect` containers are never
+        // catalog locations). This is both the upsert set and the "present"
+        // set for vanished-mailbox retirement.
+        let present: Vec<String> = entries
+            .iter()
+            .filter(|entry| !entry.no_select)
+            .map(|entry| entry.name.clone())
+            .collect();
         for entry in &entries {
             if entry.no_select {
                 continue; // \Noselect containers are never catalog locations.
@@ -519,6 +538,36 @@ impl ImapProvider {
                     "imap sync: catalog refresh could not record {:?}, ignored: {error}",
                     entry.name
                 );
+            }
+        }
+        // Vanished-mailbox retirement (item 5 / fact 5). A SUCCESSFUL LIST that
+        // returned at least one selectable mailbox lets us retire any catalog
+        // row the server no longer lists: it would otherwise fail EXAMINE
+        // forever and hold the coverage epoch — and the emptied-thread grace —
+        // open indefinitely. An empty `present` is treated as a FAILURE (a
+        // server that momentarily lists nothing must not wipe the catalog), so
+        // we skip retirement entirely; `retire_vanished_mailboxes` guards this
+        // too. INBOX is never retired.
+        if present.is_empty() {
+            log::warn!(
+                "imap sync: catalog refresh LIST returned no selectable mailboxes; \
+                 treating as a failure and retiring nothing this poll"
+            );
+        } else {
+            match self.store.retire_vanished_mailboxes(&present) {
+                Ok(retired) if !retired.is_empty() => {
+                    log::info!(
+                        "imap sync: retired {} vanished mailbox(es) from the catalog: {:?}",
+                        retired.len(),
+                        retired
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    log::warn!(
+                        "imap sync: vanished-mailbox retirement failed, ignored this poll: {error}"
+                    );
+                }
             }
         }
         if let Err(error) = self.store.record_catalog_refresh(now) {
@@ -539,6 +588,7 @@ impl ImapProvider {
             is_inbox: true,
             window_class: policy::SyncWindowClass::Inbox,
             label_kind: plan::LabelKind::SystemRole,
+            location_label_id: Some("INBOX".to_string()),
             synced_now: true,
         };
         self.refresh_mailbox_with(session, &entry, true).await
@@ -1347,6 +1397,28 @@ impl MailSync for ImapProvider {
 
         let plan = self.build_sync_plan()?;
 
+        // Thread-wide union of DYNAMIC (`folder:` / `lf:`) label ids across
+        // every message's every location (fact 1). The engine builds a thread's
+        // non-system labels from the ROOT message only, so a `folder:`/`lf:`
+        // label that lives on a reply (or on a message whose only location is a
+        // user folder) would be dropped unless EVERY returned message carries
+        // it. We gather the union here and append it to each message below.
+        // System location ids (INBOX/SENT/SPAM/TRASH) are per-copy, NOT in this
+        // union — they are unioned over all messages by the engine already.
+        let mut thread_dynamic: Vec<String> = Vec::new();
+        for message_id in &message_ids {
+            for location in self.store.locations_for_message(message_id).map_err(db_err)? {
+                for id in plan.location_label_ids_for_mailbox(&location.mailbox) {
+                    if (id.starts_with("folder:") || id.starts_with("lf:"))
+                        && !thread_dynamic.contains(&id)
+                    {
+                        thread_dynamic.push(id);
+                    }
+                }
+            }
+        }
+        thread_dynamic.sort();
+
         let mut messages = Vec::new();
         for message_id in &message_ids {
             let locations = self
@@ -1358,15 +1430,21 @@ impl MailSync for ImapProvider {
                 continue;
             }
             // Labels: the union across every copy, each classified by the
-            // mailbox's RESOLVED ROLE (never its name).
-            let per_copy: Vec<Vec<String>> = locations
+            // mailbox's RESOLVED location (never an ad-hoc name parse), then
+            // the thread-wide dynamic union appended so every message carries
+            // the thread's `folder:`/`lf:` labels (fact 1).
+            let mut per_copy: Vec<Vec<String>> = locations
                 .iter()
                 .map(|location| {
                     let flags: Vec<String> =
                         serde_json::from_str(&location.flags_json).unwrap_or_default();
-                    labels_for(plan.label_for_mailbox(&location.mailbox), &flags)
+                    labels_for_location_ids(
+                        &plan.location_label_ids_for_mailbox(&location.mailbox),
+                        &flags,
+                    )
                 })
                 .collect();
+            per_copy.push(thread_dynamic.clone());
             let label_ids = merge_label_sets(&per_copy);
 
             // Body: cache first, else fetch from the best live location.
@@ -1481,14 +1559,37 @@ impl MailFetch for ImapProvider {
             return Err(ProviderError::NotFound);
         }
         let plan = self.build_sync_plan()?;
-        let per_copy: Vec<Vec<String>> = locations
+        let mut per_copy: Vec<Vec<String>> = locations
             .iter()
             .map(|location| {
                 let flags: Vec<String> =
                     serde_json::from_str(&location.flags_json).unwrap_or_default();
-                labels_for(plan.label_for_mailbox(&location.mailbox), &flags)
+                labels_for_location_ids(
+                    &plan.location_label_ids_for_mailbox(&location.mailbox),
+                    &flags,
+                )
             })
             .collect();
+        // Thread-wide dynamic (`folder:`/`lf:`) union, so a single message read
+        // carries the thread's user/label-folder labels even when they live on
+        // another message of the thread (fact 1).
+        if let Some(thread) = self.store.thread_of_message(id).map_err(db_err)? {
+            let resolved = self.store.resolve_thread_alias(&thread).map_err(db_err)?;
+            let mut thread_dynamic: Vec<String> = Vec::new();
+            for message_id in self.store.messages_in_thread(&resolved).map_err(db_err)? {
+                for location in self.store.locations_for_message(&message_id).map_err(db_err)? {
+                    for lid in plan.location_label_ids_for_mailbox(&location.mailbox) {
+                        if (lid.starts_with("folder:") || lid.starts_with("lf:"))
+                            && !thread_dynamic.contains(&lid)
+                        {
+                            thread_dynamic.push(lid);
+                        }
+                    }
+                }
+            }
+            thread_dynamic.sort();
+            per_copy.push(thread_dynamic);
+        }
         let label_ids = merge_label_sets(&per_copy);
         let raw = match self.cache.get(id).map_err(db_err)? {
             Some(cached) => cached.raw,
@@ -1550,9 +1651,14 @@ impl MailMutate for ImapProvider {
     }
 
     async fn list_labels(&self) -> ProviderResult<Vec<Label>> {
-        // System labels this slice (no user labels yet). Slice 5b-1 adds the
-        // Sent/Spam/Trash roles alongside INBOX.
-        Ok(vec![
+        // The six system labels first, in a fixed order, then the account's
+        // dynamic labels read from the LOCAL plan/catalog (no network): `lf:`
+        // labels (kind `user`, name = path relative to the container) for every
+        // label-folder child, then `folder:` labels (kind `folder`, name = full
+        // mailbox name) for every user folder — whether or not any message is
+        // currently in them (fact 2 / item 3). The frontend resolves label ids
+        // through this catalog, so an id absent here renders as raw text.
+        let mut labels = vec![
             Label {
                 id: "INBOX".into(),
                 name: "Inbox".into(),
@@ -1583,7 +1689,23 @@ impl MailMutate for ImapProvider {
                 name: "Starred".into(),
                 kind: "system".into(),
             },
-        ])
+        ];
+        let plan = self.build_sync_plan()?;
+        for (id, kind) in plan.dynamic_labels() {
+            // Display name: the id with its `lf:` / `folder:` prefix stripped
+            // (the relative label path, or the full user-folder name).
+            let name = id
+                .strip_prefix("lf:")
+                .or_else(|| id.strip_prefix("folder:"))
+                .unwrap_or(&id)
+                .to_string();
+            labels.push(Label {
+                id,
+                name,
+                kind: kind.to_string(),
+            });
+        }
+        Ok(labels)
     }
 
     async fn create_label(&self, _name: &str) -> ProviderResult<Label> {
@@ -4881,6 +5003,422 @@ mod tests {
         );
     }
 
+    // ------------------------------------------------------------------
+    // Slice 5b-2 run B: folder:/lf: labels, user/label-folder sync, and
+    // vanished-mailbox retirement, all driven through sync::sync_with over
+    // the multi-mailbox fake.
+    // ------------------------------------------------------------------
+
+    /// Collect every label id across all messages of a thread, sorted + deduped
+    /// (the shared `thread_labels` above returns them unsorted/undeduped).
+    async fn thread_label_set(provider: &ImapProvider, thread_id: &str) -> Vec<String> {
+        let mut labels = thread_labels(provider, thread_id).await;
+        labels.sort();
+        labels.dedup();
+        labels
+    }
+
+    /// The stable message id of the (single) message currently in `mailbox`.
+    fn message_id_in(store: &ImapStateStore, mailbox: &str) -> String {
+        store
+            .locations_in_mailbox(mailbox)
+            .expect("locations")
+            .first()
+            .map(|l| l.message_id.clone())
+            .unwrap_or_else(|| panic!("no message in {mailbox}"))
+    }
+
+    /// The resolved thread id for a stable message id.
+    fn thread_of(store: &ImapStateStore, message_id: &str) -> String {
+        let t = store
+            .thread_of_message(message_id)
+            .expect("thread_of_message")
+            .expect("a thread");
+        store.resolve_thread_alias(&t).expect("resolve")
+    }
+
+    /// (a) A hot INBOX message that another client MOVED into a user folder:
+    /// the thread survives, its labels become `folder:<name>` WITHOUT INBOX,
+    /// and the engine keeps ONE local thread with the folder label on its root.
+    #[tokio::test]
+    async fn an_inbox_message_moved_into_a_user_folder_keeps_the_thread_with_a_folder_label() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<u1@x>", "Hello", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+
+        // Baseline: the message is in INBOX, hot.
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        let mid = message_id_in(&store, "INBOX");
+        let tid = thread_of(&store, &mid);
+        assert!(store.is_thread_hot(&tid).unwrap(), "an INBOX message is hot");
+        assert_eq!(thread_label_set(&provider, &tid).await, vec!["INBOX"]);
+
+        // Another client moves it: INBOX copy gone, a copy appears in the user
+        // folder Clients/Acme (same Message-ID = same stable id).
+        {
+            let mut m = mailbox.lock().unwrap();
+            m.inbox().messages.clear();
+            m.add_to("Clients/Acme", 70, &["\\Seen"], &message("<u1@x>", "Hello", ""));
+        }
+        // The destination folder is brand new on the server, so re-arm the
+        // catalog refresh to notice it (the fixed test clock otherwise keeps the
+        // periodic refresh from coming due again).
+        store.force_catalog_refresh_due_for_test();
+        // Poll enough times to visit INBOX (sees the deletion) and the user
+        // folder (sees the new copy) within the emptied-thread grace.
+        for _ in 0..4 {
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        }
+
+        // One local thread survives, labelled folder:Clients/Acme, no INBOX.
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1);
+        let mid = message_id_in(&store, "Clients/Acme");
+        let tid = thread_of(&store, &mid);
+        let labels = thread_label_set(&provider, &tid).await;
+        assert!(labels.contains(&"folder:Clients/Acme".to_string()), "{labels:?}");
+        assert!(!labels.contains(&"INBOX".to_string()), "no INBOX after the move: {labels:?}");
+    }
+
+    /// (b) Proton-style label copy: an INBOX message with an additional copy in
+    /// `Labels/Clients` -> `lf:Clients` + INBOX, and the `lf:` label is on
+    /// EVERY message of the thread even when only a REPLY was labelled.
+    #[tokio::test]
+    async fn a_label_folder_copy_adds_lf_to_every_message_of_the_thread() {
+        let mut mb = FakeMailbox::new(100);
+        // Root in INBOX; a reply in INBOX; the REPLY also copied into the label
+        // folder (Proton labels one message of the thread).
+        mb.add(&["\\Seen"], &message("<root@x>", "Topic", ""));
+        mb.add(&["\\Seen"], &message("<reply@x>", "Re: Topic", "In-Reply-To: <root@x>\r\n"));
+        mb.add_to(
+            "Labels/Clients",
+            70,
+            &["\\Seen"],
+            &message("<reply@x>", "Re: Topic", "In-Reply-To: <root@x>\r\n"),
+        );
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+
+        for _ in 0..4 {
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        }
+
+        let mid = message_id_in(&store, "Labels/Clients");
+        let tid = thread_of(&store, &mid);
+        // The thread has INBOX and lf:Clients.
+        let labels = thread_label_set(&provider, &tid).await;
+        assert!(labels.contains(&"INBOX".to_string()), "{labels:?}");
+        assert!(labels.contains(&"lf:Clients".to_string()), "{labels:?}");
+
+        // Every message of the thread carries lf:Clients, even the root, which
+        // was never itself in the label folder (fact 1 — thread-wide union).
+        let messages = provider.fetch_thread(&tid).await.unwrap();
+        assert_eq!(messages.len(), 2, "root + reply");
+        for m in &messages {
+            assert!(
+                m.label_ids.contains(&"lf:Clients".to_string()),
+                "message {} carries lf:Clients: {:?}",
+                m.id,
+                m.label_ids
+            );
+        }
+    }
+
+    /// (c) A message in TWO label folders gets both `lf:` labels; (i) dynamic
+    /// ids with spaces/colon/non-ASCII round-trip through fetch_thread.
+    #[tokio::test]
+    async fn a_message_in_two_label_folders_gets_both_lf_labels() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<m@x>", "Two labels", ""));
+        mb.add_to("Labels/Clients", 70, &["\\Seen"], &message("<m@x>", "Two labels", ""));
+        mb.add_to("Labels/Zoë's: tag", 71, &["\\Seen"], &message("<m@x>", "Two labels", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+
+        for _ in 0..5 {
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        }
+        let mid = message_id_in(&store, "Labels/Clients");
+        let tid = thread_of(&store, &mid);
+        let labels = thread_label_set(&provider, &tid).await;
+        assert!(labels.contains(&"INBOX".to_string()), "{labels:?}");
+        assert!(labels.contains(&"lf:Clients".to_string()), "{labels:?}");
+        assert!(labels.contains(&"lf:Zoë's: tag".to_string()), "{labels:?}");
+    }
+
+    /// (e) A never-hot thread that only ever lives in a user folder is RECORDED
+    /// (index-synced locations + a local thread) but NEVER hot — so it is never
+    /// reported to the engine as a changed hot thread.
+    #[tokio::test]
+    async fn a_user_folder_only_thread_is_recorded_but_never_hot() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i@x>", "Inbox", "")); // keeps INBOX non-trivial
+        mb.add_to("Clients/Acme", 70, &["\\Seen"], &message("<folder-only@x>", "Folder only", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+
+        for _ in 0..4 {
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        }
+        // The folder-only message is index-synced (its location is recorded).
+        assert!(
+            !store.locations_in_mailbox("Clients/Acme").unwrap().is_empty(),
+            "the user folder is index-synced"
+        );
+        // Its thread exists locally but is NOT hot (never reported).
+        let mid = message_id_in(&store, "Clients/Acme");
+        let tid = thread_of(&store, &mid);
+        assert!(!store.is_thread_hot(&tid).unwrap(), "a user-folder-only thread is never hot");
+        // And it still resolves to its folder: label when fetched directly.
+        let labels = thread_label_set(&provider, &tid).await;
+        assert_eq!(labels, vec!["folder:Clients/Acme"]);
+    }
+
+    /// (f) `list_labels` content, order and kinds: the six system labels, then
+    /// `lf:` labels (kind `user`, relative name) sorted, then `folder:` labels
+    /// (kind `folder`, full name) sorted — INCLUDING a label folder with no
+    /// messages in it.
+    #[tokio::test]
+    async fn list_labels_publishes_system_then_lf_then_folder_in_order() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i@x>", "Inbox", ""));
+        mb.add_to("Clients/Acme", 70, &["\\Seen"], &message("<c@x>", "C", ""));
+        mb.add_to("Labels/Work", 71, &["\\Seen"], &message("<w@x>", "W", ""));
+        // An EMPTY label folder (no messages) must still be published.
+        mb.folder("Labels/Empty", 72);
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+
+        let labels = provider.list_labels().await.unwrap();
+        let shape: Vec<(&str, &str)> =
+            labels.iter().map(|l| (l.id.as_str(), l.kind.as_str())).collect();
+        assert_eq!(
+            shape,
+            vec![
+                ("INBOX", "system"),
+                ("SENT", "system"),
+                ("SPAM", "system"),
+                ("TRASH", "system"),
+                ("UNREAD", "system"),
+                ("STARRED", "system"),
+                ("lf:Empty", "user"),
+                ("lf:Work", "user"),
+                ("folder:Clients/Acme", "folder"),
+            ]
+        );
+        // The dynamic labels carry a display name = id without its prefix.
+        let empty = labels.iter().find(|l| l.id == "lf:Empty").unwrap();
+        assert_eq!(empty.name, "Empty");
+        let acme = labels.iter().find(|l| l.id == "folder:Clients/Acme").unwrap();
+        assert_eq!(acme.name, "Clients/Acme");
+    }
+
+    /// (g) With MORE real user folders than the per-poll budget, every one is
+    /// visited within ceil(N/budget) polls and the coverage epoch advances so
+    /// an expunged hot thread is deleted after the grace — proving user folders
+    /// (not just the synthetic knob) feed the scheduler/epoch machinery.
+    #[tokio::test]
+    async fn many_real_user_folders_are_all_covered_and_the_epoch_advances() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<m1@x>", "Hello", ""));
+        // Three real user folders, budget 1: no single poll covers them all.
+        for (i, name) in ["Clients/A", "Clients/B", "Clients/C"].iter().enumerate() {
+            mb.add_to(name, 60 + i as u32, &["\\Seen"], &message(&format!("<f{i}@x>"), "F", ""));
+        }
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (mut provider, store) = provider_with(mailbox.clone());
+        provider.folder_rounds_per_poll_override = Some(1);
+        let db = store.database();
+
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1);
+
+        // Expunge the INBOX copy: the hot thread goes empty.
+        mailbox.lock().unwrap().inbox().messages.clear();
+
+        // Drive polls: three user folders at budget 1 means a coverage epoch
+        // takes several polls, and two epochs to spend the grace. The thread is
+        // deleted only once the epoch machinery advances across polls.
+        let mut deleted = false;
+        for _ in 0..20 {
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+            if db.list_all_mail(Some("me@example.com")).unwrap().is_empty() {
+                deleted = true;
+                break;
+            }
+        }
+        assert!(deleted, "coverage over real user folders advances the epoch and spends the grace");
+        assert!(store.complete_walks().unwrap() >= policy::EMPTIED_THREAD_GRACE_WALKS);
+        // Every user folder was index-synced (all visited).
+        for name in ["Clients/A", "Clients/B", "Clients/C"] {
+            assert!(!store.locations_in_mailbox(name).unwrap().is_empty(), "{name} visited");
+        }
+    }
+
+    /// (h) Vanished mailbox: a catalog row the server stops LISTing is retired
+    /// (catalog + sync-state + locations deleted), the affected hot thread is
+    /// journaled and kept through the grace, the epoch is no longer held open,
+    /// an empty/failed LIST retires nothing, INBOX is never retired, and a
+    /// re-appearing mailbox is re-added.
+    #[tokio::test]
+    async fn a_vanished_mailbox_is_retired_and_stops_holding_the_epoch_open() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i@x>", "Inbox", ""));
+        // A user folder holding a HOT thread's only non-INBOX copy, plus an
+        // INBOX copy so the thread is hot.
+        mb.add(&["\\Seen"], &message("<shared@x>", "Shared", ""));
+        mb.add_to("Clients/Acme", 70, &["\\Seen"], &message("<shared@x>", "Shared", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        assert!(!store.locations_in_mailbox("Clients/Acme").unwrap().is_empty());
+        // The shared message is the one copied into Clients/Acme; resolve its
+        // thread by that unique location (INBOX also holds the unrelated <i@x>).
+        let shared_id = message_id_in(&store, "Clients/Acme");
+        let tid = thread_of(&store, &shared_id);
+        assert!(store.is_thread_hot(&tid).unwrap());
+
+        // An EMPTY/failed LIST retires nothing: a LIST that fails is swallowed,
+        // and the catalog is untouched.
+        {
+            let mut m = mailbox.lock().unwrap();
+            m.list_fails = true;
+        }
+        store.force_catalog_refresh_due_for_test();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        assert!(
+            store.mailboxes().unwrap().iter().any(|mb| mb.name == "Clients/Acme"),
+            "a failed LIST retires nothing"
+        );
+
+        // Now the user folder genuinely vanishes from the server and LIST
+        // succeeds without it.
+        {
+            let mut m = mailbox.lock().unwrap();
+            m.list_fails = false;
+            m.folders.remove("Clients/Acme");
+        }
+        store.force_catalog_refresh_due_for_test();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+
+        // Retired: catalog row, sync-state row and locations are gone.
+        assert!(
+            !store.mailboxes().unwrap().iter().any(|mb| mb.name == "Clients/Acme"),
+            "the vanished mailbox's catalog row is retired"
+        );
+        assert!(store.locations_in_mailbox("Clients/Acme").unwrap().is_empty());
+        assert!(store.mailbox_sync_state("Clients/Acme").unwrap().is_none());
+        // INBOX was never retired.
+        assert!(store.mailboxes().unwrap().iter().any(|mb| mb.name == "INBOX"));
+
+        // The shared thread still has its INBOX copy, so it stays hot and
+        // present (the retirement journaled it; it did not delete it).
+        let tid = thread_of(&store, &shared_id);
+        assert!(store.is_thread_hot(&tid).unwrap());
+        assert!(!thread_label_set(&provider, &tid).await.is_empty());
+
+        // The epoch is no longer held open by the vanished folder: a couple of
+        // polls complete coverage over the REMAINING synced set.
+        let epoch_before = store.complete_walks().unwrap();
+        for _ in 0..3 {
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        }
+        assert!(
+            store.complete_walks().unwrap() > epoch_before,
+            "with the broken folder retired, the coverage epoch advances again"
+        );
+
+        // Re-appearance: the mailbox comes back and is re-added, its message
+        // re-syncs (bodies untouched — threading is intact).
+        {
+            let mut m = mailbox.lock().unwrap();
+            m.add_to("Clients/Acme", 99, &["\\Seen"], &message("<shared@x>", "Shared", ""));
+        }
+        store.force_catalog_refresh_due_for_test();
+        for _ in 0..4 {
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        }
+        assert!(
+            store.mailboxes().unwrap().iter().any(|mb| mb.name == "Clients/Acme"),
+            "a re-appearing mailbox is re-added"
+        );
+        assert!(!store.locations_in_mailbox("Clients/Acme").unwrap().is_empty());
+    }
+
+    /// A retirement that touches NO hot thread is a catalog-only change: it does
+    /// not bump the generation (nothing for the engine to re-ingest).
+    #[tokio::test]
+    async fn retiring_a_cold_only_mailbox_does_not_bump_the_generation() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i@x>", "Inbox", ""));
+        // A user folder with a COLD (never-INBOX, never-hot) thread only.
+        mb.add_to("Clients/Cold", 70, &["\\Seen"], &message("<cold@x>", "Cold", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        // Settle.
+        for _ in 0..3 {
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        }
+        let gen_before = store.generation().unwrap();
+
+        // Vanish the cold-only folder.
+        {
+            let mut m = mailbox.lock().unwrap();
+            m.folders.remove("Clients/Cold");
+        }
+        store.force_catalog_refresh_due_for_test();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        assert!(
+            !store.mailboxes().unwrap().iter().any(|mb| mb.name == "Clients/Cold"),
+            "the cold-only folder is retired"
+        );
+        // No hot thread was affected, so the generation did not move for the
+        // retirement itself (idle polls aside).
+        assert_eq!(
+            store.generation().unwrap(),
+            gen_before,
+            "retiring a cold-only mailbox is a catalog-only change"
+        );
+    }
+
+    /// (k) Idle polls after the dynamic-label set is synced do not bump the
+    /// generation or rebuild the threader.
+    #[tokio::test]
+    async fn idle_polls_with_user_and_label_folders_are_stable() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i@x>", "Inbox", ""));
+        mb.add_to("Clients/Acme", 70, &["\\Seen"], &message("<c@x>", "C", ""));
+        mb.add_to("Labels/Work", 71, &["\\Seen"], &message("<w@x>", "W", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        for _ in 0..4 {
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        }
+        let generation = store.generation().unwrap();
+        let loads = provider.thread_state_loads.load(std::sync::atomic::Ordering::Relaxed);
+        for _ in 0..4 {
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+            assert_eq!(store.generation().unwrap(), generation, "idle poll must not bump generation");
+        }
+        assert_eq!(
+            provider.thread_state_loads.load(std::sync::atomic::Ordering::Relaxed),
+            loads,
+            "idle polls do not rebuild threader state"
+        );
+    }
+
     // Compiles always; runs only when THREESTRANDS_IMAP_IT=1 AND the Dovecot
     // container's fingerprint is in DOVECOT_TEST_FP. Skips cleanly otherwise,
     // exactly like the Slice 4 live tests in fetch.rs. The orchestrator runs it
@@ -4892,6 +5430,7 @@ mod tests {
         use super::super::{BodyCache, ImapProvider, ImapProviderConfig, ImapStateStore};
         use crate::db::Database;
         use crate::provider::{LabelModel, MailSync};
+        use crate::provider::MailMutate;
         use std::sync::Arc;
 
         const HOST: &str = "127.0.0.1";
@@ -5188,6 +5727,104 @@ mod tests {
                 "sync must not set \\Seen on the archived copy"
             );
             let _ = probe.logout().await;
+        }
+
+        /// (Slice 5b-2 run B, live) With `label_storage = Folders` and
+        /// `label_container = Labels` (super::test_settings), after baseline +
+        /// a few polls the labelled+foldered message (seeded in INBOX, the user
+        /// folder Folders/Projects, and the label folder Labels/Clients)
+        /// carries `INBOX` + `lf:Clients` + `folder:Folders/Projects`; the
+        /// old message that exists ONLY in the user folder is index-synced but
+        /// never hot (never reported); and `list_labels` contains both dynamic
+        /// labels. Skips cleanly without docker.
+        #[tokio::test]
+        async fn live_provider_reports_folder_and_lf_labels_and_lists_them() {
+            let Some(config) = gated() else { return };
+            let provider = live_provider(config);
+
+            // Baseline + a few polls so INBOX, the user folder and the label
+            // folder are all visited.
+            let mut cursor = provider.baseline_cursor().await.expect("baseline");
+            for _ in 0..6 {
+                cursor = provider.poll(&cursor).await.expect("poll").cursor;
+            }
+
+            // The labelled message is the one with a copy in all three of
+            // INBOX, Folders/Projects and Labels/Clients. Find it by that
+            // defining property.
+            let inbox_locs = provider.store.locations_in_mailbox("INBOX").expect("inbox");
+            let mut labelled: Option<String> = None;
+            for location in &inbox_locs {
+                let all = provider
+                    .store
+                    .locations_for_message(&location.message_id)
+                    .expect("locations");
+                let boxes: std::collections::BTreeSet<&str> =
+                    all.iter().map(|l| l.mailbox.as_str()).collect();
+                if boxes.contains("INBOX")
+                    && boxes.contains("Folders/Projects")
+                    && boxes.contains("Labels/Clients")
+                {
+                    labelled = Some(location.message_id.clone());
+                    break;
+                }
+            }
+            let labelled = labelled.expect("the labelled+foldered message is in all three places");
+
+            let thread = provider
+                .store
+                .thread_of_message(&labelled)
+                .expect("thread_of_message")
+                .expect("a thread");
+            let messages = provider.fetch_thread(&thread).await.expect("fetch_thread");
+            let labels: Vec<String> =
+                messages.iter().flat_map(|m| m.label_ids.clone()).collect();
+            assert!(labels.contains(&"INBOX".to_string()), "INBOX: {labels:?}");
+            assert!(labels.contains(&"lf:Clients".to_string()), "lf:Clients: {labels:?}");
+            assert!(
+                labels.contains(&"folder:Folders/Projects".to_string()),
+                "folder:Folders/Projects: {labels:?}"
+            );
+
+            // The folder-only old message is index-synced (a location exists)
+            // but its thread is NOT hot (it has no INBOX/Sent location), so it
+            // is never reported to the engine.
+            let folder_locs =
+                provider.store.locations_in_mailbox("Folders/Projects").expect("folder");
+            let folder_only = folder_locs
+                .iter()
+                .find(|l| {
+                    let all = provider
+                        .store
+                        .locations_for_message(&l.message_id)
+                        .expect("locations");
+                    all.iter().all(|loc| loc.mailbox != "INBOX")
+                })
+                .expect("the folder-only message is index-synced");
+            let t = provider
+                .store
+                .thread_of_message(&folder_only.message_id)
+                .expect("thread")
+                .expect("a thread");
+            assert!(
+                !provider.store.is_thread_hot(&t).expect("hot?"),
+                "a folder-only thread is never hot (never reported)"
+            );
+
+            // list_labels contains the dynamic labels (read from the local plan).
+            let listed = provider.list_labels().await.expect("list_labels");
+            let ids: std::collections::BTreeSet<&str> =
+                listed.iter().map(|l| l.id.as_str()).collect();
+            assert!(ids.contains("lf:Clients"), "list_labels has lf:Clients: {ids:?}");
+            assert!(
+                ids.contains("folder:Folders/Projects"),
+                "list_labels has folder:Folders/Projects: {ids:?}"
+            );
+            // Kinds are correct.
+            let lf = listed.iter().find(|l| l.id == "lf:Clients").unwrap();
+            assert_eq!(lf.kind, "user");
+            let folder = listed.iter().find(|l| l.id == "folder:Folders/Projects").unwrap();
+            assert_eq!(folder.kind, "folder");
         }
     }
 }

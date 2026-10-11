@@ -14,15 +14,24 @@
 //! (RFC 3501 reserves it; it carries no special-use role).
 //!
 //! ## What this run syncs
-//! INBOX, Sent, Trash, Junk and Archive are `synced_now`. Archive joins the
-//! synced set in Slice 5b-2 (`synced_now = true` for the Archive role): it is
-//! Folder-class (an evicting 2,000 window) and contributes NO location label
-//! (archived = not in INBOX, so a system label would be wrong). Sent's window
-//! is a non-evicting acquisition bound filled in chunked background rounds
-//! after INBOX. User folders and label-folder children stay
-//! `synced_now = false` (run B). `\All`, `\Flagged` (Proton "Starred" has
+//! INBOX, Sent, Trash, Junk and Archive are `synced_now` (system roles).
+//! Archive is Folder-class (an evicting 2,000 window) and contributes NO
+//! location label (archived = not in INBOX, so a system label would be wrong).
+//! Sent's window is a non-evicting acquisition bound filled in chunked
+//! background rounds after INBOX.
+//!
+//! Slice 5b-2 run B ALSO syncs the account's own mail folders, Folder-class:
+//! **user folders** (a selectable mailbox with no resolved role, not INBOX, not
+//! an aggregate/Drafts, not the label container or its children) contribute a
+//! dynamic `folder:<full catalog name>` label; and, when the account's
+//! `label_storage` is [`LabelStorage::Folders`](super::settings::LabelStorage),
+//! **label-folder children** (selectable children of the configured label
+//! container) contribute a dynamic `lf:<name relative to the container>` label.
+//! Under any other `label_storage` the label container is not in play, so a
+//! "child of the container" is treated as an ordinary user folder (there is no
+//! container to be relative to). `\All`, `\Flagged` (Proton "Starred" has
 //! `\Flagged` and NO role), `\Drafts` and the label container itself are
-//! `NotSynced`.
+//! `NotSynced` and contribute no label.
 //!
 //! Discovery never persists `\Noselect` containers (see `mailboxes.rs`), so a
 //! catalog row is always a selectable mailbox; the plan therefore does not need
@@ -35,17 +44,19 @@ use super::settings::ImapAccountSettings;
 /// INBOX is a reserved name, not a special-use role.
 pub const INBOX: &str = "INBOX";
 
-/// The label kind a synced mailbox contributes to its messages. Run 2 produces
-/// only system-role location labels; `lf:`/`folder:` kinds arrive in 5b-2.
+/// The label kind a synced mailbox contributes to its messages: a system
+/// location label (INBOX/SENT/SPAM/TRASH), a `folder:` user-folder label, an
+/// `lf:` label-folder label, or nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LabelKind {
     /// A system location label (INBOX / SENT / SPAM / TRASH).
     SystemRole,
-    /// A user folder (`folder:<name>`) — classified, not synced in run 2.
+    /// A user folder: contributes `folder:<full catalog name>`.
     UserFolder,
-    /// A label-container child (`lf:<name>`) — classified, not synced in run 2.
+    /// A label-container child (label_storage == Folders): contributes
+    /// `lf:<name relative to the container>`.
     LabelFolder,
-    /// Contributes no label (aggregates, Drafts, the label container).
+    /// Contributes no label (aggregates, Drafts, Archive, the label container).
     None,
 }
 
@@ -64,19 +75,25 @@ pub struct PlanEntry {
     pub window_class: SyncWindowClass,
     /// The label kind it contributes.
     pub label_kind: LabelKind,
+    /// The OWNED location label id a message stored in this mailbox carries, if
+    /// any — computed once at plan-build time so `fetch` needs no delimiter or
+    /// container knowledge. `Some("INBOX")`/`Some("SENT")`/… for system roles,
+    /// `Some("folder:<name>")` for a user folder, `Some("lf:<rel>")` for a
+    /// label-folder child, `None` for a mailbox that contributes no location
+    /// label (Archive, Drafts, aggregates, the label container).
+    pub location_label_id: Option<String>,
     /// Whether THIS run syncs the mailbox.
     pub synced_now: bool,
 }
 
 impl PlanEntry {
-    /// The location [`MailboxLabel`](super::labels::MailboxLabel) a message in
-    /// this mailbox carries, if any. INBOX -> Inbox; a system role maps through
-    /// [`MailboxLabel::for_role`]; everything else contributes none this run.
-    pub fn location_label(&self) -> Option<super::labels::MailboxLabel> {
-        if self.is_inbox {
-            return Some(super::labels::MailboxLabel::Inbox);
-        }
-        self.role.and_then(super::labels::MailboxLabel::for_role)
+    /// The OWNED location label ids a message stored in this mailbox carries.
+    /// Zero or more label-id strings (a message in several mailboxes unions the
+    /// per-copy results upstream). Today a single mailbox contributes at most
+    /// one location label, but the owned-`Vec` shape is what lets a dynamic
+    /// `folder:`/`lf:` id live here instead of a `Copy` enum (fact 4).
+    pub fn location_label_ids(&self) -> Vec<String> {
+        self.location_label_id.iter().cloned().collect()
     }
 }
 
@@ -100,11 +117,47 @@ impl SyncPlan {
         self.entries.iter().find(|entry| entry.mailbox == mailbox)
     }
 
-    /// Resolve a stored mailbox name to its location label (used by
-    /// fetch_thread / fetch_message to label copies by role, not by name). A
-    /// mailbox absent from the plan contributes no label.
-    pub fn label_for_mailbox(&self, mailbox: &str) -> Option<super::labels::MailboxLabel> {
-        self.entry_for(mailbox).and_then(PlanEntry::location_label)
+    /// Resolve a stored mailbox name to its OWNED location label ids (used by
+    /// fetch_thread / fetch_message to label copies by role / folder, not by
+    /// an ad-hoc name parse). A mailbox absent from the plan contributes none.
+    pub fn location_label_ids_for_mailbox(&self, mailbox: &str) -> Vec<String> {
+        self.entry_for(mailbox)
+            .map(PlanEntry::location_label_ids)
+            .unwrap_or_default()
+    }
+
+    /// Every dynamic (`folder:` / `lf:`) label this plan declares, as
+    /// `(id, kind)` pairs in list order: first the `lf:` labels (every
+    /// label-folder child, `kind = "user"`) then the `folder:` labels (every
+    /// user folder, `kind = "folder"`), each sorted by id. `list_labels` reads
+    /// this to publish the dynamic catalog whether or not any message is
+    /// currently in a given folder (fact 2).
+    pub fn dynamic_labels(&self) -> Vec<(String, &'static str)> {
+        let mut lf: Vec<&PlanEntry> = self
+            .entries
+            .iter()
+            .filter(|e| e.label_kind == LabelKind::LabelFolder)
+            .collect();
+        lf.sort_by(|a, b| a.location_label_id.cmp(&b.location_label_id));
+        let mut folders: Vec<&PlanEntry> = self
+            .entries
+            .iter()
+            .filter(|e| e.label_kind == LabelKind::UserFolder)
+            .collect();
+        folders.sort_by(|a, b| a.location_label_id.cmp(&b.location_label_id));
+
+        let mut out: Vec<(String, &'static str)> = Vec::new();
+        for entry in lf {
+            if let Some(id) = &entry.location_label_id {
+                out.push((id.clone(), "user"));
+            }
+        }
+        for entry in folders {
+            if let Some(id) = &entry.location_label_id {
+                out.push((id.clone(), "folder"));
+            }
+        }
+        out
     }
 }
 
@@ -150,17 +203,63 @@ fn is_label_container(name: &str, settings: &ImapAccountSettings) -> bool {
     settings.label_container.as_deref() == Some(name)
 }
 
-/// Whether a mailbox is a CHILD of the label container (a label folder).
+/// Whether a mailbox is a CHILD of the label container AND the account stores
+/// labels as folders. A container child counts as a label folder only under
+/// [`LabelStorage::Folders`](super::settings::LabelStorage): with any other
+/// `label_storage` there is no label container in play, so such a mailbox is an
+/// ordinary user folder (fact 3). Requires a configured container.
 fn is_label_folder_child(
     name: &str,
     delimiter: Option<&str>,
     settings: &ImapAccountSettings,
 ) -> bool {
+    use super::settings::LabelStorage;
+    if settings.label_storage != LabelStorage::Folders {
+        return false;
+    }
     let Some(container) = settings.label_container.as_deref() else {
         return false;
     };
-    let delimiter = delimiter.filter(|d| !d.is_empty()).unwrap_or("/");
+    let delimiter = hierarchy_delimiter(delimiter);
     name.starts_with(&format!("{container}{delimiter}"))
+}
+
+/// The hierarchy delimiter to use, defaulting to `/` when none / empty.
+fn hierarchy_delimiter(delimiter: Option<&str>) -> &str {
+    delimiter.filter(|d| !d.is_empty()).unwrap_or("/")
+}
+
+/// The `lf:` label name for a label-folder child: its mailbox name with the
+/// `<container><delimiter>` prefix stripped, so `Labels/Clients` -> `Clients`
+/// and a nested `Labels/A/B` -> `A/B`. Assumes the caller already confirmed the
+/// mailbox is a container child under label-folder mode.
+fn label_folder_relative_name(name: &str, delimiter: Option<&str>, container: &str) -> String {
+    let delimiter = hierarchy_delimiter(delimiter);
+    let prefix = format!("{container}{delimiter}");
+    name.strip_prefix(&prefix).unwrap_or(name).to_string()
+}
+
+/// Whether a mailbox's RFC 6154 `special_use` attribute marks it as an
+/// AGGREGATE view (`\All` or `\Flagged`) rather than a real folder. Such a
+/// mailbox is a view of mail stored elsewhere, so it is never synced as a
+/// location and never contributes a `folder:` label (the design's aggregate
+/// rule). `\All` also resolves to [`MailboxRole::All`]; `\Flagged` carries no
+/// role, so this is the only guard that catches a "Starred"-style mailbox.
+fn is_aggregate_attribute(special_use: Option<&str>) -> bool {
+    matches!(special_use, Some(attr)
+        if attr.eq_ignore_ascii_case("\\All") || attr.eq_ignore_ascii_case("\\Flagged"))
+}
+
+/// The owned location label id a resolved SYSTEM role contributes, if any:
+/// `SENT`/`SPAM`/`TRASH`. Archive / Drafts / `\All` contribute none (an
+/// archived message is simply not in INBOX; the others are aggregates/drafts).
+fn system_role_label_id(role: MailboxRole) -> Option<&'static str> {
+    match role {
+        MailboxRole::Sent => Some("SENT"),
+        MailboxRole::Junk => Some("SPAM"),
+        MailboxRole::Trash => Some("TRASH"),
+        MailboxRole::Archive | MailboxRole::Drafts | MailboxRole::All => None,
+    }
 }
 
 /// Build the sync plan from the account's selectable catalog + settings.
@@ -185,12 +284,13 @@ pub fn build_plan(
                 is_inbox: true,
                 window_class: SyncWindowClass::Inbox,
                 label_kind: LabelKind::SystemRole,
+                location_label_id: Some("INBOX".to_string()),
                 synced_now: true,
             });
             continue;
         }
 
-        // The label container itself and its children are special.
+        // The label container itself: never synced, no label.
         if is_label_container(&mailbox.name, settings) {
             rest.push(PlanEntry {
                 mailbox: mailbox.name.clone(),
@@ -198,48 +298,94 @@ pub fn build_plan(
                 is_inbox: false,
                 window_class: SyncWindowClass::NotSynced,
                 label_kind: LabelKind::None,
+                location_label_id: None,
                 synced_now: false,
             });
             continue;
         }
+        // A label-container child under label-folder mode: synced (5b-2), a
+        // Folder-class window, contributing `lf:<name relative to container>`.
         if is_label_folder_child(&mailbox.name, delimiter, settings) {
-            rest.push(PlanEntry {
+            let container = settings
+                .label_container
+                .as_deref()
+                .expect("is_label_folder_child requires a container");
+            let rel = label_folder_relative_name(&mailbox.name, delimiter, container);
+            synced.push(PlanEntry {
                 mailbox: mailbox.name.clone(),
                 role: None,
                 is_inbox: false,
                 window_class: SyncWindowClass::Folder,
                 label_kind: LabelKind::LabelFolder,
-                synced_now: false, // 5b-2
+                location_label_id: Some(format!("lf:{rel}")),
+                synced_now: true, // 5b-2 run B
             });
             continue;
         }
 
         let role = resolve_role(mailbox, delimiter, settings);
-        let (window_class, label_kind, synced_now, bucket_synced) = match role {
-            // Aggregates and Drafts: never synced.
+        // An aggregate mailbox with an attribute that maps to NO MailboxRole
+        // (Proton's "Starred" carries `\Flagged`) is a VIEW of mail stored
+        // elsewhere, never a user folder: it must not be synced as a location
+        // nor contribute a `folder:` label (fact 4 / the design's aggregate
+        // rule). `\All` already resolves to MailboxRole::All below; `\Flagged`
+        // has no role, so guard it explicitly here.
+        if role.is_none() && is_aggregate_attribute(mailbox.special_use.as_deref()) {
+            rest.push(PlanEntry {
+                mailbox: mailbox.name.clone(),
+                role: None,
+                is_inbox: false,
+                window_class: SyncWindowClass::NotSynced,
+                label_kind: LabelKind::None,
+                location_label_id: None,
+                synced_now: false,
+            });
+            continue;
+        }
+        let (window_class, label_kind, location_label_id, synced_now, bucket_synced) = match role {
+            // Aggregates and Drafts: never synced, no label.
             Some(MailboxRole::All) | Some(MailboxRole::Drafts) => {
-                (SyncWindowClass::NotSynced, LabelKind::None, false, false)
+                (SyncWindowClass::NotSynced, LabelKind::None, None, false, false)
             }
-            // Sent: synced THIS run (run 3), Sent class, SystemRole label.
+            // Sent: synced THIS run (run 3), Sent class, SENT label.
             // Its 5,000 is a non-evicting ACQUISITION bound (see
             // SyncWindowClass::Sent / SyncLimits::sent), filled in chunked
             // background rounds after INBOX; see provider.rs.
-            Some(MailboxRole::Sent) => {
-                (SyncWindowClass::Sent, LabelKind::SystemRole, true, true)
-            }
-            // Trash and Junk: synced THIS run, Folder class.
-            Some(MailboxRole::Trash) | Some(MailboxRole::Junk) => {
-                (SyncWindowClass::Folder, LabelKind::SystemRole, true, true)
-            }
+            Some(role @ MailboxRole::Sent) => (
+                SyncWindowClass::Sent,
+                LabelKind::SystemRole,
+                system_role_label_id(role).map(str::to_string),
+                true,
+                true,
+            ),
+            // Trash and Junk: synced THIS run, Folder class, SystemRole label.
+            Some(role @ (MailboxRole::Trash | MailboxRole::Junk)) => (
+                SyncWindowClass::Folder,
+                LabelKind::SystemRole,
+                system_role_label_id(role).map(str::to_string),
+                true,
+                true,
+            ),
             // Archive: synced THIS run (5b-2), Folder class (evicting 2,000
             // window), SystemRole classification but NO location label — an
-            // archived message carries no system label (archived == no INBOX),
-            // so it maps through MailboxLabel::for_role to None.
-            Some(MailboxRole::Archive) => {
-                (SyncWindowClass::Folder, LabelKind::SystemRole, true, true)
-            }
-            // User folders: classified now, synced in 5b-2.
-            None => (SyncWindowClass::Folder, LabelKind::UserFolder, false, false),
+            // archived message carries no system label (archived == no INBOX).
+            Some(MailboxRole::Archive) => (
+                SyncWindowClass::Folder,
+                LabelKind::SystemRole,
+                None,
+                true,
+                true,
+            ),
+            // User folders: synced in 5b-2 run B, Folder class, contributing
+            // `folder:<full catalog name>`. Bucketed with the other synced
+            // mailboxes so plan order is deterministic (role_order 4, by name).
+            None => (
+                SyncWindowClass::Folder,
+                LabelKind::UserFolder,
+                Some(format!("folder:{}", mailbox.name)),
+                true,
+                true,
+            ),
         };
         let entry = PlanEntry {
             mailbox: mailbox.name.clone(),
@@ -247,6 +393,7 @@ pub fn build_plan(
             is_inbox: false,
             window_class,
             label_kind,
+            location_label_id,
             synced_now,
         };
         if bucket_synced {
@@ -256,10 +403,13 @@ pub fn build_plan(
         }
     }
 
-    // Stable order within the synced-non-INBOX bucket: Trash, then Junk, then
-    // Sent, then by name, so the per-poll walk is deterministic. Sent sorts
-    // after Trash/Junk so its (potentially long, chunked) backfill never
-    // starves the cheap Trash/Junk rounds within one poll's folder budget.
+    // Stable order within the synced-non-INBOX bucket: system roles first
+    // (Trash, Junk, Sent, Archive) then user/label folders, each then by name,
+    // so the per-poll walk input is deterministic. Sent sorts after Trash/Junk
+    // so its (potentially long, chunked) backfill never starves the cheap
+    // Trash/Junk rounds within one poll's folder budget; user/label folders
+    // (role_order 4) sort after every system role. The per-poll SCHEDULER
+    // (provider.rs) is what actually bounds and fairly orders the walk.
     synced.sort_by(|a, b| {
         role_order(a.role)
             .cmp(&role_order(b.role))
@@ -375,7 +525,11 @@ mod tests {
         assert_eq!(archive.role, Some(MailboxRole::Archive));
         assert!(archive.synced_now, "Archive is synced in 5b-2");
         assert_eq!(archive.window_class, SyncWindowClass::Folder);
-        assert_eq!(plan.label_for_mailbox("Archive"), None, "Archive has no location label");
+        assert_eq!(
+            plan.location_label_ids_for_mailbox("Archive"),
+            Vec::<String>::new(),
+            "Archive has no location label"
+        );
 
         // All Mail (\All) and Drafts: NotSynced, no label.
         for name in ["All Mail", "Drafts"] {
@@ -395,22 +549,41 @@ mod tests {
         let labels = find("Labels");
         assert!(!labels.synced_now);
         assert_eq!(labels.label_kind, LabelKind::None);
+        assert_eq!(labels.location_label_id, None);
 
-        // A label-folder child: classified LabelFolder, not synced (5b-2).
+        // A label-folder child (label_storage == Folders): synced (5b-2 run B
+        // contract change — previously !synced_now), carrying `lf:<relative>`.
         let work = find("Labels/Work");
         assert_eq!(work.label_kind, LabelKind::LabelFolder);
-        assert!(!work.synced_now);
+        assert!(work.synced_now, "label folders are synced in run B");
+        assert_eq!(work.location_label_id.as_deref(), Some("lf:Work"));
 
-        // A user folder: classified UserFolder, not synced (5b-2).
+        // A user folder: synced (5b-2 run B contract change — previously
+        // !synced_now), carrying `folder:<full name>`.
         let acme = find("Clients/Acme");
         assert_eq!(acme.label_kind, LabelKind::UserFolder);
-        assert!(!acme.synced_now);
+        assert!(acme.synced_now, "user folders are synced in run B");
+        assert_eq!(
+            acme.location_label_id.as_deref(),
+            Some("folder:Clients/Acme")
+        );
 
-        // Exactly INBOX, Trash, Spam, Sent, Archive are synced, INBOX first,
-        // then the cheap folder rounds (Trash/Spam), Sent, and Archive last
-        // (5b-2 contract change — this list previously ended at "Sent").
+        // Synced set (INBOX first, then system roles Trash/Spam/Sent/Archive,
+        // then user/label folders by name): 5b-2 run B contract change — this
+        // list previously ended at "Archive" with no user/label folders.
         let synced: Vec<&str> = plan.synced().map(|e| e.mailbox.as_str()).collect();
-        assert_eq!(synced, vec!["INBOX", "Trash", "Spam", "Sent", "Archive"]);
+        assert_eq!(
+            synced,
+            vec![
+                "INBOX",
+                "Trash",
+                "Spam",
+                "Sent",
+                "Archive",
+                "Clients/Acme",
+                "Labels/Work",
+            ]
+        );
     }
 
     #[test]
@@ -438,7 +611,6 @@ mod tests {
 
     #[test]
     fn location_labels_follow_the_resolved_role() {
-        use super::super::labels::MailboxLabel;
         let catalog = vec![
             mb("INBOX", None),
             mb("Trash", Some("\\Trash")),
@@ -447,13 +619,92 @@ mod tests {
             mb("Archive", Some("\\Archive")),
         ];
         let plan = build_plan(&catalog, Some("/"), &settings());
-        assert_eq!(plan.label_for_mailbox("INBOX"), Some(MailboxLabel::Inbox));
-        assert_eq!(plan.label_for_mailbox("Trash"), Some(MailboxLabel::Trash));
-        assert_eq!(plan.label_for_mailbox("Spam"), Some(MailboxLabel::Junk));
-        assert_eq!(plan.label_for_mailbox("Sent"), Some(MailboxLabel::Sent));
-        // Archive contributes no system location label this slice.
-        assert_eq!(plan.label_for_mailbox("Archive"), None);
+        let ids = |name: &str| plan.location_label_ids_for_mailbox(name);
+        assert_eq!(ids("INBOX"), vec!["INBOX".to_string()]);
+        assert_eq!(ids("Trash"), vec!["TRASH".to_string()]);
+        assert_eq!(ids("Spam"), vec!["SPAM".to_string()]);
+        assert_eq!(ids("Sent"), vec!["SENT".to_string()]);
+        // Archive contributes no system location label.
+        assert_eq!(ids("Archive"), Vec::<String>::new());
         // A mailbox absent from the plan contributes nothing.
-        assert_eq!(plan.label_for_mailbox("Nope"), None);
+        assert_eq!(ids("Nope"), Vec::<String>::new());
+    }
+
+    /// A user folder yields `folder:<full catalog name>`; a label-folder child
+    /// yields `lf:<name relative to the container>`, including a NESTED child.
+    /// Dynamic ids with spaces, colons and non-ASCII (already modified-UTF-7
+    /// decoded) are carried verbatim (test (i)).
+    #[test]
+    fn dynamic_labels_use_full_folder_name_and_relative_label_name() {
+        let catalog = vec![
+            mb("INBOX", None),
+            mb("Clients/Acme", None),             // user folder
+            mb("Labels/Clients", None),           // label folder child
+            mb("Labels/A/B", None),               // nested label folder child
+            mb("Projektübersicht: Q3", None),     // user folder, spaces/colon/non-ASCII
+            mb("Labels/Zoë's: tag", None),        // label folder, odd chars
+        ];
+        let plan = build_plan(&catalog, Some("/"), &settings());
+        let ids = |name: &str| plan.location_label_ids_for_mailbox(name);
+        assert_eq!(ids("Clients/Acme"), vec!["folder:Clients/Acme".to_string()]);
+        assert_eq!(ids("Labels/Clients"), vec!["lf:Clients".to_string()]);
+        assert_eq!(ids("Labels/A/B"), vec!["lf:A/B".to_string()]);
+        assert_eq!(
+            ids("Projektübersicht: Q3"),
+            vec!["folder:Projektübersicht: Q3".to_string()]
+        );
+        assert_eq!(ids("Labels/Zoë's: tag"), vec!["lf:Zoë's: tag".to_string()]);
+    }
+
+    /// (d) A container child under label_storage Keywords / None is NOT an
+    /// `lf:` label — there is no container in play — so it is an ordinary USER
+    /// FOLDER (`folder:<full name>`), still synced.
+    #[test]
+    fn a_container_child_without_folder_storage_is_a_plain_user_folder() {
+        for storage in [LabelStorage::Keywords, LabelStorage::None] {
+            let mut settings = settings();
+            settings.label_storage = storage;
+            // Keep label_container set to prove it is the STORAGE mode, not the
+            // missing container, that decides this.
+            settings.label_container = Some("Labels".into());
+            let catalog = vec![mb("INBOX", None), mb("Labels/Clients", None)];
+            let plan = build_plan(&catalog, Some("/"), &settings);
+            let child = plan.entry_for("Labels/Clients").unwrap();
+            assert_eq!(
+                child.label_kind,
+                LabelKind::UserFolder,
+                "a container child under {storage:?} is a user folder, not lf:"
+            );
+            assert!(child.synced_now, "it is still synced");
+            assert_eq!(
+                child.location_label_id.as_deref(),
+                Some("folder:Labels/Clients"),
+                "and carries a folder: label with its full name under {storage:?}"
+            );
+        }
+    }
+
+    /// `dynamic_labels()` lists `lf:` labels first (kind `user`), then
+    /// `folder:` labels (kind `folder`), each sorted by id, independent of
+    /// whether a message is in them.
+    #[test]
+    fn dynamic_labels_are_ordered_lf_then_folders() {
+        let catalog = vec![
+            mb("INBOX", None),
+            mb("Zed/Folder", None),       // user folder
+            mb("Clients/Acme", None),     // user folder
+            mb("Labels/Work", None),      // lf
+            mb("Labels/Acme", None),      // lf
+        ];
+        let plan = build_plan(&catalog, Some("/"), &settings());
+        assert_eq!(
+            plan.dynamic_labels(),
+            vec![
+                ("lf:Acme".to_string(), "user"),
+                ("lf:Work".to_string(), "user"),
+                ("folder:Clients/Acme".to_string(), "folder"),
+                ("folder:Zed/Folder".to_string(), "folder"),
+            ]
+        );
     }
 }

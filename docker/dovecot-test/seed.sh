@@ -8,7 +8,11 @@
 #     to exercise the "one message, two locations" identity rule);
 #   - 1 Sent message (the shared Message-ID);
 #   - 1 Archive message;
-#   - 1 Trash message and 1 Junk message (index-synced, never reported).
+#   - 1 Trash message and 1 Junk message (index-synced, never reported);
+#   - 1 labelled+foldered message (Slice 5b-2 run B): the same Message-ID in
+#     INBOX, the user folder Folders/Projects and the label folder
+#     Labels/Clients (one message, three locations);
+#   - 1 old message ONLY in Folders/Projects (index-synced, never reported).
 # Keep this in sync with the fixtures the Rust tests assert against.
 set -eu
 
@@ -93,6 +97,37 @@ Message-ID: <junk-0005@example.test>
 Date: Mon, 06 Oct 2025 11:30:00 +0000
 
 A message in Junk, index-synced but not reported.
+EOF
+
+# Slice 5b-2 run B: a message that is in INBOX AND copied into both a user
+# folder (Folders/Projects -> folder:Folders/Projects) and a label-container
+# child (Labels/Clients -> lf:Clients). Same Message-ID in all three places =
+# ONE message with three locations, so the live test asserts the INBOX message
+# carries INBOX + lf:Clients + folder:Folders/Projects.
+LABELLED='<labelled-0006@threestrands.test>'
+for box in "INBOX" "Folders/Projects" "Labels/Clients"; do
+  deliver "$box" <<EOF
+From: eve@example.test
+To: test@threestrands.test
+Subject: A labelled and foldered message
+Message-ID: ${LABELLED}
+Date: Mon, 06 Oct 2025 12:00:00 +0000
+
+One message in INBOX, a user folder and a label folder — three locations.
+EOF
+done
+
+# An OLD message that exists ONLY in the user folder (no INBOX copy): the live
+# test asserts it is index-synced but NOT reported (never hot — no INBOX/Sent
+# location) and does not surface its body.
+deliver "Folders/Projects" <<'EOF'
+From: frank@example.test
+To: test@threestrands.test
+Subject: An old project note
+Message-ID: <folder-only-0007@example.test>
+Date: Sun, 01 Jun 2025 08:00:00 +0000
+
+An older message that lives only in the user folder.
 EOF
 
 touch "$MARKER"
