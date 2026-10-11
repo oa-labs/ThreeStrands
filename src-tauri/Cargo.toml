@@ -92,6 +92,25 @@ async-imap = { version = "0.12", default-features = false, features = ["runtime-
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 rustls-platform-verifier = "0.7"
 futures = "0.3"
+# --- Phase 4 run 1: SMTP submission client -------------------------------
+# The phase-tracked SMTP submission client (provider/imap/smtp.rs) is built on
+# mail-send's LOW-LEVEL API (mail_from/rcpt_to/cmd/write_message/read): its
+# one-shot `send()` cannot tell "definitely not delivered" from "unknown", so
+# we drive the phases ourselves (see docs/imap-design.md "Sending"). The crate
+# accepts our own rustls `ClientConfig` via `tls_connector`, so the IMAP
+# fingerprint-pinning verifier (provider/imap/tls.rs) is reused unchanged for
+# both implicit TLS and STARTTLS. Pinned to the exact version proved by the
+# Phase 4 spike. mail-send's ONLY feature is `aws-lc-rs`, left OFF, so it
+# brings NO aws-lc; we never use its built-in provider selection because we
+# inject our own ring-backed rustls `ClientConfig` through `tls_connector`,
+# so no feature is needed. It pulls NO second rustls and reuses mail-builder 1.0.
+mail-send = { version = "=0.6.2", default-features = false }
+# mail-send's public API returns and carries `smtp_proto::Response<String>`
+# (the parsed SMTP reply) but does not re-export smtp-proto, so the submission
+# client names it directly. Already in the tree via mail-send; this only adds
+# the direct declaration — no new crate. Pinned to the version mail-send
+# resolves so the two never disagree on the reply type.
+smtp-proto = "=0.2.5"
 
 [target.'cfg(unix)'.dependencies]
 xattr = "1"

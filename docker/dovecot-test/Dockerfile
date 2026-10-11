@@ -34,6 +34,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # dovecot-imapd pulls dovecot-core. openssl generates the self-signed cert at
 # first boot; tini is PID 1 for clean signal handling (fast `docker stop`).
+# python3 (stdlib only) backs the tiny SMTP sink the Phase 4 submission live
+# tests send to — no pip, no aiosmtpd, so the image build stays as
+# offline-friendly as the apt step already is.
 # Pin the exact Dovecot version so server behavior is reproducible; refresh it
 # deliberately when the base digest moves.
 ARG DOVECOT_VERSION=1:2.3.21+dfsg1-2ubuntu6.5
@@ -42,6 +45,7 @@ RUN apt-get update \
         "dovecot-core=${DOVECOT_VERSION}" \
         "dovecot-imapd=${DOVECOT_VERSION}" \
         openssl \
+        python3 \
         tini \
     && rm -rf /var/lib/apt/lists/*
 
@@ -49,11 +53,13 @@ COPY dovecot.conf /etc/dovecot/dovecot.conf
 COPY dovecot-acl /etc/dovecot/dovecot-acl
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY seed.sh /usr/local/bin/seed.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/seed.sh
+COPY smtp-sink.py /usr/local/bin/smtp-sink.py
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/seed.sh /usr/local/bin/smtp-sink.py
 
 # IMAP STARTTLS on the non-standard port the primary account uses (1143), so
 # the test exercises "STARTTLS on a port we upgrade ourselves" rather than
-# implicit TLS on 993. SMTP (lettre) pinning is a Phase-4 concern; not here.
-EXPOSE 1143
+# implicit TLS on 993. The Phase 4 SMTP submission live tests reach the tiny
+# sink on 1465 (implicit TLS) and 1587 (STARTTLS), sharing the IMAP cert.
+EXPOSE 1143 1465 1587
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]

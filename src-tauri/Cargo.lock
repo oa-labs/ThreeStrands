@@ -3191,6 +3191,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "mail-send"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8355326d14f08c9de5e9badfe606d9ba8fea2febb60fe4318ecbac33cfb7b41e"
+dependencies = [
+ "base64 0.23.1",
+ "gethostname",
+ "rustls",
+ "rustls-pki-types",
+ "rustls-platform-verifier",
+ "smtp-proto",
+ "tokio",
+ "tokio-rustls",
+]
+
+[[package]]
 name = "markup5ever"
 version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5240,6 +5256,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e"
 
 [[package]]
+name = "smtp-proto"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "142a5a642c6bd7ffd7e1b525ad6a6e9921ccef992dba4663974f8519209a00c1"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "socket2"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5966,6 +5991,7 @@ dependencies = [
  "log",
  "mail-builder",
  "mail-parser",
+ "mail-send",
  "md-5 0.11.0",
  "oauth2",
  "objc2",
@@ -5989,6 +6015,7 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "sha2 0.11.0",
+ "smtp-proto",
  "tauri",
  "tauri-build",
  "tauri-plugin-log",

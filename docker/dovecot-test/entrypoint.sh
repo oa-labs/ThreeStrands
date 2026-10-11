@@ -47,5 +47,14 @@ done
 
 /usr/local/bin/seed.sh || echo "[entrypoint] seed.sh reported a non-fatal issue; continuing"
 
+# Start the tiny SMTP sink (Phase 4 submission live tests). It shares the IMAP
+# self-signed cert, so the client pins ONE fingerprint for both protocols. It
+# runs in the background next to dovecot; tini reaps it on stop. A failure here
+# must not stop dovecot, so it is best-effort.
+mkdir -p /srv/smtp-sink/received
+chown -R 5000:5000 /srv/smtp-sink 2>/dev/null || true
+echo "[entrypoint] starting SMTP sink (implicit 1465 / STARTTLS 1587)"
+python3 /usr/local/bin/smtp-sink.py &
+
 echo "[entrypoint] dovecot ready; running in foreground"
 wait "$DOVECOT_PID"

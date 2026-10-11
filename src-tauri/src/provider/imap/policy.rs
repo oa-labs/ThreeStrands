@@ -680,6 +680,93 @@ pub fn check_flags_per_command(count: usize) -> Result<usize, ProviderError> {
     Ok(count)
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4 run 1: SMTP submission limits
+// ---------------------------------------------------------------------------
+//
+// Every numeric limit the SMTP submission client (`smtp.rs`) enforces, in this
+// one place, following the "never silently clamp" rule above: a value over a
+// limit is a typed, PERMANENT error and nothing is sent — never a truncation.
+//
+// The three TIMEOUTS exist because mail-send's default is 3600s (far too long
+// for an interactive send) and because the delivery-safety model turns on the
+// difference between "no final reply yet" and "a reply arrived": a short,
+// explicit final-reply timeout is what lets a hung server map to `Unknown`
+// quickly rather than hanging the UI. They are plain `Duration` data; the
+// client makes them injectable in tests by taking an override struct, so the
+// "hung final reply => Unknown" and "hung before 354 => NotDelivered" cases
+// run under paused tokio time without waiting these out.
+//
+// The two gating COUNT/LENGTH limits (address length, recipients per message)
+// each have below/exact/above tests, exactly like the ingest gates above.
+
+use std::time::Duration;
+
+/// How long the TCP connect + TLS handshake + EHLO + AUTH ("prepare") phase
+/// may take overall. A failure anywhere here is a DEFINITE non-delivery, so a
+/// generous-but-bounded ceiling is safe: nothing has been sent. Matches the
+/// setup dry-run's own 15s probe ceiling so both paths feel the same.
+pub const SMTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// How long any single envelope command (MAIL FROM, each RCPT TO, the DATA
+/// request itself) may wait for its reply. Short, because each is one round
+/// trip on an already-open connection; a stall here, before the server's
+/// `354`, is a DEFINITE non-delivery.
+pub const SMTP_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long to wait for the server's FINAL reply after the message body and
+/// its terminating `.` have been written. This is the one timeout whose expiry
+/// is classified as `Unknown`, not a failure: the server may already hold the
+/// whole message, so we must not claim non-delivery. Kept longer than a
+/// command timeout because a server may do real queue work (virus/spam scan)
+/// before its `250`.
+pub const SMTP_FINAL_REPLY_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Longest server reply TEXT (the human-readable part after the code) we keep
+/// to surface to the user, in bytes. A hostile or buggy server could return a
+/// multi-megabyte reply line; the reply reader already caps the raw line, and
+/// this bounds what we RETAIN after sanitising control characters out, so the
+/// preserved "553 ... names the identity" message cannot bloat an error or a
+/// log. 512 bytes is far more than any real SMTP reply text.
+pub const MAX_SMTP_REPLY_TEXT_BYTES: usize = 512;
+
+/// Longest envelope address (the `local@domain` inside the angle brackets),
+/// in bytes. RFC 5321 §4.5.3.1.3 caps the forward/reverse path at 256 octets
+/// INCLUDING the angle brackets, so the address itself is at most 254. An
+/// address over this is rejected before any network I/O. Over the limit is a
+/// typed PERMANENT rejection — zero bytes reach the wire.
+pub const MAX_SMTP_ADDRESS_BYTES: usize = 254;
+
+/// Most recipients one message may carry. ThreeStrands composes ordinary mail;
+/// a hundred recipients is already far past any interactive send and a
+/// thousand would be abuse. 100 bounds the RCPT round trips while never
+/// getting in a real user's way. Over the limit is a typed PERMANENT rejection
+/// before any network I/O — never a silent drop of the overflow recipients.
+pub const MAX_SMTP_RECIPIENTS: usize = 100;
+
+/// Reject an envelope address whose byte length exceeds
+/// [`MAX_SMTP_ADDRESS_BYTES`]. Returns the length unchanged when within the
+/// limit (including exactly at it), so the caller reads "ok, this long".
+pub fn check_smtp_address_len(len: usize) -> Result<usize, ProviderError> {
+    if len > MAX_SMTP_ADDRESS_BYTES {
+        return Err(ProviderError::PermanentClientRejection(format!(
+            "email address is {len} bytes, over the {MAX_SMTP_ADDRESS_BYTES}-byte (RFC 5321) limit"
+        )));
+    }
+    Ok(len)
+}
+
+/// Reject a recipient count over [`MAX_SMTP_RECIPIENTS`]. Returns the count
+/// unchanged when within the limit (including exactly at it).
+pub fn check_smtp_recipient_count(count: usize) -> Result<usize, ProviderError> {
+    if count > MAX_SMTP_RECIPIENTS {
+        return Err(ProviderError::PermanentClientRejection(format!(
+            "{count} recipients, over the {MAX_SMTP_RECIPIENTS}-recipient per-message limit"
+        )));
+    }
+    Ok(count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1267,5 +1354,56 @@ mod tests {
         // a fetch split a large UID set identically.
         assert_eq!(MAX_UIDS_PER_COMMAND, UID_BATCH_SIZE);
         assert!(MAX_UIDS_PER_COMMAND > 0);
+    }
+
+    // --- Phase 4 run 1: SMTP submission limits -----------------------------
+
+    #[test]
+    fn smtp_address_length_gates_below_at_and_above_the_limit() {
+        // Below and exactly at the limit are accepted and echo the length.
+        assert_eq!(check_smtp_address_len(0).unwrap(), 0);
+        assert_eq!(
+            check_smtp_address_len(MAX_SMTP_ADDRESS_BYTES - 1).unwrap(),
+            MAX_SMTP_ADDRESS_BYTES - 1
+        );
+        assert_eq!(
+            check_smtp_address_len(MAX_SMTP_ADDRESS_BYTES).unwrap(),
+            MAX_SMTP_ADDRESS_BYTES
+        );
+        // One over is a PERMANENT rejection, never a silent clamp.
+        assert!(matches!(
+            check_smtp_address_len(MAX_SMTP_ADDRESS_BYTES + 1).unwrap_err(),
+            ProviderError::PermanentClientRejection(_)
+        ));
+    }
+
+    #[test]
+    fn smtp_recipient_count_gates_below_at_and_above_the_limit() {
+        assert_eq!(check_smtp_recipient_count(1).unwrap(), 1);
+        assert_eq!(
+            check_smtp_recipient_count(MAX_SMTP_RECIPIENTS - 1).unwrap(),
+            MAX_SMTP_RECIPIENTS - 1
+        );
+        assert_eq!(
+            check_smtp_recipient_count(MAX_SMTP_RECIPIENTS).unwrap(),
+            MAX_SMTP_RECIPIENTS
+        );
+        assert!(matches!(
+            check_smtp_recipient_count(MAX_SMTP_RECIPIENTS + 1).unwrap_err(),
+            ProviderError::PermanentClientRejection(_)
+        ));
+    }
+
+    #[test]
+    fn smtp_numeric_limits_are_the_documented_bounds() {
+        // The RFC 5321 path cap is 254 for the address inside the brackets.
+        assert_eq!(MAX_SMTP_ADDRESS_BYTES, 254);
+        assert_eq!(MAX_SMTP_RECIPIENTS, 100);
+        assert_eq!(MAX_SMTP_REPLY_TEXT_BYTES, 512);
+        // The final-reply timeout is the one that maps to Unknown, so it must
+        // be the longest of the three; connect is bounded and short.
+        assert!(SMTP_FINAL_REPLY_TIMEOUT >= SMTP_COMMAND_TIMEOUT);
+        assert!(SMTP_CONNECT_TIMEOUT.as_secs() > 0);
+        assert!(SMTP_COMMAND_TIMEOUT.as_secs() > 0);
     }
 }

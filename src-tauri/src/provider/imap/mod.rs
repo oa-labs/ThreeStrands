@@ -50,6 +50,7 @@ mod rfc822;
 mod session;
 mod settings;
 mod setup;
+mod smtp;
 mod threading;
 mod tls;
 mod write;
@@ -103,7 +104,20 @@ pub use mailboxes::{
     MappingSource, RoleProposal,
 };
 pub use setup::{
-    plain_language, probe_imap_certificate, probe_smtp_certificate, test_imap, test_smtp, TestReport,
+    plain_language, probe_imap_certificate, test_imap, TestReport,
+};
+// The SMTP dry-run surface moved to `smtp` in Phase 4 run 1; re-export it from
+// the same module path so the tauri setup commands that call
+// `imap::test_smtp` / `imap::probe_smtp_certificate` are unchanged.
+#[allow(unused_imports)]
+pub use smtp::{probe_smtp_certificate, test_smtp};
+// Phase 4 run 1 submission client. No caller until a later run wires it into
+// MailSend/the UI, so the re-exports are forward-looking exactly like the
+// connection-layer ones above; the allow is removed with that first consumer.
+#[allow(unused_imports)]
+pub use smtp::{
+    frame_message, validate_envelope_address, Phase, SmtpCredentials, SmtpEndpoint, SmtpFailure,
+    SmtpOutcome, SmtpReply, SmtpSession, SmtpTimeouts, SmtpUnknown,
 };
 pub use setup::connect_with_settings;
 // Named only as `connect_with_settings`'s return type, so the re-export itself
@@ -114,7 +128,9 @@ pub use connection::ConnectedSession;
 // the frontend form reaches through commands added as the UI fills in; no
 // caller yet, so the allow is scoped and removed with it.
 #[allow(unused_imports)]
-pub use setup::{default_imap_port, default_smtp_port};
+pub use setup::default_imap_port;
+#[allow(unused_imports)]
+pub use smtp::default_smtp_port;
 #[allow(unused_imports)]
 pub use tls::CertificateInfo;
 

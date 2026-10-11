@@ -24,6 +24,11 @@ fi
 IMAGE=threestrands/dovecot-test:latest
 NAME=threestrands-dovecot-test
 PORT="${DOVECOT_TEST_PORT:-11143}"
+# Phase 4 SMTP submission live tests reach the tiny sink on these host ports,
+# mapped to the container's 1465 (implicit TLS) / 1587 (STARTTLS). Point the
+# Rust live test at the STARTTLS one with THREESTRANDS_SMTP_SINK_PORT.
+SMTP_IMPLICIT_PORT="${DOVECOT_TEST_SMTP_IMPLICIT_PORT:-11465}"
+SMTP_STARTTLS_PORT="${DOVECOT_TEST_SMTP_STARTTLS_PORT:-11587}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CTX="$HERE/docker/dovecot-test"
 
@@ -41,6 +46,8 @@ up() {
   "$DOCKER" run -d --rm \
     --name "$NAME" \
     -p "127.0.0.1:$PORT:1143" \
+    -p "127.0.0.1:$SMTP_IMPLICIT_PORT:1465" \
+    -p "127.0.0.1:$SMTP_STARTTLS_PORT:1587" \
     "$IMAGE" >/dev/null
   # Wait until dovecot answers (max ~30s). `doveadm who` succeeds once the
   # server is up; nc is not shipped in the image.
@@ -65,7 +72,8 @@ down() {
 
 status() {
   if "$DOCKER" ps --format '{{.Names}} {{.Ports}}' | grep -q "$NAME"; then
-    echo "[dovecot-test] RUNNING  host 127.0.0.1:$PORT"
+    echo "[dovecot-test] RUNNING  host 127.0.0.1:$PORT (IMAP STARTTLS)"
+    echo "[dovecot-test]          SMTP sink 127.0.0.1:$SMTP_IMPLICIT_PORT (implicit TLS), 127.0.0.1:$SMTP_STARTTLS_PORT (STARTTLS)"
   else
     echo "[dovecot-test] stopped"
   fi

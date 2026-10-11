@@ -50,9 +50,9 @@ advertises and how it changes the design.
 | --- | --- | --- |
 | IMAP client | [`async-imap`](https://crates.io/crates/async-imap) 0.12 with `default-features = false, features = ["runtime-tokio"]`, behind an internal `ImapSession` trait | It is actively maintained (0.12.0 released 2026-09-30) and widely used: Delta Chat runs it against every kind of server. It has calls for everything the primary account offers: `idle()`, `uid_mv`, `uid_expunge`, `append`, `id()`, plus `select_condstore` for later. It wraps any `AsyncRead + AsyncWrite` stream, so STARTTLS and certificate pinning stay in our own rustls code. Its default runtime is async-std, so the feature flags matter. |
 | IMAP fallback | [`imap-codec`](https://crates.io/crates/imap-codec) 1.0 / [`imap-next`](https://crates.io/crates/imap-next) | The most complete typed model of the protocol, including `CONDSTORE`/`QRESYNC`/`VANISHED`. `imap-next` is low-level, so we would write the command flow ourselves. It's the replacement if `async-imap` turns out to be inadequate. The `ImapSession` trait keeps that swap local. |
-| SMTP | [`lettre`](https://crates.io/crates/lettre) 0.11 (tokio, rustls) | Supports implicit TLS and STARTTLS, `AUTH PLAIN/LOGIN`, and XOAUTH2 for later. It doesn't accept a custom certificate verifier. For a pinned certificate, use `CertificateStore::None` plus `add_root_certificate(pinned)`, which makes that one certificate the only trusted root. Never use `dangerous_accept_invalid_certs`. |
+| SMTP | [`mail-send`](https://crates.io/crates/mail-send) 0.6.2 (Stalwart Labs; pinned `=0.6.2`, `default-features = false`) | **Supersedes the earlier `lettre` choice.** `lettre` cannot take our custom pinning `ServerCertVerifier` (it only offers a root-store route), which would force a second TLS trust path to reconcile with IMAP's. `mail-send` exposes its `tls_connector` field publicly, so we inject the SAME ring-backed rustls `ClientConfig` + `PinnedCertVerifier` the IMAP side uses, for both implicit TLS and STARTTLS, and a wrong pin fails in the handshake before any AUTH. It pulls no second rustls, no aws-lc and no second mail-builder. We drive the submission phases with its low-level API (`mail_from`/`rcpt_to`/`cmd`/`read`) rather than its one-shot `send()`, which merges the body write and the final reply and so cannot distinguish definite non-delivery from an unknown result — see [Sending](#sending). We validate envelope addresses and frame the body ourselves (mail-send does neither safely). |
 | MIME | `mail-parser` / `mail-builder` (already dependencies) | Reuse. Raw `BODY.PEEK[]` bytes are parsed into `RawMessage`. |
-| TLS | rustls 0.23 with the `ring` provider (already a dependency), with certificates always verified | The same stack `reqwest` already uses. A certificate that doesn't chain to a trusted root is accepted only if it matches the certificate the user pinned at setup (see [Account setup](#account-setup)). On IMAP that's a custom `ServerCertVerifier` comparing the SHA-256 fingerprint. On SMTP it's lettre's root-store route above. Verification is never switched off. |
+| TLS | rustls 0.23 with the `ring` provider (already a dependency), with certificates always verified | The same stack `reqwest` already uses. A certificate that doesn't chain to a trusted root is accepted only if it matches the certificate the user pinned at setup (see [Account setup](#account-setup)). On IMAP AND SMTP alike it's the custom `PinnedCertVerifier` comparing the SHA-256 fingerprint, injected into mail-send's `tls_connector`. Verification is never switched off. |
 | DNS SRV | `hickory-resolver` | Only needed for RFC 6186 autodiscovery. |
 
 Avoid the blocking [`imap`](https://crates.io/crates/imap) crate (2.4.1, last
@@ -78,10 +78,10 @@ profile first (a Dovecot container restricted to
 custom keywords), then against Bridge itself. Check that:
 - STARTTLS works on a non-standard port over a stream we upgrade ourselves,
   with a fingerprint-pinning `ServerCertVerifier`;
-- lettre with `CertificateStore::None` plus the pinned certificate connects to
-  a self-signed SMTP server whose certificate names the host only in its CN, or
-  only in an IP SAN, for `127.0.0.1`. If it can't, that changes the SMTP pinning
-  design;
+- `mail-send` with our pinned `tls_connector` (NOT its root-store route)
+  connects to a self-signed SMTP server whose certificate names the host only
+  in its CN, or only in an IP SAN, for `127.0.0.1`. (Confirmed by the Phase 4
+  spike, 14/15 checks; the SMTP row now reflects this decision.)
 - `IDLE` survives the 25-minute re-issue and reconnects cleanly after the
   server drops the connection;
 - `UID MOVE` and `APPEND` sent through `run_command` return `COPYUID` and
@@ -505,14 +505,28 @@ current locations:
 
 1. **Choose the From address** from the account's identities (see
    [Identities](#identities)).
-2. **Submit over SMTP** with `lettre`:
+2. **Submit over SMTP** with `mail-send` (driven at the low level; see the
+   stack table's SMTP row):
    - Implicit TLS on port 465 is preferred (RFC 8314). STARTTLS on port 587,
      or any port the user sets (Bridge's default is 1025), is accepted but
-     required; there is no plaintext fallback.
+     required; there is no plaintext fallback. With STARTTLS, a server that
+     does not advertise the extension fails before AUTH — credentials never
+     cross the wire in the clear.
    - The SMTP connection uses the same certificate rules, including a pinned
-     fingerprint.
+     fingerprint (the IMAP `PinnedCertVerifier` injected into mail-send's
+     `tls_connector`). A wrong pin fails in the TLS handshake before AUTH.
    - Same username and password as IMAP unless the user sets separate SMTP
      credentials.
+   - **Delivery is classified by phase** into one of three outcomes, because
+     the receipt cannot be checked against the server (only we would have
+     saved a Sent copy): `Accepted` (a 2xx final reply), `NotDelivered` (a
+     definite failure — connect/TLS/pin/AUTH, a 5xx/4xx on the envelope, any
+     rejected recipient, or a 4xx/5xx final reply), or `Unknown` (any
+     drop/timeout from the first body byte through the wait for the final
+     reply). An `Unknown` result is the "may have been sent: check before
+     resending" state and is NEVER resent automatically. Envelope addresses
+     are validated and the body is CRLF-normalised and dot-stuffed before any
+     bytes reach the wire.
 3. **Save the sent copy** with `APPEND` to `\Sent`, flagged `\Seen`. With
    `UIDPLUS`, `APPENDUID` records the location immediately.
 4. **Avoid duplicate sent copies:** some hosts save submitted mail to Sent
