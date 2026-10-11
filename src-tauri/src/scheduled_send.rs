@@ -334,7 +334,8 @@ impl Database {
         .map_err(|e| e.to_string())
     }
 
-    pub fn overdue_schedules(&self, at: i64, resumed: bool) -> Result<(), String> {
+    #[cfg(test)]
+    fn overdue_schedules(&self, at: i64, resumed: bool) -> Result<(), String> {
         // Recovery changes only local rows; only the owner may publish them.
         self.overdue_schedules_owned(at, resumed, "")
     }
