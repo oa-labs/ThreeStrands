@@ -164,6 +164,18 @@ pub trait ImapSession: Send {
 
     /// LOGOUT and close the session.
     async fn logout(&mut self) -> Result<(), ProviderError>;
+
+    /// Re-borrow this session as the Phase 3 WRITE surface
+    /// ([`ImapWriteSession`](super::write::ImapWriteSession)), when it
+    /// implements it. The session source hands callers a `Box<dyn
+    /// ImapSession>`, which cannot be downcast to the write trait object, so a
+    /// writer (run 2's flag mutations) upcasts through this method instead.
+    /// The default is `None` for a read-only session (the test stub); the two
+    /// real sessions — `AsyncImapSession` and `LeasedSession` — override it to
+    /// return `Some(self)`.
+    fn as_write_session(&mut self) -> Option<&mut dyn super::write::ImapWriteSession> {
+        None
+    }
 }
 
 /// The `async-imap`-backed [`ImapSession`]. Wraps an authenticated
@@ -357,9 +369,13 @@ where
     async fn logout(&mut self) -> Result<(), ProviderError> {
         self.session.logout().await.map_err(|e| map_imap_error(&e))
     }
-}
 
-/// The outcome of a raw write command that may carry a UIDPLUS `COPYUID`:
+    fn as_write_session(&mut self) -> Option<&mut dyn super::write::ImapWriteSession> {
+        // `AsyncImapSession<T>` implements `ImapWriteSession` below, so it can
+        // be re-borrowed as the write surface.
+        Some(self)
+    }
+}
 /// whether it completed OK, and the first typed `CopyUid` seen (from either an
 /// untagged `* OK [COPYUID ...]` — MOVE — or the tagged completion — COPY).
 struct RawWriteOutcome {

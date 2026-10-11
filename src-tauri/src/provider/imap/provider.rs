@@ -150,6 +150,11 @@ impl ImapSession for LeasedSession {
     async fn logout(&mut self) -> ProviderResult<()> {
         self.session.logout().await
     }
+    fn as_write_session(&mut self) -> Option<&mut dyn super::write::ImapWriteSession> {
+        // `LeasedSession` implements `ImapWriteSession` below (run 1), so a
+        // writer can re-borrow it as the write surface.
+        Some(self)
+    }
 }
 
 #[async_trait]
@@ -1664,32 +1669,375 @@ impl MailFetch for ImapProvider {
     }
 }
 
-/// Mutations are not supported until phase 3; every entry point rejects with a
-/// clear, PERMANENT message so the mutation queue rolls the local change back
-/// to `failed` rather than retrying forever (see the engine's
-/// `deliver_mutations`: `InvalidOperation` is neither retryable nor a reauth,
-/// so it lands in the permanent-failure branch).
+/// The remaining unimplemented mutations (archive/trash/spam MOVEs and the
+/// label create/update/delete methods) reject with a clear, PERMANENT message
+/// so the mutation queue rolls the local change back to `failed` rather than
+/// retrying forever (see the engine's `deliver_mutations`: `InvalidOperation`
+/// is neither retryable nor a reauth, so it lands in the permanent-failure
+/// branch). Phase 3 run 2 implements the `UNREAD`/`STARRED` flag changes; the
+/// MOVE and label-CRUD paths land in runs 3-4.
 const MUTATE_UNSUPPORTED: &str =
-    "IMAP mutations (archive, star, label, move) are not supported until phase 3";
+    "IMAP label create/update/delete is not supported until phase 3 run 4";
+
+/// The desired end-state of one message flag after a mutation request is
+/// reduced: the flag must end up PRESENT, or ABSENT, on every synced copy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DesiredFlag {
+    /// The flag must be set on the message (e.g. `STARRED` -> `\Flagged`
+    /// present; `remove UNREAD` -> `\Seen` present).
+    Present,
+    /// The flag must be cleared from the message (e.g. `add UNREAD` ->
+    /// `\Seen` absent; `unstar` -> `\Flagged` absent).
+    Absent,
+}
+
+/// The reduced plan for a flag mutation: the net desired state of `\Seen`
+/// and/or `\Flagged`. Only the flags the request actually names are `Some`;
+/// a flag the request did not mention is left untouched everywhere.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct FlagPlan {
+    /// Desired `\Seen` state, derived from `UNREAD` (add UNREAD = `\Seen`
+    /// absent; remove UNREAD = `\Seen` present). `None` if UNREAD was not in
+    /// the request.
+    seen: Option<DesiredFlag>,
+    /// Desired `\Flagged` state, derived from `STARRED` (add STARRED =
+    /// `\Flagged` present; remove STARRED = `\Flagged` absent). `None` if
+    /// STARRED was not in the request.
+    flagged: Option<DesiredFlag>,
+}
+
+impl FlagPlan {
+    /// Whether this plan asks for no change at all (neither flag named).
+    fn is_empty(self) -> bool {
+        self.seen.is_none() && self.flagged.is_none()
+    }
+
+    /// Whether a stored flag list ALREADY satisfies every part of this plan,
+    /// so the location needs no write command (idempotency / no-op).
+    fn already_satisfied_by(self, flags: &[String]) -> bool {
+        let has = |flag: &str| flags.iter().any(|f| f.eq_ignore_ascii_case(flag));
+        let ok = |desired: Option<DesiredFlag>, present: bool| match desired {
+            None => true,
+            Some(DesiredFlag::Present) => present,
+            Some(DesiredFlag::Absent) => !present,
+        };
+        ok(self.seen, has("\\Seen")) && ok(self.flagged, has("\\Flagged"))
+    }
+
+    /// The stored flag list this plan would leave behind on a location that
+    /// started from `flags`: the same list with `\Seen`/`\Flagged` forced to
+    /// the desired presence (case-insensitively), every other flag kept. Used
+    /// to update `flags_json` locally after the verified store, so the next
+    /// sync sweep sees no difference and does not flap.
+    fn apply_to(self, flags: &[String]) -> Vec<String> {
+        let mut out: Vec<String> = flags.to_vec();
+        let force = |out: &mut Vec<String>, flag: &str, desired: Option<DesiredFlag>| {
+            match desired {
+                None => {}
+                Some(DesiredFlag::Present) => {
+                    if !out.iter().any(|f| f.eq_ignore_ascii_case(flag)) {
+                        out.push(flag.to_string());
+                    }
+                }
+                Some(DesiredFlag::Absent) => {
+                    out.retain(|f| !f.eq_ignore_ascii_case(flag));
+                }
+            }
+        };
+        force(&mut out, "\\Seen", self.seen);
+        force(&mut out, "\\Flagged", self.flagged);
+        out
+    }
+}
+
+/// Reduce a `(add, remove)` request to a [`FlagPlan`], rejecting anything the
+/// flag path does not support. Only `UNREAD` and `STARRED` are supported here;
+/// every other label id (INBOX, TRASH, SPAM, SENT, `lf:`, `folder:`, or an
+/// unknown id) is a permanent `InvalidOperation` naming it, so the engine
+/// rolls the change back rather than retrying forever. A label appearing in
+/// BOTH `add` and `remove` is contradictory and rejected (never guessed).
+fn plan_flag_mutation(add: &[String], remove: &[String]) -> ProviderResult<FlagPlan> {
+    // Every id must be a supported system flag label.
+    let check_supported = |ids: &[String]| -> ProviderResult<()> {
+        for id in ids {
+            if id != "UNREAD" && id != "STARRED" {
+                return Err(ProviderError::InvalidOperation(format!(
+                    "label {id:?} is not a flag the IMAP provider can set/clear directly \
+                     (only UNREAD and STARRED are); refusing permanently"
+                )));
+            }
+        }
+        Ok(())
+    };
+    check_supported(add)?;
+    check_supported(remove)?;
+
+    // No label may appear in both lists (contradictory; reject, do not guess).
+    for id in add {
+        if remove.iter().any(|r| r == id) {
+            return Err(ProviderError::InvalidOperation(format!(
+                "label {id:?} appears in both the add and remove lists; \
+                 the request is contradictory and is refused"
+            )));
+        }
+    }
+
+    let adds = |label: &str| add.iter().any(|l| l == label);
+    let removes = |label: &str| remove.iter().any(|l| l == label);
+
+    // UNREAD present means the message LACKS \Seen, so:
+    //   add UNREAD    -> \Seen must be ABSENT
+    //   remove UNREAD -> \Seen must be PRESENT
+    let seen = if adds("UNREAD") {
+        Some(DesiredFlag::Absent)
+    } else if removes("UNREAD") {
+        Some(DesiredFlag::Present)
+    } else {
+        None
+    };
+    // STARRED == \Flagged, so:
+    //   add STARRED    -> \Flagged PRESENT
+    //   remove STARRED -> \Flagged ABSENT
+    let flagged = if adds("STARRED") {
+        Some(DesiredFlag::Present)
+    } else if removes("STARRED") {
+        Some(DesiredFlag::Absent)
+    } else {
+        None
+    };
+
+    Ok(FlagPlan { seen, flagged })
+}
+
+impl ImapProvider {
+    /// Apply an `UNREAD`/`STARRED` flag change to a set of messages, at EVERY
+    /// synced location of each message, idempotently and with partial-failure
+    /// honesty. The shared implementation behind both `modify_thread`
+    /// (thread-level, resolved to its messages) and `modify_messages`
+    /// (message-level).
+    ///
+    /// Steps (plan-then-apply; nothing is sent until the whole request
+    /// validates):
+    /// 1. Reduce `(add, remove)` to a net [`FlagPlan`] via
+    ///    [`plan_flag_mutation`] — reject an unsupported label id or a label
+    ///    in both lists with a permanent `InvalidOperation`, before any
+    ///    command. A request that reduces to no flag at all is `Ok(())`.
+    /// 2. For every message, read its stored locations. A message with NO
+    ///    location at all (an emptied/grace thread) is a permanent
+    ///    `InvalidOperation` naming it — never a silent success. Skip any
+    ///    location whose stored flags already satisfy the plan (idempotency;
+    ///    avoids a pointless command).
+    /// 3. Group the remaining locations by `(mailbox, uidvalidity)`. For each
+    ///    mailbox, `select_for_write` (guards UIDVALIDITY; a stale mailbox is a
+    ///    named transient error and NOTHING is sent), then run one
+    ///    `verified_store` per store op (`+/-\Seen`, `+/-\Flagged`) using
+    ///    run 1's capability-gated verified store — so a server that cannot
+    ///    keep a flag fails cleanly with the permanent error naming it.
+    /// 4. After each mailbox's ops verify, update that mailbox's locations'
+    ///    stored `flags_json` so the next sync sweep sees no difference and
+    ///    does NOT journal a spurious change. One session is reused for the
+    ///    whole mutation (respecting the 2-connection cap — the command slot).
+    /// 5. Partial failure: mailboxes are processed one at a time, and a
+    ///    mailbox whose ops succeeded has its local flags already persisted; a
+    ///    later mailbox's error is returned (transient stays transient,
+    ///    permanent stays permanent), so a retry touches only the failed one.
+    ///
+    /// Does NOT bump the sync generation or journal anything: a flag the next
+    /// sweep would observe anyway is kept consistent locally (step 4), and the
+    /// engine already applied the optimistic local change that drove this
+    /// mutation — the provider only makes the server and the local location
+    /// rows agree. Journaling here would re-report a change the engine made.
+    async fn apply_flag_mutation(
+        &self,
+        message_ids: &[String],
+        add: &[String],
+        remove: &[String],
+    ) -> ProviderResult<()> {
+        let plan = plan_flag_mutation(add, remove)?;
+        if plan.is_empty() {
+            return Ok(()); // Nothing to do (no supported flag named).
+        }
+
+        // Gather every location that still needs a write, grouped by mailbox,
+        // validating messages up front (plan-then-apply). A message with no
+        // location at all fails the whole request permanently.
+        //
+        // Keyed by mailbox name; each value carries the mailbox's UIDVALIDITY
+        // (taken from its location rows) and the locations whose stored flags
+        // do NOT yet satisfy the plan.
+        let mut by_mailbox: std::collections::BTreeMap<String, (i64, Vec<ImapLocation>)> =
+            std::collections::BTreeMap::new();
+        for message_id in message_ids {
+            let locations = self
+                .store
+                .locations_for_message(message_id)
+                .map_err(db_err)?;
+            if locations.is_empty() {
+                return Err(ProviderError::InvalidOperation(format!(
+                    "message {message_id:?} has no synced location to modify \
+                     (it may have been expunged or moved to an unsynced mailbox); \
+                     refusing the flag change permanently"
+                )));
+            }
+            for location in locations {
+                let flags: Vec<String> =
+                    serde_json::from_str(&location.flags_json).unwrap_or_default();
+                if plan.already_satisfied_by(&flags) {
+                    continue; // Idempotent: this copy already matches.
+                }
+                by_mailbox
+                    .entry(location.mailbox.clone())
+                    .or_insert_with(|| (location.uidvalidity, Vec::new()))
+                    .1
+                    .push(location);
+            }
+        }
+
+        // Everything is already satisfied: send no command at all (idempotent
+        // no-op), as the brief requires.
+        if by_mailbox.is_empty() {
+            return Ok(());
+        }
+
+        // Reuse ONE session for the whole mutation (the command slot; the
+        // 2-connection cap is respected because we lease exactly one).
+        let mut session = self.open_session().await?;
+        let result = self.apply_flag_mutation_on(session.as_mut(), &plan, by_mailbox).await;
+        let _ = session.logout().await;
+        result
+    }
+
+    /// The flag mutation against an already-open session, factored out so the
+    /// session is logged out exactly once regardless of outcome. Processes one
+    /// mailbox at a time; a mailbox that succeeds persists its locations' new
+    /// flags before the next is attempted, so a partial failure leaves the
+    /// succeeded mailboxes consistent and a retry re-derives only the rest.
+    async fn apply_flag_mutation_on(
+        &self,
+        session: &mut dyn ImapSession,
+        plan: &FlagPlan,
+        by_mailbox: std::collections::BTreeMap<String, (i64, Vec<ImapLocation>)>,
+    ) -> ProviderResult<()> {
+        for (mailbox, (uidvalidity, locations)) in by_mailbox {
+            // The write session must also expose the write trait; the live
+            // LeasedSession and the test AsyncImapSession both implement it.
+            // Guard UIDVALIDITY (a stale mailbox is transient; nothing sent).
+            let write_session = as_write_session(session)?;
+            let ctx = super::write::select_for_write(write_session, &self.store, &mailbox, uidvalidity as u32)
+                .await?;
+
+            // The UID set for this mailbox (every location that needs a write;
+            // one store op applies to all of them).
+            let uids: Vec<u32> = locations.iter().map(|l| l.uid as u32).collect();
+
+            // One verified store per flag op the plan names. `\Seen` and
+            // `\Flagged` are independent ops; each is a capability-gated,
+            // re-fetched verified store (run 1), so a server that silently
+            // ignores or cannot keep a flag fails with the permanent error
+            // naming the flag + mailbox.
+            if let Some(desired) = plan.seen {
+                run_store(write_session, &ctx, &uids, "\\Seen", desired).await?;
+            }
+            if let Some(desired) = plan.flagged {
+                run_store(write_session, &ctx, &uids, "\\Flagged", desired).await?;
+            }
+
+            // This mailbox's ops all verified: update each location's stored
+            // flags so the next sweep sees no difference (no flap, no spurious
+            // journal). Done BEFORE the next mailbox, so a later failure leaves
+            // this mailbox's local state already consistent (partial-failure
+            // honesty).
+            for location in &locations {
+                let flags: Vec<String> =
+                    serde_json::from_str(&location.flags_json).unwrap_or_default();
+                let updated = plan.apply_to(&flags);
+                let new_json =
+                    serde_json::to_string(&updated).unwrap_or_else(|_| location.flags_json.clone());
+                self.store
+                    .upsert_location(&ImapLocation {
+                        flags_json: new_json,
+                        ..location.clone()
+                    })
+                    .map_err(db_err)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Run one verified store that forces `flag` to `desired` on a UID set. An
+/// `Absent` desired is a `-FLAGS` remove; a `Present` is a `+FLAGS` add. The
+/// flag is validated to its wire spelling first (it is a fixed system flag
+/// here, so this never rejects), then handed to run 1's capability-gated
+/// verified store.
+async fn run_store(
+    session: &mut dyn super::write::ImapWriteSession,
+    ctx: &super::write::WriteContext,
+    uids: &[u32],
+    flag: &str,
+    desired: DesiredFlag,
+) -> ProviderResult<()> {
+    let wire = super::write::validate_flag(flag)?;
+    let op = match desired {
+        DesiredFlag::Present => super::write::StoreOp::Add,
+        DesiredFlag::Absent => super::write::StoreOp::Remove,
+    };
+    super::write::verified_store(session, ctx, uids, op, &[wire]).await
+}
+
+/// Narrow a `&mut dyn ImapSession` to the write trait. Every `ImapSession`
+/// the provider opens (the live `LeasedSession` and the test
+/// `AsyncImapSession`) also implements `ImapWriteSession` and overrides
+/// `ImapSession::as_write_session` to return `Some(self)`; a read-only session
+/// (the test stub) returns `None`, which here is an internal error — the flag
+/// path is only ever driven over a write-capable session, so `None` means a
+/// programming mistake, surfaced as a non-retryable `Other` rather than a
+/// panic.
+fn as_write_session<'a>(
+    session: &'a mut dyn ImapSession,
+) -> ProviderResult<&'a mut dyn super::write::ImapWriteSession> {
+    session.as_write_session().ok_or_else(|| {
+        ProviderError::Other(
+            "internal error: flag mutation driven over a non-write-capable IMAP session".into(),
+        )
+    })
+}
 
 #[async_trait]
 impl MailMutate for ImapProvider {
     async fn modify_thread(
         &self,
-        _id: &str,
-        _add: &[String],
-        _remove: &[String],
+        id: &str,
+        add: &[String],
+        remove: &[String],
     ) -> ProviderResult<()> {
-        Err(ProviderError::InvalidOperation(MUTATE_UNSUPPORTED.into()))
+        // A thread id may be an alias: resolve it, then act on every message
+        // of the surviving thread. An unknown/emptied thread resolves to no
+        // messages and `apply_flag_mutation` rejects it as a permanent
+        // InvalidOperation naming the thread.
+        let thread_id = self.store.resolve_thread_alias(id).map_err(db_err)?;
+        let message_ids = self.store.messages_in_thread(&thread_id).map_err(db_err)?;
+        if message_ids.is_empty() {
+            return Err(ProviderError::InvalidOperation(format!(
+                "thread {id:?} has no messages to modify (it may have been emptied); \
+                 refusing a flag change permanently"
+            )));
+        }
+        self.apply_flag_mutation(&message_ids, add, remove).await
     }
 
     async fn modify_messages(
         &self,
-        _ids: &[String],
-        _add: &[String],
-        _remove: &[String],
+        ids: &[String],
+        add: &[String],
+        remove: &[String],
     ) -> ProviderResult<()> {
-        Err(ProviderError::InvalidOperation(MUTATE_UNSUPPORTED.into()))
+        if ids.is_empty() {
+            return Err(ProviderError::InvalidOperation(
+                "modify_messages called with no message ids".into(),
+            ));
+        }
+        self.apply_flag_mutation(ids, add, remove).await
     }
 
     async fn list_labels(&self) -> ProviderResult<Vec<Label>> {
@@ -2459,23 +2807,58 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mutations_are_rejected_as_a_permanent_invalid_operation() {
-        // So the mutation queue rolls the local change back to `failed` rather
-        // than retrying forever (see the engine-level regression test in
-        // sync.rs). InvalidOperation is neither retryable nor a reauth.
+    async fn unsupported_mutations_are_rejected_as_a_permanent_invalid_operation() {
+        // Phase 3 run 2 changed the contract: STARRED/UNREAD are now SUPPORTED
+        // flag mutations and no longer rejected blanket. What still fails
+        // permanently is every OTHER label id (a system location, a user
+        // folder, an unknown id) and the label CRUD methods — so the mutation
+        // queue rolls those back to `failed` rather than retrying forever
+        // (InvalidOperation is neither retryable nor a reauth).
         let (provider, _store) = provider_with(Arc::new(Mutex::new(FakeMailbox::new(1))));
+
+        // An unsupported location/label id is still a permanent rejection,
+        // sent through the (supported-label) validation BEFORE any network.
+        for bad in [
+            vec!["INBOX".to_string()],
+            vec!["TRASH".to_string()],
+            vec!["SENT".to_string()],
+            vec!["SPAM".to_string()],
+            vec!["lf:Work".to_string()],
+            vec!["folder:Clients/Acme".to_string()],
+            vec!["kw:anything".to_string()],
+        ] {
+            let err = provider
+                .modify_messages(&["imap:me@example.com:x".into()], &bad, &[])
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, ProviderError::InvalidOperation(_)),
+                "{bad:?} must be a permanent InvalidOperation, got {err:?}"
+            );
+            assert!(!err.retry_mutation());
+            assert!(!err.requires_reauthentication());
+        }
+
+        // A SUPPORTED flag change on a thread that resolves to NO messages
+        // (emptied / unknown) is a permanent InvalidOperation naming the
+        // thread — never a silent success.
         let err = provider
-            .modify_thread("imap:t:1", &["STARRED".into()], &[])
+            .modify_thread("imap:t:gone", &["STARRED".into()], &[])
             .await
             .unwrap_err();
-        assert!(matches!(err, ProviderError::InvalidOperation(_)));
+        assert!(matches!(err, ProviderError::InvalidOperation(_)), "{err:?}");
         assert!(!err.retry_mutation());
-        assert!(!err.requires_reauthentication());
+
         // Sending is likewise unsupported this phase.
         match provider.prepare_delivery().await {
             Err(ProviderError::InvalidOperation(_)) => {}
             other => panic!("expected InvalidOperation, got {:?}", other.err()),
         }
+        // The label CRUD methods remain unsupported (runs 3-4).
+        assert!(matches!(
+            provider.create_label("X").await.unwrap_err(),
+            ProviderError::InvalidOperation(_)
+        ));
         // list_labels returns the system labels including the Slice 5b-1
         // Sent/Spam/Trash roles.
         let labels = provider.list_labels().await.unwrap();
@@ -5992,5 +6375,905 @@ mod tests {
             let folder = listed.iter().find(|l| l.id == "folder:Folders/Projects").unwrap();
             assert_eq!(folder.kind, "folder");
         }
+    }
+}
+
+// ===========================================================================
+// Phase 3 run 2: read/unread + star/unstar flag mutations.
+//
+// These drive `modify_messages` / `modify_thread` through a REAL `ImapProvider`
+// over a REAL `AsyncImapSession` (so async-imap's own command formatting and
+// the `imap-proto` parser run) against a scripted server that understands the
+// WRITE path (SELECT read-write + PERMANENTFLAGS + UIDVALIDITY, UID STORE, the
+// verify UID FETCH FLAGS) AND the READ path (EXAMINE, UID SEARCH, identity +
+// body + flags FETCH), so a mutation and a following sync sweep run against the
+// SAME shared server state. The server shares its mailbox state by Arc<Mutex>,
+// so a STORE on the live connection is visible to the next sweep — which is how
+// "the local flags_json agrees and a following sweep sees no change" is proven.
+// No network, no openssl / /dev/tcp.
+// ===========================================================================
+#[cfg(test)]
+mod mutate_tests {
+    use super::*;
+    use crate::db::Database;
+    use crate::provider::MailSync;
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream};
+
+    /// One message on the fake server: its UID, flags and raw bytes.
+    #[derive(Clone)]
+    struct MutMessage {
+        uid: u32,
+        flags: Vec<String>,
+        raw: String,
+    }
+
+    /// One mailbox on the fake server.
+    #[derive(Clone)]
+    struct MutFolder {
+        uidvalidity: u32,
+        uidnext: u32,
+        permanent_flags: Vec<String>,
+        /// SELECT answers `NO` (an unselectable / vanished mailbox).
+        select_fails: bool,
+        /// SELECT answers a TRANSIENT `NO [INUSE]` (a busy mailbox the engine
+        /// retries), used to exercise the partial-failure retry path.
+        select_busy: bool,
+        /// SELECT answers `OK [READ-ONLY]` (async-imap still treats this as a
+        /// successful select).
+        read_only: bool,
+        messages: Vec<MutMessage>,
+    }
+
+    impl MutFolder {
+        fn new(uidvalidity: u32) -> Self {
+            Self {
+                uidvalidity,
+                uidnext: 1,
+                permanent_flags: vec![
+                    "\\Seen".into(),
+                    "\\Flagged".into(),
+                    "\\Deleted".into(),
+                ],
+                select_fails: false,
+                select_busy: false,
+                read_only: false,
+                messages: Vec::new(),
+            }
+        }
+        fn add(&mut self, flags: &[&str], raw: &str) -> u32 {
+            let uid = self.uidnext;
+            self.uidnext += 1;
+            self.messages.push(MutMessage {
+                uid,
+                flags: flags.iter().map(|f| f.to_string()).collect(),
+                raw: raw.to_string(),
+            });
+            uid
+        }
+    }
+
+    /// The shared server state, mutated in place so a STORE on the live
+    /// connection is visible to a later sweep.
+    #[derive(Clone, Default)]
+    struct MutServer {
+        capabilities: Vec<String>,
+        folders: BTreeMap<String, MutFolder>,
+        /// Every write command the server saw (minus LOGIN/LOGOUT), so a test
+        /// can assert what did — and did NOT — reach the wire.
+        commands: Arc<Mutex<Vec<String>>>,
+        /// When set, a STORE that would add/remove this flag is ACKed OK but
+        /// NOT recorded, so the verify FETCH omits/keeps it — the silent
+        /// ignore the verified store must catch.
+        silently_ignore_flag: Option<String>,
+    }
+
+    impl MutServer {
+        fn new() -> Self {
+            Self {
+                capabilities: vec![
+                    "IMAP4REV1".into(),
+                    "MOVE".into(),
+                    "UIDPLUS".into(),
+                ],
+                folders: BTreeMap::new(),
+                commands: Arc::new(Mutex::new(Vec::new())),
+                silently_ignore_flag: None,
+            }
+        }
+        fn folder(&mut self, name: &str, uidvalidity: u32) -> &mut MutFolder {
+            self.folders
+                .entry(name.to_string())
+                .or_insert_with(|| MutFolder::new(uidvalidity))
+        }
+        fn flags_of(&self, mailbox: &str, uid: u32) -> Vec<String> {
+            self.folders
+                .get(mailbox)
+                .and_then(|f| f.messages.iter().find(|m| m.uid == uid))
+                .map(|m| m.flags.clone())
+                .unwrap_or_default()
+        }
+        fn wire(&self) -> Vec<String> {
+            self.commands.lock().unwrap().clone()
+        }
+        fn count_starting(&self, prefix: &str) -> usize {
+            self.wire()
+                .iter()
+                .filter(|c| c.to_ascii_uppercase().starts_with(prefix))
+                .count()
+        }
+    }
+
+    /// Spawn the scripted mutation+read server over a duplex stream, sharing
+    /// the live `Arc<Mutex<MutServer>>` so a STORE is visible to later sweeps.
+    fn spawn(server_state: Arc<Mutex<MutServer>>) -> DuplexStream {
+        let (client, server) = tokio::io::duplex(1 << 20);
+        tokio::spawn(async move {
+            let mut server = BufReader::new(server);
+            server.get_mut().write_all(b"* OK ready\r\n").await.unwrap();
+            let mut selected = String::new();
+            loop {
+                let mut line = String::new();
+                if server.read_line(&mut line).await.unwrap() == 0 {
+                    break;
+                }
+                let line = line.trim_end().to_string();
+                let mut parts = line.splitn(2, ' ');
+                let tag = parts.next().unwrap_or("").to_string();
+                let rest = parts.next().unwrap_or("").to_string();
+                let upper = rest.to_ascii_uppercase();
+
+                // Build the whole response under the lock in a NON-async block,
+                // drop the guard, then write it — a MutexGuard must never be
+                // held across an await (the server task is Send).
+                let (response, done) = {
+                    let mut state = server_state.lock().unwrap();
+                    if !upper.starts_with("LOGIN") && !upper.starts_with("LOGOUT") {
+                        state.commands.lock().unwrap().push(rest.clone());
+                    }
+                    build_response(&mut state, &mut selected, &tag, &rest, &upper)
+                };
+                reply(&mut server, &response).await;
+                if done {
+                    break;
+                }
+            }
+        });
+        client
+    }
+
+    /// Build the server's response to one command (lock held, no await). Returns
+    /// `(response_text, should_disconnect)`.
+    fn build_response(
+        state: &mut MutServer,
+        selected: &mut String,
+        tag: &str,
+        rest: &str,
+        upper: &str,
+    ) -> (String, bool) {
+        if upper.starts_with("LOGIN") {
+            (format!("{tag} OK logged in\r\n"), false)
+        } else if upper.starts_with("CAPABILITY") {
+            let caps = state.capabilities.join(" ");
+            (format!("* CAPABILITY {caps}\r\n{tag} OK done\r\n"), false)
+        } else if upper.starts_with("SELECT") || upper.starts_with("EXAMINE") {
+            let is_select = upper.starts_with("SELECT");
+            let name = select_name(rest, is_select);
+            *selected = name.clone();
+            let Some(folder) = state.folders.get(&name) else {
+                return (format!("{tag} NO [NONEXISTENT] no mailbox\r\n"), false);
+            };
+            if folder.select_fails {
+                return (format!("{tag} NO [NONEXISTENT] select failed\r\n"), false);
+            }
+            if folder.select_busy {
+                // A TRANSIENT failure the engine retries (RFC 5530 [INUSE]).
+                return (format!("{tag} NO [INUSE] mailbox busy\r\n"), false);
+            }
+            let permanent = folder.permanent_flags.join(" ");
+            let rw = if folder.read_only || !is_select {
+                "[READ-ONLY]"
+            } else {
+                "[READ-WRITE]"
+            };
+            (
+                format!(
+                    "* {} EXISTS\r\n\
+                     * OK [PERMANENTFLAGS ({permanent})] limited\r\n\
+                     * OK [UIDVALIDITY {}] valid\r\n\
+                     * OK [UIDNEXT {}] next\r\n\
+                     {tag} OK {rw} done\r\n",
+                    folder.messages.len(),
+                    folder.uidvalidity,
+                    folder.uidnext
+                ),
+                false,
+            )
+        } else if upper.starts_with("UID SEARCH") {
+            let uids: Vec<String> = state
+                .folders
+                .get(selected.as_str())
+                .map(|f| f.messages.iter().map(|m| m.uid.to_string()).collect())
+                .unwrap_or_default();
+            (format!("* SEARCH {}\r\n{tag} OK done\r\n", uids.join(" ")), false)
+        } else if upper.starts_with("UID STORE") {
+            let flags = store_flags(rest);
+            let is_add = upper.contains("+FLAGS");
+            let set = parse_uid_set(rest);
+            let ignore = state.silently_ignore_flag.clone();
+            if let Some(folder) = state.folders.get_mut(selected.as_str()) {
+                for message in folder.messages.iter_mut() {
+                    if !set.contains(&message.uid) {
+                        continue;
+                    }
+                    for flag in &flags {
+                        let ignored = ignore
+                            .as_deref()
+                            .map(|f| f.eq_ignore_ascii_case(flag))
+                            .unwrap_or(false);
+                        if ignored {
+                            continue; // ACK OK but do not record.
+                        }
+                        if is_add {
+                            if !message.flags.iter().any(|f| f.eq_ignore_ascii_case(flag)) {
+                                message.flags.push(flag.clone());
+                            }
+                        } else {
+                            message.flags.retain(|f| !f.eq_ignore_ascii_case(flag));
+                        }
+                    }
+                }
+            }
+            (format!("{tag} OK STORE done\r\n"), false)
+        } else if upper.starts_with("UID FETCH") {
+            let set = parse_uid_set(rest);
+            let wants_body = upper.contains("BODY.PEEK[]");
+            let is_identity = upper.contains("HEADER.FIELDS");
+            let empty = Vec::new();
+            let messages = state
+                .folders
+                .get(selected.as_str())
+                .map(|f| &f.messages)
+                .unwrap_or(&empty);
+            let mut out = String::new();
+            for (seq, uid) in set.iter().enumerate() {
+                if let Some(message) = messages.iter().find(|m| &m.uid == uid) {
+                    out.push_str(&fetch_line(seq as u32 + 1, message, wants_body, is_identity));
+                }
+            }
+            out.push_str(&format!("{tag} OK done\r\n"));
+            (out, false)
+        } else if upper.starts_with("LOGOUT") {
+            (format!("* BYE\r\n{tag} OK logout\r\n"), true)
+        } else {
+            (format!("{tag} OK done\r\n"), false)
+        }
+    }
+
+    async fn reply(server: &mut BufReader<DuplexStream>, text: &str) {
+        server.get_mut().write_all(text.as_bytes()).await.unwrap();
+    }
+
+    /// The mailbox name after `SELECT`/`EXAMINE`, unquoted.
+    fn select_name(rest: &str, is_select: bool) -> String {
+        let verb_len = if is_select { "SELECT".len() } else { "EXAMINE".len() };
+        rest[verb_len.min(rest.len())..].trim().trim_matches('"').to_string()
+    }
+
+    /// The parenthesised flag list of a STORE command.
+    fn store_flags(cmd: &str) -> Vec<String> {
+        if let (Some(open), Some(close)) = (cmd.find('('), cmd.rfind(')')) {
+            cmd[open + 1..close].split_whitespace().map(str::to_string).collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The UID set token after `UID FETCH`/`UID STORE` (comma + range forms).
+    fn parse_uid_set(cmd: &str) -> Vec<u32> {
+        // "UID FETCH <set> ..." / "UID STORE <set> ...": the set is token 3.
+        let token = cmd.split_whitespace().nth(2).unwrap_or("");
+        let mut uids = Vec::new();
+        for part in token.split(',') {
+            if let Some((lo, hi)) = part.split_once(':') {
+                if let (Ok(lo), Ok(hi)) = (lo.parse::<u32>(), hi.parse::<u32>()) {
+                    uids.extend(lo..=hi);
+                }
+            } else if let Ok(uid) = part.parse::<u32>() {
+                uids.push(uid);
+            }
+        }
+        uids
+    }
+
+    fn fetch_line(seq: u32, message: &MutMessage, wants_body: bool, is_identity: bool) -> String {
+        let flags = message.flags.join(" ");
+        if wants_body {
+            format!(
+                "* {seq} FETCH (UID {} BODY[]<0> {{{}}}\r\n{})\r\n",
+                message.uid,
+                message.raw.len(),
+                message.raw
+            )
+        } else if is_identity {
+            let header_block = message
+                .raw
+                .split_once("\r\n\r\n")
+                .map(|(h, _)| format!("{h}\r\n\r\n"))
+                .unwrap_or_else(|| message.raw.clone());
+            format!(
+                "* {seq} FETCH (UID {} FLAGS ({flags}) RFC822.SIZE {} BODY[HEADER.FIELDS (MESSAGE-ID DATE FROM SUBJECT)] {{{}}}\r\n{})\r\n",
+                message.uid,
+                message.raw.len(),
+                header_block.len(),
+                header_block
+            )
+        } else {
+            // FLAGS-only (verify + sweep).
+            format!("* {seq} FETCH (UID {} FLAGS ({flags}))\r\n", message.uid)
+        }
+    }
+
+    /// A session source that logs into a fresh connection against the SHARED
+    /// server state each time it is opened.
+    struct MutSource {
+        server: Arc<Mutex<MutServer>>,
+    }
+
+    #[async_trait]
+    impl ImapSessionSource for MutSource {
+        async fn open(&self) -> ProviderResult<Box<dyn ImapSession>> {
+            let client = spawn(self.server.clone());
+            let session = async_imap::Client::new(client)
+                .login("user", "password")
+                .await
+                .map_err(|(error, _)| super::super::error::map_imap_error(&error))?;
+            Ok(Box::new(super::super::session::AsyncImapSession::new(session)))
+        }
+    }
+
+    fn test_settings() -> ImapAccountSettings {
+        use super::super::settings::SecurityMode;
+        ImapAccountSettings {
+            imap_host: "127.0.0.1".into(),
+            imap_port: 1143,
+            imap_security: SecurityMode::StartTls,
+            imap_username: "me@example.com".into(),
+            smtp_host: "127.0.0.1".into(),
+            smtp_port: 1025,
+            smtp_security: SecurityMode::StartTls,
+            smtp_username: "me@example.com".into(),
+            mailbox_overrides: Default::default(),
+            archive_mailbox: None,
+            label_storage: LabelStorage::Folders,
+            label_container: Some("Labels".into()),
+            identities: vec![],
+            pinned_fingerprints: Default::default(),
+            server_saves_sent: false,
+        }
+    }
+
+    fn infer_special_use(name: &str) -> Option<String> {
+        match name {
+            "Trash" => Some("\\Trash".into()),
+            "Junk" | "Spam" => Some("\\Junk".into()),
+            "Sent" => Some("\\Sent".into()),
+            "Archive" => Some("\\Archive".into()),
+            _ => None,
+        }
+    }
+
+    /// Build a provider over the shared server, seeding a catalog row for every
+    /// folder present (so SELECT's UIDVALIDITY guard matches) and returning
+    /// the provider + store.
+    fn provider_with(server: Arc<Mutex<MutServer>>) -> (ImapProvider, ImapStateStore) {
+        let database = Arc::new(Database::open_memory());
+        database
+            .adopt_mail_account("me@example.com", crate::models::MailProviderKind::Imap)
+            .unwrap();
+        let store = ImapStateStore::new(database.clone(), "me@example.com");
+        for (name, folder) in &server.lock().unwrap().folders {
+            store
+                .upsert_mailbox(&super::super::ImapMailbox {
+                    name: name.clone(),
+                    delimiter: Some("/".into()),
+                    special_use: infer_special_use(name),
+                    uidvalidity: folder.uidvalidity as i64,
+                    uidnext: folder.uidnext as i64,
+                    highestmodseq: None,
+                    permanent_flags_json: None,
+                    permanent_keywords: None,
+                })
+                .unwrap();
+        }
+        let cache = BodyCache::new(store.clone());
+        let provider = ImapProvider {
+            store: store.clone(),
+            cache,
+            username: "me@example.com".into(),
+            label_model: LabelModel::ImapLabelFolders,
+            settings: test_settings(),
+            source: Arc::new(MutSource { server }),
+            now: || 1_700_000_000,
+            limits: SyncLimits::inbox(),
+            sent_round_budget: None,
+            folder_window_override: None,
+            extra_synced_candidates: None,
+            force_user_folders: None,
+            folder_rounds_per_poll_override: None,
+            thread_state_loads: std::sync::atomic::AtomicUsize::new(0),
+        };
+        (provider, store)
+    }
+
+    fn message(message_id: &str) -> String {
+        format!(
+            "Message-ID: {message_id}\r\nDate: Mon, 06 Oct 2025 09:00:00 +0000\r\nFrom: a@b.com\r\nSubject: S\r\n\r\nbody",
+        )
+    }
+
+    /// Seed one message as a location + thread + a cached body, so modify_* can
+    /// resolve it. Returns its stable message id. `mailbox`'s UIDVALIDITY must
+    /// match the server's.
+    fn seed(
+        store: &ImapStateStore,
+        provider: &ImapProvider,
+        mailbox: &str,
+        uidvalidity: i64,
+        uid: i64,
+        msgid: &str,
+        flags: &[&str],
+    ) -> String {
+        let message_id = format!("imap:me@example.com:{msgid}");
+        store
+            .upsert_location(&ImapLocation {
+                mailbox: mailbox.into(),
+                uidvalidity,
+                uid,
+                message_id: message_id.clone(),
+                flags_json: serde_json::to_string(
+                    &flags.iter().map(|f| f.to_string()).collect::<Vec<_>>(),
+                )
+                .unwrap(),
+                modseq: None,
+            })
+            .unwrap();
+        store
+            .commit_sync_round(&SyncRoundWrite {
+                thread_assignments: vec![(message_id.clone(), format!("imap:t:{msgid}"))],
+                changed_threads: vec![format!("imap:t:{msgid}")],
+                ..Default::default()
+            })
+            .unwrap();
+        provider
+            .cache
+            .put(&message_id, message(&format!("<{msgid}@x>")).as_bytes(), 1)
+            .unwrap();
+        message_id
+    }
+
+    /// The stored flags for a location, as the local store holds them.
+    fn local_flags(store: &ImapStateStore, mailbox: &str, uid: i64) -> Vec<String> {
+        let location = store
+            .locations_in_mailbox(mailbox)
+            .unwrap()
+            .into_iter()
+            .find(|l| l.uid == uid)
+            .expect("location present");
+        serde_json::from_str(&location.flags_json).unwrap()
+    }
+
+    fn server_with_inbox() -> Arc<Mutex<MutServer>> {
+        let mut s = MutServer::new();
+        s.folder("INBOX", 100);
+        Arc::new(Mutex::new(s))
+    }
+
+    // --- mark read / unread ------------------------------------------------
+
+    #[tokio::test]
+    async fn mark_read_adds_seen_and_updates_local_flags() {
+        let server = server_with_inbox();
+        {
+            let mut g = server.lock().unwrap();
+            g.folder("INBOX", 100).add(&[], &message("<m1@x>")); // unread (no \Seen)
+        }
+        let (provider, store) = provider_with(server.clone());
+        let id = seed(&store, &provider, "INBOX", 100, 1, "m1", &[]);
+
+        // remove UNREAD == mark read == add \Seen.
+        provider
+            .modify_messages(&[id], &[], &["UNREAD".into()])
+            .await
+            .expect("mark read");
+
+        // The server now holds \Seen, and the local flags agree.
+        assert!(server.lock().unwrap().flags_of("INBOX", 1).iter().any(|f| f == "\\Seen"));
+        assert!(local_flags(&store, "INBOX", 1).iter().any(|f| f == "\\Seen"));
+    }
+
+    #[tokio::test]
+    async fn mark_unread_removes_seen() {
+        let server = server_with_inbox();
+        {
+            let mut g = server.lock().unwrap();
+            g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+        }
+        let (provider, store) = provider_with(server.clone());
+        let id = seed(&store, &provider, "INBOX", 100, 1, "m1", &["\\Seen"]);
+
+        // add UNREAD == mark unread == remove \Seen.
+        provider
+            .modify_messages(&[id], &["UNREAD".into()], &[])
+            .await
+            .expect("mark unread");
+
+        assert!(!server.lock().unwrap().flags_of("INBOX", 1).iter().any(|f| f == "\\Seen"));
+        assert!(!local_flags(&store, "INBOX", 1).iter().any(|f| f == "\\Seen"));
+    }
+
+    // --- star / unstar -----------------------------------------------------
+
+    #[tokio::test]
+    async fn star_adds_flagged_and_unstar_removes_it() {
+        let server = server_with_inbox();
+        {
+            let mut g = server.lock().unwrap();
+            g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+        }
+        let (provider, store) = provider_with(server.clone());
+        let id = seed(&store, &provider, "INBOX", 100, 1, "m1", &["\\Seen"]);
+
+        provider.modify_messages(&[id.clone()], &["STARRED".into()], &[]).await.expect("star");
+        assert!(server.lock().unwrap().flags_of("INBOX", 1).iter().any(|f| f == "\\Flagged"));
+        assert!(local_flags(&store, "INBOX", 1).iter().any(|f| f == "\\Flagged"));
+
+        provider.modify_messages(&[id], &[], &["STARRED".into()]).await.expect("unstar");
+        assert!(!server.lock().unwrap().flags_of("INBOX", 1).iter().any(|f| f == "\\Flagged"));
+        assert!(!local_flags(&store, "INBOX", 1).iter().any(|f| f == "\\Flagged"));
+    }
+
+    // --- thread-level mark-read across messages and two mailboxes ----------
+
+    #[tokio::test]
+    async fn thread_mark_read_touches_every_message_in_every_mailbox() {
+        // Two messages of one thread; one lives in INBOX, the other has copies
+        // in INBOX and Archive (two locations, both must agree).
+        let mut s = MutServer::new();
+        s.folder("INBOX", 100).add(&[], &message("<a@x>")); // uid 1
+        s.folder("INBOX", 100).add(&[], &message("<b@x>")); // uid 2
+        s.folder("Archive", 95).add(&[], &message("<b@x>")); // uid 1 (copy of b)
+        let server = Arc::new(Mutex::new(s));
+        let (provider, store) = provider_with(server.clone());
+
+        // Seed both messages into ONE thread.
+        store
+            .upsert_location(&ImapLocation {
+                mailbox: "INBOX".into(), uidvalidity: 100, uid: 1,
+                message_id: "imap:me@example.com:a".into(), flags_json: "[]".into(), modseq: None,
+            }).unwrap();
+        store
+            .upsert_location(&ImapLocation {
+                mailbox: "INBOX".into(), uidvalidity: 100, uid: 2,
+                message_id: "imap:me@example.com:b".into(), flags_json: "[]".into(), modseq: None,
+            }).unwrap();
+        store
+            .upsert_location(&ImapLocation {
+                mailbox: "Archive".into(), uidvalidity: 95, uid: 1,
+                message_id: "imap:me@example.com:b".into(), flags_json: "[]".into(), modseq: None,
+            }).unwrap();
+        store
+            .commit_sync_round(&SyncRoundWrite {
+                thread_assignments: vec![
+                    ("imap:me@example.com:a".into(), "imap:t:thread".into()),
+                    ("imap:me@example.com:b".into(), "imap:t:thread".into()),
+                ],
+                changed_threads: vec!["imap:t:thread".into()],
+                ..Default::default()
+            }).unwrap();
+
+        provider
+            .modify_thread("imap:t:thread", &[], &["UNREAD".into()])
+            .await
+            .expect("thread mark read");
+
+        // Every copy, in BOTH mailboxes, now has \Seen on the server and locally.
+        let g = server.lock().unwrap();
+        assert!(g.flags_of("INBOX", 1).iter().any(|f| f == "\\Seen"));
+        assert!(g.flags_of("INBOX", 2).iter().any(|f| f == "\\Seen"));
+        assert!(g.flags_of("Archive", 1).iter().any(|f| f == "\\Seen"));
+        drop(g);
+        assert!(local_flags(&store, "INBOX", 1).iter().any(|f| f == "\\Seen"));
+        assert!(local_flags(&store, "INBOX", 2).iter().any(|f| f == "\\Seen"));
+        assert!(local_flags(&store, "Archive", 1).iter().any(|f| f == "\\Seen"));
+    }
+
+    // --- alias thread id ---------------------------------------------------
+
+    #[tokio::test]
+    async fn modify_thread_resolves_an_alias_to_the_survivor() {
+        let server = server_with_inbox();
+        {
+            let mut g = server.lock().unwrap();
+            g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+        }
+        let (provider, store) = provider_with(server.clone());
+        store
+            .upsert_location(&ImapLocation {
+                mailbox: "INBOX".into(), uidvalidity: 100, uid: 1,
+                message_id: "imap:me@example.com:m1".into(), flags_json: r#"["\\Seen"]"#.into(),
+                modseq: None,
+            }).unwrap();
+        store
+            .commit_sync_round(&SyncRoundWrite {
+                thread_assignments: vec![("imap:me@example.com:m1".into(), "imap:t:survivor".into())],
+                aliases: vec![("imap:t:old".into(), "imap:t:survivor".into())],
+                changed_threads: vec!["imap:t:survivor".into()],
+                ..Default::default()
+            }).unwrap();
+
+        // Star via the OLD (aliased) id: it resolves to the survivor's message.
+        provider.modify_thread("imap:t:old", &["STARRED".into()], &[]).await.expect("star via alias");
+        assert!(server.lock().unwrap().flags_of("INBOX", 1).iter().any(|f| f == "\\Flagged"));
+    }
+
+    // --- idempotent no-op sends nothing ------------------------------------
+
+    #[tokio::test]
+    async fn an_already_satisfied_request_sends_no_write_command() {
+        let server = server_with_inbox();
+        {
+            let mut g = server.lock().unwrap();
+            g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+        }
+        let (provider, store) = provider_with(server.clone());
+        let id = seed(&store, &provider, "INBOX", 100, 1, "m1", &["\\Seen"]);
+
+        // Mark-read on an already-read message: Ok(()) and ZERO commands sent
+        // (not even a SELECT), because the local flags already satisfy it.
+        provider.modify_messages(&[id], &[], &["UNREAD".into()]).await.expect("no-op ok");
+        let g = server.lock().unwrap();
+        assert_eq!(g.count_starting("SELECT"), 0, "an idempotent no-op selects nothing");
+        assert_eq!(g.count_starting("UID STORE"), 0, "and sends no STORE");
+    }
+
+    // --- stale UIDVALIDITY sends nothing and is transient ------------------
+
+    #[tokio::test]
+    async fn a_stale_uidvalidity_sends_no_write_and_is_transient() {
+        let server = server_with_inbox();
+        {
+            let mut g = server.lock().unwrap();
+            // The server's INBOX is at UIDVALIDITY 200, but the stored location
+            // says 100 -> the select_for_write guard refuses.
+            g.folder("INBOX", 100).uidvalidity = 200;
+            g.folder("INBOX", 100).add(&[], &message("<m1@x>"));
+        }
+        let (provider, store) = provider_with(server.clone());
+        let id = seed(&store, &provider, "INBOX", 100, 1, "m1", &[]); // stored UIDVALIDITY 100
+
+        let err = provider
+            .modify_messages(&[id], &[], &["UNREAD".into()])
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ProviderError::TransientTransport(ref m) if m.contains("UIDVALIDITY")),
+            "a stale mailbox is a named transient error: {err:?}"
+        );
+        assert!(err.retry_mutation(), "transient so the engine retries");
+        // The guard SELECTed to learn the UIDVALIDITY but issued NO STORE.
+        assert_eq!(server.lock().unwrap().count_starting("UID STORE"), 0);
+    }
+
+    // --- flag missing from PERMANENTFLAGS is a permanent error naming it ----
+
+    #[tokio::test]
+    async fn a_flag_outside_permanentflags_is_a_permanent_error_naming_it() {
+        let server = server_with_inbox();
+        {
+            let mut g = server.lock().unwrap();
+            // PERMANENTFLAGS without \Flagged and no \* -> \Flagged unstorable.
+            g.folder("INBOX", 100).permanent_flags = vec!["\\Seen".into(), "\\Deleted".into()];
+            g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+        }
+        let (provider, store) = provider_with(server.clone());
+        let id = seed(&store, &provider, "INBOX", 100, 1, "m1", &["\\Seen"]);
+
+        let err = provider
+            .modify_messages(&[id], &["STARRED".into()], &[])
+            .await
+            .unwrap_err();
+        match err {
+            ProviderError::InvalidOperation(m) => {
+                assert!(m.contains("Flagged"), "names the flag: {m}");
+                assert!(m.contains("INBOX"), "names the mailbox: {m}");
+            }
+            other => panic!("expected a permanent InvalidOperation, got {other:?}"),
+        }
+        // No \Flagged was stored.
+        assert!(!server.lock().unwrap().flags_of("INBOX", 1).iter().any(|f| f == "\\Flagged"));
+    }
+
+    // --- a silently-ignored STORE is caught --------------------------------
+
+    #[tokio::test]
+    async fn a_silently_ignored_store_is_caught() {
+        let server = server_with_inbox();
+        {
+            let mut g = server.lock().unwrap();
+            g.silently_ignore_flag = Some("\\Flagged".into());
+            g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+        }
+        let (provider, store) = provider_with(server.clone());
+        let id = seed(&store, &provider, "INBOX", 100, 1, "m1", &["\\Seen"]);
+
+        let err = provider
+            .modify_messages(&[id], &["STARRED".into()], &[])
+            .await
+            .unwrap_err();
+        match err {
+            ProviderError::InvalidOperation(m) => assert!(m.contains("silently ignored"), "{m}"),
+            other => panic!("expected InvalidOperation, got {other:?}"),
+        }
+    }
+
+    // --- unsupported / mixed request rejected with ZERO commands -----------
+
+    #[tokio::test]
+    async fn an_unsupported_or_mixed_request_is_rejected_before_any_command() {
+        let server = server_with_inbox();
+        {
+            let mut g = server.lock().unwrap();
+            g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+        }
+        let (provider, store) = provider_with(server.clone());
+        let id = seed(&store, &provider, "INBOX", 100, 1, "m1", &["\\Seen"]);
+
+        // STARRED + INBOX (an unsupported location id) is rejected permanently.
+        let err = provider
+            .modify_messages(&[id.clone()], &["STARRED".into(), "INBOX".into()], &[])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProviderError::InvalidOperation(_)), "{err:?}");
+
+        // A label in BOTH lists is contradictory and rejected.
+        let err = provider
+            .modify_messages(&[id], &["STARRED".into()], &["STARRED".into()])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProviderError::InvalidOperation(_)), "{err:?}");
+
+        // Not one command reached the wire for either rejected request.
+        let g = server.lock().unwrap();
+        assert_eq!(g.count_starting("SELECT"), 0, "no SELECT for a rejected request");
+        assert_eq!(g.count_starting("UID STORE"), 0, "no STORE for a rejected request");
+    }
+
+    // --- a message with no location at all is a permanent error naming it ---
+
+    #[tokio::test]
+    async fn a_message_with_no_location_is_a_permanent_error_naming_it() {
+        let server = server_with_inbox();
+        let (provider, store) = provider_with(server.clone());
+        // A message id with a thread row but NO location (emptied / expunged).
+        store
+            .commit_sync_round(&SyncRoundWrite {
+                thread_assignments: vec![("imap:me@example.com:gone".into(), "imap:t:gone".into())],
+                changed_threads: vec!["imap:t:gone".into()],
+                ..Default::default()
+            }).unwrap();
+
+        let err = provider
+            .modify_messages(&["imap:me@example.com:gone".into()], &["STARRED".into()], &[])
+            .await
+            .unwrap_err();
+        match err {
+            ProviderError::InvalidOperation(m) => assert!(m.contains("gone"), "names the message: {m}"),
+            other => panic!("expected a permanent InvalidOperation, got {other:?}"),
+        }
+        assert_eq!(server.lock().unwrap().count_starting("UID STORE"), 0);
+    }
+
+    // --- partial failure across two mailboxes, then retry touches only B ----
+
+    #[tokio::test]
+    async fn a_partial_failure_persists_the_succeeded_mailbox_and_a_retry_touches_only_the_failed() {
+        // One message with copies in INBOX (processed first — mailboxes are
+        // visited in name order — and succeeds) and Trash (SELECT transiently
+        // fails first time). The INBOX copy's local flags are updated; the
+        // mutation returns Trash's error; a retry re-derives only Trash.
+        let mut s = MutServer::new();
+        s.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>")); // uid 1
+        s.folder("Trash", 95).add(&["\\Seen"], &message("<m1@x>")); // uid 1
+        s.folder("Trash", 95).select_busy = true;
+        let server = Arc::new(Mutex::new(s));
+        let (provider, store) = provider_with(server.clone());
+
+        for (mailbox, uidvalidity, uid) in [("INBOX", 100, 1), ("Trash", 95, 1)] {
+            store
+                .upsert_location(&ImapLocation {
+                    mailbox: mailbox.into(), uidvalidity, uid,
+                    message_id: "imap:me@example.com:m1".into(),
+                    flags_json: r#"["\\Seen"]"#.into(), modseq: None,
+                }).unwrap();
+        }
+        store
+            .commit_sync_round(&SyncRoundWrite {
+                thread_assignments: vec![("imap:me@example.com:m1".into(), "imap:t:m1".into())],
+                changed_threads: vec!["imap:t:m1".into()],
+                ..Default::default()
+            }).unwrap();
+
+        // Star: INBOX (visited first) succeeds and persists; Trash SELECT
+        // transiently fails and the mutation returns that error.
+        let err = provider
+            .modify_messages(&["imap:me@example.com:m1".into()], &["STARRED".into()], &[])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProviderError::TransientTransport(_)), "Trash select busy: {err:?}");
+        assert!(err.retry_mutation(), "transient so the engine retries");
+
+        // INBOX's copy IS starred (server + local); Trash's is NOT yet.
+        assert!(server.lock().unwrap().flags_of("INBOX", 1).iter().any(|f| f == "\\Flagged"));
+        assert!(local_flags(&store, "INBOX", 1).iter().any(|f| f == "\\Flagged"));
+        assert!(!server.lock().unwrap().flags_of("Trash", 1).iter().any(|f| f == "\\Flagged"));
+        assert!(!local_flags(&store, "Trash", 1).iter().any(|f| f == "\\Flagged"));
+
+        // Heal Trash and retry. INBOX is already satisfied (local flags say
+        // starred), so the retry touches ONLY Trash: exactly one SELECT and
+        // one STORE this time, both against Trash.
+        server.lock().unwrap().commands.lock().unwrap().clear();
+        server.lock().unwrap().folder("Trash", 95).select_busy = false;
+        provider
+            .modify_messages(&["imap:me@example.com:m1".into()], &["STARRED".into()], &[])
+            .await
+            .expect("retry succeeds");
+        assert!(server.lock().unwrap().flags_of("Trash", 1).iter().any(|f| f == "\\Flagged"));
+        let g = server.lock().unwrap();
+        assert_eq!(g.count_starting("UID STORE"), 1, "retry stores once (Trash only)");
+        // The single SELECT was Trash, never INBOX (INBOX was already done).
+        assert!(g.wire().iter().any(|c| c.contains("Trash")));
+        assert!(!g.wire().iter().any(|c| c.to_ascii_uppercase().starts_with("SELECT \"INBOX\"")));
+    }
+
+    // --- local flags_json updated; a following sync sweep reports no change -
+
+    #[tokio::test]
+    async fn after_a_mutation_a_following_sweep_sees_no_change() {
+        // Mark a message read, then run a full INBOX sweep against the SAME
+        // server (which now holds \Seen). The sweep must find the local flags
+        // already agree and NOT bump the generation (no flap, no journal).
+        let server = server_with_inbox();
+        {
+            let mut g = server.lock().unwrap();
+            g.folder("INBOX", 100).add(&[], &message("<m1@x>"));
+        }
+        let (provider, store) = provider_with(server.clone());
+
+        // A baseline sweep ingests m1 so the local store knows its id/thread.
+        provider.baseline_cursor().await.unwrap();
+        let id = store.locations_in_mailbox("INBOX").unwrap()[0].message_id.clone();
+        let gen_before = store.generation().unwrap();
+
+        // Mark it read through the mutation path.
+        provider.modify_messages(&[id], &[], &["UNREAD".into()]).await.expect("mark read");
+        let gen_after_mutation = store.generation().unwrap();
+        assert_eq!(
+            gen_after_mutation, gen_before,
+            "the mutation itself does not bump the generation"
+        );
+        assert!(local_flags(&store, "INBOX", 1).iter().any(|f| f == "\\Seen"));
+
+        // A following sweep over the same (now \Seen) server state sees the
+        // local flags already agree: no content change, no generation bump.
+        let cursor = SyncCursor::from_generation(gen_after_mutation);
+        let batch = provider.poll(&cursor).await.unwrap();
+        assert_eq!(
+            store.generation().unwrap(),
+            gen_after_mutation,
+            "a following sweep sees no change after the mutation reconciled local flags"
+        );
+        assert!(batch.changed_threads.is_empty(), "and journals nothing");
     }
 }
