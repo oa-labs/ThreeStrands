@@ -1202,7 +1202,7 @@ mod dry_run {
 //
 //   scripts/dovecot-test-server.sh up
 //   DOVECOT_TEST_FP="$(scripts/dovecot-test-server.sh fingerprint)" \
-//   THREESTRANDS_SMTP_SINK_PORT=11587 \
+//   THREESTRANDS_SMTP_SINK_PORT=11587 THREESTRANDS_SMTP_SINK_IMPLICIT_PORT=11465 \
 //     cargo test --lib provider::imap::smtp::tests::live_ -- --nocapture --ignored
 //
 // NOTE: the worker that wrote these could NOT run docker; see the brief's
@@ -1214,7 +1214,11 @@ mod live {
     use crate::provider::imap::tls::parse_sha256_fingerprint;
 
     fn sink_endpoint(security: SecurityMode, pin: Sha256Fingerprint) -> Option<SmtpEndpoint> {
-        let port: u16 = std::env::var("THREESTRANDS_SMTP_SINK_PORT")
+        let var = match security {
+            SecurityMode::StartTls => "THREESTRANDS_SMTP_SINK_PORT",
+            SecurityMode::ImplicitTls => "THREESTRANDS_SMTP_SINK_IMPLICIT_PORT",
+        };
+        let port: u16 = std::env::var(var)
             .ok()?
             .parse()
             .ok()?;
@@ -1255,6 +1259,38 @@ mod live {
                 &["test@threestrands.test".to_string()],
                 b"From: test@threestrands.test\r\nTo: test@threestrands.test\r\n\
                   Subject: live smtp\r\n\r\nhello from the live harness\r\n",
+            )
+            .await;
+        assert!(
+            matches!(out, SmtpOutcome::Accepted { .. }),
+            "live send should be Accepted, got {out:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires docker SMTP sink (DOVECOT_TEST_FP + THREESTRANDS_SMTP_SINK_PORT)"]
+    async fn live_authenticated_send_is_accepted_over_implicit_tls() {
+        let Some(fp) = fp() else {
+            eprintln!("skipping: DOVECOT_TEST_FP not set");
+            return;
+        };
+        let Some(endpoint) = sink_endpoint(SecurityMode::ImplicitTls, fp) else {
+            eprintln!("skipping: THREESTRANDS_SMTP_SINK_PORT not set");
+            return;
+        };
+        let creds = SmtpCredentials {
+            username: "test@threestrands.test".into(),
+            password: "testpassword".into(),
+        };
+        let session = SmtpSession::connect(&endpoint, &creds)
+            .await
+            .expect("live connect+auth should succeed");
+        let out = session
+            .send(
+                "test@threestrands.test",
+                &["test@threestrands.test".to_string()],
+                b"From: test@threestrands.test\r\nTo: test@threestrands.test\r\n\
+                  Subject: live smtp implicit\r\n\r\nhello from the live harness\r\n",
             )
             .await;
         assert!(
