@@ -548,6 +548,88 @@ async fn a_copy_trycreate_surfaces_as_the_typed_outcome() {
 }
 
 // ---------------------------------------------------------------------------
+// recording relocate (run 3): a partial failure hands back the destination it
+// already created, and the source-only finisher completes the retry.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_recording_relocate_hands_back_the_copyuid_when_the_expunge_fails() {
+    // UIDPLUS-only (copy+delete+expunge). The expunge fails AFTER the COPY and
+    // \Deleted store landed, so the destination holds the copy. The recording
+    // relocate must return that destination mapping so the caller can persist
+    // it and keep the retry idempotent.
+    let mut script = ServerScript::default();
+    script.capabilities = vec!["IMAP4REV1".into(), "UIDPLUS".into()];
+    script.fail_expunge = Some("expunge refused".into());
+    let (mut session, log, task) = connect(script).await;
+    let store = store();
+    let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
+    let failure = relocate_uids_recording(&mut session, &ctx, &[10], "Archive")
+        .await
+        .expect_err("the expunge failure is surfaced");
+    // The COPY landed (UID 10 -> 90), so the destination mapping is present.
+    let copyuid = failure.copyuid.expect("the copied destination is reported");
+    assert_eq!(copyuid.source, vec![10]);
+    assert_eq!(copyuid.dest, vec![90]);
+    // And the error is the partial-state error with its retry classification.
+    match failure.error.into_provider_error() {
+        ProviderError::InvalidOperation(m) => {
+            assert!(m.contains("BOTH"), "{m}");
+            assert!(m.contains("EXPUNGE"), "{m}");
+        }
+        other => panic!("expected a partial-state InvalidOperation, got {other:?}"),
+    }
+    assert_eq!(log.count_starting("UID COPY"), 1);
+    let _ = session.logout().await;
+    task.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_recording_relocate_trycreate_reports_no_destination_landed() {
+    // The COPY draws a TRYCREATE before anything lands: no destination mapping.
+    let mut script = ServerScript::default();
+    script.capabilities = vec!["IMAP4REV1".into(), "UIDPLUS".into()];
+    script.copy_trycreate = Some("Mailbox doesn't exist: Archive".into());
+    let (mut session, log, task) = connect(script).await;
+    let store = store();
+    let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
+    let failure = relocate_uids_recording(&mut session, &ctx, &[10], "Archive")
+        .await
+        .expect_err("TRYCREATE is surfaced");
+    assert!(failure.copyuid.is_none(), "nothing landed in the destination");
+    assert!(matches!(failure.error, WriteError::TryCreate(_)));
+    assert_eq!(log.count_starting("UID STORE"), 0);
+    assert_eq!(log.count_starting("UID EXPUNGE"), 0);
+    let _ = session.logout().await;
+    task.await.unwrap();
+}
+
+#[tokio::test]
+async fn expunge_source_copies_marks_deleted_then_expunges_without_copying() {
+    // The source-only finisher used on an idempotent retry: it stores \Deleted
+    // and UID EXPUNGEs the source UID, and never issues a COPY/MOVE.
+    let mut script = ServerScript::default();
+    script.capabilities = vec!["IMAP4REV1".into(), "UIDPLUS".into()];
+    let (mut session, log, task) = connect(script).await;
+    let store = store();
+    let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
+    expunge_source_copies(&mut session, &ctx, &[10])
+        .await
+        .expect("the source copy is deleted and expunged");
+    assert_eq!(log.count_starting("UID STORE"), 1, "one \\Deleted store");
+    assert!(log
+        .seen()
+        .iter()
+        .any(|c| c.to_ascii_uppercase().contains("+FLAGS")
+            && c.to_ascii_uppercase().contains("DELETED")));
+    assert_eq!(log.count_starting("UID EXPUNGE"), 1, "one targeted expunge");
+    assert_eq!(log.count_starting("UID COPY"), 0, "no copy on the finisher");
+    assert_eq!(log.count_starting("UID MOVE"), 0, "no move on the finisher");
+    let _ = session.logout().await;
+    task.await.unwrap();
+}
+
+// ---------------------------------------------------------------------------
 // batching + hostile inputs never reach the wire
 // ---------------------------------------------------------------------------
 
@@ -823,6 +905,119 @@ mod live {
             .unwrap_err();
         assert!(matches!(err, ProviderError::TransientTransport(_)));
         drop_scratch(&mut session, &[mailbox]).await;
+        let _ = session.logout().await;
+    }
+
+    /// Live round trip of the exact MOVE/COPY/EXPUNGE sequence
+    /// `ImapProvider::modify_thread` emits for archive/trash/spam and their
+    /// reverses: relocate a message from a scratch source into a scratch
+    /// destination, then relocate it back. Uses the recording relocate so the
+    /// crash-honest path runs against the real server. Only scratch mailboxes
+    /// and a COPY of a seeded INBOX message are touched; every message and
+    /// mailbox created is removed, so the seeded fixtures are never disturbed.
+    #[tokio::test]
+    async fn live_move_round_trip_both_directions() {
+        let Some((mut session, _lease)) = live_session().await else {
+            return;
+        };
+        let store = ImapStateStore::new(
+            std::sync::Arc::new(crate::db::Database::open_memory()),
+            "test@threestrands.test",
+        );
+        let a = "P3R1-RtA";
+        let b = "P3R1-RtB";
+        // Seed a copy of a seeded INBOX message into scratch A (never touches
+        // the seeded message itself), and create empty scratch B.
+        seed_message(&mut session, a).await;
+        let _ = session.select("INBOX").await;
+        let _ = session
+            .run_command_capture_code(&format!("DELETE {}", build_mailbox_arg(b).unwrap()))
+            .await;
+        session.create_mailbox(b).await.expect("create scratch B");
+
+        // Forward: A -> B.
+        let status = session.select(a).await.unwrap();
+        let uidvalidity = status.uid_validity.unwrap();
+        let uids = session.uid_search("ALL").await.unwrap();
+        assert_eq!(uids.len(), 1, "scratch A seeded with exactly one message");
+        let ctx = select_for_write(&mut session, &store, a, uidvalidity).await.unwrap();
+        let fwd = relocate_uids_recording(&mut session, &ctx, &uids, b)
+            .await
+            .expect("forward relocate A -> B");
+        // The source is now empty and B holds exactly one copy.
+        session.select(a).await.unwrap();
+        assert!(session.uid_search("ALL").await.unwrap().is_empty(), "A emptied");
+        let b_status = session.select(b).await.unwrap();
+        let b_uids = session.uid_search("ALL").await.unwrap();
+        assert_eq!(b_uids.len(), 1, "exactly one copy landed in B (no duplicate)");
+        if let Some(copyuid) = &fwd.copyuid {
+            assert_eq!(copyuid.dest, b_uids, "COPYUID dest matches the real destination");
+        }
+
+        // Reverse: B -> A (the reverse direction archive/unarchive uses).
+        let b_uidvalidity = b_status.uid_validity.unwrap();
+        let ctx = select_for_write(&mut session, &store, b, b_uidvalidity).await.unwrap();
+        relocate_uids_recording(&mut session, &ctx, &b_uids, a)
+            .await
+            .expect("reverse relocate B -> A");
+        session.select(b).await.unwrap();
+        assert!(session.uid_search("ALL").await.unwrap().is_empty(), "B emptied");
+        session.select(a).await.unwrap();
+        assert_eq!(session.uid_search("ALL").await.unwrap().len(), 1, "exactly one copy back in A");
+
+        drop_scratch(&mut session, &[a, b]).await;
+        let _ = session.logout().await;
+    }
+
+    /// A move must not set `\Seen` on the message it relocates: the harness's
+    /// PERMANENTFLAGS include `\Seen`, so a careless implementation could. COPY
+    /// preserves flags; the relocate adds only `\Deleted` to the SOURCE copy
+    /// (then expunges it). Assert the destination copy's flags carry no
+    /// `\Seen` that the source copy did not already have.
+    #[tokio::test]
+    async fn live_move_does_not_set_seen_on_the_moved_message() {
+        let Some((mut session, _lease)) = live_session().await else {
+            return;
+        };
+        let store = ImapStateStore::new(
+            std::sync::Arc::new(crate::db::Database::open_memory()),
+            "test@threestrands.test",
+        );
+        let a = "P3R1-SeenA";
+        let b = "P3R1-SeenB";
+        seed_message(&mut session, a).await;
+        let _ = session.select("INBOX").await;
+        let _ = session
+            .run_command_capture_code(&format!("DELETE {}", build_mailbox_arg(b).unwrap()))
+            .await;
+        session.create_mailbox(b).await.expect("create scratch B");
+
+        // The seeded copy in A must not already be \Seen (a COPY of an unseen
+        // INBOX message is unseen).
+        let status = session.select(a).await.unwrap();
+        let uidvalidity = status.uid_validity.unwrap();
+        let uids = session.uid_search("ALL").await.unwrap();
+        let before = session.uid_fetch(&uids[0].to_string(), "FLAGS").await.unwrap();
+        let source_seen = before.iter().any(|m| {
+            m.flags().any(|f| matches!(f, async_imap::types::Flag::Seen))
+        });
+
+        let ctx = select_for_write(&mut session, &store, a, uidvalidity).await.unwrap();
+        relocate_uids_recording(&mut session, &ctx, &uids, b)
+            .await
+            .expect("relocate A -> B");
+
+        // The destination copy's \Seen state must equal the source's (the move
+        // never SET it).
+        session.select(b).await.unwrap();
+        let b_uids = session.uid_search("ALL").await.unwrap();
+        let after = session.uid_fetch(&b_uids[0].to_string(), "FLAGS").await.unwrap();
+        let dest_seen = after.iter().any(|m| {
+            m.flags().any(|f| matches!(f, async_imap::types::Flag::Seen))
+        });
+        assert_eq!(dest_seen, source_seen, "the move must not change \\Seen");
+
+        drop_scratch(&mut session, &[a, b]).await;
         let _ = session.logout().await;
     }
 

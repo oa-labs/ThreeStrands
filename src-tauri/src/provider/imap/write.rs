@@ -887,6 +887,182 @@ fn partial_relocate_error(
     ))
 }
 
+// ===========================================================================
+// The RECORDING relocate (Phase 3 run 3): a crash-honest move whose partial
+// failure hands back the destination it already created, so the caller can
+// persist that destination location row BEFORE returning the error. The
+// idempotent retry then sees the destination copy already recorded and runs
+// only the source-side delete+expunge via [`expunge_source_copies`] — it
+// never copies again, so a half-applied move never produces a duplicate.
+// ===========================================================================
+
+/// A relocate that failed AFTER at least a successful COPY/MOVE of some
+/// messages: the destination now holds those copies even though the whole
+/// request did not finish. `copyuid` is whatever the server returned for the
+/// copies that DID land (it is always present on the copy+delete+expunge path,
+/// which requires UIDPLUS), so the caller can record the destination location
+/// rows and make the retry idempotent. `error` is the classified failure to
+/// propagate (its retry policy — transient vs permanent — is preserved).
+#[derive(Debug)]
+pub struct RelocateFailure {
+    /// The destination mapping for the copies that landed before the failure,
+    /// if the server reported one (UIDPLUS). `None` only when nothing was
+    /// copied yet (e.g. a TRYCREATE on the very first COPY) or the server did
+    /// not return COPYUID.
+    pub copyuid: Option<CopyUid>,
+    /// The failure to surface, with its original retry classification.
+    pub error: WriteError,
+}
+
+/// The result of a [`relocate_uids_recording`] call: either the full outcome,
+/// or a [`RelocateFailure`] carrying both the destination mapping created so
+/// far and the error to propagate.
+pub type RecordingRelocateResult = Result<RelocateOutcome, RelocateFailure>;
+
+/// Move a UID set from the guarded source mailbox to `dest`, exactly like
+/// [`relocate_uids`], but surfacing a PARTIAL failure's destination mapping so
+/// the caller can persist the destination location rows before returning the
+/// error (idempotent retry). The strategy choice is unchanged (`MOVE`, else
+/// `UID COPY`+`\Deleted`+`UID EXPUNGE`, else `Unsupported`).
+///
+/// On the copy+delete+expunge path a failure AFTER the COPY returns
+/// `Err(RelocateFailure { copyuid: Some(..), error })`: the copies are in the
+/// destination, so the caller records them and the retry skips the COPY (it
+/// calls [`expunge_source_copies`] on the still-present source UID). A failure
+/// BEFORE any copy lands (a TRYCREATE, an `Unsupported` strategy, a COPY that
+/// errored) returns `copyuid: None` and NOTHING was written to the
+/// destination.
+///
+/// Callers that move ONE message at a time (the system-move path) pass a
+/// single-UID set so the returned `copyuid` maps unambiguously to that message.
+pub async fn relocate_uids_recording(
+    session: &mut dyn ImapWriteSession,
+    ctx: &WriteContext,
+    uids: &[u32],
+    dest: &str,
+) -> RecordingRelocateResult {
+    if uids.is_empty() {
+        return Ok(RelocateOutcome::default());
+    }
+    let dest_arg = match build_mailbox_arg(dest) {
+        Ok(arg) => arg,
+        Err(error) => {
+            return Err(RelocateFailure {
+                copyuid: None,
+                error: WriteError::Provider(error),
+            });
+        }
+    };
+
+    match ctx.caps.relocation_strategy() {
+        RelocationStrategy::Move => {
+            // MOVE is atomic server-side: either the message moved or it did
+            // not. There is no "copied but not deleted" window, so a failure
+            // leaves no destination copy to record.
+            let mut merged = CopyUid::default();
+            let mut saw_copyuid = false;
+            for batch in build_uid_set_batches(uids) {
+                match session.uid_move(&batch, &dest_arg).await {
+                    Ok(outcome) => {
+                        if let Some(copyuid) = outcome.copyuid {
+                            merge_copyuid(&mut merged, copyuid);
+                            saw_copyuid = true;
+                        }
+                    }
+                    Err(error) => {
+                        return Err(RelocateFailure {
+                            copyuid: None,
+                            error,
+                        });
+                    }
+                }
+            }
+            Ok(RelocateOutcome {
+                copyuid: saw_copyuid.then_some(merged),
+            })
+        }
+        RelocationStrategy::CopyDeleteExpunge => {
+            let mut merged = CopyUid::default();
+            let mut saw_copyuid = false;
+            for batch in build_uid_set_batches(uids) {
+                // 1. COPY. A TRYCREATE here (dest absent) means NOTHING landed.
+                let outcome = match session.uid_copy(&batch, &dest_arg).await {
+                    Ok(outcome) => outcome,
+                    Err(error) => {
+                        return Err(RelocateFailure {
+                            copyuid: saw_copyuid.then(|| merged.clone()),
+                            error,
+                        });
+                    }
+                };
+                if let Some(copyuid) = outcome.copyuid {
+                    merge_copyuid(&mut merged, copyuid);
+                    saw_copyuid = true;
+                }
+                // 2. Mark the SOURCE copies \Deleted. The COPY landed, so a
+                // failure now is a PARTIAL state the caller must record.
+                let deleted = vec!["\\Deleted".to_string()];
+                if let Err(error) = session.uid_store(&batch, StoreOp::Add, &deleted).await {
+                    return Err(RelocateFailure {
+                        copyuid: saw_copyuid.then(|| merged.clone()),
+                        error: WriteError::Provider(partial_relocate_error(
+                            &ctx.mailbox,
+                            dest,
+                            &batch,
+                            "COPY succeeded but marking the source copies \\Deleted failed",
+                            &error,
+                        )),
+                    });
+                }
+                // 3. Expunge ONLY the named UIDs. Still partial if it fails.
+                if let Err(error) = session.uid_expunge(&batch).await {
+                    return Err(RelocateFailure {
+                        copyuid: saw_copyuid.then(|| merged.clone()),
+                        error: WriteError::Provider(partial_relocate_error(
+                            &ctx.mailbox,
+                            dest,
+                            &batch,
+                            "COPY and \\Deleted store succeeded but UID EXPUNGE of the source failed",
+                            &error,
+                        )),
+                    });
+                }
+            }
+            Ok(RelocateOutcome {
+                copyuid: saw_copyuid.then_some(merged),
+            })
+        }
+        RelocationStrategy::Unsupported(reason) => Err(RelocateFailure {
+            copyuid: None,
+            error: WriteError::Provider(ProviderError::InvalidOperation(reason)),
+        }),
+    }
+}
+
+/// Finish a half-applied copy+delete+expunge move whose destination copy is
+/// ALREADY present (recorded locally after an earlier partial failure): mark
+/// the SOURCE UIDs `\Deleted` and `UID EXPUNGE` them, WITHOUT copying again.
+/// This is the idempotent-retry step — the one thing that keeps a retried move
+/// from producing a duplicate in the destination.
+///
+/// Only valid on a UIDPLUS server (targeted `UID EXPUNGE`); the caller reaches
+/// it only on the copy+delete+expunge strategy, where UIDPLUS is guaranteed.
+/// If the source UID is already gone (the earlier failure was only in
+/// recording, not on the wire), the `\Deleted` store + expunge of an absent
+/// UID is a harmless no-op the server accepts.
+pub async fn expunge_source_copies(
+    session: &mut dyn ImapWriteSession,
+    _ctx: &WriteContext,
+    uids: &[u32],
+) -> Result<(), ProviderError> {
+    for batch in build_uid_set_batches(uids) {
+        let deleted = vec!["\\Deleted".to_string()];
+        session.uid_store(&batch, StoreOp::Add, &deleted).await?;
+        session.uid_expunge(&batch).await?;
+    }
+    Ok(())
+}
+
 /// Merge a per-batch `COPYUID` into the accumulating one. The uidvalidity is
 /// taken from the first batch (all batches of one relocate share the
 /// destination's uidvalidity); source/dest pairs are appended.
