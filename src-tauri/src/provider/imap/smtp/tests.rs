@@ -62,6 +62,17 @@ enum Script {
     VeryLongFinal,
     /// 250 success, used by implicit-TLS tests.
     AcceptImplicit,
+    /// MAIL FROM is answered 250 only after a delay longer than the CONNECT
+    /// timeout but shorter than the COMMAND timeout (review: the command
+    /// timeout must govern envelope commands, not the connect timeout).
+    SlowMailFrom,
+    /// The final 250 arrives after a delay longer than the CONNECT and
+    /// COMMAND timeouts but shorter than the FINAL-REPLY timeout (a slow but
+    /// legitimate MTA must be Accepted, not reported "may have been sent").
+    SlowFinal,
+    /// A non-2xx/4xx/5xx final reply (a stray 354) after the body: the server
+    /// has not given a verdict, so this must be Unknown, never definite.
+    Odd3xxFinal,
 }
 
 struct FakeSmtp {
@@ -227,6 +238,9 @@ async fn run_session<S>(
         } else if up.starts_with("MAIL FROM") {
             if script == Script::Reject553MailFrom {
                 let _ = s.write_all(b"553 5.7.1 sender address rejected\r\n").await;
+            } else if script == Script::SlowMailFrom {
+                tokio::time::sleep(Duration::from_millis(1500)).await;
+                let _ = s.write_all(b"250 2.1.0 ok\r\n").await;
             } else {
                 let _ = s.write_all(b"250 2.1.0 ok\r\n").await;
             }
@@ -282,6 +296,13 @@ async fn run_session<S>(
                 Script::StallAfterDot => {
                     tokio::time::sleep(Duration::from_secs(3600)).await;
                     return;
+                }
+                Script::SlowFinal => {
+                    tokio::time::sleep(Duration::from_millis(1500)).await;
+                    let _ = s.write_all(b"250 2.0.0 accepted late\r\n").await;
+                }
+                Script::Odd3xxFinal => {
+                    let _ = s.write_all(b"354 unexpected continuation\r\n").await;
                 }
                 Script::Reject451Final => {
                     let _ = s.write_all(b"451 4.3.0 try again later\r\n").await;
@@ -626,6 +647,68 @@ async fn stall_waiting_for_final_reply_is_unknown_and_fast() {
     // The final-reply timeout (400ms) fired; we did not wait anywhere near the
     // server's 3600s stall.
     assert!(started.elapsed() < Duration::from_secs(10), "must give up on our own timeout");
+}
+
+/// Timeouts where CONNECT < COMMAND < FINAL-REPLY, all generous enough for a
+/// local handshake, so each phase's own ceiling is the thing under test.
+fn staged_timeouts() -> SmtpTimeouts {
+    SmtpTimeouts {
+        connect: Duration::from_millis(1000),
+        command: Duration::from_millis(4000),
+        final_reply: Duration::from_millis(6000),
+    }
+}
+
+#[tokio::test]
+async fn a_slow_envelope_reply_is_governed_by_the_command_timeout_not_the_connect_one() {
+    let srv = start(Script::SlowMailFrom, false).await;
+    let session = SmtpSession::connect_with_timeouts(
+        &endpoint(&srv, false, None),
+        &creds(),
+        staged_timeouts(),
+    )
+    .await
+    .unwrap();
+    let out = session
+        .send("a@b.example", &["c@d.example".to_string()], BODY)
+        .await;
+    assert!(
+        matches!(out, SmtpOutcome::Accepted { .. }),
+        "a MAIL FROM reply slower than the connect timeout but within the command timeout must succeed, got {out:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_slow_final_reply_within_its_own_timeout_is_accepted() {
+    let srv = start(Script::SlowFinal, false).await;
+    let session = SmtpSession::connect_with_timeouts(
+        &endpoint(&srv, false, None),
+        &creds(),
+        staged_timeouts(),
+    )
+    .await
+    .unwrap();
+    let out = session
+        .send("a@b.example", &["c@d.example".to_string()], BODY)
+        .await;
+    assert!(
+        matches!(out, SmtpOutcome::Accepted { .. }),
+        "a final reply slower than connect/command timeouts but within final_reply must be Accepted, got {out:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_non_verdict_final_reply_is_unknown_not_definite() {
+    let srv = start(Script::Odd3xxFinal, false).await;
+    let out = connect(&srv, false)
+        .await
+        .unwrap()
+        .send("a@b.example", &["c@d.example".to_string()], BODY)
+        .await;
+    match out {
+        SmtpOutcome::Unknown(u) => assert_eq!(u.phase, Phase::FinalReply),
+        other => panic!("a 1xx/3xx reply after the body is no verdict and must be Unknown, got {other:?}"),
+    }
 }
 
 #[tokio::test]

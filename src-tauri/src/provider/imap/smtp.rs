@@ -714,7 +714,15 @@ impl SmtpSession {
         builder.tls_connector = connector;
 
         match builder.connect().await {
-            Ok(client) => Ok(SmtpSession { client, timeouts }),
+            Ok(mut client) => {
+                // mail-send applies ONE `timeout` to the handshake and to
+                // every `cmd()` afterwards. We built the client with the
+                // CONNECT ceiling; from here on envelope commands must run
+                // under the (longer) COMMAND ceiling, or a slow-but-healthy
+                // server would be reported as a failure at the connect limit.
+                client.timeout = timeouts.command;
+                Ok(SmtpSession { client, timeouts })
+            }
             Err(e) => Err(SmtpFailure {
                 phase: Phase::Prepare,
                 error: map_connect_error(&e),
@@ -823,6 +831,19 @@ impl SmtpSession {
             }),
             Ok(Ok(resp)) => {
                 let reply = SmtpReply::from_response(&resp);
+                if !is_2xx(reply.code) && !(400..=599).contains(&reply.code) {
+                    // A 1xx/3xx (or otherwise non-verdict) reply is not an
+                    // answer to the message: the server has neither accepted
+                    // nor refused it, so this is the UNKNOWN zone, never a
+                    // definite non-delivery.
+                    return SmtpOutcome::Unknown(SmtpUnknown {
+                        phase: Phase::FinalReply,
+                        detail: format!(
+                            "the server sent an unexpected reply after the message body ({})",
+                            reply.summary()
+                        ),
+                    });
+                }
                 if is_2xx(reply.code) {
                     // Best-effort QUIT; never let cleanup rewrite the verdict.
                     self.best_effort_quit().await;
@@ -884,13 +905,19 @@ impl SmtpSession {
     }
 
     async fn best_effort_rset(&mut self) {
-        let quick = Duration::from_secs(5);
-        let _ = tokio::time::timeout(quick, self.client.cmd(b"RSET\r\n")).await;
+        let _ = tokio::time::timeout(
+            policy::SMTP_CLEANUP_TIMEOUT,
+            self.client.cmd(b"RSET\r\n"),
+        )
+        .await;
     }
 
     async fn best_effort_quit(&mut self) {
-        let quick = Duration::from_secs(5);
-        let _ = tokio::time::timeout(quick, self.client.cmd(b"QUIT\r\n")).await;
+        let _ = tokio::time::timeout(
+            policy::SMTP_CLEANUP_TIMEOUT,
+            self.client.cmd(b"QUIT\r\n"),
+        )
+        .await;
     }
 }
 

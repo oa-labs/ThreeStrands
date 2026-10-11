@@ -722,6 +722,11 @@ pub const SMTP_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 /// before its `250`.
 pub const SMTP_FINAL_REPLY_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// How long the best-effort `RSET` / `QUIT` after a finished or aborted
+/// submission may take. Cleanup never changes the verdict, so it only needs to
+/// be bounded.
+pub const SMTP_CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Longest server reply TEXT (the human-readable part after the code) we keep
 /// to surface to the user, in bytes. A hostile or buggy server could return a
 /// multi-megabyte reply line; the reply reader already caps the raw line, and
