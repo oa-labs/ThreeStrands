@@ -38,33 +38,48 @@ async function enableDraftReview(page: import("@playwright/test").Page) {
 }
 
 for (const name of [null, "A recipient with a very long display name that exceeds the panel width"]) {
-  test(`long recipient ${name ? "names and email addresses" : "email headings"} truncate within the context panel`, async ({ page }) => {
+  test(`long recipient ${name ? "names and email addresses" : "email addresses"} truncate within the context panel's history chips`, async ({ page }) => {
     await page.goto("/");
     await page.getByRole("button", { name: "New Message (c)" }).click();
     const composer = page.getByRole("dialog", { name: "New Message" });
     const email = "someone.with.a.long.address@a.very.long.organization.example.com";
-    await composer.getByRole("textbox", { name: "To", exact: true }).fill(name ? `${name} <${email}>` : email);
+    const otherEmail = "another.recipient.with.a.long.address@a.very.long.organization.example.com";
+    const recipients = [
+      { label: name || email, email },
+      { label: otherEmail, email: otherEmail },
+    ];
+    const to = composer.getByRole("textbox", { name: "To", exact: true });
+    await to.fill(name ? `${name} <${email}>` : email);
+    await to.press(",");
+    await to.fill(otherEmail);
+    await to.press(",");
     await composer.getByRole("textbox", { name: "Subject" }).focus();
-    const about = page.getByRole("region", { name: `About ${name || email}` });
-    await expect(about).toBeVisible();
-    const lines = about.locator(".compose-recipient-name, .compose-recipient-email");
-    await expect(lines).toHaveCount(name ? 2 : 1);
-    for (const line of await lines.all()) {
-      await expect(line).toHaveCSS("white-space", "nowrap");
-      await expect(line).toHaveCSS("text-overflow", "ellipsis");
-      await expect(line).toHaveCSS("overflow-x", "hidden");
-      const layout = await line.evaluate((element) => ({
+    const panel = page.getByRole("complementary", { name: "Compose context" });
+    const chips = panel.getByRole("group", { name: "Show history with" });
+    await expect(chips.getByRole("button")).toHaveCount(2);
+    // Unsaved recipients have no About section; their identities appear in the history chips.
+    await expect(panel.getByRole("region", { name: /^About / })).toHaveCount(0);
+    for (const recipient of recipients) {
+      const chip = chips.getByRole("button", { name: recipient.label, exact: true });
+      await expect(chip).toBeVisible();
+      await expect(chip).toHaveText(recipient.label);
+      await expect(chip).toHaveAttribute("title", recipient.email);
+      await expect(chip).toHaveCSS("white-space", "nowrap");
+      await expect(chip).toHaveCSS("text-overflow", "ellipsis");
+      await expect(chip).toHaveCSS("overflow-x", "hidden");
+      const layout = await chip.evaluate((element) => ({
         scrollWidth: element.scrollWidth,
         clientWidth: element.clientWidth,
         right: element.getBoundingClientRect().right,
         panelRight: element.closest(".context-panel")!.getBoundingClientRect().right,
-        text: element.textContent,
-        title: element.getAttribute("title"),
       }));
       expect(layout.scrollWidth).toBeGreaterThan(layout.clientWidth);
       expect(layout.right).toBeLessThanOrEqual(layout.panelRight);
-      expect(layout.title).toBe(layout.text);
     }
+    await expect(chips.getByRole("button", { name: recipients[0].label, exact: true })).toHaveAttribute("aria-pressed", "true");
+    await chips.getByRole("button", { name: otherEmail, exact: true }).click();
+    await expect(chips.getByRole("button", { name: otherEmail, exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(chips.getByRole("button", { name: recipients[0].label, exact: true })).toHaveAttribute("aria-pressed", "false");
   });
 }
 
