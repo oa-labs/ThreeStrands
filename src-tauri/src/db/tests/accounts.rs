@@ -367,12 +367,14 @@ fn account_removal_and_local_disconnect_purge_only_that_accounts_imap_state() {
                 c.execute("INSERT INTO imap_locations VALUES (?1, 'INBOX', 1, 1, 'm', '[]', NULL)", [account])?;
                 c.execute("INSERT INTO imap_threads VALUES (?1, 'm', 't', 1)", [account])?;
                 c.execute("INSERT INTO imap_thread_aliases VALUES (?1, 'old', 't')", [account])?;
-                c.execute("INSERT INTO imap_sync_state(account_id, generation) VALUES (?1, 1)", [account])?;
+                c.execute("INSERT INTO imap_sync_state(account_id, generation, complete_walks) VALUES (?1, 1, 4)", [account])?;
                 c.execute("INSERT INTO imap_change_journal VALUES (?1, 1, 't')", [account])?;
                 c.execute("INSERT INTO imap_message_tokens VALUES (?1, 'm', '<m@x>')", [account])?;
-                c.execute("INSERT INTO imap_mailbox_sync_state(account_id, mailbox, last_exists, last_uidnext, last_sweep_at, backfill_low_uid)
-                    VALUES (?1, 'Trash', 3, 9, 100, NULL)", [account])?;
-                c.execute("INSERT INTO imap_hot_threads VALUES (?1, 't')", [account])?;
+                // Populate the Slice 5b-2 columns (last_visited_at, emptied_at_walk)
+                // so this test proves the purge covers them too (item i).
+                c.execute("INSERT INTO imap_mailbox_sync_state(account_id, mailbox, last_exists, last_uidnext, last_sweep_at, backfill_low_uid, last_visited_at)
+                    VALUES (?1, 'Trash', 3, 9, 100, NULL, 200)", [account])?;
+                c.execute("INSERT INTO imap_hot_threads(account_id, thread_id, emptied_at_walk) VALUES (?1, 't', 2)", [account])?;
                 c.execute("INSERT INTO imap_mailboxes(account_id, name, uidvalidity, uidnext, permanent_flags_json, permanent_keywords)
                     VALUES (?1, 'INBOX', 1, 2, '[]', 0)", [account])?;
                 Ok(())

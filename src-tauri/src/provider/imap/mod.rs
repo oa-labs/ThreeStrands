@@ -878,6 +878,234 @@ impl ImapStateStore {
         })
     }
 
+    // -----------------------------------------------------------------------
+    // Slice 5b-2 fair-scheduling + emptied-hot-thread grace state (schema v62).
+    // -----------------------------------------------------------------------
+
+    /// The persisted last-VISIT time for one mailbox (0 if never visited / no
+    /// row). The fair scheduler orders user folders least-recently-visited
+    /// first by this clock, which — unlike `last_sweep_at` — advances on every
+    /// EXAMINE including a cadence-gate no-op, so a mailbox the cadence gate
+    /// keeps skipping still rotates forward and is never starved.
+    pub fn mailbox_last_visited_at(&self, mailbox: &str) -> DbResult<i64> {
+        self.database.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT last_visited_at FROM imap_mailbox_sync_state
+                     WHERE account_id = ?1 AND mailbox = ?2",
+                    rusqlite::params![self.account_id, mailbox],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap_or(0))
+        })
+    }
+
+    /// The COVERAGE EPOCH a mailbox was last successfully visited in (0 if
+    /// never / no row). The scheduler prefers mailboxes whose value is below
+    /// the current epoch so a coverage epoch completes deterministically.
+    pub fn mailbox_visited_in_epoch(&self, mailbox: &str) -> DbResult<i64> {
+        self.database.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT visited_in_epoch FROM imap_mailbox_sync_state
+                     WHERE account_id = ?1 AND mailbox = ?2",
+                    rusqlite::params![self.account_id, mailbox],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap_or(0))
+        })
+    }
+
+    /// The account's count of completed COVERAGE EPOCHS (0 before any / no
+    /// row). A coverage epoch completes when every currently-synced mailbox
+    /// (INBOX + all `synced_now` plan entries) has been successfully visited in
+    /// the current epoch — measured ACROSS polls, since one poll's folder
+    /// budget may be smaller than the synced-mailbox set. The emptied-hot-
+    /// thread grace is measured in completed epochs, so a mailbox that is never
+    /// successfully visited holds the epoch open and the grace never advances
+    /// (safe: it never deletes data early). The name stays `complete_walks`;
+    /// its meaning is "completed coverage epochs".
+    pub fn complete_walks(&self) -> DbResult<u64> {
+        self.database.with_connection(|connection| {
+            let walks: i64 = connection
+                .query_row(
+                    "SELECT complete_walks FROM imap_sync_state WHERE account_id = ?1",
+                    [&self.account_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+            Ok(walks as u64)
+        })
+    }
+
+    /// Advance the COVERAGE EPOCH if (and only if) every currently-synced
+    /// mailbox has been successfully visited in the CURRENT epoch — i.e. its
+    /// `imap_mailbox_sync_state.visited_in_epoch` equals the current
+    /// `complete_walks` value. Call once at the END of each poll, passing the
+    /// full currently-synced set (INBOX + every `synced_now` plan entry).
+    ///
+    /// Coverage is across polls: a per-poll folder budget smaller than the
+    /// synced set means no single poll visits every folder, but each poll
+    /// stamps the folders it DID visit with the current epoch, so the epoch
+    /// completes once the union of visits over successive polls covers
+    /// everything. When it completes this bumps `complete_walks` and, in the
+    /// SAME transaction, journals every emptied hot thread whose grace has now
+    /// expired so the engine re-fetches it and gets `NotFound`. The generation
+    /// is bumped ONLY when at least one thread's grace expired — an epoch that
+    /// completes with nothing newly expired is still a bookkeeping-only commit.
+    ///
+    /// A mailbox not yet visited in the current epoch (a folder that errored,
+    /// or one newly added to the plan) holds the epoch open; this returns the
+    /// unchanged generation and records nothing beyond leaving the counter put.
+    /// Returns `(generation, outstanding)` where `outstanding` names the
+    /// mailboxes still unvisited this epoch (empty when the epoch advanced), so
+    /// the caller can log a rate-limited warning. Creates the sync-state row if
+    /// absent.
+    pub fn advance_coverage_epoch_if_complete(
+        &self,
+        synced_mailboxes: &[String],
+    ) -> DbResult<(u64, Vec<String>)> {
+        self.database.with_transaction(|transaction| {
+            // Ensure the sync-state row exists (new account => epoch 0).
+            transaction.execute(
+                "INSERT OR IGNORE INTO imap_sync_state (account_id, generation, tokens_backfilled, complete_walks)
+                 VALUES (?1, 0, 1, 0)",
+                [&self.account_id],
+            )?;
+            let epoch: i64 = transaction.query_row(
+                "SELECT complete_walks FROM imap_sync_state WHERE account_id = ?1",
+                [&self.account_id],
+                |row| row.get(0),
+            )?;
+            let current_gen: i64 = transaction.query_row(
+                "SELECT generation FROM imap_sync_state WHERE account_id = ?1",
+                [&self.account_id],
+                |row| row.get(0),
+            )?;
+
+            // Which synced mailboxes have NOT been visited in the current epoch?
+            let mut outstanding: Vec<String> = Vec::new();
+            for mailbox in synced_mailboxes {
+                let visited: Option<i64> = transaction
+                    .query_row(
+                        "SELECT visited_in_epoch FROM imap_mailbox_sync_state
+                         WHERE account_id = ?1 AND mailbox = ?2",
+                        rusqlite::params![self.account_id, mailbox],
+                        |row| row.get(0),
+                    )
+                    .ok();
+                if visited != Some(epoch) {
+                    outstanding.push(mailbox.clone());
+                }
+            }
+            if !outstanding.is_empty() {
+                // Coverage incomplete: hold the epoch open, bump nothing.
+                return Ok((current_gen as u64, outstanding));
+            }
+
+            // Coverage complete: advance the epoch.
+            let next_epoch = epoch + 1;
+            transaction.execute(
+                "UPDATE imap_sync_state SET complete_walks = ?2 WHERE account_id = ?1",
+                rusqlite::params![self.account_id, next_epoch],
+            )?;
+
+            // Emptied hot threads whose grace has now expired: journal them so
+            // the engine re-fetches and deletes. The grace boundary (measured
+            // in completed epochs) is
+            // `completed_epochs - emptied_at_walk >= EMPTIED_THREAD_GRACE_WALKS`.
+            let expired: Vec<String> = {
+                let threshold =
+                    (next_epoch as u64).saturating_sub(policy::EMPTIED_THREAD_GRACE_WALKS);
+                let mut statement = transaction.prepare(
+                    "SELECT thread_id FROM imap_hot_threads
+                     WHERE account_id = ?1
+                       AND emptied_at_walk IS NOT NULL
+                       AND emptied_at_walk <= ?2
+                     ORDER BY thread_id",
+                )?;
+                let rows = statement
+                    .query_map(rusqlite::params![self.account_id, threshold as i64], |row| {
+                        row.get::<_, String>(0)
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                rows
+            };
+            if expired.is_empty() {
+                // Epoch advanced but nothing newly expired — do NOT bump the
+                // generation or touch the journal (bookkeeping-only commit).
+                return Ok((current_gen as u64, Vec::new()));
+            }
+            // Something expired: bump the generation and journal each expired
+            // thread under the new generation, in this same transaction.
+            let next_gen = current_gen + 1;
+            transaction.execute(
+                "UPDATE imap_sync_state SET generation = ?2 WHERE account_id = ?1",
+                rusqlite::params![self.account_id, next_gen],
+            )?;
+            for thread_id in &expired {
+                transaction.execute(
+                    "INSERT OR IGNORE INTO imap_change_journal
+                        (account_id, generation, thread_id) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![self.account_id, next_gen, thread_id],
+                )?;
+            }
+            Ok((next_gen as u64, Vec::new()))
+        })
+    }
+
+    /// The emptied-marker for a hot thread: `Ok(Some(walk))` when the thread is
+    /// currently marked empty (observed with zero locations at that complete-
+    /// walk count), `Ok(None)` when it is not marked empty (or is not a hot
+    /// thread). Resolves the id through the alias chain so the survivor's
+    /// marker is read.
+    pub fn hot_thread_emptied_at_walk(&self, thread_id: &str) -> DbResult<Option<u64>> {
+        self.database.with_connection(|connection| {
+            let resolved = self.resolve_thread_alias_conn(connection, thread_id)?;
+            Ok(connection
+                .query_row(
+                    "SELECT emptied_at_walk FROM imap_hot_threads
+                     WHERE account_id = ?1 AND thread_id = ?2",
+                    rusqlite::params![self.account_id, resolved],
+                    |row| row.get::<_, Option<i64>>(0),
+                )
+                .ok()
+                .flatten()
+                .map(|value| value as u64))
+        })
+    }
+
+    /// Mark a hot thread first-observed-empty at `walk` IF it has no marker
+    /// yet; a thread already marked keeps its ORIGINAL (earlier) walk, so the
+    /// grace is counted from when it was first seen empty, not re-observed.
+    /// A no-op for a thread with no `imap_hot_threads` row (a cold thread is
+    /// never journaled, so the grace never applies to it). Resolves aliases.
+    pub fn mark_hot_thread_emptied(&self, thread_id: &str, walk: u64) -> DbResult<()> {
+        self.database.with_connection(|connection| {
+            let resolved = self.resolve_thread_alias_conn(connection, thread_id)?;
+            connection.execute(
+                "UPDATE imap_hot_threads SET emptied_at_walk = ?3
+                 WHERE account_id = ?1 AND thread_id = ?2 AND emptied_at_walk IS NULL",
+                rusqlite::params![self.account_id, resolved, walk as i64],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Clear a hot thread's emptied-marker (it regained a location). Resolves
+    /// aliases; a no-op when there is no marker or no row.
+    pub fn clear_hot_thread_emptied(&self, thread_id: &str) -> DbResult<()> {
+        self.database.with_connection(|connection| {
+            let resolved = self.resolve_thread_alias_conn(connection, thread_id)?;
+            connection.execute(
+                "UPDATE imap_hot_threads SET emptied_at_walk = NULL
+                 WHERE account_id = ?1 AND thread_id = ?2",
+                rusqlite::params![self.account_id, resolved],
+            )?;
+            Ok(())
+        })
+    }
+
     /// Whether a thread is currently marked hot (has, or ever had, a location
     /// in INBOX or Sent).
     pub fn is_thread_hot(&self, thread_id: &str) -> DbResult<bool> {
@@ -943,23 +1171,27 @@ impl ImapStateStore {
                 // Still persist per-mailbox cadence counters so an unchanged
                 // folder records that it was examined/swept — this does NOT
                 // move the generation (item 4).
-                if let Some((mailbox, last_exists, last_uidnext, last_sweep_at)) =
+                if let Some((mailbox, last_exists, last_uidnext, last_sweep_at, last_visited_at, visited_in_epoch)) =
                     &round.mailbox_state
                 {
                     transaction.execute(
                         "INSERT INTO imap_mailbox_sync_state
-                            (account_id, mailbox, last_exists, last_uidnext, last_sweep_at)
-                         VALUES (?1, ?2, ?3, ?4, ?5)
+                            (account_id, mailbox, last_exists, last_uidnext, last_sweep_at, last_visited_at, visited_in_epoch)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                          ON CONFLICT(account_id, mailbox) DO UPDATE SET
                              last_exists = excluded.last_exists,
                              last_uidnext = excluded.last_uidnext,
-                             last_sweep_at = excluded.last_sweep_at",
+                             last_sweep_at = excluded.last_sweep_at,
+                             last_visited_at = excluded.last_visited_at,
+                             visited_in_epoch = excluded.visited_in_epoch",
                         rusqlite::params![
                             self.account_id,
                             mailbox,
                             last_exists,
                             last_uidnext,
-                            last_sweep_at
+                            last_sweep_at,
+                            last_visited_at,
+                            visited_in_epoch
                         ],
                     )?;
                     Self::apply_sent_backfill_low_uid(transaction, &self.account_id, mailbox, round)?;
@@ -1099,21 +1331,25 @@ impl ImapStateStore {
                 )?;
             }
             // Per-mailbox cadence counters, in the same atomic round.
-            if let Some((mailbox, last_exists, last_uidnext, last_sweep_at)) = &round.mailbox_state {
+            if let Some((mailbox, last_exists, last_uidnext, last_sweep_at, last_visited_at, visited_in_epoch)) = &round.mailbox_state {
                 transaction.execute(
                     "INSERT INTO imap_mailbox_sync_state
-                        (account_id, mailbox, last_exists, last_uidnext, last_sweep_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5)
+                        (account_id, mailbox, last_exists, last_uidnext, last_sweep_at, last_visited_at, visited_in_epoch)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                      ON CONFLICT(account_id, mailbox) DO UPDATE SET
                          last_exists = excluded.last_exists,
                          last_uidnext = excluded.last_uidnext,
-                         last_sweep_at = excluded.last_sweep_at",
+                         last_sweep_at = excluded.last_sweep_at,
+                         last_visited_at = excluded.last_visited_at,
+                         visited_in_epoch = excluded.visited_in_epoch",
                     rusqlite::params![
                         self.account_id,
                         mailbox,
                         last_exists,
                         last_uidnext,
-                        last_sweep_at
+                        last_sweep_at,
+                        last_visited_at,
+                        visited_in_epoch
                     ],
                 )?;
                 Self::apply_sent_backfill_low_uid(transaction, &self.account_id, mailbox, round)?;
@@ -1239,10 +1475,20 @@ pub struct SyncRoundWrite {
     /// transaction as the location that makes them hot (Slice 5b-1).
     pub hot_threads: Vec<String>,
     /// Optional per-mailbox cadence state to persist this round:
-    /// `(mailbox, last_exists, last_uidnext, last_sweep_at)`. Written even for
-    /// an otherwise-empty round (an unchanged folder still records that it was
-    /// examined / swept), WITHOUT bumping the generation.
-    pub mailbox_state: Option<(String, i64, i64, i64)>,
+    /// `(mailbox, last_exists, last_uidnext, last_sweep_at, last_visited_at,
+    /// visited_in_epoch)`. Written even for an otherwise-empty round (an
+    /// unchanged folder still records that it was examined / visited), WITHOUT
+    /// bumping the generation. `last_visited_at` is the VISIT clock the fair
+    /// scheduler (Slice 5b-2) orders by: it advances every time the mailbox is
+    /// examined, INCLUDING a cadence-gate no-op visit, whereas `last_sweep_at`
+    /// advances only on a full sweep — so least-recently-visited ordering never
+    /// starves a mailbox the cadence gate keeps skipping. `visited_in_epoch` is
+    /// the COVERAGE-EPOCH this mailbox was last successfully visited in; a
+    /// coverage epoch completes (advancing `complete_walks`) only when every
+    /// currently-synced mailbox has been visited in the current epoch, so
+    /// coverage is measured ACROSS polls — a budget that cannot visit every
+    /// folder in one poll still completes an epoch over several.
+    pub mailbox_state: Option<(String, i64, i64, i64, i64, i64)>,
     /// Optional Sent backfill watermark write, applied to the SAME
     /// `imap_mailbox_sync_state` row as `mailbox_state` and in the SAME
     /// transaction as this round's acquired chunk (so progress is exactly as
@@ -1605,7 +1851,7 @@ mod tests {
                 ('me@example.com','old','middle'),
                 ('me@example.com','middle','root'),
                 ('other@example.com','root','foreign-root');
-                INSERT INTO imap_hot_threads VALUES ('me@example.com','old');",
+                INSERT INTO imap_hot_threads(account_id, thread_id) VALUES ('me@example.com','old');",
                 )?;
                 Ok(())
             })

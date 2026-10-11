@@ -288,6 +288,156 @@ pub fn folder_sweep_due(last_sweep_at: i64, now: i64) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Slice 5b-2: fair folder scheduling, the synced-mailbox cap, and the
+// emptied-hot-thread grace.
+// ---------------------------------------------------------------------------
+//
+// Slice 5b-1 walked `plan.synced().filter(!inbox).take(FOLDER_ROUNDS_PER_POLL)`
+// — a fixed PREFIX. With many folders/labels the later ones never sync, and a
+// move's destination mailbox may never be visited in the poll that sees the
+// INBOX location disappear. 5b-2 replaces that prefix with a fair schedule:
+// INBOX first, then ALL synced SYSTEM-ROLE mailboxes every poll (bounded,
+// cheap when idle via the cadence gate), then user/label folders chosen
+// LEAST-RECENTLY-VISITED first up to the remaining budget. The selection is a
+// pure function so it is table-testable. None of these is a silent clamp: the
+// cap logs the count dropped, and the schedule reports exactly which mailboxes
+// it chose.
+
+/// The most SYNCED mailboxes one account keeps in its plan. Over this cap, the
+/// account syncs system roles first then a deterministic by-name prefix of the
+/// rest, and logs how many it dropped (never silently). 500 is far more than
+/// any ordinary account's folder/label count while bounding per-poll planning
+/// and the `imap_mailbox_sync_state` row count. Below/exact/above tested.
+pub const MAX_SYNCED_MAILBOXES: usize = 500;
+
+/// How many completed COVERAGE EPOCHS a hot thread with zero locations must
+/// survive before `fetch_thread` reports it `NotFound` (and the engine
+/// deletes the local copy). Until then `fetch_thread` returns `Ok(empty)` and
+/// the engine leaves the local thread — tasks and labels — untouched. This is
+/// the grace that absorbs the common case: another client moved a hot message
+/// out of INBOX into a mailbox not swept that poll, so the thread momentarily
+/// has no locations but regains one as soon as the destination is visited. A
+/// coverage epoch = every currently-synced mailbox visited across one or more
+/// polls, so two epochs is ample for the destination to be reached even when
+/// the per-poll budget cannot cover every folder at once. Below/exact/above
+/// tested.
+pub const EMPTIED_THREAD_GRACE_WALKS: u64 = 2;
+
+/// Whether an emptied hot thread's grace has EXPIRED: it was first seen empty
+/// at completed-epoch count `emptied_at_walk`, and `complete_walks` completed
+/// coverage epochs have now elapsed. Grace expires once at least
+/// [`EMPTIED_THREAD_GRACE_WALKS`] completed epochs have passed SINCE it was
+/// first observed empty. Exactly at the boundary the grace is spent (the
+/// thread is deleted); one epoch short, it still survives.
+pub fn emptied_grace_expired(emptied_at_walk: u64, complete_walks: u64) -> bool {
+    complete_walks.saturating_sub(emptied_at_walk) >= EMPTIED_THREAD_GRACE_WALKS
+}
+
+/// One candidate mailbox the fair scheduler reasons over: its exact name, its
+/// persisted last-VISIT time (0 if never visited), the COVERAGE EPOCH it was
+/// last visited in (0 if never), and whether it plays a system role
+/// (INBOX/Sent/Trash/Junk/Archive). INBOX is NOT passed here — it is always
+/// visited first, outside the budget.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScheduleCandidate {
+    pub mailbox: String,
+    pub last_visited_at: i64,
+    pub visited_in_epoch: i64,
+    pub is_system_role: bool,
+}
+
+/// Choose which non-INBOX mailboxes to VISIT this poll, in visit order.
+///
+/// Pure, so the whole fairness policy is table-testable without a server. The
+/// order is: every synced SYSTEM-ROLE mailbox first (bounded set, always
+/// visited every poll — cheap when idle via the EXAMINE cadence gate), then
+/// user/label folders up to the remaining `budget`, chosen so a COVERAGE EPOCH
+/// completes deterministically: folders NOT YET visited in `current_epoch`
+/// (`visited_in_epoch < current_epoch`) come first, then within that bucket
+/// LEAST-RECENTLY-VISITED (`last_visited_at`, never-visited 0 first), ties
+/// broken by name. Prioritising the not-yet-covered folders means coverage
+/// completes in ceil(N/budget) polls regardless of the wall-clock resolution
+/// (two folders visited in the same second still rotate, because the epoch
+/// stamp — not the timestamp — decides who is still outstanding). The budget
+/// counts mailbox VISITS, and SYSTEM ROLES are ALWAYS included regardless of
+/// budget (so a `budget` of 0 still visits every system role). System roles
+/// come back sorted by name; the chosen user folders keep their coverage order.
+pub fn schedule_visits(
+    candidates: &[ScheduleCandidate],
+    current_epoch: i64,
+    budget: usize,
+) -> Vec<String> {
+    let mut system: Vec<&ScheduleCandidate> =
+        candidates.iter().filter(|c| c.is_system_role).collect();
+    system.sort_by(|a, b| a.mailbox.cmp(&b.mailbox));
+
+    let mut folders: Vec<&ScheduleCandidate> =
+        candidates.iter().filter(|c| !c.is_system_role).collect();
+    // Not-yet-covered-this-epoch first (so an epoch completes deterministically
+    // even when the clock does not advance between visits), then
+    // least-recently-visited (never-visited 0 first), ties by name.
+    folders.sort_by(|a, b| {
+        let a_covered = a.visited_in_epoch >= current_epoch;
+        let b_covered = b.visited_in_epoch >= current_epoch;
+        a_covered
+            .cmp(&b_covered)
+            .then_with(|| a.last_visited_at.cmp(&b.last_visited_at))
+            .then_with(|| a.mailbox.cmp(&b.mailbox))
+    });
+
+    let mut out: Vec<String> = system.into_iter().map(|c| c.mailbox.clone()).collect();
+    out.extend(folders.into_iter().take(budget).map(|c| c.mailbox.clone()));
+    out
+}
+
+/// Apply [`MAX_SYNCED_MAILBOXES`] to a planned synced-mailbox set, keeping
+/// SYSTEM ROLES first (never dropped) then a deterministic by-name prefix of
+/// the rest, and reporting how many were dropped so the caller can LOG it
+/// rather than silently truncating. Below/exact at the cap keeps everything;
+/// above the cap drops the by-name tail of the non-system folders. Returns
+/// `(kept_in_a_stable_order, dropped_count)`.
+pub fn cap_synced_mailboxes(
+    candidates: &[ScheduleCandidate],
+    cap: usize,
+) -> (Vec<String>, usize) {
+    if candidates.len() <= cap {
+        // Still return a deterministic order (system roles by name, then the
+        // rest by name) so the caller's accounting is stable.
+        let mut system: Vec<&ScheduleCandidate> =
+            candidates.iter().filter(|c| c.is_system_role).collect();
+        system.sort_by(|a, b| a.mailbox.cmp(&b.mailbox));
+        let mut rest: Vec<&ScheduleCandidate> =
+            candidates.iter().filter(|c| !c.is_system_role).collect();
+        rest.sort_by(|a, b| a.mailbox.cmp(&b.mailbox));
+        let kept = system
+            .into_iter()
+            .chain(rest)
+            .map(|c| c.mailbox.clone())
+            .collect();
+        return (kept, 0);
+    }
+    let mut system: Vec<&ScheduleCandidate> =
+        candidates.iter().filter(|c| c.is_system_role).collect();
+    system.sort_by(|a, b| a.mailbox.cmp(&b.mailbox));
+    let mut rest: Vec<&ScheduleCandidate> =
+        candidates.iter().filter(|c| !c.is_system_role).collect();
+    rest.sort_by(|a, b| a.mailbox.cmp(&b.mailbox));
+
+    // System roles are never dropped (they are a bounded set); the cap applies
+    // to the remaining folders. If the cap is smaller than the system set, keep
+    // every system role anyway (correctness over the cap for the bounded set).
+    let room_for_folders = cap.saturating_sub(system.len());
+    let kept_folders = rest.len().min(room_for_folders);
+    let dropped = rest.len() - kept_folders;
+    let kept: Vec<String> = system
+        .into_iter()
+        .map(|c| c.mailbox.clone())
+        .chain(rest.into_iter().take(kept_folders).map(|c| c.mailbox.clone()))
+        .collect();
+    (kept, dropped)
+}
+
+// ---------------------------------------------------------------------------
 // Slice 5b-1 run 3: Sent chunked acquisition
 // ---------------------------------------------------------------------------
 //
@@ -617,6 +767,193 @@ mod tests {
         assert_eq!(FOLDER_SWEEP_INTERVAL_SECS, 15 * 60);
         assert!(FOLDER_ROUNDS_PER_POLL > 0);
         assert_eq!(FOLDER_ROUNDS_PER_POLL, 8);
+    }
+
+    // --- Slice 5b-2: fair scheduling, cap, grace --------------------------
+
+    fn sys(name: &str) -> ScheduleCandidate {
+        ScheduleCandidate {
+            mailbox: name.into(),
+            last_visited_at: 0,
+            visited_in_epoch: 0,
+            is_system_role: true,
+        }
+    }
+    fn folder(name: &str, last_visited_at: i64) -> ScheduleCandidate {
+        ScheduleCandidate {
+            mailbox: name.into(),
+            last_visited_at,
+            visited_in_epoch: 0,
+            is_system_role: false,
+        }
+    }
+    fn folder_epoch(name: &str, last_visited_at: i64, visited_in_epoch: i64) -> ScheduleCandidate {
+        ScheduleCandidate {
+            mailbox: name.into(),
+            last_visited_at,
+            visited_in_epoch,
+            is_system_role: false,
+        }
+    }
+
+    #[test]
+    fn system_roles_are_always_visited_regardless_of_budget() {
+        let candidates = vec![sys("Archive"), sys("Sent"), sys("Trash"), folder("A", 0)];
+        // Budget 0: every system role still visited, no user folder.
+        let visits = schedule_visits(&candidates, 1, 0);
+        assert_eq!(visits, vec!["Archive", "Sent", "Trash"], "roles sorted by name, no folders");
+        // Budget 1: the roles plus one folder.
+        let visits = schedule_visits(&candidates, 1, 1);
+        assert_eq!(visits, vec!["Archive", "Sent", "Trash", "A"]);
+    }
+
+    #[test]
+    fn not_yet_covered_this_epoch_folders_are_scheduled_before_already_covered_ones() {
+        // In epoch 5: A and C already visited this epoch, B and D not. The
+        // not-covered folders come first (by name), regardless of their
+        // last_visited_at timestamps.
+        let candidates = vec![
+            folder_epoch("A", 100, 5), // covered this epoch
+            folder_epoch("B", 999, 4), // NOT covered this epoch (older epoch)
+            folder_epoch("C", 50, 5),  // covered this epoch
+            folder_epoch("D", 10, 0),  // never covered
+        ];
+        let visits = schedule_visits(&candidates, 5, 10);
+        assert_eq!(
+            visits,
+            vec!["D", "B", "C", "A"],
+            "not-covered-this-epoch (D, B by LRV) precede covered (C, A by LRV)"
+        );
+    }
+
+    #[test]
+    fn never_visited_folders_come_first_then_least_recently_visited() {
+        // "A" never visited (0), "B"/"C" visited at increasing times, "D"
+        // never visited. Never-visited first (A, D by name), then LRV (B, C).
+        let candidates = vec![
+            folder("C", 300),
+            folder("A", 0),
+            folder("B", 100),
+            folder("D", 0),
+        ];
+        let visits = schedule_visits(&candidates, 1, 10);
+        assert_eq!(visits, vec!["A", "D", "B", "C"], "never-visited first (by name), then LRV");
+    }
+
+    #[test]
+    fn ties_in_visit_time_break_deterministically_by_name() {
+        let candidates = vec![folder("Z", 50), folder("A", 50), folder("M", 50)];
+        let visits = schedule_visits(&candidates, 1, 10);
+        assert_eq!(visits, vec!["A", "M", "Z"], "equal visit times tie-break by name");
+    }
+
+    #[test]
+    fn budget_below_exact_and_above_the_folder_count() {
+        let candidates = vec![folder("A", 0), folder("B", 0), folder("C", 0)];
+        // Below: only the first `budget` folders (never-covered, by name).
+        assert_eq!(schedule_visits(&candidates, 1, 2), vec!["A", "B"]);
+        // Exact: all folders.
+        assert_eq!(schedule_visits(&candidates, 1, 3), vec!["A", "B", "C"]);
+        // Above: still all folders, no padding.
+        assert_eq!(schedule_visits(&candidates, 1, 4), vec!["A", "B", "C"]);
+    }
+
+    #[test]
+    fn fairness_every_folder_is_visited_within_ceil_n_over_budget_polls() {
+        // 20 user folders, budget 3 => ceil(20/3) = 7 polls to cover all. This
+        // simulates the COVERAGE EPOCH: a folder visited this epoch is stamped
+        // with the current epoch, and the scheduler prefers folders not yet
+        // covered this epoch, so coverage completes deterministically even with
+        // a frozen clock. Assert full coverage within one epoch's worth of polls.
+        let budget = 3usize;
+        let n = 20usize;
+        let epoch = 1i64;
+        let mut visited_in_epoch: std::collections::BTreeMap<String, i64> =
+            (0..n).map(|i| (format!("f{i:02}"), 0i64)).collect();
+        let mut ever_visited: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
+        let polls_needed = n.div_ceil(budget);
+        for _ in 0..polls_needed {
+            let candidates: Vec<ScheduleCandidate> = visited_in_epoch
+                .iter()
+                .map(|(name, &e)| folder_epoch(name, 0, e))
+                .collect();
+            let visits = schedule_visits(&candidates, epoch, budget);
+            for v in &visits {
+                ever_visited.insert(v.clone());
+                visited_in_epoch.insert(v.clone(), epoch); // stamp as covered this epoch
+            }
+        }
+        assert_eq!(
+            ever_visited.len(),
+            n,
+            "every folder visited within ceil(N/budget) polls: {}/{n}",
+            ever_visited.len()
+        );
+    }
+
+    #[test]
+    fn the_cap_is_a_positive_bound() {
+        assert!(MAX_SYNCED_MAILBOXES > 0);
+        assert_eq!(MAX_SYNCED_MAILBOXES, 500);
+    }
+
+    #[test]
+    fn cap_keeps_everything_below_and_at_the_limit() {
+        let make = |n: usize| -> Vec<ScheduleCandidate> {
+            (0..n).map(|i| folder(&format!("f{i:04}"), 0)).collect()
+        };
+        // Below the cap: nothing dropped.
+        let (kept, dropped) = cap_synced_mailboxes(&make(MAX_SYNCED_MAILBOXES - 1), MAX_SYNCED_MAILBOXES);
+        assert_eq!(kept.len(), MAX_SYNCED_MAILBOXES - 1);
+        assert_eq!(dropped, 0);
+        // Exactly at the cap: nothing dropped.
+        let (kept, dropped) = cap_synced_mailboxes(&make(MAX_SYNCED_MAILBOXES), MAX_SYNCED_MAILBOXES);
+        assert_eq!(kept.len(), MAX_SYNCED_MAILBOXES);
+        assert_eq!(dropped, 0);
+    }
+
+    #[test]
+    fn cap_drops_the_by_name_tail_above_the_limit_keeping_system_roles() {
+        // 2 system roles + 5 folders, cap 4 => keep both roles + first 2
+        // folders by name, drop 3.
+        let mut candidates = vec![sys("Sent"), sys("Trash")];
+        for name in ["e", "d", "c", "b", "a"] {
+            candidates.push(folder(name, 0));
+        }
+        let (kept, dropped) = cap_synced_mailboxes(&candidates, 4);
+        assert_eq!(dropped, 3, "5 folders, room for 2 => 3 dropped");
+        // System roles kept (by name) then the first 2 folders by name.
+        assert_eq!(kept, vec!["Sent", "Trash", "a", "b"]);
+    }
+
+    #[test]
+    fn cap_never_drops_a_system_role_even_below_the_cap_size() {
+        // 3 system roles, cap 2 (smaller than the system set): all 3 roles are
+        // still kept — the bounded system set is never sacrificed.
+        let candidates = vec![sys("Archive"), sys("Sent"), sys("Trash")];
+        let (kept, dropped) = cap_synced_mailboxes(&candidates, 2);
+        assert_eq!(kept, vec!["Archive", "Sent", "Trash"]);
+        assert_eq!(dropped, 0, "no user folders to drop; roles are never dropped");
+    }
+
+    #[test]
+    fn the_grace_constant_is_a_positive_bound() {
+        assert!(EMPTIED_THREAD_GRACE_WALKS > 0);
+        assert_eq!(EMPTIED_THREAD_GRACE_WALKS, 2);
+    }
+
+    #[test]
+    fn emptied_grace_expiry_below_at_and_above_the_bound() {
+        let emptied_at = 10u64;
+        // Below the bound (1 of 2 completed coverage epochs elapsed): not expired.
+        assert!(!emptied_grace_expired(emptied_at, emptied_at + (EMPTIED_THREAD_GRACE_WALKS - 1)));
+        // Exactly at the bound: expired (grace spent).
+        assert!(emptied_grace_expired(emptied_at, emptied_at + EMPTIED_THREAD_GRACE_WALKS));
+        // Past the bound: expired.
+        assert!(emptied_grace_expired(emptied_at, emptied_at + EMPTIED_THREAD_GRACE_WALKS + 5));
+        // Observed empty on the SAME walk it is checked: zero elapsed, not expired.
+        assert!(!emptied_grace_expired(emptied_at, emptied_at));
     }
 
     // The Sent per-poll acquisition budget mirrors Gmail's Sent backfill

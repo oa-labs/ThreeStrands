@@ -14,11 +14,13 @@
 //! (RFC 3501 reserves it; it carries no special-use role).
 //!
 //! ## What this run syncs
-//! INBOX, Sent, Trash and Junk are `synced_now`. Sent joins the synced set in
-//! run 3 (`synced_now = true` for the Sent role); its window is a non-evicting
-//! acquisition bound and the provider fills it in chunked background rounds
-//! after INBOX. Archive, user folders and label-folder children are classified
-//! `synced_now = false` (Slice 5b-2). `\All`, `\Flagged` (Proton "Starred" has
+//! INBOX, Sent, Trash, Junk and Archive are `synced_now`. Archive joins the
+//! synced set in Slice 5b-2 (`synced_now = true` for the Archive role): it is
+//! Folder-class (an evicting 2,000 window) and contributes NO location label
+//! (archived = not in INBOX, so a system label would be wrong). Sent's window
+//! is a non-evicting acquisition bound filled in chunked background rounds
+//! after INBOX. User folders and label-folder children stay
+//! `synced_now = false` (run B). `\All`, `\Flagged` (Proton "Starred" has
 //! `\Flagged` and NO role), `\Drafts` and the label container itself are
 //! `NotSynced`.
 //!
@@ -79,8 +81,9 @@ impl PlanEntry {
 }
 
 /// The whole plan: the ordered mailbox entries. Order places INBOX first, then
-/// the other synced mailboxes (Trash, Junk, then Sent), then the rest — so a
-/// caller can walk `synced_now` entries in a stable, INBOX-first order.
+/// the other synced mailboxes (Trash, Junk, Sent, then Archive), then the rest.
+/// The per-poll SCHEDULER (provider.rs, Slice 5b-2) is what actually bounds and
+/// fairly orders the walk; this stable plan order is its deterministic input.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SyncPlan {
     pub entries: Vec<PlanEntry>,
@@ -228,9 +231,12 @@ pub fn build_plan(
             Some(MailboxRole::Trash) | Some(MailboxRole::Junk) => {
                 (SyncWindowClass::Folder, LabelKind::SystemRole, true, true)
             }
-            // Archive: classified now, synced in 5b-2.
+            // Archive: synced THIS run (5b-2), Folder class (evicting 2,000
+            // window), SystemRole classification but NO location label — an
+            // archived message carries no system label (archived == no INBOX),
+            // so it maps through MailboxLabel::for_role to None.
             Some(MailboxRole::Archive) => {
-                (SyncWindowClass::Folder, LabelKind::SystemRole, false, false)
+                (SyncWindowClass::Folder, LabelKind::SystemRole, true, true)
             }
             // User folders: classified now, synced in 5b-2.
             None => (SyncWindowClass::Folder, LabelKind::UserFolder, false, false),
@@ -267,15 +273,18 @@ pub fn build_plan(
     SyncPlan { entries }
 }
 
-/// A stable ordering key for the synced-mailbox walk: Trash, Junk, then Sent.
-/// Sent is last so its chunked backfill cannot starve the cheap Trash/Junk
-/// rounds inside one poll's folder budget.
+/// A stable ordering key for the synced-mailbox walk: Trash, Junk, Sent, then
+/// Archive. Sent precedes Archive but both sort after the cheap Trash/Junk
+/// rounds; the per-poll SCHEDULER (provider.rs) is what actually bounds and
+/// fairly orders the walk, but a deterministic plan order keeps that input
+/// stable.
 fn role_order(role: Option<MailboxRole>) -> u8 {
     match role {
         Some(MailboxRole::Trash) => 0,
         Some(MailboxRole::Junk) => 1,
         Some(MailboxRole::Sent) => 2,
-        _ => 3,
+        Some(MailboxRole::Archive) => 3,
+        _ => 4,
     }
 }
 
@@ -359,10 +368,14 @@ mod tests {
         assert!(sent.synced_now, "Sent is synced in run 3");
         assert_eq!(sent.label_kind, LabelKind::SystemRole);
 
-        // Archive: classified, Folder class, NOT synced (5b-2).
+        // Archive: classified, Folder class, synced THIS run (5b-2 contract
+        // change — this test previously asserted !archive.synced_now). It
+        // contributes NO location label (archived = not in INBOX).
         let archive = find("Archive");
         assert_eq!(archive.role, Some(MailboxRole::Archive));
-        assert!(!archive.synced_now);
+        assert!(archive.synced_now, "Archive is synced in 5b-2");
+        assert_eq!(archive.window_class, SyncWindowClass::Folder);
+        assert_eq!(plan.label_for_mailbox("Archive"), None, "Archive has no location label");
 
         // All Mail (\All) and Drafts: NotSynced, no label.
         for name in ["All Mail", "Drafts"] {
@@ -393,10 +406,11 @@ mod tests {
         assert_eq!(acme.label_kind, LabelKind::UserFolder);
         assert!(!acme.synced_now);
 
-        // Exactly INBOX, Trash, Spam, Sent are synced, INBOX first and Sent
-        // last (its chunked backfill must not starve the cheap folder rounds).
+        // Exactly INBOX, Trash, Spam, Sent, Archive are synced, INBOX first,
+        // then the cheap folder rounds (Trash/Spam), Sent, and Archive last
+        // (5b-2 contract change — this list previously ended at "Sent").
         let synced: Vec<&str> = plan.synced().map(|e| e.mailbox.as_str()).collect();
-        assert_eq!(synced, vec!["INBOX", "Trash", "Spam", "Sent"]);
+        assert_eq!(synced, vec!["INBOX", "Trash", "Spam", "Sent", "Archive"]);
     }
 
     #[test]

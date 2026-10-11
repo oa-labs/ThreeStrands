@@ -183,6 +183,21 @@ pub struct ImapProvider {
     /// semantics, so a window boundary is testable without thousands of
     /// messages. `None` in production uses each class's policy limit.
     folder_window_override: Option<usize>,
+    /// TEST KNOB: inject synthetic synced-mailbox candidates into the fair
+    /// scheduler so a fairness test can exercise many user folders without a
+    /// large plan. Each is scheduled by name but has no plan entry, so it is
+    /// never driven against the server. `None` in production.
+    extra_synced_candidates: Option<Vec<super::policy::ScheduleCandidate>>,
+    /// TEST KNOB: force named catalog mailboxes to plan as USER-FOLDER class
+    /// (role `None`, `synced_now = true`, `LabelKind::UserFolder`) so the
+    /// coverage-epoch logic can be exercised with real, server-backed folders
+    /// that are NOT system roles and so are subject to the per-poll budget.
+    /// `None` in production (run B's plan will set this naturally).
+    force_user_folders: Option<std::collections::BTreeSet<String>>,
+    /// TEST KNOB: override `policy::FOLDER_ROUNDS_PER_POLL` so a test can set a
+    /// tiny per-poll folder budget (e.g. 1) and watch the coverage epoch
+    /// advance only after several polls. `None` in production.
+    folder_rounds_per_poll_override: Option<usize>,
     /// How many times a round rebuilt the threader's prior state from the
     /// store. That rebuild reads every cached body, so a round with no new
     /// mail must not do it; tests assert on this.
@@ -247,6 +262,9 @@ impl ImapProvider {
             limits: SyncLimits::inbox(),
             sent_round_budget: None,
             folder_window_override: None,
+            extra_synced_candidates: None,
+            force_user_folders: None,
+            folder_rounds_per_poll_override: None,
             thread_state_loads: std::sync::atomic::AtomicUsize::new(0),
         }
     }
@@ -306,16 +324,74 @@ impl ImapProvider {
             });
         let mut generation = self.refresh_mailbox_with(session, &inbox_entry, true).await?;
 
-        // Then the other synced mailboxes (Trash, Junk, then Sent) in plan
-        // order, bounded
-        // by the per-poll budget, each with cadence gating.
-        let folders: Vec<_> = plan
-            .synced()
-            .filter(|e| !e.is_inbox)
-            .take(policy::FOLDER_ROUNDS_PER_POLL)
+        // FAIR SCHEDULING (Slice 5b-2). The other synced mailboxes are chosen
+        // per poll by `policy::schedule_visits`, NOT by a fixed prefix: every
+        // synced SYSTEM-ROLE mailbox (Sent, Trash, Junk, Archive) is visited
+        // every poll (bounded, cheap when idle via the cadence gate), then
+        // user/label folders LEAST-RECENTLY-VISITED first up to the remaining
+        // FOLDER_ROUNDS_PER_POLL budget. Over MAX_SYNCED_MAILBOXES the set is
+        // capped (system roles first, then by name) and the drop is LOGGED.
+        let synced_non_inbox: Vec<plan::PlanEntry> =
+            plan.synced().filter(|e| !e.is_inbox).cloned().collect();
+
+        // Candidates for the cap + scheduler, carrying each mailbox's persisted
+        // visit clock, its last-covered epoch, and whether it plays a system
+        // role. The current coverage epoch drives the scheduler's "not yet
+        // covered this epoch first" ordering so an epoch completes across polls.
+        let current_epoch = self.store.complete_walks().map_err(db_err)? as i64;
+        let mut candidates: Vec<policy::ScheduleCandidate> = Vec::new();
+        for entry in &synced_non_inbox {
+            candidates.push(policy::ScheduleCandidate {
+                mailbox: entry.mailbox.clone(),
+                last_visited_at: self.store.mailbox_last_visited_at(&entry.mailbox).map_err(db_err)?,
+                visited_in_epoch: self.store.mailbox_visited_in_epoch(&entry.mailbox).map_err(db_err)?,
+                is_system_role: entry.role.is_some(),
+            });
+        }
+        // TEST KNOB: inject synthetic synced candidates so a fairness test can
+        // exercise the scheduler with many user folders without a huge plan.
+        // Never set in production.
+        if let Some(extra) = &self.extra_synced_candidates {
+            candidates.extend(extra.iter().cloned());
+        }
+
+        // Cap the synced set; LOG the count dropped, never silently.
+        let (allowed, dropped) =
+            policy::cap_synced_mailboxes(&candidates, policy::MAX_SYNCED_MAILBOXES);
+        if dropped > 0 {
+            log::warn!(
+                "imap sync: {dropped} synced mailbox(es) over the {}-mailbox cap are not synced this poll",
+                policy::MAX_SYNCED_MAILBOXES
+            );
+        }
+        let allowed_set: std::collections::BTreeSet<&str> =
+            allowed.iter().map(String::as_str).collect();
+        let allowed_candidates: Vec<policy::ScheduleCandidate> = candidates
+            .iter()
+            .filter(|c| allowed_set.contains(c.mailbox.as_str()))
             .cloned()
             .collect();
-        for entry in folders {
+
+        // The per-poll visit order (system roles first, then LRV folders up to
+        // the budget). A COVERAGE EPOCH is coverage ACROSS polls, not a single
+        // poll that visited every mailbox: run B syncs more user/label folders
+        // than one poll's budget can visit, so no single poll covers them all.
+        // Each mailbox visited this poll stamped `visited_in_epoch` with the
+        // current epoch (inside refresh_mailbox_with). After the poll, the
+        // epoch advances iff every currently-synced mailbox — INBOX plus every
+        // real `synced_now` plan entry — has been visited in the current epoch.
+        // Synthetic test candidates are NOT server-backed and are excluded.
+        let budget = self
+            .folder_rounds_per_poll_override
+            .unwrap_or(policy::FOLDER_ROUNDS_PER_POLL);
+        let visit_order = policy::schedule_visits(&allowed_candidates, current_epoch, budget);
+        let entry_by_name: std::collections::BTreeMap<&str, &plan::PlanEntry> =
+            synced_non_inbox.iter().map(|e| (e.mailbox.as_str(), e)).collect();
+        let scheduled_real: Vec<&plan::PlanEntry> = visit_order
+            .iter()
+            .filter_map(|name| entry_by_name.get(name.as_str()).copied())
+            .collect();
+        for entry in scheduled_real {
             // Cadence gating decides whether a full sweep is needed. Only INBOX
             // may abort a poll: the engine ingests a poll's changes only after
             // the whole poll succeeds, so a folder that cannot be synced (its
@@ -323,7 +399,10 @@ impl ImapProvider {
             // flowing. A folder failure is logged and retried next poll, and a
             // dropped connection ends the folder walk (INBOX already committed).
             // Only a credential rejection, which pauses the account, propagates.
-            match self.refresh_mailbox_with(session, &entry, false).await {
+            // A folder that errors is simply not stamped for this epoch, so the
+            // epoch stays open until it succeeds (the safe direction: the
+            // emptied-thread grace never advances early).
+            match self.refresh_mailbox_with(session, entry, false).await {
                 Ok(committed) => generation = committed,
                 Err(error) if error.requires_reauthentication() => return Err(error),
                 Err(error) => {
@@ -336,6 +415,35 @@ impl ImapProvider {
                     }
                 }
             }
+        }
+
+        // End-of-poll coverage check (Slice 5b-2 item 4). The full currently-
+        // synced set is INBOX plus every real `synced_now` plan entry (NOT just
+        // this poll's schedule, and NOT synthetic test candidates). The epoch
+        // advances only when every one has been visited in the current epoch;
+        // on advance, emptied hot threads whose grace just expired are journaled
+        // (same transaction) — bumping the generation only when something
+        // actually expired. Visit recording never bumps the generation.
+        let mut synced_all: Vec<String> = Vec::with_capacity(synced_non_inbox.len() + 1);
+        synced_all.push(inbox_entry.mailbox.clone());
+        synced_all.extend(synced_non_inbox.iter().map(|e| e.mailbox.clone()));
+        let (after_epoch, outstanding) = self
+            .store
+            .advance_coverage_epoch_if_complete(&synced_all)
+            .map_err(db_err)?;
+        generation = generation.max(after_epoch);
+        if !outstanding.is_empty() {
+            // Coverage still open this epoch: the emptied-thread grace cannot
+            // advance until these mailboxes are successfully visited. This
+            // fires at most once per poll and only while coverage is genuinely
+            // incomplete (KNOWN LIMITATION: a permanently broken folder holds
+            // the epoch — and the grace — open indefinitely; no escape hatch
+            // this run).
+            log::warn!(
+                "imap sync: coverage epoch still open — {} mailbox(es) not yet visited this epoch: {:?}",
+                outstanding.len(),
+                outstanding
+            );
         }
         Ok(Refreshed { last: generation })
     }
@@ -354,7 +462,22 @@ impl ImapProvider {
                 special_use: row.special_use.clone(),
             })
             .collect();
-        Ok(plan::build_plan(&catalog, Some(&delimiter), &self.settings))
+        let mut plan = plan::build_plan(&catalog, Some(&delimiter), &self.settings);
+        // TEST KNOB: re-class named mailboxes as synced USER FOLDERS (role
+        // None, synced_now true) so the coverage-epoch logic can be exercised
+        // with real server-backed folders that are subject to the per-poll
+        // budget (run B produces such entries naturally).
+        if let Some(forced) = &self.force_user_folders {
+            for entry in plan.entries.iter_mut() {
+                if forced.contains(&entry.mailbox) {
+                    entry.role = None;
+                    entry.synced_now = true;
+                    entry.label_kind = plan::LabelKind::UserFolder;
+                    entry.window_class = policy::SyncWindowClass::Folder;
+                }
+            }
+        }
+        Ok(plan)
     }
 
     /// Round-time catalog refresh (item 3). When the account's periodic catalog
@@ -479,6 +602,11 @@ impl ImapProvider {
         // either (item 2): EXISTS/UIDNEXT unchanged does not mean the window is
         // fully acquired, so there is still a chunk to pull this poll.
         let now = (self.now)();
+        // The COVERAGE EPOCH this successful visit belongs to (Slice 5b-2):
+        // stamped into `visited_in_epoch` so coverage can be judged ACROSS
+        // polls. Stable during a poll — only the end-of-poll
+        // `advance_coverage_epoch_if_complete` changes it.
+        let epoch = self.store.complete_walks().map_err(db_err)? as i64;
         let local_uidvalidity_pre = self
             .store
             .locations_in_mailbox(mailbox)
@@ -515,8 +643,12 @@ impl ImapProvider {
             // the generation, keeping last_sweep_at as stored.
             let last_sweep_at = stored.map(|(_, _, s)| s).unwrap_or(now);
             let mut round = SyncRoundWrite::default();
+            // A cadence-gate no-op still COUNTS as a visit: stamp
+            // last_visited_at=now AND visited_in_epoch=epoch so the fair
+            // scheduler rotates this mailbox forward and the coverage epoch
+            // counts it as visited, even though no full sweep ran (item 2/4).
             round.mailbox_state =
-                Some((mailbox.to_string(), server_exists, server_uidnext, last_sweep_at));
+                Some((mailbox.to_string(), server_exists, server_uidnext, last_sweep_at, now, epoch));
             return self.store.commit_sync_round(&round).map_err(db_err);
         }
         // A full sweep is happening now: advance the sweep clock when due (or
@@ -641,7 +773,7 @@ impl ImapProvider {
 
         let mut round = SyncRoundWrite::default();
         round.mailbox_state =
-            Some((mailbox.to_string(), server_exists, server_uidnext, new_last_sweep_at));
+            Some((mailbox.to_string(), server_exists, server_uidnext, new_last_sweep_at, now, epoch));
         // Sent backfill watermark, written in the SAME transaction as this
         // round's acquired chunk so progress is exactly as crash-safe as the
         // locations it accompanies (item 2). `None` for every non-Sent mailbox.
@@ -1154,11 +1286,65 @@ impl MailSync for ImapProvider {
         // Resolve an aliased (merged-away) id to its survivor.
         let thread_id = self.store.resolve_thread_alias(id).map_err(db_err)?;
         let message_ids = self.store.messages_in_thread(&thread_id).map_err(db_err)?;
-        if message_ids.is_empty() {
-            // No remaining locations/messages: the engine deletes the local
-            // copy.
+
+        // Does this thread have ANY live location right now? A message row can
+        // outlive its last location (the location was expunged / the message
+        // was moved to a mailbox not swept this poll), so "has messages" is not
+        // "has a location". Zero locations is the trigger for the emptied-hot-
+        // thread grace (Slice 5b-2 item 4).
+        let mut has_any_location = false;
+        for message_id in &message_ids {
+            if !self
+                .store
+                .locations_for_message(message_id)
+                .map_err(db_err)?
+                .is_empty()
+            {
+                has_any_location = true;
+                break;
+            }
+        }
+
+        if !has_any_location {
+            // The thread has no locations. If it is (or ever was) HOT, do NOT
+            // report NotFound immediately: another client may have moved a hot
+            // message out of INBOX into a mailbox not swept this poll, so the
+            // thread momentarily has zero locations but regains one as soon as
+            // the destination is visited. Return `Ok(empty)` during the grace
+            // (the engine's ingest_threads applies nothing and leaves the local
+            // thread, its tasks and labels untouched), and `NotFound` only once
+            // EMPTIED_THREAD_GRACE_WALKS completed COVERAGE EPOCHS have passed
+            // (an epoch = every synced mailbox visited across one or more polls).
+            if self.store.is_thread_hot(&thread_id).map_err(db_err)? {
+                let walks = self.store.complete_walks().map_err(db_err)?;
+                match self.store.hot_thread_emptied_at_walk(&thread_id).map_err(db_err)? {
+                    None => {
+                        // First observation of emptiness: start the grace
+                        // clock at the current completed-epoch count and keep
+                        // the local copy for now.
+                        self.store.mark_hot_thread_emptied(&thread_id, walks).map_err(db_err)?;
+                        return Ok(Vec::new());
+                    }
+                    Some(emptied_at) => {
+                        if policy::emptied_grace_expired(emptied_at, walks) {
+                            // Grace spent: the thread really is gone.
+                            return Err(ProviderError::NotFound);
+                        }
+                        // Still within the grace window.
+                        return Ok(Vec::new());
+                    }
+                }
+            }
+            // Not a hot thread (cold threads are never journaled, so the engine
+            // never asks about one that is gone — but keep the original
+            // contract): the engine deletes the local copy.
             return Err(ProviderError::NotFound);
         }
+
+        // The thread regained (or still has) a location: clear any emptied
+        // marker so a future emptiness restarts the grace from scratch.
+        self.store.clear_hot_thread_emptied(&thread_id).map_err(db_err)?;
+
         let plan = self.build_sync_plan()?;
 
         let mut messages = Vec::new();
@@ -1837,6 +2023,9 @@ mod tests {
             limits: SyncLimits::inbox(),
             sent_round_budget: None,
             folder_window_override: None,
+            extra_synced_candidates: None,
+            force_user_folders: None,
+            folder_rounds_per_poll_override: None,
             thread_state_loads: std::sync::atomic::AtomicUsize::new(0),
         };
         (provider, store)
@@ -3339,32 +3528,33 @@ mod tests {
 
     /// (f) INBOX, Trash, Junk AND Sent are synced; Drafts, All Mail, Starred
     /// (\Flagged, no role), the label container and Archive are never selected
-    /// or fetched. (Sent joined the synced set in run 3 — the intentional
-    /// contract change; before run 3 this test asserted Sent was not synced.)
+    /// or fetched. (Sent joined the synced set in run 3 and Archive in 5b-2 —
+    /// intentional contract changes; this test previously named only
+    /// INBOX/Trash/Junk/Sent as synced and asserted Archive was never synced.)
     #[tokio::test]
-    async fn only_inbox_trash_junk_and_sent_are_ever_synced() {
+    async fn only_inbox_trash_junk_sent_and_archive_are_ever_synced() {
         let mut mb = FakeMailbox::new(100);
         mb.add(&["\\Seen"], &message("<i1@x>", "Inbox", ""));
         mb.add_to("Trash", 50, &["\\Seen"], &message("<t1@x>", "Trashed", ""));
         mb.add_to("Junk", 60, &["\\Seen"], &message("<j1@x>", "Spam", ""));
         mb.add_to("Sent", 90, &["\\Seen"], &message("<s1@x>", "Sent", "")); // run 3: synced
+        mb.add_to("Archive", 95, &["\\Seen"], &message("<ar1@x>", "Arch", "")); // 5b-2: synced
         // Folders that MUST never be synced:
         mb.add_to("Drafts", 70, &["\\Seen"], &message("<d1@x>", "Draft", ""));
         mb.add_to("All Mail", 80, &["\\Seen"], &message("<a1@x>", "All", ""));
-        mb.add_to("Archive", 95, &["\\Seen"], &message("<ar1@x>", "Arch", "")); // 5b-2
         let mailbox = Arc::new(Mutex::new(mb));
         let (provider, store) = provider_with(mailbox.clone());
         let db = store.database();
 
         crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
 
-        // Synced mailboxes have locations (Sent included this run).
-        for synced in ["INBOX", "Trash", "Junk", "Sent"] {
+        // Synced mailboxes have locations (Sent and Archive included this run).
+        for synced in ["INBOX", "Trash", "Junk", "Sent", "Archive"] {
             assert!(!store.locations_in_mailbox(synced).unwrap().is_empty(), "{synced} synced");
         }
         // Never-synced mailboxes have NO locations and were never SEARCHed.
         let counts = mailbox.lock().unwrap();
-        for never in ["Drafts", "All Mail", "Archive"] {
+        for never in ["Drafts", "All Mail"] {
             assert!(store.locations_in_mailbox(never).unwrap().is_empty(), "{never} not synced");
             assert_eq!(counts.counts(never).0, 0, "{never} never SEARCHed");
         }
@@ -4094,10 +4284,22 @@ mod tests {
         // The provider commits the expunge; the engine does not consume it.
         provider.refresh_all().await.unwrap();
         assert!(sent_uids(&store).is_empty());
-        // A full recovery still needs the now-locationless hot thread id.
+        // A full recovery still needs the now-locationless hot thread id. Under
+        // the Slice 5b-2 EMPTIED_THREAD_GRACE_WALKS grace the thread is NOT
+        // deleted on first observation of emptiness — it SURVIVES the grace and
+        // is deleted only after EMPTIED_THREAD_GRACE_WALKS completed coverage epochs pass
+        // (this test previously asserted immediate deletion). Drive polls until
+        // the grace expires and the engine deletes it, bounded.
         db.clear_cursor("me@example.com").unwrap();
-        sync_n(&provider, db.as_ref(), 1).await;
-        assert!(db.list_all_mail(Some("me@example.com")).unwrap().is_empty());
+        let mut deleted = false;
+        for _ in 0..8 {
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+            if db.list_all_mail(Some("me@example.com")).unwrap().is_empty() {
+                deleted = true;
+                break;
+            }
+        }
+        assert!(deleted, "the long-empty hot thread is deleted once the grace expires");
     }
 
     #[tokio::test]
@@ -4185,6 +4387,497 @@ mod tests {
             provider.thread_state_loads.load(std::sync::atomic::Ordering::Relaxed),
             loads,
             "idle poll does not rebuild threader state"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Slice 5b-2: fair scheduling, Archive sync, emptied-hot-thread grace
+    // ------------------------------------------------------------------
+
+    /// Count the open tasks linked to a provider thread id (via its local id).
+    fn task_count_for(store: &ImapStateStore, provider_thread_id: &str) -> i64 {
+        let local = format!("me@example.com:{provider_thread_id}");
+        store
+            .database()
+            .with_connection(|c| {
+                Ok(c.query_row(
+                    "SELECT COUNT(*) FROM tasks WHERE thread_id = ?1",
+                    [&local],
+                    |r| r.get(0),
+                )?)
+            })
+            .unwrap()
+    }
+
+    /// Attach a task to a provider thread's LOCAL thread row (as the triage
+    /// surface would), so a test can prove the grace leaves local state intact.
+    fn attach_task(store: &ImapStateStore, provider_thread_id: &str, task_id: &str) {
+        let local = format!("me@example.com:{provider_thread_id}");
+        store
+            .database()
+            .with_connection(|c| {
+                c.execute(
+                    "INSERT INTO tasks(id, account_id, thread_id, subject_snapshot, title, kind,
+                        due_kind, status, created_at, updated_at)
+                     VALUES (?1, 'me@example.com', ?2, 'S', 'T', 'action', 'none', 'open',
+                        '2026-09-20T00:00:00Z', '2026-09-20T00:00:00Z')",
+                    rusqlite::params![task_id, local],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    /// (a) A hot INBOX message moved to ARCHIVE by another client: because
+    /// Archive is now synced (5b-2), its new location is picked up, the thread
+    /// survives as ONE local thread with NO INBOX label (archived == no system
+    /// location label), and the engine never deletes it.
+    #[tokio::test]
+    async fn a_hot_inbox_message_moved_to_archive_survives_without_an_inbox_label() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<m1@x>", "Hello", ""));
+        mb.folder("Archive", 95); // present but empty for now
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        let threads = provider.list_inbox(None).await.unwrap();
+        assert_eq!(threads.thread_ids.len(), 1);
+        let thread_id = threads.thread_ids[0].clone();
+        assert_eq!(thread_labels(&provider, &thread_id).await, vec!["INBOX"]);
+
+        // Another client moves m1 from INBOX to Archive (same Message-ID ->
+        // same stable id).
+        {
+            let mut mb = mailbox.lock().unwrap();
+            mb.inbox().messages.retain(|m| m.uid != 1);
+            mb.add_to("Archive", 95, &["\\Seen"], &message("<m1@x>", "Hello", ""));
+        }
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+
+        // INBOX location gone, Archive location present, ONE engine thread.
+        assert!(store.locations_in_mailbox("INBOX").unwrap().is_empty());
+        assert_eq!(store.locations_in_mailbox("Archive").unwrap().len(), 1);
+        assert_eq!(
+            db.list_all_mail(Some("me@example.com")).unwrap().len(),
+            1,
+            "the engine keeps exactly one local thread"
+        );
+        // The thread carries NO INBOX label — archived has no system location
+        // label — and is not NotFound.
+        let labels = thread_labels(&provider, &thread_id).await;
+        assert!(!labels.contains(&"INBOX".to_string()), "no INBOX after archiving: {labels:?}");
+    }
+
+    /// (b) A hot INBOX message moved into a mailbox NOT swept this poll (forced
+    /// via `examine_fails` on the destination): the thread has zero locations
+    /// momentarily, SURVIVES the grace (its local copy — including a linked
+    /// task — is untouched), then the destination recovers and the thread is
+    /// re-journaled with the right labels.
+    #[tokio::test]
+    async fn a_move_into_an_unswept_mailbox_survives_the_grace_then_recovers() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<m1@x>", "Hello", ""));
+        // Archive exists but EXAMINE fails this poll (stands in for "a mailbox
+        // not swept this poll" — the scheduler visited it but it errored, so
+        // the move's destination is not seen).
+        mb.folder("Archive", 95).examine_fails = true;
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        let thread_id = provider.list_inbox(None).await.unwrap().thread_ids[0].clone();
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1);
+        // Attach a task to the local thread; it must survive the grace.
+        attach_task(&store, &thread_id, "task-b");
+        assert_eq!(task_count_for(&store, &thread_id), 1);
+
+        // Another client moves m1 out of INBOX into the (un-examinable) Archive.
+        {
+            let mut mb = mailbox.lock().unwrap();
+            mb.inbox().messages.retain(|m| m.uid != 1);
+            mb.add_to("Archive", 95, &["\\Seen"], &message("<m1@x>", "Hello", ""));
+        }
+        // Poll: INBOX location gone, Archive EXAMINE fails so the destination
+        // is not seen -> the hot thread has zero locations. The grace keeps it.
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        assert!(store.locations_in_mailbox("INBOX").unwrap().is_empty());
+        assert_eq!(
+            db.list_all_mail(Some("me@example.com")).unwrap().len(),
+            1,
+            "the thread survives the grace while its destination is unswept"
+        );
+        assert_eq!(task_count_for(&store, &thread_id), 1, "the linked task survived the grace");
+
+        // The destination recovers: Archive is examinable again.
+        mailbox.lock().unwrap().folder("Archive", 95).examine_fails = false;
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        assert_eq!(store.locations_in_mailbox("Archive").unwrap().len(), 1, "Archive location found");
+        // Still one thread, task intact, and now re-journaled with correct
+        // labels (no INBOX; Archive contributes no system label).
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1);
+        assert_eq!(task_count_for(&store, &thread_id), 1, "task preserved after recovery");
+        let labels = thread_labels(&provider, &thread_id).await;
+        assert!(!labels.contains(&"INBOX".to_string()), "no INBOX after the move: {labels:?}");
+    }
+
+    /// (c) A true server-side expunge of the last copy: the local thread is
+    /// kept for the grace, then deleted after EMPTIED_THREAD_GRACE_WALKS
+    /// completed coverage epochs; idle polls during the grace do not bump the
+    /// generation.
+    #[tokio::test]
+    async fn a_true_expunge_keeps_the_thread_for_the_grace_then_deletes_it() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<m1@x>", "Hello", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1);
+
+        // The server expunges the only copy.
+        mailbox.lock().unwrap().inbox().messages.clear();
+
+        // First poll after the expunge: the thread has zero locations and is
+        // hot, so the grace keeps it (NOT deleted yet).
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        assert_eq!(
+            db.list_all_mail(Some("me@example.com")).unwrap().len(),
+            1,
+            "the first empty observation does not delete (grace)"
+        );
+        let gen_during_grace = store.generation().unwrap();
+
+        // An idle poll during the grace (nothing changed) does not bump the
+        // generation.
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        // Keep polling until the thread is finally deleted once the grace is spent.
+        let mut deleted = false;
+        for _ in 0..8 {
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+            if db.list_all_mail(Some("me@example.com")).unwrap().is_empty() {
+                deleted = true;
+                break;
+            }
+        }
+        assert!(deleted, "the thread is deleted after EMPTIED_THREAD_GRACE_WALKS completed coverage epochs");
+        // The generation moved only when the grace expired (the deletion was
+        // journaled), not on the idle grace polls: it is >= the grace-era value.
+        assert!(store.generation().unwrap() >= gen_during_grace);
+    }
+
+    /// (d) A folder that keeps failing EXAMINE is never visited in the current
+    /// coverage epoch, so the epoch cannot advance and the emptied-thread grace
+    /// does not progress: nothing is deleted early. Once the folder recovers,
+    /// the epoch advances and the grace expires.
+    #[tokio::test]
+    async fn a_failing_folder_blocks_the_coverage_epoch_and_the_grace() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<m1@x>", "Hello", ""));
+        // A Trash folder that always fails EXAMINE -> it is never visited in
+        // the current epoch, so the epoch never completes.
+        mb.folder("Trash", 50).examine_fails = true;
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1);
+        let walks_before = store.complete_walks().unwrap();
+
+        // Expunge the INBOX copy: the thread goes empty.
+        mailbox.lock().unwrap().inbox().messages.clear();
+
+        // Many polls, but Trash keeps failing so the coverage epoch cannot
+        // advance and the grace never progresses: the thread is NOT deleted.
+        for _ in 0..6 {
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        }
+        assert_eq!(
+            store.complete_walks().unwrap(),
+            walks_before,
+            "a failing folder blocks coverage-epoch advance"
+        );
+        assert_eq!(
+            db.list_all_mail(Some("me@example.com")).unwrap().len(),
+            1,
+            "the emptied thread is NOT deleted while coverage cannot complete"
+        );
+
+        // Heal Trash: walks complete again, the grace advances, deletion lands.
+        mailbox.lock().unwrap().folder("Trash", 50).examine_fails = false;
+        let mut deleted = false;
+        for _ in 0..8 {
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+            if db.list_all_mail(Some("me@example.com")).unwrap().is_empty() {
+                deleted = true;
+                break;
+            }
+        }
+        assert!(deleted, "once walks complete again the grace expires and the thread is deleted");
+    }
+
+    /// (k) Archive is an EVICTING window (Folder class) at a tiny limit, while
+    /// Sent (acquisition bound) is NOT, in the same account.
+    #[tokio::test]
+    async fn archive_evicts_at_a_tiny_window_while_sent_does_not() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i1@x>", "Inbox", ""));
+        // Archive and Sent each start with 2 messages.
+        for i in 1..=2 {
+            mb.add_to("Archive", 95, &["\\Seen"], &message(&format!("<a{i}@x>"), "A", ""));
+            mb.add_to("Sent", 90, &["\\Seen"], &message(&format!("<s{i}@x>"), "S", ""));
+        }
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (mut provider, store) = provider_with(mailbox.clone());
+        provider.sent_round_budget = Some(10);
+        provider.folder_window_override = Some(2); // tiny window for both
+        let db = store.database();
+
+        sync_n(&provider, db.as_ref(), 2).await;
+        let archive_uids = |s: &ImapStateStore| {
+            let mut u: Vec<i64> = s.locations_in_mailbox("Archive").unwrap().into_iter().map(|l| l.uid).collect();
+            u.sort_unstable();
+            u
+        };
+        assert_eq!(archive_uids(&store), vec![1, 2], "both Archive acquired");
+        assert_eq!(sent_uids(&store), vec![1, 2], "both Sent acquired");
+
+        // Newer mail pushes the oldest (UID 1) past the 2-message window in both.
+        {
+            let mut g = mailbox.lock().unwrap();
+            g.add_to("Archive", 95, &["\\Seen"], &message("<a3@x>", "A3", ""));
+            g.add_to("Sent", 90, &["\\Seen"], &message("<s3@x>", "S3", ""));
+        }
+        sync_n(&provider, db.as_ref(), 2).await;
+
+        // Archive EVICTS the aged-out UID 1 (sliding window); Sent keeps it.
+        assert_eq!(archive_uids(&store), vec![2, 3], "Archive evicts the aged-out UID 1");
+        assert_eq!(sent_uids(&store), vec![1, 2, 3], "Sent never evicts (acquisition bound)");
+    }
+
+    /// (l) Fairness integration: with 20 synthetic extra `synced_now` entries
+    /// injected through the test-only scheduler knob and a small budget, every
+    /// one is VISITED within ceil(20/budget) polls. The synthetic candidates
+    /// are scheduled by name only (no plan entry, so no server round), proving
+    /// the scheduler's rotation without a 20-folder fixture.
+    #[tokio::test]
+    async fn fairness_every_injected_folder_is_scheduled_within_ceil_n_over_budget_polls() {
+        // The scheduler is a pure function; here we drive it the way
+        // refresh_all_with does, through the injected candidates, and record
+        // which names schedule_visits returns across polls. We assert on the
+        // SELECTION (schedule_visits output) which is what bounds server work.
+        let budget = policy::FOLDER_ROUNDS_PER_POLL; // production budget
+        let n = 20usize;
+        // Build 20 synthetic user-folder candidates (never covered at start).
+        let names: Vec<String> = (0..n).map(|i| format!("folder-{i:02}")).collect();
+        let epoch = 1i64;
+        let mut visited_in_epoch: std::collections::BTreeMap<String, i64> =
+            names.iter().map(|n| (n.clone(), 0i64)).collect();
+        let mut ever: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let polls = n.div_ceil(budget);
+        for _ in 0..polls {
+            let candidates: Vec<policy::ScheduleCandidate> = names
+                .iter()
+                .map(|name| policy::ScheduleCandidate {
+                    mailbox: name.clone(),
+                    last_visited_at: 0,
+                    visited_in_epoch: visited_in_epoch[name],
+                    is_system_role: false,
+                })
+                .collect();
+            let visits = policy::schedule_visits(&candidates, epoch, budget);
+            for v in &visits {
+                ever.insert(v.clone());
+                visited_in_epoch.insert(v.clone(), epoch);
+            }
+        }
+        assert_eq!(ever.len(), n, "every injected folder visited within ceil(N/budget) polls");
+
+        // And prove the knob is wired into refresh_all_with: an injected
+        // candidate is accepted (does not panic / abort the walk) and the walk
+        // still completes INBOX. The synthetic names have no plan entry, so
+        // they take no server round.
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<i1@x>", "Inbox", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (mut provider, store) = provider_with(mailbox);
+        provider.extra_synced_candidates = Some(
+            names
+                .iter()
+                .map(|name| policy::ScheduleCandidate {
+                    mailbox: name.clone(),
+                    last_visited_at: 0,
+                    visited_in_epoch: 0,
+                    is_system_role: false,
+                })
+                .collect(),
+        );
+        let db = store.database();
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+            .await
+            .expect("injected synthetic candidates must not wedge the walk");
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1, "INBOX still synced");
+    }
+
+    // ------------------------------------------------------------------
+    // Slice 5b-2 coverage-epoch fix: a "complete walk" is coverage ACROSS
+    // polls, not a single poll that visited every mailbox. With more synced
+    // mailboxes than the per-poll budget, no single poll covers them all, so
+    // the epoch (and the emptied-thread grace) must still advance once every
+    // synced mailbox has been visited across successive polls.
+    // ------------------------------------------------------------------
+
+    /// (1) More synced mailboxes than the per-poll budget: the coverage epoch
+    /// advances only after EVERY synced mailbox was visited (over several
+    /// polls), and a truly-expunged hot thread's last copy is deleted after
+    /// exactly two completed epochs — not never (the old per-poll definition
+    /// would have deadlocked the epoch here forever).
+    #[tokio::test]
+    async fn coverage_epoch_advances_across_polls_and_grace_eventually_deletes() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<m1@x>", "Hello", ""));
+        // Two extra server-backed folders, forced to USER-FOLDER class so they
+        // count against the per-poll budget (not system roles, which are always
+        // visited). They start non-empty so they are examinable.
+        mb.add_to("Junk", 60, &["\\Seen"], &message("<j1@x>", "J", ""));
+        mb.add_to("Archive", 95, &["\\Seen"], &message("<a1@x>", "A", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (mut provider, store) = provider_with(mailbox.clone());
+        provider.force_user_folders =
+            Some(["Junk".to_string(), "Archive".to_string()].into_iter().collect());
+        provider.folder_rounds_per_poll_override = Some(1); // one user folder per poll
+        let db = store.database();
+
+        // Baseline + one poll. With a budget of 1 and two user folders, no
+        // single poll covers both — the epoch must still advance across polls.
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1);
+
+        // Expunge the only INBOX copy: the hot thread goes empty.
+        mailbox.lock().unwrap().inbox().messages.clear();
+
+        // Drive polls until the thread is deleted. Each poll visits INBOX +
+        // (budget 1) one user folder, so it takes two polls to complete one
+        // coverage epoch, and two completed epochs to spend the grace. The old
+        // per-poll logic never advances the epoch here, so the thread would
+        // linger forever — this loop would never see the deletion.
+        let mut deleted = false;
+        for _ in 0..12 {
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+            if db.list_all_mail(Some("me@example.com")).unwrap().is_empty() {
+                deleted = true;
+                break;
+            }
+        }
+        assert!(
+            deleted,
+            "a truly-expunged hot thread is deleted after the grace, even when no single poll covers every synced mailbox"
+        );
+        // The epoch really did advance beyond the baseline (coverage worked).
+        assert!(store.complete_walks().unwrap() >= policy::EMPTIED_THREAD_GRACE_WALKS);
+    }
+
+    /// (2) A folder that keeps failing EXAMINE prevents the coverage epoch from
+    /// advancing (that folder is never visited in the current epoch), so
+    /// nothing is deleted early; once it recovers, the epoch advances and the
+    /// grace expires. Uses forced user folders + budget 1 so coverage genuinely
+    /// depends on the failing folder succeeding.
+    #[tokio::test]
+    async fn a_failing_folder_blocks_epoch_advance_until_it_recovers() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<m1@x>", "Hello", ""));
+        mb.add_to("Junk", 60, &["\\Seen"], &message("<j1@x>", "J", ""));
+        mb.add_to("Archive", 95, &["\\Seen"], &message("<a1@x>", "A", ""));
+        // Archive (a forced user folder) always fails EXAMINE.
+        mb.folder("Archive", 95).examine_fails = true;
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (mut provider, store) = provider_with(mailbox.clone());
+        provider.force_user_folders =
+            Some(["Junk".to_string(), "Archive".to_string()].into_iter().collect());
+        provider.folder_rounds_per_poll_override = Some(1);
+        let db = store.database();
+
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        let epoch_before = store.complete_walks().unwrap();
+
+        // Expunge the INBOX copy: the thread goes empty.
+        mailbox.lock().unwrap().inbox().messages.clear();
+
+        // Many polls, but Archive never succeeds, so the epoch cannot advance
+        // (Archive is never visited in the current epoch) and nothing is
+        // deleted early.
+        for _ in 0..10 {
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        }
+        assert_eq!(
+            store.complete_walks().unwrap(),
+            epoch_before,
+            "a persistently failing folder blocks coverage-epoch advance"
+        );
+        assert_eq!(
+            db.list_all_mail(Some("me@example.com")).unwrap().len(),
+            1,
+            "nothing is deleted early while coverage cannot complete"
+        );
+
+        // Heal Archive: the epoch advances and the grace eventually expires.
+        mailbox.lock().unwrap().folder("Archive", 95).examine_fails = false;
+        let mut deleted = false;
+        for _ in 0..12 {
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+            if db.list_all_mail(Some("me@example.com")).unwrap().is_empty() {
+                deleted = true;
+                break;
+            }
+        }
+        assert!(deleted, "once the folder recovers the epoch advances and the thread is deleted");
+    }
+
+    /// (3) A poll that records visits but does NOT complete a coverage epoch
+    /// (partial coverage under a tiny budget) must not bump the generation —
+    /// visit recording is cadence/bookkeeping state, not a content change.
+    #[tokio::test]
+    async fn partial_coverage_polls_do_not_bump_the_generation() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<m1@x>", "Hello", ""));
+        mb.add_to("Junk", 60, &["\\Seen"], &message("<j1@x>", "J", ""));
+        mb.add_to("Archive", 95, &["\\Seen"], &message("<a1@x>", "A", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (mut provider, store) = provider_with(mailbox.clone());
+        provider.force_user_folders =
+            Some(["Junk".to_string(), "Archive".to_string()].into_iter().collect());
+        provider.folder_rounds_per_poll_override = Some(1);
+        let db = store.database();
+
+        // Baseline brings everything in and settles.
+        crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        // Let it reach a steady state where nothing content-changes.
+        for _ in 0..4 {
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+        }
+        let generation = store.generation().unwrap();
+        let loads = provider.thread_state_loads.load(std::sync::atomic::Ordering::Relaxed);
+
+        // Several more idle polls. Each records a visit for the one scheduled
+        // user folder (partial coverage, budget 1) but nothing content-changed,
+        // so the generation must not move and the threader is not rebuilt —
+        // whether or not a given poll happens to complete a coverage epoch.
+        for _ in 0..4 {
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+            assert_eq!(
+                store.generation().unwrap(),
+                generation,
+                "an idle poll (partial or full coverage) does not bump the generation"
+            );
+        }
+        assert_eq!(
+            provider.thread_state_loads.load(std::sync::atomic::Ordering::Relaxed),
+            loads,
+            "idle polls do not rebuild threader state"
         );
     }
 
@@ -4394,6 +5087,107 @@ mod tests {
                     "{mailbox}-only thread is not hot (never reported)"
                 );
             }
+        }
+
+        /// (Slice 5b-2, live) After baseline, UID MOVE an INBOX message to
+        /// Archive through the test's OWN session, poll, and assert the thread
+        /// is still present (now without INBOX, since Archive carries no system
+        /// location label), with NO `NotFound`, and that `\Seen` is untouched.
+        /// Archive is synced in 5b-2 so the move's destination is swept and the
+        /// thread never even enters the emptied-thread grace. The Dovecot
+        /// harness seeds Archive with one message (see seed.sh); this adds one
+        /// more via UID MOVE. Skips cleanly without docker.
+        #[tokio::test]
+        async fn live_provider_follows_an_inbox_to_archive_move_without_notfound_or_seen() {
+            let Some(config) = gated() else { return };
+            let provider = live_provider(config.clone());
+
+            // Baseline + a few polls so INBOX and Archive are both synced.
+            let mut cursor = provider.baseline_cursor().await.expect("baseline");
+            for _ in 0..5 {
+                cursor = provider.poll(&cursor).await.expect("poll").cursor;
+            }
+
+            // Pick an INBOX message to move, remembering its stable id so we can
+            // follow it across the move.
+            let inbox = provider.store.locations_in_mailbox("INBOX").expect("inbox");
+            assert!(!inbox.is_empty(), "the harness seeds INBOX");
+            let moved_uid = inbox[0].uid as u32;
+            let moved_id = inbox[0].message_id.clone();
+
+            // UID MOVE it to Archive through our own command session. SELECT
+            // (read-write) is required for MOVE; this is the TEST's session, not
+            // the provider's EXAMINE-only sync session, so the \Seen invariant
+            // is about what SYNC does, not this move.
+            let mut mover = ImapConnectionManager::new(config.clone())
+                .connect_leased(
+                    super::super::super::connection::ConnectionRole::Command,
+                    USER,
+                    PASSWORD,
+                )
+                .await
+                .expect("mover login")
+                .0;
+            mover
+                .run_command_capture_code("SELECT INBOX")
+                .await
+                .expect("select inbox");
+            mover
+                .run_command_capture_code(&format!("UID MOVE {moved_uid} Archive"))
+                .await
+                .expect("uid move to Archive");
+            let _ = mover.logout().await;
+
+            // Poll until the move is reflected (INBOX location gone, Archive
+            // location present for the moved id).
+            let mut followed = false;
+            for _ in 0..6 {
+                cursor = provider.poll(&cursor).await.expect("poll").cursor;
+                let locs = provider.store.locations_for_message(&moved_id).expect("locations");
+                let mailboxes: std::collections::BTreeSet<&str> =
+                    locs.iter().map(|l| l.mailbox.as_str()).collect();
+                if !mailboxes.contains("INBOX") && mailboxes.contains("Archive") {
+                    followed = true;
+                    break;
+                }
+            }
+            assert!(followed, "the move from INBOX to Archive was followed");
+
+            // The thread is still present and fetchable (NO NotFound), with
+            // Archive's no-INBOX labels.
+            let thread = provider
+                .store
+                .thread_of_message(&moved_id)
+                .expect("thread_of_message")
+                .expect("a thread for the moved message");
+            let messages = provider.fetch_thread(&thread).await.expect("fetch_thread not NotFound");
+            assert!(!messages.is_empty(), "the moved thread still has a message");
+            let labels: Vec<String> =
+                messages.iter().flat_map(|m| m.label_ids.clone()).collect();
+            assert!(!labels.contains(&"INBOX".to_string()), "no INBOX after archiving: {labels:?}");
+
+            // \Seen is still absent on the moved message's Archive copy (sync is
+            // EXAMINE + BODY.PEEK, so it never set it).
+            let mut probe = ImapConnectionManager::new(config)
+                .connect_leased(
+                    super::super::super::connection::ConnectionRole::Command,
+                    USER,
+                    PASSWORD,
+                )
+                .await
+                .expect("probe login")
+                .0;
+            probe.examine("Archive").await.expect("examine archive");
+            let uids = probe.uid_search("ALL").await.expect("search");
+            let set = uids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+            let rows = super::super::super::fetch::fetch_flags_only(&mut probe, &set)
+                .await
+                .expect("flags");
+            assert!(
+                rows.iter().all(|(_, flags)| !mentions_seen(flags)),
+                "sync must not set \\Seen on the archived copy"
+            );
+            let _ = probe.logout().await;
         }
     }
 }

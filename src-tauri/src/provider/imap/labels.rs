@@ -21,7 +21,9 @@
 //! RFC 6154 attribute > name match) rather than by name is the AGENTS.md
 //! provider-neutral invariant: nothing here branches on a sender, host or
 //! brand, and a mailbox literally named "Trash" that the plan did not resolve
-//! to the Trash role contributes NO location label.
+//! to the Trash role contributes NO location label. The `\Archive` role is
+//! synced from Slice 5b-2 but contributes NO location label either: an
+//! archived message is simply not in INBOX and carries no system label.
 //!
 //! The INBOX->Trash move the brief calls out falls out of this naturally: when
 //! a hot message's INBOX location is deleted and a Trash location appears, the
@@ -64,8 +66,9 @@ impl MailboxLabel {
     }
 
     /// The location label a resolved [`MailboxRole`](super::MailboxRole)
-    /// contributes, if any. `\Archive`, `\All` (aggregate), `\Drafts` and the
-    /// label container contribute none this slice.
+    /// contributes, if any. `\Archive` (synced in Slice 5b-2 but an archived
+    /// message carries no system location label), `\All` (aggregate),
+    /// `\Drafts` and the label container contribute none.
     pub fn for_role(role: super::MailboxRole) -> Option<Self> {
         use super::MailboxRole;
         match role {

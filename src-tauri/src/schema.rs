@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 61;
+pub(crate) const LATEST_VERSION: i64 = 62;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1773,6 +1773,78 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 62 {
+        // The IMAP provider's FAIR FOLDER SCHEDULING and EMPTIED-HOT-THREAD
+        // GRACE (Phase 2 Slice 5b-2; see `docs/imap-design.md` "Sync"). Three
+        // nullable/defaulted columns on the Slice 5b-1 tables, no new table:
+        //
+        //  * `imap_mailbox_sync_state.last_visited_at` — the per-mailbox VISIT
+        //    clock, distinct from `last_sweep_at`. A mailbox skipped by the
+        //    cadence gate advances this (it WAS examined) but NOT the sweep
+        //    clock, so least-recently-VISITED ordering never starves a mailbox
+        //    the cadence gate keeps skipping. Defaults to 0 (never visited).
+        //
+        //  * `imap_mailbox_sync_state.visited_in_epoch` — the COVERAGE-EPOCH
+        //    number this mailbox was last SUCCESSFULLY visited in. Coverage is
+        //    measured ACROSS polls, not per poll: run B syncs more user/label
+        //    folders than one poll's FOLDER_ROUNDS_PER_POLL budget can visit,
+        //    so no single poll covers them all. An epoch completes when every
+        //    currently-synced mailbox (INBOX + all `synced_now` entries) has
+        //    been visited in the current epoch; only then does `complete_walks`
+        //    advance. Defaults to 0.
+        //
+        //  * `imap_sync_state.complete_walks` — the per-account count of
+        //    completed COVERAGE EPOCHS (an epoch = every currently-synced
+        //    mailbox visited across one or more polls). The emptied-thread
+        //    grace is measured in completed epochs, so a folder that is never
+        //    successfully visited holds the epoch open and the grace never
+        //    advances (safe: never deletes data early). Defaults 0.
+        //
+        //  * `imap_hot_threads.emptied_at_walk` — nullable: the completed-epoch
+        //    count at which a hot thread was first observed with ZERO
+        //    locations. NULL means "not currently empty". A thread that
+        //    regains a location clears it; once `EMPTIED_THREAD_GRACE_WALKS`
+        //    completed coverage epochs have passed the thread is journaled and
+        //    the engine deletes it. This is the data-integrity fix for a hot
+        //    message moved out of INBOX into a mailbox not swept that poll.
+        //
+        // Provider-internal sync state: NO Gmail code path reads or writes it,
+        // and it is deliberately NOT part of the settings-transfer export
+        // (`transfer.rs` is untouched and its VERSION is unchanged) — losing it
+        // only forces a re-derive or a full resync. The column adds set every
+        // pre-existing row to the default (0 / NULL), which is exactly the
+        // "never visited / no epochs yet / not empty" starting state. Reserve a
+        // new schema number for every later change rather than editing this.
+        if !has_column(&tx, "imap_mailbox_sync_state", "last_visited_at")? {
+            tx.execute_batch(
+                "ALTER TABLE imap_mailbox_sync_state
+                    ADD COLUMN last_visited_at INTEGER NOT NULL DEFAULT 0;",
+            )
+            .map_err(error)?;
+        }
+        if !has_column(&tx, "imap_mailbox_sync_state", "visited_in_epoch")? {
+            tx.execute_batch(
+                "ALTER TABLE imap_mailbox_sync_state
+                    ADD COLUMN visited_in_epoch INTEGER NOT NULL DEFAULT 0;",
+            )
+            .map_err(error)?;
+        }
+        if !has_column(&tx, "imap_sync_state", "complete_walks")? {
+            tx.execute_batch(
+                "ALTER TABLE imap_sync_state
+                    ADD COLUMN complete_walks INTEGER NOT NULL DEFAULT 0;",
+            )
+            .map_err(error)?;
+        }
+        if !has_column(&tx, "imap_hot_threads", "emptied_at_walk")? {
+            tx.execute_batch(
+                "ALTER TABLE imap_hot_threads
+                    ADD COLUMN emptied_at_walk INTEGER;",
+            )
+            .map_err(error)?;
+        }
+        tx.execute_batch("PRAGMA user_version=62;").map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -2359,7 +2431,7 @@ mod tests {
                 "DROP INDEX imap_thread_aliases_by_survivor;
             PRAGMA user_version=60;
             INSERT INTO imap_thread_aliases VALUES ('you@gmail.com','old','survivor');
-            INSERT INTO imap_hot_threads VALUES ('you@gmail.com','old');",
+            INSERT INTO imap_hot_threads(account_id, thread_id) VALUES ('you@gmail.com','old');",
             )
             .unwrap();
         for _ in 0..2 {
@@ -2388,6 +2460,106 @@ mod tests {
             );
             connection.pragma_update(None, "user_version", 60).unwrap();
         }
+    }
+
+    #[test]
+    fn v62_adds_the_scheduling_and_grace_columns_without_losing_state_and_reruns_cleanly() {
+        // A fresh database reaches v62 with all four new columns present and
+        // queryable at their defaults.
+        let mut fresh = unmigrated_database_with_one_account();
+        super::migrate(&mut fresh).unwrap();
+        fresh
+            .execute(
+                "SELECT last_visited_at, visited_in_epoch FROM imap_mailbox_sync_state",
+                [],
+            )
+            .unwrap_or_else(|error| panic!("last_visited_at/visited_in_epoch should exist: {error}"));
+        fresh
+            .execute("SELECT complete_walks FROM imap_sync_state", [])
+            .unwrap_or_else(|error| panic!("complete_walks should exist: {error}"));
+        fresh
+            .execute("SELECT emptied_at_walk FROM imap_hot_threads", [])
+            .unwrap_or_else(|error| panic!("emptied_at_walk should exist: {error}"));
+        assert_eq!(
+            fresh.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
+            super::LATEST_VERSION
+        );
+
+        // An upgraded database stopped at v61 keeps its pre-existing sync
+        // state, and the new columns arrive at their defaults for existing
+        // rows (0 / 0 / NULL — the "never visited / no walks / not empty"
+        // starting state).
+        let mut upgraded = unmigrated_database_with_one_account();
+        super::migrate(&mut upgraded).unwrap();
+        upgraded
+            .execute_batch(
+                "ALTER TABLE imap_mailbox_sync_state DROP COLUMN last_visited_at;
+                 ALTER TABLE imap_mailbox_sync_state DROP COLUMN visited_in_epoch;
+                 ALTER TABLE imap_sync_state DROP COLUMN complete_walks;
+                 ALTER TABLE imap_hot_threads DROP COLUMN emptied_at_walk;
+                 PRAGMA user_version=61;",
+            )
+            .unwrap();
+        upgraded
+            .execute_batch(
+                "INSERT INTO imap_sync_state(account_id, generation) VALUES ('you@gmail.com', 7);
+                 INSERT INTO imap_mailbox_sync_state(account_id, mailbox, last_exists, last_uidnext, last_sweep_at)
+                   VALUES ('you@gmail.com', 'Archive', 3, 9, 100);
+                 INSERT INTO imap_hot_threads(account_id, thread_id) VALUES ('you@gmail.com', 't');",
+            )
+            .unwrap();
+        super::migrate(&mut upgraded).unwrap();
+        // Pre-existing state survived.
+        let generation: i64 = upgraded
+            .query_row(
+                "SELECT generation FROM imap_sync_state WHERE account_id='you@gmail.com'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(generation, 7, "the generation survived the column add");
+        // New columns defaulted for the existing rows.
+        let (visited, walks): (i64, i64) = (
+            upgraded
+                .query_row(
+                    "SELECT last_visited_at FROM imap_mailbox_sync_state WHERE mailbox='Archive'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            upgraded
+                .query_row(
+                    "SELECT complete_walks FROM imap_sync_state WHERE account_id='you@gmail.com'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+        );
+        assert_eq!((visited, walks), (0, 0), "new counters default to zero");
+        let visited_epoch: i64 = upgraded
+            .query_row(
+                "SELECT visited_in_epoch FROM imap_mailbox_sync_state WHERE mailbox='Archive'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(visited_epoch, 0, "visited_in_epoch defaults to zero");
+        let emptied: Option<i64> = upgraded
+            .query_row(
+                "SELECT emptied_at_walk FROM imap_hot_threads WHERE thread_id='t'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(emptied, None, "emptied_at_walk defaults to NULL (not empty)");
+
+        // Re-running once more over the already-added columns must not fail.
+        upgraded.pragma_update(None, "user_version", 61).unwrap();
+        super::migrate(&mut upgraded).unwrap();
+        assert_eq!(
+            upgraded.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
+            super::LATEST_VERSION
+        );
     }
 
     #[test]
