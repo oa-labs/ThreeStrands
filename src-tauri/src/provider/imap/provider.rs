@@ -2016,7 +2016,21 @@ impl MailMutate for ImapProvider {
         // messages and `apply_flag_mutation` rejects it as a permanent
         // InvalidOperation naming the thread.
         let thread_id = self.store.resolve_thread_alias(id).map_err(db_err)?;
-        let message_ids = self.store.messages_in_thread(&thread_id).map_err(db_err)?;
+        // `imap_threads` rows are permanent, so a thread still lists messages
+        // that were expunged elsewhere. Only messages that still have a
+        // location can be changed; skipping the rest keeps one dead sibling
+        // from failing (and rolling back) the whole thread-level change.
+        let mut message_ids = Vec::new();
+        for message_id in self.store.messages_in_thread(&thread_id).map_err(db_err)? {
+            if !self
+                .store
+                .locations_for_message(&message_id)
+                .map_err(db_err)?
+                .is_empty()
+            {
+                message_ids.push(message_id);
+            }
+        }
         if message_ids.is_empty() {
             return Err(ProviderError::InvalidOperation(format!(
                 "thread {id:?} has no messages to modify (it may have been emptied); \
@@ -7016,6 +7030,50 @@ mod mutate_tests {
         // Star via the OLD (aliased) id: it resolves to the survivor's message.
         provider.modify_thread("imap:t:old", &["STARRED".into()], &[]).await.expect("star via alias");
         assert!(server.lock().unwrap().flags_of("INBOX", 1).iter().any(|f| f == "\\Flagged"));
+    }
+
+    // --- a thread keeps rows for messages expunged elsewhere ---------------
+
+    #[tokio::test]
+    async fn modify_thread_skips_messages_with_no_remaining_location() {
+        let server = server_with_inbox();
+        {
+            let mut g = server.lock().unwrap();
+            g.folder("INBOX", 100).add(&[], &message("<m1@x>"));
+        }
+        let (provider, store) = provider_with(server.clone());
+        let live = "imap:me@example.com:m1".to_string();
+        store
+            .upsert_location(&ImapLocation {
+                mailbox: "INBOX".into(), uidvalidity: 100, uid: 1,
+                message_id: live.clone(), flags_json: "[]".into(), modseq: None,
+            })
+            .unwrap();
+        // m2 is in the same thread but was expunged on the server: its
+        // imap_threads row is permanent, its locations are gone.
+        store
+            .commit_sync_round(&SyncRoundWrite {
+                thread_assignments: vec![
+                    (live.clone(), "imap:t:shared".into()),
+                    ("imap:me@example.com:m2".into(), "imap:t:shared".into()),
+                ],
+                changed_threads: vec!["imap:t:shared".into()],
+                ..Default::default()
+            })
+            .unwrap();
+
+        provider
+            .modify_thread("imap:t:shared", &[], &["UNREAD".into()])
+            .await
+            .expect("an expunged sibling must not fail a thread-level mark-read");
+        assert!(server.lock().unwrap().flags_of("INBOX", 1).iter().any(|f| f == "\\Seen"));
+
+        // A thread whose messages ALL lost their locations is still refused.
+        let err = provider
+            .modify_thread("imap:t:gone", &[], &["UNREAD".into()])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProviderError::InvalidOperation(_)), "{err:?}");
     }
 
     // --- idempotent no-op sends nothing ------------------------------------
