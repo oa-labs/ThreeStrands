@@ -61,7 +61,7 @@ describe("DiagnosticsSettings", () => {
     expect(within(recovery).queryByRole("list")).not.toBeInTheDocument();
     for (const [title, entries] of [
       ["Last sync attempt failed", ["network unreachable", "authentication expired"]],
-      ["1 change couldn’t be applied in Gmail", ["invalid label"]],
+      ["1 change couldn’t be applied on the server", ["invalid label"]],
       ["1 message couldn’t be read", ["Invalid message body"]],
     ] as const) {
       const issue = screen.getByRole("group", { name: title });
@@ -97,7 +97,7 @@ describe("DiagnosticsSettings", () => {
     render(<DiagnosticsSettings status={rejected} accountCount={1} />);
 
     expect(screen.getByText("1 item to review")).toBeInTheDocument();
-    const issue = screen.getByRole("group", { name: "1 change couldn’t be applied in Gmail" });
+    const issue = screen.getByRole("group", { name: "1 change couldn’t be applied on the server" });
     expect(within(issue).getByText("label")).toBeInTheDocument();
     expect(within(issue).getByText(/1 attempt/)).toBeInTheDocument();
     // The native status repeats the newest failed mutation's error as the
@@ -105,10 +105,30 @@ describe("DiagnosticsSettings", () => {
     expect(screen.queryByRole("group", { name: "Last sync attempt failed" })).not.toBeInTheDocument();
   });
 
+  it("surfaces the provider's own plain-language reason, with provider-neutral framing", () => {
+    // An IMAP account's permanent-rejection reason must reach the user as the
+    // provider wrote it — not be swallowed or replaced by generic Gmail text.
+    const imapReason =
+      "This account stores labels as folders, so renaming a label is not supported.";
+    const imapRejected: SyncStatus = {
+      ...rejected,
+      failedMutations: [{ ...rejected.failedMutations[0]!, error: imapReason }],
+      error: imapReason,
+    };
+    render(<DiagnosticsSettings status={imapRejected} accountCount={1} />);
+
+    const issue = screen.getByRole("group", { name: "1 change couldn’t be applied on the server" });
+    // The provider's reason is shown verbatim on the failed-change row.
+    const item = within(issue).getByRole("listitem");
+    expect(item).toHaveTextContent(imapReason);
+    // The heading and description are provider-neutral (no "Gmail" brand).
+    expect(issue).not.toHaveTextContent(/Gmail/i);
+  });
+
   it("retries or dismisses failed operations through the supplied actions", async () => {
     const handlers = actions();
     render(<DiagnosticsSettings status={rejected} accountCount={1} actions={handlers} />);
-    const issue = screen.getByRole("group", { name: "1 change couldn’t be applied in Gmail" });
+    const issue = screen.getByRole("group", { name: "1 change couldn’t be applied on the server" });
 
     fireEvent.click(within(issue).getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(handlers.retryFailed).toHaveBeenCalledTimes(1));

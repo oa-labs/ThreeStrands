@@ -3,6 +3,7 @@ import {
   conversationLabelGroups,
   formatLabelName,
   isManageableLabel,
+  labelCapabilities,
   labelIdsForConversationDisplay,
   sortLabelIdsForDisplay,
 } from "./labels";
@@ -143,5 +144,44 @@ describe("conversationLabelGroups", () => {
     const result = conversationLabelGroups(["INBOX", "Label_1"], undefined);
     expect(result.systemLabelNames).toEqual(["INBOX"]);
     expect(result.userLabels).toEqual([]);
+  });
+});
+
+describe("labelCapabilities", () => {
+  it("allows every label action for Gmail's many-to-many model", () => {
+    expect(labelCapabilities("gmailLabels")).toEqual({
+      canManageLabels: true,
+      canRenameLabels: true,
+      unavailableReason: null,
+    });
+  });
+
+  it("allows create/delete/toggle but NOT rename for IMAP label folders", () => {
+    // Rename is refused permanently on the backend (the `lf:` id is derived
+    // from the name), so the UI must not offer it.
+    expect(labelCapabilities("imapLabelFolders")).toEqual({
+      canManageLabels: true,
+      canRenameLabels: false,
+      unavailableReason: null,
+    });
+  });
+
+  it("offers no label actions, with an explanation, for IMAP keyword or no-storage accounts", () => {
+    for (const model of ["imapKeywords", "imapNoUserLabels"] as const) {
+      const capabilities = labelCapabilities(model);
+      expect(capabilities.canManageLabels).toBe(false);
+      expect(capabilities.canRenameLabels).toBe(false);
+      expect(capabilities.unavailableReason).toBeTruthy();
+      // Provider-neutral: no "Gmail" in the user-facing reason.
+      expect(capabilities.unavailableReason).not.toMatch(/gmail/i);
+    }
+  });
+
+  it("defaults to the permissive Gmail model when the model is unknown (data still loading)", () => {
+    expect(labelCapabilities(undefined)).toEqual({
+      canManageLabels: true,
+      canRenameLabels: true,
+      unavailableReason: null,
+    });
   });
 });

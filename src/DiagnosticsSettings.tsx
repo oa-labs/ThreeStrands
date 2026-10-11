@@ -136,8 +136,8 @@ export function DiagnosticsSettings({
 
       {failed.length ? (
         <DiagnosticsIssue
-          title={`${plural(failed.length, "change")} couldn’t be applied in Gmail`}
-          description="Gmail rejected these, so they only took effect in ThreeStrands. Retry once the cause is fixed, such as after reconnecting an account, or dismiss them."
+          title={`${plural(failed.length, "change")} couldn’t be applied on the server`}
+          description="The mail server rejected these, so they only took effect in ThreeStrands. Each change shows why below. Retry once the cause is fixed, such as after reconnecting an account, or dismiss them."
           actions={actions ? (
             <>
               <button className="btn btn-sm" type="button" disabled={pending !== null} onClick={() => runFor("retry", actions.retryFailed)}>

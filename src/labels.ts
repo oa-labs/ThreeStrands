@@ -1,4 +1,4 @@
-import type { Label } from "./domain";
+import type { Label, LabelModel } from "./domain";
 
 const CATEGORY_PREFIX = "CATEGORY_";
 
@@ -97,4 +97,43 @@ export function conversationLabelGroups(
     }
   }
   return { systemLabelNames, userLabels };
+}
+
+/** Which label actions the UI may offer for an account, derived from its
+ * label model. Offering an action the provider can only reject (rename on an
+ * IMAP label-folder account; any label action on an IMAP account with no
+ * label storage) would show the user a control that can only fail and roll
+ * back, so the UI hides it and, where labels are unavailable entirely, shows
+ * `unavailableReason` instead. */
+export type LabelCapabilities = {
+  /** Create, delete and toggle user labels are available. */
+  canManageLabels: boolean;
+  /** Rename an existing user label is available. */
+  canRenameLabels: boolean;
+  /** Why labels are unavailable, when `canManageLabels` is false; null when
+   * they are available. Provider-neutral, user-facing text. */
+  unavailableReason: string | null;
+};
+
+/** Derives an account's label capabilities from its label model. Default
+ * (`undefined`, e.g. before accounts load) is the permissive Gmail model, so
+ * nothing is hidden spuriously while data is loading. */
+export function labelCapabilities(labelModel: LabelModel | undefined): LabelCapabilities {
+  switch (labelModel) {
+    case "imapLabelFolders":
+      // Create / delete / toggle work; rename is refused permanently because
+      // the label-folder id is derived from the name and nothing migrates it.
+      return { canManageLabels: true, canRenameLabels: false, unavailableReason: null };
+    case "imapKeywords":
+    case "imapNoUserLabels":
+      // No writable user-label storage: every label action would be refused.
+      return {
+        canManageLabels: false,
+        canRenameLabels: false,
+        unavailableReason: "This account does not support labels yet.",
+      };
+    case "gmailLabels":
+    default:
+      return { canManageLabels: true, canRenameLabels: true, unavailableReason: null };
+  }
 }

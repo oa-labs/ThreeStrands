@@ -13,6 +13,7 @@ const account: Account = {
   color: "#112233",
   status: "connected",
   provider: "gmail",
+  labelModel: "gmailLabels",
   sortOrder: 0,
   connectedAt: "2026-10-08T12:00:00Z",
   lastSyncedAt: null,

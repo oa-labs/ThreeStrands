@@ -43,6 +43,74 @@ fn adopting_the_same_account_twice_does_not_duplicate_it() {
 }
 
 #[test]
+fn account_label_model_reflects_provider_and_imap_label_storage() {
+    use crate::models::MailProviderKind;
+    use crate::provider::LabelModel;
+
+    let database = database();
+
+    // Gmail accounts carry the many-to-many model, with no IMAP settings row.
+    database.adopt_account("gmail@example.com").unwrap();
+    assert_eq!(
+        database
+            .get_account("gmail@example.com")
+            .unwrap()
+            .unwrap()
+            .label_model,
+        LabelModel::GmailLabels
+    );
+
+    // An IMAP account's model comes from the label_storage it saved at setup.
+    for (account, storage, expected) in [
+        ("folders@example.com", "folders", LabelModel::ImapLabelFolders),
+        ("keywords@example.com", "keywords", LabelModel::ImapKeywords),
+        ("none@example.com", "none", LabelModel::ImapNoUserLabels),
+    ] {
+        database
+            .adopt_mail_account(account, MailProviderKind::Imap)
+            .unwrap();
+        database
+            .with_connection(|c| {
+                c.execute(
+                    "INSERT INTO imap_account_settings(account_id, imap_host, imap_port, imap_security, imap_username, smtp_host, smtp_port, smtp_security, smtp_username, label_storage)
+                     VALUES (?1, 'imap.example.com', 993, 'implicit_tls', ?1, 'smtp.example.com', 465, 'implicit_tls', ?1, ?2)",
+                    rusqlite::params![account, storage],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(
+            database.get_account(account).unwrap().unwrap().label_model,
+            expected,
+            "label_model for storage {storage}"
+        );
+    }
+
+    // An IMAP account with no settings row yet (set up on another device)
+    // falls back to the default rather than erroring.
+    database
+        .adopt_mail_account("bare-imap@example.com", MailProviderKind::Imap)
+        .unwrap();
+    assert_eq!(
+        database
+            .get_account("bare-imap@example.com")
+            .unwrap()
+            .unwrap()
+            .label_model,
+        LabelModel::GmailLabels
+    );
+
+    // list_accounts enriches the model the same way get_account does.
+    let folders = database
+        .list_accounts()
+        .unwrap()
+        .into_iter()
+        .find(|account| account.email == "folders@example.com")
+        .unwrap();
+    assert_eq!(folders.label_model, LabelModel::ImapLabelFolders);
+}
+
+#[test]
 fn adopting_an_existing_account_discards_a_recreated_default_sync_row() {
     let database = database();
     database.adopt_account("you@gmail.com").unwrap();

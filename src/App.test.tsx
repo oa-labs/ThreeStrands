@@ -1440,6 +1440,7 @@ describe("account selection persistence", () => {
       color: "#4285F4",
       status: "connected" as const,
       provider: "gmail" as const,
+      labelModel: "gmailLabels" as const,
       sortOrder: 0,
       connectedAt: "2026-03-04T00:00:00Z",
       lastSyncedAt: null,

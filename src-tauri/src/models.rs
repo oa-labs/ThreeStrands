@@ -1093,6 +1093,18 @@ pub struct Account {
     /// frontend's `MailProvider` type, and a string round-trips through the
     /// database and the settings-transfer format without a mapping layer.
     pub provider: String,
+    /// How this account models user-visible labels, so the UI can hide label
+    /// actions a provider can never perform (rename on IMAP; create/delete/
+    /// toggle on an IMAP account with no label storage) rather than offering
+    /// an action that can only fail and roll back. Derived on read from the
+    /// account's provider and, for IMAP, its saved `label_storage` — it is
+    /// NOT a stored column. `#[serde(default)]` so an account deserialized
+    /// without it (the sync projection, a settings import, an older cache
+    /// row) is treated as the Gmail many-to-many model, the pre-IMAP
+    /// behaviour. The settings-transfer format uses `TransferAccount`, not
+    /// this struct, so this field does not reach the export.
+    #[serde(default)]
+    pub label_model: crate::provider::LabelModel,
     pub sort_order: i64,
     pub connected_at: String,
     pub last_synced_at: Option<String>,

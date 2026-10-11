@@ -71,6 +71,7 @@ export function defaultDemoDataset(): DemoDataset {
         color: "#4285F4",
         status: "connected",
         provider: "gmail",
+        labelModel: "gmailLabels",
         sortOrder: 0,
         connectedAt: "2026-03-04T00:00:00Z",
         lastSyncedAt: null,

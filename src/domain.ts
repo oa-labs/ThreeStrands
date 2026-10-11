@@ -662,6 +662,20 @@ export type AuthStatus = {
 /** A mail backend an account can authenticate and sync through. */
 export type MailProvider = "gmail" | "imap";
 
+/**
+ * How an account models the labels a user can see and act on. Drives which
+ * label actions the UI offers, so it never presents one the provider can only
+ * reject (see `labelCapabilities`). Mirrors the Rust `LabelModel`.
+ * - `gmailLabels`: Gmail's many-to-many labels — create, rename, delete, toggle.
+ * - `imapKeywords`: IMAP keyword user labels (not yet writable in the app).
+ * - `imapLabelFolders`: IMAP label-folder user labels — create, delete, toggle,
+ *   but NOT rename (the folder id is derived from the name, so a rename can
+ *   only fail and roll back).
+ * - `imapNoUserLabels`: an IMAP account with no user-label storage — no label
+ *   actions at all.
+ */
+export type LabelModel = "gmailLabels" | "imapKeywords" | "imapLabelFolders" | "imapNoUserLabels";
+
 /** How a mail connection reaches TLS. Mirrors the Rust `SecurityMode`. */
 export type ImapSecurityMode = "implicit_tls" | "start_tls";
 
@@ -764,6 +778,10 @@ export type Account = {
   status: "connected" | "needs_reauth";
   /** Which backend this account authenticates and syncs through. */
   provider: MailProvider;
+  /** How this account models user-visible labels. The UI reads this (via
+   * `labelCapabilities`) to hide label actions the provider can only reject,
+   * rather than branching on provider names or label ids in components. */
+  labelModel: LabelModel;
   sortOrder: number;
   connectedAt: string;
   lastSyncedAt: string | null;

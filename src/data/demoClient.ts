@@ -956,6 +956,9 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         color: palette[accounts.length % palette.length]!,
         status: "connected",
         provider,
+        // Gmail has full labels; a bare demo IMAP account (added without the
+        // setup flow that chooses label storage) has none.
+        labelModel: provider === "gmail" ? "gmailLabels" : "imapNoUserLabels",
         sortOrder: accounts.length,
         connectedAt: new Date().toISOString(),
         lastSyncedAt: null,
@@ -1006,6 +1009,14 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         color: palette[accounts.length % palette.length]!,
         status: "connected",
         provider: "imap",
+        // Mirror the Rust `label_model_for`: the chosen label storage decides
+        // which label actions the UI offers.
+        labelModel:
+          request.labelStorage === "folders"
+            ? "imapLabelFolders"
+            : request.labelStorage === "keywords"
+              ? "imapKeywords"
+              : "imapNoUserLabels",
         sortOrder: accounts.length,
         connectedAt: new Date().toISOString(),
         lastSyncedAt: null,

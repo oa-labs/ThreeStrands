@@ -55,7 +55,7 @@ import { FolderSwitcher } from "./FolderSwitcher";
 import { ICON_SIZE } from "./iconSizes";
 import { ImageLightbox } from "./ImageLightbox";
 import { LabelManager } from "./LabelManager";
-import { conversationLabelGroups, formatLabelName } from "./labels";
+import { conversationLabelGroups, formatLabelName, labelCapabilities } from "./labels";
 import { MeetingProposalDialog } from "./MeetingProposalDialog";
 import { MeetingScheduler } from "./MeetingScheduler";
 import { MessageCard } from "./MessageCard";
@@ -1144,6 +1144,9 @@ export function App() {
         <LabelManager
           labels={labelTargetAccountId ? labelsByAccount[labelTargetAccountId] ?? [] : []}
           accountId={labelTargetAccountId}
+          capabilities={labelCapabilities(
+            accounts.find((account) => account.email === labelTargetAccountId)?.labelModel,
+          )}
           checkedLabelIds={new Set(
             (labelTargetAccountId ? labelsByAccount[labelTargetAccountId] ?? [] : [])
               .filter((label) =>

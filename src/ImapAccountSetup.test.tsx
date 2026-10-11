@@ -11,7 +11,7 @@ vi.mock("./data/client", () => ({ mailClient: {
   discoverImapMailboxes: vi.fn(), commitImapMailboxMapping: vi.fn(),
 } }));
 
-const account: Account = { email: "me@example.com", provider: "imap", displayName: null,
+const account: Account = { email: "me@example.com", provider: "imap", labelModel: "imapLabelFolders", displayName: null,
   color: "#112233", status: "connected", sortOrder: 0, connectedAt: "2026-10-10", lastSyncedAt: null };
 const probe = (fingerprint: string, trusted = false): ImapCertificateProbe => ({
   certificate: { subject: "test server", issuer: "test issuer", sha256Fingerprint: fingerprint },

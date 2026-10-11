@@ -3,13 +3,14 @@ import { useMemo, useState } from "react";
 import type { Label } from "./domain";
 import { Modal } from "./AppChrome";
 import { FindOrCreatePicker } from "./FindOrCreatePicker";
-import { formatLabelName, isManageableLabel } from "./labels";
+import { formatLabelName, isManageableLabel, type LabelCapabilities } from "./labels";
 import { readLabelUsage, recordLabelUsed } from "./settings";
 import { ICON_SIZE } from "./iconSizes";
 
 export function LabelManager({
   labels,
   accountId,
+  capabilities,
   checkedLabelIds,
   onClose,
   onCreate,
@@ -19,6 +20,10 @@ export function LabelManager({
 }: {
   labels: Label[];
   accountId?: string;
+  /** What label actions this account's provider can perform. Controls that
+   * could only fail (rename on IMAP; any label action with no label storage)
+   * are hidden, and the no-labels case shows an explanation instead. */
+  capabilities: LabelCapabilities;
   checkedLabelIds: Set<string>;
   onClose(): void;
   onCreate(name: string): Promise<Label>;
@@ -67,6 +72,9 @@ export function LabelManager({
 
   return (
     <Modal title="Manage Labels" onClose={onClose}>
+      {!capabilities.canManageLabels ? (
+        <p className="label-unavailable">{capabilities.unavailableReason}</p>
+      ) : (
       <FindOrCreatePicker
         items={orderedLabels}
         getSearchText={(label: Label) => formatLabelName(label)}
@@ -95,17 +103,19 @@ export function LabelManager({
             </span>
             {label.kind === "user" ? (
               <span className="label-actions">
-                <button
-                  className="btn-icon btn-icon-sm"
-                  aria-label={`Rename ${label.name}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setRenaming(label);
-                    setRenameValue(label.name);
-                  }}
-                >
-                  <Pencil size={ICON_SIZE.sm} />
-                </button>
+                {capabilities.canRenameLabels ? (
+                  <button
+                    className="btn-icon btn-icon-sm"
+                    aria-label={`Rename ${label.name}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setRenaming(label);
+                      setRenameValue(label.name);
+                    }}
+                  >
+                    <Pencil size={ICON_SIZE.sm} />
+                  </button>
+                ) : null}
                 <button
                   className="btn-icon btn-icon-sm"
                   aria-label={`Delete ${label.name}`}
@@ -121,6 +131,7 @@ export function LabelManager({
           </div>
         )}
       />
+      )}
       {renaming ? (
         <form
           className="rename-label"

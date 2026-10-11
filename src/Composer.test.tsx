@@ -40,6 +40,7 @@ const accounts: Account[] = ["first@example.com", "second@example.com"].map((ema
   color: "#4285F4",
   status: "connected",
   provider: "gmail",
+  labelModel: "gmailLabels",
   sortOrder,
   connectedAt: "2026-01-01T00:00:00Z",
   lastSyncedAt: null,

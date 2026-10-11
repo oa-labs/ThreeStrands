@@ -30,7 +30,11 @@ impl Database {
                  FROM accounts ORDER BY sort_order",
             )?;
             let rows = statement.query_map([], account_from_row)?;
-            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+            let mut accounts = rows.collect::<Result<Vec<_>, _>>()?;
+            for account in &mut accounts {
+                enrich_label_model(connection, account)?;
+            }
+            Ok(accounts)
         })
     }
 
@@ -133,14 +137,21 @@ impl Database {
 
     pub fn get_account(&self, email: &str) -> DbResult<Option<Account>> {
         self.with_connection(|connection| {
-            Ok(connection
+            let account = connection
                 .query_row(
                     "SELECT email, display_name, color, status, provider, sort_order, connected_at, last_synced_at
                      FROM accounts WHERE email = ?1",
                     [email],
                     account_from_row,
                 )
-                .optional()?)
+                .optional()?;
+            Ok(match account {
+                Some(mut account) => {
+                    enrich_label_model(connection, &mut account)?;
+                    Some(account)
+                }
+                None => None,
+            })
         })
     }
 
@@ -329,10 +340,27 @@ fn account_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
         color: row.get(2)?,
         status: row.get(3)?,
         provider: row.get(4)?,
+        // Defaults to the Gmail many-to-many model; `enrich_label_model`
+        // overrides it for an IMAP account from its saved label_storage.
+        label_model: crate::provider::LabelModel::default(),
         sort_order: row.get(5)?,
         connected_at: row.get(6)?,
         last_synced_at: row.get(7)?,
     })
+}
+
+/// Fills in an account's label model from its provider and, for IMAP, its
+/// saved `label_storage`. Read on the same connection the account was loaded
+/// on. A Gmail account, or an IMAP account not yet set up on this device,
+/// keeps the default Gmail model.
+fn enrich_label_model(connection: &rusqlite::Connection, account: &mut Account) -> DbResult<()> {
+    if MailProviderKind::parse(&account.provider) != Some(MailProviderKind::Imap) {
+        return Ok(());
+    }
+    if let Some(settings) = crate::provider::imap::read_settings_row(connection, &account.email)? {
+        account.label_model = crate::provider::imap::label_model_for(settings.label_storage);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

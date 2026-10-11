@@ -134,10 +134,14 @@ pub struct SyncBatch {
 /// variants land with the IMAP provider (phases 2–3). Matches on this enum
 /// should list every variant rather than use a `_` arm, so adding the IMAP
 /// variants fails to compile until each caller decides how to handle them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub enum LabelModel {
     /// Many-to-many labels, as Gmail exposes them. A message can carry any
-    /// number of labels and they are toggled directly.
+    /// number of labels and they are toggled directly. The default so that an
+    /// account row deserialized without a `labelModel` (an older cache row, a
+    /// synced projection, a settings import) keeps the pre-IMAP behaviour.
+    #[default]
     GmailLabels,
     /// IMAP folders plus keyword user labels (`PERMANENTFLAGS` has `\*`): user
     /// labels are stored as IMAP keywords.
