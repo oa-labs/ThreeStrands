@@ -472,8 +472,16 @@ test("scheduled send survives reload, reschedules, and requires confirmation aft
   await composer.getByRole("textbox", { name: "To", exact: true }).fill("test@example.com");
   await composer.getByRole("textbox", { name: "Subject" }).fill("A scheduled email");
   await composer.getByRole("textbox", { name: "Message Body" }).fill("Preserved scheduled content");
-  await composer.getByRole("button", { name: "Send later", exact: true }).click();
+  await expect(composer.getByRole("button", { name: "Send later", exact: true })).toHaveAttribute("aria-keyshortcuts", "Meta+Shift+L Control+Shift+L");
+  await page.keyboard.press("ControlOrMeta+Shift+L");
   const picker = page.getByRole("dialog", { name: "Send later" });
+  await expect(picker).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(picker).not.toBeVisible();
+  await expect(composer.getByRole("textbox", { name: "Message Body" })).toHaveText("Preserved scheduled content");
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("threestrands.demoCorrespondence")!).outbox)).toHaveLength(0);
+  await page.keyboard.press("ControlOrMeta+Shift+L");
+  await expect(picker).toBeVisible();
   await picker.getByLabel("Schedule timezone").fill("UTC");
   await picker.getByLabel("Scheduled date and time").fill("2026-10-11T09:00");
   await picker.getByRole("button", { name: "Schedule email" }).click();

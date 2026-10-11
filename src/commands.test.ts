@@ -110,6 +110,22 @@ function noopContext(): CommandContext {
 }
 
 describe("command registry", () => {
+  it("opens Send later with Command or Control + Shift + L only while composing", () => {
+    const schedule = commands.find((command) => command.id === "draft.schedule")!;
+    const scheduleDraft = vi.fn();
+    const context = { ...noopContext(), composerActive: true, scheduleDraft };
+    expect(schedule.keys).toEqual(["Mod+Shift+L"]);
+    expect(schedule.enabled(noopContext())).toBe(false);
+    expect(schedule.enabled(context)).toBe(true);
+    for (const modifier of [{ metaKey: true }, { ctrlKey: true }]) {
+      expect(matchesShortcut(new KeyboardEvent("keydown", { key: "L", shiftKey: true, ...modifier }), schedule.keys[0])).toBe(true);
+      expect(matchesShortcut(new KeyboardEvent("keydown", { key: "l", ...modifier }), schedule.keys[0])).toBe(false);
+    }
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "L", shiftKey: true }), schedule.keys[0])).toBe(false);
+    void schedule.run(context);
+    expect(scheduleDraft).toHaveBeenCalledOnce();
+  });
+
   it("keeps diagnostics in Settings instead of exposing a standalone command", () => {
     expect(commands.find((command) => command.id === "diagnostics.open")).toBeUndefined();
   });

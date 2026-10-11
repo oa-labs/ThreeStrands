@@ -175,17 +175,26 @@ plus the group's key changes and join records.
 
 Replicated entities are tasks (including the goal each one supports), goals,
 saved contacts, contact groups, snippets, Split Inboxes, mail-account display metadata, calendar-account
-metadata and selections, retention, and the portable preference allowlist.
+metadata and selections, scheduled-send summaries, retention, and the portable
+preference allowlist.
 
 A device reads only the entity types its version knows. Goals arrived in
 0.62.0: a device on an earlier version can't open a snapshot that holds a goal,
 so it stops receiving changes from updated devices until it is updated too.
 Contact groups arrived in 0.79.0 and behave the same way on earlier versions.
-Nothing is lost meanwhile, because a snapshot it can't open is never merged.
+Scheduled-send summaries arrived in 0.98.1; update every device to that version
+or later before sharing them. Nothing is lost meanwhile, because a snapshot
+it can't open is never merged.
 A group's membership merges per member, so adding and removing different
 people on two devices at once keeps both changes. Device roster names are also synchronized so
 each device has the same name in every roster; the hostname is used as the
-initial name. Cached mail and bodies, attachments, drafts, queued mail,
+initial name. Scheduled-send summaries share account, subject, timing, owner,
+and last reported delivery state inside encrypted snapshots. Only the creating
+installation can send or manage the message. Other devices show a read-only
+summary; an elapsed time without a new report does not prove delivery failed.
+Message bodies, recipients, attachments, and sending authority stay local.
+
+Cached mail and bodies, attachments, drafts, queued mail payloads,
 provider mutations, OAuth tokens, AI API keys, crash reports, telemetry
 consent, and device navigation state never leave the device. Storage
 providers see only ciphertext.

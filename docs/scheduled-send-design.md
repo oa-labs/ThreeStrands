@@ -1,6 +1,7 @@
 # Scheduled send with synchronized visibility
 
-Status: proposed implementation plan (2026-10-10). Not implemented.
+Status: implemented in 0.98.1 (2026-10-10), with the Send Later shortcut added in 0.98.2.
+Live Gmail and native sleep/wake verification remain developer release checks.
 
 ## Product contract
 
@@ -54,7 +55,7 @@ ambiguous times. Changing the computer's timezone later does not move the
 scheduled instant. Show the original time and zone, with a local equivalent
 on computers using another zone.
 
-Use a proposed 60-second dispatch grace period. A continuously running worker
+Use a 60-second dispatch grace period. A continuously running worker
 may claim a message from its target instant through the end of that period.
 If it cannot claim within that period, the message becomes `overdue` and
 requires an action on its owner: **Send now**, **Reschedule**, or **Return to
@@ -90,14 +91,12 @@ missing keychain identity, or an ownership mismatch pauses the schedule for
 review; it never grants sending authority. Document that copying both a
 profile and its keychain identity is outside this device-isolation guarantee.
 
-Extend `outbox_messages` additively with nullable fields for:
-
-- `scheduled_at`: UTC epoch milliseconds; null for ordinary sends.
-- `scheduled_time_zone`: the original IANA timezone.
-- `owner_installation_id`: immutable for scheduled messages.
-- `visibility_group_id`: the original sync group, if sharing was enabled.
-- `report_revision` and `status_changed_at`: owner-generated status sequence
-  and timestamp, advanced together on every relevant transition.
+Schema migration 64 extends `outbox_messages` with nullable `schedule_json`.
+Ordinary sends keep this field null. Scheduled metadata holds the UTC target,
+original IANA timezone, immutable installation owner, original visibility
+group, and owner-generated report revision and change timestamp as one value.
+Remote reports live separately in `scheduled_send_summaries`; they contain
+no executable send payload.
 
 Use a stable public group identifier or fingerprint, never key material, for
 the visibility binding. A schedule created outside a group stays local in
@@ -200,8 +199,10 @@ delivery result.
 
 ## UI and command behavior
 
-- Add **Send later** beside Send and to the command palette. Flush autosave
-  before scheduling and retain all existing compose checks and native validation.
+- **Send later** is available beside Send, in the command palette, and through
+  **Command+Shift+L** on macOS (**Ctrl+Shift+L** elsewhere) while composing.
+  The shortcut opens the picker; it does not queue or send the message.
+  Flush autosave before scheduling and retain all existing compose checks and native validation.
 - The picker shows **Sends from this computer (MacBook)**, its timezone, and
   the requirement to keep ThreeStrands running and the computer awake.
 - Outbox shows local schedules and remote summaries. Local pre-delivery rows
@@ -232,17 +233,18 @@ delivery result.
 4. **Composer and Outbox.** Add the picker, local management, peer visibility,
    timing and freshness wording, palette actions, and demo fixtures. Preserve
    ordinary sending and existing correspondence side effects.
-5. **Release.** Update cross-device sync's data boundary, correspondence status,
-   and user guidance. Add a minor SemVer bump at implementation time across
+5. **Release.** Cross-device sync's data boundary and correspondence guidance
+   describe the feature. The application version is kept identical across
    `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and the
-   `threestrands` entry in `src-tauri/Cargo.lock`. This plan alone needs no bump.
+   `threestrands` entry in `src-tauri/Cargo.lock`. The feature shipped in
+   0.98.1; the shortcut addition bumps the patch version to 0.98.2.
 
 New sync entity variants currently make snapshots unreadable to older builds.
 Use the existing documented update-all-devices behavior, preserve old snapshot
 reading in new builds, and provide an actionable compatibility message. Test
 the old reader's rejection before any partial merge. Do not reset groups or
-silently discard unknown entities to ship this feature. Document the minimum
-supported version when the implementation version is assigned.
+silently discard unknown entities to ship this feature. All devices sharing
+scheduled-send summaries must run **0.98.1 or later**.
 
 ## Automated acceptance coverage
 

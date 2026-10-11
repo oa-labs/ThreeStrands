@@ -109,6 +109,38 @@ afterEach(() => {
 });
 
 describe("useShortcutHandler", () => {
+  it("opens Send later from compose fields with Mod+Shift+L and respects overlays, IME, and repeats", () => {
+    const current = context({ interactionScope: "compose", composerActive: true });
+    const execute = vi.fn();
+    renderHook(() => useShortcutHandler(current, execute));
+    const composer = document.createElement("div");
+    composer.className = "composer";
+    composer.dataset.shortcutScope = "compose";
+    const subject = document.createElement("input");
+    const body = document.createElement("div");
+    body.contentEditable = "true";
+    const modal = document.createElement("div");
+    modal.dataset.shortcutScope = "modal";
+    const modalInput = document.createElement("input");
+    modal.append(modalInput);
+    composer.append(subject, body, modal);
+    document.body.append(composer);
+    for (const field of [subject, body]) {
+      for (const modifier of [{ metaKey: true }, { ctrlKey: true }]) {
+        const event = new KeyboardEvent("keydown", { key: "L", shiftKey: true, ...modifier, bubbles: true, cancelable: true });
+        field.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(true);
+      }
+    }
+    expect(execute).toHaveBeenCalledTimes(4);
+    expect(execute.mock.calls.every(([command]) => command.id === "draft.schedule")).toBe(true);
+    for (const extra of [{ repeat: true }, { isComposing: true }, { shiftKey: false }, { altKey: true }]) {
+      body.dispatchEvent(new KeyboardEvent("keydown", { key: "L", metaKey: true, shiftKey: true, bubbles: true, ...extra }));
+    }
+    modalInput.dispatchEvent(new KeyboardEvent("keydown", { key: "L", metaKey: true, shiftKey: true, bubbles: true }));
+    expect(execute).toHaveBeenCalledTimes(4);
+  });
+
   it("keeps Shift+E out of text fields and overlays, and ignores held-key repeats", () => {
     const current = context({ canUndoArchive: true });
     const execute = vi.fn();

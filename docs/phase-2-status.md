@@ -10,6 +10,11 @@ The correspondence portion of [the Phase 2 plan](phase-2-compose.md) is implemen
 - Sender identity retrieved from the connected Gmail account and cached for offline composition. The primary identity is supported; sending aliases are not yet supported.
 - Reply metadata cached during synchronization, with on-demand retrieval for older cached messages. Replies use Reply-To and preserve threading headers; changing a reply subject detaches the explicit Gmail thread ID.
 - A separate durable send outbox with immutable MIME snapshots, a 10-second undo window, atomic claim/cancel transitions, persisted attempt metadata, and prevention of duplicate queue submissions.
+- Scheduled send with an explicit timezone, daylight-saving offset selection,
+  a fixed sending installation, and optional encrypted summary visibility.
+  The sending computer must remain running, awake, connected, and authorized.
+  Missed times require owner confirmation; peers cannot take over. Local
+  schedules can be rescheduled or returned to drafts before sending.
 - A native send worker independent of the mailbox polling interval. It verifies the connected account before delivery and issues a single send request per claim. Explicit provider rejection can restore a draft; uncertain outcomes are reconciled against Gmail Sent and are never blindly retried.
 - Restart recovery preserves drafts and queued work, gives interrupted undo windows a fresh grace period, and marks interrupted in-flight delivery uncertain. Normal close flushes drafts, keeps undo available, and waits for an active send acknowledgement before exiting.
 - Native file selection and managed attachment copies, MIME multipart construction, removal, and on-demand retrieval of forwarded attachments. Unavailable attachments block Send until downloaded or removed. Copies persist independently of their original files. Limits are conservatively capped at 18 MB of files and 24 MB of encoded MIME.
@@ -24,11 +29,12 @@ The correspondence portion of [the Phase 2 plan](phase-2-compose.md) is implemen
 | Forward | `f` |
 | Refresh mail | `Shift+r` |
 | Send from composer | `Cmd/Ctrl+Enter` |
+| Open Send Later picker | `Cmd/Ctrl+Shift+L` |
 | Save and close composer | `Escape` |
 | Command palette | `Cmd/Ctrl+K` |
 | Unsubscribe (when advertised by the message) | `Cmd/Ctrl+U` |
 
-Attach files, Drafts, Outbox, and Undo Send are available in the command palette. Reply targets the latest displayed message. The native file picker is used from Rust; the webview does not receive arbitrary filesystem access.
+Send Later, Attach files, Drafts, Outbox, and Undo Send are available in the command palette. Reply targets the latest displayed message. The native file picker is used from Rust; the webview does not receive arbitrary filesystem access.
 
 ## Verification and remaining release checks
 
@@ -43,6 +49,9 @@ Before declaring the correspondence milestone ready for regular use, verify on a
 3. Forward and compare attachment bytes and Unicode filenames at receipt.
 4. Save offline, quit/relaunch the native app, reconnect, send, and undo.
 5. Exercise native file-picker cancel, normal window close and app quit, token expiry, and account disconnect/reconnect while queued.
+6. Verify a scheduled send, native sleep/wake and restart recovery, and read-only
+   visibility on a second enrolled computer. See the
+   [scheduled-send design](scheduled-send-design.md) for timing and ownership rules.
 
 These live/native UI checks have not been performed by the implementation agent; no real email was sent. The automatic tests use fixtures, temporary databases, and fake transport outcomes. Unresolved delivery should be checked in Gmail Sent before the user explicitly composes another message.
 

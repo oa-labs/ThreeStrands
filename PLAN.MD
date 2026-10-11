@@ -134,7 +134,8 @@ from the current feature set when publishing a website.
 The roadmap should be revised as research and reliability work change
 priorities. Contact browsing and editing, meeting proposals, available-time
 replies, and reviewed calendar-event creation exist today. Task follow-ups exist
-today; snoozing a conversation and scheduled sending do not.
+today. Scheduled sending with one fixed sending device and synchronized
+summary visibility is implemented; conversation snoozing remains planned.
 
 ## Current product model and decisions
 
@@ -221,8 +222,9 @@ flowchart LR
    recovery, and cross-device sync compatibility. Report progress in user
    terms rather than treating a feature's presence in code as proof of
    production reliability.
-3. **Build the near-term roadmap deliberately.** Define scheduled-action
-   behavior around app sleep and shutdown before adding snooze or send later.
+3. **Build the near-term roadmap deliberately.** Verify scheduled-send
+   behavior around native sleep and shutdown; define snooze behavior before
+   adding it.
    Extend the existing standalone address book with connected provider address
    books after defining ownership and conflict behavior.
    Mature replicated sync before presenting it as a standard feature.
@@ -247,7 +249,8 @@ flowchart LR
 
 ## Source documents
 
-- [Scheduled send plan](docs/scheduled-send-design.md) — fixed sending-device ownership, local scheduling, and encrypted summary visibility across devices; proposed, not implemented.
+- [Scheduled send plan](docs/scheduled-send-design.md) — fixed sending-device ownership, local scheduling, and encrypted summary visibility across devices; implemented in 0.98.1, with
+  Command/Ctrl+Shift+L added in 0.98.2.
 - [Design principles](DESIGN.md) — current keyboard, workspace, form, and AI
   review decisions.
 - [Cross-device sync](docs/cross-device-sync.md) and [replicated sync design](docs/replicated-sync-design.md) — sync scope and trust model.

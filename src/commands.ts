@@ -184,7 +184,7 @@ export const commands: Command[] = [
     enabled: (c) => !c.composerActive && c.focusedPane === "mail" && !c.calendarWeekActive && (c.mailbox === "inbox" || c.mailbox === "split") && c.splitInboxCount > 0,
     run: (c) => complete(c.goToPreviousSplitTab),
   },
-  { id: "draft.schedule", title: "Send later", keys: [], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(() => c.scheduleDraft?.()) },
+  { id: "draft.schedule", title: "Send later", keys: ["Mod+Shift+L"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(() => c.scheduleDraft?.()) },
   { id: "draft.send", title: "Send Draft", keys: ["Mod+Enter"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.sendDraft) },
   { id: "draft.sendAndMarkDone", title: "Send & Mark Done", keys: ["Mod+Shift+Enter"], group: "Compose", enabled: (c) => c.composerActive && c.canSendAndMarkDone, run: (c) => complete(c.sendAndMarkDone) },
   // The open draft in the Drafts folder is what "#" deletes there, matching
