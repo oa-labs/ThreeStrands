@@ -184,6 +184,15 @@ impl super::write::ImapWriteSession for LeasedSession {
     async fn uid_expunge(&mut self, uid_set: &str) -> ProviderResult<()> {
         self.session.uid_expunge(uid_set).await
     }
+    async fn create_mailbox_arg(&mut self, arg: &str) -> super::write::WriteResult<()> {
+        self.session.create_mailbox_arg(arg).await
+    }
+    async fn delete_mailbox_arg(&mut self, arg: &str) -> ProviderResult<()> {
+        self.session.delete_mailbox_arg(arg).await
+    }
+    async fn rename_mailbox_arg(&mut self, from: &str, to: &str) -> ProviderResult<()> {
+        self.session.rename_mailbox_arg(from, to).await
+    }
 }
 
 /// A live IMAP account provider.
@@ -1669,16 +1678,6 @@ impl MailFetch for ImapProvider {
     }
 }
 
-/// The remaining unimplemented mutations (archive/trash/spam MOVEs and the
-/// label create/update/delete methods) reject with a clear, PERMANENT message
-/// so the mutation queue rolls the local change back to `failed` rather than
-/// retrying forever (see the engine's `deliver_mutations`: `InvalidOperation`
-/// is neither retryable nor a reauth, so it lands in the permanent-failure
-/// branch). Phase 3 run 2 implements the `UNREAD`/`STARRED` flag changes; the
-/// MOVE and label-CRUD paths land in runs 3-4.
-const MUTATE_UNSUPPORTED: &str =
-    "IMAP label create/update/delete is not supported until phase 3 run 4";
-
 /// The desired end-state of one message flag after a mutation request is
 /// reduced: the flag must end up PRESENT, or ABSENT, on every synced copy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2571,6 +2570,678 @@ fn role_name(role: MoveRole) -> &'static str {
     }
 }
 
+// ===========================================================================
+// Phase 3 run 4: USER LABELS in label-folder mode (`label_storage == Folders`).
+//
+// A `lf:<name>` label is a COPY of a message in the mailbox
+// `<container><delim><name>` (Proton Bridge: a message labelled N times has N
+// copies). The engine delivers a user-label change through `modify_messages`
+// (verified in `sync.rs`: `ThreadMutation::Label` resolves to its target
+// message and calls `modify_messages`, never `modify_thread`), as
+// `([lf:X], [])` to ADD or `([], [lf:X])` to REMOVE. `create_label` /
+// `update_label` / `delete_label` manage the label mailboxes themselves.
+//
+// Everything here applies ONLY when `label_storage == Folders` with a
+// configured container. In any other mode these all refuse permanently with
+// `InvalidOperation` naming the mode, BEFORE any command.
+//
+// RENAME is DELIBERATELY NOT IMPLEMENTED (see `update_label` below): the `lf:`
+// id is derived from the name, and the engine/database have no label-id
+// migration (no label alias table; `update_label`'s returned `Label` is handed
+// to the frontend, never used to re-point `threads.labels_json` rows), so a
+// rename would silently orphan every stored `lf:<old>` association.
+// ===========================================================================
+
+/// The hierarchy delimiter the account uses, from any catalog row (every
+/// mailbox on a server shares one), defaulting to `/`.
+fn account_delimiter(delimiter: Option<&str>) -> &str {
+    delimiter.filter(|d| !d.is_empty()).unwrap_or("/")
+}
+
+/// Build the label-folder mailbox name for a label `name` relative to the
+/// container: `<container><delim><name>`. Pure; the inverse of
+/// `plan::label_folder_relative_name`.
+fn label_mailbox_name(container: &str, delimiter: &str, name: &str) -> String {
+    format!("{container}{delimiter}{name}")
+}
+
+impl ImapProvider {
+    /// This account's label container, or a permanent `InvalidOperation`
+    /// naming the storage mode when label-folder mode is not configured. The
+    /// single gate every `lf:` path passes through BEFORE any command, so a
+    /// keyword-mode or no-label account refuses label-folder operations
+    /// cleanly rather than touching the server.
+    fn label_container(&self) -> ProviderResult<String> {
+        match self.settings.label_storage {
+            LabelStorage::Folders => self.settings.label_container.clone().ok_or_else(|| {
+                ProviderError::InvalidOperation(
+                    "this account stores labels as folders but has no label container configured; \
+                     refusing the label operation permanently"
+                        .into(),
+                )
+            }),
+            LabelStorage::Keywords => Err(ProviderError::InvalidOperation(
+                "keyword labels are not supported yet (this account's label_storage is 'keywords'); \
+                 refusing permanently"
+                    .into(),
+            )),
+            LabelStorage::None => Err(ProviderError::InvalidOperation(
+                "this account has no user-label storage (label_storage is 'none'); \
+                 refusing permanently"
+                    .into(),
+            )),
+        }
+    }
+
+    /// The hierarchy delimiter from the persisted catalog (defaulting to `/`).
+    fn delimiter(&self) -> ProviderResult<String> {
+        let rows = self.store.mailboxes().map_err(db_err)?;
+        Ok(account_delimiter(rows.iter().find_map(|r| r.delimiter.as_deref())).to_string())
+    }
+
+    /// The mailbox name a `lf:<name>` id refers to, resolved against this
+    /// account's container + delimiter. Returns `None` for an id without the
+    /// `lf:` prefix. Never consults the catalog, so it names the mailbox a
+    /// label WOULD live in even before it is created (used by `create_label`).
+    fn label_mailbox_for_id(&self, id: &str, delimiter: &str, container: &str) -> Option<String> {
+        id.strip_prefix("lf:")
+            .map(|name| label_mailbox_name(container, delimiter, name))
+    }
+
+    // --- add / remove a user label (modify_messages lf: path) --------------
+
+    /// Apply a single `lf:<name>` ADD or REMOVE to a set of messages, in
+    /// label-folder mode, idempotently and with partial-failure honesty. The
+    /// request has already been classified ([`classify_message_mutation`]) to a
+    /// single label id and a direction.
+    ///
+    /// ADD: for each message, if a copy already lives in the label mailbox it
+    /// is satisfied (no command); otherwise COPY one existing synced copy into
+    /// the label mailbox (source priority INBOX > Archive > a user folder >
+    /// Sent; never Trash/Junk). A message with no usable source is a permanent
+    /// error naming it. Idempotent: the destination row is recorded as soon as
+    /// COPYUID confirms, so a retry after a partial failure never double-copies.
+    ///
+    /// REMOVE: delete only the copy in the label mailbox (needs `\Deleted`
+    /// storable + UIDPLUS `UID EXPUNGE`). Refuses permanently, sending NO
+    /// write, when removing the label copy would delete the message's LAST
+    /// synced copy. A message with no copy in the label mailbox is satisfied.
+    async fn apply_label_mutation(
+        &self,
+        message_ids: &[String],
+        label_id: &str,
+        add: bool,
+    ) -> ProviderResult<()> {
+        let container = self.label_container()?;
+        let delimiter = self.delimiter()?;
+        let label_mailbox = self
+            .label_mailbox_for_id(label_id, &delimiter, &container)
+            .ok_or_else(|| {
+                ProviderError::InvalidOperation(format!(
+                    "label id {label_id:?} is not a label-folder id; refusing permanently"
+                ))
+            })?;
+
+        if add {
+            self.apply_label_add(message_ids, label_id, &label_mailbox).await
+        } else {
+            self.apply_label_remove(message_ids, label_id, &label_mailbox).await
+        }
+    }
+
+    /// ADD `lf:<name>` to every message: COPY one existing copy into the label
+    /// mailbox, grouped by source mailbox over one leased session.
+    async fn apply_label_add(
+        &self,
+        message_ids: &[String],
+        label_id: &str,
+        label_mailbox: &str,
+    ) -> ProviderResult<()> {
+        // The label mailbox must exist in the local catalog (never auto-create
+        // on add — only create_label does that).
+        let catalog: std::collections::BTreeSet<String> = self
+            .store
+            .mailboxes()
+            .map_err(db_err)?
+            .into_iter()
+            .map(|m| m.name)
+            .collect();
+        if !catalog.contains(label_mailbox) {
+            return Err(ProviderError::InvalidOperation(format!(
+                "cannot add label {label_id:?}: its mailbox {label_mailbox:?} does not exist in \
+                 the local catalog; create the label first (refusing permanently)"
+            )));
+        }
+
+        let sync_plan = self.build_sync_plan()?;
+
+        // Decide each message's COPY from LOCAL state (plan-then-apply). A
+        // message already in the label mailbox is satisfied; otherwise pick its
+        // best source copy by priority. A message with no usable source is a
+        // permanent error naming it.
+        let mut by_source: std::collections::BTreeMap<String, (i64, Vec<PlannedMove>)> =
+            std::collections::BTreeMap::new();
+        for message_id in message_ids {
+            let locations = self.store.locations_for_message(message_id).map_err(db_err)?;
+            if locations.iter().any(|l| l.mailbox == *label_mailbox) {
+                continue; // Already labelled: no command.
+            }
+            let source = self
+                .best_label_source(&sync_plan, &locations)
+                .ok_or_else(|| {
+                    ProviderError::InvalidOperation(format!(
+                        "cannot add label {label_id:?} to message {message_id:?}: it has no synced \
+                         copy outside Trash/Junk to copy from; refusing permanently"
+                    ))
+                })?;
+            by_source
+                .entry(source.mailbox.clone())
+                .or_insert_with(|| (source.uidvalidity, Vec::new()))
+                .1
+                .push(PlannedMove {
+                    message_id: message_id.clone(),
+                    uid: source.uid,
+                    flags_json: source.flags_json.clone(),
+                    modseq: source.modseq,
+                });
+        }
+
+        if by_source.is_empty() {
+            // Every message is already in the label mailbox: no command.
+            return Ok(());
+        }
+
+        let mut session = self.open_session().await?;
+        let result = self
+            .apply_label_add_on(session.as_mut(), label_mailbox, by_source)
+            .await;
+        let _ = session.logout().await;
+        result
+    }
+
+    /// The best source copy to COPY into a label mailbox, by the brief's
+    /// priority: INBOX, then Archive, then any user folder, then Sent. NEVER a
+    /// copy whose only mailbox role is Trash or Junk (those are not a source).
+    /// A copy in a label folder is not itself a source (we copy real mail, not
+    /// a label view). Returns `None` when no usable source copy exists.
+    fn best_label_source(
+        &self,
+        plan: &SyncPlan,
+        locations: &[ImapLocation],
+    ) -> Option<ImapLocation> {
+        // Rank a location by its mailbox's resolved role: lower is better.
+        // INBOX (0) > Archive (1) > user folder (2) > Sent (3); Trash/Junk and
+        // label folders are NOT sources (None).
+        let rank = |mailbox: &str| -> Option<u8> {
+            if mailbox.eq_ignore_ascii_case(INBOX) {
+                return Some(0);
+            }
+            let entry = plan.entry_for(mailbox)?;
+            match entry.role {
+                Some(super::MailboxRole::Archive) => Some(1),
+                Some(super::MailboxRole::Sent) => Some(3),
+                Some(super::MailboxRole::Trash) | Some(super::MailboxRole::Junk) => None,
+                // Aggregates / Drafts carry no usable source either.
+                Some(super::MailboxRole::All) | Some(super::MailboxRole::Drafts) => None,
+                None => match entry.label_kind {
+                    // A real user folder is a source; a label folder is not.
+                    plan::LabelKind::UserFolder => Some(2),
+                    _ => None,
+                },
+            }
+        };
+        locations
+            .iter()
+            .filter_map(|l| rank(&l.mailbox).map(|r| (r, l)))
+            .min_by_key(|(r, l)| (*r, l.uid))
+            .map(|(_, l)| l.clone())
+    }
+
+    /// The ADD against an open session: COPY each planned source copy into the
+    /// label mailbox, one source mailbox at a time, recording the destination
+    /// location row as soon as COPYUID confirms (idempotent retry).
+    async fn apply_label_add_on(
+        &self,
+        session: &mut dyn ImapSession,
+        label_mailbox: &str,
+        by_source: std::collections::BTreeMap<String, (i64, Vec<PlannedMove>)>,
+    ) -> ProviderResult<()> {
+        for (source_mailbox, (uidvalidity, copies)) in by_source {
+            let write_session = as_write_session(session)?;
+            let ctx = super::write::select_for_write(
+                write_session,
+                &self.store,
+                &source_mailbox,
+                uidvalidity as u32,
+            )
+            .await?;
+            for planned in &copies {
+                self.copy_one_label(write_session, &ctx, label_mailbox, planned).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// COPY one message's source copy into the label mailbox and record the
+    /// destination location row (idempotent). A single-UID COPY so COPYUID maps
+    /// unambiguously. If the destination already has this message locally (an
+    /// earlier partial success), skip — the copy is done. Without COPYUID the
+    /// row is left to the next sweep (Message-ID), noted in a log line.
+    async fn copy_one_label(
+        &self,
+        session: &mut dyn super::write::ImapWriteSession,
+        // The caller already holds a guarded writable SELECT on the SOURCE
+        // mailbox (its UIDVALIDITY confirmed) for the whole group, so the COPY
+        // runs in that context; the ctx itself is not needed here.
+        _ctx: &super::write::WriteContext,
+        label_mailbox: &str,
+        planned: &PlannedMove,
+    ) -> ProviderResult<()> {
+        let already = self
+            .store
+            .locations_for_message(&planned.message_id)
+            .map_err(db_err)?
+            .iter()
+            .any(|l| l.mailbox == *label_mailbox);
+        if already {
+            return Ok(()); // The copy already landed (recorded) — idempotent.
+        }
+        let uid = planned.uid as u32;
+        let dest_arg = super::write::build_mailbox_arg(label_mailbox)?;
+        let uid_set = super::write::build_uid_set(&[uid]).expect("one uid");
+        match session.uid_copy(&uid_set, &dest_arg).await {
+            Ok(outcome) => {
+                if let Some(copyuid) = &outcome.copyuid {
+                    if let Some(dest_uid) = dest_uid_for(copyuid, uid) {
+                        self.store
+                            .upsert_location(&ImapLocation {
+                                mailbox: label_mailbox.to_string(),
+                                uidvalidity: copyuid.uidvalidity as i64,
+                                uid: dest_uid as i64,
+                                message_id: planned.message_id.clone(),
+                                flags_json: planned.flags_json.clone(),
+                                modseq: planned.modseq,
+                            })
+                            .map_err(db_err)?;
+                    }
+                } else {
+                    log::warn!(
+                        "imap add-label: no COPYUID for {} into {label_mailbox:?}; the next sweep \
+                         will discover the labelled copy by Message-ID",
+                        planned.message_id
+                    );
+                }
+                Ok(())
+            }
+            Err(super::write::WriteError::TryCreate(text)) => {
+                // The label mailbox vanished between the catalog check and the
+                // COPY. Permanent: create_label owns creation, not add.
+                Err(ProviderError::InvalidOperation(format!(
+                    "cannot add label into {label_mailbox:?}: the server reports it does not exist \
+                     (TRYCREATE: {text}); create the label first (refusing permanently)"
+                )))
+            }
+            Err(super::write::WriteError::Provider(error)) => Err(error),
+        }
+    }
+
+    /// REMOVE `lf:<name>` from every message: delete only the copy in the label
+    /// mailbox, with the never-delete-the-last-copy guard and UIDPLUS
+    /// requirement checked BEFORE any write.
+    async fn apply_label_remove(
+        &self,
+        message_ids: &[String],
+        label_id: &str,
+        label_mailbox: &str,
+    ) -> ProviderResult<()> {
+        // Decide each message's delete from LOCAL state. A message with no copy
+        // in the label mailbox is satisfied. The never-delete-the-last-copy
+        // guard: if the label copy is the message's ONLY synced location,
+        // refuse the WHOLE request permanently before any command.
+        let mut by_uidvalidity: Option<i64> = None;
+        let mut targets: Vec<PlannedMove> = Vec::new();
+        for message_id in message_ids {
+            let locations = self.store.locations_for_message(message_id).map_err(db_err)?;
+            let in_label: Vec<&ImapLocation> =
+                locations.iter().filter(|l| l.mailbox == *label_mailbox).collect();
+            if in_label.is_empty() {
+                continue; // No copy in the label mailbox: satisfied.
+            }
+            // The invariant: never delete the message's last synced copy.
+            if locations.len() == in_label.len() {
+                return Err(ProviderError::InvalidOperation(format!(
+                    "cannot remove label {label_id:?} from message {message_id:?}: the label copy \
+                     is its only synced location, so removing the label would delete the message; \
+                     refusing permanently"
+                )));
+            }
+            for location in in_label {
+                // All copies in one mailbox share its UIDVALIDITY.
+                by_uidvalidity.get_or_insert(location.uidvalidity);
+                targets.push(PlannedMove {
+                    message_id: message_id.clone(),
+                    uid: location.uid,
+                    flags_json: location.flags_json.clone(),
+                    modseq: location.modseq,
+                });
+            }
+        }
+
+        if targets.is_empty() {
+            return Ok(()); // Every message already lacks the label: no command.
+        }
+        let uidvalidity = by_uidvalidity.expect("non-empty targets carry a UIDVALIDITY");
+
+        let mut session = self.open_session().await?;
+        let result = self
+            .apply_label_remove_on(session.as_mut(), label_mailbox, uidvalidity, &targets)
+            .await;
+        let _ = session.logout().await;
+        result
+    }
+
+    /// The REMOVE against an open session: select the label mailbox for write
+    /// (UIDPLUS gate + UIDVALIDITY guard), then per message mark `\Deleted` and
+    /// `UID EXPUNGE` just its UID, deleting the local row only after the server
+    /// delete confirms. A half-applied state (\Deleted stored, expunge failed)
+    /// keeps the copy present+flagged and its retry just finishes it, with the
+    /// cause's retry class preserved.
+    async fn apply_label_remove_on(
+        &self,
+        session: &mut dyn ImapSession,
+        label_mailbox: &str,
+        uidvalidity: i64,
+        targets: &[PlannedMove],
+    ) -> ProviderResult<()> {
+        let write_session = as_write_session(session)?;
+        let ctx = super::write::select_for_write(
+            write_session,
+            &self.store,
+            label_mailbox,
+            uidvalidity as u32,
+        )
+        .await?;
+        // UIDPLUS is required: without a targeted UID EXPUNGE a plain EXPUNGE
+        // would remove other clients' \Deleted mail, so refuse (nothing sent).
+        if !ctx.caps.can_expunge_uids() {
+            return Err(ProviderError::InvalidOperation(format!(
+                "cannot remove a label copy from {label_mailbox:?}: the server does not advertise \
+                 UIDPLUS, so a targeted UID EXPUNGE is unavailable and a plain EXPUNGE could delete \
+                 other clients' messages; refusing permanently"
+            )));
+        }
+        for planned in targets {
+            // expunge_source_copies marks \Deleted then UID EXPUNGE of just this
+            // UID; a half-applied state (expunge failed after \Deleted) keeps
+            // the copy and its retry re-runs the same step. Delete the local
+            // row only after the server delete confirms.
+            super::write::expunge_source_copies(write_session, &ctx, &[planned.uid as u32]).await?;
+            self.store
+                .delete_location(label_mailbox, ctx.uidvalidity as i64, planned.uid)
+                .map_err(db_err)?;
+        }
+        Ok(())
+    }
+
+    // --- create / delete a label -------------------------------------------
+
+    /// Create a label mailbox for `name` and add its catalog row so
+    /// `list_labels` shows it immediately. Validation + the case-insensitive
+    /// idempotent-alias check happen BEFORE any command. Returns the existing
+    /// label when `name` aliases one case-insensitively (Proton labels are
+    /// case-insensitive).
+    async fn create_label_folder(&self, name: &str) -> ProviderResult<Label> {
+        let container = self.label_container()?;
+        let delimiter = self.delimiter()?;
+        let clean = validate_label_name(name, &delimiter)?;
+
+        // Case-insensitive alias check against the EXISTING labels: a label
+        // whose name matches (ignoring case) is returned as-is (idempotent).
+        let plan = self.build_sync_plan()?;
+        for (id, _) in plan.dynamic_labels() {
+            if let Some(existing) = id.strip_prefix("lf:") {
+                if existing.eq_ignore_ascii_case(&clean) {
+                    return Ok(Label {
+                        id: id.clone(),
+                        name: existing.to_string(),
+                        kind: "user".into(),
+                    });
+                }
+            }
+        }
+
+        let label_mailbox = label_mailbox_name(&container, &delimiter, &clean);
+        let arg = super::write::build_mailbox_arg(&label_mailbox)?;
+
+        let mut session = self.open_session().await?;
+        let result = self
+            .create_label_folder_on(session.as_mut(), &container, &label_mailbox, &arg)
+            .await;
+        let _ = session.logout().await;
+        result?;
+
+        // Record the catalog row so list_labels reflects it with no sync. A
+        // label folder is synced, Folder-class; born with zero counters (the
+        // next sweep fills them), special_use NULL, delimiter carried.
+        self.store
+            .upsert_mailbox_catalog(&label_mailbox, Some(&delimiter), None)
+            .map_err(db_err)?;
+
+        Ok(Label { id: format!("lf:{clean}"), name: clean, kind: "user".into() })
+    }
+
+    /// CREATE the label mailbox over an open session. If the container itself
+    /// is missing (`TRYCREATE`/`NONEXISTENT`), create the container first and
+    /// retry once — the user asked for a label, so creating the container it
+    /// lives under is acceptable here.
+    async fn create_label_folder_on(
+        &self,
+        session: &mut dyn ImapSession,
+        container: &str,
+        label_mailbox: &str,
+        arg: &str,
+    ) -> ProviderResult<()> {
+        let write_session = as_write_session(session)?;
+        match write_session.create_mailbox_arg(arg).await {
+            Ok(()) => Ok(()),
+            Err(super::write::WriteError::TryCreate(_)) => {
+                // The container does not exist yet: create it, then retry once.
+                let container_arg = super::write::build_mailbox_arg(container)?;
+                if let Err(error) = write_session.create_mailbox_arg(&container_arg).await {
+                    return Err(error.into_provider_error());
+                }
+                write_session
+                    .create_mailbox_arg(arg)
+                    .await
+                    .map_err(|e| e.into_provider_error())
+                    .map(|()| {
+                        log::info!(
+                            "imap create_label: created missing container {container:?} before \
+                             {label_mailbox:?}"
+                        );
+                    })
+            }
+            Err(super::write::WriteError::Provider(error)) => Err(error),
+        }
+    }
+
+    /// Delete a label mailbox, conservatively: only when EVERY message in it
+    /// has another synced copy AND the server's message count equals the local
+    /// location count (nothing unsynced we cannot vouch for). Otherwise a
+    /// permanent error. Deleting an already-absent label is idempotent success.
+    async fn delete_label_folder(&self, id: &str) -> ProviderResult<()> {
+        let container = self.label_container()?;
+        let delimiter = self.delimiter()?;
+        let label_mailbox = self
+            .label_mailbox_for_id(id, &delimiter, &container)
+            .ok_or_else(|| {
+                ProviderError::InvalidOperation(format!(
+                    "label id {id:?} is not a label-folder id; refusing permanently"
+                ))
+            })?;
+
+        // Idempotent: an already-absent label (no catalog row) is success.
+        let catalog: std::collections::BTreeSet<String> = self
+            .store
+            .mailboxes()
+            .map_err(db_err)?
+            .into_iter()
+            .map(|m| m.name)
+            .collect();
+        if !catalog.contains(&label_mailbox) {
+            return Ok(());
+        }
+
+        // Safety: every location in the label mailbox must belong to a message
+        // with at least one OTHER synced location.
+        let locations = self.store.locations_in_mailbox(&label_mailbox).map_err(db_err)?;
+        let mut would_lose = 0usize;
+        for location in &locations {
+            let others = self
+                .store
+                .locations_for_message(&location.message_id)
+                .map_err(db_err)?
+                .into_iter()
+                .filter(|l| l.mailbox != label_mailbox)
+                .count();
+            if others == 0 {
+                would_lose += 1;
+            }
+        }
+        if would_lose > 0 {
+            return Err(ProviderError::InvalidOperation(format!(
+                "cannot delete label {id:?}: {would_lose} message(s) have no other synced copy, so \
+                 deleting its mailbox {label_mailbox:?} would lose them; refusing permanently"
+            )));
+        }
+
+        // The server's message count must equal the local location count, so we
+        // never delete a mailbox holding unsynced mail we cannot vouch for.
+        let mut session = self.open_session().await?;
+        let result = self
+            .delete_label_folder_on(session.as_mut(), &label_mailbox, locations.len())
+            .await;
+        let _ = session.logout().await;
+        result?;
+
+        // Retire the catalog row, sync-state and locations in one transaction,
+        // journaling affected hot threads — reusing the slice 5b-2 retirement
+        // helper by passing the full present catalog MINUS the deleted label,
+        // so ONLY that mailbox is retired (nothing else is absent from the set).
+        let present: Vec<String> = catalog
+            .into_iter()
+            .filter(|name| name != &label_mailbox)
+            .collect();
+        self.store.retire_vanished_mailboxes(&present).map_err(db_err)?;
+        Ok(())
+    }
+
+    /// Verify the server count then DELETE the mailbox. EXAMINE (read-only) to
+    /// read the count without selecting it for write; a mismatch is a permanent
+    /// refusal (nothing deleted). DELETE is never issued while the mailbox is
+    /// the selected one — select INBOX first.
+    async fn delete_label_folder_on(
+        &self,
+        session: &mut dyn ImapSession,
+        label_mailbox: &str,
+        local_count: usize,
+    ) -> ProviderResult<()> {
+        let status = session.examine(label_mailbox).await?;
+        if status.exists as usize != local_count {
+            return Err(ProviderError::InvalidOperation(format!(
+                "cannot delete label mailbox {label_mailbox:?}: the server reports {} message(s) \
+                 but the local store knows only {local_count}, so some mail is unsynced and could \
+                 be lost; refusing permanently",
+                status.exists
+            )));
+        }
+        // Never DELETE the selected mailbox: select INBOX first.
+        session.select(INBOX).await?;
+        let write_session = as_write_session(session)?;
+        let arg = super::write::build_mailbox_arg(label_mailbox)?;
+        write_session.delete_mailbox_arg(&arg).await
+    }
+}
+
+/// Validate a user-supplied label name (the part relative to the container):
+/// non-empty after trimming, no control characters, must not contain the
+/// server delimiter, no leading/trailing space or delimiter, within
+/// [`policy::MAX_LABEL_NAME_CHARS`]. Returns the TRIMMED name. A permanent
+/// `InvalidOperation` describes any violation.
+fn validate_label_name(name: &str, delimiter: &str) -> ProviderResult<String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(ProviderError::InvalidOperation(
+            "a label name cannot be empty; refusing permanently".into(),
+        ));
+    }
+    policy::check_label_name_len(trimmed.chars().count())?;
+    if trimmed.chars().any(|c| c.is_control()) {
+        return Err(ProviderError::InvalidOperation(
+            "a label name cannot contain a control character; refusing permanently".into(),
+        ));
+    }
+    if !delimiter.is_empty() && trimmed.contains(delimiter) {
+        return Err(ProviderError::InvalidOperation(format!(
+            "a label name cannot contain the server hierarchy delimiter {delimiter:?}; \
+             refusing permanently"
+        )));
+    }
+    // The trimmed name has no leading/trailing space by construction; also
+    // reject a leading/trailing delimiter char (e.g. a single-char delimiter).
+    if let Some(first) = delimiter.chars().next() {
+        if trimmed.starts_with(first) || trimmed.ends_with(first) {
+            return Err(ProviderError::InvalidOperation(format!(
+                "a label name cannot start or end with the hierarchy delimiter {delimiter:?}; \
+                 refusing permanently"
+            )));
+        }
+    }
+    Ok(trimmed.to_string())
+}
+
+/// A classified `modify_messages` request in label-folder terms: either a flag
+/// change (handled by run 2's flag path) or a single `lf:` add/remove.
+enum MessageMutationKind {
+    /// Only `UNREAD`/`STARRED` ids — the run-2 flag path.
+    Flag,
+    /// A single `lf:<name>` ADD (`add == true`) or REMOVE (`add == false`).
+    Label { id: String, add: bool },
+}
+
+/// Classify a `modify_messages` `(add, remove)` request. A request naming no
+/// `lf:` id is the flag path (run 2's `plan_flag_mutation` still rejects a
+/// `folder:`/system/`kw:`/unknown id or an id in both lists). A request that
+/// names exactly ONE `lf:` id — `([lf:X], [])` or `([], [lf:X])`, the two
+/// shapes the engine delivers a user-label change in — is the label path.
+/// Anything else (a label mixed with another id, several labels, a label in
+/// both lists, a label alongside a flag) is a permanent `InvalidOperation`
+/// BEFORE any command.
+fn classify_message_mutation(
+    add: &[String],
+    remove: &[String],
+) -> ProviderResult<MessageMutationKind> {
+    let is_lf = |id: &String| id.starts_with("lf:");
+    let any_lf = add.iter().chain(remove.iter()).any(is_lf);
+    if !any_lf {
+        return Ok(MessageMutationKind::Flag);
+    }
+    // Exactly one lf: id, alone, in exactly one list.
+    match (add, remove) {
+        ([only], []) if is_lf(only) => {
+            Ok(MessageMutationKind::Label { id: only.clone(), add: true })
+        }
+        ([], [only]) if is_lf(only) => {
+            Ok(MessageMutationKind::Label { id: only.clone(), add: false })
+        }
+        _ => Err(ProviderError::InvalidOperation(format!(
+            "the IMAP provider accepts a user-label change only as a single lf: id added or \
+             removed on its own ([lf:X],[]) or ([],[lf:X]); the request add={add:?} remove={remove:?} \
+             mixes a label with other ids, names several, or repeats one; refusing permanently"
+        ))),
+    }
+}
+
 #[async_trait]
 impl MailMutate for ImapProvider {
     async fn modify_thread(
@@ -2630,7 +3301,17 @@ impl MailMutate for ImapProvider {
                 "modify_messages called with no message ids".into(),
             ));
         }
-        self.apply_flag_mutation(ids, add, remove).await
+        // A `modify_messages` request is EITHER a flag change (UNREAD/STARRED)
+        // or a single user-label (`lf:`) add/remove — the two shapes the engine
+        // delivers through this method. Classify first (rejecting a mixed /
+        // multi-label / folder: / unknown shape permanently BEFORE any
+        // command), then route.
+        match classify_message_mutation(add, remove)? {
+            MessageMutationKind::Flag => self.apply_flag_mutation(ids, add, remove).await,
+            MessageMutationKind::Label { id, add } => {
+                self.apply_label_mutation(ids, &id, add).await
+            }
+        }
     }
 
     async fn list_labels(&self) -> ProviderResult<Vec<Label>> {
@@ -2691,16 +3372,31 @@ impl MailMutate for ImapProvider {
         Ok(labels)
     }
 
-    async fn create_label(&self, _name: &str) -> ProviderResult<Label> {
-        Err(ProviderError::InvalidOperation(MUTATE_UNSUPPORTED.into()))
+    async fn create_label(&self, name: &str) -> ProviderResult<Label> {
+        self.create_label_folder(name).await
     }
 
     async fn update_label(&self, _id: &str, _name: &str) -> ProviderResult<Label> {
-        Err(ProviderError::InvalidOperation(MUTATE_UNSUPPORTED.into()))
+        // RENAME is deliberately NOT implemented. The `lf:` label id is derived
+        // from the label NAME, so a rename changes the id; but the engine and
+        // database have no way to migrate stored label ids: there is no label
+        // alias table (unlike thread aliases), and `update_label`'s returned
+        // `Label` is handed straight to the frontend, never used to re-point
+        // the `threads.labels_json` rows that carry `lf:<old>`. Renaming would
+        // therefore silently orphan every message/thread labelled with the old
+        // id until each is independently re-ingested. Until a label-id
+        // migration exists, refuse permanently with a plain-language reason.
+        Err(ProviderError::InvalidOperation(
+            "renaming a label is not supported on this account: a label-folder label's id is \
+             derived from its name, and there is no safe migration of the label id already stored \
+             on your messages and threads, so a rename would detach them from the label. Create a \
+             new label and move the messages instead. (Refusing permanently.)"
+                .into(),
+        ))
     }
 
-    async fn delete_label(&self, _id: &str) -> ProviderResult<()> {
-        Err(ProviderError::InvalidOperation(MUTATE_UNSUPPORTED.into()))
+    async fn delete_label(&self, id: &str) -> ProviderResult<()> {
+        self.delete_label_folder(id).await
     }
 }
 
@@ -3447,11 +4143,12 @@ mod tests {
             Err(ProviderError::InvalidOperation(_)) => {}
             other => panic!("expected InvalidOperation, got {:?}", other.err()),
         }
-        // The label CRUD methods remain unsupported (runs 3-4).
-        assert!(matches!(
-            provider.create_label("X").await.unwrap_err(),
-            ProviderError::InvalidOperation(_)
-        ));
+        // Label RENAME (`update_label`) is refused PERMANENTLY in run 4 (the
+        // `lf:` id is name-derived and there is no label-id migration), and the
+        // refusal is decided before any session, so it holds on this fake too.
+        let err = provider.update_label("lf:Old", "New").await.unwrap_err();
+        assert!(matches!(err, ProviderError::InvalidOperation(_)), "{err:?}");
+        assert!(!err.retry_mutation(), "rename refusal is permanent");
         // list_labels returns the system labels including the Slice 5b-1
         // Sent/Spam/Trash roles.
         let labels = provider.list_labels().await.unwrap();
@@ -6968,6 +7665,155 @@ mod tests {
             let folder = listed.iter().find(|l| l.id == "folder:Folders/Projects").unwrap();
             assert_eq!(folder.kind, "folder");
         }
+
+        /// (Phase 3 run 4, live) Create a scratch label, COPY a scratch INBOX
+        /// message into it, sync and observe the `lf:` label, remove the label
+        /// (expunging only that copy), then delete the scratch label. Operates
+        /// ONLY on copies this test creates — the seeded fixtures are never
+        /// moved, flagged or expunged. Panics loudly if cleanup cannot finish.
+        /// Skips cleanly without docker.
+        #[tokio::test]
+        async fn live_provider_adds_removes_and_deletes_a_user_label() {
+            let Some(config) = gated() else { return };
+            let provider = live_provider(config.clone());
+
+            // Baseline + a few polls so INBOX and Labels/Clients are synced.
+            let mut cursor = provider.baseline_cursor().await.expect("baseline");
+            for _ in 0..5 {
+                cursor = provider.poll(&cursor).await.expect("poll").cursor;
+            }
+
+            // Create OUR OWN scratch copy inside INBOX (UID COPY of a seeded
+            // INBOX message to a new UID in INBOX) so we never touch a fixture.
+            let seeded = provider.store.locations_in_mailbox("INBOX").expect("inbox");
+            assert!(!seeded.is_empty(), "the harness seeds INBOX");
+            let source_uid = seeded[0].uid as u32;
+
+            let mut worker = ImapConnectionManager::new(config.clone())
+                .connect_leased(
+                    super::super::super::connection::ConnectionRole::Command,
+                    USER,
+                    PASSWORD,
+                )
+                .await
+                .expect("worker login")
+                .0;
+            // Make a scratch copy inside INBOX; capture its new UID from COPYUID.
+            worker.run_command_capture_code("SELECT INBOX").await.expect("select inbox");
+            let copy_code = worker
+                .run_command_capture_code(&format!("UID COPY {source_uid} INBOX"))
+                .await
+                .expect("scratch copy")
+                .expect("COPYUID for the scratch copy");
+            // COPYUID <validity> <src> <dst>: the scratch UID is the dst member.
+            let scratch_uid: u32 = copy_code
+                .rsplit(|c: char| c == ' ' || c == ']')
+                .find_map(|tok| tok.trim().parse::<u32>().ok())
+                .expect("a scratch UID from COPYUID");
+
+            // A scratch label name unlikely to collide with a fixture.
+            let label_name = "ScratchP3R4";
+            let label_mailbox = format!("Labels/{label_name}");
+
+            // Guarantee cleanup even on assertion failure: a guard that removes
+            // the scratch INBOX copy and deletes the scratch label mailbox.
+            let cleanup = |config: super::super::super::connection::ConnectionConfig| async move {
+                let mut c = ImapConnectionManager::new(config)
+                    .connect_leased(
+                        super::super::super::connection::ConnectionRole::Command,
+                        USER,
+                        PASSWORD,
+                    )
+                    .await
+                    .expect("cleanup login")
+                    .0;
+                // Remove the scratch INBOX copy.
+                c.run_command_capture_code("SELECT INBOX").await.expect("select inbox");
+                let _ = c
+                    .run_command_capture_code(&format!("UID STORE {scratch_uid} +FLAGS.SILENT (\\Deleted)"))
+                    .await;
+                let _ = c.run_command_capture_code(&format!("UID EXPUNGE {scratch_uid}")).await;
+                // Delete the scratch label mailbox (after selecting INBOX).
+                let _ = c.run_command_capture_code(&format!("DELETE \"{label_mailbox}\"")).await;
+                let _ = c.logout().await;
+            };
+
+            // Create the label through the provider; add it to the scratch copy.
+            let created = provider.create_label(label_name).await.expect("create_label");
+            assert_eq!(created.id, format!("lf:{label_name}"));
+
+            // Resync so the provider learns the scratch INBOX copy's id/thread.
+            for _ in 0..6 {
+                cursor = provider.poll(&cursor).await.expect("poll").cursor;
+            }
+            // Find the stable id of the scratch INBOX copy by its UID.
+            let scratch_id = provider
+                .store
+                .locations_in_mailbox("INBOX")
+                .expect("inbox")
+                .into_iter()
+                .find(|l| l.uid as u32 == scratch_uid)
+                .map(|l| l.message_id);
+            let scratch_id = match scratch_id {
+                Some(id) => id,
+                None => {
+                    cleanup(config.clone()).await;
+                    panic!("the scratch INBOX copy was not synced");
+                }
+            };
+
+            // Add the label, sync, and observe lf:<name> on the message.
+            if let Err(error) = provider.modify_messages(&[scratch_id.clone()], &[created.id.clone()], &[]).await {
+                cleanup(config.clone()).await;
+                panic!("add label failed: {error:?}");
+            }
+            for _ in 0..6 {
+                cursor = provider.poll(&cursor).await.expect("poll").cursor;
+            }
+            let thread = provider
+                .store
+                .thread_of_message(&scratch_id)
+                .expect("thread")
+                .expect("a thread");
+            let messages = provider.fetch_thread(&thread).await.expect("fetch_thread");
+            let labelled = messages.iter().any(|m| m.label_ids.contains(&created.id));
+            if !labelled {
+                cleanup(config.clone()).await;
+                panic!("the lf: label was not observed after adding it");
+            }
+
+            // Remove the label (expunges only the label copy), then delete the
+            // now-empty scratch label.
+            if let Err(error) = provider.modify_messages(&[scratch_id.clone()], &[], &[created.id.clone()]).await {
+                cleanup(config.clone()).await;
+                panic!("remove label failed: {error:?}");
+            }
+            if let Err(error) = provider.delete_label(&created.id).await {
+                cleanup(config.clone()).await;
+                panic!("delete_label failed: {error:?}");
+            }
+
+            // Clean up the scratch INBOX copy (the label mailbox is already
+            // deleted by delete_label). Panic loudly if cleanup fails.
+            let mut c = ImapConnectionManager::new(config.clone())
+                .connect_leased(
+                    super::super::super::connection::ConnectionRole::Command,
+                    USER,
+                    PASSWORD,
+                )
+                .await
+                .expect("final cleanup login")
+                .0;
+            c.run_command_capture_code("SELECT INBOX").await.expect("select inbox");
+            c.run_command_capture_code(&format!("UID STORE {scratch_uid} +FLAGS.SILENT (\\Deleted)"))
+                .await
+                .expect("flag scratch copy deleted");
+            c.run_command_capture_code(&format!("UID EXPUNGE {scratch_uid}"))
+                .await
+                .expect("expunge scratch copy — cleanup must succeed");
+            let _ = c.logout().await;
+            let _ = worker.logout().await;
+        }
     }
 }
 
@@ -7069,6 +7915,11 @@ mod mutate_tests {
         /// Cleared after it fires once so a retry can finish the move. Models
         /// the half-applied copy+delete+expunge move.
         fail_expunge_once: Option<String>,
+        /// When set, `CREATE <this exact name>` answers `NO [TRYCREATE] <text>`
+        /// the first time (and does NOT create), cleared after it fires once —
+        /// so `create_label` creates the missing container and retries. Keyed
+        /// by the decoded mailbox name.
+        create_trycreate_once: Option<String>,
     }
 
     impl MutServer {
@@ -7084,6 +7935,7 @@ mod mutate_tests {
                 silently_ignore_flag: None,
                 copy_trycreate_once: None,
                 fail_expunge_once: None,
+                create_trycreate_once: None,
             }
         }
         fn folder(&mut self, name: &str, uidvalidity: u32) -> &mut MutFolder {
@@ -7256,12 +8108,51 @@ mod mutate_tests {
                 .trim()
                 .trim_matches('"')
                 .to_string();
-            if state.folders.contains_key(&name) {
+            // A scripted one-shot TRYCREATE (missing parent/container) fires
+            // once for THIS exact name, so create_label can create the
+            // container and retry.
+            if state.create_trycreate_once.as_deref() == Some(name.as_str()) {
+                state.create_trycreate_once = None;
+                (format!("{tag} NO [TRYCREATE] missing parent\r\n"), false)
+            } else if state.folders.contains_key(&name) {
                 (format!("{tag} NO [ALREADYEXISTS] exists\r\n"), false)
             } else {
                 // A freshly-created destination gets its own UIDVALIDITY.
                 state.folders.insert(name, MutFolder::new(700));
                 (format!("{tag} OK CREATE done\r\n"), false)
+            }
+        } else if upper.starts_with("DELETE") {
+            // DELETE <mailbox>: remove the folder. Deleting an absent one
+            // answers NO [NONEXISTENT]; the provider never issues that because
+            // it checks the local catalog first.
+            let name = rest["DELETE".len().min(rest.len())..]
+                .trim()
+                .trim_matches('"')
+                .to_string();
+            if state.folders.remove(&name).is_some() {
+                (format!("{tag} OK DELETE done\r\n"), false)
+            } else {
+                (format!("{tag} NO [NONEXISTENT] no such mailbox\r\n"), false)
+            }
+        } else if upper.starts_with("RENAME") {
+            // RENAME <from> <to>: move the folder (and its messages) to a new
+            // name. Absent source -> NO; existing target -> NO. The provider
+            // never issues RENAME (run 4 refuses rename), so this exists only
+            // for completeness / future use.
+            let args: Vec<&str> = rest["RENAME".len().min(rest.len())..].trim().split('"').collect();
+            // Tokens are "from" "to"; split on quotes yields ["", from, " ", to, ""].
+            let from = args.get(1).unwrap_or(&"").to_string();
+            let to = args.get(3).unwrap_or(&"").to_string();
+            match state.folders.remove(&from) {
+                Some(folder) if !state.folders.contains_key(&to) => {
+                    state.folders.insert(to, folder);
+                    (format!("{tag} OK RENAME done\r\n"), false)
+                }
+                Some(folder) => {
+                    state.folders.insert(from, folder);
+                    (format!("{tag} NO [ALREADYEXISTS] target exists\r\n"), false)
+                }
+                None => (format!("{tag} NO [NONEXISTENT] no such mailbox\r\n"), false),
             }
         } else if upper.starts_with("UID COPY") {
             // UID COPY <set> <dest>: copy the named source UIDs (from the
@@ -8722,6 +9613,687 @@ mod mutate_tests {
             store.locations_for_message(&id).unwrap().len(),
             1,
             "exactly one location after the sweep"
+        );
+    }
+
+    // =======================================================================
+    // Phase 3 run 4: USER LABELS in label-folder mode (lf: add/remove + label
+    // create/delete; rename refused). Driven through a REAL ImapProvider over
+    // the shared MutServer, so a COPY/EXPUNGE/CREATE/DELETE reaches the wire
+    // and a following sweep runs against the same state. test_settings() sets
+    // label_storage = Folders, container = Labels.
+    // =======================================================================
+
+    /// A server with INBOX + Archive + Sent + the label mailbox `Labels/Clients`,
+    /// MOVE + UIDPLUS advertised. The label container `Labels` is \Noselect
+    /// (never a folder row); its child `Labels/Clients` is the label mailbox.
+    fn server_with_label_folder() -> Arc<Mutex<MutServer>> {
+        let mut s = MutServer::new();
+        s.folder("INBOX", 100);
+        s.folder("Archive", 200);
+        s.folder("Sent", 500);
+        s.folder("Labels/Clients", 600);
+        Arc::new(Mutex::new(s))
+    }
+
+    /// Local location count in one mailbox.
+    fn local_count_in(store: &ImapStateStore, mailbox: &str) -> usize {
+        store.locations_in_mailbox(mailbox).unwrap().len()
+    }
+
+    // --- add a label to one message: COPY into the label mailbox -----------
+
+    #[tokio::test]
+    async fn add_label_copies_the_inbox_message_into_the_label_mailbox() {
+        let server = server_with_label_folder();
+        server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>")); // uid 1
+        let (provider, store) = provider_with(server.clone());
+        let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+
+        provider
+            .modify_messages(&[id.clone()], &["lf:Clients".into()], &[])
+            .await
+            .expect("add label");
+
+        // The server now holds a copy in Labels/Clients, and the local store
+        // recorded that destination location (from COPYUID) with the same flags.
+        assert_eq!(uids_in(&server, "Labels/Clients").len(), 1, "one copy on the server");
+        let boxes = local_mailboxes_of(&store, &id);
+        assert!(boxes.contains(&"INBOX".to_string()));
+        assert!(boxes.contains(&"Labels/Clients".to_string()), "{boxes:?}");
+        // Exactly one COPY command, no MOVE, no EXPUNGE.
+        let g = server.lock().unwrap();
+        assert_eq!(g.count_starting("UID COPY"), 1);
+        assert_eq!(g.count_starting("UID MOVE"), 0);
+        assert_eq!(g.count_starting("UID EXPUNGE"), 0);
+    }
+
+    #[tokio::test]
+    async fn add_label_to_several_messages_copies_each() {
+        let server = server_with_label_folder();
+        {
+            let mut g = server.lock().unwrap();
+            g.folder("INBOX", 100).add(&["\\Seen"], &message("<a@x>")); // uid 1
+            g.folder("INBOX", 100).add(&["\\Seen"], &message("<b@x>")); // uid 2
+        }
+        let (provider, store) = provider_with(server.clone());
+        let a = seed_loc(&store, &provider, "a", "imap:t:a", "INBOX", 100, 1, &["\\Seen"]);
+        let b = seed_loc(&store, &provider, "b", "imap:t:b", "INBOX", 100, 2, &["\\Seen"]);
+
+        provider
+            .modify_messages(&[a.clone(), b.clone()], &["lf:Clients".into()], &[])
+            .await
+            .expect("add label to two");
+
+        assert_eq!(uids_in(&server, "Labels/Clients").len(), 2, "two copies on the server");
+        assert!(local_mailboxes_of(&store, &a).contains(&"Labels/Clients".to_string()));
+        assert!(local_mailboxes_of(&store, &b).contains(&"Labels/Clients".to_string()));
+    }
+
+    // --- add is idempotent: a second add sends no command ------------------
+
+    #[tokio::test]
+    async fn add_label_is_idempotent_and_sends_no_command_the_second_time() {
+        let server = server_with_label_folder();
+        server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+        let (provider, store) = provider_with(server.clone());
+        let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+
+        provider.modify_messages(&[id.clone()], &["lf:Clients".into()], &[]).await.expect("add 1");
+        server.lock().unwrap().commands.lock().unwrap().clear();
+        // Second add: already satisfied — ZERO commands (not even a SELECT).
+        provider.modify_messages(&[id], &["lf:Clients".into()], &[]).await.expect("add 2 no-op");
+        let g = server.lock().unwrap();
+        assert_eq!(g.count_starting("SELECT"), 0, "idempotent add selects nothing");
+        assert_eq!(g.count_starting("UID COPY"), 0, "and copies nothing");
+    }
+
+    // --- source priority: Archive used when the message is not in INBOX ----
+
+    #[tokio::test]
+    async fn add_label_source_priority_prefers_inbox_then_archive() {
+        // A message with copies in Archive AND Sent (no INBOX): Archive wins.
+        let server = server_with_label_folder();
+        {
+            let mut g = server.lock().unwrap();
+            g.folder("Archive", 200).add(&["\\Seen"], &message("<m1@x>")); // uid 1
+            g.folder("Sent", 500).add(&["\\Seen"], &message("<m1@x>")); // uid 1
+        }
+        let (provider, store) = provider_with(server.clone());
+        let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "Archive", 200, 1, &["\\Seen"]);
+        store
+            .upsert_location(&ImapLocation {
+                mailbox: "Sent".into(), uidvalidity: 500, uid: 1,
+                message_id: id.clone(), flags_json: r#"["\\Seen"]"#.into(), modseq: None,
+            })
+            .unwrap();
+
+        provider.modify_messages(&[id.clone()], &["lf:Clients".into()], &[]).await.expect("add");
+
+        // The COPY was issued from Archive, not Sent.
+        let g = server.lock().unwrap();
+        assert!(
+            g.wire().iter().any(|c| c.to_ascii_uppercase().starts_with("SELECT \"ARCHIVE\"")),
+            "selected Archive as the source: {:?}", g.wire()
+        );
+        assert!(!g.wire().iter().any(|c| c.to_ascii_uppercase().starts_with("SELECT \"SENT\"")));
+    }
+
+    // --- a message whose only copy is in Trash is refused ------------------
+
+    #[tokio::test]
+    async fn add_label_from_a_trash_only_message_is_a_permanent_error() {
+        let mut s = MutServer::new();
+        s.folder("INBOX", 100);
+        s.folder("Trash", 300).add(&["\\Seen"], &message("<m1@x>")); // uid 1
+        s.folder("Labels/Clients", 600);
+        let server = Arc::new(Mutex::new(s));
+        let (provider, store) = provider_with(server.clone());
+        let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "Trash", 300, 1, &["\\Seen"]);
+
+        let err = provider
+            .modify_messages(&[id], &["lf:Clients".into()], &[])
+            .await
+            .unwrap_err();
+        assert!(!err.retry_mutation());
+        match err {
+            ProviderError::InvalidOperation(m) => assert!(m.contains("no synced copy outside Trash"), "{m}"),
+            other => panic!("expected permanent InvalidOperation, got {other:?}"),
+        }
+        assert_eq!(server.lock().unwrap().count_starting("UID COPY"), 0, "nothing copied");
+    }
+
+    // --- a missing label mailbox is a permanent error ----------------------
+
+    #[tokio::test]
+    async fn add_label_to_a_missing_label_mailbox_is_permanent() {
+        // No Labels/Clients folder exists in the catalog.
+        let mut s = MutServer::new();
+        s.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+        let server = Arc::new(Mutex::new(s));
+        let (provider, store) = provider_with(server.clone());
+        let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+
+        let err = provider
+            .modify_messages(&[id], &["lf:Clients".into()], &[])
+            .await
+            .unwrap_err();
+        match err {
+            ProviderError::InvalidOperation(m) => assert!(m.contains("does not exist"), "{m}"),
+            other => panic!("expected permanent InvalidOperation, got {other:?}"),
+        }
+        assert_eq!(server.lock().unwrap().count_starting("UID COPY"), 0);
+    }
+
+    // --- add with a stale source UIDVALIDITY sends nothing and is transient -
+
+    #[tokio::test]
+    async fn add_label_with_a_stale_source_uidvalidity_is_transient_and_sends_no_copy() {
+        let server = server_with_label_folder();
+        {
+            let mut g = server.lock().unwrap();
+            g.folder("INBOX", 100).uidvalidity = 999; // server moved on
+            g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+        }
+        let (provider, store) = provider_with(server.clone());
+        // Local location says UIDVALIDITY 100 (stale).
+        let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+
+        let err = provider
+            .modify_messages(&[id], &["lf:Clients".into()], &[])
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ProviderError::TransientTransport(ref m) if m.contains("UIDVALIDITY")),
+            "{err:?}"
+        );
+        assert!(err.retry_mutation());
+        assert_eq!(server.lock().unwrap().count_starting("UID COPY"), 0, "nothing copied");
+    }
+
+    // --- remove a label: expunge only that copy, keep the others -----------
+
+    #[tokio::test]
+    async fn remove_label_expunges_only_the_label_copy_and_keeps_the_inbox_copy() {
+        let server = server_with_label_folder();
+        {
+            let mut g = server.lock().unwrap();
+            g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>")); // uid 1
+            g.folder("Labels/Clients", 600).add(&["\\Seen"], &message("<m1@x>")); // uid 1
+        }
+        let (provider, store) = provider_with(server.clone());
+        let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+        store
+            .upsert_location(&ImapLocation {
+                mailbox: "Labels/Clients".into(), uidvalidity: 600, uid: 1,
+                message_id: id.clone(), flags_json: r#"["\\Seen"]"#.into(), modseq: None,
+            })
+            .unwrap();
+
+        provider
+            .modify_messages(&[id.clone()], &[], &["lf:Clients".into()])
+            .await
+            .expect("remove label");
+
+        // The label copy is gone (server + local); the INBOX copy is untouched.
+        assert_eq!(uids_in(&server, "Labels/Clients").len(), 0, "label copy expunged");
+        assert_eq!(uids_in(&server, "INBOX"), vec![1], "INBOX copy kept");
+        assert_eq!(local_mailboxes_of(&store, &id), vec!["INBOX".to_string()]);
+        let g = server.lock().unwrap();
+        assert_eq!(g.count_starting("UID EXPUNGE"), 1);
+    }
+
+    // --- remove the LAST copy is refused with ZERO commands ----------------
+
+    #[tokio::test]
+    async fn remove_label_that_is_the_last_copy_is_refused_with_zero_commands() {
+        let server = server_with_label_folder();
+        server.lock().unwrap().folder("Labels/Clients", 600).add(&["\\Seen"], &message("<m1@x>"));
+        let (provider, store) = provider_with(server.clone());
+        // The ONLY synced location is the label copy.
+        let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "Labels/Clients", 600, 1, &["\\Seen"]);
+
+        let err = provider
+            .modify_messages(&[id], &[], &["lf:Clients".into()])
+            .await
+            .unwrap_err();
+        match err {
+            ProviderError::InvalidOperation(m) => assert!(m.contains("only synced location"), "{m}"),
+            other => panic!("expected permanent InvalidOperation, got {other:?}"),
+        }
+        let g = server.lock().unwrap();
+        assert_eq!(g.count_starting("SELECT"), 0, "refused before any SELECT");
+        assert_eq!(g.count_starting("UID STORE"), 0);
+        assert_eq!(g.count_starting("UID EXPUNGE"), 0);
+    }
+
+    // --- remove without UIDPLUS refused with zero write commands -----------
+
+    #[tokio::test]
+    async fn remove_label_without_uidplus_is_refused_with_no_write() {
+        let server = server_with_label_folder();
+        {
+            let mut g = server.lock().unwrap();
+            g.capabilities = vec!["IMAP4REV1".into(), "MOVE".into()]; // NO UIDPLUS
+            g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+            g.folder("Labels/Clients", 600).add(&["\\Seen"], &message("<m1@x>"));
+        }
+        let (provider, store) = provider_with(server.clone());
+        let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+        store
+            .upsert_location(&ImapLocation {
+                mailbox: "Labels/Clients".into(), uidvalidity: 600, uid: 1,
+                message_id: id.clone(), flags_json: r#"["\\Seen"]"#.into(), modseq: None,
+            })
+            .unwrap();
+
+        let err = provider
+            .modify_messages(&[id], &[], &["lf:Clients".into()])
+            .await
+            .unwrap_err();
+        match err {
+            ProviderError::InvalidOperation(m) => assert!(m.contains("UIDPLUS"), "{m}"),
+            other => panic!("expected permanent InvalidOperation, got {other:?}"),
+        }
+        let g = server.lock().unwrap();
+        assert_eq!(g.count_starting("UID STORE"), 0, "no \\Deleted store without UIDPLUS");
+        assert_eq!(g.count_starting("UID EXPUNGE"), 0, "and never a plain/UID EXPUNGE");
+    }
+
+    // --- remove with no label copy is a satisfied no-op --------------------
+
+    #[tokio::test]
+    async fn remove_label_with_no_label_copy_sends_nothing() {
+        let server = server_with_label_folder();
+        server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+        let (provider, store) = provider_with(server.clone());
+        let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+
+        provider
+            .modify_messages(&[id], &[], &["lf:Clients".into()])
+            .await
+            .expect("satisfied no-op");
+        let g = server.lock().unwrap();
+        assert_eq!(g.count_starting("SELECT"), 0);
+        assert_eq!(g.count_starting("UID EXPUNGE"), 0);
+    }
+
+    // --- half-applied remove (expunge fails once) then retry finishes -------
+
+    #[tokio::test]
+    async fn remove_label_half_applied_expunge_failure_is_retryable_and_the_retry_finishes() {
+        for (fail_text, expect_transient) in [
+            ("[UNAVAILABLE] try later", true),
+            ("[NONEXISTENT] gone", false),
+        ] {
+            let server = server_with_label_folder();
+            {
+                let mut g = server.lock().unwrap();
+                g.fail_expunge_once = Some(fail_text.into());
+                g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+                g.folder("Labels/Clients", 600).add(&["\\Seen"], &message("<m1@x>"));
+            }
+            let (provider, store) = provider_with(server.clone());
+            let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+            store
+                .upsert_location(&ImapLocation {
+                    mailbox: "Labels/Clients".into(), uidvalidity: 600, uid: 1,
+                    message_id: id.clone(), flags_json: r#"["\\Seen"]"#.into(), modseq: None,
+                })
+                .unwrap();
+
+            // First attempt: COPY-side \Deleted store lands, EXPUNGE fails once.
+            let err = provider
+                .modify_messages(&[id.clone()], &[], &["lf:Clients".into()])
+                .await
+                .unwrap_err();
+            assert_eq!(
+                err.retry_mutation(), expect_transient,
+                "retry class preserved for {fail_text}: {err:?}"
+            );
+            // The label copy is still present on the server (flagged \Deleted),
+            // and still recorded locally — the half state the retry finishes.
+            assert_eq!(uids_in(&server, "Labels/Clients").len(), 1, "copy still present after the failed expunge");
+            assert!(local_mailboxes_of(&store, &id).contains(&"Labels/Clients".to_string()));
+
+            // Retry: the one-shot failure is cleared, the expunge completes,
+            // the label copy and its local row are gone, INBOX is untouched.
+            provider
+                .modify_messages(&[id.clone()], &[], &["lf:Clients".into()])
+                .await
+                .expect("retry finishes the remove");
+            assert_eq!(uids_in(&server, "Labels/Clients").len(), 0, "copy expunged on retry");
+            assert_eq!(local_mailboxes_of(&store, &id), vec!["INBOX".to_string()]);
+        }
+    }
+
+    // --- a partial add failure does not create a second copy on retry ------
+
+    #[tokio::test]
+    async fn add_label_retry_after_a_recorded_copy_does_not_double_copy() {
+        // Simulate a partial success: the destination row is already recorded
+        // locally (an earlier COPY confirmed) but the mutation is retried. The
+        // retry must COPY nothing (idempotent).
+        let server = server_with_label_folder();
+        {
+            let mut g = server.lock().unwrap();
+            g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+            g.folder("Labels/Clients", 600).add(&["\\Seen"], &message("<m1@x>")); // the copy already landed
+        }
+        let (provider, store) = provider_with(server.clone());
+        let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+        // Record the destination row as a prior partial success would.
+        store
+            .upsert_location(&ImapLocation {
+                mailbox: "Labels/Clients".into(), uidvalidity: 600, uid: 1,
+                message_id: id.clone(), flags_json: r#"["\\Seen"]"#.into(), modseq: None,
+            })
+            .unwrap();
+
+        provider.modify_messages(&[id], &["lf:Clients".into()], &[]).await.expect("retry add");
+        // Still exactly one copy on the server (no second copy created).
+        assert_eq!(uids_in(&server, "Labels/Clients").len(), 1, "no duplicate copy");
+        assert_eq!(server.lock().unwrap().count_starting("UID COPY"), 0, "retry copies nothing");
+    }
+
+    // --- non-Folders storage mode rejects every lf: op with zero commands --
+
+    #[tokio::test]
+    async fn label_ops_in_non_folders_storage_mode_are_rejected_with_zero_commands() {
+        use super::super::settings::LabelStorage;
+        let server = server_with_label_folder();
+        server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+        let (mut provider, store) = provider_with(server.clone());
+        // Flip to keyword mode (no container in play).
+        provider.settings.label_storage = LabelStorage::Keywords;
+        provider.settings.label_container = None;
+        let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+
+        for (add, remove) in [
+            (vec!["lf:Clients".to_string()], vec![]),
+            (vec![], vec!["lf:Clients".to_string()]),
+        ] {
+            let err = provider.modify_messages(&[id.clone()], &add, &remove).await.unwrap_err();
+            match err {
+                ProviderError::InvalidOperation(m) => assert!(m.contains("keyword labels"), "{m}"),
+                other => panic!("expected InvalidOperation naming the mode, got {other:?}"),
+            }
+        }
+        // create / delete likewise refuse naming the mode.
+        assert!(matches!(provider.create_label("X").await.unwrap_err(), ProviderError::InvalidOperation(_)));
+        assert!(matches!(provider.delete_label("lf:Clients").await.unwrap_err(), ProviderError::InvalidOperation(_)));
+        assert_eq!(server.lock().unwrap().count_starting("UID COPY"), 0);
+        assert_eq!(server.lock().unwrap().count_starting("CREATE"), 0);
+    }
+
+    // --- mixed / folder: / system / flag ids rejected with zero commands ---
+
+    #[tokio::test]
+    async fn a_mixed_or_multi_label_message_request_is_rejected_before_any_command() {
+        let server = server_with_label_folder();
+        server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+        let (provider, store) = provider_with(server.clone());
+        let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+
+        let bad: Vec<(Vec<String>, Vec<String>)> = vec![
+            (vec!["lf:Clients".into(), "STARRED".into()], vec![]), // label + flag
+            (vec!["lf:A".into(), "lf:B".into()], vec![]),          // two labels
+            (vec!["lf:Clients".into()], vec!["lf:Clients".into()]), // both lists
+            (vec!["folder:Projects".into()], vec![]),               // folder: not accepted
+            (vec!["lf:Clients".into(), "INBOX".into()], vec![]),    // label + system
+        ];
+        for (add, remove) in bad {
+            let err = provider.modify_messages(&[id.clone()], &add, &remove).await.unwrap_err();
+            assert!(matches!(err, ProviderError::InvalidOperation(_)), "add={add:?} remove={remove:?} -> {err:?}");
+            assert!(!err.retry_mutation());
+        }
+        let g = server.lock().unwrap();
+        assert_eq!(g.count_starting("SELECT"), 0, "nothing selected for a rejected request");
+        assert_eq!(g.count_starting("UID COPY"), 0);
+    }
+
+    // --- modify_thread still rejects a lf: id (engine never sends it there) -
+
+    #[tokio::test]
+    async fn modify_thread_still_rejects_a_label_id_permanently() {
+        let server = server_with_label_folder();
+        server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+        let (provider, store) = provider_with(server.clone());
+        let _id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+
+        let err = provider
+            .modify_thread("imap:t:m1", &["lf:Clients".into()], &[])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProviderError::InvalidOperation(_)), "{err:?}");
+        assert_eq!(server.lock().unwrap().count_starting("UID COPY"), 0);
+    }
+
+    // --- create a label: new, case-insensitive existing, hostile, limits ---
+
+    #[tokio::test]
+    async fn create_label_creates_the_mailbox_and_lists_it() {
+        let server = server_with_label_folder();
+        let (provider, _store) = provider_with(server.clone());
+
+        let label = provider.create_label("Acme").await.expect("create");
+        assert_eq!(label.id, "lf:Acme");
+        assert_eq!(label.name, "Acme");
+        assert_eq!(label.kind, "user");
+        // The mailbox Labels/Acme exists on the server…
+        assert!(server.lock().unwrap().folders.contains_key("Labels/Acme"));
+        // …and list_labels shows it immediately, with no sync.
+        let listed = provider.list_labels().await.unwrap();
+        assert!(listed.iter().any(|l| l.id == "lf:Acme" && l.kind == "user"), "{listed:?}");
+    }
+
+    #[tokio::test]
+    async fn create_label_is_case_insensitively_idempotent() {
+        let server = server_with_label_folder(); // already has Labels/Clients
+        let (provider, _store) = provider_with(server.clone());
+
+        // "clients" aliases the existing "Clients" case-insensitively: returns
+        // the EXISTING label and creates no new mailbox.
+        let label = provider.create_label("clients").await.expect("idempotent create");
+        assert_eq!(label.id, "lf:Clients", "returns the existing label id");
+        assert!(!server.lock().unwrap().folders.contains_key("Labels/clients"), "no new mailbox");
+        assert_eq!(server.lock().unwrap().count_starting("CREATE"), 0, "no CREATE issued");
+    }
+
+    #[tokio::test]
+    async fn create_label_rejects_hostile_names_delimiter_and_over_length() {
+        let server = server_with_label_folder();
+        let (provider, _store) = provider_with(server.clone());
+
+        for bad in [
+            "",                 // empty
+            "   ",              // whitespace only
+            "a\rb",             // control (CR)
+            "a\nb",             // control (LF)
+            "Clients/Sub",      // contains the delimiter
+            "/leading",         // leading delimiter
+            "trailing/",        // trailing delimiter
+        ] {
+            let err = provider.create_label(bad).await.unwrap_err();
+            assert!(matches!(err, ProviderError::InvalidOperation(_)), "{bad:?} -> {err:?}");
+        }
+        // Length: below / exact / above MAX_LABEL_NAME_CHARS.
+        let max = super::super::policy::MAX_LABEL_NAME_CHARS;
+        let below = "x".repeat(max - 1);
+        let exact = "x".repeat(max);
+        let above = "x".repeat(max + 1);
+        assert!(provider.create_label(&below).await.is_ok(), "below the limit");
+        assert!(provider.create_label(&exact).await.is_ok(), "exactly at the limit");
+        let err = provider.create_label(&above).await.unwrap_err();
+        assert!(matches!(err, ProviderError::InvalidOperation(_)), "above the limit must reject");
+        // No mailbox was created for the over-length name.
+        assert!(!server.lock().unwrap().folders.contains_key(&format!("Labels/{above}")));
+    }
+
+    #[tokio::test]
+    async fn create_label_creates_a_missing_container_then_retries() {
+        // The server has no Labels container child yet, and CREATE Labels/New
+        // answers TRYCREATE once (missing parent). create_label then creates
+        // the container and retries, succeeding.
+        let mut s = MutServer::new();
+        s.folder("INBOX", 100);
+        s.create_trycreate_once = Some("Labels/New".into());
+        let server = Arc::new(Mutex::new(s));
+        let (provider, _store) = provider_with(server.clone());
+
+        let label = provider.create_label("New").await.expect("create after container");
+        assert_eq!(label.id, "lf:New");
+        let g = server.lock().unwrap();
+        // Both the container and the label mailbox exist now.
+        assert!(g.folders.contains_key("Labels"), "container created");
+        assert!(g.folders.contains_key("Labels/New"), "label mailbox created on retry");
+        // Two CREATE lines reached the wire (the failed label, then container +
+        // retried label) — at least the container + successful label.
+        assert!(g.count_starting("CREATE") >= 2, "{:?}", g.wire());
+    }
+
+    // --- delete a label: allowed, refused (sole copy), refused (mismatch) --
+
+    #[tokio::test]
+    async fn delete_label_allowed_when_every_message_has_another_copy() {
+        let server = server_with_label_folder();
+        {
+            let mut g = server.lock().unwrap();
+            g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+            g.folder("Labels/Clients", 600).add(&["\\Seen"], &message("<m1@x>"));
+        }
+        let (provider, store) = provider_with(server.clone());
+        let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+        store
+            .upsert_location(&ImapLocation {
+                mailbox: "Labels/Clients".into(), uidvalidity: 600, uid: 1,
+                message_id: id.clone(), flags_json: r#"["\\Seen"]"#.into(), modseq: None,
+            })
+            .unwrap();
+
+        provider.delete_label("lf:Clients").await.expect("delete allowed");
+        // The mailbox is gone on the server, the catalog row retired, the
+        // label copy's local location removed; INBOX untouched.
+        assert!(!server.lock().unwrap().folders.contains_key("Labels/Clients"));
+        assert!(!store.mailboxes().unwrap().iter().any(|m| m.name == "Labels/Clients"));
+        assert_eq!(local_mailboxes_of(&store, &id), vec!["INBOX".to_string()]);
+        // DELETE was issued, and INBOX was selected first (never DELETE the
+        // selected mailbox).
+        let g = server.lock().unwrap();
+        assert_eq!(g.count_starting("DELETE"), 1);
+        let delete_pos = g.wire().iter().position(|c| c.to_ascii_uppercase().starts_with("DELETE")).unwrap();
+        assert!(
+            g.wire()[..delete_pos].iter().any(|c| c.to_ascii_uppercase().starts_with("SELECT \"INBOX\"")),
+            "INBOX selected before DELETE: {:?}", g.wire()
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_label_refused_when_a_message_has_no_other_copy() {
+        let server = server_with_label_folder();
+        server.lock().unwrap().folder("Labels/Clients", 600).add(&["\\Seen"], &message("<m1@x>"));
+        let (provider, store) = provider_with(server.clone());
+        // The ONLY copy of m1 is in the label mailbox.
+        let _id = seed_loc(&store, &provider, "m1", "imap:t:m1", "Labels/Clients", 600, 1, &["\\Seen"]);
+
+        let err = provider.delete_label("lf:Clients").await.unwrap_err();
+        match err {
+            ProviderError::InvalidOperation(m) => assert!(m.contains("no other synced copy"), "{m}"),
+            other => panic!("expected permanent InvalidOperation, got {other:?}"),
+        }
+        // Nothing deleted on the server.
+        assert!(server.lock().unwrap().folders.contains_key("Labels/Clients"));
+        assert_eq!(server.lock().unwrap().count_starting("DELETE"), 0);
+    }
+
+    #[tokio::test]
+    async fn delete_label_refused_when_server_count_exceeds_local_count() {
+        // The server's label mailbox holds TWO messages but the local store
+        // knows only one — unsynced mail we cannot vouch for, so refuse.
+        let server = server_with_label_folder();
+        {
+            let mut g = server.lock().unwrap();
+            g.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+            g.folder("Labels/Clients", 600).add(&["\\Seen"], &message("<m1@x>")); // uid 1 (known)
+            g.folder("Labels/Clients", 600).add(&["\\Seen"], &message("<unsynced@x>")); // uid 2 (unknown locally)
+        }
+        let (provider, store) = provider_with(server.clone());
+        let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+        store
+            .upsert_location(&ImapLocation {
+                mailbox: "Labels/Clients".into(), uidvalidity: 600, uid: 1,
+                message_id: id.clone(), flags_json: r#"["\\Seen"]"#.into(), modseq: None,
+            })
+            .unwrap();
+
+        let err = provider.delete_label("lf:Clients").await.unwrap_err();
+        match err {
+            ProviderError::InvalidOperation(m) => assert!(m.contains("unsynced"), "{m}"),
+            other => panic!("expected permanent InvalidOperation, got {other:?}"),
+        }
+        assert!(server.lock().unwrap().folders.contains_key("Labels/Clients"), "nothing deleted");
+        assert_eq!(server.lock().unwrap().count_starting("DELETE"), 0);
+    }
+
+    #[tokio::test]
+    async fn delete_label_already_absent_is_idempotent_success() {
+        let server = server_with_label_folder();
+        let (provider, _store) = provider_with(server.clone());
+        // A label with no catalog row: deleting it is success, no command.
+        provider.delete_label("lf:DoesNotExist").await.expect("idempotent absent delete");
+        assert_eq!(server.lock().unwrap().count_starting("DELETE"), 0);
+        assert_eq!(server.lock().unwrap().count_starting("EXAMINE"), 0);
+    }
+
+    // --- rename (update_label) is refused permanently ----------------------
+
+    #[tokio::test]
+    async fn update_label_rename_is_refused_permanently_with_a_reason() {
+        let server = server_with_label_folder();
+        let (provider, _store) = provider_with(server.clone());
+
+        let err = provider.update_label("lf:Clients", "Customers").await.unwrap_err();
+        assert!(!err.retry_mutation(), "a rename refusal is permanent");
+        match err {
+            ProviderError::InvalidOperation(m) => {
+                assert!(m.to_ascii_lowercase().contains("renaming"), "{m}");
+                assert!(m.contains("derived from its name"), "names the reason: {m}");
+            }
+            other => panic!("expected permanent InvalidOperation, got {other:?}"),
+        }
+        // Nothing touched the server (no RENAME, the label mailbox is intact).
+        let g = server.lock().unwrap();
+        assert_eq!(g.count_starting("RENAME"), 0);
+        assert!(g.folders.contains_key("Labels/Clients"));
+    }
+
+    // --- add label then a following sweep: no change, no duplicate ---------
+
+    #[tokio::test]
+    async fn after_add_label_a_following_sweep_sees_no_change_and_no_duplicate() {
+        let server = server_with_label_folder();
+        server.lock().unwrap().folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+        let (provider, store) = provider_with(server.clone());
+
+        // Baseline so INBOX's m1 is ingested with its id/thread.
+        provider.baseline_cursor().await.unwrap();
+        let id = store.locations_in_mailbox("INBOX").unwrap()[0].message_id.clone();
+
+        provider.modify_messages(&[id.clone()], &["lf:Clients".into()], &[]).await.expect("add label");
+        let copies_before = store.locations_for_message(&id).unwrap().len();
+        assert_eq!(copies_before, 2, "INBOX + Labels/Clients");
+        let gen_after = store.generation().unwrap();
+
+        // A following full refresh over the same server state must not
+        // duplicate the labelled copy nor flap labels.
+        let cursor = SyncCursor::from_generation(gen_after);
+        for _ in 0..4 {
+            let _ = provider.poll(&cursor).await.unwrap();
+        }
+        assert_eq!(
+            store.locations_for_message(&id).unwrap().len(),
+            2,
+            "exactly two locations after the sweep (no duplicate label copy)"
         );
     }
 }

@@ -618,6 +618,17 @@ impl Default for SyncLimits {
 /// spelling. Over the limit is a typed rejection — nothing is sent.
 pub const MAX_MAILBOX_NAME_BYTES: usize = 1024;
 
+/// Longest user LABEL name (the part the user types, relative to the label
+/// container) accepted by `create_label`, measured in Unicode scalar values
+/// (`chars`), not bytes, so a limit the user sees in characters is not spent
+/// early by multi-byte letters. A label becomes a child mailbox
+/// `<container><delim><name>`, so this is well under
+/// [`MAX_MAILBOX_NAME_BYTES`] once the container prefix and modified-UTF-7
+/// expansion are added. 128 characters is far longer than any real label
+/// while bounding the created mailbox path. Over the limit is a typed,
+/// permanent rejection — nothing is sent.
+pub const MAX_LABEL_NAME_CHARS: usize = 128;
+
 /// Most flags one `UID STORE` command may set or clear at once.
 ///
 /// A STORE carries a parenthesised flag list; a caller asking to set hundreds
@@ -646,7 +657,19 @@ pub fn check_mailbox_name_len(len: usize) -> Result<usize, ProviderError> {
     Ok(len)
 }
 
-/// Reject a flag count over [`MAX_FLAGS_PER_COMMAND`]. Returns the count
+/// Reject a label name whose character length exceeds
+/// [`MAX_LABEL_NAME_CHARS`]. `chars` is the Unicode scalar count of the
+/// trimmed label name. Returns the count unchanged when within the limit
+/// (including exactly at it).
+pub fn check_label_name_len(chars: usize) -> Result<usize, ProviderError> {
+    if chars > MAX_LABEL_NAME_CHARS {
+        return Err(ProviderError::InvalidOperation(format!(
+            "label name is {chars} characters, over the {MAX_LABEL_NAME_CHARS}-character limit"
+        )));
+    }
+    Ok(chars)
+}
+
 /// unchanged when within the limit (including exactly at it).
 pub fn check_flags_per_command(count: usize) -> Result<usize, ProviderError> {
     if count > MAX_FLAGS_PER_COMMAND {

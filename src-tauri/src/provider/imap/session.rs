@@ -548,6 +548,24 @@ where
         self.run_write_command_plain(&format!("UID EXPUNGE {uid_set}"))
             .await
     }
+
+    async fn create_mailbox_arg(&mut self, arg: &str) -> super::write::WriteResult<()> {
+        // `arg` is already an encoded, quoted mailbox token (build_mailbox_arg),
+        // so we build the command directly rather than go through async-imap's
+        // `create`, which quotes but does not modified-UTF-7-encode. A missing
+        // parent surfaces as the typed TryCreate outcome.
+        self.run_write_command(&format!("CREATE {arg}")).await?;
+        Ok(())
+    }
+
+    async fn delete_mailbox_arg(&mut self, arg: &str) -> Result<(), ProviderError> {
+        self.run_write_command_plain(&format!("DELETE {arg}")).await
+    }
+
+    async fn rename_mailbox_arg(&mut self, from: &str, to: &str) -> Result<(), ProviderError> {
+        self.run_write_command_plain(&format!("RENAME {from} {to}"))
+            .await
+    }
 }
 
 #[cfg(test)]

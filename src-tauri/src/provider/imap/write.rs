@@ -191,6 +191,27 @@ pub trait ImapWriteSession: ImapSession {
     /// `UID EXPUNGE <set>` (UIDPLUS). Only the named UIDs are expunged, never a
     /// plain `EXPUNGE` over the whole mailbox.
     async fn uid_expunge(&mut self, uid_set: &str) -> Result<(), ProviderError>;
+
+    /// `CREATE <arg>` where `arg` is an ALREADY-ENCODED mailbox argument from
+    /// [`build_mailbox_arg`] (modified UTF-7, quoted). A `TRYCREATE`/
+    /// `NONEXISTENT` on a missing parent surfaces as [`WriteError::TryCreate`]
+    /// so the label-create path can create the container and retry; every
+    /// other `NO`/`BAD` is classified through the RFC 5530 map. Distinct from
+    /// [`ImapSession::create_mailbox`](super::session::ImapSession::create_mailbox),
+    /// which takes a DECODED name and lets async-imap quote it (no modified
+    /// UTF-7) — the label paths need the audited encoder for user-chosen,
+    /// possibly non-ASCII names.
+    async fn create_mailbox_arg(&mut self, arg: &str) -> WriteResult<()>;
+
+    /// `DELETE <arg>` where `arg` is an already-encoded mailbox argument. Maps
+    /// `NO`/`BAD` through the RFC 5530 map; deleting an absent mailbox is left
+    /// to the caller to tolerate (the label-delete path treats it as
+    /// idempotent success).
+    async fn delete_mailbox_arg(&mut self, arg: &str) -> Result<(), ProviderError>;
+
+    /// `RENAME <from> <to>` where both are already-encoded mailbox arguments.
+    /// Maps `NO`/`BAD` through the RFC 5530 map.
+    async fn rename_mailbox_arg(&mut self, from: &str, to: &str) -> Result<(), ProviderError>;
 }
 
 // ===========================================================================
