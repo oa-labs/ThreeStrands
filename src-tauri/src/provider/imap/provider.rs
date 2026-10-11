@@ -204,17 +204,9 @@ pub struct ImapProviderConfig {
     pub settings: ImapAccountSettings,
 }
 
-/// The generations a full refresh walk reached.
+/// The final generation reached by a full refresh walk.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Refreshed {
-    /// The generation right after the INBOX round, before any folder round.
-    /// The engine's full sync takes THIS as its baseline cursor: it lists
-    /// INBOX threads itself, then runs one incremental pass from the cursor,
-    /// so every hot thread a folder round (Sent, say) journals during the same
-    /// walk is delivered by that pass. A baseline taken after the folder rounds
-    /// would skip those journal rows, and a Sent-only thread, which is not in
-    /// `list_inbox`, would never reach the engine.
-    pub after_inbox: u64,
     /// The generation after the last round that committed.
     pub last: u64,
 }
@@ -312,8 +304,7 @@ impl ImapProvider {
                 label_kind: plan::LabelKind::SystemRole,
                 synced_now: true,
             });
-        let after_inbox = self.refresh_mailbox_with(session, &inbox_entry, true).await?;
-        let mut generation = after_inbox;
+        let mut generation = self.refresh_mailbox_with(session, &inbox_entry, true).await?;
 
         // Then the other synced mailboxes (Trash, Junk, then Sent) in plan
         // order, bounded
@@ -346,10 +337,7 @@ impl ImapProvider {
                 }
             }
         }
-        Ok(Refreshed {
-            after_inbox,
-            last: generation,
-        })
+        Ok(Refreshed { last: generation })
     }
 
     /// Build the account's sync plan from the persisted catalog + settings.
@@ -548,8 +536,27 @@ impl ImapProvider {
         let server_uids = session.uid_search("ALL").await?;
 
         let local_view = self.local_view(local_uidvalidity, &local_locations);
-        let flag_window = policy::select_window(server_uids.clone(), limits.mailbox_window).in_window;
-        let server_flags = self.fetch_flags(session, &flag_window).await?;
+        let mut flag_uids: std::collections::BTreeSet<u32> =
+            policy::select_window(server_uids.clone(), limits.mailbox_window)
+                .in_window
+                .into_iter()
+                .collect();
+        // Non-evicting mailboxes keep acquired locations beyond the acquisition
+        // window. Continue refreshing their flags while they remain on the
+        // server, but never carry UIDs across a UIDVALIDITY reset.
+        if !limits.evicts && !uidvalidity_changed {
+            let live_uids: std::collections::BTreeSet<u32> = server_uids.iter().copied().collect();
+            flag_uids.extend(
+                local_view
+                    .flags_by_uid
+                    .keys()
+                    .filter(|uid| live_uids.contains(uid))
+                    .copied(),
+            );
+        }
+        let server_flags = self
+            .fetch_flags(session, &flag_uids.into_iter().collect::<Vec<_>>())
+            .await?;
         let server_view = super::delta::ServerMailboxView {
             uidvalidity: server_uidvalidity,
             all_uids: server_uids.clone(),
@@ -1081,12 +1088,33 @@ impl MailSync for ImapProvider {
     }
 
     async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
-        // Refresh every synced mailbox (INBOX first). The cursor is the
-        // generation right AFTER INBOX, not after the folder rounds: the
-        // engine's follow-up incremental pass then delivers the hot threads the
-        // folder rounds journaled during this same walk (see `Refreshed`).
         let refreshed = self.refresh_all().await?;
-        Ok(SyncCursor::from_generation(refreshed.after_inbox))
+        // The engine seeds full recovery from list_inbox alone. Re-journal
+        // every other hot thread, including acquired Sent mail from an earlier
+        // interrupted baseline and threads whose last location disappeared.
+        // Rebuild from durable hotness rather than old journal rows, which may
+        // already have been pruned. Repeating this after a crash is harmless.
+        let inbox: std::collections::BTreeSet<String> = self
+            .store
+            .thread_ids_in_mailbox(INBOX)
+            .map_err(db_err)?
+            .into_iter()
+            .collect();
+        let changed_threads = self
+            .store
+            .hot_thread_ids()
+            .map_err(db_err)?
+            .into_iter()
+            .filter(|thread| !inbox.contains(thread))
+            .collect();
+        self.store
+            .commit_sync_round(&SyncRoundWrite {
+                changed_threads,
+                ..Default::default()
+            })
+            .map_err(db_err)?;
+        // The engine's follow-up incremental pass consumes the replay above.
+        Ok(SyncCursor::from_generation(refreshed.last))
     }
 
     async fn poll(&self, cursor: &SyncCursor) -> ProviderResult<SyncBatch> {
@@ -3898,15 +3926,8 @@ mod tests {
     /// carries SENT and no INBOX, and does NOT appear in list_inbox; an idle
     /// reconcile poll does not re-journal it or treat it as INBOX drift.
     ///
-    /// `sync_with`'s full-sync path seeds its recovery ingest from list_inbox
-    /// (INBOX only), so a Sent-only thread acquired during the baseline is
-    /// ingested by the engine on a later incremental poll, NOT the baseline
-    /// pass — see the final report. The reachable, deterministic facts are
-    /// asserted directly against the provider: the thread is HOT and JOURNALED
-    /// (a poll from a cursor BELOW its generation returns it, which is exactly
-    /// how the engine ingests it), it fetches with a body and SENT/no-INBOX,
-    /// it is absent from list_inbox, and an idle poll neither bumps the
-    /// generation nor re-journals it.
+    /// Full recovery lists INBOX and then consumes the baseline's replay of
+    /// other hot threads through its incremental pass.
     #[tokio::test]
     async fn a_sent_only_thread_is_hot_journaled_and_not_treated_as_inbox_drift() {
         let mut mb = FakeMailbox::new(100);
@@ -3945,8 +3966,8 @@ mod tests {
         );
 
         // The incremental pass the engine runs right after the baseline delivers
-        // the Sent-only thread (the baseline cursor sits before the folder
-        // rounds, see `Refreshed`). Once delivered, a poll from the NEW cursor
+        // the Sent-only thread (the baseline cursor sits before the hot-thread
+        // replay). Once delivered, a poll from the NEW cursor
         // is idle: it neither bumps the generation nor re-journals the thread,
         // so the Sent-only thread is never treated as INBOX drift.
         let generation = store.generation().unwrap();
@@ -3963,12 +3984,8 @@ mod tests {
         assert!(idle.changed_threads.is_empty(), "idle reconcile re-journals nothing");
     }
 
-    /// The engine's full sync takes `baseline_cursor`, lists INBOX, then runs ONE
-    /// incremental pass from that cursor. A Sent-only thread acquired by the
-    /// baseline walk is journaled during that walk, so the baseline cursor must
-    /// sit BEFORE the folder rounds (right after INBOX); a cursor taken after
-    /// them would skip those journal rows and the thread would never reach the
-    /// engine (it is not in `list_inbox`).
+    /// Full recovery ingests both INBOX's snapshot and the replay of hot
+    /// threads outside INBOX on its first incremental pass.
     #[tokio::test]
     async fn sent_only_threads_acquired_at_baseline_reach_the_engine() {
         let mut mb = FakeMailbox::new(100);
@@ -3992,6 +4009,157 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn sent_baseline_crash_before_engine_recovery_is_saved_replays_acquired_mail() {
+        let mut mb = FakeMailbox::new(100);
+        seed_sent(&mut mb, 90, 3);
+        let (mut provider, store) = provider_with(Arc::new(Mutex::new(mb)));
+        provider.sent_round_budget = Some(1);
+        let db = store.database();
+        // Two interruptions after baseline commits, before begin_sync_recovery.
+        for expected in [vec![3], vec![2, 3]] {
+            provider.baseline_cursor().await.unwrap();
+            assert_eq!(sent_uids(&store), expected);
+            assert!(db.cursor("me@example.com").unwrap().is_none());
+            assert!(db.recovery_cursor("me@example.com").unwrap().is_none());
+        }
+        // Reconstruct the provider's transient state, keeping only persisted
+        // state and the fake server across the simulated process restart.
+        let provider = ImapProvider {
+            cache: BodyCache::new(store.clone()),
+            thread_state_loads: std::sync::atomic::AtomicUsize::new(0),
+            ..provider
+        };
+        sync_n(&provider, db.as_ref(), 1).await;
+        assert_eq!(
+            db.list_all_mail(Some("me@example.com")).unwrap().len(),
+            3,
+            "every previously acquired chunk reaches the engine on recovery"
+        );
+        let generation = store.generation().unwrap();
+        sync_n(&provider, db.as_ref(), 2).await;
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 3);
+        assert_eq!(
+            store.generation().unwrap(),
+            generation,
+            "idle polls do not replay"
+        );
+    }
+
+    #[tokio::test]
+    async fn baseline_replay_survives_journal_pruning_and_excludes_cold_threads() {
+        let mut mb = FakeMailbox::new(100);
+        seed_sent(&mut mb, 90, 1);
+        mb.add_to("Trash", 80, &["\\Seen"], &message("<cold@x>", "Cold", ""));
+        let (provider, store) = provider_with(Arc::new(Mutex::new(mb)));
+        let db = store.database();
+        provider.baseline_cursor().await.unwrap();
+        let old = store.generation().unwrap();
+        // Age the acquired Sent message out of journal retention.
+        db.with_connection(|connection| {
+            connection.execute(
+                "UPDATE imap_sync_state SET generation = generation + ?1 WHERE account_id = ?2",
+                rusqlite::params![(policy::JOURNAL_RETENTION_GENERATIONS + 1) as i64, "me@example.com"],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        store.prune_journal().unwrap();
+        assert!(store.journal_since(0).unwrap().is_empty());
+        assert!(!policy::journal_cursor_is_answerable(
+            old,
+            store.generation().unwrap()
+        ));
+
+        sync_n(&provider, db.as_ref(), 1).await;
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1);
+        assert!(
+            db.list_trash(Some("me@example.com")).unwrap().is_empty(),
+            "a cold Trash-only thread remains index-only during baseline replay"
+        );
+    }
+
+    #[tokio::test]
+    async fn baseline_replays_deletions_of_previously_hot_sent_threads() {
+        let mut mb = FakeMailbox::new(100);
+        seed_sent(&mut mb, 90, 1);
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+        sync_n(&provider, db.as_ref(), 1).await;
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1);
+        mailbox.lock().unwrap().folder("Sent", 90).messages.clear();
+        // The provider commits the expunge; the engine does not consume it.
+        provider.refresh_all().await.unwrap();
+        assert!(sent_uids(&store).is_empty());
+        // A full recovery still needs the now-locationless hot thread id.
+        db.clear_cursor("me@example.com").unwrap();
+        sync_n(&provider, db.as_ref(), 1).await;
+        assert!(db.list_all_mail(Some("me@example.com")).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn retained_sent_flags_are_synced_outside_the_acquisition_window() {
+        let mut mb = FakeMailbox::new(100);
+        seed_sent(&mut mb, 90, 2);
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (mut provider, store) = provider_with(mailbox.clone());
+        provider.folder_window_override = Some(2);
+        let db = store.database();
+        sync_n(&provider, db.as_ref(), 1).await;
+        mailbox
+            .lock()
+            .unwrap()
+            .add_to("Sent", 90, &["\\Seen"], &message("<s3@x>", "New", ""));
+        sync_n(&provider, db.as_ref(), 1).await;
+        assert_eq!(
+            sent_uids(&store),
+            vec![1, 2, 3],
+            "non-evicting Sent retains UID 1"
+        );
+        let before_flag_change = store.generation().unwrap();
+        let old = store
+            .locations_in_mailbox("Sent")
+            .unwrap()
+            .into_iter()
+            .find(|l| l.uid == 1)
+            .unwrap();
+        let old_thread = store.thread_of_message(&old.message_id).unwrap().unwrap();
+        let before_body_fetches = mailbox.lock().unwrap().counts("Sent").1;
+        mailbox.lock().unwrap().folder("Sent", 90).messages[0].flags =
+            vec!["\\Seen".into(), "\\Flagged".into()];
+        // Unchanged EXISTS/UIDNEXT: the periodic sweep must discover the flag.
+        provider.now = || 1_700_000_000 + policy::FOLDER_SWEEP_INTERVAL_SECS;
+        sync_n(&provider, db.as_ref(), 1).await;
+        let old = store
+            .locations_in_mailbox("Sent")
+            .unwrap()
+            .into_iter()
+            .find(|l| l.uid == 1)
+            .unwrap();
+        let flags: Vec<String> = serde_json::from_str(&old.flags_json).unwrap();
+        assert!(
+            flags.contains(&"\\Flagged".into()),
+            "a Sent sweep updates retained messages outside the acquisition window: {flags:?}"
+        );
+        assert!(store
+            .journal_since(before_flag_change)
+            .unwrap()
+            .contains(&old_thread));
+        assert!(
+            db.list_all_mail(Some("me@example.com"))
+                .unwrap()
+                .iter()
+                .any(|thread| thread.provider_thread_id == old_thread && thread.starred),
+            "the engine receives the retained Sent thread's updated star"
+        );
+        assert_eq!(
+            mailbox.lock().unwrap().counts("Sent").1,
+            before_body_fetches,
+            "a retained flag update does not re-download bodies"
+        );
     }
 
     /// (k) Idle polls with Sent complete: generation unchanged, no threader

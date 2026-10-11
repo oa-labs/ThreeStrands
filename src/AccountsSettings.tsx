@@ -164,6 +164,9 @@ export function AccountsSettings({
                     {busyEmail === `reconnect:${account.email}` ? "Waiting for Google…" : "Reconnect"}
                   </button>
                 ) : null}
+                <span className="account-provider-badge">
+                  {account.provider === "imap" ? "IMAP" : "Gmail"}
+                </span>
               </div>
               <div className="account-card-controls">
                 <AccountSenderNameInput

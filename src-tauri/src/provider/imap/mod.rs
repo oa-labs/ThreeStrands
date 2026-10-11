@@ -493,6 +493,22 @@ impl ImapStateStore {
         })
     }
 
+    /// All durable hot-thread markers for baseline recovery, including retired
+    /// aliases and threads with no remaining locations. Those ids must reach
+    /// the engine to reconcile merges and deletions even after journal pruning.
+    pub fn hot_thread_ids(&self) -> DbResult<Vec<String>> {
+        self.database.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT thread_id FROM imap_hot_threads
+                 WHERE account_id = ?1 ORDER BY thread_id",
+            )?;
+            let rows = statement
+                .query_map([&self.account_id], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+    }
+
     /// Every thread id recorded in the change journal with a generation
     /// strictly greater than `since`, de-duplicated. This is the poll scan:
     /// `poll(cursor=g)` returns these.
@@ -1373,6 +1389,19 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(mine.mailboxes().unwrap().is_empty());
+        mine.commit_sync_round(&SyncRoundWrite {
+            hot_threads: vec!["mine".into()],
+            ..Default::default()
+        })
+        .unwrap();
+        theirs
+            .commit_sync_round(&SyncRoundWrite {
+                hot_threads: vec!["theirs".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(mine.hot_thread_ids().unwrap(), ["mine"]);
+        assert_eq!(theirs.hot_thread_ids().unwrap(), ["theirs"]);
     }
 
     #[test]
@@ -1513,6 +1542,7 @@ mod tests {
         assert_eq!(store.commit_sync_round(&round).unwrap(), initial + 1);
         assert_eq!(store.resolve_thread_alias("hot").unwrap(), "survivor");
         assert!(store.is_thread_hot("survivor").unwrap());
+        assert_eq!(store.hot_thread_ids().unwrap(), ["hot", "survivor"]);
         assert_eq!(
             store.journal_since(initial).unwrap(),
             ["hot", "middle", "survivor"]

@@ -360,7 +360,9 @@ In label-folder mode:
     first INBOX sync. This reuses the Gmail limit
     (`MAX_SENT_BACKFILL_THREADS` in `sync.rs`), so the address book, contact
     timelines and Keep in Touch see the same depth of history on both
-    providers.
+    providers. This is an acquisition bound: already acquired messages remain
+    tracked after newer mail pushes them beyond the window. Sweeps refresh
+    flags for those retained UIDs until the server expunges them.
   - **Archive and user folders, including label folders:** headers for the
     newest 2,000 messages in each, with bodies fetched when a message is
     opened.
@@ -408,6 +410,13 @@ again.
 New, changed and deleted locations are mapped to message IDs and then to
 thread IDs. These go back to the existing engine as `SyncBatch.changed_threads`.
 `fetch_thread` builds the thread from the location table and the body cache.
+
+Full recovery lists INBOX, then consumes an incremental pass. The IMAP
+baseline re-journals every durable hot thread outside that INBOX snapshot and
+returns the generation before the replay. This includes earlier Sent chunks,
+retired aliases and threads with no remaining locations, so interrupted
+baselines and journal pruning cannot hide acquired mail, merges or deletions.
+Ordinary polls do not replay unchanged threads.
 
 **What triggers a sync:** the `IDLE` connection for INBOX. For other
 mailboxes, `STATUS` (or `LIST-STATUS`) on the existing polling schedule. A

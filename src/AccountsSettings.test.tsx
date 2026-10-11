@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountsSettings } from "./AccountsSettings";
 import type { Account } from "./domain";
@@ -38,6 +38,25 @@ describe("mail account settings", () => {
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
+  });
+
+  it.each<Account["status"]>(["connected", "needs_reauth"])("labels each card with its account provider when %s", (status) => {
+    renderAccounts(vi.fn(), {
+      accounts: [
+        { ...account, status },
+        { ...account, email: "imap@gmail.com", provider: "imap", status },
+      ],
+    });
+
+    const cards = screen.getAllByRole("listitem");
+    expect(within(cards[0]!).getByText("Gmail")).toBeVisible();
+    expect(within(cards[0]!).queryByText("IMAP")).not.toBeInTheDocument();
+    expect(within(cards[1]!).getByText("IMAP")).toBeVisible();
+    expect(within(cards[1]!).queryByText("Gmail")).not.toBeInTheDocument();
+    for (const card of cards) {
+      expect(within(card).getByText(status === "connected" ? "Connected" : "Needs reconnect")).toBeVisible();
+      expect(within(card).queryByRole("button", { name: "Reconnect" }) !== null).toBe(status === "needs_reauth");
+    }
   });
 
   it("offers Gmail and IMAP from one Add Account button without starting sign-in", () => {

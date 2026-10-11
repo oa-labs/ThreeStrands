@@ -2490,6 +2490,7 @@ form.split-inbox-add select {
 .account-card-heading { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .account-card-heading strong { overflow: hidden; font-size: var(--text-body); text-overflow: ellipsis; white-space: nowrap; }
 .account-card-email { overflow: hidden; color: var(--muted); font-size: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
+.account-provider-badge { flex-shrink: 0; align-self: flex-start; padding: var(--space-0-5) var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-pill); color: var(--muted); background: var(--hover); font-size: var(--text-meta); font-weight: var(--weight-semibold); }
 .device-roster-id { display: flex; min-width: 0; gap: var(--space-1); color: var(--muted); font-size: var(--text-meta); }
 .device-roster-id code { min-width: 0; overflow-wrap: anywhere; user-select: all; }
 /* The controls row is identical on every card (status-dependent actions

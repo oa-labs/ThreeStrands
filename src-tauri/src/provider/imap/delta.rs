@@ -42,7 +42,8 @@ pub struct LocalMailboxView {
 }
 
 /// The server's current view, as the sync routine gathered it from EXAMINE and
-/// a `UID SEARCH ALL` + per-UID `FLAGS` fetch over the window.
+/// a `UID SEARCH ALL` + per-UID `FLAGS` fetch over the acquisition window
+/// and any retained locations outside it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ServerMailboxView {
     /// The server's current `UIDVALIDITY` (from EXAMINE).
@@ -50,7 +51,7 @@ pub struct ServerMailboxView {
     /// Every UID the mailbox currently holds (`UID SEARCH ALL`), unordered.
     pub all_uids: Vec<u32>,
     /// `uid -> flags` for the UIDs whose flags were fetched this round (the
-    /// window). A UID absent here is simply not compared for flag changes.
+    /// acquisition window and retained UIDs). An absent UID is not compared.
     pub flags_by_uid: BTreeMap<u32, Vec<String>>,
 }
 
@@ -110,18 +111,18 @@ pub fn compute_delta(
     // A NON-evicting class (Sent's acquisition bound) keeps an aged-out UID: it
     // is only deleted when the SERVER no longer has it, so we subtract from the
     // full server UID set, not the windowed one.
-    let deleted_uids: Vec<u32> = if limits.evicts {
-        local_set.difference(&server_set).copied().collect()
+    let retained_set: BTreeSet<u32> = if limits.evicts {
+        server_set
     } else {
-        let server_all: BTreeSet<u32> = server.all_uids.iter().copied().collect();
-        local_set.difference(&server_all).copied().collect()
+        server.all_uids.iter().copied().collect()
     };
+    let deleted_uids: Vec<u32> = local_set.difference(&retained_set).copied().collect();
 
     // Flag changes: present both sides, flags differ. Compared only for UIDs
     // whose flags the server actually fetched this round.
     let mut flag_changed_uids = Vec::new();
     for (&uid, server_flags) in &server.flags_by_uid {
-        if !server_set.contains(&uid) {
+        if !retained_set.contains(&uid) {
             continue;
         }
         if let Some(local_flags) = local.flags_by_uid.get(&uid) {
@@ -325,6 +326,52 @@ mod tests {
             vec![99],
             "Sent still deletes a server-expunged UID"
         );
+    }
+
+    #[test]
+    fn retained_flag_coverage_respects_eviction_expunges_and_uidvalidity() {
+        let local_view = local(Some(5), &[(1, &["\\Seen"]), (2, &["\\Seen"])]);
+        // UID 1 aged out, UID 2 was expunged, UID 3 was never acquired. Flags
+        // returned for a vanished UID must not resurrect it.
+        let server_view = server(
+            5,
+            &[1, 3, 4, 5],
+            &[
+                (1, &["\\Flagged"]),
+                (2, &["\\Flagged"]),
+                (3, &["\\Flagged"]),
+            ],
+        );
+        for evicts in [false, true] {
+            let limits = SyncLimits {
+                mailbox_window: 2,
+                evicts,
+            };
+            let delta = compute_delta(&local_view, &server_view, &limits);
+            assert_eq!(delta.new_uids, vec![4, 5], "acquisition stays windowed");
+            assert_eq!(
+                delta.flag_changed_uids,
+                if evicts { vec![] } else { vec![1] }
+            );
+            assert_eq!(
+                delta.deleted_uids,
+                if evicts { vec![1, 2] } else { vec![2] }
+            );
+            let reset = compute_delta(
+                &LocalMailboxView {
+                    uidvalidity: Some(9),
+                    ..local_view.clone()
+                },
+                &server_view,
+                &limits,
+            );
+            assert!(reset.uidvalidity_reset);
+            assert!(
+                reset.flag_changed_uids.is_empty(),
+                "old UIDs do not survive a reset"
+            );
+            assert_eq!(reset.new_uids, vec![4, 5]);
+        }
     }
 
     #[test]
