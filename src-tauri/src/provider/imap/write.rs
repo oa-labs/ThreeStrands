@@ -887,6 +887,32 @@ fn partial_relocate_error(
     ))
 }
 
+/// Like [`partial_relocate_error`], but keeps the CAUSE's retry class. The
+/// recording relocate backs the system-move path, whose idempotent retry only
+/// runs if the engine actually retries; wrapping a dropped connection or an
+/// `UNAVAILABLE` as a permanent `InvalidOperation` would roll the mutation
+/// back and strand the message in both mailboxes. Only a cause that is itself
+/// permanent stays permanent.
+fn classified_partial_relocate_error(
+    source: &str,
+    dest: &str,
+    uid_set: &str,
+    stage: &str,
+    cause: &ProviderError,
+) -> ProviderError {
+    let text = format!(
+        "partial relocate from {source:?} to {dest:?} for UIDs {uid_set}: {stage}; the messages \
+         now exist in BOTH mailboxes — a retry must be idempotent. Cause: {cause}"
+    );
+    match cause {
+        ProviderError::TransientTransport(_) => ProviderError::TransientTransport(text),
+        ProviderError::RetryableServer(_) => ProviderError::RetryableServer(text),
+        ProviderError::Authentication(_) => ProviderError::Authentication(text),
+        ProviderError::ReauthenticationRequired(_) => ProviderError::ReauthenticationRequired(text),
+        _ => ProviderError::InvalidOperation(text),
+    }
+}
+
 // ===========================================================================
 // The RECORDING relocate (Phase 3 run 3): a crash-honest move whose partial
 // failure hands back the destination it already created, so the caller can
@@ -1005,7 +1031,7 @@ pub async fn relocate_uids_recording(
                 if let Err(error) = session.uid_store(&batch, StoreOp::Add, &deleted).await {
                     return Err(RelocateFailure {
                         copyuid: saw_copyuid.then(|| merged.clone()),
-                        error: WriteError::Provider(partial_relocate_error(
+                        error: WriteError::Provider(classified_partial_relocate_error(
                             &ctx.mailbox,
                             dest,
                             &batch,
@@ -1018,7 +1044,7 @@ pub async fn relocate_uids_recording(
                 if let Err(error) = session.uid_expunge(&batch).await {
                     return Err(RelocateFailure {
                         copyuid: saw_copyuid.then(|| merged.clone()),
-                        error: WriteError::Provider(partial_relocate_error(
+                        error: WriteError::Provider(classified_partial_relocate_error(
                             &ctx.mailbox,
                             dest,
                             &batch,

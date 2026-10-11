@@ -8563,6 +8563,39 @@ mod mutate_tests {
         assert_eq!(local_mailboxes_of(&store, &id), vec!["Archive".to_string()]);
     }
 
+    // --- a TRANSIENT cause of a half-applied move stays transient -----------
+
+    #[tokio::test]
+    async fn a_transient_expunge_failure_after_the_copy_is_retryable_and_the_retry_completes() {
+        let mut s = MutServer::new();
+        s.capabilities = vec!["IMAP4REV1".into(), "UIDPLUS".into()]; // no MOVE
+        s.folder("INBOX", 100).add(&["\\Seen"], &message("<m1@x>"));
+        s.folder("Archive", 200);
+        s.fail_expunge_once = Some("[UNAVAILABLE] try later".into());
+        let server = Arc::new(Mutex::new(s));
+        let (provider, store) = provider_with(server.clone());
+        let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
+
+        // The engine retries only retry_mutation() errors; a permanent class
+        // here would roll the archive back and leave the message in BOTH
+        // mailboxes with nobody to finish it.
+        let err = provider
+            .modify_thread("imap:t:m1", &[], &["INBOX".into()])
+            .await
+            .unwrap_err();
+        assert!(err.retry_mutation(), "a transient cause must stay retryable: {err:?}");
+        assert!(err.to_string().contains("BOTH"), "still names the partial state: {err}");
+        assert!(local_mailboxes_of(&store, &id).contains(&"Archive".to_string()));
+
+        provider
+            .modify_thread("imap:t:m1", &[], &["INBOX".into()])
+            .await
+            .expect("the engine's retry finishes the move");
+        assert_eq!(uids_in(&server, "Archive").len(), 1, "exactly one destination copy");
+        assert!(uids_in(&server, "INBOX").is_empty());
+        assert_eq!(local_mailboxes_of(&store, &id), vec!["Archive".to_string()]);
+    }
+
     // --- partial failure across two source mailboxes -----------------------
 
     #[tokio::test]
