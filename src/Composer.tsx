@@ -20,10 +20,11 @@ import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import type { DraftReviewActions } from "./draftReview";
 import { plainTextToHtml } from "./richText";
+import { ScheduleSendPicker } from "./ScheduleSendPicker";
 
 export type ComposerHandle = {
   draftReview: DraftReviewActions;
-  flush(): Promise<Draft>; prepareExit(): Promise<void>; send(afterQueued?: () => void, archiveOnSend?: boolean): void; attach(): void; close(): void; discard(): void; draftReplyWithAI(): void;
+  schedule(): void; flush(): Promise<Draft>; prepareExit(): Promise<void>; send(afterQueued?: () => void, archiveOnSend?: boolean): void; attach(): void; close(): void; discard(): void; draftReplyWithAI(): void;
   /** Inserts plain text where the caret last was in the body, or at the top when it never was. */
   insertText(text: string): void;
   /** Swaps one recipient address for another, in whichever field holds it. */
@@ -56,6 +57,7 @@ export const Composer = forwardRef<ComposerHandle, {
   const captureChanges = useCallback(() => bodyEditor.current?.captureChanges() ?? null, []);
   const [error, setError] = useState("");
   const { draft, latest, status, edit, markChanged, captureBody, flush, replaceDraft } = useDraftAutosave(initial, captureChanges, setError);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [showBlankCopies, setShowBlankCopies] = useState(false);
@@ -95,6 +97,7 @@ export const Composer = forwardRef<ComposerHandle, {
   }
   function discard() { void run(async () => { await flush(); await mailClient.discardDraft(draft.id); onClose(); }); }
   function send(afterQueued?: () => void, archiveOnSend?: boolean) {
+    if (scheduleOpen) return;
     void run(async () => {
       const saved = await flush();
       const item = archiveOnSend
@@ -230,7 +233,7 @@ export const Composer = forwardRef<ComposerHandle, {
       return readReviewDraft();
     },
   };
-  useImperativeHandle(ref, () => ({ draftReview, flush, send, attach, close, discard, draftReplyWithAI, insertText, replaceRecipient, moveRecipientsToBcc, switchAccount: changeAccount, focusBody, prepareExit: async () => {
+  useImperativeHandle(ref, () => ({ draftReview, flush, send, schedule: () => setScheduleOpen(true), attach, close, discard, draftReplyWithAI, insertText, replaceRecipient, moveRecipientsToBcc, switchAccount: changeAccount, focusBody, prepareExit: async () => {
     if (busyRef.current) throw new Error("Finish the current composer action before closing.");
     busyRef.current = true; setBusy(true);
     try { await flush(); }
@@ -272,10 +275,10 @@ export const Composer = forwardRef<ComposerHandle, {
     panel.current?.querySelector<HTMLInputElement>(`[name="${field}"]`)?.focus();
   }, [showBlankCopies]);
   useEffect(() => { onDraftChange?.(draft); }, [draft, onDraftChange]);
-  useEscapeDismiss(close);
+  useEscapeDismiss(close, !scheduleOpen);
   return <div ref={panel} className={initial.mode === "new" ? "composer composer-inline composer-new" : "composer composer-inline"} role="dialog" data-shortcut-scope="compose" aria-label={initial.mode === "new" ? "New Message" : initial.mode === "forward" ? "Forward Message" : "Reply Message"}
       onKeyDown={(event) => {
-        if (event.nativeEvent.isComposing || replyAssistOpen) return;
+        if (event.nativeEvent.isComposing || replyAssistOpen || scheduleOpen) return;
         if ((event.metaKey || event.ctrlKey) && event.shiftKey && ["o", "c", "b"].includes(event.key.toLowerCase())) {
           const field = event.key.toLowerCase() === "o" ? "to" : event.key.toLowerCase() === "c" ? "cc" : "bcc";
           event.preventDefault();
@@ -334,8 +337,14 @@ export const Composer = forwardRef<ComposerHandle, {
         {draft.attachments.some((attachment) => !attachment.inline) && <ul className="attachment-list">{draft.attachments.filter((attachment) => !attachment.inline).map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : "Download required"}</small></span>{!a.ready && <button className="btn btn-sm" disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); replaceDraft(next); })}>Download</button>}<button className="btn-icon btn-icon-sm" aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); replaceDraft(next); })}><X size={ICON_SIZE.sm} /></button></li>)}</ul>}
         {error && <div className="notice compose-error" role="alert">{error} <button className="btn btn-sm" onClick={() => void run(async () => { await flush(); })}>Retry Save</button></div>}
       </div>
-      <footer><button className="btn btn-primary send-button" onClick={() => send()} disabled={busy}><Send size={ICON_SIZE.md} /> Send <kbd>⌘/Ctrl ↵</kbd></button><button className="btn-icon" onClick={attach} disabled={busy} aria-label="Attach Files"><Paperclip size={ICON_SIZE.lg} /></button><span className="save-status" role="status">{status}</span><button className="btn-icon" disabled={busy} aria-label="Discard Draft" onClick={discard}><Trash size={ICON_SIZE.lg} /></button></footer>
+      <footer><button className="btn btn-primary send-button" onClick={() => send()} disabled={busy}><Send size={ICON_SIZE.md} /> Send <kbd>⌘/Ctrl ↵</kbd></button><button className="btn" onClick={() => setScheduleOpen(true)} disabled={busy}>Send later</button><button className="btn-icon" onClick={attach} disabled={busy} aria-label="Attach Files"><Paperclip size={ICON_SIZE.lg} /></button><span className="save-status" role="status">{status}</span><button className="btn-icon" disabled={busy} aria-label="Discard Draft" onClick={discard}><Trash size={ICON_SIZE.lg} /></button></footer>
       <p className="compose-note">Drafts are saved on this device. Send has a 10-second undo window.{!("__TAURI_INTERNALS__" in window) && " Browser preview: delivery and attachments are simulated."}</p>
+      {scheduleOpen && <ScheduleSendPicker onClose={() => setScheduleOpen(false)} onSchedule={async (selection) => {
+        if (busyRef.current) throw new Error("Finish the current composer action first");
+        busyRef.current = true; setBusy(true);
+        try { const saved = await flush(); const item = await mailClient.scheduleDraft(saved.id, saved.revision, selection); setScheduleOpen(false); onQueued(item); }
+        finally { busyRef.current = false; if (mounted.current) setBusy(false); }
+      }} />}
       {replyAssistOpen ? (
         <Modal title="Reply Assist" className="reply-assist-modal" backdropClassName="reply-assist-backdrop" initialFocusRef={replyInstructionInput} onClose={() => { setReplyAssistOpen(false); setConfirmAddToExisting(false); }}>
           <div className="reply-assist-panel">

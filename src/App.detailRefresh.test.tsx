@@ -1214,7 +1214,7 @@ it("renders a reply in the open conversation as soon as Send queues it", async (
     const editor = await screen.findByRole("textbox", { name: "Message Body" });
     editor.innerHTML = "<p>Visible without waiting for delivery</p>";
     fireEvent.input(editor);
-    fireEvent.click(screen.getByRole("button", { name: /Send/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Send ⌘/ }));
 
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reply Message" })).not.toBeInTheDocument());
     await waitFor(() => {

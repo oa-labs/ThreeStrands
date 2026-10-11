@@ -284,57 +284,74 @@ impl Database {
     }
 
     pub fn record_follow_up(&self, id: &str) -> DbResult<ThreadTask> {
-        self.with_connection(|connection| {
-            let current =
-                task_by_id(connection, id)?.ok_or(DatabaseError::NotFound("Task"))?;
-            if !is_active_status(&current.status)
-                || current.kind != "follow_up"
-                || current.repeat_interval_days.is_none()
-            {
-                return Err(DatabaseError::invalid("Only active repeating follow-up tasks can be recorded"));
-            }
-            let interval = current.repeat_interval_days.unwrap_or_default() as i64;
-            let due_value = current
-                .due_value
-                .as_deref()
-                .ok_or_else(|| DatabaseError::invalid("Repeating follow-up has no due date"))?;
-            let next_due = match current.due_kind.as_str() {
-                "date" => NaiveDate::parse_from_str(due_value, "%Y-%m-%d").map_err(display_error)?
+        self.with_connection(|connection| Self::record_follow_up_on(connection,id))
+    }
+
+    pub(crate) fn record_follow_up_on(
+        connection: &rusqlite::Connection,
+        id: &str,
+    ) -> DbResult<ThreadTask> {
+        let current = task_by_id(connection, id)?.ok_or(DatabaseError::NotFound("Task"))?;
+        if !is_active_status(&current.status)
+            || current.kind != "follow_up"
+            || current.repeat_interval_days.is_none()
+        {
+            return Err(DatabaseError::invalid(
+                "Only active repeating follow-up tasks can be recorded",
+            ));
+        }
+        let interval = current.repeat_interval_days.unwrap_or_default() as i64;
+        let due_value = current
+            .due_value
+            .as_deref()
+            .ok_or_else(|| DatabaseError::invalid("Repeating follow-up has no due date"))?;
+        let next_due = match current.due_kind.as_str() {
+            "date" => NaiveDate::parse_from_str(due_value, "%Y-%m-%d")
+                .map_err(display_error)?
+                .checked_add_days(Days::new(interval as u64))
+                .ok_or_else(|| DatabaseError::invalid("Follow-up due date is out of range"))?
+                .format("%Y-%m-%d")
+                .to_string(),
+            "datetime" => {
+                let parsed = DateTime::parse_from_rfc3339(due_value).map_err(display_error)?;
+                let time_zone = current
+                    .time_zone
+                    .as_deref()
+                    .unwrap_or("UTC")
+                    .parse::<Tz>()
+                    .map_err(display_error)?;
+                let local = parsed.with_timezone(&time_zone);
+                let next_local = local
+                    .naive_local()
                     .checked_add_days(Days::new(interval as u64))
-                    .ok_or_else(|| DatabaseError::invalid("Follow-up due date is out of range"))?
-                    .format("%Y-%m-%d")
-                    .to_string(),
-                "datetime" => {
-                    let parsed = DateTime::parse_from_rfc3339(due_value).map_err(display_error)?;
-                    let time_zone = current
-                        .time_zone
-                        .as_deref()
-                        .unwrap_or("UTC")
-                        .parse::<Tz>()
-                        .map_err(display_error)?;
-                    let local = parsed.with_timezone(&time_zone);
-                    let next_local = local
-                        .naive_local()
-                        .checked_add_days(Days::new(interval as u64))
-                        .ok_or_else(|| DatabaseError::invalid("Follow-up due date is out of range"))?;
-                    time_zone
-                        .from_local_datetime(&next_local)
-                        .single()
-                        .or_else(|| time_zone.from_local_datetime(&next_local).earliest())
-                        .or_else(|| time_zone.from_local_datetime(&next_local).latest())
-                        .ok_or_else(|| DatabaseError::invalid("Follow-up due date is invalid in its timezone"))?
-                        .to_rfc3339()
-                }
-                _ => return Err(DatabaseError::invalid("Repeating follow-up must have a date or datetime due value")),
-            };
-            let now = Utc::now().to_rfc3339();
-            connection
+                    .ok_or_else(|| DatabaseError::invalid("Follow-up due date is out of range"))?;
+                time_zone
+                    .from_local_datetime(&next_local)
+                    .single()
+                    .or_else(|| time_zone.from_local_datetime(&next_local).earliest())
+                    .or_else(|| time_zone.from_local_datetime(&next_local).latest())
+                    .ok_or_else(|| {
+                        DatabaseError::invalid("Follow-up due date is invalid in its timezone")
+                    })?
+                    .to_rfc3339()
+            }
+            _ => {
+                return Err(DatabaseError::invalid(
+                    "Repeating follow-up must have a date or datetime due value",
+                ))
+            }
+        };
+        let now = Utc::now().to_rfc3339();
+        connection
                 .execute(
                     "UPDATE tasks SET due_value=?1, wait_after=(SELECT last_received_at FROM threads WHERE threads.id=tasks.thread_id), completion_source=NULL, completed_at=NULL, updated_at=?2 WHERE id=?3 AND status IN ('open', 'in_progress')",
                     params![next_due, now, id],
                 )?;
-            Ok(connection.query_row(&format!("{} WHERE id = ?1", select_sql()), [id], task_from_row)?)
-        })
+        Ok(connection.query_row(
+            &format!("{} WHERE id = ?1", select_sql()),
+            [id],
+            task_from_row,
+        )?)
     }
 
     pub fn reconcile_waiting_tasks(&self) -> DbResult<usize> {

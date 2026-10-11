@@ -1,9 +1,9 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor, render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Draft, OutboxItem } from "./correspondence";
+import type { Draft, OutboxItem, ScheduledSendReport } from "./correspondence";
 import { mailClient } from "./data/client";
 import type { Snippet } from "./domain";
-import { useCorrespondence } from "./useCorrespondence";
+import { OutboxList, useCorrespondence } from "./useCorrespondence";
 
 const draft: Draft = {
   id: "draft-1",
@@ -137,4 +137,35 @@ describe("useCorrespondence", () => {
     await act(async () => resolveRecovery(draft));
     await waitFor(() => expect(result.current.pendingOutboxActions.has("outbox-1")).toBe(false));
   });
+  it("shows peer schedules read-only without recipients or invented delivery outcomes", () => {
+    const report: ScheduledSendReport={operationId:"remote",ownerInstallationId:"peer",ownerSyncDeviceId:null,ownerNameAtCreation:"MacBook",account:"me@example.com",subject:"Remote schedule",scheduledAt:10,timeZone:"UTC",state:"scheduled",blockedReason:null,reportRevision:1,statusChangedAt:1};
+    const undo=vi.fn(),restore=vi.fn(),reconcile=vi.fn();
+    render(<OutboxList outbox={[]} summaries={[report]} clock={20} onUndo={undo} onRestore={restore} onReconcile={reconcile} />);
+    expect(screen.getByText("Scheduled time passed; awaiting an update from MacBook")).toBeInTheDocument();
+    expect(screen.getByText("Manage on MacBook")).toBeInTheDocument();
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    expect(undo).not.toHaveBeenCalled();expect(restore).not.toHaveBeenCalled();expect(reconcile).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("keeps local schedules out of the undo banner and deduplicates owner summaries", async () => {
+    const report:ScheduledSendReport={operationId:outbox.id,ownerInstallationId:"self",ownerSyncDeviceId:null,ownerNameAtCreation:"Desktop",account:draft.account,subject:draft.subject,scheduledAt:Date.now()+60000,timeZone:"UTC",state:"scheduled",blockedReason:null,reportRevision:1,statusChangedAt:Date.now()};
+    vi.spyOn(mailClient,"listDrafts").mockResolvedValue([]);
+    vi.spyOn(mailClient,"listOutbox").mockResolvedValue([{...outbox,state:"scheduled",schedule:{report,canManage:true,visibility:"pending"}}]);
+    vi.spyOn(mailClient,"listScheduledSummaries").mockResolvedValue([report]);
+    const {result}=renderHook(() => useCorrespondence([],undefined,undefined,...snippetArgs,null));
+    await waitFor(() => expect(result.current.outboxCount).toBe(1));
+    expect(result.current.summaries).toHaveLength(0);expect(result.current.context.canUndoSend).toBe(false);
+  });
+
+  it("requires overdue confirmation on its owner and guards duplicate Send now", async () => {
+    const report:ScheduledSendReport={operationId:outbox.id,ownerInstallationId:"self",ownerSyncDeviceId:null,ownerNameAtCreation:"Desktop",account:draft.account,subject:draft.subject,scheduledAt:10,timeZone:"UTC",state:"overdue",blockedReason:null,reportRevision:3,statusChangedAt:11};
+    const sendNow=vi.spyOn(mailClient,"sendScheduledNow").mockResolvedValue();
+    const changed=vi.fn().mockResolvedValue(undefined);
+    render(<OutboxList outbox={[{...outbox,state:"overdue",schedule:{report,canManage:true,visibility:"local"}}]} clock={20} onUndo={vi.fn()} onRestore={vi.fn()} onReconcile={vi.fn()} onChanged={changed} />);
+    fireEvent.click(screen.getByRole("button",{name:"Send now"}));fireEvent.click(screen.getByRole("button",{name:"Send now"}));
+    await waitFor(() => expect(changed).toHaveBeenCalledTimes(1));expect(sendNow).toHaveBeenCalledTimes(1);expect(sendNow).toHaveBeenCalledWith(outbox.id,3);
+    cleanup();
+  });
+
 });

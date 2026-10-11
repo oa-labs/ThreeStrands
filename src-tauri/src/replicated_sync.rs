@@ -183,6 +183,11 @@ impl Database {
     /// environment variable to fiddle with.
     pub fn reconcile_replicated_sync_backlog(&self) -> Result<usize, String> {
         let mut repaired = 0usize;
+        if self.outbox()?.iter().any(|o|o.schedule.is_some()) {
+            if let Ok(owner)=crate::scheduled_send::keychain_identity(false) {
+                self.refresh_schedule_reports(&owner,chrono::Utc::now().timestamp_millis())?;
+            }
+        }
         for task in self.list_tasks(None, None)? {
             if self.reconcile_one_entity(EntityType::Task, &task.id, serde_json::to_value(&task).map_err(display)?)? {
                 repaired += 1;

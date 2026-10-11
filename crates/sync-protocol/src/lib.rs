@@ -24,6 +24,7 @@ pub enum EntityType {
     // New variants go last: the derived order is the snapshots' canonical field order.
     Goal,
     ContactGroup,
+    ScheduledSendSummary,
 }
 
 /// Most members one synchronized contact group may list.
@@ -46,6 +47,7 @@ impl EntityType {
             Self::Contact => "contact",
             Self::Goal => "goal",
             Self::ContactGroup => "contact_group",
+            Self::ScheduledSendSummary => "scheduled_send_summary",
         }
     }
 
@@ -57,6 +59,11 @@ impl EntityType {
             return Err("The synchronized record is too large".to_string());
         }
         match self {
+            Self::ScheduledSendSummary => {
+                if object.len() != 1 { return Err("A scheduled summary contains only a report".into()); }
+                let report: ScheduledSendReport = serde_json::from_value(object.get("report").cloned().unwrap_or(Value::Null)).map_err(display)?;
+                report.validate()?;
+            }
             Self::Task => {
                 required_string(object, "title", 240)?;
                 enum_string(object, "kind", &["action", "follow_up", "waiting_for"])?;
@@ -173,6 +180,7 @@ impl std::str::FromStr for EntityType {
             "contact" => Ok(Self::Contact),
             "goal" => Ok(Self::Goal),
             "contact_group" => Ok(Self::ContactGroup),
+            "scheduled_send_summary" => Ok(Self::ScheduledSendSummary),
             _ => Err("Unknown synchronized entity type".to_string()),
         }
     }
@@ -276,7 +284,8 @@ mod tests {
             | EntityType::Retention
             | EntityType::Contact
             | EntityType::Goal
-            | EntityType::ContactGroup => entity_type,
+            | EntityType::ContactGroup
+            | EntityType::ScheduledSendSummary => entity_type,
         };
         for entity_type in [
             EntityType::Task,
@@ -290,6 +299,7 @@ mod tests {
             EntityType::Contact,
             EntityType::Goal,
             EntityType::ContactGroup,
+            EntityType::ScheduledSendSummary,
         ] {
             let entity_type = listed(entity_type);
             assert_eq!(entity_type.as_str().parse::<EntityType>(), Ok(entity_type));
@@ -398,5 +408,59 @@ mod tests {
         invalid=valid;
         invalid["photoData"]=json!("x".repeat(90_001));
         assert!(EntityType::Contact.validate_payload(&invalid).is_err());
+    }
+    #[test]
+    fn scheduled_summary_allowlist_rejects_content_credentials_and_invalid_reports() {
+        let report=ScheduledSendReport {operation_id:"00000000-0000-4000-8000-000000000001".into(),owner_installation_id:"00000000-0000-4000-8000-000000000002".into(),owner_sync_device_id:None,owner_name_at_creation:"MacBook".into(),account:"me@example.com".into(),subject:"Hello".into(),scheduled_at:1_800_000_000_000,time_zone:"America/New_York".into(),state:"scheduled".into(),blocked_reason:None,report_revision:1,status_changed_at:1_700_000_000_000};
+        let valid=json!({"report":report});assert!(EntityType::ScheduledSendSummary.validate_payload(&valid).is_ok());
+        for field in ["body","bodyHtml","to","bcc","raw","attachments","token","error"] {
+            let mut bad=valid.clone();bad["report"][field]=json!("private");assert!(EntityType::ScheduledSendSummary.validate_payload(&bad).is_err());
+            let mut bad=valid.clone();bad[field]=json!("private");assert!(EntityType::ScheduledSendSummary.validate_payload(&bad).is_err());
+        }
+        for (field,value) in [("scheduledAt",json!(-1)),("state",json!("resend")),("reportRevision",json!(0)),("timeZone",json!("unknown")),("ownerInstallationId",json!("")),("blockedReason",json!("server error with secret"))] {
+            let mut bad=valid.clone();bad["report"][field]=value;assert!(EntityType::ScheduledSendSummary.validate_payload(&bad).is_err(),"{field}");
+        }
+        // An old vocabulary rejects the new variant; snapshots cannot partially decode.
+        #[derive(Deserialize)] #[serde(rename_all="snake_case")] enum PreviousType {Task,Snippet,SplitInbox,MailAccount,CalendarAccount,CalendarSelection,Preferences,Retention,Contact,Goal,ContactGroup}
+        assert!(serde_json::from_str::<PreviousType>("\"scheduled_send_summary\"").is_err());
+        assert!(serde_json::from_str::<EntityType>("\"task\"").is_ok());
+    }
+
+}
+
+/// Read-only metadata. No recipient, MIME, attachment, credential or raw error fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScheduledSendReport {
+    pub operation_id: String,
+    pub owner_installation_id: String,
+    pub owner_sync_device_id: Option<String>,
+    pub owner_name_at_creation: String,
+    pub account: String,
+    pub subject: String,
+    pub scheduled_at: i64,
+    pub time_zone: String,
+    pub state: String,
+    pub blocked_reason: Option<String>,
+    pub report_revision: i64,
+    pub status_changed_at: i64,
+}
+
+impl ScheduledSendReport {
+    pub fn entity_id(&self) -> String { format!("{}:{}", self.owner_installation_id, self.operation_id) }
+    pub fn validate(&self) -> Result<(), String> {
+        let uuid = |v: &str| v.len() == 36 && v.bytes().enumerate().all(|(i,b)| if [8,13,18,23].contains(&i) { b == b'-' } else { b.is_ascii_hexdigit() });
+        if !uuid(&self.operation_id) || !uuid(&self.owner_installation_id)
+            || self.owner_sync_device_id.as_ref().is_some_and(|v| v.len() != 32 || !v.bytes().all(|b| b.is_ascii_hexdigit()))
+            || self.owner_name_at_creation.trim().is_empty() || self.owner_name_at_creation.chars().count() > 60
+            || self.account.is_empty() || self.account.len() > 320 || !self.account.contains('@') || self.account.contains(['\r','\n'])
+            || self.subject.chars().count() > 998 || self.time_zone.parse::<chrono_tz::Tz>().is_err()
+            || !(0..=253402300799999).contains(&self.scheduled_at) || !(0..=253402300799999).contains(&self.status_changed_at)
+            || self.report_revision < 1
+            || !["scheduled","overdue","undo_pending","ready","sending","sent","failed","uncertain","unverifiable","canceled"].contains(&self.state.as_str())
+            || self.blocked_reason.as_ref().is_some_and(|v| !["authorization","owner_unavailable","account_disconnected","provider_unavailable"].contains(&v.as_str())) {
+            return Err("Invalid scheduled-send report".into());
+        }
+        Ok(())
     }
 }

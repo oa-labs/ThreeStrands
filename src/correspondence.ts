@@ -16,9 +16,24 @@ export type Draft = {
   followUpTaskId?: string | null;
   attachments: Attachment[]; updatedAt: number;
 };
-export type OutboxItem = { id: string; draft: Draft; state: "undo_pending" | "ready" | "sending" | "sent" | "failed" | "uncertain" | "unverifiable" | "canceled"; deadline: number; error: string | null; providerId?: string | null };
+export type OutboxItem = { id: string; draft: Draft; state: "scheduled" | "overdue" | "undo_pending" | "ready" | "sending" | "sent" | "failed" | "uncertain" | "unverifiable" | "canceled"; deadline: number; error: string | null; providerId?: string | null; schedule?: ScheduledSend | null };
+export type ScheduleSelection = { localTime: string; timeZone: string; offsetSeconds?: number | null };
+export type ScheduleTimeChoice = { scheduledAt: number; offsetSeconds: number };
+export type ScheduledSendReport = {
+  operationId: string; ownerInstallationId: string; ownerSyncDeviceId: string | null;
+  ownerNameAtCreation: string; account: string; subject: string; scheduledAt: number; timeZone: string;
+  state: OutboxItem["state"]; blockedReason: string | null; reportRevision: number; statusChangedAt: number;
+  ownerName?: string | null; lastContactAt?: number | null;
+};
+export type ScheduledSend = { report: ScheduledSendReport; canManage: boolean; visibility: string; visibilityGroupId?: string | null };
 export interface CorrespondenceClient {
   senderIdentity(): Promise<string>;
+  schedulingInfo(): Promise<{ deviceName: string; sharing: boolean }>;
+  scheduleChoices(localTime: string, timeZone: string): Promise<ScheduleTimeChoice[]>;
+  scheduleDraft(id: string, revision: number, selection: ScheduleSelection): Promise<OutboxItem>;
+  rescheduleSend(id: string, revision: number, selection: ScheduleSelection): Promise<void>;
+  sendScheduledNow(id: string, revision: number): Promise<void>;
+  listScheduledSummaries(): Promise<ScheduledSendReport[]>;
   /** `account` is required for reply/replyAll/forward (the source thread's owning account) and optional for "new" (defaults to the most-recently-used account). */
   createDraft(mode: ComposeMode, sourceId?: string, account?: string): Promise<Draft>;
   /** Changes a "new" message's sending account; reply/replyAll/forward stay locked to their source thread's account. */
@@ -39,12 +54,19 @@ export interface CorrespondenceClient {
 }
 
 type CorrespondenceOperation =
+  | "schedulingInfo" | "scheduleChoices" | "schedule" | "reschedule" | "sendScheduledNow" | "listScheduledSummaries"
   | "identity" | "create" | "setAccount" | "save" | "listDrafts"
   | "discard" | "queue" | "listOutbox" | "cancel" | "recover"
   | "reconcile" | "attach" | "attachInline" | "readInline"
   | "removeAttachment" | "fetchAttachment";
 
 const OPERATION_POLICY: Record<CorrespondenceOperation, InvokePolicy> = {
+  schedulingInfo: BOUNDED_LOCAL_READ,
+  scheduleChoices: BOUNDED_LOCAL_READ,
+  schedule: WAIT_FOR_NATIVE_COMPLETION,
+  reschedule: WAIT_FOR_NATIVE_COMPLETION,
+  sendScheduledNow: WAIT_FOR_NATIVE_COMPLETION,
+  listScheduledSummaries: BOUNDED_LOCAL_READ,
   identity: BOUNDED_LOCAL_READ,
   create: WAIT_FOR_NATIVE_COMPLETION,
   setAccount: WAIT_FOR_NATIVE_COMPLETION,
@@ -71,6 +93,12 @@ const request = <T>(op: CorrespondenceOperation, args: object = {}) =>
   );
 export const nativeCorrespondence: CorrespondenceClient = {
   senderIdentity: () => request("identity"),
+  schedulingInfo: () => request("schedulingInfo"),
+  scheduleChoices: (localTime,timeZone) => request("scheduleChoices",{localTime,timeZone}),
+  scheduleDraft: (id,revision,selection) => request("schedule",{id,revision,selection}),
+  rescheduleSend: (id,revision,selection) => request("reschedule",{id,revision,selection}),
+  sendScheduledNow: (id,revision) => request("sendScheduledNow",{id,revision}),
+  listScheduledSummaries: () => request("listScheduledSummaries"),
   createDraft: (mode, sourceId, account) => request("create", { mode, sourceId, account }),
   setDraftAccount: (id, account) => request("setAccount", { id, account }),
   saveDraft: (draft) => request("save", { draft }),

@@ -247,6 +247,7 @@ flowchart LR
 
 ## Source documents
 
+- [Scheduled send plan](docs/scheduled-send-design.md) — fixed sending-device ownership, local scheduling, and encrypted summary visibility across devices; proposed, not implemented.
 - [Design principles](DESIGN.md) — current keyboard, workspace, form, and AI
   review decisions.
 - [Cross-device sync](docs/cross-device-sync.md) and [replicated sync design](docs/replicated-sync-design.md) — sync scope and trust model.

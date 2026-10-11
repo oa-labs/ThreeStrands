@@ -214,7 +214,7 @@ test("HTML forwarding preserves formatting and blocked images after reopening, s
   await expect(body).toHaveText("Please see the original message below.");
   await expect(frame.locator("strong")).toHaveText("ThreeStrands");
   await expect(frame.locator("img")).not.toHaveAttribute("src");
-  await composer.getByRole("button", { name: /^Send / }).click();
+  await composer.getByRole("button", { name: /^Send ⌘/ }).click();
   await expect(composer).not.toBeVisible();
   await page.getByRole("button", { name: "Undo Send", exact: true }).click();
   await expect(body).toHaveText("Please see the original message below.");
@@ -374,7 +374,7 @@ test("attachment selection and removal survive autosave; invalid recipients keep
   await expect(composer.getByText("résumé.txt", { exact: false })).toBeVisible();
   await composer.getByRole("button", { name: "Remove résumé.txt" }).click();
   await expect(composer.getByText("résumé.txt", { exact: false })).not.toBeVisible();
-  await composer.getByRole("button", { name: /^Send / }).click();
+  await composer.getByRole("button", { name: /^Send ⌘/ }).click();
   await expect(composer.getByRole("alert")).toContainText("Add at least one recipient");
   await expect(composer).toBeVisible();
 });
@@ -435,7 +435,7 @@ for (const theme of ["light", "dark"] as const) {
     await page.getByRole("textbox", { name: "Subject" }).fill("A quick update");
     await page.getByRole("textbox", { name: "Message Body" }).fill("Hi Jane,\n\nI've attached my notes from today. Let me know what you think.\n\nThanks!");
     await page.getByRole("button", { name: "To", exact: true }).click();
-    await expect(page.getByRole("button", { name: /^Send / })).toBeInViewport();
+    await expect(page.getByRole("button", { name: /^Send ⌘/ })).toBeInViewport();
     await expect(page.getByRole("button", { name: "Save and Close Draft" })).toBeInViewport();
     await expect(page.getByRole("dialog").getByRole("status")).toHaveText("Saved on this device");
     await page.screenshot({ path: testInfo.outputPath(`composer-${theme}.png`) });
@@ -462,4 +462,53 @@ test("a mailto link in a message starts a prefilled draft in ThreeStrands", asyn
   await expect(composer.getByRole("textbox", { name: "Message Body" })).toContainText("Hi Jane,");
   await expect(composer.getByRole("textbox", { name: "Message Body" })).toContainText("See below.");
   await expect(composer.getByRole("button", { name: /^Remove .*passwd/ })).toHaveCount(0);
+});
+
+test("scheduled send survives reload, reschedules, and requires confirmation after a missed time", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-10-10T12:00:00Z") });
+  await page.goto("/");
+  await page.getByRole("button", { name: "New Message (c)" }).click();
+  const composer = page.getByRole("dialog", { name: "New Message" });
+  await composer.getByRole("textbox", { name: "To", exact: true }).fill("test@example.com");
+  await composer.getByRole("textbox", { name: "Subject" }).fill("A scheduled email");
+  await composer.getByRole("textbox", { name: "Message Body" }).fill("Preserved scheduled content");
+  await composer.getByRole("button", { name: "Send later", exact: true }).click();
+  const picker = page.getByRole("dialog", { name: "Send later" });
+  await picker.getByLabel("Schedule timezone").fill("UTC");
+  await picker.getByLabel("Scheduled date and time").fill("2026-10-11T09:00");
+  await picker.getByRole("button", { name: "Schedule email" }).click();
+  await expect(composer).not.toBeVisible();
+  await page.reload();
+  await (await openFolders(page)).getByRole("button", { name: /Outbox/ }).click();
+  const item = page.locator(".outbox-row").filter({ hasText: "A scheduled email" });
+  await expect(item).toContainText("scheduled");
+  await item.getByRole("button", { name: "Reschedule", exact: true }).click();
+  const reschedule = page.getByRole("dialog", { name: "Reschedule email" });
+  await reschedule.getByLabel("Scheduled date and time").fill("2026-10-12T09:00");
+  await reschedule.getByRole("button", { name: "Save schedule" }).click();
+  await page.clock.setSystemTime(new Date("2026-10-12T09:01:01Z"));
+  await page.reload();
+  await (await openFolders(page)).getByRole("button", { name: /Outbox/ }).click();
+  await expect(item).toContainText("Scheduled time missed");
+  await expect(item.getByRole("button", { name: "Send now", exact: true })).toBeVisible();
+  await item.getByRole("button", { name: "Send now", exact: true }).click();
+  await item.getByRole("button", { name: "Undo Send", exact: true }).click();
+  await expect(composer.getByRole("textbox", { name: "Message Body" })).toHaveText("Preserved scheduled content");
+});
+
+test("peer scheduled visibility cannot send or restore message content", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("threestrands.demoCorrespondence", JSON.stringify({ drafts: [], outbox: [], summaries: [{
+      operationId: "peer-job", ownerInstallationId: "peer-owner", ownerSyncDeviceId: null,
+      ownerNameAtCreation: "MacBook", account: "me@example.com", subject: "Peer scheduled email",
+      scheduledAt: 1, timeZone: "UTC", state: "scheduled", blockedReason: null,
+      reportRevision: 1, statusChangedAt: 1,
+    }] }));
+  });
+  await page.goto("/");
+  await (await openFolders(page)).getByRole("button", { name: /Outbox/ }).click();
+  const item = page.locator(".outbox-row").filter({ hasText: "Peer scheduled email" });
+  await expect(item).toContainText("Scheduled time passed; awaiting an update from MacBook");
+  await expect(item).toContainText("Manage on MacBook");
+  await expect(item.getByRole("button")).toHaveCount(0);
 });

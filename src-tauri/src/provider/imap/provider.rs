@@ -1761,6 +1761,7 @@ impl MailSend for ImapProvider {
 impl MailProvider for ImapProvider {
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
+                    send_supported: false,
             server_search: false,
             provided_threads: false,
             label_model: self.label_model,

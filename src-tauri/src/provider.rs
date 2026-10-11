@@ -165,6 +165,8 @@ pub struct ProviderCapabilities {
     /// When false the remote search backfill is skipped entirely rather than
     /// attempted and rejected.
     pub server_search: bool,
+    /// Submission is implemented; checking this never contacts the server.
+    pub send_supported: bool,
     /// Whether the provider supplies thread ids itself (`true`) or threading
     /// is computed locally from message references (`false`). Gmail returns
     /// conversation ids, so it is `true`; the IMAP provider sets it `false`

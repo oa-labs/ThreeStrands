@@ -493,7 +493,8 @@ impl Database {
             )
             ?;
         tx.execute_batch(
-            "DELETE FROM sync_deliveries;
+            "DELETE FROM scheduled_send_summaries;
+             DELETE FROM sync_deliveries;
              DELETE FROM sync_values;
              DELETE FROM sync_context;
              DELETE FROM sync_objects;

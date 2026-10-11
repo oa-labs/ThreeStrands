@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 63;
+pub(crate) const LATEST_VERSION: i64 = 64;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1871,6 +1871,13 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 64 {
+        if !has_column(&tx,"outbox_messages","schedule_json")? {
+            tx.execute_batch("ALTER TABLE outbox_messages ADD COLUMN schedule_json TEXT;").map_err(error)?;
+        }
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS scheduled_send_summaries (id TEXT PRIMARY KEY, report TEXT NOT NULL);
+            PRAGMA user_version=64;").map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1880,6 +1887,7 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
             [Utc::now().timestamp_millis() + 10_000],
         )
         .map_err(error)?;
+    connection.execute("UPDATE outbox_messages SET state='overdue' WHERE state='scheduled' AND deadline<?1", [Utc::now().timestamp_millis()]).map_err(error)?;
     Ok(())
 }
 

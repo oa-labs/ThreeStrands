@@ -78,6 +78,7 @@ impl Database {
     ) -> DbResult<()> {
         if deleted {
             match entity_type {
+                EntityType::ScheduledSendSummary => self.delete_synced_row("DELETE FROM scheduled_send_summaries WHERE id=?1", entity_id)?,
                 EntityType::Task => self.delete_synced_row("DELETE FROM tasks WHERE id=?1", entity_id)?,
                 EntityType::Snippet => self.delete_synced_row("DELETE FROM snippets WHERE id=?1", entity_id)?,
                 EntityType::SplitInbox => self.delete_synced_row("DELETE FROM split_inboxes WHERE id=?1", entity_id)?,
@@ -103,6 +104,15 @@ impl Database {
             }
         } else if let Some(payload) = payload {
             match entity_type {
+                EntityType::ScheduledSendSummary => {
+                    entity_type.validate_payload(payload).map_err(DatabaseError::invalid)?;
+                    let report: threestrands_sync_protocol::ScheduledSendReport = serde_json::from_value(payload["report"].clone()).map_err(serialization_error)?;
+                    if report.entity_id()!=entity_id { return Err(DatabaseError::invalid("Scheduled summary identity mismatch")); }
+                    self.with_connection(|c| {
+                        c.execute("INSERT INTO scheduled_send_summaries(id,report) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET report=excluded.report",params![entity_id,payload["report"].to_string()])?;
+                        Ok(())
+                    })?;
+                }
                 EntityType::Task => {
                     self.upsert_synced_task(serde_json::from_value(payload.clone()).map_err(serialization_error)?)?
                 }

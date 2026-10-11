@@ -590,7 +590,7 @@ export function App() {
                     {mailbox === "drafts"
                       ? `${correspondence.drafts.length} drafts`
                       : mailbox === "outbox"
-                        ? `${correspondence.outbox.filter((item) => item.state !== "canceled").length} outgoing`
+                        ? `${correspondence.outbox.filter((item) => item.state !== "canceled").length + correspondence.summaries.filter((item) => item.state !== "canceled").length} outgoing`
                         : `${visibleThreads.length} conversations`}
                   </h1>
                   {isTabbedMailbox ? (
@@ -651,6 +651,8 @@ export function App() {
           ) : mailbox === "outbox" ? (
             <OutboxList
               outbox={correspondence.outbox}
+              summaries={correspondence.summaries}
+              onChanged={correspondence.refresh}
               clock={correspondence.clock}
               onUndo={correspondence.undoSendItem}
               onRestore={correspondence.restoreFailedSend}

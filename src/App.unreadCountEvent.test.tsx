@@ -38,7 +38,7 @@ describe("background unread count updates", () => {
   // fire "unread-counts-changed" by hand, and returns a helper to do so.
   function setupEventBridge() {
     const handlersById = new Map<number, (event: unknown) => void>();
-    const listenIdsByEvent = new Map<string, number>();
+    const listenIdsByEvent = new Map<string, number[]>();
     let nextId = 1;
 
     transformCallback.mockImplementation((callback: (event: unknown) => void) => {
@@ -49,7 +49,8 @@ describe("background unread count updates", () => {
     invoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
       if (cmd === "plugin:event|listen") {
         const handlerId = args?.handler as number;
-        listenIdsByEvent.set(args?.event as string, handlerId);
+        const event = args?.event as string;
+        listenIdsByEvent.set(event, [...(listenIdsByEvent.get(event) ?? []), handlerId]);
         return Promise.resolve(handlerId);
       }
       return Promise.resolve(1);
@@ -57,9 +58,10 @@ describe("background unread count updates", () => {
 
     async function fire(event: string, payload: unknown) {
       await waitFor(() => expect(listenIdsByEvent.has(event)).toBe(true));
-      const id = listenIdsByEvent.get(event);
       await act(async () => {
-        handlersById.get(id!)?.({ event, id, payload });
+        for (const id of listenIdsByEvent.get(event) ?? []) {
+          handlersById.get(id)?.({ event, id, payload });
+        }
       });
     }
 
@@ -144,5 +146,37 @@ describe("background unread count updates", () => {
     await bridge.fire("mail-sync-activity", { accountId: "other@example.com", active: false });
     expect(refresh).toHaveAttribute("aria-busy", "false");
     expect(refresh.querySelector("svg")).not.toHaveClass("spin");
+  });
+
+  it("shows newly discovered IMAP labels in an open conversation after sync finishes", async () => {
+    const bridge = setupEventBridge();
+    const originalLabels = await mailClient.listLabels(DEMO_ACCOUNT_ID);
+    const listLabels = vi.spyOn(mailClient, "listLabels").mockResolvedValue(originalLabels);
+    const originalGetThread = mailClient.getThread;
+    vi.spyOn(mailClient, "getThread").mockImplementation(async (id) => {
+      const detail = await originalGetThread(id);
+      return { ...detail, thread: { ...detail.thread, labels: [...detail.thread.labels, "lf:Clients", "folder:Projects"] } };
+    });
+
+    try {
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      await screen.findByText("Inbox", { selector: "span.eyebrow" });
+      expect(screen.queryByText("Clients")).not.toBeInTheDocument();
+      expect(screen.queryByText(/lf:|folder:/)).not.toBeInTheDocument();
+
+      listLabels.mockResolvedValue([
+        ...originalLabels,
+        { id: "lf:Clients", name: "Clients", kind: "user" },
+        { id: "folder:Projects", name: "Projects", kind: "folder" },
+      ]);
+      await bridge.fire("mail-sync-activity", { accountId: DEMO_ACCOUNT_ID, active: false });
+
+      expect(await screen.findByText("Clients", { selector: ".user-label-badge" })).toBeInTheDocument();
+      expect(await screen.findByText("Inbox · Projects", { selector: "span.eyebrow" })).toBeInTheDocument();
+      expect(screen.queryByText(/lf:|folder:/)).not.toBeInTheDocument();
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });

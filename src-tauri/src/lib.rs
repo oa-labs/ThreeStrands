@@ -9,6 +9,7 @@ mod backoff;
 mod calendar;
 mod calendar_files;
 mod correspondence;
+mod scheduled_send;
 mod contact_interchange;
 mod credentials;
 mod db;
@@ -2598,7 +2599,7 @@ async fn remove_account_internal(
     let fallback = state
         .auth_config
         .mail_account(catalogued_mail_provider(&state.database, &email)?, &email)?;
-    state.database.pause_ready_sends_for(&email)?;
+    state.correspondence.pause_account_schedules(&email)?;
     // Stop every sync run for the account before purging, including ones
     // started outside the polling loop (foreground, backfill, manual
     // refresh): a run still waiting on the provider would otherwise write
@@ -4411,6 +4412,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let registry = startup_account_registry(&database, &auth_config, app.handle());
     let accounts: AccountRegistry = Arc::new(tokio::sync::Mutex::new(registry));
     let correspondence = correspondence::Correspondence {
+        sending_identity: Arc::new(scheduled_send::keychain_identity),
         database: database.clone(),
         accounts: accounts.clone(),
         root,
@@ -4908,7 +4910,12 @@ fn handle_run_event(handle: &tauri::AppHandle, event: tauri::RunEvent) {
                 }
             }
         }
-        tauri::RunEvent::Resumed => spawn_foreground_sync(handle),
+        tauri::RunEvent::Resumed => {
+            if let Some(state) = handle.try_state::<AppState>() {
+                log_failure("recovering scheduled sends after wake", state.correspondence.resume_schedules());
+            }
+            spawn_foreground_sync(handle);
+        },
         // macOS opens `mailto:` links and `.ics` files here when ThreeStrands
         // handles them (Info.plist declares both), including the one that
         // launched it.

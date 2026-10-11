@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountsSettings } from "./AccountsSettings";
 import type { Account } from "./domain";
 import type { ComponentProps } from "react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import postcss from "postcss";
 
 const account: Account = {
   email: "me@example.com",
@@ -38,6 +41,29 @@ describe("mail account settings", () => {
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
+  });
+
+  it("styles provider badges like Connected while keeping reconnect status distinct", () => {
+    const css = postcss.parse(readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8"));
+    function badgeStyles(selectors: string[]) {
+      const styles: Record<string, string> = {};
+      css.walkRules((rule) => {
+        if (rule.selectors.some((selector) => selectors.includes(selector))) {
+          rule.walkDecls((declaration) => { styles[declaration.prop] = declaration.value; });
+        }
+      });
+      // The provider badge sits at the top of the row; the status sits beside the name.
+      delete styles["align-self"];
+      return styles;
+    }
+
+    const connected = badgeStyles([".account-status", ".account-status.connected"]);
+    expect(badgeStyles([".account-provider-badge"])).toEqual(connected);
+    expect(connected).toMatchObject({ border: "0", "font-weight": "var(--weight-regular)" });
+    expect(badgeStyles([".account-status", ".account-status.needs_reauth"])).toMatchObject({
+      color: "var(--error)",
+      background: "color-mix(in srgb, var(--error) 12%, transparent)",
+    });
   });
 
   it.each<Account["status"]>(["connected", "needs_reauth"])("labels each card with its account provider when %s", (status) => {

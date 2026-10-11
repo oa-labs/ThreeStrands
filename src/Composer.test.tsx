@@ -695,7 +695,7 @@ describe("Composer forwarded content and attachments", () => {
 
     await waitFor(() => expect(fetchAttachment).toHaveBeenCalledWith("draft-1", "forwarded-image"));
     await waitFor(() => expect(screen.getByText(/Ready/)).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: /Send/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Send ⌘/ }));
 
     await waitFor(() => expect(queueDraft).toHaveBeenCalledWith("draft-1", 1));
     expect(onQueued).toHaveBeenCalledWith(queued);
@@ -1359,5 +1359,39 @@ describe("Composer context panel actions", () => {
     const text = editor.textContent ?? "";
     expect(text.indexOf("Hi Ann,")).toBeLessThan(text.indexOf("Here are some times"));
     expect(text.indexOf("Here are some times")).toBeLessThan(text.indexOf("Best, Me"));
+  });
+});
+
+
+describe("Composer scheduled sending", () => {
+  afterEach(() => {cleanup();vi.restoreAllMocks();});
+  it("flushes edited content before scheduling and closes only after durable queueing",async () => {
+    vi.spyOn(mailClient,"schedulingInfo").mockResolvedValue({deviceName:"MacBook",sharing:true});
+    vi.spyOn(mailClient,"scheduleChoices").mockResolvedValue([{scheduledAt:Date.now()+3600000,offsetSeconds:0}]);
+    const save=vi.spyOn(mailClient,"saveDraft").mockImplementation(async (next) => ({...next,revision:next.revision+1}));
+    const queued:OutboxItem={id:"scheduled",draft,state:"scheduled",deadline:Date.now()+3600000,error:null};
+    const schedule=vi.spyOn(mailClient,"scheduleDraft").mockResolvedValue(queued);
+    const immediate=vi.spyOn(mailClient,"queueDraft");const onQueued=vi.fn(),onClose=vi.fn();
+    render(<Composer draft={{...draft,to:"client@example.com"}} accounts={accounts} {...snippetProps} onClose={onClose} onQueued={onQueued}/>);
+    fireEvent.change(screen.getByRole("textbox",{name:"Subject"}),{target:{value:"Saved before scheduling"}});
+    fireEvent.click(screen.getByRole("button",{name:"Send later"}));
+    const dialog=screen.getByRole("dialog",{name:"Send later"});
+    await waitFor(() => expect(within(dialog).getByRole("button",{name:"Schedule email"})).toBeEnabled());
+    expect(within(dialog).getByText(/Recipients, message bodies, and attachments stay/)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button",{name:"Schedule email"}));
+    await waitFor(() => expect(onQueued).toHaveBeenCalledWith(queued));
+    expect(save.mock.calls.at(-1)?.[0].subject).toBe("Saved before scheduling");expect(schedule.mock.calls[0][1]).toBe(1);expect(immediate).not.toHaveBeenCalled();expect(onClose).not.toHaveBeenCalled();
+  });
+  it("requires an explicit offset for repeated times and Escape keeps the composer open",async () => {
+    vi.spyOn(mailClient,"schedulingInfo").mockResolvedValue({deviceName:"Desktop",sharing:false});
+    vi.spyOn(mailClient,"scheduleChoices").mockResolvedValue([{scheduledAt:Date.now()+3600000,offsetSeconds:-14400},{scheduledAt:Date.now()+7200000,offsetSeconds:-18000}]);
+    const close=vi.fn();render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={close} onQueued={vi.fn()}/>);
+    fireEvent.click(screen.getByRole("button",{name:"Send later"}));
+    await waitFor(() => expect(screen.getByRole("combobox",{name:"UTC offset"})).toBeInTheDocument());
+    expect(screen.getByRole("button",{name:"Schedule email"})).toBeDisabled();
+    fireEvent.change(screen.getByRole("combobox",{name:"UTC offset"}),{target:{value:"-18000"}});
+    expect(screen.getByRole("button",{name:"Schedule email"})).toBeEnabled();
+    fireEvent.keyDown(window,{key:"Escape"});
+    await waitFor(() => expect(screen.queryByRole("dialog",{name:"Send later"})).not.toBeInTheDocument());expect(close).not.toHaveBeenCalled();expect(screen.getByRole("dialog",{name:"New Message"})).toBeInTheDocument();
   });
 });

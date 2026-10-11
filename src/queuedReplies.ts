@@ -47,7 +47,7 @@ export function messagesWithQueuedReplies(detail: ThreadDetail, outbox: OutboxIt
   const queuedReplies = outbox
     .filter((item) =>
       ["reply", "replyAll"].includes(item.draft.mode)
-      && !["canceled", "failed"].includes(item.state)
+      && !["canceled", "failed", "scheduled", "overdue"].includes(item.state)
       && Boolean(item.draft.sourceId)
       && detail.messages.some((message) => message.id === item.draft.sourceId)
       && !detail.messages.some((message) =>

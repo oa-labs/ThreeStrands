@@ -1,10 +1,12 @@
-import type { CorrespondenceClient, Draft, OutboxItem } from "../correspondence";
+import { previewScheduleChoices } from "../scheduleTimes";
+import type { CorrespondenceClient, Draft, OutboxItem, ScheduledSendReport, ScheduleSelection } from "../correspondence";
 import { plainTextToHtml } from "../richText";
 import type { ThreadDetail } from "../domain";
 
 const key = "threestrands.demoCorrespondence";
 const inlineImages = new Map<string, string>();
-type Store = { drafts: Draft[]; outbox: OutboxItem[] };
+type Store = { drafts: Draft[]; outbox: OutboxItem[]; summaries?: ScheduledSendReport[] };
+const previewOwner = "00000000-0000-4000-8000-000000000001";
 function read(): Store {
   const saved = localStorage.getItem(key);
   return saved ? JSON.parse(saved) as Store : { drafts: [], outbox: [] };
@@ -24,6 +26,13 @@ function draft(store: Store, id: string) {
   return result;
 }
 function tick(store: Store) {
+  store.outbox.forEach((item) => {
+    if (item.state === "scheduled" && item.deadline < Date.now() - 60_000) item.state = "overdue";
+    if (item.state === "scheduled" && item.deadline <= Date.now() && navigator.onLine) item.state = "sent";
+    if (item.schedule && item.schedule.report.state !== item.state) {
+      item.schedule.report.state = item.state; item.schedule.report.reportRevision++; item.schedule.report.statusChangedAt = Date.now();
+    }
+  });
   if (navigator.onLine) store.outbox.forEach((item) => {
     if (item.state === "undo_pending" && item.deadline <= Date.now()) item.state = "sent";
   });
@@ -32,13 +41,51 @@ function tick(store: Store) {
 function cancel(id: string, recover = false) {
   const store = read(); tick(store);
   const item = store.outbox.find((o) => o.id === id);
-  if (!item || !(recover ? item.state === "failed" : ["undo_pending", "ready"].includes(item.state))) throw new Error("Delivery has already started");
+  if (!item || !(recover ? item.state === "failed" : ["undo_pending", "ready", "scheduled", "overdue"].includes(item.state))) throw new Error("Delivery has already started");
+  if (item.schedule && item.schedule.report.ownerInstallationId !== previewOwner) throw new Error("This message belongs to another sending computer");
   item.state = "canceled";
+  if (item.schedule) { item.schedule.report.state = "canceled"; item.schedule.report.reportRevision++; }
   const restored = { ...item.draft, revision: item.draft.revision + 1 };
   store.drafts.push(restored); write(store); return restored;
 }
+function resolveSelection(selection: ScheduleSelection) {
+  const choices = previewScheduleChoices(selection.localTime,selection.timeZone);
+  const selected = choices.length === 1 && selection.offsetSeconds == null ? choices[0] : choices.find((v) => v.offsetSeconds === selection.offsetSeconds);
+  if (!selected) throw new Error("This time occurs twice. Choose its UTC offset.");
+  if (selected.scheduledAt <= Date.now()) throw new Error("Choose a time in the future");
+  return selected.scheduledAt;
+}
 export function demoCorrespondence(getSourceThread: (messageId: string) => Promise<ThreadDetail>, defaultAccount: () => string): CorrespondenceClient {
+  const recovered = read();
+  recovered.outbox.forEach((item) => { if (item.state === "scheduled" && item.deadline < Date.now()) item.state = "overdue"; });
+  write(recovered);
   return {
+    async schedulingInfo() { return { deviceName: "This computer", sharing: false }; },
+    async scheduleChoices(localTime,timeZone) { return previewScheduleChoices(localTime,timeZone); },
+    async listScheduledSummaries() { return read().summaries ?? []; },
+    async scheduleDraft(id,revision,selection) {
+      const store=read();
+      const queued=store.outbox.find((o) => o.draft.id===id && o.draft.revision===revision);
+      if (queued) return queued;
+      const d=draft(store,id);
+      if (d.revision!==revision) throw new Error("Draft is still saving");
+      if (![d.to,d.cc,d.bcc].some((v) => v.trim())) throw new Error("Add at least one recipient");
+      if ([d.to,d.cc,d.bcc].some((v) => v.trim() && !v.includes("@"))) throw new Error("Enter a complete email address");
+      if (d.attachments.some((a) => !a.ready)) throw new Error("Download or remove unavailable attachments");
+      const scheduledAt=resolveSelection(selection), operationId=crypto.randomUUID();
+      const item: OutboxItem={id:operationId,draft:d,state:"scheduled",deadline:scheduledAt,error:null,schedule:{canManage:true,visibility:"local",report:{operationId,ownerInstallationId:previewOwner,ownerSyncDeviceId:null,ownerNameAtCreation:"This computer",account:d.account,subject:d.subject,scheduledAt,timeZone:selection.timeZone,state:"scheduled",blockedReason:null,reportRevision:1,statusChangedAt:Date.now()}}};
+      store.outbox.push(item); store.drafts=store.drafts.filter((v) => v.id!==id); write(store); return item;
+    },
+    async rescheduleSend(id,revision,selection) {
+      const store=read(); tick(store); const item=store.outbox.find((o) => o.id===id);
+      if (!item?.schedule || item.schedule.report.ownerInstallationId!==previewOwner || item.schedule.report.reportRevision!==revision || !["scheduled","overdue"].includes(item.state)) throw new Error("Schedule changed or belongs to another computer");
+      const at=resolveSelection(selection); item.state="scheduled";item.deadline=at;item.schedule.report.scheduledAt=at;item.schedule.report.timeZone=selection.timeZone;item.schedule.report.state="scheduled";item.schedule.report.reportRevision++;item.schedule.report.statusChangedAt=Date.now(); write(store);
+    },
+    async sendScheduledNow(id,revision) {
+      const store=read(); const item=store.outbox.find((o) => o.id===id);
+      if (!item?.schedule || item.schedule.report.ownerInstallationId!==previewOwner || item.schedule.report.reportRevision!==revision || item.state!=="overdue") throw new Error("Schedule changed or belongs to another computer");
+      item.state="undo_pending";item.deadline=Date.now()+10_000;item.schedule.report.state="undo_pending";item.schedule.report.reportRevision++; write(store);
+    },
     async senderIdentity() { return defaultAccount(); },
     async createDraft(mode, sourceId, account) {
       const store = read();

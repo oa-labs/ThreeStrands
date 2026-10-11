@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { X } from "lucide-react";
 import { Composer, type ComposerHandle } from "./Composer";
 import { mailClient } from "./data/client";
-import type { ComposeMode, Draft, OutboxItem } from "./correspondence";
+import type { ComposeMode, Draft, OutboxItem, ScheduledSendReport } from "./correspondence";
 import type { Account, Snippet } from "./domain";
 import { matchesShortcut } from "./commands";
 import { logBackgroundFailure } from "./errors";
@@ -12,6 +12,7 @@ import { draftWithSelectedQuote } from "./selectedMessageQuote";
 import { ICON_SIZE } from "./iconSizes";
 import type { MessageAppearance } from "./SafeMessage";
 import type { MailtoRequest } from "./mailtoLink";
+import { ScheduleSendPicker, formatScheduledTime } from "./ScheduleSendPicker";
 import type { DraftReviewActions } from "./draftReview";
 
 type ComposeOptions = {
@@ -43,6 +44,7 @@ export function useCorrespondence(
   const [liveDraft, setLiveDraft] = useState<Draft | null>(null);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [outbox, setOutbox] = useState<OutboxItem[]>([]);
+  const [summaries, setSummaries] = useState<ScheduledSendReport[]>([]);
   const [error, setError] = useState("");
   const [closing, setClosing] = useState(false);
   const editor = useRef<ComposerHandle>(null);
@@ -55,7 +57,7 @@ export function useCorrespondence(
   const refresh = useCallback(async () => {
     if (refreshing.current) return;
     refreshing.current = true;
-    try { const [d, o] = await Promise.all([mailClient.listDrafts(), mailClient.listOutbox()]); setDrafts(d); setOutbox(o); }
+    try { const [d, o, reports] = await Promise.all([mailClient.listDrafts(), mailClient.listOutbox(), mailClient.listScheduledSummaries?.() ?? Promise.resolve([])]); setDrafts(d); setOutbox(o); setSummaries(reports); }
     finally { refreshing.current = false; }
   }, []);
   useEffect(() => { void refresh().catch((e) => setError(String(e))); }, [refresh]);
@@ -144,13 +146,12 @@ export function useCorrespondence(
   useEffect(() => { if (closing) document.querySelector<HTMLElement>(".exit-notice")?.focus(); }, [closing]);
   const pending = outbox.find((o) => ["undo_pending", "ready"].includes(o.state));
   const pendingId = pending?.id ?? null;
-  const hasActiveDelivery = outbox.some((o) => ["undo_pending", "ready", "sending"].includes(o.state));
+  const hasActiveDelivery = outbox.some((o) => ["undo_pending", "ready", "scheduled", "overdue", "uncertain", "sending"].includes(o.state));
   useEffect(() => {
-    if (!hasActiveDelivery) return;
     const timer = window.setInterval(() => {
       setClock(Date.now());
       void refresh().catch(logBackgroundFailure("Outbox refresh"));
-    }, 1000);
+    }, hasActiveDelivery ? 1000 : 5000);
     return () => window.clearInterval(timer);
   }, [hasActiveDelivery, refresh]);
 
@@ -187,6 +188,7 @@ export function useCorrespondence(
   }, []);
   const openDrafts = useCallback(() => { void openList(); }, [openList]);
   const openOutbox = useCallback(() => { void openList(); }, [openList]);
+  const scheduleDraft = useCallback(() => editor.current?.schedule(), []);
   const sendDraft = useCallback(() => editor.current?.send(), []);
   const sendDraftAndThen = useCallback((action: () => void, archiveOnSend?: boolean) => editor.current?.send(action, archiveOnSend), []);
   const attachFiles = useCallback(() => editor.current?.attach(), []);
@@ -215,8 +217,8 @@ export function useCorrespondence(
     closing,
     composerActive,
     compose, reply, replyAll, forward, openInbox, openDrafts, openOutbox,
-    sendDraft, sendDraftAndThen, attachFiles, discardDraft, draftReplyWithAI, undoSend, canUndoSend: pendingId !== null,
-  }), [attachFiles, closing, compose, composerActive, discardDraft, draftReplyWithAI, forward, openDrafts, openInbox, openOutbox, reply, replyAll, sendDraft, sendDraftAndThen, undoSend, pendingId]);
+    scheduleDraft, sendDraft, sendDraftAndThen, attachFiles, discardDraft, draftReplyWithAI, undoSend, canUndoSend: pendingId !== null,
+  }), [scheduleDraft, attachFiles, closing, compose, composerActive, discardDraft, draftReplyWithAI, forward, openDrafts, openInbox, openOutbox, reply, replyAll, sendDraft, sendDraftAndThen, undoSend, pendingId]);
   const openDraft = useCallback((draft: Draft) => {
     setSelectedQuoteDraftId(null);
     setActiveFollowUpTaskId(draft.followUpTaskId ?? null);
@@ -258,7 +260,7 @@ export function useCorrespondence(
         // so an open conversation can render the reply optimistically.
         setOutbox((current) => [item, ...current.filter((entry) => entry.id !== item.id)]);
         void refresh();
-        if (followUpTaskId) {
+        if (followUpTaskId && !item.schedule) {
           void mailClient.recordFollowUp(followUpTaskId).catch((reason) => setError(String(reason)));
         }
       }}
@@ -272,10 +274,12 @@ export function useCorrespondence(
     replyWithFollowUp,
     drafts,
     outbox,
+    summaries: summaries.filter((s) => !outbox.some((o) => o.schedule?.report.ownerInstallationId === s.ownerInstallationId && o.id === s.operationId)),
+    refresh,
     clock,
     sentCount: outbox.filter((o) => o.state === "sent").length,
     draftCount: drafts.length,
-    outboxCount: outbox.filter((o) => !["sent", "canceled"].includes(o.state)).length,
+    outboxCount: outbox.filter((o) => !["sent", "canceled"].includes(o.state)).length + summaries.filter((s) => !["sent", "canceled"].includes(s.state) && !outbox.some((o) => o.id === s.operationId && o.schedule?.report.ownerInstallationId === s.ownerInstallationId)).length,
     openDraft,
     discardListedDraft,
     undoSendItem,
@@ -328,6 +332,8 @@ export function OutboxList({
   onRestore,
   onReconcile,
   pendingActions,
+  summaries = [],
+  onChanged,
 }: {
   outbox: OutboxItem[];
   clock: number;
@@ -335,21 +341,53 @@ export function OutboxList({
   onRestore(id: string): void;
   onReconcile(id: string): void;
   pendingActions?: ReadonlySet<string>;
+  summaries?: ScheduledSendReport[];
+  onChanged?(): Promise<void>;
 }) {
+  const [rescheduling, setRescheduling] = useState<OutboxItem | null>(null);
+  const [actionError, setActionError] = useState("");
+  const actions = useRef(new Set<string>());
+  const runScheduleAction = async (item: OutboxItem) => {
+    if (actions.current.has(item.id)) return;
+    actions.current.add(item.id); setActionError("");
+    try { await mailClient.sendScheduledNow(item.id,item.schedule!.report.reportRevision); await onChanged?.(); }
+    catch (e) { setActionError(String(e)); }
+    finally { actions.current.delete(item.id); }
+  };
   const visible = outbox.filter((o) => o.state !== "canceled");
-  if (visible.length === 0) return <p className="empty">No outgoing messages.</p>;
-  return <>{visible.map((o) => {
+  if (visible.length === 0 && summaries.length === 0) return <p className="empty">No outgoing messages.</p>;
+  return <>{actionError && <p role="alert">{actionError}</p>}{rescheduling?.schedule && <ScheduleSendPicker initialAt={rescheduling.schedule.report.scheduledAt} initialZone={rescheduling.schedule.report.timeZone} onClose={() => setRescheduling(null)} onSchedule={async (selection) => {
+    await mailClient.rescheduleSend(rescheduling.id,rescheduling.schedule!.report.reportRevision,selection); setRescheduling(null); await onChanged?.();
+  }} />}{visible.map((o) => {
     const busy = pendingActions?.has(o.id) ?? false;
     return (
     <article className="outbox-row" key={o.id}>
       <strong>{o.draft.subject || "(no subject)"}</strong>
       <span>From {o.draft.account} · To {o.draft.to || o.draft.cc || "Bcc recipients"}</span>
+      {o.schedule && <>
+        <small>{formatScheduledTime(o.schedule.report.scheduledAt,o.schedule.report.timeZone)} · Sends from {o.schedule.report.ownerNameAtCreation}</small>
+        {o.schedule.report.blockedReason && <p>Paused: {o.schedule.report.blockedReason === "owner_unavailable" ? "the sending-device identity is unavailable on this computer" : "reconnect the sending account"}.</p>}
+        <small>{o.schedule.visibility === "local" ? "Saved on this computer" : o.schedule.visibility === "published" ? "Published to sync storage" : o.schedule.visibility === "paused" ? "Visibility sync paused" : "Waiting to sync visibility"}</small>
+        {o.schedule.canManage && ["scheduled","overdue"].includes(o.state) && <>
+          <button className="btn btn-sm" onClick={() => setRescheduling(o)} disabled={busy}>Reschedule</button>
+          <button className="btn btn-sm" onClick={() => onUndo(o.id)} disabled={busy}>Return to draft</button>
+          {o.state === "overdue" && <button className="btn btn-sm" onClick={() => void runScheduleAction(o)} disabled={busy}>Send now</button>}
+        </>}
+        {o.state === "overdue" && <p>Scheduled time missed. Confirm sending or reschedule on the sending computer.</p>}
+      </>}
       <small>{o.state === "undo_pending" ? (o.deadline > clock ? `Undo available · ${Math.ceil((o.deadline - clock) / 1000)}s` : "Waiting for connection") : o.state}</small>
       {o.error && <p>{o.error}</p>}
-      {["undo_pending", "ready"].includes(o.state) && <button className="btn btn-sm" onClick={() => onUndo(o.id)}>Undo Send</button>}
-      {o.state === "failed" && <button className="btn btn-sm" disabled={busy} onClick={() => onRestore(o.id)}>Restore Draft</button>}
-      {o.state === "uncertain" && <button className="btn btn-sm" disabled={busy} onClick={() => onReconcile(o.id)}>Check Sent Mail</button>}
+      {(!o.schedule || o.schedule.canManage) && ["undo_pending", "ready"].includes(o.state) && <button className="btn btn-sm" onClick={() => onUndo(o.id)}>Undo Send</button>}
+      {(!o.schedule || o.schedule.canManage) && o.state === "failed" && <button className="btn btn-sm" disabled={busy} onClick={() => onRestore(o.id)}>Restore Draft</button>}
+      {(!o.schedule || o.schedule.canManage) && o.state === "uncertain" && <button className="btn btn-sm" disabled={busy} onClick={() => onReconcile(o.id)}>Check Sent Mail</button>}
     </article>
     );
-  })}</>;
+  })}{summaries.filter((s) => s.state !== "canceled").map((s) => <article className="outbox-row" key={`${s.ownerInstallationId}:${s.operationId}`}>
+    <strong>{s.subject || "(no subject)"}</strong><span>From {s.account}</span>
+    <small>{formatScheduledTime(s.scheduledAt,s.timeZone)} · Sends from {s.ownerName ?? s.ownerNameAtCreation}</small>
+    {s.timeZone !== Intl.DateTimeFormat().resolvedOptions().timeZone && <small>On this computer: {new Date(s.scheduledAt).toLocaleString()}</small>}
+    <p>{s.state === "scheduled" && s.scheduledAt <= clock ? `Scheduled time passed; awaiting an update from ${s.ownerName ?? s.ownerNameAtCreation}` : `Last reported status: ${s.state}`}</p>
+    <small>Report changed {new Date(s.statusChangedAt).toLocaleString()}{s.lastContactAt ? ` · Last contact ${new Date(s.lastContactAt).toLocaleString()}` : ""}</small>
+    <span>Manage on {s.ownerName ?? s.ownerNameAtCreation}</span>
+  </article>)}</>;
 }

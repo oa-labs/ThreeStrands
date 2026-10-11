@@ -5941,7 +5941,7 @@ dependencies = [
 
 [[package]]
 name = "threestrands"
-version = "0.97.2"
+version = "0.98.1"
 dependencies = [
  "argon2",
  "async-imap",
@@ -6046,6 +6046,7 @@ dependencies = [
 name = "threestrands-sync-protocol"
 version = "0.1.0"
 dependencies = [
+ "chrono-tz",
  "serde",
  "serde_json",
 ]

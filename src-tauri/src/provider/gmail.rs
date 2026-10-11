@@ -1365,6 +1365,7 @@ impl MailSend for GmailClient {
 impl MailProvider for GmailClient {
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
+                    send_supported: true,
             server_search: true,
             // Gmail returns conversation ids, so threading is not computed
             // locally.

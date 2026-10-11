@@ -108,6 +108,8 @@ pub struct OutboxItem {
     /// delivered sent message. Without this, a thread archived optimistically
     /// at queue time reappears in the inbox once the delayed send lands.
     pub archive_on_send: bool,
+    #[serde(default)]
+    pub schedule: Option<crate::scheduled_send::Schedule>,
 }
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
@@ -115,6 +117,12 @@ pub enum Request {
     Identity,
     ListDrafts,
     ListOutbox,
+    ListScheduledSummaries,
+    SchedulingInfo,
+    ScheduleChoices { local_time: String, time_zone: String },
+    Schedule { id: String, revision: i64, selection: crate::scheduled_send::Selection },
+    Reschedule { id: String, revision: i64, selection: crate::scheduled_send::Selection },
+    SendScheduledNow { id: String, revision: i64 },
     Create {
         mode: String,
         source_id: Option<String>,
@@ -577,7 +585,7 @@ impl Database {
         let c = self.connection()?;
         let mut q = c
             .prepare(
-                "SELECT id,payload,state,deadline,error,provider_id,archive_on_send FROM outbox_messages ORDER BY rowid DESC",
+                "SELECT id,payload,state,deadline,error,provider_id,archive_on_send,schedule_json FROM outbox_messages ORDER BY rowid DESC",
             )
             .map_err(error)?;
         let rows = q
@@ -590,11 +598,12 @@ impl Database {
                     r.get::<_, Option<String>>(4)?,
                     r.get::<_, Option<String>>(5)?,
                     r.get::<_, bool>(6)?,
+                    r.get::<_, Option<String>>(7)?,
                 ))
             })
             .map_err(error)?;
         rows.map(|r| {
-            let (id, payload, state, deadline, error, provider_id, archive_on_send) =
+            let (id, payload, state, deadline, error, provider_id, archive_on_send, schedule_json) =
                 r.map_err(error)?;
             Ok(OutboxItem {
                 id,
@@ -604,6 +613,7 @@ impl Database {
                 error,
                 provider_id,
                 archive_on_send,
+                schedule: schedule_json.map(|s|serde_json::from_str(&s)).transpose().map_err(crate::correspondence::error)?,
             })
         })
         .collect()
@@ -629,15 +639,8 @@ impl Database {
     /// on `state='uncertain'` makes this a no-op if the row has since moved
     /// on. See `docs/imap-design.md` ("Sending").
     pub fn mark_unverifiable(&self, id: &str) -> Result<(), String> {
-        self.connection()?
-            .execute(
-                "UPDATE outbox_messages SET state='unverifiable', \
-                 error='This message may have been sent, but delivery could not be confirmed. \
-                 Confirm with the recipient before sending it again.' \
-                 WHERE id=?1 AND state='uncertain'",
-                [id],
-            )
-            .map_err(error)?;
+        let owner=self.outbox()?.into_iter().find(|o|o.id==id).and_then(|o|o.schedule).map(|s|s.report.owner_installation_id).unwrap_or_default();
+        self.change_outbox("UPDATE outbox_messages SET state='unverifiable', error='This message may have been sent, but delivery could not be confirmed. Confirm with the recipient before sending it again.' WHERE id=?1 AND state='uncertain'",[id],id,&owner,now())?;
         Ok(())
     }
     pub fn queue(
@@ -680,6 +683,7 @@ impl Database {
             error: None,
             provider_id: None,
             archive_on_send,
+            schedule: None,
         };
         let mut c = self.connection()?;
         let tx = c.transaction().map_err(error)?;
@@ -705,7 +709,7 @@ impl Database {
         let allowed = if recover {
             item.state == "failed"
         } else {
-            item.state == "undo_pending" || item.state == "ready"
+            ["undo_pending", "ready", "scheduled", "overdue"].contains(&item.state.as_str())
         };
         if !allowed {
             return Err(
@@ -731,6 +735,7 @@ impl Database {
             params![d.id, d.revision, json(&d)?],
         )
         .map_err(error)?;
+        if let Some(schedule) = &item.schedule { crate::scheduled_send::record(&tx,id,&schedule.report.owner_installation_id,now()).map_err(error)?; }
         tx.commit().map_err(error)?;
         Ok(d)
     }
@@ -747,13 +752,20 @@ impl Database {
     }
     /// Pauses undo-pending/ready outbox items for one account, so removing a
     /// connected account never pauses another account's in-flight sends.
+    #[cfg(test)]
     pub fn pause_ready_sends_for(&self, account: &str) -> Result<(), String> {
-        self.connection()?.execute("UPDATE outbox_messages SET state='failed',error='Account disconnected. Reconnect and restore this draft to send.' WHERE account=?1 AND state IN ('undo_pending','ready')",[account]).map_err(error)?;
+        self.pause_ready_sends_for_owned(account,"")
+    }
+    pub fn pause_ready_sends_for_owned(&self, account: &str, owner: &str) -> Result<(), String> {
+        let items=self.outbox()?;
+        for item in items.into_iter().filter(|o|o.draft.account==account && ["undo_pending","ready","scheduled","overdue"].contains(&o.state.as_str())) {
+            self.change_outbox("UPDATE outbox_messages SET state='failed',error='Account disconnected. Reconnect and restore this draft to send.' WHERE id=?1 AND state IN ('undo_pending','ready','scheduled','overdue')",[&item.id],&item.id,owner,now())?;
+        }
         Ok(())
     }
 }
 
-fn build_mime(
+pub(crate) fn build_mime(
     d: &Draft,
     sender_name: Option<&str>,
     id: &str,
@@ -839,6 +851,7 @@ fn build_mime(
 
 #[derive(Clone)]
 pub struct Correspondence {
+    pub sending_identity: Arc<crate::scheduled_send::SendingIdentity>,
     pub database: Arc<Database>,
     /// Every connected account, shared with `AppState` in `lib.rs` (the same
     /// `Arc`, so add/remove/reconnect there is immediately visible here).
@@ -851,6 +864,27 @@ pub struct Correspondence {
     pub edits: Arc<tokio::sync::Mutex<()>>,
 }
 impl Correspondence {
+    pub fn resume_schedules(&self) -> Result<(),String> {
+        let owner=self.schedule_owner(false).unwrap_or_default();
+        self.database.overdue_schedules_owned(now(),true,&owner)
+    }
+    pub fn pause_account_schedules(&self,account:&str) -> Result<(),String> {
+        let owner=self.schedule_owner(false).unwrap_or_default();
+        self.database.pause_ready_sends_for_owned(account,&owner)
+    }
+    fn schedule_owner(&self, create: bool) -> Result<String,String> {
+        let has_schedules = self.database.outbox()?.iter().any(|o|o.schedule.is_some());
+        if !create && !has_schedules { return Err("No scheduled messages".into()); }
+        (self.sending_identity)(create && !has_schedules)
+    }
+    fn authorize_schedule(&self, id: &str) -> Result<String,String> {
+        let item=self.database.outbox()?.into_iter().find(|o|o.id==id).ok_or("Outbox item not found")?;
+        if let Some(schedule)=item.schedule {
+            let owner=self.schedule_owner(false)?;
+            if schedule.report.owner_installation_id != owner { return Err("This message belongs to another sending computer".into()); }
+            Ok(owner)
+        } else { Ok(String::new()) }
+    }
     async fn auth_for(&self, account: &str) -> Option<AccountAuth> {
         self.accounts
             .lock()
@@ -920,7 +954,45 @@ impl Correspondence {
                 Ok(serde_json::to_value(identity?).map_err(error)?)
             }
             ListDrafts => Ok(serde_json::to_value(self.database.drafts()?).map_err(error)?),
-            ListOutbox => Ok(serde_json::to_value(self.database.outbox()?).map_err(error)?),
+            ListOutbox => {
+                let owner=self.schedule_owner(false).ok();
+                if let Some(owner)=&owner { self.database.refresh_schedule_reports(owner,now())?; }
+                let mut items=self.database.outbox()?;
+                for item in &mut items {
+                    if let Some(schedule)=&mut item.schedule {
+                        schedule.can_manage=owner.as_deref()==Some(&schedule.report.owner_installation_id);
+                        if !schedule.can_manage { schedule.report.blocked_reason=Some("owner_unavailable".into()); }
+                        schedule.visibility=self.database.schedule_visibility(schedule)?;
+                    }
+                }
+                Ok(serde_json::to_value(items).map_err(error)?)
+            }
+            ListScheduledSummaries => Ok(serde_json::to_value(self.database.scheduled_summaries()?).map_err(error)?),
+            SchedulingInfo => {
+                let label=self.database.device_roster().map_err(error)?.into_iter().find(|d|d.is_self).and_then(|d|d.label).unwrap_or_else(||gethostname::gethostname().to_string_lossy().chars().take(60).collect());
+                Ok(serde_json::json!({"deviceName":label,"sharing":self.database.cross_device_sync_enrolled().map_err(error)?}))
+            }
+            ScheduleChoices {local_time,time_zone} => Ok(serde_json::to_value(crate::scheduled_send::choices(&local_time,&time_zone)?).map_err(error)?),
+            Schedule {id,revision,selection} => {
+                if let Some(item)=self.database.outbox()?.into_iter().find(|o|o.draft.id==id && o.draft.revision==revision) {
+                    self.authorize_schedule(&item.id)?;
+                    return Ok(serde_json::to_value(item).map_err(error)?);
+                }
+                let draft=self.database.draft(&id)?;
+                if !self.provider_for(&draft.account).await?.capabilities().send_supported { return Err("Scheduled sending is not supported for this account yet".into()); }
+                let owner=self.schedule_owner(true)?;
+                Ok(serde_json::to_value(self.database.schedule_draft(&id,revision,&selection,&owner,&self.root,now())?).map_err(error)?)
+            }
+            Reschedule {id,revision,selection} => {
+                let owner=self.authorize_schedule(&id)?;
+                self.database.manage_schedule(&id,revision,Some(&selection),false,&owner,now())?;
+                Ok(serde_json::Value::Null)
+            }
+            SendScheduledNow {id,revision} => {
+                let owner=self.authorize_schedule(&id)?;
+                self.database.manage_schedule(&id,revision,None,true,&owner,now())?;
+                Ok(serde_json::Value::Null)
+            }
             Create {
                 mode,
                 source_id,
@@ -989,9 +1061,11 @@ impl Correspondence {
             )?)
             .map_err(error)?),
             Cancel { id } => {
+                self.authorize_schedule(&id)?;
                 Ok(serde_json::to_value(self.database.cancel_send(&id, false)?).map_err(error)?)
             }
             Recover { id } => {
+                self.authorize_schedule(&id)?;
                 Ok(serde_json::to_value(self.database.cancel_send(&id, true)?).map_err(error)?)
             }
             Reconcile { id } => {
@@ -1227,6 +1301,7 @@ impl Correspondence {
         if item.state != "uncertain" {
             return Ok(());
         }
+        self.authorize_schedule(id)?;
         let provider = self.provider_for(&item.draft.account).await?;
         self.reconcile_with_provider(&item, provider.as_ref()).await
     }
@@ -1245,7 +1320,7 @@ impl Correspondence {
             .await
             .map_err(error)?
         {
-            self.database.connection()?.execute("UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2 AND state='uncertain'",params![message.provider_message_id,id]).map_err(error)?;
+            self.database.change_outbox("UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2 AND state='uncertain'",params![message.provider_message_id,id],id,&self.authorize_schedule(id)?,now())?;
             if let Some(thread_id) = message.thread_id.as_deref() {
                 if self.database.archive_on_send(&item.id)? {
                     let _ = provider
@@ -1276,10 +1351,13 @@ impl Correspondence {
     }
     pub async fn tick(&self) -> Result<(), String> {
         let _guard = self.gate.lock().await;
+        let owner=self.schedule_owner(false).ok();
+        self.database.overdue_schedules_owned(now(),false,owner.as_deref().unwrap_or(""))?;
+        if let Some(owner)=&owner { self.database.refresh_schedule_reports(owner,now())?; }
         let items = self.database.outbox()?;
         if !items
             .iter()
-            .any(|o| ["undo_pending", "ready", "uncertain"].contains(&o.state.as_str()))
+            .any(|o| ["undo_pending", "ready", "scheduled", "uncertain"].contains(&o.state.as_str()))
         {
             return Ok(());
         }
@@ -1288,6 +1366,7 @@ impl Correspondence {
         // account's queued sends.
         let mut by_account: HashMap<String, Vec<OutboxItem>> = HashMap::new();
         for item in items {
+            if !["scheduled","undo_pending","ready","uncertain"].contains(&item.state.as_str()) || item.deadline>now() {continue;}
             by_account
                 .entry(item.draft.account.clone())
                 .or_default()
@@ -1295,12 +1374,15 @@ impl Correspondence {
         }
         for (account, items) in by_account {
             let Ok(provider) = self.provider_for(&account).await else {
+                for item in &items { if item.schedule.is_some() {self.database.block_schedule(&item.id,owner.as_deref().unwrap_or(""),Some("account_disconnected"),now())?;} }
                 continue;
             };
             let Ok(identity) = provider.sender_identity().await else {
+                for item in &items { if item.schedule.is_some() {self.database.block_schedule(&item.id,owner.as_deref().unwrap_or(""),Some("authorization"),now())?;} }
                 continue;
             };
-            for item in items {
+            for mut item in items {
+                if item.schedule.as_ref().is_some_and(|s|Some(s.report.owner_installation_id.as_str())!=owner.as_deref()) { continue; }
                 if item.draft.account != identity {
                     self.database.connection()?.execute("UPDATE outbox_messages SET error='Paused: reconnect the original sender account to continue.' WHERE id=?1 AND state IN ('undo_pending','ready')", [&item.id]).map_err(error)?;
                     continue;
@@ -1318,13 +1400,21 @@ impl Correspondence {
                     }
                     continue;
                 }
-                if !["undo_pending", "ready"].contains(&item.state.as_str())
+                if !["undo_pending", "ready", "scheduled"].contains(&item.state.as_str())
                     || item.deadline > now()
                 {
                     continue;
                 }
                 // Obtain authorization before claiming delivery; transport errors after the claim are uncertain.
-                let permit = provider.prepare_delivery().await.map_err(error)?;
+                let permit = match provider.prepare_delivery().await {
+                    Ok(permit)=>permit,
+                    Err(_) if item.schedule.is_some()=> {self.database.block_schedule(&item.id,owner.as_deref().unwrap_or(""),Some("provider_unavailable"),now())?; continue;},
+                    Err(e)=>return Err(error(e)),
+                };
+                if item.schedule.is_some() {
+                    self.database.block_schedule(&item.id,owner.as_deref().unwrap_or(""),None,now())?;
+                    item=self.database.outbox()?.into_iter().find(|o|o.id==item.id).ok_or("Outbox item missing")?;
+                }
                 let sent = self
                     .dispatch_due(&item, now(), |raw, thread| async move {
                         permit.send_once(&raw, thread.as_deref()).await
@@ -1377,27 +1467,26 @@ impl Correspondence {
             )
             .map_err(error)?
         };
-        let claimed=self.database.connection()?.execute("UPDATE outbox_messages SET state='sending',attempts=attempts+1,last_attempt_at=?2,error=NULL WHERE id=?1 AND state IN ('undo_pending','ready') AND deadline<=?2",params![item.id,at]).map_err(error)?;
+        let owner=if item.schedule.is_some() { self.authorize_schedule(&item.id)? } else {String::new()};
+        let claimed=self.database.change_outbox("UPDATE outbox_messages SET state='sending',attempts=attempts+1,last_attempt_at=?2,error=NULL WHERE id=?1 AND state IN ('undo_pending','ready','scheduled') AND deadline<=?2 AND (state!='scheduled' OR deadline>=?3) AND (schedule_json IS NULL OR (json_extract(schedule_json,'$.report.reportRevision')=?4 AND json_extract(schedule_json,'$.report.ownerInstallationId')=?5))",params![item.id,at,at.saturating_sub(crate::scheduled_send::DISPATCH_GRACE_MS),item.schedule.as_ref().map(|s|s.report.report_revision),owner],&item.id,&owner,at)?;
         if claimed != 1 {
             return Ok(None);
         }
         match deliver(raw, item.draft.thread_id.clone()).await {
             Ok(sent) => {
-                self.database.connection()?.execute("UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2",params![sent.provider_message_id,item.id]).map_err(error)?;
+                self.database.change_outbox("UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2",params![sent.provider_message_id,item.id],&item.id,&owner,at)?;
                 Ok(Some(sent))
             }
             Err((definite, message)) => {
                 self.database
-                    .connection()?
-                    .execute(
+                    .change_outbox(
                         "UPDATE outbox_messages SET state=?1,error=?2 WHERE id=?3",
                         params![
                             if definite { "failed" } else { "uncertain" },
                             message,
                             item.id
-                        ],
-                    )
-                    .map_err(error)?;
+                        ], &item.id,&owner,at,
+                    )?;
                 Ok(None)
             }
         }
@@ -1758,6 +1847,7 @@ mod tests {
         impl MailProvider for ReconcileProvider {
             fn capabilities(&self) -> ProviderCapabilities {
                 ProviderCapabilities {
+                    send_supported: true,
                     server_search: false,
                     provided_threads: false,
                     label_model: LabelModel::GmailLabels,
@@ -2227,6 +2317,7 @@ mod tests {
     }
     fn service() -> Correspondence {
         Correspondence {
+            sending_identity: Arc::new(|_| Ok("00000000-0000-4000-8000-000000000001".into())),
             database: Arc::new(database()),
             accounts: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             root: PathBuf::from("/unused"),
@@ -2415,4 +2506,79 @@ mod tests {
         }
         std::fs::remove_dir_all(root).unwrap();
     }
+    fn scheduled(service: &Correspondence) -> OutboxItem {
+        let d=saved(&service.database);
+        service.database.schedule_draft(&d.id,d.revision,&crate::scheduled_send::Selection {local_time:"2030-01-01T09:00".into(),time_zone:"America/New_York".into(),offset_seconds:None},"00000000-0000-4000-8000-000000000001",&service.root,1_800_000_000_000).unwrap()
+    }
+
+    #[tokio::test]
+    async fn scheduled_dispatch_boundaries_and_two_installations_never_duplicate() {
+        use std::sync::atomic::{AtomicUsize,Ordering};
+        for delta in [-1,0,60_000,60_001] {
+            let owner=service(); let item=scheduled(&owner);
+            let mut peer=owner.clone();
+            peer.sending_identity=Arc::new(|_|Ok("00000000-0000-4000-8000-000000000002".into()));
+            let calls=AtomicUsize::new(0);
+            let send=|_,_|async {calls.fetch_add(1,Ordering::SeqCst);Ok(DeliveryReceipt {provider_message_id:"sent".into(),thread_id:None})};
+            assert!(peer.dispatch_due(&item,item.deadline+delta,&send).await.is_err());
+            assert_eq!(calls.load(Ordering::SeqCst),0);
+            let result=owner.dispatch_due(&item,item.deadline+delta,&send).await.unwrap();
+            let due=(0..=60_000).contains(&delta);
+            assert_eq!(result.is_some(),due);
+            owner.dispatch_due(&item,item.deadline+delta,&send).await.unwrap();
+            assert_eq!(calls.load(Ordering::SeqCst),usize::from(due));
+            if due {assert_eq!(owner.database.outbox().unwrap()[0].schedule.as_ref().unwrap().report.state,"sent");}
+        }
+    }
+
+    #[tokio::test]
+    async fn scheduled_reschedule_cancel_and_missing_identity_block_stale_delivery() {
+        let mut owner=service();let item=scheduled(&owner);
+        let revision=item.schedule.as_ref().unwrap().report.report_revision;
+        let selection=crate::scheduled_send::Selection {local_time:"2030-01-02T09:00".into(),time_zone:"America/New_York".into(),offset_seconds:None};
+        assert!(owner.database.manage_schedule(&item.id,revision,Some(&selection),false,"wrong-owner",item.deadline-1).is_err());
+        owner.database.manage_schedule(&item.id,revision,Some(&selection),false,"00000000-0000-4000-8000-000000000001",item.deadline-1).unwrap();
+        assert!(owner.database.manage_schedule(&item.id,revision,Some(&selection),false,"00000000-0000-4000-8000-000000000001",item.deadline-1).is_err());
+        assert!(owner.dispatch_due(&item,item.deadline,|_,_|async {panic!("stale schedule sent")}).await.unwrap().is_none());
+        owner.sending_identity=Arc::new(|_|Err("missing identity".into()));
+        assert!(owner.request(Request::Cancel {id:item.id.clone()}).await.is_err());
+        let current=owner.database.outbox().unwrap().remove(0);
+        assert!(owner.dispatch_due(&current,current.deadline,|_,_|async {panic!("restored copy sent")}).await.is_err());
+        owner.sending_identity=Arc::new(|_|Ok("00000000-0000-4000-8000-000000000001".into()));
+        owner.request(Request::Cancel {id:item.id.clone()}).await.unwrap();
+        assert_eq!(owner.database.drafts().unwrap()[0].body,item.draft.body);
+        assert!(owner.dispatch_due(&current,current.deadline,|_,_|async {panic!("canceled schedule sent")}).await.unwrap().is_none());
+    }
+
+    #[test]
+    fn scheduled_recovery_and_overdue_policy_preserve_ordinary_undo() {
+        let owner=service();let item=scheduled(&owner);
+        assert!(!owner.database.pending_undo().unwrap());
+        owner.database.overdue_schedules_owned(item.deadline+60_000,false,"00000000-0000-4000-8000-000000000001").unwrap();
+        assert_eq!(owner.database.outbox().unwrap()[0].state,"scheduled");
+        owner.database.overdue_schedules_owned(item.deadline+60_001,false,"00000000-0000-4000-8000-000000000001").unwrap();
+        let late=owner.database.outbox().unwrap().remove(0);
+        assert_eq!(late.state,"overdue");assert_eq!(late.schedule.as_ref().unwrap().report.state,"overdue");
+        owner.database.manage_schedule(&item.id,late.schedule.unwrap().report.report_revision,None,true,"00000000-0000-4000-8000-000000000001",item.deadline+60_001).unwrap();
+        let now_send=owner.database.outbox().unwrap().remove(0);assert_eq!(now_send.state,"undo_pending");assert_eq!(now_send.deadline,item.deadline+70_001);
+        let d=saved(&owner.database);let immediate=owner.database.queue(&d.id,d.revision,false,&owner.root).unwrap();
+        crate::schema::migrate(&mut owner.database.connection().unwrap()).unwrap();
+        let items=owner.database.outbox().unwrap();
+        assert!(items.iter().find(|o|o.id==immediate.id).unwrap().deadline>now());
+        assert_eq!(items.iter().find(|o|o.id==item.id).unwrap().schedule.as_ref().unwrap().report.scheduled_at,item.deadline);
+    }
+
+    #[tokio::test]
+    async fn scheduled_send_uncertainty_is_persisted_without_retry_and_report_failure_rolls_back() {
+        let owner=service();let item=scheduled(&owner);
+        owner.database.connection().unwrap().execute_batch("CREATE TRIGGER fail_report BEFORE UPDATE OF schedule_json ON outbox_messages BEGIN SELECT RAISE(FAIL,'report storage failed'); END;").unwrap();
+        assert!(owner.dispatch_due(&item,item.deadline,|_,_|async {panic!("delivery before durable claim")}).await.is_err());
+        assert_eq!(owner.database.outbox().unwrap()[0].state,"scheduled");
+        owner.database.connection().unwrap().execute_batch("DROP TRIGGER fail_report;").unwrap();
+        owner.dispatch_due(&item,item.deadline,|_,_|async {Err((false,"lost acknowledgement".into()))}).await.unwrap();
+        let uncertain=owner.database.outbox().unwrap().remove(0);
+        assert_eq!(uncertain.state,"uncertain");assert_eq!(uncertain.schedule.as_ref().unwrap().report.state,"uncertain");
+        owner.dispatch_due(&uncertain,item.deadline+1,|_,_|async {panic!("uncertain resend")}).await.unwrap();
+    }
+
 }

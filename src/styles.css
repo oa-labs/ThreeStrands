@@ -2490,7 +2490,7 @@ form.split-inbox-add select {
 .account-card-heading { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .account-card-heading strong { overflow: hidden; font-size: var(--text-body); text-overflow: ellipsis; white-space: nowrap; }
 .account-card-email { overflow: hidden; color: var(--muted); font-size: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
-.account-provider-badge { flex-shrink: 0; align-self: flex-start; padding: var(--space-0-5) var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-pill); color: var(--muted); background: var(--hover); font-size: var(--text-meta); font-weight: var(--weight-semibold); }
+.account-provider-badge { align-self: flex-start; }
 .device-roster-id { display: flex; min-width: 0; gap: var(--space-1); color: var(--muted); font-size: var(--text-meta); }
 .device-roster-id code { min-width: 0; overflow-wrap: anywhere; user-select: all; }
 /* The controls row is identical on every card (status-dependent actions
@@ -2501,8 +2501,8 @@ form.split-inbox-add select {
 .account-sender-name input { width: min(220px, 100%); min-width: 0; font-size: var(--text-body); }
 .account-card-controls .account-sender-name { flex: 1 1 240px; }
 .account-card-controls .account-sender-name input { flex: 1 1 auto; width: auto; max-width: 280px; }
-.account-status { display: inline-flex; flex-shrink: 0; align-items: center; gap: var(--space-1); padding: var(--space-0-5) var(--space-2); border-radius: var(--radius-pill); color: var(--muted); background: var(--hover); font-size: var(--text-meta); }
-.account-status.connected { color: var(--secondary); background: color-mix(in srgb, var(--secondary) 12%, transparent); }
+.account-status, .account-provider-badge { display: inline-flex; flex-shrink: 0; align-items: center; gap: var(--space-1); padding: var(--space-0-5) var(--space-2); border: 0; border-radius: var(--radius-pill); color: var(--muted); background: var(--hover); font-size: var(--text-meta); font-weight: var(--weight-regular); }
+.account-status.connected, .account-provider-badge { color: var(--secondary); background: color-mix(in srgb, var(--secondary) 12%, transparent); }
 .account-status.needs_reauth { color: var(--error); background: color-mix(in srgb, var(--error) 12%, transparent); }
 .accounts-footnote { width: 100%; margin: var(--space-0-5) 0 0; color: var(--muted); font-size: var(--text-meta); line-height: var(--leading-normal); }
 .accounts-list-actions { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-1-5); margin-left: auto; }
@@ -3032,3 +3032,9 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .contact-management-dialog li .btn { margin-left: var(--space-2); }
 .contacts-header-actions { flex-wrap: wrap; }
 .contacts-bulk-bar { flex-wrap: wrap; }
+
+.schedule-send-form { display: grid; gap: var(--space-3); padding: var(--space-4) var(--dialog-inset); overflow-y: auto; }
+.schedule-send-form label { display: grid; gap: var(--space-2); }
+.schedule-send-form input, .schedule-send-form select { width: 100%; min-width: 0; }
+.schedule-send-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
+.composer footer { flex-wrap: wrap; }
