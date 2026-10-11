@@ -245,6 +245,157 @@ fn html_stored_as_plain_text_is_read_and_previewed_as_text() {
 }
 
 #[test]
+fn inbox_previews_and_cached_text_omit_html_styles_after_ingestion_and_upgrade() {
+    use crate::mime::{normalize, MimeBody, MimePart, RawMessage};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+
+    let database = database();
+    let fixtures = [
+        ("document", "<html><head data-layout=email><style type=text/css>@media screen and (max-width: 767px) { table tbody { display: block; } }</style></head><body><table><tr><td>Your appointment is reserved.</td></tr></table></body></html>"),
+        ("fragment", "<div><style media=screen data-note='a > b'>.card > p { color: red; }</style><p>Your appointment is reserved.</p><script type=text/javascript>alert('hidden')</script></div>"),
+    ];
+    for (id, html) in fixtures {
+        let raw = RawMessage {
+            id: id.into(),
+            thread_id: id.into(),
+            internal_date: "0".into(),
+            label_ids: vec!["INBOX".into()],
+            snippet: "Provider preview".into(),
+            payload: MimePart {
+                mime_type: "text/html".into(),
+                body: MimeBody {
+                    data: Some(URL_SAFE_NO_PAD.encode(html)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        };
+        let normalized = normalize(&raw).unwrap();
+        database
+            .upsert_thread("you@example.com", &[normalized])
+            .unwrap();
+        let thread_id = local_thread_id("you@example.com", id);
+        assert_eq!(
+            list_snippet(&database, &thread_id),
+            "Your appointment is reserved."
+        );
+
+        // Simulate a previous release's cached, already flattened CSS text.
+        // Exercise both legacy uncompressed and current compressed storage.
+        let leaked =
+            "@media screen { table tbody { display: block; } } Your appointment is reserved.";
+        {
+            let connection = database.connection().unwrap();
+            if id == "document" {
+                connection
+                    .execute(
+                        "UPDATE messages SET body_text = ?1, body_text_z = NULL WHERE id = ?2",
+                        params![leaked, id],
+                    )
+                    .unwrap();
+            } else {
+                connection
+                    .execute(
+                        "UPDATE messages SET body_text = '', body_text_z = ?1 WHERE id = ?2",
+                        params![crate::db::messages::compress_body(leaked), id],
+                    )
+                    .unwrap();
+            }
+            connection
+                .execute(
+                    "UPDATE threads SET snippet = ?1 WHERE id = ?2",
+                    params![leaked, thread_id],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO pending_search_reindex(thread_id) VALUES (?1)",
+                    [&thread_id],
+                )
+                .unwrap();
+        }
+        assert_eq!(database.reindex_next_search_batch(1).unwrap(), 1);
+        assert_eq!(database.reindex_next_search_batch(1).unwrap(), 0);
+        assert_eq!(
+            list_snippet(&database, &thread_id),
+            "Your appointment is reserved."
+        );
+        assert_eq!(
+            search_column(&database, "snippet", &thread_id),
+            "Your appointment is reserved."
+        );
+        assert_eq!(
+            search_body(&database, &thread_id).trim(),
+            "Your appointment is reserved."
+        );
+        let detail = database.get_thread(&thread_id).unwrap();
+        assert_eq!(
+            detail.messages[0].body_text,
+            "Your appointment is reserved."
+        );
+        assert_eq!(detail.messages[0].body_html, html);
+    }
+    assert!(search_ids(&database, "media").is_empty());
+    assert!(search_ids(&database, "hidden").is_empty());
+    assert_eq!(search_ids(&database, "appointment").len(), 2);
+}
+
+#[test]
+fn cached_text_repair_keeps_the_senders_plain_text_alternative() {
+    use crate::mime::{normalize, MimeBody, MimePart, RawMessage};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+
+    let plain = "Please use @media screen { p { color: red; } } in the stylesheet.";
+    let raw = RawMessage {
+        id: "plain-css".into(),
+        thread_id: "plain-css".into(),
+        internal_date: "0".into(),
+        label_ids: vec!["INBOX".into()],
+        snippet: String::new(),
+        payload: MimePart {
+            mime_type: "multipart/alternative".into(),
+            parts: [
+                ("text/plain", plain),
+                (
+                    "text/html",
+                    "<style type=text/css>p { color: red; }</style><p>Different HTML text</p>",
+                ),
+            ]
+            .into_iter()
+            .map(|(kind, body)| MimePart {
+                mime_type: kind.into(),
+                body: MimeBody {
+                    data: Some(URL_SAFE_NO_PAD.encode(body)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .collect(),
+            ..Default::default()
+        },
+    };
+    let database = database();
+    database
+        .upsert_thread("you@example.com", &[normalize(&raw).unwrap()])
+        .unwrap();
+    let thread_id = local_thread_id("you@example.com", "plain-css");
+    database
+        .connection()
+        .unwrap()
+        .execute(
+            "INSERT INTO pending_search_reindex(thread_id) VALUES (?1)",
+            [&thread_id],
+        )
+        .unwrap();
+    assert_eq!(database.reindex_next_search_batch(1).unwrap(), 1);
+    assert_eq!(list_snippet(&database, &thread_id), plain);
+    assert_eq!(
+        database.get_thread(&thread_id).unwrap().messages[0].body_text,
+        plain
+    );
+}
+
+#[test]
 fn chat_search_matches_any_word_and_skips_the_open_and_trashed_conversations() {
     let database = database();
     let words = |list: &[&str]| list.iter().map(|word| word.to_string()).collect::<Vec<_>>();

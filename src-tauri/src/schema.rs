@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 66;
+pub(crate) const LATEST_VERSION: i64 = 67;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1902,6 +1902,16 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         }
         tx.execute_batch("PRAGMA user_version=66;").map_err(error)?;
     }
+    if version < 67 {
+        // The old HTML text extractor leaked styles/scripts with attributes.
+        // Rebuild cached text from MIME metadata and refresh previews/search
+        // in the existing bounded background queue, without a network refetch.
+        tx.execute_batch(
+            "INSERT OR IGNORE INTO pending_search_reindex(thread_id) SELECT thread_id FROM thread_search;
+             PRAGMA user_version=67;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1918,6 +1928,50 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use rusqlite::Connection;
+
+    #[test]
+    fn v67_requeues_cached_previews_once_without_changing_existing_mail() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "DELETE FROM pending_search_reindex;
+             INSERT INTO thread_search(thread_id, subject, snippet, participants, body)
+             VALUES ('you@gmail.com:t1', 'Appointment', '@media screen', 'Sender', '@media screen');
+             PRAGMA user_version=66;",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let queued: Vec<String> = connection
+            .prepare("SELECT thread_id FROM pending_search_reindex")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(queued, vec!["you@gmail.com:t1".to_string()]);
+        let body: String = connection
+            .query_row(
+                "SELECT body FROM thread_search WHERE thread_id='you@gmail.com:t1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            body, "@media screen",
+            "repair runs later in bounded batches"
+        );
+        connection
+            .execute("DELETE FROM pending_search_reindex", [])
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM pending_search_reindex", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0, "completed repairs are not requeued on restart");
+    }
 
     #[test]
     fn v66_adds_optional_account_nicknames_and_preserves_account_identity() {

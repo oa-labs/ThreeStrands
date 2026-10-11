@@ -18,6 +18,7 @@ mod endpoint_origin;
 mod enrollment;
 mod error_text;
 mod http_client;
+mod html_plain_text;
 mod image_format;
 mod image_proxy;
 mod ipfs_transport;
@@ -4553,8 +4554,8 @@ fn spawn_storage_maintenance(database: Arc<Database>) {
             }
             tokio::time::sleep(BACKFILL_BATCH_PAUSE).await;
         }
-        // Same for search rows queued by schema v46, rewritten without
-        // quoted history the thread already contains.
+        // Same for queued search rows and inbox previews, repairing extracted
+        // HTML text and removing quoted history the thread already contains.
         loop {
             let backfill_db = database.clone();
             let reindexed =

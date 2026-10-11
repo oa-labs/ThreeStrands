@@ -1,9 +1,9 @@
 //! Full-text queries, preview encoding, and bounded search-index repair.
 
-use super::messages::resolve_body;
+use super::messages::{compress_body, resolve_body};
 use super::threads::THREAD_COLUMNS;
 use super::{decode_json, Database, DbResult};
-use crate::mime::readable_body_text;
+use crate::mime::{normalize, readable_body_text, RawMessage};
 use crate::models::{SearchThreadsRequest, Thread};
 use rusqlite::{params, OptionalExtension};
 
@@ -82,13 +82,15 @@ impl Database {
         })
     }
 
-    /// Rewrites a bounded batch of threads queued by schema v46 so their
+    /// Rewrites a bounded batch of threads queued by schema migrations so their
     /// search `body` drops quoted history repeated within the thread, and
     /// both the search `snippet` and the inbox preview (`threads.snippet`)
     /// show the latest message without its quote (see
     /// [`crate::quoted_history::searchable_thread_text`]). Returns the number
     /// of queued threads handled; call repeatedly until it returns 0. A queued
-    /// thread that no longer has a search row is simply dequeued.
+    /// thread that no longer has a search row is simply dequeued. Re-normalize
+    /// cached MIME payloads when available to repair HTML-derived text produced
+    /// by older extractors, while preserving genuine text/plain alternatives.
     pub fn reindex_next_search_batch(&self, batch_size: usize) -> DbResult<usize> {
         self.with_transaction(|transaction| {
             let queued: Vec<String> = transaction
@@ -104,19 +106,32 @@ impl Database {
                     )
                     .optional()?;
                 if let Some(rowid) = rowid {
-                    let bodies: Vec<String> = transaction
+                    let messages: Vec<(String, String, String)> = transaction
                         .prepare(
-                            "SELECT body_text, body_text_z FROM messages
-                             WHERE thread_id = ?1 ORDER BY sent_at, id",
+                            "SELECT m.id, m.body_text, m.body_text_z,
+                                    COALESCE(mm.payload, ''), mm.payload_z
+                             FROM messages m LEFT JOIN message_metadata mm ON mm.id = m.id
+                             WHERE m.thread_id = ?1 ORDER BY m.sent_at, m.id",
                         )?
                         .query_map([thread_id], |row| {
-                            Ok(readable_body_text(resolve_body(
-                                0,
-                                row.get(0)?,
-                                row.get(1)?,
-                            )?))
+                            let stored = resolve_body(1, row.get(1)?, row.get(2)?)?;
+                            let metadata = resolve_body(3, row.get(3)?, row.get(4)?)?;
+                            let corrected = serde_json::from_str::<RawMessage>(&metadata)
+                                .ok()
+                                .and_then(|raw| normalize(&raw).ok())
+                                .map(|message| message.body_text)
+                                .unwrap_or_else(|| readable_body_text(stored.clone()));
+                            Ok((row.get(0)?, stored, corrected))
                         })?
                         .collect::<Result<_, _>>()?;
+                    for (id, stored, corrected) in &messages {
+                        if stored != corrected {
+                            transaction.execute(
+                                "UPDATE messages SET body_text = '', body_text_z = ?1 WHERE id = ?2",
+                                params![compress_body(corrected), id],
+                            )?;
+                        }
+                    }
                     // The stored preview is still the provider's until this
                     // rewrite; it remains the fallback for a body without text.
                     let provider_snippet: String = transaction.query_row(
@@ -125,7 +140,7 @@ impl Database {
                         |row| row.get(0),
                     )?;
                     let text = crate::quoted_history::searchable_thread_text(
-                        bodies.iter().map(String::as_str),
+                        messages.iter().map(|(_, _, text)| text.as_str()),
                     );
                     transaction.execute(
                         "UPDATE thread_search SET body = ?1, snippet = ?2 WHERE rowid = ?3",

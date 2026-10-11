@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use mail_parser::decoders::html::html_to_text;
+use crate::html_plain_text::html_to_text;
 use mail_parser::MessageParser;
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -833,6 +833,53 @@ mod tests {
     }
 
     #[test]
+    fn html_body_text_omits_styles_with_attributes_in_documents_and_fragments() {
+        let fixtures = [
+            "<!doctype html><html><head data-layout=\"email\"><style type=\"text/css\">@media screen and (max-width: 767px) { table tbody { display: block; } }</style></head><body><table><tr><td>Your appointment is reserved.</td></tr></table></body></html>",
+            "<div><STYLE media=\"screen\" data-note=\"a > b\">.card > p { color: red; }</STYLE><p>Your appointment is reserved.</p><script type=\"text/javascript\">alert('hidden')</script></div>",
+        ];
+        for html in fixtures {
+            for mime_type in ["text/html", "text/plain"] {
+                let message = RawMessage {
+                    id: "m".into(),
+                    thread_id: "t".into(),
+                    label_ids: vec![],
+                    snippet: String::new(),
+                    internal_date: "0".into(),
+                    payload: part(mime_type, html),
+                };
+                let normalized = normalize(&message).unwrap();
+                assert_eq!(
+                    normalized.body_text.trim(),
+                    "Your appointment is reserved.",
+                    "{mime_type}: {html}"
+                );
+                if mime_type == "text/html" {
+                    assert_eq!(normalized.body_html, html, "sender HTML stays intact");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn extracted_html_text_never_contains_active_attributes_or_non_content_blocks() {
+        let html = concat!(
+            "<head data-note=\"a > b\"><title>Hidden title</title></head>",
+            "<style media=screen>.x:after { content: '</head><p>hidden css</p>'; }</style>",
+            "<script type=text/javascript>const x = '</head><p>hidden script</p>';</script>",
+            "<template data-id=x><template>Hidden nested template</template>Still hidden</template>",
+            "<!-- Hidden comment --><noscript class=fallback>Hidden fallback</noscript>",
+            "<img src=\"https://example.com/tracking.png\" onerror=\"alert('hidden handler')\">",
+            "<p onclick=\"alert('hidden click')\">Visible &amp; safe <b>text</b>.</p>",
+            "<pre>&lt;style&gt;p { color: red; }&lt;/style&gt;</pre>",
+        );
+        assert_eq!(
+            html_to_text(html),
+            "Visible & safe text.\n<style>p { color: red; }</style>",
+        );
+    }
+
+    #[test]
     fn reads_an_html_document_in_the_plain_part_as_html() {
         let document = "<html><head><meta http-equiv=\"Content-Type\" content=\"text/html\"><style>p { color: red; }</style></head><body><p>Hi Parents, we need help.</p></body></html>";
         let fragment = "\n<div dir=\"ltr\">Lunch at <b>noon</b>?<br>Thanks</div>";
@@ -859,6 +906,7 @@ mod tests {
             "<ann@example.com> wrote:\n> hi",
             "<p is a paragraph tag",
             "Use <div> for blocks.",
+            "@media screen and (max-width: 767px) { table { display: block; } }",
             "<pre-approved> list attached",
             "",
         ] {

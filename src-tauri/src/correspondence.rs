@@ -412,7 +412,7 @@ impl Database {
             let from = header(part, "From");
             d.subject = normalized.subject.clone();
             let quote = if normalized.body_text.trim().is_empty() {
-                mail_parser::decoders::html::html_to_text(&normalized.body_html)
+                crate::html_plain_text::html_to_text(&normalized.body_html)
             } else {
                 normalized.body_text.clone()
             };

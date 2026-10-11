@@ -5941,7 +5941,7 @@ dependencies = [
 
 [[package]]
 name = "threestrands"
-version = "0.102.0"
+version = "0.102.1"
 dependencies = [
  "argon2",
  "async-imap",
@@ -5958,6 +5958,7 @@ dependencies = [
  "fontdb",
  "futures",
  "gethostname",
+ "html5ever",
  "imagesize",
  "iroh-car",
  "jiff",

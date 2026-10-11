@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.102.0"
+version = "0.102.1"
 description = "A local-first, keyboard-driven email client"
 authors = ["OpenArc LLC"]
 license-file = "../LICENSE"
@@ -25,6 +25,8 @@ cid = { version = "0.11", default-features = false, features = ["std"] }
 fontdb = "0.24"
 imagesize = "0.15"
 gethostname = "1.1"
+# Inert HTML tokenization for email text extraction (also a transitive dependency).
+html5ever = "0.39"
 iroh-car = "0.5"
 jiff = "0.2"
 # The default `v1` feature keeps keyring 3's entry naming (macOS login
