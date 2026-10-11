@@ -329,21 +329,24 @@ impl ImapProvider {
         // per poll by `policy::schedule_visits`, NOT by a fixed prefix: every
         // synced SYSTEM-ROLE mailbox (Sent, Trash, Junk, Archive) is visited
         // every poll (bounded, cheap when idle via the cadence gate), then
-        // user/label folders LEAST-RECENTLY-VISITED first up to the remaining
+        // user/label folders LEAST-RECENTLY-ATTEMPTED first up to the remaining
         // FOLDER_ROUNDS_PER_POLL budget. Over MAX_SYNCED_MAILBOXES the set is
         // capped (system roles first, then by name) and the drop is LOGGED.
         let synced_non_inbox: Vec<plan::PlanEntry> =
             plan.synced().filter(|e| !e.is_inbox).cloned().collect();
 
         // Candidates for the cap + scheduler, carrying each mailbox's persisted
-        // visit clock, its last-covered epoch, and whether it plays a system
-        // role. The current coverage epoch drives the scheduler's "not yet
-        // covered this epoch first" ordering so an epoch completes across polls.
+        // attempt order, successful visit clock and coverage stamp. Attempts
+        // rotate even on failure; only successful visits count toward coverage.
         let current_epoch = self.store.complete_walks().map_err(db_err)? as i64;
         let mut candidates: Vec<policy::ScheduleCandidate> = Vec::new();
         for entry in &synced_non_inbox {
             candidates.push(policy::ScheduleCandidate {
                 mailbox: entry.mailbox.clone(),
+                last_attempt: self
+                    .store
+                    .mailbox_last_attempt(&entry.mailbox)
+                    .map_err(db_err)?,
                 last_visited_at: self.store.mailbox_last_visited_at(&entry.mailbox).map_err(db_err)?,
                 visited_in_epoch: self.store.mailbox_visited_in_epoch(&entry.mailbox).map_err(db_err)?,
                 is_system_role: entry.role.is_some(),
@@ -379,8 +382,9 @@ impl ImapProvider {
         // than one poll's budget can visit, so no single poll covers them all.
         // Each mailbox visited this poll stamped `visited_in_epoch` with the
         // current epoch (inside refresh_mailbox_with). After the poll, the
-        // epoch advances iff every currently-synced mailbox — INBOX plus every
-        // real `synced_now` plan entry — has been visited in the current epoch.
+        // epoch advances iff INBOX plus every allowed real plan entry has
+        // been successfully visited in the current epoch. Capped-out entries
+        // cannot hold coverage open because they are never scheduled.
         // Synthetic test candidates are NOT server-backed and are excluded.
         let budget = self
             .folder_rounds_per_poll_override
@@ -393,6 +397,9 @@ impl ImapProvider {
             .filter_map(|name| entry_by_name.get(name.as_str()).copied())
             .collect();
         for entry in scheduled_real {
+            self.store
+                .record_mailbox_attempt(&entry.mailbox)
+                .map_err(db_err)?;
             // Cadence gating decides whether a full sweep is needed. Only INBOX
             // may abort a poll: the engine ingests a poll's changes only after
             // the whole poll succeeds, so a folder that cannot be synced (its
@@ -419,15 +426,20 @@ impl ImapProvider {
         }
 
         // End-of-poll coverage check (Slice 5b-2 item 4). The full currently-
-        // synced set is INBOX plus every real `synced_now` plan entry (NOT just
-        // this poll's schedule, and NOT synthetic test candidates). The epoch
+        // synced set is INBOX plus every real entry allowed by the cap (NOT
+        // just this poll's schedule, and NOT synthetic test candidates). The epoch
         // advances only when every one has been visited in the current epoch;
         // on advance, emptied hot threads whose grace just expired are journaled
         // (same transaction) — bumping the generation only when something
         // actually expired. Visit recording never bumps the generation.
         let mut synced_all: Vec<String> = Vec::with_capacity(synced_non_inbox.len() + 1);
         synced_all.push(inbox_entry.mailbox.clone());
-        synced_all.extend(synced_non_inbox.iter().map(|e| e.mailbox.clone()));
+        synced_all.extend(
+            synced_non_inbox
+                .iter()
+                .filter(|e| allowed_set.contains(e.mailbox.as_str()))
+                .map(|e| e.mailbox.clone()),
+        );
         let (after_epoch, outstanding) = self
             .store
             .advance_coverage_epoch_if_complete(&synced_all)
@@ -604,9 +616,10 @@ impl ImapProvider {
     /// deletions, thread assignments, aliases, newly-hot threads, the journal,
     /// the mailbox cadence counters and the generation bump — is collected into
     /// one [`SyncRoundWrite`] and applied in a SINGLE transaction at the end
-    /// (`commit_sync_round`). A failure before that commit writes NOTHING
-    /// durable for THIS mailbox, so the next round redoes only its work — the
-    /// at-least-once contract, now per mailbox. Body-cache puts happen eagerly
+    /// (`commit_sync_round`). A failure before that commit changes no mail,
+    /// cadence counters or coverage for this mailbox. Attempt ordering is
+    /// recorded separately before network work so retries rotate fairly.
+    /// Body-cache puts happen eagerly
     /// during fetch because the cache is rebuildable and deduplicated by stable
     /// id. EXAMINE only, so sync never sets `\Seen`.
     pub(super) async fn refresh_mailbox_with(
@@ -4806,6 +4819,7 @@ mod tests {
                 .iter()
                 .map(|name| policy::ScheduleCandidate {
                     mailbox: name.clone(),
+                    last_attempt: 0,
                     last_visited_at: 0,
                     visited_in_epoch: visited_in_epoch[name],
                     is_system_role: false,
@@ -4832,6 +4846,7 @@ mod tests {
                 .iter()
                 .map(|name| policy::ScheduleCandidate {
                     mailbox: name.clone(),
+                    last_attempt: 0,
                     last_visited_at: 0,
                     visited_in_epoch: 0,
                     is_system_role: false,
@@ -5417,6 +5432,127 @@ mod tests {
             loads,
             "idle polls do not rebuild threader state"
         );
+    }
+
+    #[tokio::test]
+    async fn expired_threads_do_not_rejournal_on_idle_polls() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<review-gone@x>", "Gone", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+        sync_n(&provider, db.as_ref(), 1).await;
+        mailbox.lock().unwrap().inbox().messages.clear();
+        sync_n(&provider, db.as_ref(), 5).await;
+        assert!(db.list_all_mail(Some("me@example.com")).unwrap().is_empty());
+        let before = store.generation().unwrap();
+        sync_n(&provider, db.as_ref(), 3).await;
+        assert_eq!(
+            store.generation().unwrap(),
+            before,
+            "a deleted thread must not re-journal forever"
+        );
+    }
+
+    #[tokio::test]
+    async fn mailbox_cap_does_not_block_coverage_forever() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<review-cap@x>", "Cap", ""));
+        for i in 0..=policy::MAX_SYNCED_MAILBOXES {
+            mb.folder(&format!("Folder/{i:04}"), 10);
+        }
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (mut provider, store) = provider_with(mailbox.clone());
+        provider.folder_rounds_per_poll_override = Some(policy::MAX_SYNCED_MAILBOXES);
+        let db = store.database();
+        sync_n(&provider, db.as_ref(), 1).await;
+        mailbox.lock().unwrap().inbox().messages.clear();
+        sync_n(&provider, db.as_ref(), 5).await;
+        assert!(
+            db.list_all_mail(Some("me@example.com")).unwrap().is_empty(),
+            "capped-out folders must not make an actual expunge immortal; epoch={}",
+            store.complete_walks().unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_folders_do_not_starve_healthy_folders() {
+        let mut mb = FakeMailbox::new(100);
+        for i in 0..policy::FOLDER_ROUNDS_PER_POLL {
+            mb.folder(&format!("A-fails-{i:02}"), 10).examine_fails = true;
+        }
+        mb.add_to(
+            "Z-healthy",
+            10,
+            &["\\Seen"],
+            &message("<healthy1@x>", "Healthy", ""),
+        );
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        sync_n(&provider, store.database().as_ref(), 5).await;
+        assert_eq!(store.locations_in_mailbox("Z-healthy").unwrap().len(), 1);
+        assert_eq!(
+            store.complete_walks().unwrap(),
+            0,
+            "failed attempts do not claim coverage"
+        );
+        mailbox.lock().unwrap().add_to(
+            "Z-healthy",
+            10,
+            &["\\Seen"],
+            &message("<healthy2@x>", "More healthy mail", ""),
+        );
+        let provider = ImapProvider {
+            cache: BodyCache::new(store.clone()),
+            thread_state_loads: std::sync::atomic::AtomicUsize::new(0),
+            ..provider
+        };
+        sync_n(&provider, store.database().as_ref(), 3).await;
+        assert_eq!(
+            store.locations_in_mailbox("Z-healthy").unwrap().len(),
+            2,
+            "persisted attempt ordering keeps servicing healthy folders"
+        );
+        assert_eq!(store.complete_walks().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn expiry_journal_survives_restart_before_engine_consumption() {
+        let mut mb = FakeMailbox::new(100);
+        mb.add(&["\\Seen"], &message("<expiry-replay@x>", "Gone", ""));
+        let mailbox = Arc::new(Mutex::new(mb));
+        let (provider, store) = provider_with(mailbox.clone());
+        let db = store.database();
+        sync_n(&provider, db.as_ref(), 1).await;
+        let thread = store.thread_ids_in_mailbox("INBOX").unwrap().pop().unwrap();
+        mailbox.lock().unwrap().inbox().messages.clear();
+        sync_n(&provider, db.as_ref(), 1).await; // engine first observes emptiness
+        let cursor = SyncCursor::new(db.cursor("me@example.com").unwrap().unwrap());
+        // Commit expiry and its acknowledgment without letting the engine
+        // consume the journal or advance its cursor.
+        let mut pending = provider.poll(&cursor).await.unwrap();
+        for _ in 0..policy::EMPTIED_THREAD_GRACE_WALKS {
+            pending = provider.poll(&pending.cursor).await.unwrap();
+        }
+        assert!(store
+            .journal_since(cursor.generation().unwrap())
+            .unwrap()
+            .contains(&thread));
+        assert_eq!(db.list_all_mail(Some("me@example.com")).unwrap().len(), 1);
+        assert!(matches!(
+            provider.fetch_thread(&thread).await,
+            Err(ProviderError::NotFound)
+        ));
+        let generation = store.generation().unwrap();
+        let provider = ImapProvider {
+            cache: BodyCache::new(store.clone()),
+            thread_state_loads: std::sync::atomic::AtomicUsize::new(0),
+            ..provider
+        };
+        sync_n(&provider, db.as_ref(), 1).await;
+        assert!(db.list_all_mail(Some("me@example.com")).unwrap().is_empty());
+        sync_n(&provider, db.as_ref(), 2).await;
+        assert_eq!(store.generation().unwrap(), generation);
     }
 
     // Compiles always; runs only when THREESTRANDS_IMAP_IT=1 AND the Dovecot

@@ -1031,11 +1031,48 @@ impl ImapStateStore {
     // Slice 5b-2 fair-scheduling + emptied-hot-thread grace state (schema v62).
     // -----------------------------------------------------------------------
 
-    /// The persisted last-VISIT time for one mailbox (0 if never visited / no
-    /// row). The fair scheduler orders user folders least-recently-visited
-    /// first by this clock, which — unlike `last_sweep_at` — advances on every
-    /// EXAMINE including a cadence-gate no-op, so a mailbox the cadence gate
-    /// keeps skipping still rotates forward and is never starved.
+    /// Last attempt's logical order, including failed attempts. Zero means no
+    /// attempt recorded since the scheduler upgrade; independent of wall time.
+    pub fn mailbox_last_attempt(&self, mailbox: &str) -> DbResult<i64> {
+        self.database.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT last_attempt FROM imap_mailbox_sync_state
+                     WHERE account_id = ?1 AND mailbox = ?2",
+                    rusqlite::params![self.account_id, mailbox],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0))
+        })
+    }
+
+    /// Rotate a mailbox before attempting network work, even if it fails or
+    /// the connection drops. Only scheduling metadata changes: no generation,
+    /// cadence counters or successful-coverage stamp is advanced.
+    pub fn record_mailbox_attempt(&self, mailbox: &str) -> DbResult<()> {
+        self.database.with_transaction(|transaction| {
+            let next: i64 = transaction.query_row(
+                "SELECT COALESCE(MAX(last_attempt), 0) + 1
+                 FROM imap_mailbox_sync_state WHERE account_id = ?1",
+                [&self.account_id],
+                |row| row.get(0),
+            )?;
+            // A never-successful mailbox must not count as visited in epoch 0.
+            transaction.execute(
+                "INSERT INTO imap_mailbox_sync_state
+                     (account_id, mailbox, last_attempt, visited_in_epoch)
+                 VALUES (?1, ?2, ?3, -1)
+                 ON CONFLICT(account_id, mailbox) DO UPDATE SET
+                     last_attempt = excluded.last_attempt",
+                rusqlite::params![self.account_id, mailbox, next],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Last successful visit time (zero before the first success), including
+    /// cadence-gate visits. Kept separate from the full-sweep clock and used
+    /// to break scheduling ties for pre-upgrade rows without attempt ordering.
     pub fn mailbox_last_visited_at(&self, mailbox: &str) -> DbResult<i64> {
         self.database.with_connection(|connection| {
             Ok(connection
@@ -1091,7 +1128,7 @@ impl ImapStateStore {
     /// mailbox has been successfully visited in the CURRENT epoch — i.e. its
     /// `imap_mailbox_sync_state.visited_in_epoch` equals the current
     /// `complete_walks` value. Call once at the END of each poll, passing the
-    /// full currently-synced set (INBOX + every `synced_now` plan entry).
+    /// capped synced set (INBOX + every real entry allowed by the sync cap).
     ///
     /// Coverage is across polls: a per-poll folder budget smaller than the
     /// synced set means no single poll visits every folder, but each poll
@@ -1164,17 +1201,17 @@ impl ImapStateStore {
             // in completed epochs) is
             // `completed_epochs - emptied_at_walk >= EMPTIED_THREAD_GRACE_WALKS`.
             let expired: Vec<String> = {
-                let threshold =
-                    (next_epoch as u64).saturating_sub(policy::EMPTIED_THREAD_GRACE_WALKS);
+                let threshold = next_epoch - policy::EMPTIED_THREAD_GRACE_WALKS as i64;
                 let mut statement = transaction.prepare(
                     "SELECT thread_id FROM imap_hot_threads
                      WHERE account_id = ?1
                        AND emptied_at_walk IS NOT NULL
+                       AND expiry_journaled = 0
                        AND emptied_at_walk <= ?2
                      ORDER BY thread_id",
                 )?;
                 let rows = statement
-                    .query_map(rusqlite::params![self.account_id, threshold as i64], |row| {
+                    .query_map(rusqlite::params![self.account_id, threshold], |row| {
                         row.get::<_, String>(0)
                     })?
                     .collect::<Result<Vec<_>, _>>()?;
@@ -1197,6 +1234,11 @@ impl ImapStateStore {
                     "INSERT OR IGNORE INTO imap_change_journal
                         (account_id, generation, thread_id) VALUES (?1, ?2, ?3)",
                     rusqlite::params![self.account_id, next_gen, thread_id],
+                )?;
+                transaction.execute(
+                    "UPDATE imap_hot_threads SET expiry_journaled = 1
+                     WHERE account_id = ?1 AND thread_id = ?2",
+                    rusqlite::params![self.account_id, thread_id],
                 )?;
             }
             Ok((next_gen as u64, Vec::new()))
@@ -1233,7 +1275,7 @@ impl ImapStateStore {
         self.database.with_connection(|connection| {
             let resolved = self.resolve_thread_alias_conn(connection, thread_id)?;
             connection.execute(
-                "UPDATE imap_hot_threads SET emptied_at_walk = ?3
+                "UPDATE imap_hot_threads SET emptied_at_walk = ?3, expiry_journaled = 0
                  WHERE account_id = ?1 AND thread_id = ?2 AND emptied_at_walk IS NULL",
                 rusqlite::params![self.account_id, resolved, walk as i64],
             )?;
@@ -1247,7 +1289,7 @@ impl ImapStateStore {
         self.database.with_connection(|connection| {
             let resolved = self.resolve_thread_alias_conn(connection, thread_id)?;
             connection.execute(
-                "UPDATE imap_hot_threads SET emptied_at_walk = NULL
+                "UPDATE imap_hot_threads SET emptied_at_walk = NULL, expiry_journaled = 0
                  WHERE account_id = ?1 AND thread_id = ?2",
                 rusqlite::params![self.account_id, resolved],
             )?;
@@ -2142,6 +2184,86 @@ mod tests {
         let tokens: Vec<String> = (0..100_000).map(|n| format!("tok-{n}")).collect();
         let seeded = store.seed_state_for_tokens(&tokens).unwrap();
         assert_eq!(seeded.len(), 1, "the one thread sharing tok-0 is seeded");
+    }
+
+    #[test]
+    fn attempts_are_account_scoped_and_do_not_claim_successful_coverage() {
+        let store = store();
+        store.record_mailbox_attempt("A").unwrap();
+        store.record_mailbox_attempt("B").unwrap();
+        let restarted = ImapStateStore::new(store.database().clone(), store.account_id());
+        restarted.record_mailbox_attempt("A").unwrap();
+        assert_eq!(restarted.mailbox_last_attempt("A").unwrap(), 3);
+        assert_eq!(restarted.mailbox_last_attempt("B").unwrap(), 2);
+        assert_eq!(restarted.mailbox_visited_in_epoch("A").unwrap(), -1);
+        assert_eq!(restarted.mailbox_last_visited_at("A").unwrap(), 0);
+        let (_, outstanding) = restarted
+            .advance_coverage_epoch_if_complete(&["A".into(), "B".into()])
+            .unwrap();
+        assert_eq!(outstanding, ["A", "B"]);
+        assert_eq!(store.generation().unwrap(), 0);
+        assert_eq!(store.complete_walks().unwrap(), 0);
+        let other = ImapStateStore::new(store.database().clone(), "other@example.com");
+        assert_eq!(other.mailbox_last_attempt("A").unwrap(), 0);
+        other.record_mailbox_attempt("A").unwrap();
+        assert_eq!(other.mailbox_last_attempt("A").unwrap(), 1);
+        assert_eq!(store.mailbox_last_attempt("A").unwrap(), 3);
+    }
+
+    #[test]
+    fn expiry_acknowledgment_is_atomic_durable_and_rearms_for_a_new_empty_period() {
+        let store = store();
+        let initial = store
+            .commit_sync_round(&SyncRoundWrite {
+                hot_threads: vec!["hot".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        store.mark_hot_thread_emptied("hot", 0).unwrap();
+        let (generation, _) = store.advance_coverage_epoch_if_complete(&[]).unwrap();
+        assert_eq!(generation, initial, "one epoch is below the grace boundary");
+        store.database().with_connection(|c| {
+            c.execute_batch(
+                "CREATE TRIGGER reject_expiry_ack BEFORE UPDATE OF expiry_journaled ON imap_hot_threads
+                 WHEN NEW.expiry_journaled = 1
+                 BEGIN SELECT RAISE(ABORT, 'injected expiry failure'); END;",
+            )?;
+            Ok(())
+        }).unwrap();
+        assert!(store.advance_coverage_epoch_if_complete(&[]).is_err());
+        assert_eq!(store.complete_walks().unwrap(), 1);
+        assert_eq!(store.generation().unwrap(), initial);
+        assert!(store.journal_since(initial).unwrap().is_empty());
+        store
+            .database()
+            .with_connection(|c| {
+                c.execute_batch("DROP TRIGGER reject_expiry_ack;")?;
+                Ok(())
+            })
+            .unwrap();
+        let (expired, _) = store.advance_coverage_epoch_if_complete(&[]).unwrap();
+        assert_eq!(expired, initial + 1);
+        assert_eq!(store.journal_since(initial).unwrap(), ["hot"]);
+        let restarted = ImapStateStore::new(store.database().clone(), store.account_id());
+        let (idle, _) = restarted.advance_coverage_epoch_if_complete(&[]).unwrap();
+        assert_eq!(idle, expired, "acknowledgment survives reconstruction");
+        assert_eq!(
+            restarted.hot_thread_emptied_at_walk("hot").unwrap(),
+            Some(0)
+        );
+        restarted.clear_hot_thread_emptied("hot").unwrap(); // regained a location
+        restarted.mark_hot_thread_emptied("hot", 3).unwrap(); // lost it again
+        let (below, _) = restarted.advance_coverage_epoch_if_complete(&[]).unwrap();
+        assert_eq!(below, expired);
+        let (second_expiry, _) = restarted.advance_coverage_epoch_if_complete(&[]).unwrap();
+        assert_eq!(
+            second_expiry,
+            expired + 1,
+            "a new empty period gets its own notification"
+        );
+        assert_eq!(restarted.journal_since(expired).unwrap(), ["hot"]);
+        let (above, _) = restarted.advance_coverage_epoch_if_complete(&[]).unwrap();
+        assert_eq!(above, second_expiry);
     }
 
     // ---- Slice 5b-2 run B: vanished-mailbox retirement safety rules --------

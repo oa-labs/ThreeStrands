@@ -298,7 +298,7 @@ pub fn folder_sweep_due(last_sweep_at: i64, now: i64) -> bool {
 // INBOX location disappear. 5b-2 replaces that prefix with a fair schedule:
 // INBOX first, then ALL synced SYSTEM-ROLE mailboxes every poll (bounded,
 // cheap when idle via the cadence gate), then user/label folders chosen
-// LEAST-RECENTLY-VISITED first up to the remaining budget. The selection is a
+// LEAST-RECENTLY-ATTEMPTED first up to the remaining budget. The selection is a
 // pure function so it is table-testable. None of these is a silent clamp: the
 // cap logs the count dropped, and the schedule reports exactly which mailboxes
 // it chose.
@@ -333,14 +333,13 @@ pub fn emptied_grace_expired(emptied_at_walk: u64, complete_walks: u64) -> bool 
     complete_walks.saturating_sub(emptied_at_walk) >= EMPTIED_THREAD_GRACE_WALKS
 }
 
-/// One candidate mailbox the fair scheduler reasons over: its exact name, its
-/// persisted last-VISIT time (0 if never visited), the COVERAGE EPOCH it was
-/// last visited in (0 if never), and whether it plays a system role
-/// (INBOX/Sent/Trash/Junk/Archive). INBOX is NOT passed here — it is always
-/// visited first, outside the budget.
+/// One candidate mailbox, with durable attempt order and successful coverage.
+/// INBOX is always visited first, outside this schedule and its budget.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScheduleCandidate {
     pub mailbox: String,
+    /// Durable logical order of the last attempt, successful or failed.
+    pub last_attempt: i64,
     pub last_visited_at: i64,
     pub visited_in_epoch: i64,
     pub is_system_role: bool,
@@ -348,20 +347,14 @@ pub struct ScheduleCandidate {
 
 /// Choose which non-INBOX mailboxes to VISIT this poll, in visit order.
 ///
-/// Pure, so the whole fairness policy is table-testable without a server. The
-/// order is: every synced SYSTEM-ROLE mailbox first (bounded set, always
-/// visited every poll — cheap when idle via the EXAMINE cadence gate), then
-/// user/label folders up to the remaining `budget`, chosen so a COVERAGE EPOCH
-/// completes deterministically: folders NOT YET visited in `current_epoch`
-/// (`visited_in_epoch < current_epoch`) come first, then within that bucket
-/// LEAST-RECENTLY-VISITED (`last_visited_at`, never-visited 0 first), ties
-/// broken by name. Prioritising the not-yet-covered folders means coverage
-/// completes in ceil(N/budget) polls regardless of the wall-clock resolution
-/// (two folders visited in the same second still rotate, because the epoch
-/// stamp — not the timestamp — decides who is still outstanding). The budget
-/// counts mailbox VISITS, and SYSTEM ROLES are ALWAYS included regardless of
-/// budget (so a `budget` of 0 still visits every system role). System roles
-/// come back sorted by name; the chosen user folders keep their coverage order.
+/// System roles are always visited first. User/label folders are ordered by
+/// their last attempt's logical sequence, including failed attempts. This
+/// rotates every folder within ceil(N/budget) polls even with a frozen clock
+/// or permanently failing peers. Ties (including pre-upgrade rows at zero)
+/// prefer uncovered folders, then older successful visits, then name.
+/// Successful coverage remains separate: a failed attempt never advances the
+/// epoch or spends deletion grace. System roles are included even at budget 0;
+/// the budget limits the user/label-folder visits after them.
 pub fn schedule_visits(
     candidates: &[ScheduleCandidate],
     current_epoch: i64,
@@ -373,14 +366,14 @@ pub fn schedule_visits(
 
     let mut folders: Vec<&ScheduleCandidate> =
         candidates.iter().filter(|c| !c.is_system_role).collect();
-    // Not-yet-covered-this-epoch first (so an epoch completes deterministically
-    // even when the clock does not advance between visits), then
-    // least-recently-visited (never-visited 0 first), ties by name.
+    // Rotate attempts independently of coverage so failed folders cannot
+    // monopolize the budget while keeping the epoch open.
     folders.sort_by(|a, b| {
         let a_covered = a.visited_in_epoch >= current_epoch;
         let b_covered = b.visited_in_epoch >= current_epoch;
-        a_covered
-            .cmp(&b_covered)
+        a.last_attempt
+            .cmp(&b.last_attempt)
+            .then_with(|| a_covered.cmp(&b_covered))
             .then_with(|| a.last_visited_at.cmp(&b.last_visited_at))
             .then_with(|| a.mailbox.cmp(&b.mailbox))
     });
@@ -774,6 +767,7 @@ mod tests {
     fn sys(name: &str) -> ScheduleCandidate {
         ScheduleCandidate {
             mailbox: name.into(),
+            last_attempt: 0,
             last_visited_at: 0,
             visited_in_epoch: 0,
             is_system_role: true,
@@ -782,6 +776,7 @@ mod tests {
     fn folder(name: &str, last_visited_at: i64) -> ScheduleCandidate {
         ScheduleCandidate {
             mailbox: name.into(),
+            last_attempt: 0,
             last_visited_at,
             visited_in_epoch: 0,
             is_system_role: false,
@@ -790,6 +785,7 @@ mod tests {
     fn folder_epoch(name: &str, last_visited_at: i64, visited_in_epoch: i64) -> ScheduleCandidate {
         ScheduleCandidate {
             mailbox: name.into(),
+            last_attempt: 0,
             last_visited_at,
             visited_in_epoch,
             is_system_role: false,
@@ -889,6 +885,40 @@ mod tests {
             n,
             "every folder visited within ceil(N/budget) polls: {}/{n}",
             ever_visited.len()
+        );
+    }
+
+    #[test]
+    fn failed_attempts_rotate_without_successful_coverage_or_clock_progress() {
+        let mut candidates = vec![
+            folder_epoch("A-fails", 0, -1),
+            folder_epoch("B-fails", 0, -1),
+            folder_epoch("C-healthy", 0, 7),
+        ];
+        let mut attempts = Vec::new();
+        for sequence in 1..=6 {
+            let next = schedule_visits(&candidates, 7, 1).pop().unwrap();
+            candidates
+                .iter_mut()
+                .find(|c| c.mailbox == next)
+                .unwrap()
+                .last_attempt = sequence;
+            attempts.push(next);
+        }
+        assert_eq!(
+            attempts,
+            [
+                "A-fails",
+                "B-fails",
+                "C-healthy",
+                "A-fails",
+                "B-fails",
+                "C-healthy"
+            ]
+        );
+        assert_eq!(
+            candidates[0].visited_in_epoch, -1,
+            "attempts do not claim success"
         );
     }
 

@@ -418,6 +418,14 @@ retired aliases and threads with no remaining locations, so interrupted
 baselines and journal pruning cannot hide acquired mail, merges or deletions.
 Ordinary polls do not replay unchanged threads.
 
+Folder scheduling uses a durable logical attempt order, including failed
+attempts, so one failing folder cannot monopolize the budget. Successful visits
+remain separate coverage stamps. Coverage includes INBOX and the real mailboxes
+allowed by the sync cap, across polls; capped-out folders do not hold it open.
+An emptied hot thread's expiry is journaled and acknowledged atomically once
+per empty period. The original grace marker remains available after restart,
+and regaining a location resets both the marker and its acknowledgment.
+
 **What triggers a sync:** the `IDLE` connection for INBOX. For other
 mailboxes, `STATUS` (or `LIST-STATUS`) on the existing polling schedule. A
 mailbox is only re-selected when its `UIDNEXT`, `MESSAGES` or `HIGHESTMODSEQ`

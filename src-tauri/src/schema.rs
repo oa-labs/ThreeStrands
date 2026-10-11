@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 62;
+pub(crate) const LATEST_VERSION: i64 = 63;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1845,6 +1845,32 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         }
         tx.execute_batch("PRAGMA user_version=62;").map_err(error)?;
     }
+    if version < 63 {
+        // Retry ordering is independent of successful coverage. A failed
+        // mailbox attempt rotates forward without advancing visited_in_epoch.
+        // Expiry acknowledgment is committed with the journal entry, preserving
+        // the original grace marker for restart-safe NotFound responses.
+        if !has_column(&tx, "imap_mailbox_sync_state", "last_attempt")? {
+            tx.execute_batch(
+                "ALTER TABLE imap_mailbox_sync_state
+                    ADD COLUMN last_attempt INTEGER NOT NULL DEFAULT 0;",
+            )
+            .map_err(error)?;
+        }
+        if !has_column(&tx, "imap_hot_threads", "expiry_journaled")? {
+            tx.execute_batch(
+                "ALTER TABLE imap_hot_threads
+                    ADD COLUMN expiry_journaled INTEGER NOT NULL DEFAULT 0;",
+            )
+            .map_err(error)?;
+        }
+        tx.execute_batch(
+            "CREATE INDEX IF NOT EXISTS imap_mailbox_sync_state_by_attempt
+                 ON imap_mailbox_sync_state(account_id, last_attempt);
+             PRAGMA user_version=63;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -2558,6 +2584,74 @@ mod tests {
         super::migrate(&mut upgraded).unwrap();
         assert_eq!(
             upgraded.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
+            super::LATEST_VERSION
+        );
+    }
+
+    #[test]
+    fn v63_preserves_v62_state_and_defaults_retry_and_expiry_metadata() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection.execute_batch(
+            "DROP INDEX imap_mailbox_sync_state_by_attempt;
+             ALTER TABLE imap_mailbox_sync_state DROP COLUMN last_attempt;
+             ALTER TABLE imap_hot_threads DROP COLUMN expiry_journaled;
+             PRAGMA user_version=62;
+             INSERT INTO imap_sync_state(account_id, generation, complete_walks)
+                 VALUES ('you@gmail.com', 17, 4);
+             INSERT INTO imap_mailbox_sync_state
+                 (account_id, mailbox, last_exists, last_uidnext, last_sweep_at, last_visited_at, visited_in_epoch)
+                 VALUES ('you@gmail.com', 'Archive', 3, 9, 100, 200, 3);
+             INSERT INTO imap_hot_threads(account_id, thread_id, emptied_at_walk)
+                 VALUES ('you@gmail.com', 'hot', 2);",
+        ).unwrap();
+        super::migrate(&mut connection).unwrap();
+        let state: (i64, i64) = connection.query_row(
+            "SELECT generation, complete_walks FROM imap_sync_state WHERE account_id='you@gmail.com'",
+            [], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
+        assert_eq!(state, (17, 4));
+        let mailbox: (i64, i64, i64, i64, i64, i64) = connection.query_row(
+            "SELECT last_exists, last_uidnext, last_sweep_at, last_visited_at, visited_in_epoch, last_attempt
+             FROM imap_mailbox_sync_state WHERE account_id='you@gmail.com' AND mailbox='Archive'",
+            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+        ).unwrap();
+        assert_eq!(mailbox, (3, 9, 100, 200, 3, 0));
+        let hot: (Option<i64>, i64) = connection
+            .query_row(
+                "SELECT emptied_at_walk, expiry_journaled FROM imap_hot_threads
+             WHERE account_id='you@gmail.com' AND thread_id='hot'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(hot, (Some(2), 0));
+        connection
+            .execute_batch(
+                "UPDATE imap_mailbox_sync_state SET last_attempt=7 WHERE mailbox='Archive';
+             UPDATE imap_hot_threads SET expiry_journaled=1 WHERE thread_id='hot';
+             PRAGMA user_version=62;",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let metadata: (i64, i64) = connection
+            .query_row(
+                "SELECT s.last_attempt, h.expiry_journaled FROM imap_mailbox_sync_state s
+             JOIN imap_hot_threads h ON h.account_id=s.account_id
+             WHERE s.account_id='you@gmail.com' AND s.mailbox='Archive' AND h.thread_id='hot'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            metadata,
+            (7, 1),
+            "rerunning migration preserves acknowledgment and retry order"
+        );
+        assert_eq!(
+            connection
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
             super::LATEST_VERSION
         );
     }
