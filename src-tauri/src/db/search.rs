@@ -132,9 +132,7 @@ impl Database {
                     return Ok(Vec::new());
                 }
                 binds.push(Value::Text(fts.clone()));
-                predicates.push("t.id IN (SELECT thread_id FROM thread_search \
-                                 WHERE thread_search MATCH ?)"
-                    .to_string());
+                predicates.push("thread_search MATCH ?".to_string());
             }
 
             for term in &plan.terms {
@@ -153,11 +151,12 @@ impl Database {
                         // Matched against the stored recipients (the To header
                         // only; see the module note and the report's Cc/Bcc
                         // finding). `recipients_json` is a JSON array string, so
-                        // a substring LIKE over it is sufficient to find a
-                        // recipient address without parsing the JSON per row.
+                        // each element is matched through `json_each`: a LIKE
+                        // over the raw text would also match the brackets,
+                        // quotes and commas of the encoding.
                         predicates.push(
-                            "EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id \
-                             AND m.recipients_json LIKE ? ESCAPE '\\')"
+                            "EXISTS (SELECT 1 FROM messages m, json_each(m.recipients_json) r \
+                             WHERE m.thread_id = t.id AND r.value LIKE ? ESCAPE '\\')"
                                 .to_string(),
                         );
                     }
@@ -174,9 +173,15 @@ impl Database {
                             // `before:d` = strictly before the start of day d.
                             DateBound::Before => "<",
                         };
+                        // Compare INSTANTS, not strings: `sent_at` is RFC 3339
+                        // in whatever offset the message carried (a `Date:`
+                        // header fallback keeps the sender's offset), so a
+                        // lexicographic compare against a UTC bound is wrong by
+                        // the offset. `datetime()` normalises both to UTC and
+                        // yields NULL (so no match) for an unparseable value.
                         predicates.push(format!(
                             "EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id \
-                             AND m.sent_at {op} ?)"
+                             AND datetime(m.sent_at) {op} datetime(?))"
                         ));
                     }
                     QueryTerm::State(MessageState::Unread) => {
@@ -206,17 +211,23 @@ impl Database {
                 predicates.push("t.account_id = ?".to_string());
             }
 
-            // When MATCH is used, keep its relevance tiebreak and FTS snippet.
-            // With no MATCH there is no rank and no snippet, so order on recency
-            // then a deterministic `t.id`, and return NULL for the snippet.
-            let (snippet_select, order_by) = if uses_match {
+            // When MATCH is used, read from the FTS table joined to `threads`
+            // exactly as the legacy path does: `snippet()` and `rank` only work
+            // inside the MATCH query itself, so a correlated subquery cannot
+            // supply them. With no MATCH there is no rank and no snippet, so
+            // order on recency then a deterministic `t.id`, and return NULL.
+            let (from_clause, snippet_select, order_by) = if uses_match {
                 (
-                    "(SELECT snippet(thread_search, -1, '\u{1}', '\u{2}', '…', 12) \
-                      FROM thread_search WHERE thread_id = t.id) AS match_snippet",
-                    "ORDER BY t.last_received_at DESC, t.id",
+                    "thread_search s JOIN threads t ON t.id = s.thread_id",
+                    "snippet(thread_search, -1, '\u{1}', '\u{2}', '…', 12) AS match_snippet",
+                    "ORDER BY t.last_received_at DESC, rank, t.id",
                 )
             } else {
-                ("NULL AS match_snippet", "ORDER BY t.last_received_at DESC, t.id")
+                (
+                    "threads t",
+                    "NULL AS match_snippet",
+                    "ORDER BY t.last_received_at DESC, t.id",
+                )
             };
 
             // Rewrite the sequential `?` placeholders into positional `?N` so
@@ -224,7 +235,7 @@ impl Database {
             let where_clause = predicates.join(" AND ");
             let sql = number_placeholders(&format!(
                 "SELECT {THREAD_COLUMNS}, {snippet_select}
-                 FROM threads t
+                 FROM {from_clause}
                  WHERE {where_clause}
                  {order_by}
                  LIMIT ? OFFSET ?"
@@ -327,14 +338,12 @@ fn map_thread_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
         provider_thread_id: row.get(1)?,
         subject: row.get(2)?,
         snippet: row.get(3)?,
-        participants: decode_json(row.get::<_, String>(4)?)
-            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?,
+        participants: decode_json(row.get::<_, String>(4)?)?,
         last_message_at: row.get(5)?,
         unread: row.get(6)?,
         starred: row.get(7)?,
         archived: row.get(8)?,
-        labels: decode_json(row.get::<_, String>(9)?)
-            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?,
+        labels: decode_json(row.get::<_, String>(9)?)?,
         trashed: row.get(10)?,
         account_id: row.get(11)?,
         summary: row.get(12)?,

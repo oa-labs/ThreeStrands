@@ -1402,3 +1402,91 @@ fn explain_query_plan_for_structured_queries_is_recorded() {
         .unwrap();
     assert!(!unread_plan.is_empty(), "is:unread EXPLAIN QUERY PLAN produced rows");
 }
+
+/// The structured path must highlight the match exactly like the legacy path:
+/// the frontend finds the match by the `\u{1}`/`\u{2}` markers FTS5 puts around
+/// it, so a snippet without them shows an unhighlighted excerpt.
+#[test]
+fn structured_free_text_snippet_marks_the_match_like_the_legacy_path() {
+    let database = database();
+    operator_fixture(&database);
+    let request = |query: &str| SearchThreadsRequest {
+        query: query.into(),
+        limit: None,
+        offset: None,
+        include_archived: None,
+    };
+    let legacy = database.search_threads(&request("budget"), None).unwrap();
+    let structured = database
+        .search_threads(&request("from:alice budget"), None)
+        .unwrap();
+    assert_eq!(legacy.len(), 1);
+    assert_eq!(structured.len(), 1);
+    let marked = structured[0].match_snippet.as_deref().unwrap_or_default();
+    assert!(
+        marked.contains("\u{1}budget\u{2}"),
+        "structured snippet lost its match markers: {marked:?}"
+    );
+    assert_eq!(
+        structured[0].match_snippet, legacy[0].match_snippet,
+        "same thread and same words must give the same snippet on both paths"
+    );
+}
+
+/// `messages.sent_at` is not always UTC: a message with no usable internal date
+/// falls back to its `Date:` header, which `to_rfc3339` keeps in the sender's
+/// offset. Comparing those strings lexicographically against a UTC bound is
+/// wrong by the offset, so the day bounds must compare instants.
+#[test]
+fn structured_date_bounds_compare_instants_across_utc_offsets() {
+    let database = database();
+    crate::db::test_support::clear_seed_threads(&database);
+    // 2024-06-15 01:00 +02:00 is 2024-06-14 23:00 UTC.
+    database
+        .upsert_thread(
+            "work",
+            &[op_message(
+                "east", "t-east", "East", "a@example.com", vec!["b@example.com"],
+                "2024-06-15T01:00:00+02:00", "x", vec!["INBOX"], vec![],
+            )],
+        )
+        .unwrap();
+    // 2024-06-15 23:30 -05:00 is 2024-06-16 04:30 UTC.
+    database
+        .upsert_thread(
+            "work",
+            &[op_message(
+                "west", "t-west", "West", "a@example.com", vec!["b@example.com"],
+                "2024-06-15T23:30:00-05:00", "x", vec!["INBOX"], vec![],
+            )],
+        )
+        .unwrap();
+    let east = tid("work", "t-east");
+    let west = tid("work", "t-west");
+    // The east thread is still 14 June in UTC.
+    assert_eq!(ids_scoped(&database, "after:2024-06-15", None), vec![west.clone()]);
+    assert_eq!(ids_scoped(&database, "before:2024-06-15", None), vec![east.clone()]);
+    // The west thread is already 16 June in UTC.
+    assert_eq!(ids_scoped(&database, "after:2024-06-16", None), vec![west]);
+    assert_eq!(ids_scoped(&database, "before:2024-06-16", None), vec![east]);
+}
+
+/// `recipients_json` is a JSON array. `to:` must match the recipient strings,
+/// never the brackets, quotes and commas of the encoding around them.
+#[test]
+fn structured_to_matches_recipients_not_json_punctuation() {
+    let database = database();
+    operator_fixture(&database);
+    for punctuation in ["to:[", "to:]", "to:,", "to:\\"] {
+        assert!(
+            ids_scoped(&database, punctuation, None).is_empty(),
+            "{punctuation} matched the JSON encoding of the recipient list"
+        );
+    }
+    // A real recipient still matches, including one that is not first in the
+    // list.
+    assert_eq!(
+        ids_scoped(&database, "to:carol@example.com", None),
+        vec![tid("work", "w-alice")]
+    );
+}
