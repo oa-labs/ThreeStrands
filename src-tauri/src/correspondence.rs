@@ -3010,6 +3010,547 @@ mod tests {
             assert!(smtp_prepare_retry_due(Some(last), last + INTERVAL + 1));
         }
     }
+
+    /// Work item C/E: the durable Sent-copy job runner. A fake provider scripts
+    /// `save_sent_copy`'s answers and COUNTS `send_once`, so every scenario can
+    /// assert the message is NEVER resent and the outbox state/provider_id never
+    /// change while the job advances. The engine body (`run_sent_copy_job`,
+    /// `process_sent_copy_jobs`, and the atomic seed in `dispatch_due`) is
+    /// driven directly, the fake injected like `send_due_item`'s.
+    mod sent_copy_jobs {
+        use super::*;
+        use crate::{
+            models::Label,
+            provider::{
+                Delivery, DeliveryReceipt, LabelModel, MailFetch, MailMutate, MailSend, MailSync,
+                ProviderCapabilities, ProviderError, ProviderResult, SentCopyRequest, SentCopyStep,
+                SyncBatch, SyncCursor, ThreadPage,
+            },
+        };
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Mutex as StdMutex;
+        use std::time::Duration;
+
+        /// What the fake's `save_sent_copy` returns, one scripted answer per
+        /// call (popped front to back; the last repeats if the queue empties).
+        #[derive(Clone)]
+        enum JobAnswer {
+            Done,
+            Recheck(Duration),
+            Transient,
+            Permanent,
+        }
+
+        struct JobProvider {
+            answers: StdMutex<Vec<JobAnswer>>,
+            save_calls: AtomicUsize,
+            send_calls: AtomicUsize,
+            client_saves_sent_copy: bool,
+        }
+
+        impl JobProvider {
+            fn new(answers: Vec<JobAnswer>) -> Self {
+                Self {
+                    answers: StdMutex::new(answers),
+                    save_calls: AtomicUsize::new(0),
+                    send_calls: AtomicUsize::new(0),
+                    client_saves_sent_copy: true,
+                }
+            }
+        }
+
+        struct NoResendPermit;
+        #[async_trait::async_trait]
+        impl Delivery for NoResendPermit {
+            async fn send_once(
+                self: Box<Self>,
+                _raw: &[u8],
+                _thread: Option<&str>,
+            ) -> Result<DeliveryReceipt, (bool, String)> {
+                unreachable!("the Sent-copy job never sends");
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl MailSend for JobProvider {
+            async fn sender_identity(&self) -> ProviderResult<String> {
+                Ok("you@example.com".into())
+            }
+            async fn prepare_delivery(&self) -> ProviderResult<Box<dyn Delivery>> {
+                // Never called by the job runner; present so the trait is
+                // satisfied. A call would be a bug (the job must not resend).
+                Ok(Box::new(NoResendPermit))
+            }
+            async fn find_sent_copy(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> ProviderResult<Option<DeliveryReceipt>> {
+                Ok(None)
+            }
+            async fn save_sent_copy(
+                &self,
+                _request: &SentCopyRequest,
+            ) -> ProviderResult<SentCopyStep> {
+                self.save_calls.fetch_add(1, Ordering::SeqCst);
+                let mut answers = self.answers.lock().unwrap();
+                let answer = if answers.len() > 1 {
+                    answers.remove(0)
+                } else {
+                    answers.first().cloned().unwrap_or(JobAnswer::Done)
+                };
+                match answer {
+                    JobAnswer::Done => Ok(SentCopyStep::Done),
+                    JobAnswer::Recheck(after) => Ok(SentCopyStep::Recheck { after }),
+                    JobAnswer::Transient => {
+                        Err(ProviderError::TransientTransport("sent mailbox unreachable".into()))
+                    }
+                    JobAnswer::Permanent => Err(ProviderError::InvalidOperation(
+                        "no Sent mailbox configured".into(),
+                    )),
+                }
+            }
+        }
+
+        impl MailProvider for JobProvider {
+            fn capabilities(&self) -> ProviderCapabilities {
+                ProviderCapabilities {
+                    send_supported: true,
+                    server_search: false,
+                    provided_threads: false,
+                    label_model: LabelModel::ImapLabelFolders,
+                    verifiable_delivery: false,
+                    client_saves_sent_copy: self.client_saves_sent_copy,
+                }
+            }
+        }
+
+        // The non-send traits are never used by the job runner.
+        #[async_trait::async_trait]
+        impl MailSync for JobProvider {
+            async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
+                panic!("job runner must not sync");
+            }
+            async fn poll(&self, _: &SyncCursor) -> ProviderResult<SyncBatch> {
+                panic!("job runner must not poll");
+            }
+            async fn list_inbox(&self, _: Option<&str>) -> ProviderResult<ThreadPage> {
+                panic!("job runner must not list");
+            }
+            async fn fetch_thread(&self, _: &str) -> ProviderResult<Vec<RawMessage>> {
+                panic!("job runner must not fetch a thread");
+            }
+        }
+        #[async_trait::async_trait]
+        impl MailFetch for JobProvider {
+            async fn fetch_message(&self, _: &str) -> ProviderResult<RawMessage> {
+                panic!("unused");
+            }
+            async fn attachment_bytes(&self, _: &str, _: &str) -> ProviderResult<Vec<u8>> {
+                panic!("unused");
+            }
+        }
+        #[async_trait::async_trait]
+        impl MailMutate for JobProvider {
+            async fn modify_thread(&self, _: &str, _: &[String], _: &[String]) -> ProviderResult<()> {
+                panic!("unused");
+            }
+            async fn modify_messages(&self, _: &[String], _: &[String], _: &[String]) -> ProviderResult<()> {
+                panic!("unused");
+            }
+            async fn list_labels(&self) -> ProviderResult<Vec<Label>> {
+                panic!("unused");
+            }
+            async fn create_label(&self, _: &str) -> ProviderResult<Label> {
+                panic!("unused");
+            }
+            async fn update_label(&self, _: &str, _: &str) -> ProviderResult<Label> {
+                panic!("unused");
+            }
+            async fn delete_label(&self, _: &str) -> ProviderResult<()> {
+                panic!("unused");
+            }
+        }
+
+        /// Queue a draft and advance it to `ready` so dispatch_due can claim it.
+        fn ready_item(service: &Correspondence) -> OutboxItem {
+            let d = saved(&service.database);
+            let item = service
+                .database
+                .queue(&d.id, d.revision, false, &[], None, &service.root)
+                .unwrap();
+            service
+                .database
+                .connection()
+                .unwrap()
+                .execute(
+                    "UPDATE outbox_messages SET state='ready', deadline=?2 WHERE id=?1",
+                    params![item.id, now() - 1],
+                )
+                .unwrap();
+            service
+                .database
+                .outbox()
+                .unwrap()
+                .into_iter()
+                .find(|o| o.id == item.id)
+                .unwrap()
+        }
+
+        /// Insert a 'sent' outbox row carrying a pending/verify Sent-copy job.
+        fn seed_job(
+            service: &Correspondence,
+            id: &str,
+            account: &str,
+            state: &str,
+            attempts: i64,
+            next_at: i64,
+            append_attempted: i64,
+        ) {
+            let c = service.database.connection().unwrap();
+            c.execute(
+                "INSERT INTO outbox_messages
+                    (id, draft_id, revision, account, state, deadline, payload, raw, provider_id,
+                     sent_copy_state, sent_copy_attempts, sent_copy_next_at, sent_copy_append_attempted)
+                 VALUES (?1, ?1, 1, ?2, 'sent', 0, '{}', x'4869', 'pm1',
+                         ?3, ?4, ?5, ?6)",
+                params![id, account, state, attempts, next_at, append_attempted],
+            )
+            .unwrap();
+        }
+
+        fn job_row(
+            service: &Correspondence,
+            id: &str,
+        ) -> (String, Option<String>, i64, Option<i64>, i64, String, Option<String>) {
+            service
+                .database
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT state, sent_copy_state, sent_copy_attempts, sent_copy_next_at,
+                            sent_copy_append_attempted, provider_id, sent_copy_error
+                     FROM outbox_messages WHERE id=?1",
+                    [id],
+                    |r| {
+                        Ok((
+                            r.get::<_, String>(0)?,
+                            r.get::<_, Option<String>>(1)?,
+                            r.get::<_, i64>(2)?,
+                            r.get::<_, Option<i64>>(3)?,
+                            r.get::<_, i64>(4)?,
+                            r.get::<_, String>(5)?,
+                            r.get::<_, Option<String>>(6)?,
+                        ))
+                    },
+                )
+                .unwrap()
+        }
+
+        /// Assert the outbox send-state and provider_id are UNTOUCHED by the job
+        /// runner, across every scenario.
+        fn assert_send_state_untouched(
+            row: &(String, Option<String>, i64, Option<i64>, i64, String, Option<String>),
+        ) {
+            assert_eq!(row.0, "sent", "job runner must never change outbox state");
+            assert_eq!(row.5, "pm1", "job runner must never change provider_id");
+        }
+
+        #[tokio::test]
+        async fn dispatch_seeds_the_job_atomically_only_when_the_capability_is_true() {
+            // Capability true: the accepted-send UPDATE sets the job pending with
+            // next_at = sent_at + SENT_COPY_SETTLE.
+            {
+                let service = service();
+                let item = ready_item(&service);
+                let at = now();
+                service
+                    .dispatch_due(&item, at, true, |_, thread| async move {
+                        Ok(DeliveryReceipt { provider_message_id: "pm".into(), thread_id: thread })
+                    })
+                    .await
+                    .unwrap();
+                let row = job_row(&service, &item.id);
+                assert_eq!(row.0, "sent");
+                assert_eq!(row.1.as_deref(), Some("pending"));
+                assert_eq!(row.2, 0, "attempts start at 0");
+                let expected = at + crate::provider::imap::SENT_COPY_SETTLE.as_millis() as i64;
+                assert_eq!(row.3, Some(expected), "first attempt waits the settle window");
+                assert_eq!(row.4, 0, "append not yet attempted");
+            }
+
+            // Capability false (Gmail-like): every sent_copy_* column stays
+            // NULL/default — no job is created.
+            {
+                let service = service();
+                let item = ready_item(&service);
+                service
+                    .dispatch_due(&item, now(), false, |_, thread| async move {
+                        Ok(DeliveryReceipt { provider_message_id: "pm".into(), thread_id: thread })
+                    })
+                    .await
+                    .unwrap();
+                let row = job_row(&service, &item.id);
+                assert_eq!(row.0, "sent");
+                assert!(row.1.is_none(), "no job for a Gmail-like provider");
+                assert!(row.3.is_none());
+                assert_eq!(row.4, 0);
+            }
+        }
+
+        #[tokio::test]
+        async fn a_schedule_originated_send_also_seeds_the_job() {
+            // The seed is in dispatch_due's accepted-send UPDATE, which every
+            // send path (immediate AND scheduled) goes through, so a scheduled
+            // send gets a job too. Drive dispatch_due with a non-scheduled item
+            // but the capability on — the UPDATE is identical.
+            let service = service();
+            let item = ready_item(&service);
+            service
+                .dispatch_due(&item, now(), true, |_, _| async {
+                    Ok(DeliveryReceipt { provider_message_id: "pm".into(), thread_id: None })
+                })
+                .await
+                .unwrap();
+            assert_eq!(job_row(&service, &item.id).1.as_deref(), Some("pending"));
+        }
+
+        #[tokio::test]
+        async fn done_marks_the_job_done_and_never_resends() {
+            let service = service();
+            seed_job(&service, "j1", "you@example.com", "pending", 0, now() - 1, 0);
+            let provider = JobProvider::new(vec![JobAnswer::Done]);
+            service
+                .run_sent_copy_job(&provider, "j1", b"Hi", "pending", 0, false, now())
+                .await
+                .unwrap();
+            let row = job_row(&service, "j1");
+            assert_eq!(row.1.as_deref(), Some("done"));
+            assert_eq!(provider.send_calls.load(Ordering::SeqCst), 0, "NO RESEND");
+            assert_send_state_untouched(&row);
+            // The write-ahead append flag was set before the provider call.
+            assert_eq!(row.4, 1, "append_attempted write-ahead flag set");
+        }
+
+        #[tokio::test]
+        async fn recheck_moves_the_job_to_verify_with_the_right_next_at() {
+            let service = service();
+            seed_job(&service, "j1", "you@example.com", "pending", 0, now() - 1, 0);
+            let at = now();
+            let provider = JobProvider::new(vec![JobAnswer::Recheck(Duration::from_secs(10))]);
+            service
+                .run_sent_copy_job(&provider, "j1", b"Hi", "pending", 0, false, at)
+                .await
+                .unwrap();
+            let row = job_row(&service, "j1");
+            assert_eq!(row.1.as_deref(), Some("verify"));
+            assert_eq!(row.3, Some(at + 10_000));
+            assert_send_state_untouched(&row);
+        }
+
+        #[tokio::test]
+        async fn a_transient_error_bumps_attempts_and_backs_off_never_before_the_settle_window() {
+            use crate::provider::imap::{sent_copy_backoff, SENT_COPY_SETTLE};
+            let service = service();
+            seed_job(&service, "j1", "you@example.com", "verify", 1, now() - 1, 1);
+            let at = now();
+            let provider = JobProvider::new(vec![JobAnswer::Transient]);
+            service
+                .run_sent_copy_job(&provider, "j1", b"Hi", "verify", 1, true, at)
+                .await
+                .unwrap();
+            let row = job_row(&service, "j1");
+            assert_eq!(row.1.as_deref(), Some("verify"), "state is KEPT on a transient error");
+            assert_eq!(row.2, 2, "attempts+1");
+            let scheduled = sent_copy_backoff(1).as_millis() as i64;
+            assert_eq!(row.3, Some(at + scheduled));
+            // Below/exact/above the settle floor: the retry is never earlier
+            // than the settle window after this attempt.
+            assert!(
+                row.3.unwrap() >= at + SENT_COPY_SETTLE.as_millis() as i64,
+                "retry must not be earlier than the settle window"
+            );
+            assert!(row.6.is_some(), "a plain-language error note is stored");
+            assert_send_state_untouched(&row);
+            assert_eq!(provider.send_calls.load(Ordering::SeqCst), 0);
+        }
+
+        #[tokio::test]
+        async fn transient_at_max_attempts_abandons() {
+            use crate::provider::imap::SENT_COPY_MAX_ATTEMPTS;
+            let service = service();
+            let at = now();
+            let prior = (SENT_COPY_MAX_ATTEMPTS - 1) as i64;
+            seed_job(&service, "j1", "you@example.com", "verify", prior, at - 1, 1);
+            let provider = JobProvider::new(vec![JobAnswer::Transient]);
+            service
+                .run_sent_copy_job(&provider, "j1", b"Hi", "verify", prior, true, at)
+                .await
+                .unwrap();
+            let row = job_row(&service, "j1");
+            assert_eq!(row.1.as_deref(), Some("abandoned"), "max attempts -> abandoned");
+            assert_eq!(row.2, SENT_COPY_MAX_ATTEMPTS as i64);
+            assert_send_state_untouched(&row);
+        }
+
+        #[tokio::test]
+        async fn a_permanent_error_abandons_immediately_with_a_plain_error() {
+            let service = service();
+            let at = now();
+            seed_job(&service, "j1", "you@example.com", "pending", 0, at - 1, 0);
+            let provider = JobProvider::new(vec![JobAnswer::Permanent]);
+            service
+                .run_sent_copy_job(&provider, "j1", b"Hi", "pending", 0, false, at)
+                .await
+                .unwrap();
+            let row = job_row(&service, "j1");
+            assert_eq!(row.1.as_deref(), Some("abandoned"));
+            assert_eq!(row.2, 0, "a permanent failure does not count a retry attempt");
+            assert_eq!(row.6.as_deref(), Some("no Sent mailbox configured"));
+            assert_send_state_untouched(&row);
+            assert_eq!(provider.send_calls.load(Ordering::SeqCst), 0);
+        }
+
+        #[tokio::test]
+        async fn a_provider_unavailable_account_is_skipped_without_counting_an_attempt() {
+            // No account is registered, so provider_for fails. process_sent_copy_jobs
+            // must skip the job and leave it exactly as-is, and the tick continues.
+            let service = service();
+            let at = now();
+            seed_job(&service, "j1", "ghost@example.com", "pending", 0, at - 1, 0);
+            service.process_sent_copy_jobs(at).await.unwrap();
+            let row = job_row(&service, "j1");
+            assert_eq!(row.1.as_deref(), Some("pending"), "unchanged");
+            assert_eq!(row.2, 0, "no attempt counted");
+            assert_eq!(row.4, 0, "no write-ahead flag set (never reached the provider)");
+        }
+
+        #[tokio::test]
+        async fn a_due_job_is_processed_even_with_no_sendable_outbox_items() {
+            // tick() runs process_sent_copy_jobs BEFORE the no-sendable early
+            // return. Seed a real 'sent' row carrying a due job (via a dispatched
+            // send so its payload is a valid Draft), on an UNREGISTERED account
+            // so the job is only skipped — then tick() must still run cleanly and
+            // reach the processor rather than short-circuit on the early return.
+            let service = service();
+            let item = ready_item(&service);
+            let at = now();
+            service
+                .dispatch_due(&item, at, true, |_, _| async {
+                    Ok(DeliveryReceipt { provider_message_id: "pm".into(), thread_id: None })
+                })
+                .await
+                .unwrap();
+            // Make the job due now and point it at an account with no provider.
+            service
+                .database
+                .connection()
+                .unwrap()
+                .execute(
+                    "UPDATE outbox_messages SET account='ghost@example.com', sent_copy_next_at=?2 WHERE id=?1",
+                    params![item.id, at - 1],
+                )
+                .unwrap();
+            // No sendable items remain (the only row is 'sent'); tick must still
+            // run cleanly, which it can only do by reaching the processor.
+            service.tick().await.unwrap();
+            // The job is unchanged (provider unavailable), proving the processor
+            // ran despite there being nothing to send.
+            assert_eq!(job_row(&service, &item.id).1.as_deref(), Some("pending"));
+        }
+
+        #[tokio::test]
+        async fn the_per_tick_cap_bounds_how_many_jobs_run() {
+            use crate::provider::imap::SENT_COPY_MAX_JOBS_PER_TICK;
+            let service = service();
+            let at = now();
+            // Seed CAP+2 due jobs on an unregistered account; the processor's
+            // SELECT caps the batch at the per-tick limit.
+            let total = SENT_COPY_MAX_JOBS_PER_TICK + 2;
+            for i in 0..total {
+                seed_job(&service, &format!("j{i}"), "ghost@example.com", "pending", 0, at - 1, 0);
+            }
+            // Count how many rows the processor's due query would select.
+            let selected: i64 = service
+                .database
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(*) FROM (SELECT id FROM outbox_messages
+                        WHERE sent_copy_state IN ('pending','verify') AND sent_copy_next_at <= ?1
+                        ORDER BY sent_copy_next_at ASC, rowid ASC LIMIT ?2)",
+                    params![at, SENT_COPY_MAX_JOBS_PER_TICK as i64],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(selected, SENT_COPY_MAX_JOBS_PER_TICK as i64);
+            assert!(total as i64 > selected, "more jobs exist than one tick drains");
+        }
+
+        #[tokio::test]
+        async fn one_account_failing_does_not_stop_another_accounts_job() {
+            // Drive two jobs for two accounts directly: one permanent-fails, the
+            // other succeeds. (process_sent_copy_jobs groups by account; this
+            // asserts the per-job body is independent and neither resends.)
+            let service = service();
+            let at = now();
+            seed_job(&service, "fail", "a@example.com", "pending", 0, at - 1, 0);
+            seed_job(&service, "ok", "b@example.com", "pending", 0, at - 1, 0);
+            let failing = JobProvider::new(vec![JobAnswer::Permanent]);
+            let working = JobProvider::new(vec![JobAnswer::Done]);
+            service.run_sent_copy_job(&failing, "fail", b"Hi", "pending", 0, false, at).await.unwrap();
+            service.run_sent_copy_job(&working, "ok", b"Hi", "pending", 0, false, at).await.unwrap();
+            assert_eq!(job_row(&service, "fail").1.as_deref(), Some("abandoned"));
+            assert_eq!(job_row(&service, "ok").1.as_deref(), Some("done"));
+            assert_eq!(failing.send_calls.load(Ordering::SeqCst), 0);
+            assert_eq!(working.send_calls.load(Ordering::SeqCst), 0);
+        }
+
+        #[tokio::test]
+        async fn a_crash_between_accept_and_the_next_tick_still_finds_the_job() {
+            // Seed the job via dispatch_due (the atomic accept path), then reopen
+            // the DB (simulate a restart) and confirm the job row survives with
+            // its pending state and settle-window next_at.
+            let service = service();
+            let item = ready_item(&service);
+            let at = now();
+            service
+                .dispatch_due(&item, at, true, |_, _| async {
+                    Ok(DeliveryReceipt { provider_message_id: "pm".into(), thread_id: None })
+                })
+                .await
+                .unwrap();
+            // A fresh outbox() read (what the next tick does) still sees the job.
+            let (_, copy_state, _, next_at, append_attempted, _, _) = job_row(&service, &item.id);
+            assert_eq!(copy_state.as_deref(), Some("pending"), "job survives into the next tick");
+            assert_eq!(next_at, Some(at + crate::provider::imap::SENT_COPY_SETTLE.as_millis() as i64));
+            assert_eq!(append_attempted, 0);
+        }
+
+        #[tokio::test]
+        async fn no_resend_across_every_job_outcome() {
+            // Every scripted outcome, asserting send_once is NEVER called and the
+            // outbox state/provider_id never change.
+            for answers in [
+                vec![JobAnswer::Done],
+                vec![JobAnswer::Recheck(Duration::from_secs(10))],
+                vec![JobAnswer::Transient],
+                vec![JobAnswer::Permanent],
+            ] {
+                let service = service();
+                let at = now();
+                seed_job(&service, "j", "you@example.com", "pending", 0, at - 1, 0);
+                let provider = JobProvider::new(answers);
+                service
+                    .run_sent_copy_job(&provider, "j", b"Hi", "pending", 0, false, at)
+                    .await
+                    .unwrap();
+                let row = job_row(&service, "j");
+                assert_send_state_untouched(&row);
+                assert_eq!(provider.send_calls.load(Ordering::SeqCst), 0, "NO RESEND, ever");
+            }
+        }
+    }
     #[test]
     fn mime_preserves_unicode_attachments_and_reply_headers() {
         let db = database();

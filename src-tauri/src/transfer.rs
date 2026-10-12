@@ -1609,6 +1609,19 @@ mod tests {
         assert_eq!(imap.identities[0].address, "me@proton.me");
         assert_eq!(imap.pinned_fingerprints.len(), 1);
         assert!(imap.server_saves_sent);
+        // The per-device Sent-copy DETECTION result is LOCAL state, never part
+        // of the transfer format (unlike server_saves_sent, the user override
+        // just asserted). An imported IMAP account must therefore carry no
+        // detection row — detection re-runs on the new device's first send.
+        let detection_rows: i64 = database
+            .connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM imap_sent_copy_detection", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            detection_rows, 0,
+            "an exported/imported IMAP account must contain no Sent-copy detection state"
+        );
         // The two Gmail accounts have no IMAP settings row.
         assert!(database.imap_account_settings("current@example.com").unwrap().is_none());
         // No password string leaked into the serialized export.

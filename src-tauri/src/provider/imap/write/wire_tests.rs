@@ -1375,6 +1375,203 @@ mod sent_copy_tests {
             s
         }
     }
+
+    // ---- Phase 4 run 4b: the DECISION wired to a real session ------------
+    //
+    // Drive `decide_sent_copy` through the production `SessionSentCopyIo`
+    // against the scripted Sent server, so the state machine is proven at the
+    // wire (what reaches the server, and what detection it records) rather than
+    // only over the pure fake in `write.rs`'s unit tests.
+    mod decision_integration {
+        use super::*;
+        use crate::provider::{SentCopyPhase, SentCopyRequest, SentCopyStep};
+        use std::time::Duration;
+
+        fn store() -> ImapStateStore {
+            let database = std::sync::Arc::new(crate::db::Database::open_memory());
+            ImapStateStore::new(database, "me@example.com")
+        }
+
+        fn req(phase: SentCopyPhase, append_attempted: bool) -> SentCopyRequest {
+            SentCopyRequest {
+                raw: raw_with("<decide@x>"),
+                outbox_id: "o1".into(),
+                append_attempted,
+                phase,
+            }
+        }
+
+        async fn run(
+            session: &mut AsyncImapSession<DuplexStream>,
+            store: &ImapStateStore,
+            server_saves_sent: bool,
+            request: &SentCopyRequest,
+        ) -> Result<SentCopyStep, ProviderError> {
+            let mut io = SessionSentCopyIo {
+                session,
+                store,
+                mailbox: "Sent".into(),
+                raw: &request.raw,
+                message_id: "<decide@x>".into(),
+                server_saves_sent,
+                config: instant_config(2),
+                now: || 1_000,
+            };
+            decide_sent_copy(&mut io, request, Duration::ZERO).await
+        }
+
+        #[tokio::test]
+        async fn override_true_touches_the_wire_zero_times() {
+            let (mut session, _state, log, task) = connect_sent(SentScript::default(), &[]).await;
+            let store = store();
+            let step = run(&mut session, &store, true, &req(SentCopyPhase::Pending, false))
+                .await
+                .unwrap();
+            assert_eq!(step, SentCopyStep::Done);
+            assert_eq!(log.count_starting("EXAMINE"), 0);
+            assert_eq!(log.count_starting("APPEND"), 0);
+            assert_eq!(log.count_starting("UID SEARCH"), 0);
+            let _ = session.logout().await;
+            task.await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn detection_some_true_touches_the_wire_zero_times() {
+            let (mut session, _state, log, task) = connect_sent(SentScript::default(), &[]).await;
+            let store = store();
+            store.set_sent_copy_detection(true, 1).unwrap();
+            let step = run(&mut session, &store, false, &req(SentCopyPhase::Pending, false))
+                .await
+                .unwrap();
+            assert_eq!(step, SentCopyStep::Done);
+            assert_eq!(log.count_starting("APPEND"), 0);
+            assert_eq!(log.count_starting("EXAMINE"), 0);
+            let _ = session.logout().await;
+            task.await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn first_send_server_copy_present_records_true_without_appending() {
+            // Preload a server copy of the Message-ID BEFORE any APPEND of ours.
+            let (mut session, state, log, task) =
+                connect_sent(SentScript::default(), &[(&String::from_utf8_lossy(&raw_with("<decide@x>")), &["\\Seen"])]).await;
+            let store = store();
+            let step = run(&mut session, &store, false, &req(SentCopyPhase::Pending, false))
+                .await
+                .unwrap();
+            assert_eq!(step, SentCopyStep::Done);
+            assert_eq!(store.sent_copy_detection().unwrap(), Some(true));
+            assert_eq!(log.count_starting("APPEND"), 0, "no APPEND when the server saved its own");
+            assert_eq!(state.count(), 1, "still exactly the server's one copy");
+            let _ = session.logout().await;
+            task.await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn first_send_absent_appends_then_recheck() {
+            let (mut session, state, log, task) = connect_sent(SentScript::default(), &[]).await;
+            let store = store();
+            let step = run(&mut session, &store, false, &req(SentCopyPhase::Pending, false))
+                .await
+                .unwrap();
+            assert_eq!(step, SentCopyStep::Recheck { after: Duration::ZERO });
+            assert_eq!(log.count_starting("APPEND"), 1, "we APPEND our copy");
+            assert_eq!(state.count(), 1);
+            assert!(store.sent_copy_detection().unwrap().is_none(), "no detection until verify");
+            let _ = session.logout().await;
+            task.await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn verify_with_one_copy_records_false() {
+            // One copy present (ours): verify records "server does not save".
+            let (mut session, _state, _log, task) =
+                connect_sent(SentScript::default(), &[(&String::from_utf8_lossy(&raw_with("<decide@x>")), &["\\Seen"])]).await;
+            let store = store();
+            let step = run(&mut session, &store, false, &req(SentCopyPhase::Verify, true))
+                .await
+                .unwrap();
+            assert_eq!(step, SentCopyStep::Done);
+            assert_eq!(store.sent_copy_detection().unwrap(), Some(false));
+            let _ = session.logout().await;
+            task.await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn verify_with_two_copies_records_true_and_leaves_the_duplicate() {
+            // Two copies of the same Message-ID (the server saved one too).
+            let dup = String::from_utf8_lossy(&raw_with("<decide@x>")).to_string();
+            let (mut session, state, log, task) =
+                connect_sent(SentScript::default(), &[(&dup, &["\\Seen"]), (&dup, &["\\Seen"])]).await;
+            let store = store();
+            let step = run(&mut session, &store, false, &req(SentCopyPhase::Verify, true))
+                .await
+                .unwrap();
+            assert_eq!(step, SentCopyStep::Done);
+            assert_eq!(store.sent_copy_detection().unwrap(), Some(true));
+            assert_eq!(state.count(), 2, "the duplicate is LEFT in place");
+            assert_eq!(log.count_starting("STORE"), 0, "never flags the duplicate");
+            assert_eq!(log.count_starting("EXPUNGE"), 0, "never expunges the duplicate");
+            let _ = session.logout().await;
+            task.await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn verify_with_zero_copies_does_not_append_again() {
+            // No copy visible (our APPEND not yet searchable): transient, no
+            // second APPEND, no detection recorded.
+            let (mut session, state, log, task) = connect_sent(SentScript::default(), &[]).await;
+            let store = store();
+            let err = run(&mut session, &store, false, &req(SentCopyPhase::Verify, true))
+                .await
+                .unwrap_err();
+            assert!(matches!(err, ProviderError::TransientTransport(_)));
+            assert_eq!(log.count_starting("APPEND"), 0, "verify must never re-APPEND");
+            assert_eq!(state.count(), 0);
+            assert!(store.sent_copy_detection().unwrap().is_none());
+            let _ = session.logout().await;
+            task.await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn lost_reply_retry_with_our_copy_present_is_not_server_evidence() {
+            // Pending phase, append_attempted=true, and our copy already present
+            // (a lost reply). It must NOT record "server saves sent"; it moves to
+            // verify after an idempotent (no-op) APPEND.
+            let (mut session, _state, _log, task) =
+                connect_sent(SentScript::default(), &[(&String::from_utf8_lossy(&raw_with("<decide@x>")), &["\\Seen"])]).await;
+            let store = store();
+            let step = run(&mut session, &store, false, &req(SentCopyPhase::Pending, true))
+                .await
+                .unwrap();
+            assert_eq!(step, SentCopyStep::Recheck { after: Duration::ZERO });
+            assert!(
+                store.sent_copy_detection().unwrap().is_none(),
+                "a copy found after our APPEND is never server-saves evidence"
+            );
+            let _ = session.logout().await;
+            task.await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn a_missing_sent_mailbox_is_a_permanent_error() {
+            let script = SentScript {
+                examine_nonexistent: Some("no such mailbox".into()),
+                ..Default::default()
+            };
+            let (mut session, _state, _log, task) = connect_sent(script, &[]).await;
+            let store = store();
+            let err = run(&mut session, &store, false, &req(SentCopyPhase::Pending, false))
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, ProviderError::InvalidOperation(_)),
+                "a missing Sent mailbox is permanent, got {err:?}"
+            );
+            let _ = session.logout().await;
+            task.await.unwrap();
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

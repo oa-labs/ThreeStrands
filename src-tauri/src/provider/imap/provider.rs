@@ -5086,6 +5086,20 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn removing_account_deletes_its_sent_copy_detection_row() {
+        // The per-device detection result is LOCAL provider state; removing the
+        // account must purge it like every other imap_* table.
+        let (_provider, store) = provider_with(Arc::new(Mutex::new(FakeMailbox::new(1))));
+        store.set_sent_copy_detection(true, 1_000).unwrap();
+        assert_eq!(store.sent_copy_detection().unwrap(), Some(true));
+        store.database().remove_account("me@example.com").unwrap();
+        assert!(
+            store.sent_copy_detection().unwrap().is_none(),
+            "account removal must delete the Sent-copy detection row"
+        );
+    }
+
     // ---- SLICE5B1 item 3/5: the token loader threads like the body oracle --
     //
     // Each corpus below syncs a sequence of messages through the provider

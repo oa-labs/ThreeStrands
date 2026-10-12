@@ -2442,6 +2442,177 @@ mod tests {
         assert_eq!(config.relocate_rechecks, policy::SENT_COPY_RELOCATE_RECHECKS);
         assert!(!config.recheck_delay.is_zero(), "the production default settles between re-checks");
     }
+
+    // ---- Phase 4 run 4b: the Sent-copy DECISION state machine --------------
+    //
+    // `decide_sent_copy` is tested over an in-memory fake IO that records every
+    // call, so every branch of the state machine — including the subtle
+    // evidence rule — is asserted without a server. The matching wire-level
+    // integration test (`write/wire_tests.rs`) proves the SAME decisions
+    // against a real session + scripted server.
+
+    use crate::provider::{SentCopyPhase, SentCopyRequest, SentCopyStep};
+    use std::time::Duration;
+
+    /// A scriptable fake [`SentCopyIo`] recording calls and returning canned
+    /// values. `count_returns` is a queue popped per `count_in_sent` call.
+    struct FakeIo {
+        override_saves: bool,
+        detection: Option<bool>,
+        count_returns: std::cell::RefCell<Vec<usize>>,
+        appended: std::cell::Cell<usize>,
+        recorded: std::cell::Cell<Option<bool>>,
+    }
+
+    impl FakeIo {
+        fn new() -> Self {
+            Self {
+                override_saves: false,
+                detection: None,
+                count_returns: std::cell::RefCell::new(Vec::new()),
+                appended: std::cell::Cell::new(0),
+                recorded: std::cell::Cell::new(None),
+            }
+        }
+        fn with_override(mut self) -> Self {
+            self.override_saves = true;
+            self
+        }
+        fn with_detection(mut self, value: bool) -> Self {
+            self.detection = Some(value);
+            self
+        }
+        fn with_counts(self, counts: &[usize]) -> Self {
+            *self.count_returns.borrow_mut() = counts.to_vec();
+            self
+        }
+    }
+
+    #[async_trait]
+    impl SentCopyIo for FakeIo {
+        fn server_saves_sent_override(&self) -> bool {
+            self.override_saves
+        }
+        async fn detection(&mut self) -> Result<Option<bool>, ProviderError> {
+            Ok(self.detection)
+        }
+        async fn record_detection(&mut self, v: bool) -> Result<(), ProviderError> {
+            self.recorded.set(Some(v));
+            Ok(())
+        }
+        async fn count_in_sent(&mut self) -> Result<usize, ProviderError> {
+            Ok(self.count_returns.borrow_mut().remove(0))
+        }
+        async fn append_copy(&mut self) -> Result<(), ProviderError> {
+            self.appended.set(self.appended.get() + 1);
+            Ok(())
+        }
+    }
+
+    fn request(phase: SentCopyPhase, append_attempted: bool) -> SentCopyRequest {
+        SentCopyRequest {
+            raw: b"Message-ID: <m@x>\r\n\r\nbody".to_vec(),
+            outbox_id: "o1".into(),
+            append_attempted,
+            phase,
+        }
+    }
+
+    async fn decide(io: &mut FakeIo, req: &SentCopyRequest) -> Result<SentCopyStep, ProviderError> {
+        decide_sent_copy(io, req, Duration::from_secs(10)).await
+    }
+
+    #[tokio::test]
+    async fn override_true_is_done_with_no_network_or_detection() {
+        let mut io = FakeIo::new().with_override();
+        let step = decide(&mut io, &request(SentCopyPhase::Pending, false)).await.unwrap();
+        assert_eq!(step, SentCopyStep::Done);
+        assert_eq!(io.appended.get(), 0, "override APPENDs nothing");
+        assert!(io.recorded.get().is_none(), "override records no detection");
+        assert!(io.count_returns.borrow().is_empty(), "override does not count");
+    }
+
+    #[tokio::test]
+    async fn detection_some_true_is_done_without_appending() {
+        let mut io = FakeIo::new().with_detection(true);
+        let step = decide(&mut io, &request(SentCopyPhase::Pending, false)).await.unwrap();
+        assert_eq!(step, SentCopyStep::Done);
+        assert_eq!(io.appended.get(), 0);
+    }
+
+    #[tokio::test]
+    async fn detection_some_false_appends_our_copy_and_is_done() {
+        let mut io = FakeIo::new().with_detection(false);
+        let step = decide(&mut io, &request(SentCopyPhase::Pending, false)).await.unwrap();
+        assert_eq!(step, SentCopyStep::Done);
+        assert_eq!(io.appended.get(), 1, "we save the copy ourselves");
+        assert!(io.recorded.get().is_none());
+    }
+
+    #[tokio::test]
+    async fn first_send_copy_present_before_append_records_server_saves_sent() {
+        // None + a copy present BEFORE any APPEND of ours == the server saved
+        // its own copy. Record true, append nothing.
+        let mut io = FakeIo::new().with_counts(&[1]);
+        let step = decide(&mut io, &request(SentCopyPhase::Pending, false)).await.unwrap();
+        assert_eq!(step, SentCopyStep::Done);
+        assert_eq!(io.appended.get(), 0, "a server-saved copy means we never APPEND");
+        assert_eq!(io.recorded.get(), Some(true));
+    }
+
+    #[tokio::test]
+    async fn first_send_copy_absent_appends_then_asks_to_verify() {
+        let mut io = FakeIo::new().with_counts(&[0]);
+        let step = decide(&mut io, &request(SentCopyPhase::Pending, false)).await.unwrap();
+        assert_eq!(step, SentCopyStep::Recheck { after: Duration::from_secs(10) });
+        assert_eq!(io.appended.get(), 1);
+        assert!(io.recorded.get().is_none(), "no detection recorded until verify");
+    }
+
+    #[tokio::test]
+    async fn verify_with_two_copies_records_server_saves_sent_and_leaves_the_duplicate() {
+        let mut io = FakeIo::new().with_counts(&[2]);
+        let step = decide(&mut io, &request(SentCopyPhase::Verify, true)).await.unwrap();
+        assert_eq!(step, SentCopyStep::Done);
+        assert_eq!(io.recorded.get(), Some(true), "server saved one too");
+        assert_eq!(io.appended.get(), 0, "verify never appends; never deletes the duplicate");
+    }
+
+    #[tokio::test]
+    async fn verify_with_one_copy_records_server_does_not_save() {
+        let mut io = FakeIo::new().with_counts(&[1]);
+        let step = decide(&mut io, &request(SentCopyPhase::Verify, true)).await.unwrap();
+        assert_eq!(step, SentCopyStep::Done);
+        assert_eq!(io.recorded.get(), Some(false));
+    }
+
+    #[tokio::test]
+    async fn verify_with_zero_copies_is_transient_and_never_appends_again() {
+        // Our APPEND's copy is not visible yet. Do NOT append again (that is how
+        // a duplicate is born); retry the verify later, record nothing.
+        let mut io = FakeIo::new().with_counts(&[0]);
+        let err = decide(&mut io, &request(SentCopyPhase::Verify, true)).await.unwrap_err();
+        assert!(matches!(err, ProviderError::TransientTransport(_)));
+        assert_eq!(io.appended.get(), 0, "a zero-copy verify must NOT re-append");
+        assert!(io.recorded.get().is_none(), "no detection recorded on a retry-later verify");
+    }
+
+    #[tokio::test]
+    async fn lost_reply_retry_with_append_attempted_is_not_server_evidence() {
+        // Pending phase but append_attempted=true (a lost reply): a copy present
+        // now may be OUR appended copy, so it is NOT evidence the server saves
+        // its own. We ensure the copy exists (idempotent) and move to verify —
+        // and crucially do NOT record detection true here.
+        let mut io = FakeIo::new();
+        let step = decide(&mut io, &request(SentCopyPhase::Pending, true)).await.unwrap();
+        assert_eq!(step, SentCopyStep::Recheck { after: Duration::from_secs(10) });
+        assert!(
+            io.recorded.get().is_none(),
+            "a copy found after our APPEND is never recorded as server-saves evidence"
+        );
+        assert_eq!(io.appended.get(), 1, "the idempotent APPEND is a no-op if present");
+        assert!(io.count_returns.borrow().is_empty(), "evidence rule: we did not count before deciding");
+    }
 }
 
 #[cfg(test)]
