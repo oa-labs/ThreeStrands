@@ -1162,7 +1162,7 @@ impl Correspondence {
                 let draft=self.database.draft(&id)?;
                 let provider = self.provider_for(&draft.account).await?;
                 if !provider.capabilities().send_supported { return Err("Scheduled sending is not supported for this account yet".into()); }
-                let identities = provider.identities().await.map_err(error)?;
+                let identities = provider.identities(&draft.account).await.map_err(error)?;
                 let message_id_domain = provider.message_id_domain(draft.from_address()).map_err(error)?;
                 let owner=schedule_owner;
                 Ok(serde_json::to_value(self.database.schedule_draft(&id,revision,&selection,&owner,&identities,message_id_domain.as_deref(),&self.root,now())?).map_err(error)?)
@@ -1223,11 +1223,20 @@ impl Correspondence {
                 let identities = if mode == "new" {
                     Vec::new()
                 } else {
-                    self.provider_for(&resolved_account)
-                        .await?
-                        .identities()
-                        .await
-                        .map_err(error)?
+                    // An unavailable provider (disconnected account, locked
+                    // keychain) must not stop a reply to an already-cached
+                    // message from opening, as it never did. Fall back to the
+                    // primary identity (`from = None`); `queue` re-resolves
+                    // the identity list from the provider and rejects a
+                    // `from` that is not on it, so nothing can send as the
+                    // wrong address.
+                    match self.provider_for(&resolved_account).await {
+                        Ok(provider) => provider
+                            .identities(&resolved_account)
+                            .await
+                            .unwrap_or_default(),
+                        Err(_) => Vec::new(),
+                    }
                 };
                 let draft = self
                     .database
@@ -1275,7 +1284,7 @@ impl Correspondence {
                 // from the draft's own account's provider, not the active one.
                 let draft = self.database.draft(&id)?;
                 let provider = self.provider_for(&draft.account).await?;
-                let identities = provider.identities().await.map_err(error)?;
+                let identities = provider.identities(&draft.account).await.map_err(error)?;
                 let message_id_domain = provider
                     .message_id_domain(draft.from_address())
                     .map_err(error)?;
@@ -2654,6 +2663,22 @@ mod tests {
             edits: Arc::new(tokio::sync::Mutex::new(())),
             scheduling: Arc::new(tokio::sync::Mutex::new(())),
         }
+    }
+    #[tokio::test]
+    async fn reply_to_a_cached_message_opens_while_its_account_is_not_connected() {
+        // `service()` has an empty account registry, so `provider_for` fails.
+        // Resolving sending identities must not turn that into a refusal to
+        // open a reply to a message that is already cached.
+        let service = service();
+        let source = serde_json::json!({"id":"cached","threadId":"t","payload":{"mimeType":"text/plain","headers":[{"name":"From","value":"Other <other@example.com>"},{"name":"To","value":"you@example.com"},{"name":"Subject","value":"Topic"},{"name":"Message-ID","value":"<cached@example.com>"}],"body":{"data":URL_SAFE_NO_PAD.encode("Hello")}}});
+        service.database.connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES ('cached', ?1)", [source.to_string()]).unwrap();
+        let value = service
+            .request(Request::Create { mode: "reply".into(), source_id: Some("cached".into()), account: Some("you@example.com".into()) })
+            .await
+            .expect("a cached reply must open without a connected provider");
+        let draft: Draft = serde_json::from_value(value).unwrap();
+        assert_eq!(draft.account, "you@example.com");
+        assert_eq!(draft.from, None, "falls back to the primary identity");
     }
     #[tokio::test]
     async fn fake_clock_and_provider_prove_undo_deadline_and_single_dispatch() {

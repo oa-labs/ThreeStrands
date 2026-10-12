@@ -319,17 +319,20 @@ pub trait MailSend: Send + Sync {
     /// The address this account actually sends as, according to the server.
     async fn sender_identity(&self) -> ProviderResult<String>;
 
-    /// The account's ordered sending identities. The default is the single
-    /// identity `[sender_identity()]` with no display name — correct for
-    /// Gmail and any account that sends as exactly one address. The IMAP
+    /// The account's ordered sending identities. `account` is the account key
+    /// (its own address). The default is the single identity `[account]` with
+    /// no display name — correct for Gmail and any account that sends as
+    /// exactly one address — and deliberately makes NO provider call:
+    /// `sender_identity()` is a network request for Gmail, and queueing,
+    /// scheduling and reply-draft creation must not start needing one. The IMAP
     /// provider overrides this from its stored identity list
     /// (`docs/imap-design.md`, "Identities"): login first, then the addresses
     /// the user added, normalized and validated. The FIRST entry is always
     /// the account's primary (login) address, so callers may rely on
-    /// `identities()[0]` being that address.
-    async fn identities(&self) -> ProviderResult<Vec<SendingIdentity>> {
+    /// `identities(account)[0]` being that address.
+    async fn identities(&self, account: &str) -> ProviderResult<Vec<SendingIdentity>> {
         Ok(vec![SendingIdentity {
-            address: self.sender_identity().await?,
+            address: account.trim().to_string(),
             display_name: None,
         }])
     }
@@ -366,4 +369,35 @@ pub trait MailSend: Send + Sync {
 /// A complete mail account backend.
 pub trait MailProvider: MailSync + MailFetch + MailMutate + MailSend {
     fn capabilities(&self) -> ProviderCapabilities;
+}
+
+#[cfg(test)]
+mod sending_identity_default_tests {
+    use super::*;
+
+    /// A provider whose `sender_identity` is a network round trip that must
+    /// never be needed just to learn the account's own address.
+    struct OfflineProvider;
+
+    #[async_trait]
+    impl MailSend for OfflineProvider {
+        async fn sender_identity(&self) -> ProviderResult<String> {
+            panic!("identities() must not call sender_identity(): that is a network request for Gmail");
+        }
+        async fn prepare_delivery(&self) -> ProviderResult<Box<dyn Delivery>> {
+            unreachable!()
+        }
+        async fn find_sent_copy(&self, _: &str, _: &str) -> ProviderResult<Option<DeliveryReceipt>> {
+            unreachable!()
+        }
+    }
+
+    #[tokio::test]
+    async fn default_identities_is_the_account_address_without_any_provider_call() {
+        let got = OfflineProvider.identities("me@example.com").await.unwrap();
+        assert_eq!(
+            got,
+            vec![SendingIdentity { address: "me@example.com".into(), display_name: None }]
+        );
+    }
 }

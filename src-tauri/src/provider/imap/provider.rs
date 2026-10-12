@@ -3597,7 +3597,7 @@ impl MailSend for ImapProvider {
         Ok(self.username.clone())
     }
 
-    async fn identities(&self) -> ProviderResult<Vec<super::SendingIdentity>> {
+    async fn identities(&self, _account: &str) -> ProviderResult<Vec<super::SendingIdentity>> {
         // The one source of truth: the login address first and always, then
         // the stored list, normalized/validated. `docs/imap-design.md`
         // ("Identities"). No DB round trip — the settings are carried in the
