@@ -3270,4 +3270,66 @@ mod tests {
         assert!(backfill_sent_step(&database, BACKFILL_ACCOUNT, &FlakySearch).await.is_err());
         assert_eq!(database.sent_backfill_progress(BACKFILL_ACCOUNT).unwrap(), Some(saved));
     }
+
+    // Phase 5 run 4: flipping `server_search` on for IMAP makes
+    // `backfill_sent_if_pending` call `provider.search(SENT_BACKFILL_QUERY, ..)`
+    // for IMAP accounts too. SENT_BACKFILL_QUERY is `in:sent -in:trash -in:spam`;
+    // the negations (`-in:trash`, `-in:spam`) are `Raw` tokens the IMAP renderer
+    // SKIPS (proven in `provider::imap::search` renderer tests and in the
+    // provider's `search_exec::a_skipped_query_makes_no_network_call_and_returns
+    // _empty`), so an IMAP `search()` returns an EMPTY page. This must make the
+    // Sent backfill finish AT ONCE: no fetch, no error, progress cleared, and no
+    // repeated work on later polls. Proven here through `backfill_sent_step` with
+    // an IMAP-shaped provider that returns what the IMAP `search()` returns for
+    // that query (an empty page) — provider-neutrally, no branching on kind.
+    #[tokio::test]
+    async fn imap_sent_backfill_finishes_at_once_because_the_negated_query_is_skipped() {
+        // An IMAP-SHAPED provider: server_search is on, but `search()` for the
+        // negated query returns an empty page (what the real IMAP search does
+        // for a Skipped render). Driven through `backfill_sent_step`.
+        struct ImapShapedSearch {
+            searches: AtomicUsize,
+        }
+        #[async_trait]
+        impl MailSync for ImapShapedSearch {
+            async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
+                unreachable!()
+            }
+            async fn list_inbox(&self, _: Option<&str>) -> ProviderResult<ThreadPage> {
+                unreachable!()
+            }
+            async fn poll(&self, _: &SyncCursor) -> ProviderResult<SyncBatch> {
+                unreachable!()
+            }
+            async fn fetch_thread(&self, _: &str) -> ProviderResult<Vec<RawMessage>> {
+                // The backfill must never fetch: the page is empty.
+                panic!("backfill must not fetch when the server search is skipped");
+            }
+            async fn search(&self, query: &str, _: Option<&str>) -> ProviderResult<ThreadPage> {
+                assert_eq!(query, SENT_BACKFILL_QUERY);
+                self.searches.fetch_add(1, Ordering::SeqCst);
+                // A Skipped render => empty page, next: None (no error).
+                Ok(ThreadPage::default())
+            }
+        }
+
+        let database = backfill_database();
+        let provider = ImapShapedSearch { searches: AtomicUsize::new(0) };
+        // Finishes at once: no more work, no error.
+        assert!(
+            !backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider).await.unwrap(),
+            "an empty search finishes the Sent backfill in one step"
+        );
+        // Progress cleared (nothing left to resume), so later polls don't loop.
+        assert_eq!(database.sent_backfill_progress(BACKFILL_ACCOUNT).unwrap(), None);
+        assert_eq!(
+            provider.searches.load(Ordering::SeqCst),
+            1,
+            "exactly one search, then done — no repeated scanning every poll"
+        );
+        // A follow-up step does nothing (progress is cleared) and never searches
+        // again.
+        assert!(!backfill_sent_step(&database, BACKFILL_ACCOUNT, &provider).await.unwrap());
+        assert_eq!(provider.searches.load(Ordering::SeqCst), 1, "no repeated work");
+    }
 }

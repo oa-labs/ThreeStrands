@@ -1168,6 +1168,61 @@ pub fn check_search_target_mailboxes(count: usize) -> Result<usize, ProviderErro
 }
 
 // ---------------------------------------------------------------------------
+// Phase 5 run 4: server-search EXECUTION limits (the budget + deadline the
+// `MailSync::search` driver runs under, as opposed to the run-1 RENDER limits
+// above which bound the criteria string).
+// ---------------------------------------------------------------------------
+//
+// Run 1 bounds the query STRING. These two bound what the EXECUTION of a
+// rendered plan may spend: how many server hits one search acquires (bodies
+// fetched + threaded + pinned, so a cost-bearing bound) and how long the whole
+// search — SEARCH + acquire across every planned mailbox — may run before it
+// returns PARTIAL results. Neither is a silent clamp: over-budget hits are
+// simply not acquired this search (the user can page/refine), and an expired
+// deadline returns what was acquired and reports partial, never an error.
+
+/// The most server hits ONE search acquires, across all its planned mailboxes.
+///
+/// A search EXAMINEs each mailbox, `UID SEARCH`es it, and acquires (fetches +
+/// threads + PINS) the chosen UIDs — real per-hit work and a pin that counts
+/// against [`MAX_SEARCH_PINS`]. This caps that per-search cost. Set equal to
+/// `sync::REMOTE_SEARCH_SCAN_LIMIT` (50) so the IMAP server-search backfill
+/// acquires the same depth the engine's `search_and_ingest_missing` scans in
+/// one pass — the two must not drift, so a test in `provider.rs` pins the
+/// value. Over the budget the extra hits are left unacquired (a page/refine
+/// away), never silently dropped.
+pub const MAX_SEARCH_ACQUIRE: usize = 50;
+
+/// The total wall-clock budget for one `MailSync::search`: SEARCH + acquire
+/// across every planned mailbox. On expiry the driver stops starting new
+/// mailboxes and returns what it has acquired as a PARTIAL result (not an
+/// error). A body-scanning server without a full-text index can take real
+/// time per mailbox (`docs/imap-design.md`, "Server search": "every search has
+/// a timeout and partial results are shown"), so this bounds the user's wait
+/// while still returning the fast mailboxes' hits. 20s is long enough for the
+/// common case on a loopback or indexed server and short enough that a slow
+/// server does not hang the UI. The driver reads this through a `tokio::time`
+/// deadline so a test can inject a tiny value (a TEST KNOB on the provider)
+/// and drive expiry under paused time without waiting it out.
+pub const SEARCH_DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Split a total acquire budget fairly across `mailbox_count` mailboxes:
+/// `ceil(budget / count)` per mailbox so no mailbox is starved, with the
+/// LAST-visited mailbox absorbing any remainder (the driver visits mailboxes
+/// in a deterministic order and takes newest-UID-first within each). Returns
+/// the per-mailbox cap. With one mailbox the whole budget goes to it; with
+/// zero mailboxes the cap is zero (there is nothing to search). The driver
+/// still stops at the GLOBAL `MAX_SEARCH_ACQUIRE` total, so a per-mailbox cap
+/// that rounds up never lets the sum exceed the budget — the running total is
+/// the hard bound, this split is only the fair share.
+pub fn search_acquire_share(budget: usize, mailbox_count: usize) -> usize {
+    if mailbox_count == 0 {
+        return 0;
+    }
+    budget.div_ceil(mailbox_count)
+}
+
+// ---------------------------------------------------------------------------
 // Phase 5 run 3: search-pin limits
 // ---------------------------------------------------------------------------
 //
@@ -2210,6 +2265,40 @@ mod tests {
             check_search_target_mailboxes(MAX_SEARCH_TARGET_MAILBOXES + 1).unwrap_err(),
             ProviderError::InvalidOperation(_)
         ));
+    }
+
+    // --- Phase 5 run 4: search-execution budget + deadline -------------
+
+    #[test]
+    fn the_search_execution_limits_are_the_documented_bounds() {
+        assert_eq!(MAX_SEARCH_ACQUIRE, 50);
+        assert!(MAX_SEARCH_ACQUIRE > 0);
+        // The deadline is a positive, bounded wall-clock budget.
+        assert_eq!(SEARCH_DEADLINE, std::time::Duration::from_secs(20));
+        assert!(SEARCH_DEADLINE > std::time::Duration::ZERO);
+    }
+
+    #[test]
+    fn search_acquire_share_splits_fairly_below_exact_and_above_an_even_divide() {
+        // Zero mailboxes: nothing to search, zero share (never a divide-by-zero).
+        assert_eq!(search_acquire_share(50, 0), 0);
+        // One mailbox: the whole budget.
+        assert_eq!(search_acquire_share(50, 1), 50);
+        // An EXACT divide: each mailbox gets its equal share.
+        assert_eq!(search_acquire_share(50, 5), 10);
+        // BELOW an even divide (49/5): ceil keeps each share just over the
+        // floor so the running total still reaches the budget rather than
+        // starving the last mailbox (10,10,10,10,9 under the global cap).
+        assert_eq!(search_acquire_share(49, 5), 10);
+        // ABOVE an even divide (51/5): ceil again (11), and the GLOBAL
+        // MAX_SEARCH_ACQUIRE total — enforced by the driver — is what keeps
+        // the sum from exceeding the budget.
+        assert_eq!(search_acquire_share(51, 5), 11);
+        // More mailboxes than budget: at least one hit each until the budget
+        // runs out (the driver's running total stops the rest).
+        assert_eq!(search_acquire_share(3, 10), 1);
+        // A zero budget yields a zero share regardless of mailbox count.
+        assert_eq!(search_acquire_share(0, 4), 0);
     }
 
     // --- Phase 5 run 3: search-pin limits ------------------------------
