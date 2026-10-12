@@ -177,12 +177,11 @@ fn resolve_role(
     delimiter: Option<&str>,
     settings: &ImapAccountSettings,
 ) -> Option<MailboxRole> {
-    // 1. User override: `mailbox_overrides` maps a role key -> mailbox name.
-    for (key, name) in &settings.mailbox_overrides {
-        if name == &mailbox.name {
-            if let Some(role) = MailboxRole::from_key(key) {
-                return Some(role);
-            }
+    // An explicit destination owns the role account-wide. In particular, the
+    // previous special-use/name candidate must not keep the same role.
+    for role in MailboxRole::ALL {
+        if explicit_destination(role, settings) == Some(mailbox.name.as_str()) {
+            return Some(role);
         }
     }
     // 2. RFC 6154 attribute.
@@ -191,11 +190,26 @@ fn resolve_role(
             .into_iter()
             .find(|role| role.attribute().eq_ignore_ascii_case(attribute))
         {
-            return Some(role);
+            return explicit_destination(role, settings)
+                .is_none()
+                .then_some(role);
         }
     }
     // 3. Conservative name match (reuse mailboxes.rs's logic).
     MailboxRole::match_by_name(&mailbox.name, delimiter)
+        .filter(|role| explicit_destination(*role, settings).is_none())
+}
+
+fn explicit_destination(role: MailboxRole, settings: &ImapAccountSettings) -> Option<&str> {
+    if role == MailboxRole::Archive {
+        if let Some(archive) = settings.archive_mailbox.as_deref() {
+            return Some(archive);
+        }
+    }
+    settings
+        .mailbox_overrides
+        .iter()
+        .find_map(|(key, name)| (MailboxRole::from_key(key) == Some(role)).then_some(name.as_str()))
 }
 
 /// Whether a mailbox is the label container itself (not synced).
@@ -290,8 +304,12 @@ pub fn build_plan(
             continue;
         }
 
-        // The label container itself: never synced, no label.
-        if is_label_container(&mailbox.name, settings) {
+        let role = resolve_role(mailbox, delimiter, settings);
+        let explicitly_mapped = role.is_some_and(|role| {
+            explicit_destination(role, settings) == Some(mailbox.name.as_str())
+        });
+        // Explicit role choices take precedence over label-folder placement.
+        if !explicitly_mapped && is_label_container(&mailbox.name, settings) {
             rest.push(PlanEntry {
                 mailbox: mailbox.name.clone(),
                 role: None,
@@ -305,7 +323,7 @@ pub fn build_plan(
         }
         // A label-container child under label-folder mode: synced (5b-2), a
         // Folder-class window, contributing `lf:<name relative to container>`.
-        if is_label_folder_child(&mailbox.name, delimiter, settings) {
+        if !explicitly_mapped && is_label_folder_child(&mailbox.name, delimiter, settings) {
             let container = settings
                 .label_container
                 .as_deref()
@@ -323,7 +341,6 @@ pub fn build_plan(
             continue;
         }
 
-        let role = resolve_role(mailbox, delimiter, settings);
         // An aggregate mailbox with an attribute that maps to NO MailboxRole
         // (Proton's "Starred" carries `\Flagged`) is a VIEW of mail stored
         // elsewhere, never a user folder: it must not be synced as a location
@@ -706,5 +723,123 @@ mod tests {
                 ("folder:Zed/Folder".to_string(), "folder"),
             ]
         );
+    }
+
+    #[test]
+    fn chosen_archive_is_resolved() {
+        let mut config = settings();
+        config.archive_mailbox = Some("Folders/Keep".into());
+        let plan = build_plan(
+            &[mb("INBOX", None), mb("Folders/Keep", None)],
+            Some("/"),
+            &config,
+        );
+        assert_eq!(
+            plan.entry_for("Folders/Keep").unwrap().role,
+            Some(MailboxRole::Archive)
+        );
+    }
+    #[test]
+    fn explicit_sent_override_is_the_only_destination() {
+        let mut config = settings();
+        config
+            .mailbox_overrides
+            .insert("sent".into(), "Z-Sent".into());
+        let plan = build_plan(
+            &[
+                mb("INBOX", None),
+                mb("Sent", Some("\\Sent")),
+                mb("Z-Sent", None),
+            ],
+            Some("/"),
+            &config,
+        );
+        let dest = plan
+            .entries
+            .iter()
+            .find(|e| e.role == Some(MailboxRole::Sent))
+            .unwrap();
+        assert_eq!(
+            dest.mailbox, "Z-Sent",
+            "the provider selects the first plan entry for the role"
+        );
+        assert_eq!(
+            plan.entries
+                .iter()
+                .filter(|e| e.role == Some(MailboxRole::Sent))
+                .count(),
+            1
+        );
+        assert_eq!(
+            plan.entry_for("Sent").unwrap().label_kind,
+            LabelKind::UserFolder
+        );
+    }
+
+    #[test]
+    fn explicit_role_destinations_supersede_attributes_and_name_matches_account_wide() {
+        for role in MailboxRole::ALL {
+            let mut config = settings();
+            config
+                .mailbox_overrides
+                .insert(role.key().into(), "Z-Chosen".into());
+            let plan = build_plan(
+                &[
+                    mb("INBOX", None),
+                    mb("A-Automatic", Some(role.attribute())),
+                    mb("Z-Chosen", None),
+                ],
+                Some("/"),
+                &config,
+            );
+            let destinations: Vec<_> = plan
+                .entries
+                .iter()
+                .filter(|entry| entry.role == Some(role))
+                .map(|entry| entry.mailbox.as_str())
+                .collect();
+            assert_eq!(destinations, ["Z-Chosen"], "{role:?}");
+        }
+        let mut config = settings();
+        config
+            .mailbox_overrides
+            .insert("sent".into(), "Missing".into());
+        let plan = build_plan(&[mb("INBOX", None), mb("Sent", None)], Some("/"), &config);
+        assert!(
+            !plan
+                .entries
+                .iter()
+                .any(|entry| entry.role == Some(MailboxRole::Sent)),
+            "a missing explicit destination must not silently revert to a name match"
+        );
+    }
+
+    #[test]
+    fn chosen_archive_supersedes_automatic_and_legacy_override_even_inside_label_container() {
+        let mut config = settings();
+        config.archive_mailbox = Some("Labels/Keep".into());
+        config
+            .mailbox_overrides
+            .insert("archive".into(), "LegacyArchive".into());
+        let plan = build_plan(
+            &[
+                mb("INBOX", None),
+                mb("Archive", Some("\\Archive")),
+                mb("LegacyArchive", None),
+                mb("Labels/Keep", None),
+            ],
+            Some("/"),
+            &config,
+        );
+        let archives: Vec<_> = plan
+            .entries
+            .iter()
+            .filter(|entry| entry.role == Some(MailboxRole::Archive))
+            .collect();
+        assert_eq!(archives.len(), 1);
+        assert_eq!(archives[0].mailbox, "Labels/Keep");
+        assert!(archives[0].synced_now);
+        assert_eq!(archives[0].label_kind, LabelKind::SystemRole);
+        assert!(archives[0].location_label_id.is_none());
     }
 }

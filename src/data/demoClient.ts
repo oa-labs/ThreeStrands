@@ -1058,6 +1058,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       // The demo has no settings row to persist into; accept and no-op so the
       // confirm step completes in browser preview.
     },
+    async finishImapAccountSetup(_email): Promise<void> {},
     async getImapSendingOptions(account): Promise<ImapSendingOptions> {
       // Browser preview has no real IMAP account: a single identity, no
       // override, detection not yet decided.

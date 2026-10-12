@@ -74,4 +74,9 @@ describe("native account requests", () => {
     await client.addAccount("gmail");
     expect(vi.mocked(invoke).mock.calls.find(([name]) => name === "add_account")?.[1]).toEqual({ provider: "gmail" });
   });
+
+  it("activates the saved IMAP account through its setup completion command", async () => {
+    await client.finishImapAccountSetup("me@example.com");
+    expect(invoke).toHaveBeenCalledWith("finish_imap_account_setup", { email: "me@example.com" });
+  });
 });

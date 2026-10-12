@@ -237,6 +237,8 @@ export interface MailClient extends CorrespondenceClient {
   discoverImapMailboxes(email: string): Promise<ImapMailboxMapping>;
   /** Persist the user's confirmed mailbox mapping (Archive choice, per-role overrides, label container). */
   commitImapMailboxMapping(commit: ImapMailboxMappingCommit): Promise<void>;
+  /** Start syncing a saved IMAP account after confirming or skipping mapping review. */
+  finishImapAccountSetup(email: string): Promise<void>;
   /** An IMAP account's sending options for the Settings panel (identities, sent-copy override + detection). Refuses a non-IMAP account. */
   getImapSendingOptions(account: string): Promise<ImapSendingOptions>;
   /** Replace an IMAP account's sending identities (strict validation; login stays first). Returns the saved list. */
@@ -400,6 +402,7 @@ const tauriClient: MailClient = {
     complete("test_and_save_imap_account", { request }),
   discoverImapMailboxes: (email) => complete("discover_imap_mailboxes", { email }),
   commitImapMailboxMapping: (commit) => complete("commit_imap_mailbox_mapping", { commit }),
+  finishImapAccountSetup: (email) => complete("finish_imap_account_setup", { email }),
   getImapSendingOptions: (account) => complete("get_imap_sending_options", { account }),
   setImapIdentities: (account, identities) => complete("set_imap_identities", { account, identities }),
   setImapServerSavesSent: (account, enabled) => complete("set_imap_server_saves_sent", { account, enabled }),

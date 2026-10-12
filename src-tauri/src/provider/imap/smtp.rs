@@ -220,9 +220,8 @@ async fn read_smtp_reply<S: tokio::io::AsyncRead + Unpin + ?Sized>(
     }
 }
 
-/// Run an SMTP `EHLO` + `AUTH LOGIN` dry-run over the pinning-TLS path,
-/// authenticating WITHOUT sending any mail, then `QUIT`. Behaviour is identical
-/// to the pre-move `setup::test_smtp`; `setup.rs` re-exports this.
+/// Authenticate using the same TLS and advertised SASL negotiation as
+/// submission, without sending any mail, then QUIT.
 pub async fn test_smtp(
     host: &str,
     port: u16,
@@ -248,30 +247,20 @@ async fn smtp_dry_run(
     username: &str,
     password: &str,
 ) -> Result<(), ProviderError> {
-    use base64::{engine::general_purpose::STANDARD, Engine};
-
-    let connector = pinned_tls_connector(pinned);
-    let mut stream = connect_smtp_tls_with_verifier(host, port, security, connector).await?;
-    smtp_command(&mut *stream, &format!("EHLO {}\r\n", ehlo_name()), 250).await?;
-
-    smtp_command(&mut *stream, "AUTH LOGIN\r\n", 334)
+    let endpoint = SmtpEndpoint {
+        host: host.into(),
+        port,
+        security,
+        pinned,
+    };
+    let credentials = SmtpCredentials {
+        username: username.into(),
+        password: password.into(),
+    };
+    let mut session = SmtpSession::connect(&endpoint, &credentials)
         .await
-        .map_err(|_| {
-            ProviderError::InvalidOperation("the server did not offer AUTH LOGIN".into())
-        })?;
-    write_line(&mut *stream, &format!("{}\r\n", STANDARD.encode(username))).await?;
-    read_smtp_reply(&mut *stream, 334).await?;
-    write_line(&mut *stream, &format!("{}\r\n", STANDARD.encode(password))).await?;
-    match read_smtp_reply(&mut *stream, 235).await {
-        Ok(()) => {}
-        Err(_) => {
-            return Err(ProviderError::ReauthenticationRequired(
-                "the SMTP server rejected the credentials".into(),
-            ))
-        }
-    }
-
-    let _ = write_line(&mut *stream, "QUIT\r\n").await;
+        .map_err(|failure| failure.error)?;
+    session.best_effort_quit().await;
     Ok(())
 }
 
@@ -648,12 +637,13 @@ pub enum SmtpOutcome {
 }
 
 /// Timeouts for the submission phases, injectable so tests can drive the
-/// "hung before 354 => NotDelivered" and "hung final reply => Unknown" cases
+/// "hung before 354 => NotDelivered" and "hung body/final reply => Unknown" cases
 /// under paused tokio time without waiting the real ceilings out.
 #[derive(Clone, Copy, Debug)]
 pub struct SmtpTimeouts {
     pub connect: Duration,
     pub command: Duration,
+    pub body: Duration,
     pub final_reply: Duration,
 }
 
@@ -662,6 +652,7 @@ impl Default for SmtpTimeouts {
         Self {
             connect: policy::SMTP_CONNECT_TIMEOUT,
             command: policy::SMTP_COMMAND_TIMEOUT,
+            body: policy::SMTP_BODY_TIMEOUT,
             final_reply: policy::SMTP_FINAL_REPLY_TIMEOUT,
         }
     }
@@ -886,8 +877,17 @@ impl SmtpSession {
     /// Write the already-framed body bytes directly. (We do NOT call
     /// mail-send's `write_message`, which would dot-stuff a second time.)
     async fn write_body(&mut self, framed: &[u8]) -> std::io::Result<()> {
-        self.client.stream.write_all(framed).await?;
-        self.client.stream.flush().await
+        tokio::time::timeout(self.timeouts.body, async {
+            self.client.stream.write_all(framed).await?;
+            self.client.stream.flush().await
+        })
+        .await
+        .map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "message body upload timed out",
+            )
+        })?
     }
 
     /// Abort on a definite pre-body failure: best-effort RSET+QUIT (bounded),

@@ -179,7 +179,8 @@ export function ImapAccountSetup({ onConnected, onCancel }: {
           setBusy(true);
           try {
             await mailClient.commitImapMailboxMapping(commit);
-            setStatus("Mailbox mapping saved.");
+            await mailClient.finishImapAccountSetup(savedAccount.email);
+            setStatus("Account connected. Syncing mail…");
             await onConnected(savedAccount);
           } catch (e) {
             setError(String(e));
@@ -189,9 +190,18 @@ export function ImapAccountSetup({ onConnected, onCancel }: {
           }
         }}
         onSkip={async () => {
-          // The account is already saved; skipping just finishes setup
-          // without writing a mapping — the user can map mailboxes later.
-          await onConnected(savedAccount);
+          setError(null);
+          setStatus("Connecting your account…");
+          setBusy(true);
+          try {
+            await mailClient.finishImapAccountSetup(savedAccount.email);
+            await onConnected(savedAccount);
+          } catch (e) {
+            setError(String(e));
+            setStatus(null);
+          } finally {
+            setBusy(false);
+          }
         }}
       />
     ) : (
@@ -204,7 +214,7 @@ export function ImapAccountSetup({ onConnected, onCancel }: {
       }}
     >
       <h2>Add an IMAP Account</h2>
-      <p>Save and test your server settings. IMAP mail sync is not available yet.</p>
+      <p>Connect your server and choose which mailboxes to sync.</p>
       <fieldset className="imap-setup-fields" disabled={busy}>
         <label className="settings-field settings-field-row">
           <span>Email Address</span>

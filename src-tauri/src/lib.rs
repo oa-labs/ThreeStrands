@@ -307,6 +307,54 @@ mod account_startup_tests {
         .unwrap()
     }
 
+    #[tokio::test]
+    async fn finishing_imap_setup_registers_live_sync_and_replaces_the_previous_poller() {
+        use std::sync::Arc;
+        let database = Arc::new(Database::open_memory());
+        let request = imap_setup_request();
+        super::save_tested_imap_settings(&database, &request, None, None).unwrap();
+        let accounts: super::AccountRegistry = Arc::default();
+        let (cancelled_tx, cancelled_rx) = tokio::sync::oneshot::channel::<()>();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let make_account = |task| {
+            let auth = AuthConfig::default()
+                .mail_account(MailProviderKind::Imap, &request.email)
+                .unwrap();
+            super::ConnectedAccount {
+                sync: crate::sync::SyncService::new(database.clone(), auth.clone()),
+                auth,
+                poll_task: task,
+            }
+        };
+        let task = tauri::async_runtime::spawn(async move {
+            let _guard = cancelled_tx;
+            started_tx.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        super::register_finished_imap_account(&accounts, request.email.clone(), || {
+            make_account(task)
+        })
+        .await;
+        started_rx.await.unwrap();
+        {
+            let accounts = accounts.lock().await;
+            let account = accounts
+                .get(&request.email)
+                .expect("available immediately without restart");
+            assert_eq!(account.auth.mail_provider(), MailProviderKind::Imap);
+            assert_eq!(account.auth.key(), request.email);
+        }
+        super::register_finished_imap_account(&accounts, request.email.clone(), || {
+            make_account(tauri::async_runtime::spawn(async {}))
+        })
+        .await;
+        tokio::time::timeout(std::time::Duration::from_secs(2), cancelled_rx)
+            .await
+            .expect("previous poller must stop")
+            .unwrap_err();
+        assert_eq!(accounts.lock().await.len(), 1);
+    }
+
     #[test]
     fn tested_imap_setup_saves_independent_pins_and_now_registers_the_account() {
         let database = Database::open_memory();
@@ -2404,16 +2452,15 @@ async fn test_and_save_imap_account(
         }
     };
 
-    // IMAP's provider is not implemented yet. Keep this saved account in the
-    // catalog only, matching startup_account_credentials, without starting
-    // polling that would call the unreachable AccountAuth::Imap::provider.
+    // Polling starts when the mapping review finishes, so the first sync
+    // uses the user's confirmed role destinations.
 
     record_mail_account(&state, &account)?;
     Ok(account)
 }
 
-// Saving setup deliberately has no app handle or sync registry: IMAP stays
-// catalog-only until the provider implementation is available.
+// Persist first; finish_imap_account_setup activates the saved account after
+// mapping review (including its skip path).
 fn save_tested_imap_settings(
     database: &Database,
     request: &ImapSetupRequest,
@@ -2578,6 +2625,43 @@ async fn commit_imap_mailbox_mapping(
     }
 
     save_imap_mailbox_mapping(&state.database, settings, commit)
+}
+
+/// Make a newly saved IMAP account usable without restarting the app. Both
+/// mapping confirmation and skipping review finish through this command.
+#[tauri::command]
+async fn finish_imap_account_setup(
+    email: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let provider = catalogued_mail_provider(&state.database, &email)?;
+    if provider != MailProviderKind::Imap {
+        return Err("This account is not an IMAP account.".into());
+    }
+    if state.database.imap_account_settings(&email)?.is_none() {
+        return Err("This account has no saved IMAP settings.".into());
+    }
+    let auth = state.auth_config.mail_account(provider, &email)?;
+    register_finished_imap_account(&state.accounts, email, || {
+        spawn_synced_account(state.database.clone(), auth, true, app)
+    })
+    .await;
+    Ok(())
+}
+
+async fn register_finished_imap_account(
+    accounts: &AccountRegistry,
+    email: String,
+    start: impl FnOnce() -> ConnectedAccount,
+) {
+    // A retry must not leave two pollers running. Restart an existing service
+    // as well: an account added before this run may hold older role settings.
+    let mut accounts = accounts.lock().await;
+    if let Some(previous) = accounts.remove(&email) {
+        previous.poll_task.abort();
+    }
+    accounts.insert(email, start());
 }
 
 /// The account's sending-related options for the Settings "Sending" panel
@@ -4919,6 +5003,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         test_and_save_imap_account,
         discover_imap_mailboxes,
         commit_imap_mailbox_mapping,
+        finish_imap_account_setup,
         get_imap_sending_options,
         set_imap_identities,
         set_imap_server_saves_sent,

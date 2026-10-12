@@ -782,10 +782,15 @@ pub const SMTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// `354`, is a DEFINITE non-delivery.
 pub const SMTP_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Bound the whole body upload, including flush. After DATA's 354 a timeout
+/// leaves delivery unknown; releasing the submission task lets other accounts
+/// continue sending even if this server stops reading.
+pub const SMTP_BODY_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// How long to wait for the server's FINAL reply after the message body and
-/// its terminating `.` have been written. This is the one timeout whose expiry
-/// is classified as `Unknown`, not a failure: the server may already hold the
-/// whole message, so we must not claim non-delivery. Kept longer than a
+/// its terminating `.` have been written. Like the body-upload timeout, its
+/// expiry is classified as `Unknown`: the server may already hold the whole
+/// message, so we must not claim non-delivery. Kept longer than a
 /// command timeout because a server may do real queue work (virus/spam scan)
 /// before its `250`.
 pub const SMTP_FINAL_REPLY_TIMEOUT: Duration = Duration::from_secs(120);
@@ -1831,8 +1836,9 @@ mod tests {
         assert_eq!(MAX_SMTP_ADDRESS_BYTES, 254);
         assert_eq!(MAX_SMTP_RECIPIENTS, 100);
         assert_eq!(MAX_SMTP_REPLY_TEXT_BYTES, 512);
-        // The final-reply timeout is the one that maps to Unknown, so it must
-        // be the longest of the three; connect is bounded and short.
+        // Upload and final reply both map to Unknown; allow more time than
+        // an envelope round trip. Connect is bounded and short.
+        assert!(SMTP_BODY_TIMEOUT >= SMTP_COMMAND_TIMEOUT);
         assert!(SMTP_FINAL_REPLY_TIMEOUT >= SMTP_COMMAND_TIMEOUT);
         assert!(SMTP_CONNECT_TIMEOUT.as_secs() > 0);
         assert!(SMTP_COMMAND_TIMEOUT.as_secs() > 0);

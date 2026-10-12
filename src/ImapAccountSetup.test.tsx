@@ -9,6 +9,7 @@ vi.mock("./data/client", () => ({ mailClient: {
   discoverImapSettings: vi.fn(), probeImapCertificate: vi.fn(),
   probeSmtpCertificate: vi.fn(), testAndSaveImapAccount: vi.fn(),
   discoverImapMailboxes: vi.fn(), commitImapMailboxMapping: vi.fn(),
+  finishImapAccountSetup: vi.fn(),
 } }));
 
 const account: Account = { email: "me@example.com", provider: "imap", labelModel: "imapLabelFolders", displayName: null,
@@ -50,6 +51,7 @@ describe("IMAP account setup", () => {
     vi.mocked(mailClient.testAndSaveImapAccount).mockResolvedValue(account);
     vi.mocked(mailClient.discoverImapMailboxes).mockResolvedValue({ proposals: [], selectable: [], labelContainers: [] });
     vi.mocked(mailClient.commitImapMailboxMapping).mockResolvedValue(undefined);
+    vi.mocked(mailClient.finishImapAccountSetup).mockResolvedValue(undefined);
   });
   afterEach(cleanup);
 
@@ -87,7 +89,9 @@ describe("IMAP account setup", () => {
     expect(screen.getByRole("heading", { name: "Map Your Mailboxes" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Map Your Mailboxes" })).toHaveFocus();
     expect(refresh).not.toHaveBeenCalled();
+    expect(mailClient.finishImapAccountSetup).not.toHaveBeenCalled();
     await skipMapping();
+    expect(mailClient.finishImapAccountSetup).toHaveBeenCalledWith(account.email);
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("heading", { name: "Add an IMAP Account" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Map Your Mailboxes" })).not.toBeInTheDocument();
@@ -117,6 +121,37 @@ describe("IMAP account setup", () => {
     expect(onConnected).not.toHaveBeenCalled();
     await confirmMapping();
     expect(mailClient.commitImapMailboxMapping).toHaveBeenCalled();
+    expect(mailClient.finishImapAccountSetup).toHaveBeenCalledWith(account.email);
+    expect(vi.mocked(mailClient.commitImapMailboxMapping).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(mailClient.finishImapAccountSetup).mock.invocationCallOrder[0]);
+    expect(onConnected).toHaveBeenCalledWith(account);
+  });
+
+  it.each(["confirm", "skip"])("waits for activation before completing %s and lets a failure retry", async (path) => {
+    const onConnected = vi.fn();
+    let finish!: () => void;
+    vi.mocked(mailClient.finishImapAccountSetup).mockImplementationOnce(() => new Promise<void>((resolve) => {
+      finish = resolve;
+    }));
+    render(<ImapAccountSetup onConnected={onConnected} />);
+    fillManualSettings();
+    await save();
+    if (path === "confirm") await confirmMapping();
+    else await skipMapping();
+    expect(onConnected).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Skip for Now" })).toBeDisabled();
+    await act(async () => finish());
+    expect(onConnected).toHaveBeenCalledWith(account);
+
+    onConnected.mockClear();
+    vi.mocked(mailClient.finishImapAccountSetup).mockRejectedValueOnce(new Error("activation failed"));
+    if (path === "confirm") await confirmMapping();
+    else await skipMapping();
+    expect(onConnected).not.toHaveBeenCalled();
+    expect(screen.getByText("Error: activation failed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Skip for Now" })).toBeEnabled();
+    if (path === "confirm") await confirmMapping();
+    else await skipMapping();
     expect(onConnected).toHaveBeenCalledWith(account);
   });
 

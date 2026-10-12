@@ -48,6 +48,10 @@ enum Script {
     DropAfterDot,
     /// 354, full body received, then never reply (stall).
     StallAfterDot,
+    /// 354, then stop reading so the client's body write hits backpressure.
+    StallDuringBody,
+    /// Advertise and accept only SASL PLAIN.
+    PlainOnly,
     /// 354, full body received, 451 transient final reply.
     Reject451Final,
     /// 354, full body received, 554 permanent final reply.
@@ -205,9 +209,13 @@ async fn run_session<S>(
         log.lock().unwrap().push(trimmed.clone());
         let up = trimmed.to_ascii_uppercase();
         if up.starts_with("EHLO") {
-            let _ = s
-                .write_all(b"250-fake\r\n250-AUTH PLAIN LOGIN\r\n250 8BITMIME\r\n")
-                .await;
+            if script == Script::PlainOnly {
+                let _ = s.write_all(b"250-fake\r\n250 AUTH PLAIN\r\n").await;
+            } else {
+                let _ = s
+                    .write_all(b"250-fake\r\n250-AUTH PLAIN LOGIN\r\n250 8BITMIME\r\n")
+                    .await;
+            }
         } else if up.starts_with("AUTH") {
             // mail-send sends AUTH PLAIN with the SASL payload inline, or
             // LOGIN. Accept either; reply per script.
@@ -218,6 +226,12 @@ async fn run_session<S>(
             }
             // AUTH LOGIN needs two 334 challenges; AUTH PLAIN finishes at once.
             if up.starts_with("AUTH LOGIN") {
+                if script == Script::PlainOnly {
+                    let _ = s
+                        .write_all(b"504 unsupported authentication mechanism\r\n")
+                        .await;
+                    return;
+                }
                 let _ = s.write_all(b"334 VXNlcm5hbWU6\r\n").await;
                 // username
                 line.clear();
@@ -267,6 +281,10 @@ async fn run_session<S>(
                 _ => {
                     let _ = s.write_all(b"354 end with <CRLF>.<CRLF>\r\n").await;
                 }
+            }
+            if script == Script::StallDuringBody {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                return;
             }
             // Read the body until the terminating "\r\n.\r\n", recording bytes.
             let mut collected: Vec<u8> = Vec::new();
@@ -370,6 +388,7 @@ fn fast_timeouts() -> SmtpTimeouts {
     SmtpTimeouts {
         connect: Duration::from_secs(5),
         command: Duration::from_secs(2),
+        body: Duration::from_secs(2),
         final_reply: Duration::from_millis(400),
     }
 }
@@ -655,6 +674,7 @@ fn staged_timeouts() -> SmtpTimeouts {
     SmtpTimeouts {
         connect: Duration::from_millis(1000),
         command: Duration::from_millis(4000),
+        body: Duration::from_secs(4),
         final_reply: Duration::from_millis(6000),
     }
 }
@@ -1343,5 +1363,71 @@ mod live {
             "a bad password must map to the reauth class, got {:?}",
             fail.error
         );
+    }
+}
+
+#[tokio::test]
+async fn stalled_body_upload_times_out_with_unknown_delivery() {
+    let srv = start(Script::StallDuringBody, true).await;
+    let timeouts = SmtpTimeouts {
+        connect: Duration::from_secs(5),
+        command: Duration::from_secs(2),
+        body: Duration::from_millis(50),
+        final_reply: Duration::from_millis(50),
+    };
+    let session =
+        SmtpSession::connect_with_timeouts(&endpoint(&srv, true, None), &creds(), timeouts)
+            .await
+            .unwrap();
+    let body = vec![b'x'; 16 * 1024 * 1024];
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        session.send("a@b.example", &["c@d.example".into()], &body),
+    )
+    .await;
+    assert!(
+        matches!(
+            result,
+            Ok(SmtpOutcome::Unknown(SmtpUnknown {
+                phase: Phase::Body,
+                ..
+            }))
+        ),
+        "stalled body must return Unknown within a bounded time: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn setup_accepts_plain_only_smtp_without_submitting_mail() {
+    for implicit in [false, true] {
+        let sending = start(Script::PlainOnly, implicit).await;
+        assert!(
+            connect(&sending, implicit).await.is_ok(),
+            "the real submission client supports this server"
+        );
+        let setup = start(Script::PlainOnly, implicit).await;
+        let security = if implicit {
+            SecurityMode::ImplicitTls
+        } else {
+            SecurityMode::StartTls
+        };
+        let result = test_smtp(
+            "127.0.0.1",
+            setup.port,
+            security,
+            Some(setup.pin),
+            "user",
+            "secret",
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "setup must allow a server supported by submission: {result:?}"
+        );
+        assert!(setup.saw_prefix("AUTH PLAIN"));
+        assert!(setup.saw_prefix("QUIT"));
+        for command in ["MAIL FROM", "RCPT TO", "DATA"] {
+            assert!(!setup.saw_prefix(command), "setup must not submit mail");
+        }
     }
 }

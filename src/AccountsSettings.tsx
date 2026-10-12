@@ -117,7 +117,7 @@ export function AccountsSettings({
           }} />
         </div>}
       </div>
-      {imapSaved && <p role="status">Account saved. IMAP mail sync is not available yet.</p>}
+      {imapSaved && <p role="status">Account connected. Syncing mail…</p>}
       {accounts.length === 0 && authStatus && !authStatus.configured ? (
         <div className="notice accounts-config-notice">
           <CircleAlert size={ICON_SIZE.md} />

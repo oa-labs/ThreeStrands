@@ -3197,6 +3197,12 @@ impl ImapProvider {
         uidvalidity: i64,
         targets: &[PlannedMove],
     ) -> ProviderResult<()> {
+        self.confirm_surviving_copies(
+            session,
+            label_mailbox,
+            targets.iter().map(|target| target.message_id.as_str()),
+        )
+        .await?;
         let write_session = as_write_session(session)?;
         let ctx = super::write::select_for_write(
             write_session,
@@ -3225,6 +3231,77 @@ impl ImapProvider {
                 .map_err(db_err)?;
         }
         Ok(())
+    }
+
+    /// Local coordinates are only candidates: another client can expunge a
+    /// copy between syncs. Before destroying a label copy, confirm a live,
+    /// non-Deleted UID in another mailbox at the same UIDVALIDITY. Check the
+    /// whole request before any write, using read-only, flags-only commands.
+    async fn confirm_surviving_copies<'a>(
+        &self,
+        session: &mut dyn ImapSession,
+        label_mailbox: &str,
+        message_ids: impl Iterator<Item = &'a str> + Send,
+    ) -> ProviderResult<()> {
+        let mut unconfirmed: std::collections::BTreeSet<String> =
+            message_ids.map(str::to_owned).collect();
+        let mut candidates: std::collections::BTreeMap<String, Vec<ImapLocation>> =
+            std::collections::BTreeMap::new();
+        for message_id in &unconfirmed {
+            for location in self
+                .store
+                .locations_for_message(message_id)
+                .map_err(db_err)?
+            {
+                if location.mailbox != label_mailbox {
+                    candidates
+                        .entry(location.mailbox.clone())
+                        .or_default()
+                        .push(location);
+                }
+            }
+        }
+        for (mailbox, locations) in candidates {
+            let status = match session.examine(&mailbox).await {
+                Ok(status) => status,
+                // A vanished/inaccessible mailbox provides no evidence of a
+                // survivor. Transport/auth failures retain their retry class.
+                Err(ProviderError::InvalidOperation(_)) => continue,
+                Err(error) => return Err(error),
+            };
+            let locations: Vec<_> = locations
+                .iter()
+                .filter(|location| {
+                    unconfirmed.contains(&location.message_id)
+                        && status.uid_validity == Some(location.uidvalidity as u32)
+                })
+                .collect();
+            let uids: Vec<_> = locations
+                .iter()
+                .map(|location| location.uid as u32)
+                .collect();
+            let flags = self.fetch_flags(session, &uids).await?;
+            for location in locations {
+                if flags.get(&(location.uid as u32)).is_some_and(|flags| {
+                    !flags
+                        .iter()
+                        .any(|flag| flag.eq_ignore_ascii_case("\\Deleted"))
+                }) {
+                    unconfirmed.remove(&location.message_id);
+                }
+            }
+            if unconfirmed.is_empty() {
+                return Ok(());
+            }
+        }
+        if unconfirmed.is_empty() {
+            return Ok(());
+        }
+        Err(ProviderError::InvalidOperation(format!(
+            "cannot delete copies in {label_mailbox:?}: {} message(s) have no verified surviving \
+             server copy; resync before removing the label",
+            unconfirmed.len()
+        )))
     }
 
     // --- create / delete a label -------------------------------------------
@@ -3396,6 +3473,14 @@ impl ImapProvider {
         label_mailbox: &str,
         locations: &[ImapLocation],
     ) -> ProviderResult<()> {
+        self.confirm_surviving_copies(
+            session,
+            label_mailbox,
+            locations
+                .iter()
+                .map(|location| location.message_id.as_str()),
+        )
+        .await?;
         let local_count = locations.len();
         let status = session.examine(label_mailbox).await?;
         if status.exists as usize != local_count {
@@ -3754,6 +3839,13 @@ impl MailSend for ImapProvider {
         &self,
         request: &crate::provider::SentCopyRequest,
     ) -> ProviderResult<crate::provider::SentCopyStep> {
+        // Nothing needs locating or uploading when the server owns Sent
+        // copies. This decision must precede mailbox resolution and network IO.
+        if self.settings.server_saves_sent
+            || self.store.sent_copy_detection().map_err(db_err)? == Some(true)
+        {
+            return Ok(crate::provider::SentCopyStep::Done);
+        }
         // The Message-ID is required to locate our copy; a message without one
         // can never be found again, so refuse PERMANENTLY (abandons the job).
         let message_id = super::send::raw_message_id(&request.raw).ok_or_else(|| {
@@ -11145,6 +11237,223 @@ mod mutate_tests {
                 store.pending_copy_identity(&id, "Labels/Clients").unwrap(),
                 None
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn remove_label_preserves_last_server_copy_when_backup_was_expunged() {
+        let (server, provider, _store, id) = paired_label_message();
+        server.lock().unwrap().folder("INBOX", 100).messages.clear();
+        let result = provider
+            .modify_messages(&[id], &[], &["lf:Clients".into()])
+            .await;
+        assert!(matches!(result, Err(ProviderError::InvalidOperation(_))));
+        assert_eq!(
+            uids_in(&server, "Labels/Clients"),
+            vec![1],
+            "stale local INBOX location is not evidence of a surviving server copy"
+        );
+    }
+    #[tokio::test]
+    async fn delete_label_preserves_last_server_copy_when_backup_was_expunged() {
+        let (server, provider, _store, _id) = paired_label_message();
+        server.lock().unwrap().folder("INBOX", 100).messages.clear();
+        let result = provider.delete_label("lf:Clients").await;
+        assert!(matches!(result, Err(ProviderError::InvalidOperation(_))));
+        assert!(
+            server
+                .lock()
+                .unwrap()
+                .folders
+                .contains_key("Labels/Clients"),
+            "must not delete a label containing the only remaining server copy"
+        );
+    }
+
+    #[tokio::test]
+    async fn removing_or_deleting_a_label_refuses_stale_or_deleted_backup_coordinates() {
+        for delete_mailbox in [false, true] {
+            for scenario in ["uidvalidity", "deleted", "missing"] {
+                let (server, provider, store, id) = paired_label_message();
+                {
+                    let mut server = server.lock().unwrap();
+                    match scenario {
+                        "uidvalidity" => server.folder("INBOX", 100).uidvalidity = 101,
+                        "deleted" => server.folder("INBOX", 100).messages[0]
+                            .flags
+                            .push("\\Deleted".into()),
+                        "missing" => {
+                            server.folders.remove("INBOX");
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                let result = if delete_mailbox {
+                    provider.delete_label("lf:Clients").await
+                } else {
+                    provider
+                        .modify_messages(&[id.clone()], &[], &["lf:Clients".into()])
+                        .await
+                };
+                assert!(
+                    matches!(result, Err(ProviderError::InvalidOperation(_))),
+                    "{scenario}: {result:?}"
+                );
+                assert_eq!(uids_in(&server, "Labels/Clients"), vec![1]);
+                assert_eq!(local_count_in(&store, "Labels/Clients"), 1);
+                let server = server.lock().unwrap();
+                for command in ["UID STORE", "UID EXPUNGE", "DELETE"] {
+                    assert_eq!(server.count_starting(command), 0, "{scenario}: {command}");
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn label_removal_can_use_a_live_archive_backup_despite_a_stale_inbox_copy() {
+        for delete_mailbox in [false, true] {
+            let (server, provider, store, id) = paired_label_message();
+            {
+                let mut server = server.lock().unwrap();
+                server.folder("INBOX", 100).messages.clear();
+                server.folder("Archive", 200).add(&[], &message("<m1@x>"));
+            }
+            store
+                .upsert_location(&ImapLocation {
+                    mailbox: "Archive".into(),
+                    uidvalidity: 200,
+                    uid: 1,
+                    message_id: id.clone(),
+                    flags_json: "[]".into(),
+                    modseq: None,
+                })
+                .unwrap();
+            if delete_mailbox {
+                provider.delete_label("lf:Clients").await.unwrap();
+            } else {
+                provider
+                    .modify_messages(&[id], &[], &["lf:Clients".into()])
+                    .await
+                    .unwrap();
+            }
+            assert_eq!(uids_in(&server, "Archive"), vec![1]);
+            assert!(
+                server.lock().unwrap().folder("Archive", 200).messages[0]
+                    .flags
+                    .is_empty(),
+                "checking a survivor must not mark it read"
+            );
+            assert_eq!(local_count_in(&store, "Labels/Clients"), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn label_removal_preserves_transient_backup_check_failures_without_writing() {
+        let (server, provider, _store, id) = paired_label_message();
+        server.lock().unwrap().folder("INBOX", 100).select_busy = true;
+        let result = provider
+            .modify_messages(&[id], &[], &["lf:Clients".into()])
+            .await;
+        assert!(
+            matches!(result, Err(ProviderError::TransientTransport(_))),
+            "{result:?}"
+        );
+        assert_eq!(uids_in(&server, "Labels/Clients"), vec![1]);
+        let server = server.lock().unwrap();
+        assert_eq!(server.count_starting("UID STORE"), 0);
+        assert_eq!(server.count_starting("UID EXPUNGE"), 0);
+    }
+
+    #[tokio::test]
+    async fn label_removal_checks_every_message_before_destroying_any_copy() {
+        for delete_mailbox in [false, true] {
+            let (server, provider, store, first_id) = paired_label_message();
+            {
+                let mut server = server.lock().unwrap();
+                // The second INBOX location is stale, but its label copy is
+                // live. A safe first message must not cause a partial delete.
+                server
+                    .folder("Labels/Clients", 600)
+                    .add(&[], &message("<m2@x>"));
+            }
+            let second_id = seed_loc(&store, &provider, "m2", "imap:t:m2", "INBOX", 100, 2, &[]);
+            store
+                .upsert_location(&ImapLocation {
+                    mailbox: "Labels/Clients".into(),
+                    uidvalidity: 600,
+                    uid: 2,
+                    message_id: second_id.clone(),
+                    flags_json: "[]".into(),
+                    modseq: None,
+                })
+                .unwrap();
+            let result = if delete_mailbox {
+                provider.delete_label("lf:Clients").await
+            } else {
+                provider
+                    .modify_messages(&[first_id, second_id], &[], &["lf:Clients".into()])
+                    .await
+            };
+            assert!(
+                matches!(result, Err(ProviderError::InvalidOperation(_))),
+                "{result:?}"
+            );
+            assert_eq!(uids_in(&server, "Labels/Clients"), vec![1, 2]);
+            let server = server.lock().unwrap();
+            for command in ["UID STORE", "UID EXPUNGE", "DELETE"] {
+                assert_eq!(server.count_starting(command), 0);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn server_saves_sent_override_skips_missing_mailbox() {
+        let server = server_with_inbox();
+        let (mut provider, _store) = provider_with(server.clone());
+        provider.settings.server_saves_sent = true;
+        let result = provider
+            .save_sent_copy(&crate::provider::SentCopyRequest {
+                raw: b"Message-ID: <override@x>\r\n\r\nbody".to_vec(),
+                outbox_id: "override-test".into(),
+                append_attempted: false,
+                phase: crate::provider::SentCopyPhase::Pending,
+            })
+            .await;
+        assert!(
+            matches!(result, Ok(crate::provider::SentCopyStep::Done)),
+            "explicit override must skip Sent-folder requirements: {result:?}"
+        );
+        assert_eq!(server.lock().unwrap().commands.lock().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn server_owned_sent_copy_needs_neither_message_id_nor_an_imap_session() {
+        for explicit_override in [false, true] {
+            let server = server_with_inbox();
+            let (mut provider, store) = provider_with(server.clone());
+            if explicit_override {
+                provider.settings.server_saves_sent = true;
+            } else {
+                store.set_sent_copy_detection(true, 1).unwrap();
+            }
+            for phase in [
+                crate::provider::SentCopyPhase::Pending,
+                crate::provider::SentCopyPhase::Verify,
+            ] {
+                let result = provider
+                    .save_sent_copy(&crate::provider::SentCopyRequest {
+                        raw: b"Subject: no message id\r\n\r\nbody".to_vec(),
+                        outbox_id: "server-owned-sent-copy".into(),
+                        append_attempted: false,
+                        phase,
+                    })
+                    .await;
+                assert!(
+                    matches!(result, Ok(crate::provider::SentCopyStep::Done)),
+                    "{result:?}"
+                );
+            }
+            assert!(server.lock().unwrap().wire().is_empty());
         }
     }
 }
