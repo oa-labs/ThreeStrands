@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 67;
+pub(crate) const LATEST_VERSION: i64 = 68;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1912,6 +1912,48 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 68 {
+        // Phase 4 run 4b: the durable Sent-copy job. After an accepted IMAP
+        // send the engine saves the sender's own copy to the account's Sent
+        // mailbox (first-send detection + idempotent APPEND). The job state
+        // lives on the outbox row and is created ATOMICALLY with the 'sent'
+        // transition (the accepted-send UPDATE sets sent_copy_state='pending'
+        // when the provider's capability says it saves its own copies), so no
+        // window exists where a send is recorded sent but the job is lost. All
+        // columns default NULL/0 for every existing row and for Gmail (which
+        // never gets a job). `has_column` guards keep the migration idempotent.
+        for (column, decl) in [
+            ("sent_copy_state", "TEXT"),
+            ("sent_copy_attempts", "INTEGER NOT NULL DEFAULT 0"),
+            ("sent_copy_next_at", "INTEGER"),
+            ("sent_copy_append_attempted", "INTEGER NOT NULL DEFAULT 0"),
+            ("sent_copy_error", "TEXT"),
+        ] {
+            if !has_column(&tx, "outbox_messages", column)? {
+                tx.execute_batch(&format!(
+                    "ALTER TABLE outbox_messages ADD COLUMN {column} {decl};"
+                ))
+                .map_err(error)?;
+            }
+        }
+        // Per-device detection result ("does this account's server save its own
+        // Sent copy?"). LOCAL state only: never exported in the settings
+        // transfer (unlike imap_account_settings.server_saves_sent, which is a
+        // USER OVERRIDE that IS exported). Deleted when the account is removed
+        // (see db::accounts::purge_imap_cache). An index on due jobs keeps the
+        // runner's per-tick scan cheap.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS imap_sent_copy_detection (
+                account_id TEXT PRIMARY KEY,
+                server_saves_sent INTEGER NOT NULL,
+                decided_at INTEGER NOT NULL
+            );
+             CREATE INDEX IF NOT EXISTS outbox_sent_copy_due
+                 ON outbox_messages(sent_copy_state, sent_copy_next_at);
+             PRAGMA user_version=68;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -1971,6 +2013,91 @@ mod tests {
             })
             .unwrap();
         assert_eq!(count, 0, "completed repairs are not requeued on restart");
+    }
+
+    #[test]
+    fn v68_adds_the_sent_copy_job_columns_and_detection_table_from_v67_and_fresh() {
+        // From a v67 database carrying an existing outbox row: the new columns
+        // appear with their defaults and the existing row is untouched.
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO outbox_messages
+                    (id, draft_id, revision, account, state, deadline, payload, raw)
+                 VALUES ('o1','d1',1,'you@gmail.com','sent',0,'{}',x'00');
+                 DROP TABLE imap_sent_copy_detection;
+                 DROP INDEX outbox_sent_copy_due;
+                 ALTER TABLE outbox_messages DROP COLUMN sent_copy_state;
+                 ALTER TABLE outbox_messages DROP COLUMN sent_copy_attempts;
+                 ALTER TABLE outbox_messages DROP COLUMN sent_copy_next_at;
+                 ALTER TABLE outbox_messages DROP COLUMN sent_copy_append_attempted;
+                 ALTER TABLE outbox_messages DROP COLUMN sent_copy_error;
+                 PRAGMA user_version=67;",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+
+        // The existing row kept its data and the new job columns default to
+        // NULL / 0 (not applicable until a send seeds them).
+        let (state, copy_state, attempts, next_at, append_attempted, copy_error): (
+            String,
+            Option<String>,
+            i64,
+            Option<i64>,
+            i64,
+            Option<String>,
+        ) = connection
+            .query_row(
+                "SELECT state, sent_copy_state, sent_copy_attempts, sent_copy_next_at,
+                        sent_copy_append_attempted, sent_copy_error
+                 FROM outbox_messages WHERE id='o1'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(state, "sent", "existing outbox row is preserved");
+        assert!(copy_state.is_none());
+        assert_eq!(attempts, 0);
+        assert!(next_at.is_none());
+        assert_eq!(append_attempted, 0);
+        assert!(copy_error.is_none());
+
+        // The per-device detection table exists and starts empty.
+        let detection_rows: i64 = connection
+            .query_row("SELECT COUNT(*) FROM imap_sent_copy_detection", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(detection_rows, 0);
+
+        // A fresh database (migrated straight through) has the same shape.
+        let mut fresh = unmigrated_database_with_one_account();
+        super::migrate(&mut fresh).unwrap();
+        fresh
+            .execute(
+                "INSERT INTO imap_sent_copy_detection(account_id, server_saves_sent, decided_at)
+                 VALUES ('you@gmail.com', 1, 123)",
+                [],
+            )
+            .unwrap();
+        let (saves, at): (i64, i64) = fresh
+            .query_row(
+                "SELECT server_saves_sent, decided_at FROM imap_sent_copy_detection",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((saves, at), (1, 123));
     }
 
     #[test]

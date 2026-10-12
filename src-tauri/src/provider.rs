@@ -192,6 +192,16 @@ pub struct ProviderCapabilities {
     /// error to re-check or the terminal `Unverifiable` outcome from
     /// `docs/imap-design.md` ("Sending"). See [`crate::correspondence`].
     pub verifiable_delivery: bool,
+    /// Whether this provider saves the sender's own copy into the account's
+    /// Sent mailbox as a SEPARATE step the engine must drive (`true` for IMAP:
+    /// after an accepted SMTP send the engine runs a durable Sent-copy job via
+    /// [`MailSend::save_sent_copy`]). Gmail stores the sent message itself as
+    /// part of submission, so it is `false` and no job is created. The engine
+    /// reads this at the moment it records a send accepted to decide — ATOMICALLY
+    /// with the `sent` transition — whether to seed the Sent-copy job row. No
+    /// code path branches on a provider name or id; this capability is the only
+    /// signal. See `docs/imap-design.md` ("Sending" steps 3–4).
+    pub client_saves_sent_copy: bool,
 }
 
 /// What a provider reports back after accepting a message for delivery.
@@ -201,6 +211,56 @@ pub struct DeliveryReceipt {
     pub provider_message_id: String,
     /// The conversation the sent copy landed in, when the provider says.
     pub thread_id: Option<String>,
+}
+
+/// Which phase of the Sent-copy job the engine is driving when it calls
+/// [`MailSend::save_sent_copy`]. The provider holds NO per-send state (an
+/// [`ImapProvider`](crate::provider::imap) is built per call), so the engine's
+/// durable job state tells the provider whether this is the first attempt or a
+/// post-APPEND verify. See `docs/imap-design.md` ("Sending" steps 3–4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SentCopyPhase {
+    /// First (and retried-before-APPEND) attempt: the provider decides whether
+    /// the server already saved a copy, else APPENDs and asks to be re-checked.
+    Pending,
+    /// Post-APPEND verify: the provider counts the copies now present to tell a
+    /// server that saved its own copy (duplicate) from the single copy we
+    /// appended, recording the per-device detection result.
+    Verify,
+}
+
+/// Everything a provider needs to save (or decide not to save) the sender's
+/// own copy of one sent message, provider-neutrally. The engine owns the
+/// durable job and passes its current state in; the provider owns the decision
+/// and performs any network I/O. See [`MailSend::save_sent_copy`].
+#[derive(Clone, Debug)]
+pub struct SentCopyRequest {
+    /// The RAW bytes of the sent message (the outbox `raw`, UNMODIFIED — it
+    /// keeps its `Bcc:` header, which is correct for the sender's own copy).
+    pub raw: Vec<u8>,
+    /// The outbox id of the message, for logging/correlation only.
+    pub outbox_id: String,
+    /// Whether an APPEND of OUR copy has already been attempted in a prior
+    /// cycle of this job (the engine's write-ahead flag). Only a copy found
+    /// BEFORE any APPEND of ours is evidence the server saves its own copies;
+    /// a copy found once this is `true` may be our own appended copy, so it is
+    /// never counted as such. See `docs/imap-design.md` ("Sending").
+    pub append_attempted: bool,
+    /// Which phase the engine's durable job is in. The provider cannot keep
+    /// this itself (it is rebuilt per call), so it is carried here.
+    pub phase: SentCopyPhase,
+}
+
+/// The provider's answer from one [`MailSend::save_sent_copy`] call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SentCopyStep {
+    /// Nothing more to do: the copy exists (ours or the server's) or the
+    /// provider saves nothing. The engine marks the job `done`.
+    Done,
+    /// The provider needs to be called again after `after` (it appended our
+    /// copy and wants to verify the server did not also save one). The engine
+    /// moves the job to the `verify` phase with `next_at = now + after`.
+    Recheck { after: std::time::Duration },
 }
 
 /// One address an account may send as, with an optional display name.
@@ -364,6 +424,22 @@ pub trait MailSend: Send + Sync {
         operation: &str,
         expected_sender: &str,
     ) -> ProviderResult<Option<DeliveryReceipt>>;
+
+    /// Saves the sender's own copy of a just-sent message into the account's
+    /// Sent mailbox, or decides nothing is needed, driven by the engine's
+    /// durable Sent-copy job (`docs/imap-design.md`, "Sending" steps 3–4).
+    ///
+    /// The default does NOTHING and returns [`SentCopyStep::Done`]: Gmail (and
+    /// any provider whose [`ProviderCapabilities::client_saves_sent_copy`] is
+    /// `false`) stores the sent message itself during submission, so the engine
+    /// never creates a job for it and never calls this. The IMAP provider
+    /// overrides it to run the first-send detection + idempotent APPEND. A
+    /// provider that returns `Recheck` is called again after the delay in the
+    /// `verify` phase. No code path branches on a provider name or id — the
+    /// capability and the request's `phase`/`append_attempted` carry everything.
+    async fn save_sent_copy(&self, _request: &SentCopyRequest) -> ProviderResult<SentCopyStep> {
+        Ok(SentCopyStep::Done)
+    }
 }
 
 /// A complete mail account backend.

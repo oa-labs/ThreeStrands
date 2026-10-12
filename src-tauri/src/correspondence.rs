@@ -44,6 +44,24 @@ fn now() -> i64 {
     Utc::now().timestamp_millis()
 }
 
+/// A short, plain-language note stored in `sent_copy_error` for a Sent-copy
+/// job that failed. The provider's error messages are already user-facing
+/// (e.g. "the Sent mailbox does not exist; configure it"); this maps the
+/// transient transport/auth classes to a stable "will retry" phrasing and
+/// passes a permanent class's own message through, so the stored note never
+/// leaks a raw transport string. Never includes a path or host name.
+fn sent_copy_error_message(err: &crate::provider::ProviderError) -> String {
+    use crate::provider::ProviderError;
+    match err {
+        ProviderError::InvalidOperation(message)
+        | ProviderError::PermanentClientRejection(message) => message.clone(),
+        ProviderError::ReauthenticationRequired(_) | ProviderError::Authentication(_) => {
+            "Couldn't sign in to save the sent copy. Will retry.".into()
+        }
+        _ => "Couldn't save the sent copy yet. Will retry.".into(),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Attachment {
@@ -1600,6 +1618,14 @@ impl Correspondence {
         self.database.overdue_schedules_owned(now(),false,owner.as_deref().unwrap_or(""))?;
         if let Some(owner)=&owner { self.database.refresh_schedule_reports(owner,now())?; }
         let items = self.database.outbox()?;
+        // Process due Sent-copy jobs FIRST, every tick — before the
+        // no-sendable-items early return below. A job is created when a send is
+        // accepted (`dispatch_due`) and lives on the outbox row independently of
+        // the send states; a tick with nothing new to send must still drive
+        // jobs to completion (fact 4). Holding `self.gate` for the whole tick
+        // gives per-message serialisation for free; the processor caps its own
+        // per-tick work.
+        self.process_sent_copy_jobs(now()).await?;
         if !items
             .iter()
             .any(|o| ["undo_pending", "ready", "scheduled", "uncertain"].contains(&o.state.as_str()))
@@ -1737,7 +1763,7 @@ impl Correspondence {
                 .ok_or("Outbox item missing")?;
         }
         let sent = self
-            .dispatch_due(&item, at, |raw, thread| async move {
+            .dispatch_due(&item, at, provider.capabilities().client_saves_sent_copy, |raw, thread| async move {
                 permit.send_once(&raw, thread.as_deref()).await
             })
             .await?;
@@ -1848,10 +1874,210 @@ impl Correspondence {
         )?;
         Ok(())
     }
+    /// Drive every DUE Sent-copy job this tick (fact 4: NOT skipped by the
+    /// no-sendable-items early return). A job is `pending`/`verify` with
+    /// `sent_copy_next_at <= now`; it is processed oldest-first, at most
+    /// [`SENT_COPY_MAX_JOBS_PER_TICK`], grouped by account so one account's
+    /// unavailable provider does not abort the tick or the others' jobs. An
+    /// account whose provider is unavailable is skipped WITHOUT counting an
+    /// attempt. Never touches the outbox `state`, `provider_id`, never resends.
+    async fn process_sent_copy_jobs(&self, at: i64) -> Result<(), String> {
+        // Collect due jobs (oldest-first), bounded by the per-tick cap.
+        let due: Vec<(String, String, Vec<u8>, String, i64, i64)> = {
+            let c = self.database.connection()?;
+            let mut q = c
+                .prepare(
+                    "SELECT id, account, raw, sent_copy_state, sent_copy_attempts, \
+                     sent_copy_append_attempted FROM outbox_messages \
+                     WHERE sent_copy_state IN ('pending','verify') AND sent_copy_next_at <= ?1 \
+                     ORDER BY sent_copy_next_at ASC, rowid ASC LIMIT ?2",
+                )
+                .map_err(error)?;
+            let rows = q
+                .query_map(
+                    params![at, crate::provider::imap::SENT_COPY_MAX_JOBS_PER_TICK as i64],
+                    |r| {
+                        Ok((
+                            r.get::<_, String>(0)?,
+                            r.get::<_, String>(1)?,
+                            r.get::<_, Vec<u8>>(2)?,
+                            r.get::<_, String>(3)?,
+                            r.get::<_, i64>(4)?,
+                            r.get::<_, i64>(5)?,
+                        ))
+                    },
+                )
+                .map_err(error)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(error)?
+        };
+        if due.is_empty() {
+            return Ok(());
+        }
+
+        // Group by account; resolve each account's provider once. A missing
+        // provider skips that account's jobs (no attempt counted).
+        let mut by_account: HashMap<String, Vec<(String, Vec<u8>, String, i64, i64)>> =
+            HashMap::new();
+        for (id, account, raw, state, attempts, append_attempted) in due {
+            by_account
+                .entry(account)
+                .or_default()
+                .push((id, raw, state, attempts, append_attempted));
+        }
+        for (account, jobs) in by_account {
+            let Ok(provider) = self.provider_for(&account).await else {
+                // Provider unavailable: leave every job exactly as-is (no
+                // attempt, no error churn) and continue the tick.
+                continue;
+            };
+            for (id, raw, state, attempts, append_attempted) in jobs {
+                self.run_sent_copy_job(
+                    provider.as_ref(),
+                    &id,
+                    &raw,
+                    &state,
+                    attempts,
+                    append_attempted != 0,
+                    at,
+                )
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Run ONE Sent-copy job against `provider` and persist its outcome. Taken
+    /// as `&dyn MailProvider` (like `send_due_item`) so a test injects a fake.
+    /// Translates the provider's `SentCopyStep`/error into job state:
+    ///
+    /// * `Ok(Done)`             -> 'done'.
+    /// * `Ok(Recheck{after})`   -> 'verify', next_at = now + after.
+    /// * transient error        -> attempts+1, next_at from the backoff
+    ///   schedule (never earlier than the settle window), state kept, a short
+    ///   `sent_copy_error`; at MAX attempts -> 'abandoned'.
+    /// * permanent error        -> 'abandoned' immediately with a plain error.
+    ///
+    /// A write-ahead flag (`sent_copy_append_attempted=1`) is set BEFORE the
+    /// provider call so a crash mid-APPEND is remembered. The outbox `state`
+    /// and `provider_id` are NEVER touched here.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_sent_copy_job(
+        &self,
+        provider: &dyn MailProvider,
+        id: &str,
+        raw: &[u8],
+        state: &str,
+        attempts: i64,
+        append_attempted: bool,
+        at: i64,
+    ) -> Result<(), String> {
+        use crate::provider::{ProviderError, SentCopyPhase, SentCopyRequest, SentCopyStep};
+
+        let phase = if state == "verify" {
+            SentCopyPhase::Verify
+        } else {
+            SentCopyPhase::Pending
+        };
+
+        // Write-ahead: in the pending phase, a copy may be APPENDed, so remember
+        // the attempt BEFORE calling the provider. A crash mid-APPEND then has
+        // append_attempted=1 recorded, so a resumed job never counts a found
+        // copy as the server's own (the evidence rule). The verify phase never
+        // appends, so it does not re-flag.
+        if phase == SentCopyPhase::Pending && !append_attempted {
+            self.database.change_outbox(
+                "UPDATE outbox_messages SET sent_copy_append_attempted=1 WHERE id=?1 AND sent_copy_state='pending'",
+                params![id],
+                id,
+                "",
+                at,
+            )?;
+        }
+
+        let request = SentCopyRequest {
+            raw: raw.to_vec(),
+            outbox_id: id.to_string(),
+            append_attempted,
+            phase,
+        };
+
+        match provider.save_sent_copy(&request).await {
+            Ok(SentCopyStep::Done) => {
+                self.database.change_outbox(
+                    "UPDATE outbox_messages SET sent_copy_state='done',sent_copy_error=NULL \
+                     WHERE id=?1 AND sent_copy_state IN ('pending','verify')",
+                    params![id],
+                    id,
+                    "",
+                    at,
+                )?;
+            }
+            Ok(SentCopyStep::Recheck { after }) => {
+                let next_at = at + after.as_millis() as i64;
+                self.database.change_outbox(
+                    "UPDATE outbox_messages SET sent_copy_state='verify',sent_copy_next_at=?2,\
+                     sent_copy_error=NULL WHERE id=?1 AND sent_copy_state IN ('pending','verify')",
+                    params![id, next_at],
+                    id,
+                    "",
+                    at,
+                )?;
+            }
+            Err(err) => {
+                let permanent = matches!(
+                    err,
+                    ProviderError::InvalidOperation(_)
+                        | ProviderError::PermanentClientRejection(_)
+                );
+                let message = sent_copy_error_message(&err);
+                if permanent {
+                    self.database.change_outbox(
+                        "UPDATE outbox_messages SET sent_copy_state='abandoned',sent_copy_error=?2 \
+                         WHERE id=?1 AND sent_copy_state IN ('pending','verify')",
+                        params![id, message],
+                        id,
+                        "",
+                        at,
+                    )?;
+                } else {
+                    // Transient: count the attempt and reschedule from the
+                    // backoff (floored at the settle window), or abandon at the
+                    // cap. The state is KEPT (a verify stays verify).
+                    let new_attempts = attempts + 1;
+                    if new_attempts as u32 >= crate::provider::imap::SENT_COPY_MAX_ATTEMPTS {
+                        self.database.change_outbox(
+                            "UPDATE outbox_messages SET sent_copy_state='abandoned',\
+                             sent_copy_attempts=?2,sent_copy_error=?3 \
+                             WHERE id=?1 AND sent_copy_state IN ('pending','verify')",
+                            params![id, new_attempts, message],
+                            id,
+                            "",
+                            at,
+                        )?;
+                    } else {
+                        let next_at = at
+                            + crate::provider::imap::sent_copy_backoff(attempts as u32).as_millis()
+                                as i64;
+                        self.database.change_outbox(
+                            "UPDATE outbox_messages SET sent_copy_attempts=?2,sent_copy_next_at=?3,\
+                             sent_copy_error=?4 WHERE id=?1 AND sent_copy_state IN ('pending','verify')",
+                            params![id, new_attempts, next_at, message],
+                            id,
+                            "",
+                            at,
+                        )?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     async fn dispatch_due<F, Fut>(
         &self,
         item: &OutboxItem,
         at: i64,
+        seed_sent_copy: bool,
         deliver: F,
     ) -> Result<Option<DeliveryReceipt>, String>
     where
@@ -1874,7 +2100,31 @@ impl Correspondence {
         }
         match deliver(raw, item.draft.thread_id.clone()).await {
             Ok(sent) => {
-                self.database.change_outbox("UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2",params![sent.provider_message_id,item.id],&item.id,&owner,at)?;
+                // Record the send accepted. When the provider saves its own
+                // Sent copy as a durable job (IMAP: `seed_sent_copy` is the
+                // `client_saves_sent_copy` capability read at the call site),
+                // seed that job in the SAME UPDATE so no window exists where a
+                // send is 'sent' but its Sent-copy job is lost. The job's first
+                // attempt is scheduled `sent_at + SENT_COPY_SETTLE` (millis), so
+                // a server that saves its own copy is given the settle window to
+                // do so before first-send detection looks. Gmail-like providers
+                // pass `seed_sent_copy=false` and every sent_copy_* column stays
+                // NULL/default.
+                if seed_sent_copy {
+                    let next_at = at
+                        + crate::provider::imap::SENT_COPY_SETTLE.as_millis() as i64;
+                    self.database.change_outbox(
+                        "UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL,\
+                         sent_copy_state='pending',sent_copy_next_at=?3,sent_copy_attempts=0,\
+                         sent_copy_append_attempted=0,sent_copy_error=NULL WHERE id=?2",
+                        params![sent.provider_message_id, item.id, next_at],
+                        &item.id,
+                        &owner,
+                        at,
+                    )?;
+                } else {
+                    self.database.change_outbox("UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2",params![sent.provider_message_id,item.id],&item.id,&owner,at)?;
+                }
                 Ok(Some(sent))
             }
             Err((definite, message)) => {
@@ -2252,6 +2502,7 @@ mod tests {
                     provided_threads: false,
                     label_model: LabelModel::GmailLabels,
                     verifiable_delivery: self.verifiable_delivery,
+                    client_saves_sent_copy: false,
                 }
             }
         }
@@ -2466,6 +2717,7 @@ mod tests {
                     provided_threads: false,
                     label_model: LabelModel::ImapLabelFolders,
                     verifiable_delivery: false,
+                    client_saves_sent_copy: false,
                 }
             }
         }
@@ -3254,16 +3506,16 @@ mod tests {
             }
         };
         service
-            .dispatch_due(&item, item.deadline - 1, &send)
+            .dispatch_due(&item, item.deadline - 1, false, &send)
             .await
             .unwrap();
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         service
-            .dispatch_due(&item, item.deadline, &send)
+            .dispatch_due(&item, item.deadline, false, &send)
             .await
             .unwrap();
         service
-            .dispatch_due(&item, item.deadline + 1, &send)
+            .dispatch_due(&item, item.deadline + 1, false, &send)
             .await
             .unwrap();
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -3280,7 +3532,7 @@ mod tests {
             .unwrap();
         service.database.cancel_send(&item.id, false).unwrap();
         service
-            .dispatch_due(&item, item.deadline, |_, _| async {
+            .dispatch_due(&item, item.deadline, false, |_, _| async {
                 panic!("Canceled mail must not send");
                 #[allow(unreachable_code)]
                 Ok(DeliveryReceipt {
@@ -3296,14 +3548,14 @@ mod tests {
             .queue(&d.id, d.revision, false, &[], None, &service.root)
             .unwrap();
         service
-            .dispatch_due(&item, item.deadline, |_, _| async {
+            .dispatch_due(&item, item.deadline, false, |_, _| async {
                 Err((false, "Connection dropped after acceptance".into()))
             })
             .await
             .unwrap();
         assert_eq!(service.database.outbox().unwrap()[0].state, "uncertain");
         service
-            .dispatch_due(&item, item.deadline + 1, |_, _| async {
+            .dispatch_due(&item, item.deadline + 1, false, |_, _| async {
                 panic!("Uncertain mail must not retry");
                 #[allow(unreachable_code)]
                 Ok(DeliveryReceipt {
@@ -3323,7 +3575,7 @@ mod tests {
             .queue(&d.id, d.revision, false, &[], None, &service.root)
             .unwrap();
         service
-            .dispatch_due(&item, item.deadline, |_, _| async {
+            .dispatch_due(&item, item.deadline, false, |_, _| async {
                 Err((true, "Invalid recipient".into()))
             })
             .await
@@ -3342,7 +3594,7 @@ mod tests {
             .database
             .queue(&d.id, d.revision, false, &[], None, &service.root)
             .unwrap();
-        let result=service.dispatch_due(&item,item.deadline,|_,_|async {
+        let result=service.dispatch_due(&item,item.deadline,false,|_,_|async {
             service.database.connection().unwrap().execute_batch("CREATE TRIGGER fail_ack BEFORE UPDATE ON outbox_messages WHEN NEW.state='sent' BEGIN SELECT RAISE(FAIL,'disk failure'); END;").unwrap();
             Ok(DeliveryReceipt{provider_message_id:"accepted".into(),thread_id:Some("thread".into())})
         }).await;
@@ -3492,12 +3744,12 @@ mod tests {
             peer.sending_identity=Arc::new(|_|Ok("00000000-0000-4000-8000-000000000002".into()));
             let calls=AtomicUsize::new(0);
             let send=|_,_|async {calls.fetch_add(1,Ordering::SeqCst);Ok(DeliveryReceipt {provider_message_id:"sent".into(),thread_id:None})};
-            assert!(peer.dispatch_due(&item,item.deadline+delta,&send).await.is_err());
+            assert!(peer.dispatch_due(&item,item.deadline+delta,false,&send).await.is_err());
             assert_eq!(calls.load(Ordering::SeqCst),0);
-            let result=owner.dispatch_due(&item,item.deadline+delta,&send).await.unwrap();
+            let result=owner.dispatch_due(&item,item.deadline+delta,false,&send).await.unwrap();
             let due=(0..=60_000).contains(&delta);
             assert_eq!(result.is_some(),due);
-            owner.dispatch_due(&item,item.deadline+delta,&send).await.unwrap();
+            owner.dispatch_due(&item,item.deadline+delta,false,&send).await.unwrap();
             assert_eq!(calls.load(Ordering::SeqCst),usize::from(due));
             if due {assert_eq!(owner.database.outbox().unwrap()[0].schedule.as_ref().unwrap().report.state,"sent");}
         }
@@ -3511,15 +3763,15 @@ mod tests {
         assert!(owner.database.manage_schedule(&item.id,revision,Some(&selection),false,"wrong-owner",item.deadline-1).is_err());
         owner.database.manage_schedule(&item.id,revision,Some(&selection),false,"00000000-0000-4000-8000-000000000001",item.deadline-1).unwrap();
         assert!(owner.database.manage_schedule(&item.id,revision,Some(&selection),false,"00000000-0000-4000-8000-000000000001",item.deadline-1).is_err());
-        assert!(owner.dispatch_due(&item,item.deadline,|_,_|async {panic!("stale schedule sent")}).await.unwrap().is_none());
+        assert!(owner.dispatch_due(&item,item.deadline,false,|_,_|async {panic!("stale schedule sent")}).await.unwrap().is_none());
         owner.sending_identity=Arc::new(|_|Err("missing identity".into()));
         assert!(owner.request(Request::Cancel {id:item.id.clone()}).await.is_err());
         let current=owner.database.outbox().unwrap().remove(0);
-        assert!(owner.dispatch_due(&current,current.deadline,|_,_|async {panic!("restored copy sent")}).await.is_err());
+        assert!(owner.dispatch_due(&current,current.deadline,false,|_,_|async {panic!("restored copy sent")}).await.is_err());
         owner.sending_identity=Arc::new(|_|Ok("00000000-0000-4000-8000-000000000001".into()));
         owner.request(Request::Cancel {id:item.id.clone()}).await.unwrap();
         assert_eq!(owner.database.drafts().unwrap()[0].body,item.draft.body);
-        assert!(owner.dispatch_due(&current,current.deadline,|_,_|async {panic!("canceled schedule sent")}).await.unwrap().is_none());
+        assert!(owner.dispatch_due(&current,current.deadline,false,|_,_|async {panic!("canceled schedule sent")}).await.unwrap().is_none());
     }
 
     #[test]
@@ -3544,13 +3796,13 @@ mod tests {
     async fn scheduled_send_uncertainty_is_persisted_without_retry_and_report_failure_rolls_back() {
         let owner=service();let item=scheduled(&owner);
         owner.database.connection().unwrap().execute_batch("CREATE TRIGGER fail_report BEFORE UPDATE OF schedule_json ON outbox_messages BEGIN SELECT RAISE(FAIL,'report storage failed'); END;").unwrap();
-        assert!(owner.dispatch_due(&item,item.deadline,|_,_|async {panic!("delivery before durable claim")}).await.is_err());
+        assert!(owner.dispatch_due(&item,item.deadline,false,|_,_|async {panic!("delivery before durable claim")}).await.is_err());
         assert_eq!(owner.database.outbox().unwrap()[0].state,"scheduled");
         owner.database.connection().unwrap().execute_batch("DROP TRIGGER fail_report;").unwrap();
-        owner.dispatch_due(&item,item.deadline,|_,_|async {Err((false,"lost acknowledgement".into()))}).await.unwrap();
+        owner.dispatch_due(&item,item.deadline,false,|_,_|async {Err((false,"lost acknowledgement".into()))}).await.unwrap();
         let uncertain=owner.database.outbox().unwrap().remove(0);
         assert_eq!(uncertain.state,"uncertain");assert_eq!(uncertain.schedule.as_ref().unwrap().report.state,"uncertain");
-        owner.dispatch_due(&uncertain,item.deadline+1,|_,_|async {panic!("uncertain resend")}).await.unwrap();
+        owner.dispatch_due(&uncertain,item.deadline+1,false,|_,_|async {panic!("uncertain resend")}).await.unwrap();
     }
 
 }

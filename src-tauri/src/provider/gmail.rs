@@ -652,6 +652,9 @@ mod tests {
         // reconcile path must keep Gmail on its existing error branch, never
         // the IMAP `unverifiable` outcome.
         assert!(capabilities.verifiable_delivery);
+        // Gmail saves the sent copy itself during submission, so the engine
+        // must NOT create a separate Sent-copy job for it.
+        assert!(!capabilities.client_saves_sent_copy);
     }
 
     mod unauthorized_replay {
@@ -1374,6 +1377,9 @@ impl MailProvider for GmailClient {
             // Gmail stores the sent message server-side, so an uncertain send
             // is confirmed by `find_sent_copy`. Delivery stays verifiable.
             verifiable_delivery: true,
+            // Gmail saves the sent copy itself during submission; the engine
+            // never runs a separate Sent-copy job for it.
+            client_saves_sent_copy: false,
         }
     }
 }

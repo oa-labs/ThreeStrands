@@ -337,6 +337,7 @@ fn purge_imap_cache(transaction: &rusqlite::Transaction<'_>, account: &str) -> D
         "imap_mailbox_sync_state",
         "imap_hot_threads",
         "imap_copy_intents",
+        "imap_sent_copy_detection",
     ] {
         transaction.execute(
             &format!("DELETE FROM {table} WHERE account_id = ?1"),

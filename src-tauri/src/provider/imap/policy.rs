@@ -954,6 +954,86 @@ pub fn check_message_id_domain(domain: &str) -> Result<String, ProviderError> {
     Ok(domain.to_ascii_lowercase())
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4 run 4b: the durable Sent-copy job's timings and limits
+// ---------------------------------------------------------------------------
+//
+// After an accepted IMAP send the engine runs a durable job that saves the
+// sender's own copy to the Sent mailbox (first-send detection + idempotent
+// APPEND, `docs/imap-design.md` "Sending" steps 3–4). Every number that job
+// uses lives here, as plain `Duration`/count data, with below/exact/above
+// tests. The engine makes them injectable in tests (zero delays, tiny caps) by
+// reading them from here; these are the production defaults.
+//
+// The ONE invariant that binds several of them: a retry's SEARCH must never
+// run earlier than SENT_COPY_SETTLE after the previous attempt. A server that
+// makes a just-stored message visible to SEARCH only after a delay would
+// otherwise let a fast retry APPEND a second copy (run 4a's residual race).
+// `sent_copy_retry_at` enforces this: every scheduled retry is at least
+// SENT_COPY_SETTLE after the attempt that produced it.
+
+/// How long to wait after a send is ACCEPTED before the first Sent-copy
+/// attempt (the "settle window"), and the floor under every retry delay. A
+/// server that saves its own Sent copy (Proton Bridge, Fastmail) does so
+/// within a couple of seconds; 10s gives it comfortable room so the first-send
+/// detection sees the server's copy rather than racing it, without making the
+/// user's sent mail take noticeably long to appear. The engine seeds the job's
+/// first `next_at` as `sent_at + SENT_COPY_SETTLE`.
+pub const SENT_COPY_SETTLE: Duration = Duration::from_secs(10);
+
+/// How long after our own APPEND to wait before the VERIFY phase counts the
+/// copies in Sent. The server, if it saves its own copy, may store it a beat
+/// after accepting the send; this delay lets a late server-saved duplicate
+/// become visible so the verify phase detects "server saves sent" rather than
+/// recording a false "we are the only copy". Kept equal to the settle window
+/// so a verify is never scheduled earlier than a retry would be.
+pub const SENT_COPY_VERIFY_DELAY: Duration = Duration::from_secs(10);
+
+/// The retry backoff schedule (delay before attempt N+1, 0-indexed by prior
+/// attempts) for a Sent-copy job that hit a TRANSIENT error. Capped-exponential
+/// with a long tail so a Sent mailbox that is briefly unreachable is retried
+/// quickly at first and then sparingly, up to [`SENT_COPY_MAX_ATTEMPTS`]. Every
+/// entry is >= SENT_COPY_SETTLE, preserving the "never earlier than the settle
+/// window" rule. Attempts past the table's end reuse its last (longest) delay.
+pub const SENT_COPY_BACKOFF: &[Duration] = &[
+    Duration::from_secs(10),   // 10s
+    Duration::from_secs(30),   // 30s
+    Duration::from_secs(120),  // 2m
+    Duration::from_secs(600),  // 10m
+    Duration::from_secs(1800), // 30m
+    Duration::from_secs(3600), // 1h
+];
+
+/// Most TRANSIENT retry attempts a Sent-copy job makes before it is
+/// `abandoned` with its last error. With [`SENT_COPY_BACKOFF`] tailing at one
+/// hour, ~30 attempts span roughly a day — long enough to ride out a Sent
+/// mailbox that is unreachable for most of a day, bounded so a permanently
+/// broken account's job does not retry forever. A PERMANENT failure abandons
+/// immediately regardless of this.
+pub const SENT_COPY_MAX_ATTEMPTS: u32 = 30;
+
+/// Most Sent-copy jobs processed in one `Correspondence::tick`. The tick holds
+/// the send gate for its whole run (per-message serialisation), so each job it
+/// processes is a bounded piece of per-tick work; this caps how many due jobs
+/// one tick drains so a backlog (many sends while offline) does not make a
+/// single tick run long. Remaining due jobs are picked up by the next tick.
+pub const SENT_COPY_MAX_JOBS_PER_TICK: usize = 10;
+
+/// The delay before Sent-copy attempt number `prior_attempts + 1` (0-indexed),
+/// read from [`SENT_COPY_BACKOFF`] and clamped to never fall below
+/// [`SENT_COPY_SETTLE`]. Attempts past the table reuse its last entry. This is
+/// the one function the engine calls to schedule a transient retry, so the
+/// "never earlier than the settle window" rule holds in exactly one place.
+pub fn sent_copy_backoff(prior_attempts: u32) -> Duration {
+    let index = (prior_attempts as usize).min(SENT_COPY_BACKOFF.len().saturating_sub(1));
+    let delay = SENT_COPY_BACKOFF[index];
+    if delay < SENT_COPY_SETTLE {
+        SENT_COPY_SETTLE
+    } else {
+        delay
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -962,6 +1042,52 @@ mod tests {
     // boundary, per AGENTS.md "Email rendering" and the emailRenderingPolicy.ts
     // pattern. The boundary itself is accepted; one past it is a typed error,
     // not a clamp.
+
+    #[test]
+    fn sent_copy_backoff_is_monotonic_floored_at_settle_and_saturates() {
+        use std::time::Duration;
+        // The schedule never schedules a retry earlier than the settle window.
+        for prior in 0..SENT_COPY_MAX_ATTEMPTS {
+            assert!(
+                sent_copy_backoff(prior) >= SENT_COPY_SETTLE,
+                "attempt {prior} must not retry earlier than the settle window"
+            );
+        }
+        // Below the table's end: reads the indexed entry.
+        assert_eq!(sent_copy_backoff(0), SENT_COPY_BACKOFF[0]);
+        assert_eq!(sent_copy_backoff(1), SENT_COPY_BACKOFF[1]);
+        // Exactly at the last index: the last (longest) entry.
+        let last = SENT_COPY_BACKOFF.len() as u32 - 1;
+        assert_eq!(sent_copy_backoff(last), SENT_COPY_BACKOFF[last as usize]);
+        // Above the table: saturates to the last entry (never panics, never 0).
+        assert_eq!(
+            sent_copy_backoff(last + 1),
+            *SENT_COPY_BACKOFF.last().unwrap()
+        );
+        assert_eq!(
+            sent_copy_backoff(SENT_COPY_MAX_ATTEMPTS + 100),
+            *SENT_COPY_BACKOFF.last().unwrap()
+        );
+        // The schedule is non-decreasing.
+        for window in SENT_COPY_BACKOFF.windows(2) {
+            assert!(window[0] <= window[1], "backoff must be non-decreasing");
+        }
+        // The settle floor would actually bite a sub-settle entry: construct
+        // the comparison the function makes.
+        assert!(SENT_COPY_SETTLE > Duration::ZERO);
+        assert!(SENT_COPY_VERIFY_DELAY >= SENT_COPY_SETTLE);
+    }
+
+    #[test]
+    fn sent_copy_job_limits_are_sane_bounds() {
+        // A per-tick cap exists and is positive (an unbounded cap would let one
+        // tick run long on a backlog).
+        assert!(SENT_COPY_MAX_JOBS_PER_TICK >= 1);
+        // Enough transient attempts to ride out a long outage, bounded so a
+        // broken account does not retry forever.
+        assert!(SENT_COPY_MAX_ATTEMPTS >= 2);
+        assert!(!SENT_COPY_BACKOFF.is_empty());
+    }
 
     #[test]
     fn raw_message_bytes_accepts_up_to_the_limit_and_rejects_above_it() {

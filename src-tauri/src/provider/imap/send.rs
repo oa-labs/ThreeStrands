@@ -223,7 +223,7 @@ fn collect_addresses(header: Option<&Address>) -> Vec<String> {
 }
 
 /// The raw `Message-ID` header value of `raw`, if present (as it appeared).
-fn raw_message_id(raw: &[u8]) -> Option<String> {
+pub(super) fn raw_message_id(raw: &[u8]) -> Option<String> {
     let message = MessageParser::default().parse(raw)?;
     message.message_id().map(|id| id.to_string())
 }

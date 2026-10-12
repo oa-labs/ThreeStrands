@@ -175,6 +175,14 @@ pub use sending_identity::{
 pub use policy::smtp_prepare_retry_due;
 #[allow(unused_imports)]
 pub use policy::SMTP_PREPARE_RETRY_INTERVAL_MS;
+// Phase 4 run 4b: the engine's outbox tick seeds and drives the durable
+// Sent-copy job from these. SENT_COPY_SETTLE sets the job's first `next_at`,
+// `sent_copy_backoff` schedules a transient retry (never earlier than the
+// settle window), and the caps bound the runner.
+pub use policy::{
+    sent_copy_backoff, SENT_COPY_MAX_ATTEMPTS, SENT_COPY_MAX_JOBS_PER_TICK, SENT_COPY_SETTLE,
+    SENT_COPY_VERIFY_DELAY,
+};
 
 use std::sync::Arc;
 
@@ -279,6 +287,56 @@ impl ImapStateStore {
                 "DELETE FROM imap_copy_intents
                  WHERE account_id = ?1 AND message_id = ?2 AND destination = ?3",
                 rusqlite::params![self.account_id, message, destination],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// The per-device Sent-copy detection result for this account, if decided:
+    /// `Some(true)` the server saves its own Sent copy (we never APPEND),
+    /// `Some(false)` it does not (we APPEND), `None` not yet decided (first
+    /// send). LOCAL state only — never exported in the settings transfer. See
+    /// `docs/imap-design.md` ("Sending").
+    pub fn sent_copy_detection(&self) -> DbResult<Option<bool>> {
+        use rusqlite::OptionalExtension;
+        self.database.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT server_saves_sent FROM imap_sent_copy_detection
+                     WHERE account_id = ?1",
+                    rusqlite::params![self.account_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?
+                .map(|flag| flag != 0))
+        })
+    }
+
+    /// Record the per-device Sent-copy detection result (idempotent upsert).
+    /// `decided_at` is a millisecond timestamp. Overwrites a prior decision so
+    /// run 5's "reset then re-detect" lands a fresh result.
+    pub fn set_sent_copy_detection(&self, server_saves_sent: bool, decided_at: i64) -> DbResult<()> {
+        self.database.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO imap_sent_copy_detection(account_id, server_saves_sent, decided_at)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(account_id) DO UPDATE SET
+                     server_saves_sent = excluded.server_saves_sent,
+                     decided_at = excluded.decided_at",
+                rusqlite::params![self.account_id, server_saves_sent as i64, decided_at],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Clear this account's Sent-copy detection result, so the next send
+    /// re-detects from scratch. Backs run 5's "reset" button. Deleting an
+    /// absent row is a harmless no-op.
+    pub fn clear_sent_copy_detection(&self) -> DbResult<()> {
+        self.database.with_connection(|connection| {
+            connection.execute(
+                "DELETE FROM imap_sent_copy_detection WHERE account_id = ?1",
+                rusqlite::params![self.account_id],
             )?;
             Ok(())
         })

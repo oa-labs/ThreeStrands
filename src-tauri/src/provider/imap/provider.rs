@@ -3743,6 +3743,60 @@ impl MailSend for ImapProvider {
         // (Run 4 may add the Sent-copy APPEND; it would revisit this.)
         Ok(None)
     }
+
+    /// Save the sender's own copy of a just-sent message into the Sent mailbox,
+    /// or decide nothing is needed, driven by the engine's durable job (run 4b;
+    /// `docs/imap-design.md`, "Sending" steps 3–4). The whole decision is the
+    /// pure [`super::write::decide_sent_copy`] over a leased-session IO; this
+    /// method only resolves the inputs (Message-ID, Sent mailbox, override) and
+    /// leases the session.
+    async fn save_sent_copy(
+        &self,
+        request: &crate::provider::SentCopyRequest,
+    ) -> ProviderResult<crate::provider::SentCopyStep> {
+        // The Message-ID is required to locate our copy; a message without one
+        // can never be found again, so refuse PERMANENTLY (abandons the job).
+        let message_id = super::send::raw_message_id(&request.raw).ok_or_else(|| {
+            ProviderError::InvalidOperation(
+                "cannot save the Sent copy: the message has no Message-ID header to locate it by; \
+                 refusing permanently"
+                    .into(),
+            )
+        })?;
+
+        // Resolve the Sent mailbox from the plan exactly as run 4a does (a WIRE
+        // name; never re-encoded). A missing Sent mailbox is permanent.
+        let plan = self.build_sync_plan()?;
+        let mailbox = self
+            .mailbox_with_role(&plan, super::MailboxRole::Sent)
+            .ok_or_else(|| {
+                ProviderError::InvalidOperation(
+                    "cannot save the Sent copy: this account has no Sent mailbox configured; \
+                     refusing permanently"
+                        .into(),
+                )
+            })?;
+
+        // Lease one session for the whole decision (the command slot, like
+        // every other write path).
+        let mut session = self.open_session().await?;
+        let result = {
+            let write_session = as_write_session(session.as_mut())?;
+            let mut io = super::write::SessionSentCopyIo {
+                session: write_session,
+                store: &self.store,
+                mailbox,
+                raw: &request.raw,
+                message_id,
+                server_saves_sent: self.settings.server_saves_sent,
+                config: super::write::SaveSentConfig::default(),
+                now: self.now,
+            };
+            super::write::decide_sent_copy(&mut io, request, super::SENT_COPY_VERIFY_DELAY).await
+        };
+        let _ = session.logout().await;
+        result
+    }
 }
 
 impl MailProvider for ImapProvider {
@@ -3757,6 +3811,11 @@ impl MailProvider for ImapProvider {
             // state via `find_sent_copy` -> Ok(None), not a Gmail-style
             // lookup.
             verifiable_delivery: false,
+            // IMAP saves the sender's own Sent copy itself, as a durable job
+            // the engine drives after an accepted send (run 4b). The engine
+            // seeds that job atomically with the `sent` transition because
+            // this is true.
+            client_saves_sent_copy: true,
         }
     }
 }
@@ -4423,6 +4482,8 @@ mod tests {
         // to confirm an uncertain send against.
         assert!(caps.send_supported);
         assert!(!caps.verifiable_delivery);
+        // Run 4b: IMAP drives its own Sent-copy job after an accepted send.
+        assert!(caps.client_saves_sent_copy);
         assert_eq!(caps.label_model, LabelModel::ImapLabelFolders);
     }
 

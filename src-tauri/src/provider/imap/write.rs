@@ -1734,6 +1734,202 @@ fn no_sent_mailbox_error(mailbox: &str, cause: &ProviderError) -> ProviderError 
     }
 }
 
+// ===========================================================================
+// Phase 4 run 4b: the Sent-copy DECISION (first-send detection)
+// ===========================================================================
+//
+// `docs/imap-design.md` ("Sending" steps 3–4). The engine owns a durable job
+// and WHEN to call this; the decision below owns WHAT to do, and is factored
+// into a pure async function over a tiny IO trait so the whole state machine is
+// table-testable without a server. The provider wires a real session + store
+// into the trait; a test wires a scripted fake.
+//
+// The decision is driven by three inputs the engine carries in a
+// `SentCopyRequest`: the user override `settings.server_saves_sent`, whether an
+// APPEND of ours was already attempted (`append_attempted`), and the job phase
+// (`Pending` first attempt / `Verify` after our APPEND). The EVIDENCE RULE is
+// the subtle part: ONLY a copy found BEFORE any APPEND of ours is evidence the
+// server saves its own copies. A copy found once `append_attempted` is true may
+// be our own (a lost-reply retry), so it is treated as success WITHOUT recording
+// "server saves sent".
+
+use crate::provider::{SentCopyPhase, SentCopyStep};
+
+/// The small IO surface the Sent-copy decision needs, so the state machine is
+/// pure and table-testable. The provider implements it against a real session
+/// + `ImapStateStore`; a test implements it with in-memory fakes.
+#[async_trait]
+pub(super) trait SentCopyIo {
+    /// The user override `imap_account_settings.server_saves_sent` (true =
+    /// never APPEND). Read-only, no network.
+    fn server_saves_sent_override(&self) -> bool;
+
+    /// The per-device detection result: `Some(true)` server saves its own,
+    /// `Some(false)` it does not, `None` not yet decided. No network.
+    async fn detection(&mut self) -> Result<Option<bool>, ProviderError>;
+
+    /// Record the per-device detection result. No network.
+    async fn record_detection(&mut self, server_saves_sent: bool) -> Result<(), ProviderError>;
+
+    /// Count the copies of our Message-ID currently in the Sent mailbox
+    /// (verified exact matches). Used both to find a pre-APPEND server copy and
+    /// to count copies in the verify phase. One SEARCH + verify FETCHes.
+    async fn count_in_sent(&mut self) -> Result<usize, ProviderError>;
+
+    /// APPEND our copy to the Sent mailbox, idempotently (run 4a's
+    /// `save_sent_copy`: it searches before it appends). Returns Ok on a stored
+    /// (or already-present) copy; an error carries its retry class.
+    async fn append_copy(&mut self) -> Result<(), ProviderError>;
+}
+
+/// The pure Sent-copy decision over [`SentCopyIo`]. Returns the engine-facing
+/// [`SentCopyStep`] (Done / Recheck) or a classified error. Never deletes,
+/// expunges or flags anything. The engine translates the step into job state.
+///
+/// `verify_delay` is injected (the policy `SENT_COPY_VERIFY_DELAY` in
+/// production, zero in tests) so a test needs no clock.
+pub(super) async fn decide_sent_copy<Io: SentCopyIo + Send>(
+    io: &mut Io,
+    request: &crate::provider::SentCopyRequest,
+    verify_delay: std::time::Duration,
+) -> Result<SentCopyStep, ProviderError> {
+    // 1. User override wins with NO network I/O.
+    if io.server_saves_sent_override() {
+        return Ok(SentCopyStep::Done);
+    }
+
+    // 2. A prior per-device decision is authoritative.
+    match io.detection().await? {
+        Some(true) => return Ok(SentCopyStep::Done), // server saves its own; nothing to do.
+        Some(false) => {
+            // We save it; run 4a's APPEND is idempotent (searches first).
+            io.append_copy().await?;
+            return Ok(SentCopyStep::Done);
+        }
+        None => {} // first send, unconfirmed: fall through to detection.
+    }
+
+    // 3. Detection. The phase tells us whether this is the first look or the
+    // post-APPEND verify.
+    match request.phase {
+        SentCopyPhase::Pending => {
+            if !request.append_attempted {
+                // (a) First look, before any APPEND of ours. A copy present now
+                // is the SERVER's own copy -> record "server saves sent".
+                if io.count_in_sent().await? >= 1 {
+                    io.record_detection(true).await?;
+                    return Ok(SentCopyStep::Done);
+                }
+                // (b) Absent -> APPEND ours, then verify after the delay.
+                io.append_copy().await?;
+                return Ok(SentCopyStep::Recheck { after: verify_delay });
+            }
+            // append_attempted is true but we are still in Pending: a retry
+            // after our APPEND did not get recorded (lost reply). Evidence rule:
+            // a copy present now may be OUR appended copy, so it is NOT evidence
+            // the server saves its own. Ensure the copy exists (idempotent
+            // APPEND is a no-op if present) and move to verify.
+            io.append_copy().await?;
+            Ok(SentCopyStep::Recheck { after: verify_delay })
+        }
+        SentCopyPhase::Verify => {
+            // (c) After our APPEND. Count the copies now present.
+            let copies = io.count_in_sent().await?;
+            if copies >= 2 {
+                // The server saved one too; ours is the duplicate. Record
+                // "server saves sent" and leave the duplicate ALONE (never
+                // delete automatically — the engine/logs note it).
+                log::warn!(
+                    "imap sent-copy: {} copies of this Message-ID in Sent after our APPEND \
+                     (outbox {}); the server saves its own copy, leaving our duplicate in place \
+                     and recording 'server saves sent'",
+                    copies,
+                    request.outbox_id
+                );
+                io.record_detection(true).await?;
+                Ok(SentCopyStep::Done)
+            } else if copies == 1 {
+                // Exactly our copy; the server does not save its own.
+                io.record_detection(false).await?;
+                Ok(SentCopyStep::Done)
+            } else {
+                // Zero copies: our APPEND's copy is not visible yet. Do NOT
+                // append again (that is how a duplicate is born). Treat as
+                // TRANSIENT so the engine retries the verify later, up to the
+                // attempts cap, WITHOUT recording a detection result.
+                Err(ProviderError::TransientTransport(
+                    "the appended Sent copy is not yet visible to SEARCH; will re-verify".into(),
+                ))
+            }
+        }
+    }
+}
+
+/// The production [`SentCopyIo`] for one account: a leased session plus the
+/// account's `ImapStateStore`, resolving the Sent mailbox from the sync plan
+/// exactly as run 4a does. `count_in_sent` EXAMINEs then
+/// [`find_by_message_id`]; `append_copy` runs run 4a's idempotent
+/// [`save_sent_copy`]. The session is leased once and reused across the calls
+/// one decision makes.
+pub(super) struct SessionSentCopyIo<'a> {
+    pub session: &'a mut dyn ImapWriteSession,
+    pub store: &'a super::ImapStateStore,
+    pub mailbox: String,
+    pub raw: &'a [u8],
+    pub message_id: String,
+    pub server_saves_sent: bool,
+    pub config: SaveSentConfig,
+    pub now: fn() -> i64,
+}
+
+#[async_trait]
+impl SentCopyIo for SessionSentCopyIo<'_> {
+    fn server_saves_sent_override(&self) -> bool {
+        self.server_saves_sent
+    }
+
+    async fn detection(&mut self) -> Result<Option<bool>, ProviderError> {
+        self.store
+            .sent_copy_detection()
+            .map_err(|e| ProviderError::Other(e.to_string()))
+    }
+
+    async fn record_detection(&mut self, server_saves_sent: bool) -> Result<(), ProviderError> {
+        self.store
+            .set_sent_copy_detection(server_saves_sent, (self.now)())
+            .map_err(|e| ProviderError::Other(e.to_string()))
+    }
+
+    async fn count_in_sent(&mut self) -> Result<usize, ProviderError> {
+        // EXAMINE (read-only; never sets \Seen on seeded mail) for UIDVALIDITY,
+        // then the verified Message-ID locate.
+        let status = self.session.examine(&self.mailbox).await?;
+        let uidvalidity = status.uid_validity.ok_or_else(|| {
+            ProviderError::InvalidOperation(format!(
+                "Sent mailbox {:?} reported no UIDVALIDITY on EXAMINE",
+                self.mailbox
+            ))
+        })?;
+        let located = find_by_message_id(self.session, &self.message_id, uidvalidity).await?;
+        Ok(located.uids.len())
+    }
+
+    async fn append_copy(&mut self) -> Result<(), ProviderError> {
+        // Run 4a's idempotent primitive: it searches before appending, so a
+        // repeat call never produces a second copy.
+        save_sent_copy(
+            self.session,
+            &self.mailbox,
+            self.raw,
+            &self.message_id,
+            self.config,
+        )
+        .await
+        .map(|_| ())
+        .map_err(WriteError::into_provider_error)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
