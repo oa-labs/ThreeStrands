@@ -92,8 +92,6 @@ export function ImapSendingSettings({ account }: { account: string }) {
 
   return (
     <section className="settings-subsection imap-sending" aria-labelledby={headingId}>
-      <h4 id={headingId}>Sending</h4>
-
       <div className="imap-sending-addresses">
         <h5>Sending addresses</h5>
         <p className="settings-hint">Addresses this account can send mail from.</p>
