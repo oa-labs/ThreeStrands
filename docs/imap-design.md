@@ -612,6 +612,22 @@ first:
 
 `server_search: true` for IMAP accounts.
 
+**Renderer decisions** (the pure `provider::imap::search::render_imap`, phase 5
+run 1): `to:` renders `(OR OR TO … CC … BCC …)` to match Gmail, where `to:`
+includes Cc and Bcc; `before:`/`after:` use `BEFORE`/`SINCE` with fixed English
+month abbreviations (`1-Jan-2024`, day unpadded) and are server-timezone,
+date-only comparisons. A term the server cannot honestly evaluate — a `Raw`
+token (negation, `OR`/`AND`, an unknown operator), a value with CR/LF/NUL, an
+over-limit value, or an empty query — SKIPS the whole server search and keeps
+local results only; a `Raw` token is never sent as `TEXT`. A term the server
+can prove matches nothing (an unknown label, an unknown folder, a label name
+that cannot be a keyword atom) reports "no server matches". `in:` and a
+folder-mode `label:` restrict which mailboxes are searched; two terms naming
+DIFFERENT mailboxes cannot be one server search and are refused rather than
+guessing an intersection. `has:attachment` has no server key and is applied to
+the fetched results locally. All search numeric limits live in
+`provider::imap::policy` (`MAX_SEARCH_*`).
+
 ## Account setup
 
 1. The user enters an email address and password.

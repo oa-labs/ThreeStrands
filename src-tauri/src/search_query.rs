@@ -158,11 +158,12 @@ impl SearchQuery {
             .join(" ")
     }
 
-    // IMAP: `render_imap(&self) -> ImapSearchKey` lands in phase 5. It turns
-    // these terms into `UID SEARCH CHARSET UTF-8 …`
+    // IMAP: the IMAP renderer lives in `provider::imap::search`
+    // (`render_imap`), landed in phase 5. It turns these terms into
+    // `UID SEARCH CHARSET UTF-8 …`
     // (TEXT/FROM/TO/SUBJECT/SINCE/BEFORE/UNSEEN/FLAGGED/KEYWORD) and reports
-    // `HasAttachment` and `Raw` as terms it cannot express server-side, so the
-    // caller post-filters or reports them.
+    // `HasAttachment` as a local post-filter and `Raw` as a term it cannot
+    // express server-side, so the caller post-filters or keeps local results.
 }
 
 /// Whether `candidate`, parsed on its own, yields exactly `term`.

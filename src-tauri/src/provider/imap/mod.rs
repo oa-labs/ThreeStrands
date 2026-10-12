@@ -47,6 +47,7 @@ mod plan;
 mod policy;
 mod provider;
 mod rfc822;
+mod search;
 mod send;
 mod sending_identity;
 mod session;
