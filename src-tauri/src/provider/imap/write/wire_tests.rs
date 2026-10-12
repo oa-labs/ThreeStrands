@@ -1536,18 +1536,20 @@ mod sent_copy_tests {
         #[tokio::test]
         async fn lost_reply_retry_with_our_copy_present_is_not_server_evidence() {
             // Pending phase, append_attempted=true, and our copy already present
-            // (a lost reply). It must NOT record "server saves sent"; it moves to
-            // verify after an idempotent (no-op) APPEND.
+            // (a lost reply, or a failure before any APPEND). It must NOT record
+            // "server saves sent" and must NOT move to verify (a single copy
+            // there would be misread as ours alone); it finishes after an
+            // idempotent (no-op) APPEND and leaves detection undecided.
             let (mut session, _state, _log, task) =
                 connect_sent(SentScript::default(), &[(&String::from_utf8_lossy(&raw_with("<decide@x>")), &["\\Seen"])]).await;
             let store = store();
             let step = run(&mut session, &store, false, &req(SentCopyPhase::Pending, true))
                 .await
                 .unwrap();
-            assert_eq!(step, SentCopyStep::Recheck { after: Duration::ZERO });
+            assert_eq!(step, SentCopyStep::Done);
             assert!(
                 store.sent_copy_detection().unwrap().is_none(),
-                "a copy found after our APPEND is never server-saves evidence"
+                "an ambiguous copy is never recorded as evidence either way"
             );
             let _ = session.logout().await;
             task.await.unwrap();

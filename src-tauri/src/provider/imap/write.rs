@@ -1824,13 +1824,19 @@ pub(super) async fn decide_sent_copy<Io: SentCopyIo + Send>(
                 io.append_copy().await?;
                 return Ok(SentCopyStep::Recheck { after: verify_delay });
             }
-            // append_attempted is true but we are still in Pending: a retry
-            // after our APPEND did not get recorded (lost reply). Evidence rule:
-            // a copy present now may be OUR appended copy, so it is NOT evidence
-            // the server saves its own. Ensure the copy exists (idempotent
-            // APPEND is a no-op if present) and move to verify.
+            // append_attempted is true but we are still in Pending. The engine
+            // sets the flag BEFORE the provider call, so this is a retry after
+            // EITHER a lost APPEND reply (a copy now present is OURS) OR a
+            // transient failure before any APPEND (a copy now present may be
+            // the SERVER's). The two are indistinguishable, so we neither
+            // record evidence nor go to `verify`: in verify a single copy reads
+            // as "ours alone" and would permanently (and wrongly) record that
+            // the server does not save its own copy, after which every later
+            // send would APPEND a duplicate. Just make sure a copy exists (the
+            // idempotent APPEND is a no-op if one is present) and finish; the
+            // next send of the account decides detection from a clean start.
             io.append_copy().await?;
-            Ok(SentCopyStep::Recheck { after: verify_delay })
+            Ok(SentCopyStep::Done)
         }
         SentCopyPhase::Verify => {
             // (c) After our APPEND. Count the copies now present.
@@ -2598,20 +2604,72 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lost_reply_retry_with_append_attempted_is_not_server_evidence() {
-        // Pending phase but append_attempted=true (a lost reply): a copy present
-        // now may be OUR appended copy, so it is NOT evidence the server saves
-        // its own. We ensure the copy exists (idempotent) and move to verify —
-        // and crucially do NOT record detection true here.
+    async fn an_ambiguous_retry_records_nothing_and_never_reaches_verify() {
+        // Pending phase but append_attempted=true. The engine sets that flag
+        // BEFORE the provider call, so it is also true when the first attempt
+        // failed transiently BEFORE any APPEND (e.g. a dropped connection at
+        // the first look) — and then a copy found now may be the SERVER's own,
+        // OR our own from a lost reply. The two cannot be told apart, so:
+        // ensure a copy exists (the idempotent APPEND is a no-op if present),
+        // record NOTHING, and finish. In particular it must NOT go on to
+        // `verify`, where a single copy would be read as "ours alone" and
+        // permanently mis-record "the server does not save its own copy" (every
+        // later send would then APPEND a duplicate). The next send decides
+        // cleanly.
         let mut io = FakeIo::new();
         let step = decide(&mut io, &request(SentCopyPhase::Pending, true)).await.unwrap();
-        assert_eq!(step, SentCopyStep::Recheck { after: Duration::from_secs(10) });
+        assert_eq!(step, SentCopyStep::Done, "an ambiguous retry must not move to verify");
         assert!(
             io.recorded.get().is_none(),
-            "a copy found after our APPEND is never recorded as server-saves evidence"
+            "an ambiguous copy is never recorded as evidence either way"
         );
         assert_eq!(io.appended.get(), 1, "the idempotent APPEND is a no-op if present");
-        assert!(io.count_returns.borrow().is_empty(), "evidence rule: we did not count before deciding");
+        assert!(io.count_returns.borrow().is_empty(), "the evidence rule: no count before deciding");
+    }
+
+    #[tokio::test]
+    async fn a_transient_failure_before_any_append_cannot_poison_the_detection() {
+        // The sequence that would have mis-recorded `false`: the server saves
+        // its own copy; attempt 1 fails transiently at the first look (flag set
+        // by the engine, nothing appended); attempt 2 sees append_attempted and
+        // finds the SERVER's copy. Drive both calls and assert the detection is
+        // never recorded `false`.
+        struct FailingFirstLook(FakeIo, bool);
+        #[async_trait]
+        impl SentCopyIo for FailingFirstLook {
+            fn server_saves_sent_override(&self) -> bool { self.0.server_saves_sent_override() }
+            async fn detection(&mut self) -> Result<Option<bool>, ProviderError> { self.0.detection().await }
+            async fn record_detection(&mut self, v: bool) -> Result<(), ProviderError> { self.0.record_detection(v).await }
+            async fn count_in_sent(&mut self) -> Result<usize, ProviderError> {
+                if !self.1 {
+                    self.1 = true;
+                    return Err(ProviderError::TransientTransport("blip".into()));
+                }
+                self.0.count_in_sent().await
+            }
+            async fn append_copy(&mut self) -> Result<(), ProviderError> { self.0.append_copy().await }
+        }
+        let mut io = FailingFirstLook(FakeIo::new().with_counts(&[1, 1, 1]), false);
+        // Attempt 1: first look, transient failure (nothing appended).
+        let first = decide_sent_copy(&mut io, &request(SentCopyPhase::Pending, false), Duration::ZERO).await;
+        assert!(matches!(first, Err(ProviderError::TransientTransport(_))));
+        // Attempt 2: the engine now passes append_attempted = true.
+        let mut step = decide_sent_copy(&mut io, &request(SentCopyPhase::Pending, true), Duration::ZERO)
+            .await
+            .unwrap();
+        // If it asked to verify, run the verify (it must not exist, but if it
+        // did, the single server copy must not be recorded as "ours alone").
+        if matches!(step, SentCopyStep::Recheck { .. }) {
+            step = decide_sent_copy(&mut io, &request(SentCopyPhase::Verify, true), Duration::ZERO)
+                .await
+                .unwrap();
+        }
+        assert_eq!(step, SentCopyStep::Done);
+        assert_ne!(
+            io.0.recorded.get(),
+            Some(false),
+            "a server-saved copy must never be recorded as 'the server does not save copies'"
+        );
     }
 }
 
