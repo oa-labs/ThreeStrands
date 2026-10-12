@@ -20,6 +20,7 @@ mod contact_suggestions;
 pub(crate) mod contacts;
 mod goals;
 mod ingestion;
+mod labels;
 mod mail_sync;
 mod maintenance;
 mod messages;
@@ -33,6 +34,7 @@ mod tasks;
 mod threads;
 mod triage;
 
+pub(crate) use labels::cache_label_listing;
 pub use mail_sync::SentBackfillProgress;
 pub use mutations::PendingMutation;
 pub use recovery::{open_with_recovery, OpenError, RecoveryOutcome};

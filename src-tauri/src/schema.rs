@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 68;
+pub(crate) const LATEST_VERSION: i64 = 69;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1954,6 +1954,35 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 69 {
+        // Phase 5 run 2b-1: the LOCAL label-catalog cache. Each account's
+        // label NAME -> label ID mapping, so the database search layer can
+        // resolve `label:` / `in:` (run 2b-2) against the opaque ids stored in
+        // threads.labels_json. Kept fresh by best-effort write-through from
+        // `list_labels` and the SyncService label mutations.
+        //
+        // This is rebuildable LOCAL cache state: it is NOT part of the
+        // encrypted settings export (`transfer.rs` is untouched and its
+        // VERSION is unchanged) and is NOT replicated by sync — losing it only
+        // forces a re-fetch on the next `list_labels`. Existing databases get
+        // an empty table. Deleted when the account is removed (see
+        // db::accounts::purge_imap_cache). Reserve a new schema number for
+        // every later change rather than editing this block once it has
+        // shipped.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS account_labels (
+                account_id TEXT NOT NULL,
+                label_id   TEXT NOT NULL,
+                name       TEXT NOT NULL,
+                kind       TEXT NOT NULL,
+                PRIMARY KEY (account_id, label_id)
+            );
+            CREATE INDEX IF NOT EXISTS account_labels_by_name
+                ON account_labels(account_id, name COLLATE NOCASE);
+            PRAGMA user_version=69;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -2098,6 +2127,61 @@ mod tests {
             )
             .unwrap();
         assert_eq!((saves, at), (1, 123));
+    }
+
+    #[test]
+    fn v69_adds_an_empty_label_cache_and_reruns_cleanly() {
+        // A database at v68 upgrades to v69 with an empty account_labels table
+        // (existing databases get no rows), and the by-name index exists.
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP INDEX account_labels_by_name;
+                 DROP TABLE account_labels;
+                 PRAGMA user_version=68;",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let rows: i64 = connection
+            .query_row("SELECT COUNT(*) FROM account_labels", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 0, "an existing database upgrades to an empty cache");
+        let index_present: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='account_labels_by_name'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(index_present, 1, "the by-name lookup index exists");
+        connection
+            .execute(
+                "INSERT INTO account_labels(account_id, label_id, name, kind)
+                 VALUES ('you@gmail.com', 'Label_18', 'Work', 'user')",
+                [],
+            )
+            .unwrap();
+
+        // Running the migration again is harmless: the inserted row survives
+        // (CREATE TABLE/INDEX IF NOT EXISTS, no destructive step) and the
+        // version is unchanged.
+        connection.pragma_update(None, "user_version", 68).unwrap();
+        super::migrate(&mut connection).unwrap();
+        let name: String = connection
+            .query_row(
+                "SELECT name FROM account_labels WHERE account_id='you@gmail.com' AND label_id='Label_18'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(name, "Work", "re-running the migration preserves cached rows");
+        assert_eq!(
+            connection
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            super::LATEST_VERSION
+        );
     }
 
     #[test]
