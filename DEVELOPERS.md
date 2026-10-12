@@ -12,8 +12,9 @@ The detailed product definition, architecture, and delivery roadmap are in
 
 The browser development build runs against deterministic fixtures. The native
 Tauri build uses local SQLite through the same typed client interface. See
-[`docs/phase-1.md`](docs/phase-1.md) for the implemented and remaining scope and
-[`docs/phase-2-status.md`](docs/phase-2-status.md) for correspondence status.
+[`docs/features.md`](docs/features.md) for current capabilities, known
+limitations, and the live-account release checks. Design notes are in
+[`docs/`](docs/); completed plans are in [`docs/archive/`](docs/archive/).
 
 ## Getting started
 
@@ -147,3 +148,7 @@ Google labels this value a client secret, but installed desktop applications
 are public clients and cannot keep it confidential. It is used only as a
 required token-endpoint parameter; OAuth tokens are stored in the
 operating-system keychain. Never commit the credential value.
+
+Sign-in opens the system browser and listens on a random loopback port, so
+both must be available. Token storage needs a logged-in desktop keychain
+service.

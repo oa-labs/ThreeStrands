@@ -1,9 +1,10 @@
 # Phase 2 Slice 0 — `async-imap` spike findings
 
-Status: **spike complete — RECOMMENDATION: proceed on `async-imap` 0.12.**
+Status: archived. Spike complete (2026-10-09); `async-imap` 0.12 was adopted and
+phase 2 proceeded on it.
 
 This records the outcome of the Slice 0 gate from
-[`imap-design.md`](./imap-design.md) ("Spike before committing"). The probe is
+[`imap-design.md`](../imap-design.md) ("Spike before committing"). The probe is
 a throwaway cargo example, `src-tauri/examples/imap_spike.rs` (dev-dependencies
 only — see [Where the code lives](#where-the-code-lives)). It was run against
 the local Dovecot test container restricted to the primary account's lowest

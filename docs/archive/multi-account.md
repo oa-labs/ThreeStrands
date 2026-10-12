@@ -1,7 +1,8 @@
 # Multi-account plan: connecting more than one Gmail account
 
-Status: proposed. Extends the "multiple accounts and unified inbox" item already
-listed under **Next** in `PLAN.MD`.
+Status: archived. Implemented 2026-09-12 to 2026-09-16 (unified inbox, account
+rail, per-account sync and drafts, account shortcuts). Kept for design history;
+the code is the current reference.
 
 This delivers a single milestone: connect a second (and third, ...) Gmail
 account without re-authenticating the first, see one merged inbox by default,

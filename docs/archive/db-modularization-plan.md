@@ -1,7 +1,7 @@
 # Database modularization plan
 
-Implemented in application version `0.86.2`. The root `db.rs` is now 167
-lines; feature operations, helpers, and tests live under `db/`. All 108
+Status: archived. Implemented in application version `0.86.2`. At that point the
+root `db.rs` was 167 lines; feature operations, helpers, and tests live under `db/`. All 108
 original root database tests remain represented, with three additional
 rollback regressions covering batch ingestion/upsert and settings import.
 Validation: 862 Rust tests passed (the same three pre-existing tests remain

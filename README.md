@@ -35,8 +35,9 @@ Launch ThreeStrands and sign in with your Google account to connect Gmail.
 
 Reading, triage, and correspondence are implemented and still being validated
 against live accounts. Compose, reply, forward, local drafts, attachments, and
-undo send are available. See the
-[correspondence status and keyboard shortcuts](docs/phase-2-status.md).
+undo send are available for Gmail, and IMAP/SMTP support (for example Proton
+Mail Bridge) is in progress. See
+[features, keyboard shortcuts, and known limitations](docs/features.md).
 
 Contacts include profiles with linked addresses, groups, birthdays, Keep in Touch
 reminders, CSV/vCard import and export, explicit profile merging, and reversible

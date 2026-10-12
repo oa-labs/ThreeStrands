@@ -127,7 +127,7 @@ from the current feature set when publishing a website.
 | Drafts across devices | Start a reply on one computer and finish it on another, with clear controls over draft synchronization. |
 | Connected address books | Import existing Google Contacts and keep them connected to local profiles, notes, and correspondence history. |
 | Smarter inbox rules | Explore inspectable, user-controlled classification beyond today's domain, label, and address rules. |
-| More mail providers | Add IMAP/SMTP (design in `docs/imap-design.md`), then Microsoft 365. Gmail is the only implemented mail provider today. |
+| More mail providers | Finish IMAP/SMTP (design and progress in `docs/imap-design.md`; read, triage, and sending work today, server search and hardening remain), then Microsoft 365. |
 | Encrypted sync reliability | Keep hardening optional encrypted sync across devices and app versions, especially upgrades and interrupted joins. |
 | Shared and mobile workflows | Explore a mobile companion and shared conversations or drafts where demand justifies the additional architecture. |
 
@@ -143,8 +143,9 @@ summary visibility is implemented; conversation snoozing remains planned.
 
 The primary user is an individual who wants a fast daily mail workflow across
 one or more Gmail accounts. Tasks, calendar context, and optional AI support
-that workflow. ThreeStrands is not yet a general-purpose mail client: the
-provider seam is implemented, but Gmail is its only production mail adapter.
+that workflow. ThreeStrands is not yet a general-purpose mail client: Gmail is
+the mature adapter, and an IMAP/SMTP adapter (aimed first at Proton Mail
+Bridge) reads, triages, and sends but is still being completed.
 
 The app does not operate a backend for mailbox access or cross-device sync.
 Polling, task reconciliation, queued sends, and replication run while the
@@ -213,8 +214,8 @@ flowchart LR
 ## Work remaining before broader release
 
 1. **Validate the native workflow end to end.** The repository has substantial
-   automated unit, integration, and Playwright coverage. Earlier phase status
-   documents explicitly leave live Gmail OAuth, synchronization, sending,
+   automated unit, integration, and Playwright coverage. The
+   [features document](docs/features.md) explicitly leaves live Gmail OAuth, synchronization, sending,
    attachment, and recovery checks to controlled real-account validation.
    Keep those checks as release gates until they are recorded as complete.
 2. **Harden the current scope.** Continue testing large mailboxes, provider
@@ -255,4 +256,6 @@ flowchart LR
   review decisions.
 - [Cross-device sync](docs/cross-device-sync.md) and [replicated sync design](docs/replicated-sync-design.md) — sync scope and trust model.
 - [Settings transfer](docs/settings-transfer.md) and [email rendering policy](docs/email-rendering-policy.md) — persistent-format and reader boundaries.
-- [Phase 1 status](docs/phase-1.md), [Phase 2 correspondence status](docs/phase-2-status.md), [multi-account plan](docs/multi-account.md), and [contact management](docs/address-book.md) — milestones and feature-specific context; the contact document describes current capabilities.
+- [Features and known limitations](docs/features.md) and [contact management](docs/address-book.md) — current capabilities, shortcuts, and outstanding live-account checks.
+- [IMAP/SMTP provider design](docs/imap-design.md) — provider design and phase progress.
+- [Archived plans](docs/archive/) — completed plans (multi-account, database recovery and modularization, Phase 2 compose, IMAP spike) kept for design history.

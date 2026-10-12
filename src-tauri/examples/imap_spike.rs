@@ -3,7 +3,7 @@
 //! A probe, not shipped code. It answers one question: is `async-imap` 0.12
 //! adequate to build the IMAP provider on, or do we fall back to `imap-next`?
 //! It runs five checks against the local Dovecot test container and prints a
-//! PASS/FAIL line per check with evidence. See `docs/imap-spike-findings.md`
+//! PASS/FAIL line per check with evidence. See `docs/archive/imap-spike-findings.md`
 //! for the recorded verdict. This file is a cargo EXAMPLE (dev-deps only), so
 //! nothing here ships in the app.
 //!

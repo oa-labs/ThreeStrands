@@ -1,7 +1,12 @@
 # IMAP/SMTP provider design
 
-Status: accepted, with every open question resolved (2026-10-08).
-Implementation hasn't started; phase 1 of [Phasing](#phasing) is next.
+Status: accepted (2026-10-08); implementation in progress. Phases 1–4 of
+[Phasing](#phasing) are implemented (2026-10-09 to 2026-10-11, through 0.104.0):
+the provider seam, read-only sync, changes, and SMTP sending with identities.
+Phase 6 is partly done: account setup UI exists, and settings transfer accepts
+IMAP accounts. Server search (phase 5) and hardening (phase 7) remain. The
+`async-imap` spike result is archived in
+[imap-spike-findings.md](archive/imap-spike-findings.md).
 
 This is the design note `PLAN.MD` asks for before IMAP/SMTP work starts
 ("after its folder and threading behavior is designed"). IMAP now

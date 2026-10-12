@@ -1,5 +1,10 @@
 # Database recovery plan
 
+Status: archived. Implemented on 2026-09-17 (`10d7175`); the code now lives in
+`src-tauri/src/db/recovery.rs` (`open_with_recovery`) and
+`src-tauri/src/db/maintenance.rs` (checkpoints and `VACUUM INTO` backups).
+The "current state" described below is the state before that work.
+
 ThreeStrands's local cache (`<app_data_dir>/threestrands.sqlite`) already gets WAL mode,
 foreign keys, and transactional mutations right (`src-tauri/src/db.rs`,
 `src-tauri/src/schema.rs`). What it has never had is a plan for the day the
