@@ -413,11 +413,14 @@ test("saves an independent sender name for each account", async ({ page }) => {
 
   const personalName = settings.getByRole("textbox", { name: "Sender name for demo@example.com" });
   await personalName.fill("Joel Reed");
-  await settings.locator(".account-card").filter({ hasText: "demo@example.com" }).getByRole("button", { name: "Save Name" }).click();
+  await personalName.press("Enter");
+  await expect(personalName.locator("xpath=ancestor::form").getByRole("status")).toHaveText(/Saved/);
 
   const workName = settings.getByRole("textbox", { name: "Sender name for demo-2@example.com" });
   await workName.fill("Joel at Work");
-  await settings.locator(".account-card").filter({ hasText: "demo-2@example.com" }).getByRole("button", { name: "Save Name" }).click();
+  // Leaving the field saves it too.
+  await workName.blur();
+  await expect(workName.locator("xpath=ancestor::form").getByRole("status")).toHaveText(/Saved/);
 
   await expect(personalName).toHaveValue("Joel Reed");
   await expect(workName).toHaveValue("Joel at Work");

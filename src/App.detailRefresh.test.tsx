@@ -1048,7 +1048,8 @@ it("reloads the inbox after reconnecting an imported account", async () => {
 
   await waitFor(() => expect(mailClient.reconnectAccount).toHaveBeenCalled());
   await waitFor(() => expect(listCalls).toBeGreaterThan(callsBeforeReconnect));
-  expect(within(dialog).getByText("Connected")).toBeInTheDocument();
+  await waitFor(() => expect(within(dialog).queryByText("Needs reconnect")).not.toBeInTheDocument());
+  expect(within(dialog).queryByRole("button", { name: "Reconnect" })).not.toBeInTheDocument();
   expect(screen.queryByRole("radio", { name: /Needs reconnect/ })).not.toBeInTheDocument();
 });
 

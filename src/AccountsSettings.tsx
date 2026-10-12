@@ -1,4 +1,5 @@
 import {
+  Check,
   CircleAlert,
   ChevronDown,
   ChevronUp,
@@ -14,6 +15,9 @@ import { ICON_SIZE } from "./iconSizes";
 import { ImapAccountSetup } from "./ImapAccountSetup";
 import { ImapSendingSettings } from "./ImapSendingSettings";
 import { AccountStatusBadge, AccountDisconnectConfirm } from "./accountSettingsParts";
+
+/** How long a field's "Saved" confirmation stays visible after autosave. */
+const SAVED_STATUS_MS = 2000;
 
 export function AccountsSettings({
   authStatus,
@@ -148,13 +152,23 @@ export function AccountsSettings({
             return (
             <li className="account-card" key={account.email}>
               <div className="account-card-row">
-                <span className="account-card-avatar" aria-hidden="true" style={{ background: account.color }}>
-                  {name.charAt(0).toUpperCase()}
-                </span>
+                <AccountColorInput
+                  email={account.email}
+                  color={account.color}
+                  initial={name.charAt(0).toUpperCase()}
+                  onCommit={(color) =>
+                    onSetColor(account.email, color).catch((reason: unknown) => {
+                      setError(errorMessage(reason));
+                      throw reason;
+                    })
+                  }
+                />
                 <div className="account-card-identity">
                   <div className="account-card-heading">
                     <strong title={name}>{name}</strong>
-                    <AccountStatusBadge status={account.status} />
+                    {/* The sync time already says a healthy account is
+                        connected; the badge only appears when it needs action. */}
+                    {account.status === "connected" ? null : <AccountStatusBadge status={account.status} />}
                   </div>
                   <span className="account-card-email" title={secondaryLine}>{secondaryLine}</span>
                 </div>
@@ -172,13 +186,13 @@ export function AccountsSettings({
                   {account.provider === "imap" ? "IMAP" : "Gmail"}
                 </span>
               </div>
-              <div className="account-card-controls">
+              <div className="account-card-fields">
                 <AccountNameInput
                   email={account.email}
                   name={account.nickname ?? null}
                   label="Account nickname"
-                  saveLabel="Save Nickname"
-                  hint="For example, Work or Personal. Used for account icons; only visible in ThreeStrands."
+                  placeholder="Work, Personal…"
+                  hint="Used for account icons. Only visible in ThreeStrands."
                   onCommit={(nickname) => onSetNickname(account.email, nickname).catch((reason: unknown) => {
                     setError(errorMessage(reason));
                     throw reason;
@@ -188,7 +202,8 @@ export function AccountsSettings({
                   email={account.email}
                   name={account.displayName}
                   label="Sender name"
-                  saveLabel="Save Name"
+                  placeholder="Your name"
+                  hint="Shown to recipients in the From line."
                   onCommit={(name) =>
                     onSetDisplayName(account.email, name).catch((reason: unknown) => {
                       setError(errorMessage(reason));
@@ -196,18 +211,22 @@ export function AccountsSettings({
                     })
                   }
                 />
-                <span className="accounts-list-actions">
-                  <span className="account-reorder">
-                    <button className="btn-icon btn-icon-sm"
+              </div>
+              <div className="account-card-footer">
+                {accounts.length > 1 ? (
+                  <span className="account-reorder" role="group" aria-label={`Order for ${account.email}`}>
+                    <button className="btn-icon"
                       type="button"
+                      title="Move up"
                       aria-label={`Move ${account.email} up`}
                       disabled={index === 0 || busyEmail !== null}
                       onClick={() => move(index, -1)}
                     >
                       <ChevronUp size={ICON_SIZE.sm} />
                     </button>
-                    <button className="btn-icon btn-icon-sm"
+                    <button className="btn-icon"
                       type="button"
+                      title="Move down"
                       aria-label={`Move ${account.email} down`}
                       disabled={index === accounts.length - 1 || busyEmail !== null}
                       onClick={() => move(index, 1)}
@@ -215,28 +234,16 @@ export function AccountsSettings({
                       <ChevronDown size={ICON_SIZE.sm} />
                     </button>
                   </span>
-                  <label className="account-color-swatch" title={`Color for ${account.email}`}>
-                    <AccountColorInput
-                      email={account.email}
-                      color={account.color}
-                      onCommit={(color) =>
-                        onSetColor(account.email, color).catch((reason: unknown) => {
-                          setError(errorMessage(reason));
-                          throw reason;
-                        })
-                      }
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-danger"
-                    disabled={busyEmail !== null}
-                    aria-expanded={confirmEmail === account.email}
-                    onClick={() => setConfirmEmail(account.email)}
-                  >
-                    Disconnect…
-                  </button>
-                </span>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn btn-sm btn-danger account-disconnect"
+                  disabled={busyEmail !== null}
+                  aria-expanded={confirmEmail === account.email}
+                  onClick={() => setConfirmEmail(account.email)}
+                >
+                  Disconnect…
+                </button>
               </div>
               {account.provider === "imap" ? <ImapSendingSettings account={account.email} /> : null}
               {confirmEmail === account.email ? (
@@ -265,59 +272,81 @@ export function AccountsSettings({
   );
 }
 
+/**
+ * A settings text field that saves itself on Enter or blur, with an inline
+ * Saving/Saved status in place of a per-field button. The input stays
+ * focusable while saving (read-only, not disabled) so Enter doesn't drop
+ * focus; a failed save keeps the edit for another try.
+ */
 function AccountNameInput({
   email,
   name,
   label,
-  saveLabel,
+  placeholder,
   hint,
   onCommit,
 }: {
   email: string;
   name: string | null;
   label: string;
-  saveLabel: string;
-  hint?: string;
+  placeholder: string;
+  hint: string;
   onCommit(name: string | null): Promise<void>;
 }) {
   const [value, setValue] = useState(name ?? "");
-  const [saving, setSaving] = useState(false);
+  const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputId = useId();
   const hintId = useId();
   const normalized = value.trim();
   const saved = name?.trim() ?? "";
 
   useEffect(() => setValue(name ?? ""), [name]);
+  useEffect(() => () => {
+    if (savedTimer.current) clearTimeout(savedTimer.current);
+  }, []);
+
+  const commit = () => {
+    if (state === "saving" || normalized === saved) return;
+    if (savedTimer.current) clearTimeout(savedTimer.current);
+    setState("saving");
+    void onCommit(normalized || null)
+      .then(() => {
+        setState("saved");
+        savedTimer.current = setTimeout(() => setState("idle"), SAVED_STATUS_MS);
+      }, (reason: unknown) => {
+        setState("idle");
+        logBackgroundFailure("Account name save")(reason);
+      });
+  };
 
   return (
     <form
       className="account-name-field"
       onSubmit={(event) => {
         event.preventDefault();
-        if (saving || normalized === saved) return;
-        setSaving(true);
-        void onCommit(normalized || null)
-          .catch(logBackgroundFailure("Account name save"))
-          .finally(() => setSaving(false));
+        commit();
       }}
     >
-      <label htmlFor={inputId}>{label}</label>
-      <div className="account-sender-name">
-        <input
-          id={inputId}
-          aria-label={`${label} for ${email}`}
-          aria-describedby={hint ? hintId : undefined}
-          value={value}
-          maxLength={200}
-          placeholder={label === "Account nickname" ? "Work, Personal…" : label}
-          disabled={saving}
-          onChange={(event) => setValue(event.target.value)}
-        />
-        <button className="btn btn-primary" type="submit" disabled={saving || normalized === saved}>
-          {saving ? "Saving…" : saveLabel}
-        </button>
-      </div>
-      {hint ? <small id={hintId}>{hint}</small> : null}
+      <span className="account-name-field-label">
+        <label htmlFor={inputId}>{label}</label>
+        <span className="account-name-field-status" role="status">
+          {state === "saving" ? "Saving…" : state === "saved" ? <><Check size={ICON_SIZE.xs} aria-hidden="true" />Saved</> : null}
+        </span>
+      </span>
+      <input
+        id={inputId}
+        aria-label={`${label} for ${email}`}
+        aria-describedby={hintId}
+        aria-busy={state === "saving"}
+        value={value}
+        maxLength={200}
+        placeholder={placeholder}
+        readOnly={state === "saving"}
+        onChange={(event) => setValue(event.target.value)}
+        onBlur={commit}
+      />
+      <small id={hintId}>{hint}</small>
     </form>
   );
 }
@@ -336,10 +365,12 @@ function AccountNameInput({
 function AccountColorInput({
   email,
   color,
+  initial,
   onCommit,
 }: {
   email: string;
   color: string;
+  initial: string;
   onCommit(color: string): Promise<void>;
 }) {
   const [value, setValue] = useState(color);
@@ -354,22 +385,27 @@ function AccountColorInput({
     if (timer.current) clearTimeout(timer.current);
   }, []);
 
+  // The avatar is the swatch: the picker input covers it invisibly, so the
+  // account's color is changed where it is shown.
   return (
-    <input
-      type="color"
-      aria-label={`Color for ${email}`}
-      value={value}
-      onChange={(event) => {
-        const next = event.target.value;
-        setValue(next);
-        if (timer.current) clearTimeout(timer.current);
-        timer.current = setTimeout(() => {
-          pendingCount.current++;
-          onCommit(next)
-            .catch(logBackgroundFailure("Account color save"))
-            .finally(() => { pendingCount.current--; });
-        }, 200);
-      }}
-    />
+    <span className="account-card-avatar account-avatar-color" style={{ background: value }} title="Change account color">
+      <span aria-hidden="true">{initial}</span>
+      <input
+        type="color"
+        aria-label={`Color for ${email}`}
+        value={value}
+        onChange={(event) => {
+          const next = event.target.value;
+          setValue(next);
+          if (timer.current) clearTimeout(timer.current);
+          timer.current = setTimeout(() => {
+            pendingCount.current++;
+            onCommit(next)
+              .catch(logBackgroundFailure("Account color save"))
+              .finally(() => { pendingCount.current--; });
+          }, 200);
+        }}
+      />
+    </span>
   );
 }
