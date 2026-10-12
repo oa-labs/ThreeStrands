@@ -75,14 +75,18 @@ fn permanent_sent_copy_message(provider_message: &str) -> String {
     const SENT_PREFIX: &str =
         "Your message was sent, but a copy couldn't be saved to your Sent folder";
     let lower = provider_message.to_ascii_lowercase();
-    if lower.contains("no sent mailbox") || lower.contains("no sent folder") {
+    // Every provider message that names "the Sent mailbox" is about it being
+    // absent or unreachable ("has no Sent mailbox configured", "the Sent
+    // mailbox ... does not exist", "... is not available"), so one test covers
+    // all three spellings.
+    if lower.contains("sent mailbox") || lower.contains("no sent folder") {
         format!("{SENT_PREFIX} because no Sent folder is set up for this account.")
-    } else if lower.contains("over quota")
-        || lower.contains("append limit")
-        || lower.contains("too large")
-        || lower.contains("over the")
-    {
+    } else if lower.contains("append limit") || lower.contains("too large") {
         format!("{SENT_PREFIX} because the message is too large for the Sent folder.")
+    } else if lower.contains("over quota") || lower.contains("refused the append") {
+        // The server said no without saying why; a full mailbox is the usual
+        // cause, but do not claim more than we know.
+        format!("{SENT_PREFIX} because your mail server refused to store it (your mailbox may be full).")
     } else if lower.contains("message-id") {
         format!("{SENT_PREFIX} because it is missing a Message-ID.")
     } else {
@@ -2462,7 +2466,18 @@ mod tests {
         let over_quota = permanent_sent_copy_message(
             "the mail server refused the APPEND of the Sent copy (e.g. over quota or a rejected message); it was not saved. The specific reason was not reported by the IMAP library.",
         );
-        assert!(over_quota.contains("too large for the Sent folder"));
+        assert!(over_quota.contains("refused to store it"), "{over_quota}");
+        assert!(!over_quota.contains("too large"), "a quota refusal must not be called 'too large': {over_quota}");
+
+        // The EXAMINE-path spelling (a Sent mailbox that no longer exists) is a
+        // missing-folder case too, not the generic fallback.
+        let gone = permanent_sent_copy_message(
+            "cannot save the Sent copy: the Sent mailbox \"Gesendet\" does not exist; configure or create it, then retry (x)",
+        );
+        assert!(gone.contains("no Sent folder is set up"), "{gone}");
+        // Unrelated wording that merely contains "over the" is not an oversize.
+        let unrelated = permanent_sent_copy_message("discovered the thing; over the moon");
+        assert!(!unrelated.contains("too large"), "{unrelated}");
 
         let no_mid = permanent_sent_copy_message(
             "cannot save the Sent copy: the message has no Message-ID header to locate it by; refusing permanently",
