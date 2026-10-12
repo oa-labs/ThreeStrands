@@ -28,6 +28,7 @@ import type {
   Goal,
   ImapMailboxMapping,
   ImapSendingOptions,
+  ImapConnectionSettings,
   SendingIdentity,
   Label,
   Message,
@@ -1074,6 +1075,20 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     },
     async setImapServerSavesSent(): Promise<void> {},
     async resetImapSentCopyDetection(): Promise<void> {},
+    async getImapConnectionSettings(account): Promise<ImapConnectionSettings> {
+      // Browser preview has no real server; show a local Bridge-style setup.
+      return {
+        imapHost: "127.0.0.1", imapPort: 1143, imapSecurity: "start_tls", imapUsername: account,
+        smtpHost: "127.0.0.1", smtpPort: 1025, smtpSecurity: "start_tls", smtpUsername: account,
+        imapCertificatePinned: true, smtpCertificatePinned: true,
+      };
+    },
+    async updateImapConnection(update) {
+      const account = accounts.find((candidate) => candidate.email === update.email);
+      if (!account) throw new Error("Account not found");
+      account.status = "connected";
+      return structuredClone(account);
+    },
     async reconnectAccount(email) {
       const account = accounts.find((candidate) => candidate.email === email);
       if (!account) throw new Error("Account not found");

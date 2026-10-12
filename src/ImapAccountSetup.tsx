@@ -21,18 +21,18 @@ import type {
  * "test and save", which only persists after both IMAP and SMTP tests pass.
  */
 
-const SECURITY_OPTIONS: { value: ImapSecurityMode; label: string }[] = [
+export const SECURITY_OPTIONS: { value: ImapSecurityMode; label: string }[] = [
   { value: "start_tls", label: "STARTTLS" },
   { value: "implicit_tls", label: "Implicit TLS" },
 ];
 
-function defaultPort(security: ImapSecurityMode, kind: "imap" | "smtp"): number {
+export function defaultPort(security: ImapSecurityMode, kind: "imap" | "smtp"): number {
   if (kind === "imap") return security === "implicit_tls" ? 993 : 143;
   return security === "implicit_tls" ? 465 : 587;
 }
 
-type CertificateState = { endpoint: string; probe: ImapCertificateProbe; pin: string | null };
-const endpointKey = (host: string, port: number, security: ImapSecurityMode) =>
+export type CertificateState = { endpoint: string; probe: ImapCertificateProbe; pin: string | null };
+export const endpointKey = (host: string, port: number, security: ImapSecurityMode) =>
   JSON.stringify([host.trim(), port, security]);
 
 export function ImapAccountSetup({ onConnected, onCancel }: {
@@ -381,7 +381,7 @@ export function ImapAccountSetup({ onConnected, onCancel }: {
   );
 }
 
-function CertificateCheck({ kind, host, certificate, onProbe, onTrust }: {
+export function CertificateCheck({ kind, host, certificate, onProbe, onTrust }: {
   kind: "IMAP" | "SMTP";
   host: string;
   certificate: CertificateState | null;

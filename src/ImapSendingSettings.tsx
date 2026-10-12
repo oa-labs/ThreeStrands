@@ -88,12 +88,7 @@ export function ImapSendingSettings({ account }: { account: string }) {
       await load();
     });
 
-  const detectionStatus =
-    options.sentCopyDetected === null
-      ? "ThreeStrands will check on your next message."
-      : options.sentCopyDetected
-        ? "Your server saves a copy itself."
-        : "ThreeStrands saves a copy for you.";
+  const automatic = !options.serverSavesSentOverride;
 
   return (
     <section className="settings-subsection imap-sending" aria-labelledby={headingId}>
@@ -101,7 +96,7 @@ export function ImapSendingSettings({ account }: { account: string }) {
 
       <div className="imap-sending-addresses">
         <h5>Sending addresses</h5>
-        <p>Addresses this account can send mail from. Your sign-in address is always available.</p>
+        <p className="settings-hint">Addresses this account can send mail from.</p>
         <SignInAddressRow address={signInAddress} />
         <ul className="imap-identity-list">
           {rows.map((row, index) => (
@@ -125,33 +120,37 @@ export function ImapSendingSettings({ account }: { account: string }) {
         </div>
       </div>
 
-      <fieldset className="imap-sent-copy">
+      <fieldset className="imap-sent-copy" aria-describedby={`${headingId}-sent-copy-intro`}>
         <legend>Sent mail copy</legend>
-        <p>If this is wrong, your Sent folder could show the message twice or not at all.</p>
-        <label className="imap-sent-copy-option">
-          <input
-            type="radio"
-            name={`sent-copy-${account}`}
-            checked={!options.serverSavesSentOverride}
-            disabled={busy}
-            onChange={() => void setServerSavesSent(false)}
-          />
-          <span>Automatic (recommended)</span>
-        </label>
-        <label className="imap-sent-copy-option">
-          <input
-            type="radio"
-            name={`sent-copy-${account}`}
-            checked={options.serverSavesSentOverride}
-            disabled={busy}
-            onChange={() => void setServerSavesSent(true)}
-          />
-          <span>My mail server saves sent mail itself — don&apos;t save a copy</span>
-        </label>
-        <p className="imap-sent-copy-status" role="status">{detectionStatus}</p>
-        <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void resetDetection()}>
-          {pending === "resetDetection" ? "Checking…" : "Check again"}
-        </button>
+        <p id={`${headingId}-sent-copy-intro`} className="settings-hint">
+          Keep a copy of each message you send in this account&apos;s Sent folder.
+        </p>
+        <SentCopyOption
+          name={`sent-copy-${account}`}
+          checked={automatic}
+          disabled={busy}
+          label="Automatic (recommended)"
+          description="ThreeStrands checks whether your server keeps sent mail, and saves a copy only when it doesn't."
+          onSelect={() => void setServerSavesSent(false)}
+        />
+        <SentCopyOption
+          name={`sent-copy-${account}`}
+          checked={!automatic}
+          disabled={busy}
+          label="My mail server saves sent mail itself"
+          description="ThreeStrands never saves a copy. If your server doesn't keep sent mail, sent messages won't appear in your Sent folder."
+          onSelect={() => void setServerSavesSent(true)}
+        />
+        {automatic ? (
+          <div className="imap-sent-copy-status">
+            <p role="status">{detectionStatus(options.sentCopyDetected)}</p>
+            {options.sentCopyDetected === null ? null : (
+              <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void resetDetection()}>
+                {pending === "resetDetection" ? "Resetting…" : "Re-check on next send"}
+              </button>
+            )}
+          </div>
+        ) : null}
       </fieldset>
 
       {error ? <p className="form-error" role="alert">{error}</p> : null}
@@ -159,13 +158,55 @@ export function ImapSendingSettings({ account }: { account: string }) {
   );
 }
 
-function SignInAddressRow({ address }: { address: string }) {
+/** What Automatic mode has learned about the server, in plain words. */
+function detectionStatus(detected: boolean | null): string {
+  if (detected === null) return "Not checked yet. ThreeStrands checks when you send your next message.";
+  return detected
+    ? "Checked: your server keeps sent mail, so ThreeStrands doesn't save a copy."
+    : "Checked: your server doesn't keep sent mail, so ThreeStrands saves a copy for you.";
+}
+
+/** One stacked radio choice with its own explanation underneath. */
+function SentCopyOption({
+  name,
+  checked,
+  disabled,
+  label,
+  description,
+  onSelect,
+}: {
+  name: string;
+  checked: boolean;
+  disabled: boolean;
+  label: string;
+  description: string;
+  onSelect(): void;
+}) {
   const id = useId();
   return (
-    <div className="imap-identity-row imap-identity-signin">
-      <label htmlFor={id}>Sign-in address</label>
-      <input id={id} value={address} readOnly aria-readonly="true" />
+    <div className="imap-sent-copy-option">
+      <input
+        id={id}
+        type="radio"
+        name={name}
+        checked={checked}
+        disabled={disabled}
+        aria-describedby={`${id}-description`}
+        onChange={onSelect}
+      />
+      <label htmlFor={id}>{label}</label>
+      <p id={`${id}-description`} className="settings-hint">{description}</p>
     </div>
+  );
+}
+
+/** The sign-in address is always a sending address and can't be edited, so it is shown as text. */
+function SignInAddressRow({ address }: { address: string }) {
+  return (
+    <p className="imap-identity-signin">
+      <span className="imap-identity-signin-address">{address}</span>
+      <span className="settings-hint">Sign-in address · always available</span>
+    </p>
   );
 }
 

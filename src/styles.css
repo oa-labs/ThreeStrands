@@ -714,7 +714,8 @@ button:disabled { cursor: default; }
 .shortcut-help-groups h3,
 .settings-nav-group-label,
 .settings-section h3,
-.imap-setup legend {
+.imap-setup legend,
+.imap-server-editor legend {
   font-size: var(--text-label);
   font-weight: var(--weight-semibold);
   letter-spacing: var(--tracking-wide);
@@ -2524,6 +2525,32 @@ form.split-inbox-add select {
 .accounts-list-actions { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-1-5); margin-left: auto; }
 .account-reconnect { flex-shrink: 0; }
 .account-reorder { display: inline-flex; align-items: center; gap: var(--space-0-5); }
+/* IMAP account panels (Sending, Server) inside a mail account card: each is a
+   divided band with a body-size heading, matching the card's other bands. */
+.account-card .imap-sending, .account-card .imap-server { display: flex; flex-direction: column; gap: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border); }
+.account-card .imap-sending h4, .account-card .imap-server h4 { margin: 0; }
+.account-card .imap-sending h5 { margin: 0; font-size: var(--text-body); font-weight: var(--weight-semibold); }
+.account-card .imap-sending p, .account-card .imap-server p { margin: 0; }
+.imap-sending-addresses { display: flex; flex-direction: column; gap: var(--space-2); }
+.imap-identity-signin { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-2); }
+.imap-identity-signin-address { font-size: var(--text-body); overflow-wrap: anywhere; }
+.imap-identity-list { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.imap-sending-actions, .imap-server-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+/* Sent mail copy: a fieldset styled as a plain titled group, not the
+   browser's bordered box, with one stacked radio choice per row. */
+.imap-sent-copy { display: flex; flex-direction: column; gap: var(--space-2-5); min-width: 0; margin: 0; padding: 0; border: 0; }
+.imap-sent-copy legend { margin-bottom: var(--space-1); padding: 0; font-size: var(--text-body); font-weight: var(--weight-semibold); }
+.imap-sent-copy-option { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: var(--space-0-5) var(--space-2); }
+.imap-sent-copy-option label { font-size: var(--text-body); }
+.imap-sent-copy-option p { grid-column: 2; }
+.imap-sent-copy-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: var(--space-2) var(--space-2-5); border-radius: var(--radius-sm); background: var(--hover); }
+.imap-sent-copy-status p { flex: 1 1 240px; color: var(--muted); font-size: var(--text-secondary); }
+.imap-server-summary { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-1) var(--space-3); margin: 0; font-size: var(--text-secondary); }
+.imap-server-summary dt { color: var(--muted); }
+.imap-server-summary dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.imap-server-editor { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.imap-server-editor .imap-server-actions { justify-content: flex-end; }
+.account-card .imap-server p.imap-server-reconnect-notice { padding: var(--space-2) var(--space-2-5); border-radius: var(--radius-sm); color: var(--error); background: color-mix(in srgb, var(--error) 12%, transparent); font-size: var(--text-secondary); }
 .form-error, .settings-section p.form-error { color: var(--error); font-size: var(--text-secondary); }
 .unsubscribe-content { padding: var(--space-2-5) var(--space-5) var(--space-6); }
 .unsubscribe-content > p { margin: 0 0 var(--space-3); line-height: var(--leading-normal); }
@@ -2712,8 +2739,9 @@ form.split-inbox-add select {
 .imap-setup legend { margin-bottom: var(--space-3); padding: 0; color: var(--muted); }
 .imap-setup .settings-field { min-width: 0; }
 .imap-setup input, .imap-setup select,
+.imap-server-editor input:not([type="radio"]), .imap-server-editor select,
 .imap-mailbox-mapping input:not([type="checkbox"]), .imap-mailbox-mapping select { box-sizing: border-box; height: var(--control-h); width: 100%; min-width: 0; padding: var(--space-2) var(--space-2-5); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background-color: var(--input); color: var(--text); font: inherit; font-size: var(--text-body); }
-.imap-setup select, .imap-mailbox-mapping select { padding-right: var(--space-8); }
+.imap-setup select, .imap-mailbox-mapping select, .imap-server-editor select { padding-right: var(--space-8); }
 .imap-setup input:focus-visible, .imap-setup select:focus-visible,
 .imap-mailbox-mapping input:focus-visible, .imap-mailbox-mapping select:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .imap-setup input:disabled, .imap-setup select:disabled,

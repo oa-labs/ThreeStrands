@@ -443,6 +443,98 @@ mod account_startup_tests {
         assert_eq!(settings.label_container, None);
     }
 
+    fn connection_update(json: serde_json::Value) -> super::ImapConnectionUpdate {
+        let mut base = serde_json::json!({
+            "email": "imap@example.com", "imapHost": "incoming.example.com", "imapPort": 993,
+            "imapSecurity": "implicit_tls", "imapUsername": "incoming",
+            "smtpHost": "outgoing.example.com", "smtpPort": 587, "smtpSecurity": "start_tls",
+            "smtpUsername": "outgoing"
+        });
+        base.as_object_mut().unwrap().extend(json.as_object().unwrap().clone());
+        serde_json::from_value(base).unwrap()
+    }
+
+    #[test]
+    fn connection_update_changes_only_server_fields_and_keeps_account_choices() {
+        let database = Database::open_memory();
+        let request = imap_setup_request();
+        let incoming = super::imap::Sha256Fingerprint::from_bytes([1; 32]);
+        super::save_tested_imap_settings(&database, &request, Some(incoming), None).unwrap();
+        let mut before = database.imap_account_settings(&request.email).unwrap().unwrap();
+        before.archive_mailbox = Some("Archive".into());
+        before.server_saves_sent = true;
+        before.identities.push(super::imap::Identity {
+            address: "alias@example.com".into(),
+            display_name: Some("Alias".into()),
+        });
+
+        let update = connection_update(serde_json::json!({
+            "smtpHost": "relay.example.com", "smtpPort": 465, "smtpSecurity": "implicit_tls",
+            "smtpUsername": "relay", "password": null
+        }));
+        let imap_pin = super::resolve_connection_pin(&before, &update.imap_host, update.imap_port, None).unwrap();
+        let smtp_pin = super::resolve_connection_pin(&before, &update.smtp_host, update.smtp_port, None).unwrap();
+        // The unchanged incoming endpoint keeps its pin; the new SMTP host has none.
+        assert_eq!(imap_pin, Some(incoming));
+        assert_eq!(smtp_pin, None);
+
+        let merged = super::merge_imap_connection_update(before.clone(), &update, imap_pin, smtp_pin);
+        assert_eq!(merged.smtp_host, "relay.example.com");
+        assert_eq!(merged.smtp_port, 465);
+        assert_eq!(merged.smtp_username, "relay");
+        assert_eq!(merged.imap_host, before.imap_host);
+        assert_eq!(merged.identities, before.identities);
+        assert_eq!(merged.archive_mailbox, before.archive_mailbox);
+        assert_eq!(merged.label_storage, before.label_storage);
+        assert_eq!(merged.label_container, before.label_container);
+        assert!(merged.server_saves_sent);
+        assert_eq!(merged.pinned_fingerprints.len(), 1);
+        assert_eq!(merged.pinned_fingerprints["incoming.example.com:993"], incoming.to_hex());
+    }
+
+    #[test]
+    fn connection_update_replaces_a_pin_only_when_a_new_certificate_is_trusted() {
+        let database = Database::open_memory();
+        let request = imap_setup_request();
+        let old = super::imap::Sha256Fingerprint::from_bytes([1; 32]);
+        let new = super::imap::Sha256Fingerprint::from_bytes([3; 32]);
+        super::save_tested_imap_settings(&database, &request, Some(old), None).unwrap();
+        let settings = database.imap_account_settings(&request.email).unwrap().unwrap();
+
+        let trusted = super::resolve_connection_pin(&settings, "incoming.example.com", 993, Some(&new.to_hex())).unwrap();
+        assert_eq!(trusted, Some(new));
+        // An empty value is "nothing newly trusted", not a cleared pin.
+        let kept = super::resolve_connection_pin(&settings, "incoming.example.com", 993, Some("")).unwrap();
+        assert_eq!(kept, Some(old));
+        // A pin never follows the user to a different port or host.
+        assert_eq!(super::resolve_connection_pin(&settings, "incoming.example.com", 143, None).unwrap(), None);
+        assert_eq!(super::resolve_connection_pin(&settings, "other.example.com", 993, None).unwrap(), None);
+        assert!(super::resolve_connection_pin(&settings, "incoming.example.com", 993, Some("not hex")).is_err());
+
+        // Moving the incoming port drops the pin for the old endpoint.
+        let update = connection_update(serde_json::json!({ "imapPort": 1143 }));
+        let merged = super::merge_imap_connection_update(settings, &update, None, None);
+        assert!(merged.pinned_fingerprints.is_empty());
+    }
+
+    #[test]
+    fn connection_settings_never_carry_a_password_or_fingerprint_value() {
+        let database = Database::open_memory();
+        let request = imap_setup_request();
+        let incoming = super::imap::Sha256Fingerprint::from_bytes([1; 32]);
+        super::save_tested_imap_settings(&database, &request, Some(incoming), None).unwrap();
+        let settings = database.imap_account_settings(&request.email).unwrap().unwrap();
+        let json = serde_json::to_value(super::ImapConnectionSettings::from(&settings)).unwrap();
+        assert_eq!(json["imapHost"], "incoming.example.com");
+        assert_eq!(json["imapSecurity"], "implicit_tls");
+        assert_eq!(json["smtpUsername"], "outgoing");
+        assert_eq!(json["imapCertificatePinned"], true);
+        assert_eq!(json["smtpCertificatePinned"], false);
+        let text = json.to_string();
+        assert!(!text.contains("secret"));
+        assert!(!text.contains(&incoming.to_hex()));
+    }
+
     #[test]
     fn confirming_without_an_archive_choice_leaves_settings_unchanged() {
         let database = Database::open_memory();
@@ -2779,6 +2871,220 @@ fn reset_imap_sent_copy_detection(
     Ok(())
 }
 
+/// An IMAP account's non-secret connection settings for the Settings
+/// "Server settings" panel. No password or fingerprint value is returned;
+/// only whether each endpoint has a pinned certificate.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImapConnectionSettings {
+    imap_host: String,
+    imap_port: u16,
+    imap_security: imap::SecurityMode,
+    imap_username: String,
+    smtp_host: String,
+    smtp_port: u16,
+    smtp_security: imap::SecurityMode,
+    smtp_username: String,
+    imap_certificate_pinned: bool,
+    smtp_certificate_pinned: bool,
+}
+
+impl From<&imap::ImapAccountSettings> for ImapConnectionSettings {
+    fn from(settings: &imap::ImapAccountSettings) -> Self {
+        Self {
+            imap_host: settings.imap_host.clone(),
+            imap_port: settings.imap_port,
+            imap_security: settings.imap_security,
+            imap_username: settings.imap_username.clone(),
+            smtp_host: settings.smtp_host.clone(),
+            smtp_port: settings.smtp_port,
+            smtp_security: settings.smtp_security,
+            smtp_username: settings.smtp_username.clone(),
+            imap_certificate_pinned: settings
+                .pinned_for(&settings.imap_host, settings.imap_port)
+                .is_some(),
+            smtp_certificate_pinned: settings
+                .pinned_for(&settings.smtp_host, settings.smtp_port)
+                .is_some(),
+        }
+    }
+}
+
+/// Read an IMAP account's server settings. Refuses a non-IMAP or unknown
+/// account. Offline-safe; never touches the keychain.
+#[tauri::command(async)]
+fn get_imap_connection_settings(
+    account: String,
+    state: State<'_, AppState>,
+) -> Result<ImapConnectionSettings, String> {
+    let settings = imap_settings_or_reject(&state.database, &account)?;
+    Ok(ImapConnectionSettings::from(&settings))
+}
+
+/// The edited server settings for an existing IMAP account.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImapConnectionUpdate {
+    email: String,
+    imap_host: String,
+    imap_port: u16,
+    imap_security: imap::SecurityMode,
+    imap_username: String,
+    smtp_host: String,
+    smtp_port: u16,
+    smtp_security: imap::SecurityMode,
+    smtp_username: String,
+    /// A new password for IMAP and SMTP; `None` or empty keeps the stored one.
+    #[serde(default)]
+    password: Option<String>,
+    /// A newly trusted certificate fingerprint; `None` keeps any existing pin
+    /// for the same `host:port`.
+    #[serde(default)]
+    imap_pinned_fingerprint: Option<String>,
+    #[serde(default)]
+    smtp_pinned_fingerprint: Option<String>,
+}
+
+/// The pin to test and save for one endpoint: a newly trusted certificate
+/// wins, otherwise the pin already recorded for the same `host:port`.
+fn resolve_connection_pin(
+    settings: &imap::ImapAccountSettings,
+    host: &str,
+    port: u16,
+    trusted: Option<&str>,
+) -> Result<Option<imap::Sha256Fingerprint>, String> {
+    match trusted.filter(|hex| !hex.is_empty()) {
+        Some(hex) => Ok(Some(imap::parse_sha256_fingerprint(hex)?)),
+        None => Ok(settings.pinned_for(host, port)),
+    }
+}
+
+/// Apply a tested connection update to the stored settings. Only the server
+/// fields and certificate pins change: identities, the mailbox mapping, label
+/// storage and the sent-copy override are kept. Pins for endpoints no longer
+/// in use are dropped.
+fn merge_imap_connection_update(
+    mut settings: imap::ImapAccountSettings,
+    update: &ImapConnectionUpdate,
+    imap_pin: Option<imap::Sha256Fingerprint>,
+    smtp_pin: Option<imap::Sha256Fingerprint>,
+) -> imap::ImapAccountSettings {
+    settings.imap_host = update.imap_host.clone();
+    settings.imap_port = update.imap_port;
+    settings.imap_security = update.imap_security;
+    settings.imap_username = update.imap_username.clone();
+    settings.smtp_host = update.smtp_host.clone();
+    settings.smtp_port = update.smtp_port;
+    settings.smtp_security = update.smtp_security;
+    settings.smtp_username = update.smtp_username.clone();
+    settings.pinned_fingerprints.clear();
+    if let Some(pin) = imap_pin {
+        settings.pinned_fingerprints.insert(
+            imap::host_port_key(&update.imap_host, update.imap_port),
+            pin.to_hex(),
+        );
+    }
+    if let Some(pin) = smtp_pin {
+        settings.pinned_fingerprints.insert(
+            imap::host_port_key(&update.smtp_host, update.smtp_port),
+            pin.to_hex(),
+        );
+    }
+    settings
+}
+
+/// Change an existing IMAP account's server settings or password, or
+/// reconnect one that needs it. Like setup, nothing is written until both the
+/// IMAP login and the SMTP AUTH dry-run succeed. On success the account is
+/// marked connected and its sync service restarts with the new settings.
+#[tauri::command]
+async fn update_imap_connection(
+    update: ImapConnectionUpdate,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Account, String> {
+    let email = update.email.clone();
+    let previous = imap_settings_or_reject(&state.database, &email)?;
+    let imap_pin = resolve_connection_pin(
+        &previous,
+        &update.imap_host,
+        update.imap_port,
+        update.imap_pinned_fingerprint.as_deref(),
+    )?;
+    let smtp_pin = resolve_connection_pin(
+        &previous,
+        &update.smtp_host,
+        update.smtp_port,
+        update.smtp_pinned_fingerprint.as_deref(),
+    )?;
+    let new_password = update.password.clone().filter(|password| !password.is_empty());
+    let password = match &new_password {
+        Some(password) => crate::credentials::ImapPassword {
+            imap: password.clone(),
+            smtp: None,
+        },
+        None => crate::auth::ImapCredential::for_account(&email)
+            .load()
+            .map_err(|_| "Enter your password to reconnect this account.".to_string())?,
+    };
+    let smtp_password = password.smtp.clone().unwrap_or_else(|| password.imap.clone());
+
+    imap::test_imap(
+        &update.imap_host,
+        update.imap_port,
+        update.imap_security,
+        imap_pin,
+        &update.imap_username,
+        &password.imap,
+    )
+    .await
+    .map_err(|error| imap::plain_language(&error))?;
+    imap::test_smtp(
+        &update.smtp_host,
+        update.smtp_port,
+        update.smtp_security,
+        smtp_pin,
+        &update.smtp_username,
+        &smtp_password,
+    )
+    .await
+    .map_err(|error| imap::plain_language(&error))?;
+
+    let servers_changed =
+        previous.imap_host != update.imap_host || previous.smtp_host != update.smtp_host;
+    let settings = merge_imap_connection_update(previous.clone(), &update, imap_pin, smtp_pin);
+    state.database.save_imap_account_settings(&email, &settings)?;
+    if new_password.is_some() {
+        let auth = state.auth_config.mail_account(MailProviderKind::Imap, &email)?;
+        let AccountAuth::Imap(credential) = &auth else {
+            return Err("expected an IMAP credential for an IMAP account".to_string());
+        };
+        // Keep settings and keychain consistent: a failed password write
+        // restores the settings that matched the old password.
+        if let Err(error) = credential.save(&password) {
+            let _ = state.database.save_imap_account_settings(&email, &previous);
+            return Err(error);
+        }
+    }
+    if servers_changed {
+        // Whether the server saves its own sent mail was learned from the
+        // old server; the next send re-detects for the new one.
+        imap::ImapStateStore::new(state.database.clone(), email.clone())
+            .clear_sent_copy_detection()?;
+    }
+
+    let account = state
+        .database
+        .adopt_mail_account(&email, MailProviderKind::Imap)?;
+    let auth = state.auth_config.mail_account(MailProviderKind::Imap, &email)?;
+    register_finished_imap_account(&state.accounts, email, || {
+        spawn_synced_account(state.database.clone(), auth, true, app)
+    })
+    .await;
+    record_mail_account(&state, &account)?;
+    Ok(account)
+}
+
 #[tauri::command]
 async fn remove_account(
     email: String,
@@ -5008,6 +5314,8 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         set_imap_identities,
         set_imap_server_saves_sent,
         reset_imap_sent_copy_detection,
+        get_imap_connection_settings,
+        update_imap_connection,
         remove_account,
         remove_synced_mail_account,
         reconnect_account,

@@ -75,6 +75,8 @@ import type {
   ImapMailboxMapping,
   ImapMailboxMappingCommit,
   ImapSendingOptions,
+  ImapConnectionSettings,
+  ImapConnectionUpdate,
   SendingIdentity,
   SendingIdentityInput,
 } from "../domain";
@@ -247,6 +249,10 @@ export interface MailClient extends CorrespondenceClient {
   setImapServerSavesSent(account: string, enabled: boolean): Promise<void>;
   /** Clear this device's Sent-copy detection so the next send re-detects. */
   resetImapSentCopyDetection(account: string): Promise<void>;
+  /** An IMAP account's non-secret server settings. Refuses a non-IMAP account. */
+  getImapConnectionSettings(account: string): Promise<ImapConnectionSettings>;
+  /** Test and save edited server settings or a new password; marks the account connected and restarts sync. */
+  updateImapConnection(update: ImapConnectionUpdate): Promise<Account>;
   removeAccount(email: string): Promise<void>;
   reconnectAccount(email: string): Promise<Account>;
   setAccountDisplayName(email: string, displayName: string | null): Promise<void>;
@@ -407,6 +413,8 @@ const tauriClient: MailClient = {
   setImapIdentities: (account, identities) => complete("set_imap_identities", { account, identities }),
   setImapServerSavesSent: (account, enabled) => complete("set_imap_server_saves_sent", { account, enabled }),
   resetImapSentCopyDetection: (account) => complete("reset_imap_sent_copy_detection", { account }),
+  getImapConnectionSettings: (account) => complete("get_imap_connection_settings", { account }),
+  updateImapConnection: (update) => complete("update_imap_connection", { update }),
   removeAccount: (email) => complete("remove_account", { email }),
   reconnectAccount: (email) => complete("reconnect_account", { email }),
   setAccountDisplayName: (email, displayName) => complete("set_account_display_name", { email, displayName }),

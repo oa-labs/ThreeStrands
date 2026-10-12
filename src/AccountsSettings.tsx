@@ -14,6 +14,7 @@ import { errorMessage, logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import { ImapAccountSetup } from "./ImapAccountSetup";
 import { ImapSendingSettings } from "./ImapSendingSettings";
+import { ImapServerSettings } from "./ImapServerSettings";
 import { AccountStatusBadge, AccountDisconnectConfirm } from "./accountSettingsParts";
 
 /** How long a field's "Saved" confirmation stays visible after autosave. */
@@ -51,6 +52,9 @@ export function AccountsSettings({
   const restoreAddFocus = useRef(false);
   const [imapSaved, setImapSaved] = useState(false);
   const [confirmEmail, setConfirmEmail] = useState<string | null>(null);
+  // IMAP reconnects happen in the account's Server editor (a password, not a
+  // browser sign-in); the header button bumps this to open and focus it.
+  const [imapReconnect, setImapReconnect] = useState<{ email: string; request: number } | null>(null);
 
   useEffect(() => {
     if (restoreAddFocus.current && busyEmail === null) {
@@ -172,7 +176,16 @@ export function AccountsSettings({
                   </div>
                   <span className="account-card-email" title={secondaryLine}>{secondaryLine}</span>
                 </div>
-                {account.status === "needs_reauth" ? (
+                {account.status === "needs_reauth" && account.provider === "imap" ? (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-primary account-reconnect"
+                    disabled={busyEmail !== null}
+                    onClick={() => setImapReconnect((current) => ({ email: account.email, request: (current?.request ?? 0) + 1 }))}
+                  >
+                    Reconnect
+                  </button>
+                ) : account.status === "needs_reauth" ? (
                   <button
                     type="button"
                     className="btn btn-sm btn-primary account-reconnect"
@@ -246,6 +259,14 @@ export function AccountsSettings({
                 </button>
               </div>
               {account.provider === "imap" ? <ImapSendingSettings account={account.email} /> : null}
+              {account.provider === "imap" ? (
+                <ImapServerSettings
+                  account={account.email}
+                  needsReconnect={account.status === "needs_reauth"}
+                  reconnectRequest={imapReconnect?.email === account.email ? imapReconnect.request : 0}
+                  onConnected={() => onImapConnected?.()}
+                />
+              ) : null}
               {confirmEmail === account.email ? (
                 <AccountDisconnectConfirm
                   kind="mail"

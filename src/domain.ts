@@ -765,6 +765,39 @@ export type ImapSendingOptions = {
   sentCopyDetected: boolean | null;
 };
 
+/** An IMAP account's non-secret server settings for the Settings panel. */
+export type ImapConnectionSettings = {
+  imapHost: string;
+  imapPort: number;
+  imapSecurity: ImapSecurityMode;
+  imapUsername: string;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecurity: ImapSecurityMode;
+  smtpUsername: string;
+  /** Whether a self-signed certificate is pinned for the current endpoint. */
+  imapCertificatePinned: boolean;
+  smtpCertificatePinned: boolean;
+};
+
+/** Edited server settings for an existing IMAP account. */
+export type ImapConnectionUpdate = {
+  email: string;
+  imapHost: string;
+  imapPort: number;
+  imapSecurity: ImapSecurityMode;
+  imapUsername: string;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecurity: ImapSecurityMode;
+  smtpUsername: string;
+  /** A new password; null keeps the stored one. */
+  password: string | null;
+  /** A newly trusted certificate fingerprint; null keeps any existing pin for the same host and port. */
+  imapPinnedFingerprint: string | null;
+  smtpPinnedFingerprint: string | null;
+};
+
 /** One submitted sending-identity row from the Settings edit form. */
 export type SendingIdentityInput = { address: string; displayName?: string | null };
 
