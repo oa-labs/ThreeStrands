@@ -47,6 +47,7 @@ mod plan;
 mod policy;
 mod provider;
 mod rfc822;
+mod send;
 mod sending_identity;
 mod session;
 mod settings;
@@ -166,6 +167,13 @@ pub use sending_identity::{
     account_identities, choose_reply_identity, identity_normalized,
     message_id_domain_for_address, normalize_identity_address, ReplyHeaders, SendingIdentity,
 };
+// Phase 4 run 3 SMTP prepare-retry gate: the engine's outbox tick reads the
+// predicate; the interval constant is read by the engine's gate tests. The
+// constant has no non-test reader in the lib build, so its re-export carries
+// the same scoped allow the other forward-looking re-exports use.
+pub use policy::smtp_prepare_retry_due;
+#[allow(unused_imports)]
+pub use policy::SMTP_PREPARE_RETRY_INTERVAL_MS;
 
 use std::sync::Arc;
 

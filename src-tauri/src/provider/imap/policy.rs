@@ -772,6 +772,42 @@ pub fn check_smtp_recipient_count(count: usize) -> Result<usize, ProviderError> 
     Ok(count)
 }
 
+/// Minimum gap, in milliseconds, between two `prepare_delivery` attempts for
+/// the SAME queued outbox item after a TRANSIENT prepare failure.
+///
+/// The outbox tick runs about every 2 seconds (`Correspondence::run`), and a
+/// transient prepare failure (an unreachable SMTP server, a TLS/connect
+/// timeout) leaves the item QUEUED — it is never claimed, so the next tick
+/// would otherwise re-attempt a full TCP+TLS+AUTH against a down server for
+/// every queued item on every tick. That is both wasteful and, against a
+/// server that rate-limits connections, counter-productive. This interval
+/// gates the re-attempt against the item's own `last_attempt_at`, so a down
+/// server is probed at most once per interval per item regardless of tick
+/// cadence. 60s is long enough to be gentle on a struggling server while a
+/// user who is actively waiting still sees a retry within a minute.
+///
+/// This is a prepare-failure backoff only; it never delays the FIRST attempt
+/// (an item with no recorded attempt is always eligible) and it is unrelated
+/// to the undo window or the schedule deadline, which gate when an item
+/// becomes due in the first place.
+pub const SMTP_PREPARE_RETRY_INTERVAL_MS: i64 = 60_000;
+
+/// Whether a queued item whose last prepare attempt was at `last_attempt_at`
+/// (`None` = never attempted) may be re-attempted at wall-clock `now`.
+///
+/// A never-attempted item is ALWAYS eligible. An item attempted at
+/// `last_attempt_at` becomes eligible again once at least
+/// [`SMTP_PREPARE_RETRY_INTERVAL_MS`] has elapsed; the boundary is inclusive,
+/// so exactly at the interval it is eligible. A clock that went backwards
+/// (`now < last_attempt_at`) is treated as "not yet eligible" rather than
+/// panicking on the subtraction.
+pub fn smtp_prepare_retry_due(last_attempt_at: Option<i64>, now: i64) -> bool {
+    match last_attempt_at {
+        None => true,
+        Some(last) => now.saturating_sub(last) >= SMTP_PREPARE_RETRY_INTERVAL_MS,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Message-ID domain (docs/imap-design.md, "Sending" > "Message-ID domain")
 // ---------------------------------------------------------------------------
@@ -1488,6 +1524,39 @@ mod tests {
         assert!(SMTP_FINAL_REPLY_TIMEOUT >= SMTP_COMMAND_TIMEOUT);
         assert!(SMTP_CONNECT_TIMEOUT.as_secs() > 0);
         assert!(SMTP_COMMAND_TIMEOUT.as_secs() > 0);
+    }
+
+    #[test]
+    fn smtp_prepare_retry_interval_is_the_documented_bound() {
+        assert_eq!(SMTP_PREPARE_RETRY_INTERVAL_MS, 60_000);
+    }
+
+    #[test]
+    fn smtp_prepare_retry_gates_below_at_and_above_the_interval() {
+        // A never-attempted item is always eligible (the first attempt is
+        // never delayed).
+        assert!(smtp_prepare_retry_due(None, 0));
+        assert!(smtp_prepare_retry_due(None, 1_000_000));
+
+        let last = 1_000_000i64;
+        // BELOW the interval: not yet eligible (one ms short).
+        assert!(!smtp_prepare_retry_due(
+            Some(last),
+            last + SMTP_PREPARE_RETRY_INTERVAL_MS - 1
+        ));
+        // EXACTLY at the interval: eligible (inclusive boundary).
+        assert!(smtp_prepare_retry_due(
+            Some(last),
+            last + SMTP_PREPARE_RETRY_INTERVAL_MS
+        ));
+        // ABOVE the interval: eligible.
+        assert!(smtp_prepare_retry_due(
+            Some(last),
+            last + SMTP_PREPARE_RETRY_INTERVAL_MS + 1
+        ));
+        // A clock that went backwards is treated as not-yet-eligible, never a
+        // panic on the subtraction.
+        assert!(!smtp_prepare_retry_due(Some(last), last - 5));
     }
 
     // --- Message-ID domain ---------------------------------------------

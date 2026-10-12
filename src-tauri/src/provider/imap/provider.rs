@@ -205,6 +205,20 @@ pub struct ImapProvider {
     store: ImapStateStore,
     cache: BodyCache,
     username: String,
+    /// The account KEY (the email address entered at setup). May DIFFER from
+    /// `username` (the IMAP LOGIN) — e.g. Proton Bridge login `joel` for the
+    /// account `joel@proton.me`. This is the account's own sending address and
+    /// the value `sender_identity()` / `identities()[0]` must report so the
+    /// outbox tick does not pause every send whose `draft.account` is the
+    /// address rather than the login. See `docs/imap-design.md` ("Identities")
+    /// and the brief's fact 6.
+    account_id: String,
+    /// The IMAP password, reused as the SMTP password per the user's decision
+    /// (`docs/imap-design.md`, "Sending": SMTP uses the IMAP login). Never
+    /// formatted anywhere — it goes only into `SmtpCredentials`, which redacts
+    /// it from `Debug`. `ImapProvider` has no derived `Debug`, so this field
+    /// cannot leak through one.
+    smtp_password: String,
     label_model: LabelModel,
     /// The account's non-secret IMAP settings — the plan needs its mailbox
     /// overrides, archive mailbox, label container and label storage to resolve
@@ -292,12 +306,14 @@ impl ImapProvider {
         let source = std::sync::Arc::new(ManagerSessionSource {
             manager: config.manager,
             username: config.username.clone(),
-            password: config.password,
+            password: config.password.clone(),
         });
         Self {
             store: config.store,
             cache: config.cache,
             username: config.username,
+            account_id: config.account_id,
+            smtp_password: config.password,
             label_model: config.label_model,
             settings: config.settings,
             source,
@@ -3593,17 +3609,24 @@ impl MailMutate for ImapProvider {
 #[async_trait]
 impl MailSend for ImapProvider {
     async fn sender_identity(&self) -> ProviderResult<String> {
-        // The login address is this account's sending identity.
-        Ok(self.username.clone())
+        // The ACCOUNT address (the key drafts are filed under), NOT the IMAP
+        // login. The tick pauses every item whose `draft.account` differs from
+        // this value, so returning the login would silently pause ALL sends
+        // for an account whose login differs from its address (e.g. Proton
+        // Bridge login `joel` for `joel@proton.me`). `docs/imap-design.md`
+        // ("Identities"), brief fact 6. The login is still what IMAP LOGIN and
+        // SMTP AUTH use — that is unchanged, it just is not the identity.
+        Ok(self.account_id.clone())
     }
 
     async fn identities(&self, _account: &str) -> ProviderResult<Vec<super::SendingIdentity>> {
-        // The one source of truth: the login address first and always, then
-        // the stored list, normalized/validated. `docs/imap-design.md`
-        // ("Identities"). No DB round trip — the settings are carried in the
-        // provider.
+        // The one source of truth: the ACCOUNT address first and always, then
+        // the stored list, normalized/validated. The first entry is the
+        // account's own sending address (its key), not the login, for the same
+        // reason `sender_identity()` returns the account address. No DB round
+        // trip — the settings are carried in the provider.
         Ok(super::account_identities(
-            &self.username,
+            &self.account_id,
             &self.settings.identities,
         ))
     }
@@ -3617,9 +3640,31 @@ impl MailSend for ImapProvider {
     }
 
     async fn prepare_delivery(&self) -> ProviderResult<Box<dyn Delivery>> {
-        Err(ProviderError::InvalidOperation(
-            "IMAP/SMTP sending is not supported until phase 4".into(),
-        ))
+        // Build the endpoint + credentials from the account's non-secret
+        // settings and the IMAP password (reused as the SMTP password per the
+        // user's decision). An empty host / zero port is InvalidOperation
+        // BEFORE any network. The password is never formatted — it goes only
+        // into SmtpCredentials (which redacts Debug).
+        let endpoint = super::send::smtp_endpoint_from_settings(&self.settings)?;
+        let creds = super::send::smtp_credentials(&self.settings, &self.smtp_password);
+
+        // Connect + authenticate. Any failure here is a DEFINITE non-delivery
+        // (nothing sent); map it to the existing ProviderError class the
+        // run-1 client already chose (ReauthenticationRequired stays that
+        // class, TLS/connect/timeout stays TransientTransport, etc.).
+        let session = super::smtp::SmtpSession::connect(&endpoint, &creds)
+            .await
+            .map_err(super::send::prepare_failure_to_error)?;
+
+        // The permit owns the live session plus what send_once needs to derive
+        // the envelope and the receipt: the account address (for the provider
+        // id) and the identity list (to validate the From).
+        let identities = super::account_identities(&self.account_id, &self.settings.identities);
+        Ok(Box::new(super::send::ImapDelivery::new(
+            session,
+            self.account_id.clone(),
+            identities,
+        )))
     }
 
     async fn find_sent_copy(
@@ -3627,19 +3672,30 @@ impl MailSend for ImapProvider {
         _operation: &str,
         _expected_sender: &str,
     ) -> ProviderResult<Option<DeliveryReceipt>> {
-        Err(ProviderError::InvalidOperation(
-            "IMAP sent-copy reconciliation is not supported until phase 4".into(),
-        ))
+        // IMAP keeps no server-side sent copy we can confirm an uncertain send
+        // against: only WE would APPEND to `\Sent`, and if the connection
+        // dropped before we could, there is nothing to look up. So this is a
+        // clean `Ok(None)`, NOT an error — `reconcile_with_provider` reads it
+        // together with `verifiable_delivery = false` and resolves the send to
+        // the terminal `Unverifiable` state ("may have been sent"). Returning
+        // an error here instead would make `reconcile_with_provider` abort via
+        // its `map_err(error)?` and the send would never reach that branch.
+        // (Run 4 may add the Sent-copy APPEND; it would revisit this.)
+        Ok(None)
     }
 }
 
 impl MailProvider for ImapProvider {
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
-                    send_supported: false,
+            send_supported: true,
             server_search: false,
             provided_threads: false,
             label_model: self.label_model,
+            // No server-side sent copy to verify an uncertain send against;
+            // an uncertain IMAP send resolves to the terminal Unverifiable
+            // state via `find_sent_copy` -> Ok(None), not a Gmail-style
+            // lookup.
             verifiable_delivery: false,
         }
     }
@@ -4027,6 +4083,8 @@ mod tests {
             store: store.clone(),
             cache,
             username: "me@example.com".into(),
+            account_id: "me@example.com".into(),
+            smtp_password: "test-password".into(),
             label_model: LabelModel::ImapLabelFolders,
             settings: test_settings(),
             source: Arc::new(FakeSource { mailbox }),
@@ -4300,6 +4358,10 @@ mod tests {
         let caps = provider.capabilities();
         assert!(!caps.server_search);
         assert!(!caps.provided_threads);
+        // Phase 4 run 3: IMAP accounts can now send, so send_supported is true.
+        // verifiable_delivery stays false — there is no server-side sent copy
+        // to confirm an uncertain send against.
+        assert!(caps.send_supported);
         assert!(!caps.verifiable_delivery);
         assert_eq!(caps.label_model, LabelModel::ImapLabelFolders);
     }
@@ -4347,11 +4409,12 @@ mod tests {
         assert!(matches!(err, ProviderError::InvalidOperation(_)), "{err:?}");
         assert!(!err.retry_mutation());
 
-        // Sending is likewise unsupported this phase.
-        match provider.prepare_delivery().await {
-            Err(ProviderError::InvalidOperation(_)) => {}
-            other => panic!("expected InvalidOperation, got {:?}", other.err()),
-        }
+        // (Phase 4 run 3 CONTRACT CHANGE: `prepare_delivery` is now
+        // IMPLEMENTED — it connects + authenticates — so it no longer returns
+        // the old "not supported until phase 4" InvalidOperation. The stale
+        // sub-assertion that used to live here has been removed; the real
+        // prepare_delivery behaviour is covered by
+        // `provider::imap::send::provider_level_tests`.)
         // Label RENAME (`update_label`) is refused PERMANENTLY in run 4 (the
         // `lf:` id is name-derived and there is no label-id migration), and the
         // refusal is decided before any session, so it holds on this fake too.
@@ -8648,6 +8711,8 @@ mod mutate_tests {
             store: store.clone(),
             cache,
             username: "me@example.com".into(),
+            account_id: "me@example.com".into(),
+            smtp_password: "test-password".into(),
             label_model: LabelModel::ImapLabelFolders,
             settings: test_settings(),
             source: Arc::new(MutSource { server }),

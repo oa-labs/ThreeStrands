@@ -121,6 +121,14 @@ pub struct OutboxItem {
     pub deadline: i64,
     pub error: Option<String>,
     pub provider_id: Option<String>,
+    /// When this item was last claimed for a delivery attempt (the
+    /// `last_attempt_at` column), or `None` if never attempted. The SMTP
+    /// prepare-failure retry limiter reads this to rate-limit re-attempts
+    /// against a down server (see `Correspondence::tick` and
+    /// `policy::smtp_prepare_retry_due`). A transient prepare failure never
+    /// claims the row, so this value stays whatever a prior attempt left it;
+    /// it is set only when `dispatch_due` actually claims the row.
+    pub last_attempt_at: Option<i64>,
     /// Set when this send was queued via "send and archive", or when its
     /// conversation was archived while delivery was pending: once the
     /// message actually sends, the thread's INBOX label is stripped again
@@ -627,7 +635,7 @@ impl Database {
         let c = self.connection()?;
         let mut q = c
             .prepare(
-                "SELECT id,payload,state,deadline,error,provider_id,archive_on_send,schedule_json FROM outbox_messages ORDER BY rowid DESC",
+                "SELECT id,payload,state,deadline,error,provider_id,archive_on_send,schedule_json,last_attempt_at FROM outbox_messages ORDER BY rowid DESC",
             )
             .map_err(error)?;
         let rows = q
@@ -641,11 +649,12 @@ impl Database {
                     r.get::<_, Option<String>>(5)?,
                     r.get::<_, bool>(6)?,
                     r.get::<_, Option<String>>(7)?,
+                    r.get::<_, Option<i64>>(8)?,
                 ))
             })
             .map_err(error)?;
         rows.map(|r| {
-            let (id, payload, state, deadline, error, provider_id, archive_on_send, schedule_json) =
+            let (id, payload, state, deadline, error, provider_id, archive_on_send, schedule_json, last_attempt_at) =
                 r.map_err(error)?;
             Ok(OutboxItem {
                 id,
@@ -654,6 +663,7 @@ impl Database {
                 deadline,
                 error,
                 provider_id,
+                last_attempt_at,
                 archive_on_send,
                 schedule: schedule_json.map(|s|serde_json::from_str(&s)).transpose().map_err(crate::correspondence::error)?,
             })
@@ -733,6 +743,7 @@ impl Database {
             deadline: now() + UNDO_MS,
             error: None,
             provider_id: None,
+            last_attempt_at: None,
             archive_on_send,
             schedule: None,
         };
@@ -1601,6 +1612,20 @@ impl Correspondence {
         let mut by_account: HashMap<String, Vec<OutboxItem>> = HashMap::new();
         for item in items {
             if !["scheduled","undo_pending","ready","uncertain"].contains(&item.state.as_str()) || item.deadline>now() {continue;}
+            // Rate-limit prepare re-attempts for a NON-scheduled queued item
+            // whose last transient prepare failure stamped `last_attempt_at`
+            // within SMTP_PREPARE_RETRY_INTERVAL: skip it this tick so a down
+            // SMTP server is not probed on every ~2s tick. A never-attempted
+            // item (`last_attempt_at` None) is always eligible, so this never
+            // delays the first attempt. Scheduled items keep their own
+            // deadline/block cadence and are not gated here.
+            let send_candidate = ["undo_pending", "ready"].contains(&item.state.as_str())
+                && item.schedule.is_none();
+            if send_candidate
+                && !crate::provider::imap::smtp_prepare_retry_due(item.last_attempt_at, now())
+            {
+                continue;
+            }
             by_account
                 .entry(item.draft.account.clone())
                 .or_default()
@@ -1615,7 +1640,7 @@ impl Correspondence {
                 for item in &items { if item.schedule.is_some() {self.database.block_schedule(&item.id,owner.as_deref().unwrap_or(""),Some("authorization"),now())?;} }
                 continue;
             };
-            for mut item in items {
+            for item in items {
                 if item.schedule.as_ref().is_some_and(|s|Some(s.report.owner_installation_id.as_str())!=owner.as_deref()) { continue; }
                 if item.draft.account != identity {
                     self.database.connection()?.execute("UPDATE outbox_messages SET error='Paused: reconnect the original sender account to continue.' WHERE id=?1 AND state IN ('undo_pending','ready')", [&item.id]).map_err(error)?;
@@ -1639,47 +1664,167 @@ impl Correspondence {
                 {
                     continue;
                 }
-                // Obtain authorization before claiming delivery; transport errors after the claim are uncertain.
-                let permit = match provider.prepare_delivery().await {
-                    Ok(permit)=>permit,
-                    Err(_) if item.schedule.is_some()=> {self.database.block_schedule(&item.id,owner.as_deref().unwrap_or(""),Some("provider_unavailable"),now())?; continue;},
-                    Err(e)=>return Err(error(e)),
-                };
-                if item.schedule.is_some() {
-                    self.database.block_schedule(&item.id,owner.as_deref().unwrap_or(""),None,now())?;
-                    item=self.database.outbox()?.into_iter().find(|o|o.id==item.id).ok_or("Outbox item missing")?;
-                }
-                let sent = self
-                    .dispatch_due(&item, now(), |raw, thread| async move {
-                        permit.send_once(&raw, thread.as_deref()).await
-                    })
+                self.send_due_item(&item, provider.as_ref(), &identity, owner.as_deref().unwrap_or(""), now())
                     .await?;
-                if let Some(sent) = sent {
-                    if let Some(thread_id) = sent.thread_id.as_deref() {
-                        if self.database.archive_on_send(&item.id)? {
-                            // Gmail attaches INBOX to the thread when the
-                            // sent message lands, which would otherwise
-                            // silently undo the archive done at queue time.
-                            // Re-assert it here, before the refetch below,
-                            // so the upserted thread reflects the archived
-                            // state regardless of timing.
-                            let _ = provider
-                                .modify_thread(thread_id, &[], &["INBOX".to_string()])
-                                .await;
-                        }
-                        if let Ok(messages) = provider.fetch_thread(thread_id).await {
-                            if let Ok(normalized) = messages
-                                .iter()
-                                .map(crate::mime::normalize)
-                                .collect::<Result<Vec<_>, _>>()
-                            {
-                                self.database.upsert_thread(&identity, &normalized)?;
-                            }
-                        }
+            }
+        }
+        Ok(())
+    }
+
+    /// Attempt one due, non-uncertain outbox item against `provider`: obtain a
+    /// delivery permit, dispatch, and (on success) re-assert the archive and
+    /// refetch the thread. Extracted from [`tick`](Self::tick) and taking a
+    /// `&dyn MailProvider` (like [`reconcile_with_provider`]) so a unit test
+    /// can inject a fake provider — the account registry can only hold real
+    /// providers.
+    ///
+    /// The one behaviour this adds over the old inline body is that a
+    /// `prepare_delivery` failure NO LONGER aborts the whole tick for a
+    /// NON-scheduled item (the old `Err(e) => return Err(error(e))`, which let
+    /// one account whose SMTP server was down stop every later account's
+    /// sends). Instead:
+    ///
+    /// * a TRANSIENT prepare failure (`TransientTransport`) leaves the item
+    ///   QUEUED (never claimed, `attempts` untouched), records a short
+    ///   plain-language `error` on the row, and returns `Ok(())` so the tick
+    ///   moves on. The retry is rate-limited by `last_attempt_at` +
+    ///   [`policy::smtp_prepare_retry_due`] in the caller's due-filtering (see
+    ///   `prepare_retry_gated`), so a down server is probed at most once per
+    ///   interval per item regardless of the ~2s tick cadence;
+    /// * a DEFINITE PERMANENT prepare failure
+    ///   (`ReauthenticationRequired` / `PermanentClientRejection` /
+    ///   `InvalidOperation`) moves the row to `failed` with a plain-language
+    ///   error via the same guarded UPDATE `dispatch_due` uses, so the draft
+    ///   stays restorable;
+    /// * a SCHEDULED item keeps its existing `block_schedule(..,
+    ///   "provider_unavailable")` behaviour unchanged.
+    ///
+    /// Gmail's `prepare_delivery` never does network I/O, so for a Gmail
+    /// provider the error branches are simply never taken and its behaviour is
+    /// unchanged.
+    async fn send_due_item(
+        &self,
+        item: &OutboxItem,
+        provider: &dyn MailProvider,
+        identity: &str,
+        owner: &str,
+        at: i64,
+    ) -> Result<(), String> {
+        // Obtain authorization before claiming delivery; transport errors
+        // after the claim are uncertain.
+        let permit = match provider.prepare_delivery().await {
+            Ok(permit) => permit,
+            Err(_) if item.schedule.is_some() => {
+                self.database
+                    .block_schedule(&item.id, owner, Some("provider_unavailable"), at)?;
+                return Ok(());
+            }
+            Err(e) => {
+                // A non-scheduled prepare failure must NOT abort the whole
+                // tick (which would wedge every other account's queue).
+                self.handle_prepare_failure(item, &e, owner, at)?;
+                return Ok(());
+            }
+        };
+        let mut item = item.clone();
+        if item.schedule.is_some() {
+            self.database.block_schedule(&item.id, owner, None, at)?;
+            item = self
+                .database
+                .outbox()?
+                .into_iter()
+                .find(|o| o.id == item.id)
+                .ok_or("Outbox item missing")?;
+        }
+        let sent = self
+            .dispatch_due(&item, at, |raw, thread| async move {
+                permit.send_once(&raw, thread.as_deref()).await
+            })
+            .await?;
+        if let Some(sent) = sent {
+            if let Some(thread_id) = sent.thread_id.as_deref() {
+                if self.database.archive_on_send(&item.id)? {
+                    // Gmail attaches INBOX to the thread when the sent message
+                    // lands, which would otherwise silently undo the archive
+                    // done at queue time. Re-assert it here, before the refetch
+                    // below, so the upserted thread reflects the archived state
+                    // regardless of timing.
+                    let _ = provider
+                        .modify_thread(thread_id, &[], &["INBOX".to_string()])
+                        .await;
+                }
+                if let Ok(messages) = provider.fetch_thread(thread_id).await {
+                    if let Ok(normalized) = messages
+                        .iter()
+                        .map(crate::mime::normalize)
+                        .collect::<Result<Vec<_>, _>>()
+                    {
+                        self.database.upsert_thread(identity, &normalized)?;
                     }
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Record a NON-scheduled item's `prepare_delivery` failure without
+    /// claiming the row or bumping `attempts`. A transient failure leaves the
+    /// item queued with a short retry note; a definite permanent failure moves
+    /// it to `failed` (draft restorable) via a state-guarded UPDATE.
+    fn handle_prepare_failure(
+        &self,
+        item: &OutboxItem,
+        error: &crate::provider::ProviderError,
+        owner: &str,
+        at: i64,
+    ) -> Result<(), String> {
+        use crate::provider::ProviderError;
+        match error {
+            // Transient: leave queued, set a plain retry note, DO NOT claim or
+            // bump attempts. We DO stamp `last_attempt_at` (without touching
+            // `attempts` or `state`) so the retry gate rate-limits the next
+            // probe against a down server; the item stays due and queued.
+            ProviderError::TransientTransport(_) | ProviderError::RetryableServer(_) => {
+                self.database.change_outbox(
+                    "UPDATE outbox_messages SET error=?2,last_attempt_at=?3 WHERE id=?1 AND state IN ('undo_pending','ready')",
+                    params![item.id, "Can't reach the mail server. Will retry.", at],
+                    &item.id,
+                    owner,
+                    at,
+                )?;
+                Ok(())
+            }
+            // Definite permanent: nothing was sent, so move to `failed` with a
+            // plain-language error so the draft stays restorable. Guard on the
+            // current queued state so a concurrent change is not clobbered.
+            ProviderError::ReauthenticationRequired(_) => {
+                self.fail_prepare(item, owner, at, "The mail server rejected the saved password. Reconnect this account, then restore the draft.")
+            }
+            other => {
+                let message = other.to_string();
+                self.fail_prepare(item, owner, at, &message)
+            }
+        }
+    }
+
+    /// Move a queued item to `failed` with `message` via a state-guarded
+    /// UPDATE (the same path `dispatch_due` uses for a definite send failure),
+    /// so the draft stays restorable and a concurrent transition is not
+    /// clobbered.
+    fn fail_prepare(
+        &self,
+        item: &OutboxItem,
+        owner: &str,
+        at: i64,
+        message: &str,
+    ) -> Result<(), String> {
+        self.database.change_outbox(
+            "UPDATE outbox_messages SET state='failed',error=?2 WHERE id=?1 AND state IN ('undo_pending','ready')",
+            params![item.id, message],
+            &item.id,
+            owner,
+            at,
+        )?;
         Ok(())
     }
     async fn dispatch_due<F, Fut>(
@@ -2201,6 +2346,359 @@ mod tests {
                     assert_eq!(provider.lookups.load(Ordering::SeqCst), 1);
                 }
             }
+        }
+    }
+
+    /// Work item D: a failing `prepare_delivery` must not wedge the queue, and
+    /// the per-item body (`send_due_item`) must be drivable with a fake
+    /// provider the account registry cannot hold.
+    mod prepare_failures {
+        use super::*;
+        use crate::{
+            models::Label,
+            provider::{
+                Delivery, DeliveryReceipt, LabelModel, MailFetch, MailMutate, MailSend, MailSync,
+                ProviderCapabilities, ProviderError, ProviderResult, SyncBatch, SyncCursor,
+                ThreadPage,
+            },
+        };
+
+        /// What the fake provider's `prepare_delivery` should do.
+        #[derive(Clone)]
+        enum PrepareBehaviour {
+            /// Succeed, then `send_once` returns the given send result.
+            Succeed(SendResult),
+            /// Fail with the given error (no permit handed out).
+            Fail(fn() -> ProviderError),
+        }
+
+        /// What the handed-out permit's `send_once` returns.
+        #[derive(Clone, Copy)]
+        enum SendResult {
+            Accepted,
+            /// Err((definite=false, ..)): the Unknown zone.
+            Unknown,
+            /// Err((definite=true, ..)): a definite non-delivery.
+            NotDelivered,
+        }
+
+        struct FakeSender {
+            behaviour: PrepareBehaviour,
+        }
+
+        struct ScriptedPermit {
+            result: SendResult,
+        }
+
+        #[async_trait::async_trait]
+        impl Delivery for ScriptedPermit {
+            async fn send_once(
+                self: Box<Self>,
+                _raw: &[u8],
+                thread: Option<&str>,
+            ) -> Result<DeliveryReceipt, (bool, String)> {
+                match self.result {
+                    SendResult::Accepted => Ok(DeliveryReceipt {
+                        provider_message_id: "fake-sent".into(),
+                        thread_id: thread.map(str::to_string),
+                    }),
+                    SendResult::Unknown => Err((
+                        false,
+                        "may have been delivered; check before resending".into(),
+                    )),
+                    SendResult::NotDelivered => {
+                        Err((true, "the server refused the message".into()))
+                    }
+                }
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl MailSend for FakeSender {
+            async fn sender_identity(&self) -> ProviderResult<String> {
+                Ok("you@example.com".into())
+            }
+            async fn prepare_delivery(&self) -> ProviderResult<Box<dyn Delivery>> {
+                match &self.behaviour {
+                    PrepareBehaviour::Succeed(result) => {
+                        Ok(Box::new(ScriptedPermit { result: *result }))
+                    }
+                    PrepareBehaviour::Fail(make) => Err(make()),
+                }
+            }
+            async fn find_sent_copy(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> ProviderResult<Option<DeliveryReceipt>> {
+                // Faithful IMAP behaviour: no server-side copy to confirm
+                // against, so a clean Ok(None) (never an error).
+                Ok(None)
+            }
+        }
+
+        impl MailProvider for FakeSender {
+            fn capabilities(&self) -> ProviderCapabilities {
+                ProviderCapabilities {
+                    send_supported: true,
+                    server_search: false,
+                    provided_threads: false,
+                    label_model: LabelModel::ImapLabelFolders,
+                    verifiable_delivery: false,
+                }
+            }
+        }
+
+        // The non-send traits are never exercised by `send_due_item` on these
+        // paths (a successful send with thread_id=None does no modify/fetch);
+        // panic so a future change that starts calling them is caught.
+        #[async_trait::async_trait]
+        impl MailSync for FakeSender {
+            async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
+                panic!("send path must not sync");
+            }
+            async fn poll(&self, _: &SyncCursor) -> ProviderResult<SyncBatch> {
+                panic!("send path must not poll");
+            }
+            async fn list_inbox(&self, _: Option<&str>) -> ProviderResult<ThreadPage> {
+                panic!("send path must not list");
+            }
+            async fn fetch_thread(&self, _: &str) -> ProviderResult<Vec<RawMessage>> {
+                panic!("new-message send has no thread to fetch");
+            }
+        }
+        #[async_trait::async_trait]
+        impl MailFetch for FakeSender {
+            async fn fetch_message(&self, _: &str) -> ProviderResult<RawMessage> {
+                panic!("send path must not fetch a message");
+            }
+            async fn attachment_bytes(&self, _: &str, _: &str) -> ProviderResult<Vec<u8>> {
+                panic!("send path must not fetch attachments");
+            }
+        }
+        #[async_trait::async_trait]
+        impl MailMutate for FakeSender {
+            async fn modify_thread(&self, _: &str, _: &[String], _: &[String]) -> ProviderResult<()> {
+                panic!("new-message send has no thread to modify");
+            }
+            async fn modify_messages(&self, _: &[String], _: &[String], _: &[String]) -> ProviderResult<()> {
+                panic!("unused");
+            }
+            async fn list_labels(&self) -> ProviderResult<Vec<Label>> {
+                panic!("unused");
+            }
+            async fn create_label(&self, _: &str) -> ProviderResult<Label> {
+                panic!("unused");
+            }
+            async fn update_label(&self, _: &str, _: &str) -> ProviderResult<Label> {
+                panic!("unused");
+            }
+            async fn delete_label(&self, _: &str) -> ProviderResult<()> {
+                panic!("unused");
+            }
+        }
+
+        /// Queue a draft and advance it past its undo window to `ready` so it
+        /// is a live send candidate. Returns the (re-read) outbox item.
+        fn ready_item(service: &Correspondence) -> OutboxItem {
+            let d = saved(&service.database);
+            let item = service
+                .database
+                .queue(&d.id, d.revision, false, &[], None, &service.root)
+                .unwrap();
+            service
+                .database
+                .connection()
+                .unwrap()
+                .execute(
+                    "UPDATE outbox_messages SET state='ready', deadline=?2 WHERE id=?1",
+                    params![item.id, now() - 1],
+                )
+                .unwrap();
+            service
+                .database
+                .outbox()
+                .unwrap()
+                .into_iter()
+                .find(|o| o.id == item.id)
+                .unwrap()
+        }
+
+        fn state_of(service: &Correspondence, id: &str) -> String {
+            service
+                .database
+                .outbox()
+                .unwrap()
+                .into_iter()
+                .find(|o| o.id == id)
+                .unwrap()
+                .state
+        }
+
+        fn attempts_of(service: &Correspondence, id: &str) -> i64 {
+            service
+                .database
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT attempts FROM outbox_messages WHERE id=?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        }
+
+        #[tokio::test]
+        async fn a_transient_prepare_failure_leaves_the_item_queued_without_bumping_attempts() {
+            let service = service();
+            let item = ready_item(&service);
+            let provider = FakeSender {
+                behaviour: PrepareBehaviour::Fail(|| {
+                    ProviderError::TransientTransport("smtp unreachable".into())
+                }),
+            };
+            // No error propagates out (the old code did `return Err`).
+            service
+                .send_due_item(&item, &provider, "you@example.com", "", now())
+                .await
+                .unwrap();
+            // Still queued, not failed; a plain retry note; attempts untouched.
+            assert_eq!(state_of(&service, &item.id), "ready");
+            assert_eq!(attempts_of(&service, &item.id), 0);
+            let row = service.database.outbox().unwrap().remove(0);
+            assert!(row.error.as_deref().unwrap().contains("Will retry"), "{:?}", row.error);
+            // last_attempt_at was stamped so the retry gate can rate-limit.
+            assert!(row.last_attempt_at.is_some());
+        }
+
+        #[tokio::test]
+        async fn a_permanent_prepare_failure_moves_the_row_to_failed_restorable() {
+            let service = service();
+            let item = ready_item(&service);
+            let provider = FakeSender {
+                behaviour: PrepareBehaviour::Fail(|| {
+                    ProviderError::ReauthenticationRequired("creds rejected".into())
+                }),
+            };
+            service
+                .send_due_item(&item, &provider, "you@example.com", "", now())
+                .await
+                .unwrap();
+            assert_eq!(state_of(&service, &item.id), "failed");
+            let row = service.database.outbox().unwrap().remove(0);
+            assert!(
+                row.error.as_deref().unwrap().contains("rejected the saved password"),
+                "{:?}",
+                row.error
+            );
+            // Nothing was sent, so attempts stays 0 (never claimed).
+            assert_eq!(attempts_of(&service, &item.id), 0);
+        }
+
+        #[tokio::test]
+        async fn a_successful_prepare_sends_and_marks_the_row_sent() {
+            let service = service();
+            let item = ready_item(&service);
+            let provider = FakeSender {
+                behaviour: PrepareBehaviour::Succeed(SendResult::Accepted),
+            };
+            service
+                .send_due_item(&item, &provider, "you@example.com", "", now())
+                .await
+                .unwrap();
+            assert_eq!(state_of(&service, &item.id), "sent");
+            // A real claim happened, so attempts is bumped exactly once.
+            assert_eq!(attempts_of(&service, &item.id), 1);
+        }
+
+        #[tokio::test]
+        async fn a_definite_send_failure_marks_the_row_failed() {
+            let service = service();
+            let item = ready_item(&service);
+            let provider = FakeSender {
+                behaviour: PrepareBehaviour::Succeed(SendResult::NotDelivered),
+            };
+            service
+                .send_due_item(&item, &provider, "you@example.com", "", now())
+                .await
+                .unwrap();
+            assert_eq!(state_of(&service, &item.id), "failed");
+            assert_eq!(attempts_of(&service, &item.id), 1);
+        }
+
+        #[tokio::test]
+        async fn an_unknown_send_goes_uncertain_then_reconciles_to_unverifiable() {
+            // The full fact-2 chain: send_once Unknown -> row 'uncertain';
+            // then reconcile_with_provider on a faithful IMAP fake
+            // (verifiable_delivery=false, find_sent_copy=Ok(None)) resolves it
+            // to the terminal 'unverifiable' — NOT an error, which the stale
+            // find_sent_copy stub would have produced.
+            let service = service();
+            let item = ready_item(&service);
+            let provider = FakeSender {
+                behaviour: PrepareBehaviour::Succeed(SendResult::Unknown),
+            };
+            service
+                .send_due_item(&item, &provider, "you@example.com", "", now())
+                .await
+                .unwrap();
+            assert_eq!(state_of(&service, &item.id), "uncertain");
+
+            let item = service
+                .database
+                .outbox()
+                .unwrap()
+                .into_iter()
+                .find(|o| o.id == item.id)
+                .unwrap();
+            service
+                .reconcile_with_provider(&item, &provider)
+                .await
+                .expect("reconcile must not error on a no-sent-copy IMAP provider");
+            assert_eq!(state_of(&service, &item.id), "unverifiable");
+        }
+
+        #[tokio::test]
+        async fn one_accounts_down_server_does_not_stop_another_accounts_send() {
+            // Two items; the first account's prepare fails transiently, the
+            // second account's prepare succeeds. Driving them in sequence (as
+            // tick does per account) proves the first's failure is Ok(()) and
+            // the second still sends.
+            let service = service();
+            let failing_item = ready_item(&service);
+            let sending_item = ready_item(&service);
+            let down = FakeSender {
+                behaviour: PrepareBehaviour::Fail(|| {
+                    ProviderError::TransientTransport("down".into())
+                }),
+            };
+            let up = FakeSender { behaviour: PrepareBehaviour::Succeed(SendResult::Accepted) };
+            service
+                .send_due_item(&failing_item, &down, "you@example.com", "", now())
+                .await
+                .unwrap();
+            service
+                .send_due_item(&sending_item, &up, "you@example.com", "", now())
+                .await
+                .unwrap();
+            assert_eq!(state_of(&service, &failing_item.id), "ready");
+            assert_eq!(state_of(&service, &sending_item.id), "sent");
+        }
+
+        #[test]
+        fn the_retry_gate_honours_the_interval_below_at_and_above() {
+            use crate::provider::imap::{
+                smtp_prepare_retry_due, SMTP_PREPARE_RETRY_INTERVAL_MS as INTERVAL,
+            };
+            let last = 1_000_000i64;
+            // Never attempted: always eligible.
+            assert!(smtp_prepare_retry_due(None, last));
+            // Below the interval: not re-attempted.
+            assert!(!smtp_prepare_retry_due(Some(last), last + INTERVAL - 1));
+            // Exactly at: eligible.
+            assert!(smtp_prepare_retry_due(Some(last), last + INTERVAL));
+            // Above: eligible.
+            assert!(smtp_prepare_retry_due(Some(last), last + INTERVAL + 1));
         }
     }
     #[test]
