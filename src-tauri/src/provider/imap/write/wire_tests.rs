@@ -1312,32 +1312,54 @@ mod sent_copy_tests {
         }
     }
 
-    // ---- a non-ASCII Sent mailbox name round-trips as modified UTF-7 ------
+    // ---- a non-ASCII Sent mailbox is addressed by its WIRE spelling -------
 
     #[tokio::test]
-    async fn a_non_ascii_sent_mailbox_name_is_appended_as_modified_utf7() {
-        // The Sent mailbox is "Gesendet/Entwürfe" (ü). The APPEND command on
-        // the wire must carry the modified-UTF-7 encoding, not raw UTF-8.
+    async fn a_wire_spelled_sent_mailbox_reaches_the_server_exactly_once_encoded() {
+        // The plan/catalog hold mailbox names exactly as LIST spelled them
+        // (modified UTF-7), and `mailbox_with_role` hands THAT to
+        // `save_sent_copy`. "Gesendet/Entwürfe" is therefore passed as
+        // "Gesendet/Entw&APw-rfe" and must be sent verbatim: encoding it again
+        // would produce "&-APw-" and address a different (nonexistent) mailbox.
         let (mut session, state, log, task) = connect_sent(SentScript::default(), &[]).await;
         let raw = raw_with("<nonascii@x>");
-        let mailbox = "Gesendet/Entw\u{00fc}rfe";
-        let outcome = save_sent_copy(&mut session, mailbox, &raw, "<nonascii@x>", instant_config(2))
+        let wire = "Gesendet/Entw&APw-rfe";
+        let outcome = save_sent_copy(&mut session, wire, &raw, "<nonascii@x>", instant_config(2))
             .await
             .expect("append to a non-ASCII mailbox");
         assert!(matches!(outcome, SentCopy::Appended { .. }));
         assert_eq!(state.count(), 1);
-        // The modified-UTF-7 encoding of "Gesendet/Entwürfe": ü -> &APw-.
-        let expected_wire = super::encode_modified_utf7(mailbox);
-        assert_eq!(expected_wire, "Gesendet/Entw&APw-rfe");
-        let saw_encoded = log
-            .seen()
-            .iter()
-            .any(|c| c.to_ascii_uppercase().starts_with("APPEND") && c.contains(&expected_wire));
-        assert!(saw_encoded, "APPEND must carry the modified-UTF-7 name: {:?}", log.seen());
-        // And NOT the raw UTF-8 ü in ANY command (EXAMINE included — EXAMINE
-        // must also use the modified-UTF-7 name, not the decoded one).
-        let saw_raw_utf8 = log.seen().iter().any(|c| c.contains('\u{00fc}'));
-        assert!(!saw_raw_utf8, "the raw UTF-8 name must never reach the wire");
+        let seen = log.seen();
+        for verb in ["EXAMINE", "APPEND"] {
+            assert!(
+                seen.iter().any(|c| c.to_ascii_uppercase().starts_with(verb) && c.contains(wire)),
+                "{verb} must carry the wire name verbatim: {seen:?}"
+            );
+        }
+        assert!(
+            !seen.iter().any(|c| c.contains("&-APw")),
+            "the wire name must never be encoded a second time: {seen:?}"
+        );
+        assert!(
+            !seen.iter().any(|c| c.contains('\u{00fc}')),
+            "raw UTF-8 must never reach the wire: {seen:?}"
+        );
+        let _ = session.logout().await;
+        task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_ampersand_in_a_wire_sent_mailbox_name_is_not_re_escaped() {
+        // "A & B" is spelled "A &- B" on the wire; passing that through again
+        // would turn the escape into "A &-- B".
+        let (mut session, _state, log, task) = connect_sent(SentScript::default(), &[]).await;
+        let raw = raw_with("<amp@x>");
+        save_sent_copy(&mut session, "A &- B", &raw, "<amp@x>", instant_config(2))
+            .await
+            .expect("append");
+        let seen = log.seen();
+        assert!(seen.iter().any(|c| c.to_ascii_uppercase().starts_with("APPEND") && c.contains("\"A &- B\"")), "{seen:?}");
+        assert!(!seen.iter().any(|c| c.contains("&--")), "{seen:?}");
         let _ = session.logout().await;
         task.await.unwrap();
     }
@@ -1423,7 +1445,7 @@ mod live {
         session.select("INBOX").await.expect("select INBOX before cleanup");
         for mailbox in mailboxes {
             session
-                .run_command_capture_code(&format!("DELETE {}", build_mailbox_arg(mailbox).unwrap()))
+                .run_command_capture_code(&format!("DELETE {}", build_wire_mailbox_arg(mailbox).unwrap()))
                 .await
                 .unwrap_or_else(|e| panic!("cleanup DELETE {mailbox} failed: {e:?}"));
         }
@@ -1729,6 +1751,20 @@ mod live {
             .expect("create empty scratch mailbox");
     }
 
+    /// Create a scratch mailbox from its WIRE spelling (no second encoding),
+    /// pre-cleaning a leftover from an earlier run.
+    async fn create_empty_scratch_wire(
+        session: &mut crate::provider::imap::connection::ConnectedSession,
+        wire: &str,
+    ) {
+        let arg = build_wire_mailbox_arg(wire).unwrap();
+        let _ = session.select("INBOX").await;
+        let _ = session.run_command_capture_code(&format!("DELETE {arg}")).await;
+        crate::provider::imap::write::ImapWriteSession::create_mailbox_arg(session, &arg)
+            .await
+            .expect("create empty wire-named scratch mailbox");
+    }
+
     fn live_raw(message_id: &str) -> Vec<u8> {
         // A Bcc header (which the Sent copy KEEPS), a non-ASCII line and a
         // single-dot line, so byte-identity across the APPEND literal is a real
@@ -1858,8 +1894,9 @@ mod live {
         };
         // A non-ASCII scratch name exercises the modified-UTF-7 EXAMINE/APPEND
         // path end to end against the real server.
-        let mailbox = "P4R4-Gesendet-Entw\u{00fc}rfe";
-        create_empty_scratch(&mut session, mailbox).await;
+        // The WIRE spelling (what LIST returns and the catalog stores).
+        let mailbox = "P4R4-Gesendet-Entw&APw-rfe";
+        create_empty_scratch_wire(&mut session, mailbox).await;
         let message_id = "<p4r4-nonascii@threestrands.test>";
         let raw = live_raw(message_id);
         let config = SaveSentConfig {

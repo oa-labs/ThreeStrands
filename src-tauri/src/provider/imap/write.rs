@@ -1317,24 +1317,28 @@ pub(super) fn select_is_read_only(code: &async_imap::imap_proto::ResponseCode<'_
 // they can see whom they blind-copied. This primitive deliberately does NOT
 // strip anything.
 
-/// Prepare the validated wire inputs for an `APPEND`: the modified-UTF-7
-/// mailbox name async-imap will quote, and the parenthesised flag list. All
-/// rejection happens here, BEFORE any byte reaches the wire.
+/// Prepare the validated wire inputs for an `APPEND`: the mailbox name and the
+/// parenthesised flag list. All rejection happens here, BEFORE any byte reaches
+/// the wire.
 ///
-/// Returns `(encoded_mailbox, flag_list)` where `encoded_mailbox` is the
-/// modified-UTF-7 encoding of the DECODED name (async-imap's `append` quotes
-/// it; passing it the raw name would send UTF-8, not modified UTF-7, for a
-/// non-ASCII mailbox — the bug a non-ASCII round-trip test pins) and
-/// `flag_list` is e.g. `"(\\Seen)"`.
+/// `mailbox` is the mailbox's WIRE spelling — exactly what LIST returned and
+/// what the catalog, the plan and the settings overrides store (modified
+/// UTF-7). It is validated (control characters, length) and returned
+/// UNCHANGED for async-imap to quote: encoding it again would turn
+/// "Entw&APw-rfe" into "Entw&-APw-rfe" and address a different, nonexistent
+/// mailbox, and turn an escaped "&-" into "&--". (Phase 4 run 4a's first
+/// version encoded here; the provider passes the plan's wire name, so every
+/// non-ASCII Sent mailbox would have failed.)
 pub(super) fn prepare_append(
     mailbox: &str,
     flags: &[String],
     content: &[u8],
 ) -> Result<(String, String), ProviderError> {
-    // Reuse the audited mailbox-name gate (control chars + length) by building
-    // (and discarding) the quoted arg; it rejects exactly what APPEND must.
-    let _ = build_mailbox_arg(mailbox)?;
-    let encoded = encode_modified_utf7(mailbox);
+    // The audited WIRE-name gate (control chars + length), as every other
+    // path that takes a catalog name uses. Discard the quoted form: the
+    // library quotes the name itself.
+    let _ = build_wire_mailbox_arg(mailbox)?;
+    let wire = mailbox.to_string();
 
     let validated = validate_flags(flags)?;
     let flag_list = format!("({})", validated.join(" "));
@@ -1353,7 +1357,7 @@ pub(super) fn prepare_append(
     }
     policy::check_append_bytes(content.len())?;
 
-    Ok((encoded, flag_list))
+    Ok((wire, flag_list))
 }
 
 /// Map an `async-imap` APPEND error to a [`WriteError`], recovering the typed
@@ -1675,15 +1679,10 @@ async fn examine_for_append(
     session: &mut dyn ImapWriteSession,
     mailbox: &str,
 ) -> WriteResult<u32> {
-    // Validate the name (control chars + length) and EXAMINE its MODIFIED
-    // UTF-7 encoding: async-imap's `examine` only quotes, it does not encode,
-    // so a non-ASCII Sent mailbox examined by its decoded name would reach the
-    // wrong mailbox (the raw UTF-8 bytes). Passing the encoded ASCII name lets
-    // async-imap's `quote!` produce the correct modified-UTF-7 token — the same
-    // trick `append` uses.
-    let _ = build_mailbox_arg(mailbox).map_err(WriteError::Provider)?;
-    let encoded = encode_modified_utf7(mailbox);
-    match session.examine(&encoded).await {
+    // `mailbox` is the WIRE spelling from the catalog/plan; async-imap's
+    // `examine` quotes it, so it goes out verbatim (see `prepare_append`).
+    let _ = build_wire_mailbox_arg(mailbox).map_err(WriteError::Provider)?;
+    match session.examine(mailbox).await {
         Ok(status) => status.uid_validity.ok_or_else(|| {
             WriteError::Provider(ProviderError::InvalidOperation(format!(
                 "Sent mailbox {mailbox:?} reported no UIDVALIDITY on EXAMINE; cannot save a copy"
@@ -1701,6 +1700,9 @@ async fn examine_for_append(
 /// dropped connection, `[UNAVAILABLE]`) KEEPS its transient class so the caller
 /// retries (Phase 3 run 3 lesson: never turn a transient cause permanent).
 fn no_sent_mailbox_error(mailbox: &str, cause: &ProviderError) -> ProviderError {
+    // `mailbox` is the wire spelling; show the user the readable name.
+    let display = decode_modified_utf7(mailbox).unwrap_or_else(|_| mailbox.to_string());
+    let mailbox = display.as_str();
     // A missing mailbox is reported by the RFC 5530 map either as the Slice-3
     // TRYCREATE-transient placeholder (text names TRYCREATE) or as a plain
     // InvalidOperation (NONEXISTENT has no typed code). Both mean "the mailbox
@@ -2123,13 +2125,18 @@ mod tests {
     // ---- Phase 4 run 4a: Sent-copy pure helpers -----------------------
 
     #[test]
-    fn prepare_append_encodes_the_mailbox_and_builds_the_flag_list() {
-        // A non-ASCII mailbox name is modified-UTF-7 encoded (async-imap then
-        // quotes the ASCII result), and the flag list is parenthesised.
+    fn prepare_append_keeps_the_wire_mailbox_name_and_builds_the_flag_list() {
+        // The mailbox is the catalog's WIRE spelling and must come back
+        // unchanged (never encoded a second time); the flag list is
+        // parenthesised.
         let (mailbox, flags) =
-            prepare_append("Gesendet/Entw\u{00fc}rfe", &["\\Seen".into()], b"hi").unwrap();
+            prepare_append("Gesendet/Entw&APw-rfe", &["\\Seen".into()], b"hi").unwrap();
         assert_eq!(mailbox, "Gesendet/Entw&APw-rfe");
         assert_eq!(flags, "(\\Seen)");
+        let (mailbox, _) = prepare_append("A &- B", &["\\Seen".into()], b"hi").unwrap();
+        assert_eq!(mailbox, "A &- B");
+        // Malformed modified UTF-7 is refused rather than naming another mailbox.
+        assert!(prepare_append("Bad &AOk", &["\\Seen".into()], b"hi").is_err());
         // ASCII name passes through unchanged.
         let (mailbox, _) = prepare_append("Sent", &["\\Seen".into()], b"hi").unwrap();
         assert_eq!(mailbox, "Sent");
