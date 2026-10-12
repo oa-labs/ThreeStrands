@@ -1081,6 +1081,92 @@ pub fn sent_copy_backoff(prior_attempts: u32) -> Duration {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 5 run 1: server-search rendering limits
+// ---------------------------------------------------------------------------
+//
+// Every numeric limit the IMAP search renderer (`search.rs`) enforces, in this
+// one place, following the "never silently clamp" rule above: a query over any
+// of these is REFUSED (the renderer returns `Skipped`, keeping local results
+// only) and never truncated. Each `check_*` helper returns the value unchanged
+// when within the limit (including exactly at it) and a typed `ProviderError`
+// over it, with below/exact/above coverage in the test module.
+//
+// Unlike the ingest/write gates, these guard a search STRING the renderer
+// builds from the user's query AST: how many terms it has, how long one user
+// value is, how long the whole rendered `UID SEARCH` criteria string is, and
+// how many mailboxes one search would touch. The bounds keep a single
+// `UID SEARCH` command line and the per-search server work bounded without
+// getting in a real query's way.
+
+/// Most user-supplied terms one query may carry. A real search is a handful of
+/// terms; a query with dozens is a mistake or abuse. 16 is generous while
+/// bounding how long the rendered criteria can grow. Over the limit the
+/// renderer skips the server search.
+pub const MAX_SEARCH_TERMS: usize = 16;
+
+/// Longest one user search VALUE may be, in UTF-8 bytes (a `from:`, `to:`,
+/// `subject:`, free-text, `label:` or `in:` value). 256 bytes is far longer
+/// than any real search value while bounding one quoted string in the command.
+pub const MAX_SEARCH_TERM_BYTES: usize = 256;
+
+/// Longest the WHOLE rendered criteria string may be, in bytes (the
+/// `CHARSET UTF-8 …` input to `UID SEARCH`). Bounds the command line a server
+/// must parse even when every individual term is within its own limit. 1024
+/// bytes comfortably holds a rich multi-term query.
+pub const MAX_SEARCH_QUERY_BYTES: usize = 1024;
+
+/// Most mailboxes one server search may target. The default set is three
+/// (INBOX, Archive, Sent); an `in:`/label-folder term narrows to one. 12
+/// bounds a pathological plan or a future multi-folder search without
+/// restricting ordinary use.
+pub const MAX_SEARCH_TARGET_MAILBOXES: usize = 12;
+
+/// Reject a term count over [`MAX_SEARCH_TERMS`]. Returns the count unchanged
+/// when within the limit (including exactly at it).
+pub fn check_search_terms(count: usize) -> Result<usize, ProviderError> {
+    if count > MAX_SEARCH_TERMS {
+        return Err(ProviderError::InvalidOperation(format!(
+            "{count} search terms, over the {MAX_SEARCH_TERMS}-term limit"
+        )));
+    }
+    Ok(count)
+}
+
+/// Reject a per-term byte length over [`MAX_SEARCH_TERM_BYTES`]. Returns the
+/// length unchanged when within the limit (including exactly at it).
+pub fn check_search_term_bytes(len: usize) -> Result<usize, ProviderError> {
+    if len > MAX_SEARCH_TERM_BYTES {
+        return Err(ProviderError::InvalidOperation(format!(
+            "a search term is {len} bytes, over the {MAX_SEARCH_TERM_BYTES}-byte limit"
+        )));
+    }
+    Ok(len)
+}
+
+/// Reject a whole-criteria byte length over [`MAX_SEARCH_QUERY_BYTES`].
+/// Returns the length unchanged when within the limit (including exactly at
+/// it).
+pub fn check_search_query_bytes(len: usize) -> Result<usize, ProviderError> {
+    if len > MAX_SEARCH_QUERY_BYTES {
+        return Err(ProviderError::InvalidOperation(format!(
+            "the search query is {len} bytes, over the {MAX_SEARCH_QUERY_BYTES}-byte limit"
+        )));
+    }
+    Ok(len)
+}
+
+/// Reject a target-mailbox count over [`MAX_SEARCH_TARGET_MAILBOXES`]. Returns
+/// the count unchanged when within the limit (including exactly at it).
+pub fn check_search_target_mailboxes(count: usize) -> Result<usize, ProviderError> {
+    if count > MAX_SEARCH_TARGET_MAILBOXES {
+        return Err(ProviderError::InvalidOperation(format!(
+            "a search would touch {count} mailboxes, over the {MAX_SEARCH_TARGET_MAILBOXES}-mailbox limit"
+        )));
+    }
+    Ok(count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1971,5 +2057,81 @@ mod tests {
                 "expected {bad:?} to be rejected"
             );
         }
+    }
+
+    // --- Phase 5 run 1: server-search limits ---------------------------
+
+    #[test]
+    fn the_search_limits_are_the_documented_bounds() {
+        assert_eq!(MAX_SEARCH_TERMS, 16);
+        assert_eq!(MAX_SEARCH_TERM_BYTES, 256);
+        assert_eq!(MAX_SEARCH_QUERY_BYTES, 1024);
+        assert_eq!(MAX_SEARCH_TARGET_MAILBOXES, 12);
+        assert!(MAX_SEARCH_TERMS > 0);
+        assert!(MAX_SEARCH_TERM_BYTES > 0);
+        assert!(MAX_SEARCH_QUERY_BYTES > 0);
+        assert!(MAX_SEARCH_TARGET_MAILBOXES > 0);
+    }
+
+    #[test]
+    fn search_terms_gate_below_at_and_above_the_limit() {
+        assert_eq!(check_search_terms(0).unwrap(), 0);
+        assert_eq!(check_search_terms(MAX_SEARCH_TERMS - 1).unwrap(), MAX_SEARCH_TERMS - 1);
+        assert_eq!(check_search_terms(MAX_SEARCH_TERMS).unwrap(), MAX_SEARCH_TERMS);
+        assert!(matches!(
+            check_search_terms(MAX_SEARCH_TERMS + 1).unwrap_err(),
+            ProviderError::InvalidOperation(_)
+        ));
+    }
+
+    #[test]
+    fn search_term_bytes_gate_below_at_and_above_the_limit() {
+        assert_eq!(check_search_term_bytes(0).unwrap(), 0);
+        assert_eq!(
+            check_search_term_bytes(MAX_SEARCH_TERM_BYTES - 1).unwrap(),
+            MAX_SEARCH_TERM_BYTES - 1
+        );
+        assert_eq!(
+            check_search_term_bytes(MAX_SEARCH_TERM_BYTES).unwrap(),
+            MAX_SEARCH_TERM_BYTES
+        );
+        assert!(matches!(
+            check_search_term_bytes(MAX_SEARCH_TERM_BYTES + 1).unwrap_err(),
+            ProviderError::InvalidOperation(_)
+        ));
+    }
+
+    #[test]
+    fn search_query_bytes_gate_below_at_and_above_the_limit() {
+        assert_eq!(check_search_query_bytes(0).unwrap(), 0);
+        assert_eq!(
+            check_search_query_bytes(MAX_SEARCH_QUERY_BYTES - 1).unwrap(),
+            MAX_SEARCH_QUERY_BYTES - 1
+        );
+        assert_eq!(
+            check_search_query_bytes(MAX_SEARCH_QUERY_BYTES).unwrap(),
+            MAX_SEARCH_QUERY_BYTES
+        );
+        assert!(matches!(
+            check_search_query_bytes(MAX_SEARCH_QUERY_BYTES + 1).unwrap_err(),
+            ProviderError::InvalidOperation(_)
+        ));
+    }
+
+    #[test]
+    fn search_target_mailboxes_gate_below_at_and_above_the_limit() {
+        assert_eq!(check_search_target_mailboxes(0).unwrap(), 0);
+        assert_eq!(
+            check_search_target_mailboxes(MAX_SEARCH_TARGET_MAILBOXES - 1).unwrap(),
+            MAX_SEARCH_TARGET_MAILBOXES - 1
+        );
+        assert_eq!(
+            check_search_target_mailboxes(MAX_SEARCH_TARGET_MAILBOXES).unwrap(),
+            MAX_SEARCH_TARGET_MAILBOXES
+        );
+        assert!(matches!(
+            check_search_target_mailboxes(MAX_SEARCH_TARGET_MAILBOXES + 1).unwrap_err(),
+            ProviderError::InvalidOperation(_)
+        ));
     }
 }
