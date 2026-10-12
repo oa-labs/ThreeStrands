@@ -1575,6 +1575,14 @@ button.keycap:active {
   color: var(--ink-soft);
 }
 
+.detail-grid .detail-feature {
+  grid-column: 1 / -1;
+}
+
+.detail-feature p {
+  max-width: 76ch;
+}
+
 /* Roadmap --------------------------------------------------------------- */
 
 .roadmap-list {

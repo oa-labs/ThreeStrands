@@ -53,7 +53,7 @@ function shot(attrs: Record<string, string>) {
 
 /** Inlines a lucide icon (the app's icon set) without shipping React to the site. */
 function icon(name: string) {
-  const source = readFileSync(path.join(repoRoot, "node_modules/lucide-react/dist/esm/icons", `${name}.js`), "utf8");
+  const source = readFileSync(path.join(repoRoot, "node_modules/lucide-react/dist/esm/icons", `${name}.mjs`), "utf8");
   const nodes = [...source.matchAll(/\[\s*"(\w+)",\s*\{([^}]*)\}\s*\]/g)].map(([, element, body]) => {
     const attrs = [...body!.matchAll(/(\w+): "([^"]*)"/g)]
       .filter(([, key]) => key !== "key")
