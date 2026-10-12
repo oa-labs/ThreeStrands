@@ -132,6 +132,11 @@ pub struct SearchReport {
     /// How many hits were refused across all mailboxes because keeping them
     /// would exceed the per-account search-pin cap. Summed across accounts.
     pub skipped_over_cap: usize,
+    /// How many accounts actually ran a server search (any status except
+    /// `Skipped`). Summed across accounts. Lets the UI tell "nothing searched
+    /// the server" apart from "one account could not, others did" in a
+    /// unified search, where `Skipped` wins the status combine.
+    pub server_searched_accounts: usize,
 }
 
 impl SearchReport {
@@ -142,6 +147,19 @@ impl SearchReport {
             status: SearchReportStatus::Complete,
             unsynced_mailboxes: 0,
             skipped_over_cap: 0,
+            server_searched_accounts: 1,
+        }
+    }
+
+    /// No server search was attempted for this account (empty query, not
+    /// connected, no server-search capability). The identity for
+    /// [`Self::combine`], so it is also the seed when folding accounts.
+    pub fn not_searched() -> Self {
+        Self {
+            status: SearchReportStatus::Complete,
+            unsynced_mailboxes: 0,
+            skipped_over_cap: 0,
+            server_searched_accounts: 0,
         }
     }
 
@@ -155,11 +173,14 @@ impl SearchReport {
     pub fn combine(self, other: SearchReport) -> SearchReport {
         let unsynced_mailboxes = self.unsynced_mailboxes + other.unsynced_mailboxes;
         let skipped_over_cap = self.skipped_over_cap + other.skipped_over_cap;
+        let server_searched_accounts =
+            self.server_searched_accounts + other.server_searched_accounts;
         let status = SearchReportStatus::combine(self.status, other.status);
         SearchReport {
             status,
             unsynced_mailboxes,
             skipped_over_cap,
+            server_searched_accounts,
         }
     }
 }
@@ -658,6 +679,35 @@ mod search_report_tests {
         }
     }
 
+    /// Review fix: in a unified search, `Skipped` wins the status, but the
+    /// report still says whether ANY account searched the server, so the UI
+    /// never claims "only mail on this device" when another account searched.
+    #[test]
+    fn the_report_counts_accounts_that_searched_the_server() {
+        let skipped = SearchReport {
+            status: SearchReportStatus::Skipped {
+                reasons: vec![SkipSearchReason::Unsupported],
+            },
+            unsynced_mailboxes: 0,
+            skipped_over_cap: 0,
+            server_searched_accounts: 0,
+        };
+        let mixed = SearchReport::not_searched()
+            .combine(skipped.clone())
+            .combine(SearchReport::complete());
+        assert!(matches!(mixed.status, SearchReportStatus::Skipped { .. }));
+        assert_eq!(mixed.server_searched_accounts, 1);
+
+        let only_skipped = SearchReport::not_searched().combine(skipped);
+        assert_eq!(only_skipped.server_searched_accounts, 0);
+
+        // not_searched is the fold identity.
+        assert_eq!(
+            SearchReport::not_searched().combine(SearchReport::complete()),
+            SearchReport::complete()
+        );
+    }
+
     #[test]
     fn complete_combined_with_complete_is_complete() {
         let got = SearchReport::complete().combine(SearchReport::complete());
@@ -672,11 +722,13 @@ mod search_report_tests {
             status: SearchReportStatus::Complete,
             unsynced_mailboxes: 2,
             skipped_over_cap: 3,
+            server_searched_accounts: 1,
         };
         let b = SearchReport {
             status: SearchReportStatus::Complete,
             unsynced_mailboxes: 1,
             skipped_over_cap: 4,
+            server_searched_accounts: 1,
         };
         let got = a.combine(b);
         assert_eq!(got.unsynced_mailboxes, 3);
@@ -690,6 +742,7 @@ mod search_report_tests {
             status: partial(PartialSearchReason::Deadline),
             unsynced_mailboxes: 0,
             skipped_over_cap: 0,
+            server_searched_accounts: 1,
         };
         // Either fold order yields the partial status.
         assert_eq!(
@@ -710,6 +763,7 @@ mod search_report_tests {
             },
             unsynced_mailboxes: 0,
             skipped_over_cap: 0,
+            server_searched_accounts: 1,
         };
         for other in [
             SearchReportStatus::Complete,
@@ -722,6 +776,7 @@ mod search_report_tests {
                 status: other,
                 unsynced_mailboxes: 0,
                 skipped_over_cap: 0,
+                server_searched_accounts: 1,
             });
             assert_eq!(
                 combined.status,
@@ -741,11 +796,13 @@ mod search_report_tests {
             status: no_match.clone(),
             unsynced_mailboxes: 0,
             skipped_over_cap: 0,
+            server_searched_accounts: 1,
         };
         let b = SearchReport {
             status: partial(PartialSearchReason::Deadline),
             unsynced_mailboxes: 0,
             skipped_over_cap: 0,
+            server_searched_accounts: 1,
         };
         assert_eq!(a.combine(b).status, no_match);
     }
@@ -756,11 +813,13 @@ mod search_report_tests {
             status: partial(PartialSearchReason::Deadline),
             unsynced_mailboxes: 0,
             skipped_over_cap: 0,
+            server_searched_accounts: 1,
         };
         let b = SearchReport {
             status: partial(PartialSearchReason::Budget),
             unsynced_mailboxes: 0,
             skipped_over_cap: 0,
+            server_searched_accounts: 1,
         };
         assert_eq!(
             a.combine(b).status,

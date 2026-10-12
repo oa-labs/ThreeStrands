@@ -559,7 +559,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       );
     },
     async backfillSearchThreads(_query, _accountId) {
-      return { status: { kind: "complete" }, unsyncedMailboxes: 0, skippedOverCap: 0 };
+      return { status: { kind: "complete" }, unsyncedMailboxes: 0, skippedOverCap: 0, serverSearchedAccounts: 1 };
     },
     async mutateThread(mutation) {
       update(mutation);

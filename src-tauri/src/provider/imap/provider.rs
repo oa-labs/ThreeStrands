@@ -2552,17 +2552,30 @@ fn imap_search_report(result: &ImapSearchResult) -> SearchReport {
             reason: NoMatchSearchReason::UnknownName,
         }
     } else if let Some(partial) = &result.partial {
+        let mut reasons = vec![partial_reason_code(partial)];
+        // Hits refused by the pin cap are matches the user will not see:
+        // say so, worded like the budget limit (the newest were kept).
+        if skipped_over_cap > 0 && !reasons.contains(&PartialSearchReason::Budget) {
+            reasons.push(PartialSearchReason::Budget);
+        }
+        SearchReportStatus::Partial { reasons }
+    } else if skipped_over_cap > 0 {
+        // Every mailbox finished, but the pin cap refused some hits, so the
+        // result is NOT complete. Never report a silent drop as Complete.
         SearchReportStatus::Partial {
-            reasons: vec![partial_reason_code(partial)],
+            reasons: vec![PartialSearchReason::Budget],
         }
     } else {
         SearchReportStatus::Complete
     };
 
+    let server_searched_accounts =
+        usize::from(!matches!(status, SearchReportStatus::Skipped { .. }));
     SearchReport {
         status,
         unsynced_mailboxes,
         skipped_over_cap,
+        server_searched_accounts,
     }
 }
 
@@ -10719,6 +10732,34 @@ mod tests {
                 assert_eq!(report.status, SearchReportStatus::Complete);
                 assert_eq!(report.unsynced_mailboxes, 0);
                 assert_eq!(report.skipped_over_cap, 0);
+                assert_eq!(report.server_searched_accounts, 1, "this account searched");
+            }
+
+            /// Review fix: hits the pin cap refused are matches the user never
+            /// sees, so a search that otherwise finished must NOT report
+            /// `Complete`; it reports the budget-style partial.
+            #[tokio::test]
+            async fn hits_refused_by_the_pin_cap_report_partial_not_complete() {
+                let mailbox = Arc::new(Mutex::new(multi_mailbox()));
+                let (provider, store, _opens) = counting_provider(mailbox);
+                // Room for exactly one new pin: the six hits overflow it.
+                let base = crate::provider::imap::policy::MAX_SEARCH_PINS - 1;
+                for uid in 0..base as u32 {
+                    store
+                        .upsert_pin("OtherFolder", 1, uid as i64 + 1, 1_700_000_000)
+                        .unwrap();
+                }
+                let (_page, report) = provider
+                    .search_with_report("from:someone", None)
+                    .await
+                    .unwrap();
+                assert!(report.skipped_over_cap > 0, "the cap refused some hits");
+                assert_eq!(
+                    report.status,
+                    SearchReportStatus::Partial {
+                        reasons: vec![PartialSearchReason::Budget]
+                    }
+                );
             }
 
             /// `-from:alice` (a negation -> Raw -> Skipped) reports `Skipped`
@@ -10732,6 +10773,7 @@ mod tests {
                     .await
                     .unwrap();
                 assert!(page.thread_ids.is_empty());
+                assert_eq!(report.server_searched_accounts, 0, "nothing reached the server");
                 assert_eq!(
                     report.status,
                     SearchReportStatus::Skipped {

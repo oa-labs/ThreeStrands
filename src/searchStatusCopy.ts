@@ -8,7 +8,6 @@
 import type {
   PartialSearchReason,
   SearchReport,
-  SearchReportStatus,
 } from "./domain";
 
 /** Appended when some planned folders were not searched because they are not synced. */
@@ -24,6 +23,10 @@ const PARTIAL_COPY: Record<PartialSearchReason["code"], string> = {
 
 const SKIPPED_COPY =
   'This search uses something your mail server can\u2019t search for (like "-" or "OR"), so only mail already on this device is shown.';
+
+/** Skipped for some accounts while others did search their server (unified search). */
+const SKIPPED_SOME_COPY =
+  'Some of your mail servers can\u2019t search for this (like "-" or "OR"). For those accounts, only mail already on this device is shown.';
 
 const NO_SERVER_MATCHES_COPY =
   "No folder or label by that name on the server.";
@@ -45,7 +48,7 @@ export function searchStatusMessage(
   report: SearchReport,
   localResultEmpty: boolean,
 ): string | null {
-  const base = statusLine(report.status, localResultEmpty);
+  const base = statusLine(report, localResultEmpty);
   const unsynced = report.unsyncedMailboxes > 0;
 
   if (base === null) {
@@ -57,9 +60,10 @@ export function searchStatusMessage(
 }
 
 function statusLine(
-  status: SearchReportStatus,
+  report: SearchReport,
   localResultEmpty: boolean,
 ): string | null {
+  const status = report.status;
   switch (status.kind) {
     case "complete":
       return null;
@@ -67,7 +71,9 @@ function statusLine(
       // Word the first reason; the backend orders them by account.
       return PARTIAL_COPY[status.reasons[0]?.code ?? "deadline"];
     case "skipped":
-      return SKIPPED_COPY;
+      // In a unified search another account may still have searched its
+      // server; never claim that only on-device mail is shown then.
+      return report.serverSearchedAccounts > 0 ? SKIPPED_SOME_COPY : SKIPPED_COPY;
     case "noServerMatches":
       return localResultEmpty ? NO_SERVER_MATCHES_COPY : null;
   }

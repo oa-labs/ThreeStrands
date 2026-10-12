@@ -611,6 +611,8 @@ export type SearchReport = {
   unsyncedMailboxes: number;
   /** Hits refused because keeping them would exceed the search-pin cap (summed). */
   skippedOverCap: number;
+  /** Accounts that actually ran a server search (summed). Zero means none did. */
+  serverSearchedAccounts: number;
 };
 
 export type ThreadMutation =

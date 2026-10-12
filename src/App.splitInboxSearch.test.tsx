@@ -265,7 +265,7 @@ describe("split inbox search shortcuts", () => {
     let finishBackfill!: () => void;
     const backfillSearchThreads = vi.spyOn(mailClient, "backfillSearchThreads").mockImplementation(
       () => new Promise<SearchReport>((resolve) => {
-        finishBackfill = () => resolve({ status: { kind: "complete" }, unsyncedMailboxes: 0, skippedOverCap: 0 });
+        finishBackfill = () => resolve({ status: { kind: "complete" }, unsyncedMailboxes: 0, skippedOverCap: 0, serverSearchedAccounts: 1 });
       }),
     );
 
@@ -302,9 +302,9 @@ describe("server-search status toast (Phase 5 run 5)", () => {
     vi.restoreAllMocks();
   });
 
-  const complete: SearchReport = { status: { kind: "complete" }, unsyncedMailboxes: 0, skippedOverCap: 0 };
-  const skipped: SearchReport = { status: { kind: "skipped", reasons: [{ code: "unsupported" }] }, unsyncedMailboxes: 0, skippedOverCap: 0 };
-  const partialDeadline: SearchReport = { status: { kind: "partial", reasons: [{ code: "deadline" }] }, unsyncedMailboxes: 0, skippedOverCap: 0 };
+  const complete: SearchReport = { status: { kind: "complete" }, unsyncedMailboxes: 0, skippedOverCap: 0, serverSearchedAccounts: 1 };
+  const skipped: SearchReport = { status: { kind: "skipped", reasons: [{ code: "unsupported" }] }, unsyncedMailboxes: 0, skippedOverCap: 0, serverSearchedAccounts: 0 };
+  const partialDeadline: SearchReport = { status: { kind: "partial", reasons: [{ code: "deadline" }] }, unsyncedMailboxes: 0, skippedOverCap: 0, serverSearchedAccounts: 1 };
 
   async function searchWithReport(report: SearchReport, query = "roadmap") {
     localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");

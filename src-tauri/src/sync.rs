@@ -340,7 +340,7 @@ impl SyncService {
     /// nothing to caveat.
     pub async fn backfill_search(&self, query: &str) -> Result<SearchReport, String> {
         if query.trim().is_empty() || !self.is_connected() {
-            return Ok(SearchReport::complete());
+            return Ok(SearchReport::not_searched());
         }
         self.exclusive(async {
             let account_id = self.account_id();
@@ -352,7 +352,7 @@ impl SyncService {
             // look past the local index simply has nothing to contribute, so
             // asking is a guaranteed round trip to an error.
             if !provider.capabilities().server_search {
-                return Ok(SearchReport::complete());
+                return Ok(SearchReport::not_searched());
             }
             search_and_ingest_missing(
                 self.database.as_ref(),
@@ -365,7 +365,7 @@ impl SyncService {
             .map_err(|error| error.to_string())
         })
         .await
-        .unwrap_or_else(|| Ok(SearchReport::complete()))
+        .unwrap_or_else(|| Ok(SearchReport::not_searched()))
     }
 
     pub async fn create_label(&self, name: &str) -> Result<Label, String> {
@@ -848,7 +848,7 @@ pub(crate) async fn search_and_ingest_missing(
     scan_limit: usize,
 ) -> ProviderResult<SearchReport> {
     if query.trim().is_empty() || scan_limit == 0 {
-        return Ok(SearchReport::complete());
+        return Ok(SearchReport::not_searched());
     }
 
     let cached: HashSet<String> = database

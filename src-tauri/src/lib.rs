@@ -1328,7 +1328,7 @@ async fn backfill_search_threads(
     state: State<'_, AppState>,
 ) -> Result<crate::provider::SearchReport, String> {
     if query.trim().is_empty() {
-        return Ok(crate::provider::SearchReport::complete());
+        return Ok(crate::provider::SearchReport::not_searched());
     }
 
     let services = sync_services(&state, account_id.as_deref()).await;
@@ -1343,7 +1343,7 @@ async fn backfill_search_threads(
     // still collected into `errors` and fails the command exactly as before —
     // the UI's existing "unavailable" state is unchanged.
     let mut errors = Vec::new();
-    let mut report = crate::provider::SearchReport::complete();
+    let mut report = crate::provider::SearchReport::not_searched();
     for service in services {
         match service.backfill_search(&query).await {
             Ok(account_report) => report = report.combine(account_report),

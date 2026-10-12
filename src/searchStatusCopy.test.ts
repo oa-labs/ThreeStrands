@@ -2,11 +2,24 @@ import { describe, expect, it } from "vitest";
 import { searchStatusMessage } from "./searchStatusCopy";
 import type { SearchReport, SearchReportStatus } from "./domain";
 
-function report(status: SearchReportStatus, counts?: Partial<Pick<SearchReport, "unsyncedMailboxes" | "skippedOverCap">>): SearchReport {
-  return { status, unsyncedMailboxes: 0, skippedOverCap: 0, ...counts };
+function report(status: SearchReportStatus, counts?: Partial<Pick<SearchReport, "unsyncedMailboxes" | "skippedOverCap" | "serverSearchedAccounts">>): SearchReport {
+  return {
+    status,
+    unsyncedMailboxes: 0,
+    skippedOverCap: 0,
+    serverSearchedAccounts: status.kind === "skipped" ? 0 : 1,
+    ...counts,
+  };
 }
 
 describe("searchStatusMessage", () => {
+  it("does not claim only on-device mail when another account searched its server", () => {
+    const mixed = report({ kind: "skipped", reasons: [{ code: "unsupported" }] }, { serverSearchedAccounts: 1 });
+    expect(searchStatusMessage(mixed, false)).toBe(
+      "Some of your mail servers can\u2019t search for this (like \"-\" or \"OR\"). For those accounts, only mail already on this device is shown.",
+    );
+  });
+
   it("shows nothing for a complete search", () => {
     expect(searchStatusMessage(report({ kind: "complete" }), false)).toBeNull();
     expect(searchStatusMessage(report({ kind: "complete" }), true)).toBeNull();
