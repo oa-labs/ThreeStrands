@@ -833,7 +833,7 @@ describe("ContactsWorkspace",()=>{
       render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
       await screen.findByDisplayValue("Jane Doe");
       fireEvent.change(screen.getByRole("combobox",{name:"Frequency"}),{target:{value:"custom"}});
-      const days=screen.getByRole("spinbutton",{name:"Every N Days"});
+      const days=await screen.findByRole("spinbutton",{name:"Every N Days"});
       for(const invalid of ["0","731"]){
         fireEvent.change(days,{target:{value:invalid}});
         fireEvent.click(screen.getByRole("button",{name:"Set Frequency"}));

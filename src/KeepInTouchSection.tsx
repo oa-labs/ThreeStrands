@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlarmClock, Check, CircleCheck, LoaderCircle } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { ContactProfile } from "./domain";
@@ -33,7 +33,16 @@ export function KeepInTouchSection({ profile, onChanged }: { profile: ContactPro
     const timer = setTimeout(() => setSaved(false), 2000);
     return () => clearTimeout(timer);
   }, [saved]);
+  // Re-sync the controls when the backend value changes (a different contact,
+  // or a reminder saved elsewhere). Skip the first run: state is already
+  // initialized from these same props above, so running it would be a no-op —
+  // except that effects flush asynchronously, so on a slow render it can land
+  // AFTER the user has already picked "Custom…", silently resetting the choice.
+  const syncedKey = useRef(`${profile.id}:${interval}`);
   useEffect(() => {
+    const key = `${profile.id}:${interval}`;
+    if (syncedKey.current === key) return;
+    syncedKey.current = key;
     setChoice(choiceFor(interval));
     setCustomDays(interval === null ? "" : String(interval));
     setError(null);
