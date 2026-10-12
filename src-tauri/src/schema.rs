@@ -2021,6 +2021,19 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
             );
             CREATE INDEX IF NOT EXISTS imap_search_pins_by_account
                 ON imap_search_pins(account_id);
+            -- A pin means nothing without its location. Every path that
+            -- removes a location (sync deletion, UIDVALIDITY reset, a local
+            -- move/delete/label removal, mailbox retirement, account purge)
+            -- drops its pin here, so no path can leave an orphan pin that
+            -- counts against MAX_SEARCH_PINS forever. Location upserts use
+            -- ON CONFLICT DO UPDATE, which never fires a DELETE trigger.
+            CREATE TRIGGER IF NOT EXISTS imap_search_pins_follow_location
+                AFTER DELETE ON imap_locations
+                BEGIN
+                    DELETE FROM imap_search_pins
+                     WHERE account_id = OLD.account_id AND mailbox = OLD.mailbox
+                       AND uidvalidity = OLD.uidvalidity AND uid = OLD.uid;
+                END;
             PRAGMA user_version=70;",
         )
         .map_err(error)?;
@@ -2252,7 +2265,8 @@ mod tests {
         super::migrate(&mut upgraded).unwrap();
         upgraded
             .execute_batch(
-                "DROP INDEX imap_search_pins_by_account;
+                "DROP TRIGGER imap_search_pins_follow_location;
+                 DROP INDEX imap_search_pins_by_account;
                  DROP TABLE imap_search_pins;
                  INSERT INTO imap_locations
                      (account_id, mailbox, uidvalidity, uid, message_id, flags_json, modseq)

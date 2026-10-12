@@ -339,6 +339,9 @@ pub enum AcquireError {
         expected: i64,
         found: i64,
     },
+    /// The mailbox is outside this run's sync set, so a pin there would never
+    /// be refreshed or released. Nothing is fetched or written.
+    MailboxNotSynced { mailbox: String },
     /// Any other error from the EXAMINE / fetch / commit path.
     Provider(ProviderError),
 }
@@ -354,6 +357,9 @@ impl std::fmt::Display for AcquireError {
                 f,
                 "UIDVALIDITY mismatch acquiring {mailbox}: expected {expected}, server reports {found}"
             ),
+            AcquireError::MailboxNotSynced { mailbox } => {
+                write!(f, "{mailbox} is not synced, so search results there cannot be kept")
+            }
             AcquireError::Provider(error) => write!(f, "{error}"),
         }
     }
@@ -369,7 +375,8 @@ impl From<AcquireError> for ProviderError {
     fn from(error: AcquireError) -> Self {
         match error {
             AcquireError::Provider(inner) => inner,
-            other @ AcquireError::UidValidityMismatch { .. } => {
+            other @ (AcquireError::UidValidityMismatch { .. }
+            | AcquireError::MailboxNotSynced { .. }) => {
                 ProviderError::InvalidOperation(other.to_string())
             }
         }
@@ -1398,6 +1405,16 @@ impl ImapProvider {
     ) -> Result<AcquireOutcome, AcquireError> {
         let mailbox = entry.mailbox.as_str();
 
+        // 0. Only a mailbox the sync visits can hold a pin: TTL release, flag
+        // refresh and expunge detection all run inside that mailbox's sync
+        // round. A pin in a mailbox outside the sync cap would never be
+        // maintained or released, so refuse before any network work.
+        if !entry.synced_now {
+            return Err(AcquireError::MailboxNotSynced {
+                mailbox: mailbox.to_string(),
+            });
+        }
+
         // 1. EXAMINE (read-only).
         let status = session.examine(mailbox).await.map_err(AcquireError::Provider)?;
         let server_uidvalidity = status.uid_validity.unwrap_or(0) as i64;
@@ -1505,8 +1522,18 @@ impl ImapProvider {
             ..Default::default()
         };
 
-        // Pin every UID we are keeping (refresh or newly accepted), at `now`.
-        for &uid in &pinned_now {
+        // Pin every UID we are keeping (refresh or newly accepted), at `now`,
+        // but ONLY if it has a location after this round: an already-local
+        // UID, or one the fetch actually returned. A UID expunged between the
+        // caller's SEARCH and this FETCH yields no location, and a pin without
+        // a location is never released by the delta (which only deletes local
+        // UIDs), so it would sit in the cap until its TTL.
+        let located_after: std::collections::BTreeSet<u32> = already_local
+            .iter()
+            .copied()
+            .chain(round.locations.iter().map(|l| l.uid as u32))
+            .collect();
+        for &uid in pinned_now.intersection(&located_after) {
             round
                 .pin_upserts
                 .push((mailbox.to_string(), server_uidvalidity, uid as i64, now));
@@ -9183,6 +9210,91 @@ mod tests {
             assert!(store.pinned_uids("Archive", 50).unwrap().is_empty());
         }
 
+        /// Review fix: a mailbox outside the sync set would never refresh or
+        /// release a pin, so acquiring into it is refused with no writes.
+        #[tokio::test]
+        async fn acquire_refuses_a_mailbox_outside_the_sync_set() {
+            let mut mb = FakeMailbox::new(100);
+            mb.add_to("Archive", 50, &["\\Seen"], &message("<a1@x>", "Old", ""));
+            let mailbox = Arc::new(Mutex::new(mb));
+            let (provider, store) = provider_window(mailbox.clone(), 1);
+
+            let mut archive = entry_for(&provider, "Archive");
+            archive.synced_now = false;
+            let mut session = session_for(&mailbox).await;
+            let result = provider
+                .acquire_uids(session.as_mut(), &archive, &[1], 50)
+                .await;
+            let _ = session.logout().await;
+            assert!(
+                matches!(result, Err(AcquireError::MailboxNotSynced { .. })),
+                "expected MailboxNotSynced, got {result:?}"
+            );
+            assert!(store.locations_in_mailbox("Archive").unwrap().is_empty());
+            assert_eq!(store.search_pin_count().unwrap(), 0);
+        }
+
+        /// Review fix: a requested UID the server no longer has (expunged
+        /// between the caller's SEARCH and this FETCH) gets no location, so it
+        /// must get no pin either. The sibling UID that does exist is pinned.
+        #[tokio::test]
+        async fn acquire_pins_only_uids_that_ended_up_located() {
+            let mut mb = FakeMailbox::new(100);
+            mb.add_to("Archive", 50, &["\\Seen"], &message("<a1@x>", "Old", ""));
+            mb.add_to("Archive", 50, &["\\Seen"], &message("<a2@x>", "New", ""));
+            let mailbox = Arc::new(Mutex::new(mb));
+            let (provider, store) = provider_window(mailbox.clone(), 1);
+
+            let archive = entry_for(&provider, "Archive");
+            let mut session = session_for(&mailbox).await;
+            provider
+                .acquire_uids(session.as_mut(), &archive, &[1, 99], 50)
+                .await
+                .expect("acquire");
+            let _ = session.logout().await;
+            let located: Vec<i64> = store
+                .locations_in_mailbox("Archive")
+                .unwrap()
+                .iter()
+                .map(|l| l.uid)
+                .collect();
+            assert_eq!(located, vec![1], "the vanished UID 99 has no location");
+            assert_eq!(store.pinned_uids("Archive", 50).unwrap(), vec![1]);
+            assert_eq!(store.search_pin_count().unwrap(), 1, "no orphan pin for 99");
+        }
+
+        /// Review fix: every path that removes a location removes its pin, so
+        /// a local move/delete (`delete_location`) or a dropped mailbox
+        /// (`drop_mailbox_locations`, also used on retirement-style resets)
+        /// cannot leave a pin counting against the cap.
+        #[tokio::test]
+        async fn removing_a_pinned_location_by_any_path_drops_its_pin() {
+            let mut mb = FakeMailbox::new(100);
+            for uid in 1..=3u32 {
+                mb.add_to("Archive", 50, &["\\Seen"], &message(&format!("<a{uid}@x>"), "m", ""));
+            }
+            let mailbox = Arc::new(Mutex::new(mb));
+            let (provider, store) = provider_window(mailbox.clone(), 1);
+            let archive = entry_for(&provider, "Archive");
+
+            let mut session = session_for(&mailbox).await;
+            provider
+                .acquire_uids(session.as_mut(), &archive, &[1, 2, 3], 50)
+                .await
+                .expect("acquire");
+            let _ = session.logout().await;
+            assert_eq!(store.pinned_uids("Archive", 50).unwrap(), vec![1, 2, 3]);
+
+            // A local write path removes one location.
+            store.delete_location("Archive", 50, 1).unwrap();
+            assert_eq!(store.pinned_uids("Archive", 50).unwrap(), vec![2, 3]);
+
+            // Dropping the whole mailbox's locations drops the rest.
+            store.drop_mailbox_locations("Archive").unwrap();
+            assert!(store.pinned_uids("Archive", 50).unwrap().is_empty());
+            assert_eq!(store.search_pin_count().unwrap(), 0);
+        }
+
         /// (required) Cap: below / exact / above, with over-cap UIDs reported
         /// and existing pins untouched. Uses a tiny injected cap via seeding
         /// the pin table directly, so no 2,000-message fixture is needed.
@@ -9429,47 +9541,65 @@ mod tests {
             #[tokio::test]
             async fn live_acquire_out_of_window_uid_survives_two_syncs() {
                 let Some(config) = gated() else { return };
-                let (provider, store) = live_provider(config);
+                let (mut provider, store) = live_provider(config);
+                // Window of ONE in every mailbox, so the oldest UID of any
+                // mailbox with two or more messages is genuinely out of window
+                // and would be evicted by the next sweep without its pin.
+                provider.limits.mailbox_window = 1;
+                provider.folder_window_override = Some(1);
                 let db = store.database();
 
                 // Baseline so the catalog + INBOX are known.
                 let _ = provider.baseline_cursor().await.expect("baseline");
 
-                // Find a mailbox with mail to acquire an old UID from. The
-                // harness seeds INBOX/Sent/Archive; pick Archive if present,
-                // else INBOX.
+                // INBOX: the harness seeds several messages there and it is an
+                // EVICTING mailbox, so with a window of one its oldest UID is
+                // out of window. (Archive holds a single seeded message.)
                 let plan = provider.build_sync_plan().expect("plan");
                 let target = plan
                     .entries
                     .iter()
-                    .find(|e| e.mailbox == "Archive")
-                    .or_else(|| plan.entries.iter().find(|e| e.is_inbox))
+                    .find(|e| e.is_inbox)
                     .cloned()
-                    .expect("a synced mailbox to acquire from");
+                    .expect("INBOX is always planned");
 
                 // EXAMINE to learn the UIDVALIDITY and an existing UID.
                 let mut session = provider.open_session().await.expect("session");
                 let status = session.examine(&target.mailbox).await.expect("examine");
                 let uidvalidity = status.uid_validity.unwrap_or(0) as i64;
                 let all = session.uid_search("ALL").await.expect("search");
-                let Some(&uid) = all.first() else {
-                    let _ = session.logout().await;
-                    eprintln!("skipping: no mail seeded in {}", target.mailbox);
-                    return;
-                };
+                assert!(
+                    all.len() >= 2,
+                    "{} needs two or more seeded messages for an out-of-window UID",
+                    target.mailbox
+                );
+                let uid = *all.iter().min().unwrap();
                 let outcome = provider
                     .acquire_uids(session.as_mut(), &target, &[uid], uidvalidity)
                     .await
                     .expect("acquire");
                 let _ = session.logout().await;
+                // Drop the session NOW: it owns one of the account's two
+                // connection leases, and holding it makes the sync below wait
+                // forever for a slot.
+                drop(session);
                 assert_eq!(outcome.skipped_over_cap, 0);
                 assert!(store.is_pinned(&target.mailbox, uidvalidity, uid as i64).unwrap());
 
-                // Two syncs: the pinned hit must survive both.
+                // Two syncs: the pinned out-of-window hit must survive both,
+                // as a LOCATION (not just a pin row).
                 for _ in 0..2 {
                     crate::sync::sync_with(db.as_ref(), USER, &provider)
                         .await
                         .unwrap();
+                    assert!(
+                        store
+                            .locations_in_mailbox(&target.mailbox)
+                            .unwrap()
+                            .iter()
+                            .any(|l| l.uid == uid as i64),
+                        "the acquired out-of-window location survives sync"
+                    );
                     assert!(
                         store.is_pinned(&target.mailbox, uidvalidity, uid as i64).unwrap(),
                         "the acquired pin survives sync"
