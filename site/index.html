@@ -3,15 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ThreeStrands — Keyboard-First, Local-First Email for Gmail</title>
-    <meta name="description" content="ThreeStrands is a source-available, keyboard-first desktop email client for Gmail. Mail, tasks, and your calendar in one fast workflow — with no account and no backend." />
+    <title>ThreeStrands — Keyboard-First, Local-First Email for Gmail and IMAP</title>
+    <meta name="description" content="ThreeStrands is a source-available, keyboard-first desktop email client for Gmail and IMAP. Mail, conversation-linked tasks, and Google Calendar in one local-first workflow for macOS and Linux." />
     <meta name="theme-color" content="#1f1b5c" />
     <meta name="color-scheme" content="light dark" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta property="og:type" content="website" />
     <meta property="og:title" content="ThreeStrands — Email at the Speed of Your Keyboard" />
-    <meta property="og:description" content="A source-available, keyboard-first, local-first email client for Gmail. No account, no backend, no middleman." />
+    <meta property="og:description" content="Source-available, keyboard-first email for Gmail and IMAP. Keep tasks, people, and Google Calendar beside your mail, with no ThreeStrands account required." />
     <meta property="og:url" content="%SITE_URL%" />
     <meta property="og:image" content="%OG_IMAGE%" />
     <meta property="og:image:width" content="1200" />
@@ -68,8 +68,9 @@
           <p class="badge"><span class="badge-dot" aria-hidden="true"></span>v%APP_VERSION% · Early Release</p>
           <h1 id="hero-title" class="display">Email at the Speed of <em>Your Keyboard</em></h1>
           <p class="lead">
-            ThreeStrands is a keyboard-first, local-first desktop email client for Gmail.
-            Your mail lives on your computer — no ThreeStrands account, no backend, no middleman.
+            ThreeStrands brings Gmail and IMAP accounts, conversation-linked tasks, and Google Calendar
+            into one fast desktop workflow. Work from your keyboard, keep context beside your mail,
+            and connect directly to your providers — with no ThreeStrands account required.
           </p>
           <div class="cta-row">
             <a class="button button-primary" href="https://github.com/oa-labs/dispatch/releases/latest" rel="noopener" data-download>
@@ -77,7 +78,7 @@
             </a>
             <a class="button button-ghost" href="#features">Explore Features<ts-icon name="arrow-right"></ts-icon></a>
           </div>
-          <p class="fine-print"><a href="https://github.com/oa-labs/dispatch" rel="noopener">Source available</a> · Gmail today · Built with Rust and Tauri</p>
+          <p class="fine-print"><a href="https://github.com/oa-labs/dispatch" rel="noopener">Source available</a> · Gmail + IMAP · macOS + Linux</p>
         </div>
 
         <div class="hero-stage container">
@@ -134,7 +135,7 @@
               <svg class="strand-glyph" viewBox="0 0 120 30" aria-hidden="true" focusable="false"><path d="M6 15 q18 -16 36 0 t36 0 t36 0" /></svg>
               <p class="strand-label">Mail</p>
               <h3>A Calm, Fast Inbox</h3>
-              <p>Merge every Gmail account into one view, split high-volume mail into its own tabs, and triage in batches with undo.</p>
+              <p>Bring Gmail and IMAP accounts into one view, split high-volume mail into its own tabs, and triage in batches with undo.</p>
             </article>
             <article class="strand-card" style="--strand: var(--strand-tasks-ink); --strand-ink: var(--strand-tasks-ink)">
               <svg class="strand-glyph" viewBox="0 0 120 30" aria-hidden="true" focusable="false"><path d="M6 15 q18 -16 36 0 t36 0 t36 0" /></svg>
@@ -146,7 +147,7 @@
               <svg class="strand-glyph" viewBox="0 0 120 30" aria-hidden="true" focusable="false"><path d="M6 15 q18 -16 36 0 t36 0 t36 0" /></svg>
               <p class="strand-label">Schedule</p>
               <h3>Your Day, Beside Your Mail</h3>
-              <p>See your day or week from Google Calendar, find free time against your working hours, and create an event or put available times in a reply.</p>
+              <p>See your day or week from Google Calendar, find free time against your working hours, and create or edit events, answer invitations, or put available times in a reply.</p>
             </article>
           </div>
         </div>
@@ -213,13 +214,14 @@
           <header class="section-head">
             <p class="eyebrow">A Closer Look</p>
             <h2 id="tour-title" class="display-2">Everything Where You Need It</h2>
+            <p class="section-lead">Connect Gmail or an IMAP/SMTP account, including Proton Mail through Proton Mail Bridge. Google Calendar connects separately and works alongside either mail provider. CalDAV and CardDAV connections are not yet available.</p>
           </header>
           <div class="tour-grid">
             <ol class="tour-steps" data-tour-steps>
               <li class="tour-step" data-step="inbox">
                 <p class="step-count">01</p>
                 <h3>One Inbox for Every Account</h3>
-                <p>Read and triage multiple Gmail accounts in one merged view, or focus on one. Archive, star, label, and process conversations in batches, with undo for every reversible action.</p>
+                <p>Read and triage Gmail and IMAP accounts in one merged view, or focus on one. Give accounts nicknames and colors so work and personal mail stay easy to recognize. Archive, star, label, and process conversations in batches, with undo for every reversible action.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="inbox" sizes="92vw" alt="The merged inbox with conversations from a work and a personal account."></ts-shot></div></div>
               </li>
               <li class="tour-step" data-step="split-inbox">
@@ -230,8 +232,9 @@
               </li>
               <li class="tour-step" data-step="reply">
                 <p class="step-count">03</p>
-                <h3>Compose Without Friction</h3>
-                <p>Rich text, attachments, and reusable snippets. Every send gets a ten-second undo window, and a durable outbox survives restarts.</p>
+                <h3>Write with the Context You Need</h3>
+                <p>Write with rich text, inline images, attachments, and reusable snippets. Keep recipient history, shared files, related tasks, meetings, and available times beside your draft. Recipient suggestions draw on saved contacts and correspondence, and groups expand into individual recipients.</p>
+                <p>Local checks flag missing attachments, likely address typos, account mismatches, and group addresses exposed in To or Cc. Optional AI draft review offers specific feedback against the outcome you want. Send now includes a ten-second undo window, and a durable outbox survives restarts.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="reply" sizes="92vw" alt="An inline reply being written beneath the conversation it answers."></ts-shot></div></div>
               </li>
               <li class="tour-step" data-step="tasks">
@@ -255,19 +258,20 @@
               <li class="tour-step" data-step="calendar-week">
                 <p class="step-count">07</p>
                 <h3>Plan the Week</h3>
-                <p>A full week view across the calendars you choose. Open a time slot or select New event to start planning without leaving your mail.</p>
+                <p>A full week view across the Google calendars you choose. Customize calendar colors, show or hide accounts, and open a time slot or select New event to start planning without leaving your mail.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="calendar-week" sizes="92vw" alt="A week calendar view with meetings, focus time, and an all-day launch event."></ts-shot></div></div>
               </li>
               <li class="tour-step" data-step="calendar-create">
                 <p class="step-count">08</p>
                 <h3>From Conversation to Calendar</h3>
-                <p>Create events with invitees from the week view or a reviewed meeting suggestion. Check the title, time, and calendar before creating.</p>
+                <p>Create events with invitees from the week view or a reviewed meeting suggestion. Check the title, time, and calendar before creating. Edit or delete events you manage, and answer invitations with Yes, No, or Maybe.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="calendar-create" sizes="92vw" alt="A new calendar event with a title, time, calendar, and invitee, awaiting Create event."></ts-shot></div></div>
               </li>
               <li class="tour-step" data-step="contacts">
                 <p class="step-count">09</p>
                 <h3>People, in Context</h3>
-                <p>Browse, add, and edit contacts with multiple addresses, notes, and correspondence history. The conversation context panel brings people, related tasks, and meetings beside your mail. Optional AI enrichment suggests profile details for you to apply.</p>
+                <p>Browse, add, and edit contacts with multiple addresses, notes, correspondence history, and shared files. Organize people into groups, remember birthdays and recurring Keep in Touch reminders, and bring your address book with CSV or vCard import and export.</p>
+                <p>Merge selected profiles to bring someone's addresses and history together, and control which addresses appear in recipient suggestions. The conversation context panel keeps people, related tasks, and meetings beside your mail. Optional AI enrichment suggests profile details for you to apply.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="contacts" sizes="92vw" alt="An editable contact profile with role, company, multiple addresses, notes, and recent emails."></ts-shot></div></div>
               </li>
             </ol>
@@ -297,9 +301,9 @@
         <div class="container">
           <header class="section-head centered">
             <p class="eyebrow">Local-First</p>
-            <h2 id="privacy-title" class="display-2">Sealed on Your Device</h2>
+            <h2 id="privacy-title" class="display-2">Your Mail, Under Your Control</h2>
             <p class="section-lead">
-              ThreeStrands talks to Gmail directly. There's no ThreeStrands account to create and no
+              ThreeStrands connects directly to your mail providers. There's no ThreeStrands account to create and no
               ThreeStrands server in the middle — so there's nothing of yours for us to store, scan, or lose.
             </p>
             <p class="section-lead">
@@ -310,7 +314,7 @@
             </p>
           </header>
 
-          <div class="flow" role="img" aria-label="Diagram: ThreeStrands on your computer connects directly to Gmail. There are no ThreeStrands servers in between.">
+          <div class="flow" role="img" aria-label="Diagram: ThreeStrands on your computer connects directly to Gmail or your IMAP/SMTP server. There are no ThreeStrands servers in between.">
             <div class="flow-node">
               <ts-icon name="laptop"></ts-icon>
               <strong>Your Computer</strong>
@@ -319,8 +323,8 @@
             <div class="flow-link"><span class="flow-wire"></span><span class="flow-pulse"></span></div>
             <div class="flow-node">
               <ts-icon name="mail"></ts-icon>
-              <strong>Gmail</strong>
-              <span>Google's API, over TLS</span>
+              <strong>Your Mail Provider</strong>
+              <span>Gmail API or IMAP/SMTP, over TLS</span>
             </div>
             <div class="flow-none">
               <ts-icon name="server-off"></ts-icon>
@@ -343,28 +347,28 @@
                 <div class="stamp-inner">
                   <ts-icon name="wifi-off"></ts-icon>
                   <h3>Works Offline</h3>
-                  <p>Mail is cached in SQLite for instant search and reading. Changes and sends queue locally and resume when you reconnect.</p>
+                  <p>Mail is cached in SQLite for instant search and reading. Changes and immediate sends queue locally and resume when you reconnect. Missed scheduled sends wait for your review.</p>
                 </div>
               </li>
               <li class="stamp" style="--stamp: var(--strand-schedule-ink)">
                 <div class="stamp-inner">
                   <ts-icon name="key-round"></ts-icon>
                   <h3>Keys in Your Keychain</h3>
-                  <p>OAuth credentials live in your operating system's credential store — never in a plain file, never in someone else's cloud.</p>
+                  <p>Google sign-in tokens and IMAP/SMTP passwords live in your operating system's credential store. Mail credentials never enter settings exports or encrypted sync.</p>
                 </div>
               </li>
               <li class="stamp" style="--stamp: var(--strand-tasks-ink)">
                 <div class="stamp-inner">
                   <ts-icon name="file-lock-2"></ts-icon>
                   <h3>Encrypted Settings Export</h3>
-                  <p>Move preferences, account display details, saved contacts, snippets, and Split Inboxes with a password-encrypted file. Mail, drafts, queued sends, and credentials stay behind.</p>
+                  <p>Move preferences, account display details, saved contacts and groups, snippets, and Split Inboxes with a password-encrypted file. Mail, drafts, queued sends, and credentials stay behind.</p>
                 </div>
               </li>
               <li class="stamp" style="--stamp: var(--strand-mail-ink)">
                 <div class="stamp-inner">
                   <ts-icon name="folder-sync"></ts-icon>
                   <h3>Encrypted Sync</h3>
-                  <p>Sync tasks, goals, saved contacts, snippets, Split Inboxes, portable preferences, and account display details with end-to-end encryption through a shared folder, S3-compatible storage, or IPFS. Mail, drafts, queued sends, and provider credentials stay on each device.</p>
+                  <p>Sync tasks, goals, saved contacts and groups, snippets, Split Inboxes, portable preferences, and account display details with end-to-end encryption through a shared folder, S3-compatible storage, or IPFS. Scheduled-send summaries share the account, subject, timing, sending computer, and last reported status. Mail, drafts, queued send payloads, and provider credentials stay on each device. Scheduled bodies, recipients, and attachments never sync.</p>
                 </div>
               </li>
             </ul>
@@ -379,7 +383,7 @@
             <p class="eyebrow">Optional AI</p>
             <h2 id="ai-title" class="display-2">Assistance, with <em>You</em> in Control</h2>
             <p class="section-lead">
-              Bring your own provider and API key for summaries, drafting help, contact enrichment, and suggested tasks or meetings.
+              Bring your own provider and API key for summaries, drafting help, draft review, contact enrichment, and suggested tasks or meetings.
               Ask questions about a conversation, search other mail when you choose, or share selected readable attachments.
               You review and apply tasks, calendar events, contact changes, and drafts. You choose when to send.
             </p>
@@ -389,7 +393,8 @@
               <li><ts-icon name="lock"></ts-icon>AI starts off. Set up your provider and key, then enable the features you want.</li>
             </ul>
             <p class="ai-note">Proactive briefs are a separate opt-in: when enabled, qualifying conversations are sent to your provider after you stay on them. Contact enrichment reviews correspondence with that person when you request it.</p>
-            <p class="ai-note">Track requests, tokens, and estimated costs in settings. An optional fast model handles summaries, reply drafts, and contact enrichment while your main model handles briefs, suggestions, and chat.</p>
+            <p class="ai-note">Draft review starts with a preview of the subject, written text, and optional goal you choose to share. Recipient fields, separately stored quoted history, and attachments are excluded. Review suggested wording before applying it; revisions can be undone.</p>
+            <p class="ai-note">Track requests, tokens, and estimated costs in settings. An optional fast model handles summaries, reply drafts, and contact enrichment while your main model handles draft review, briefs, suggestions, and chat.</p>
           </div>
           <div class="ai-screenshots">
             <figure>
@@ -412,11 +417,14 @@
             <h2 id="details-title" class="display-2">The Details Add Up</h2>
           </header>
           <ul class="detail-grid">
-            <li><ts-icon name="undo-2"></ts-icon><h3>Undo Send</h3><p>Ten seconds to change your mind, on every message.</p></li>
+            <li><ts-icon name="undo-2"></ts-icon><h3>Undo Send</h3><p>Send now gives you ten seconds to change your mind.</p></li>
+            <li id="send-later"><ts-icon name="clock"></ts-icon><h3>Send Later</h3><p>Pick a date, time, and timezone. Reschedule or return to draft before sending starts. With encrypted sync enabled, other computers can see the schedule and its last reported status.</p><p>Sends from the computer where you scheduled it. ThreeStrands must be running, and that computer must be awake, online, and authorized. Missed times wait for your review; another computer never takes over.</p></li>
             <li><ts-icon name="send"></ts-icon><h3>Durable Outbox</h3><p>Queued mail survives restarts and flaky connections.</p></li>
             <li><ts-icon name="list-checks"></ts-icon><h3>Batch Triage</h3><p>Select many, act once, and undo if you need to.</p></li>
-            <li><ts-icon name="search"></ts-icon><h3>Local + Gmail Search</h3><p>Instant local results that reach back into Gmail for older mail.</p></li>
-            <li><ts-icon name="users"></ts-icon><h3>Multiple Accounts</h3><p>Every Gmail account in one merged inbox, color-coded.</p></li>
+            <li><ts-icon name="search"></ts-icon><h3>Local + Provider Search</h3><p>Search cached mail instantly, and reach beyond the cache through your connected provider where supported.</p></li>
+            <li><ts-icon name="users"></ts-icon><h3>Multiple Accounts</h3><p>Gmail and IMAP accounts in one merged inbox, with nicknames and colors to tell them apart.</p></li>
+            <li><ts-icon name="shield-check"></ts-icon><h3>Before You Send</h3><p>Local checks flag likely mistakes in attachments, recipients, and sender accounts. Review them and decide what to change; no AI required.</p></li>
+            <li><ts-icon name="mail"></ts-icon><h3>Open Mail and Invitations</h3><p>Mailto links open a draft. On macOS, choose ThreeStrands as your default mail app and open .ics invitations to review or add to Google Calendar.</p></li>
             <li><ts-icon name="scroll-text"></ts-icon><h3>Snippets</h3><p>Reusable replies, a keystroke away.</p></li>
             <li><ts-icon name="mail-x"></ts-icon><h3>Unsubscribe</h3><p>Leave a mailing list in one step, with a confirmation first.</p></li>
             <li><ts-icon name="fold-vertical"></ts-icon><h3>Clean Threads</h3><p>Repeated quoted replies fold away, and search skips them too.</p></li>
@@ -435,12 +443,12 @@
             <p class="section-lead">Directions for unfinished work — not dated commitments. Everything above ships today; everything here is next.</p>
           </header>
           <ol class="roadmap-list">
-            <li><h3>Snooze and Scheduled Sending</h3><p>Put a conversation aside until a chosen time, and queue a message for later delivery.</p></li>
+            <li><h3>Snooze</h3><p>Put a conversation aside and bring it back at a chosen time.</p></li>
             <li><h3>Sending Aliases and Signatures</h3><p>Send from verified Gmail aliases, with a signature for each identity.</p></li>
             <li><h3>Drafts Across Devices</h3><p>Start a reply on one computer and finish it on another, with clear controls over draft synchronization.</p></li>
-            <li><h3>Connected Address Books</h3><p>Import existing Google Contacts and keep them connected to your local profiles, notes, and correspondence history.</p></li>
+            <li><h3>Connected Address Books</h3><p>Keep Google Contacts and CardDAV address books connected with ongoing synchronization. CSV and vCard import and export are available today.</p></li>
             <li><h3>Smarter Inbox Rules</h3><p>Inspectable, user-controlled classification beyond domain, label, and address rules.</p></li>
-            <li><h3>More Mail Providers</h3><p>IMAP and SMTP, then Microsoft 365. Gmail is the only provider today.</p></li>
+            <li><h3>Microsoft 365</h3><p>Add a direct Microsoft 365 integration alongside the Gmail and IMAP/SMTP connections available today.</p></li>
             <li><h3>Encrypted Sync Reliability</h3><p>Keep hardening encrypted sync across devices and app versions, especially upgrades and interrupted joins.</p></li>
             <li><h3>Shared and Mobile Workflows</h3><p>A mobile companion and shared conversations or drafts, where demand justifies them.</p></li>
           </ol>
@@ -467,7 +475,7 @@
             </a>
             <a class="button button-ghost" href="privacy.html">Read the Privacy Policy<ts-icon name="arrow-right"></ts-icon></a>
           </div>
-          <p class="fine-print">Gmail is the only supported mail provider today. Builds are published on GitHub Releases.</p>
+          <p class="fine-print">Gmail and IMAP/SMTP · macOS and Linux · Builds on GitHub Releases. Google Calendar connects separately.</p>
         </div>
       </section>
     </main>

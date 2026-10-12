@@ -67,15 +67,67 @@ test.describe("feature claims", () => {
     await expect(tour).toContainText("mark it achieved, drop it, or carry it forward");
     const roadmap = page.locator("#roadmap");
     await expect(roadmap.getByRole("heading", { level: 3 })).toHaveText([
-      "Snooze and Scheduled Sending", "Sending Aliases and Signatures", "Drafts Across Devices",
-      "Connected Address Books", "Smarter Inbox Rules", "More Mail Providers",
+      "Snooze", "Sending Aliases and Signatures", "Drafts Across Devices",
+      "Connected Address Books", "Smarter Inbox Rules", "Microsoft 365",
       "Encrypted Sync Reliability", "Shared and Mobile Workflows",
     ]);
     await expect(roadmap).toContainText("verified Gmail aliases");
     await expect(roadmap).toContainText("clear controls over draft synchronization");
-    await expect(roadmap).toContainText("Import existing Google Contacts");
-    await expect(roadmap).toContainText("IMAP and SMTP, then Microsoft 365");
+    await expect(roadmap).toContainText("Google Contacts and CardDAV address books connected with ongoing synchronization");
+    await expect(roadmap).toContainText("CSV and vCard import and export are available today");
+    await expect(roadmap).toContainText("Gmail and IMAP/SMTP connections available today");
+    await expect(roadmap).not.toContainText(/scheduled sending|Gmail is the only/i);
     await expect(roadmap).not.toContainText(/\bbeta\b/i);
+  });
+
+  test("describes mail compatibility separately from calendars in copy and metadata", async ({ page }) => {
+    await page.goto("./");
+    await expect(page).toHaveTitle(/Gmail and IMAP/);
+    for (const selector of ['meta[name="description"]', 'meta[property="og:description"]']) {
+      await expect(page.locator(selector)).toHaveAttribute("content", /Gmail and IMAP/);
+    }
+    await expect(page.locator(".hero .fine-print")).toContainText("Gmail + IMAP · macOS + Linux");
+    const tour = page.locator("#features");
+    await expect(tour).toContainText("Proton Mail through Proton Mail Bridge");
+    await expect(tour).toContainText("Google Calendar connects separately and works alongside either mail provider");
+    await expect(tour).toContainText("CalDAV and CardDAV connections are not yet available");
+    await expect(tour.locator('[data-step="inbox"]')).toContainText("Gmail and IMAP accounts");
+    await expect(page.locator(".flow")).toHaveAttribute("aria-label", /Gmail or your IMAP\/SMTP server/);
+    await expect(page.locator(".finale .fine-print")).toContainText("Gmail and IMAP/SMTP");
+    await expect(page.locator("main")).not.toContainText(/Gmail today|Gmail is the only|every Gmail account/i);
+  });
+
+  test("keeps scheduled delivery ownership and missed-time requirements beside the feature", async ({ page }) => {
+    await page.goto("./");
+    const scheduled = page.locator("#send-later");
+    await expect(scheduled.getByRole("heading")).toHaveText("Send Later");
+    for (const claim of [
+      "date, time, and timezone", "Reschedule or return to draft before sending starts",
+      "With encrypted sync enabled, other computers can see the schedule and its last reported status",
+      "Sends from the computer where you scheduled it", "ThreeStrands must be running",
+      "awake, online, and authorized", "Missed times wait for your review", "another computer never takes over",
+    ]) await expect(scheduled).toContainText(claim);
+    await expect(page.locator('[data-step="reply"]')).toContainText("Send now includes a ten-second undo window");
+    await expect(page.locator(".stamps")).toContainText("Missed scheduled sends wait for your review");
+    await expect(page.locator("main")).not.toContainText(/every send gets|on every message/i);
+  });
+
+  test("presents local compose checks, relationships, and calendar management as shipped", async ({ page }) => {
+    await page.goto("./");
+    const compose = page.locator('[data-step="reply"]');
+    await expect(compose).toContainText("recipient history, shared files, related tasks, meetings, and available times");
+    await expect(compose).toContainText("Local checks flag missing attachments, likely address typos, account mismatches");
+    await expect(compose).toContainText("group addresses exposed in To or Cc");
+    await expect(compose).toContainText("Optional AI draft review");
+    const contacts = page.locator('[data-step="contacts"]');
+    for (const claim of ["groups", "birthdays", "Keep in Touch", "CSV or vCard import and export", "Merge selected profiles", "recipient suggestions"]) {
+      await expect(contacts).toContainText(claim);
+    }
+    await expect(page.locator('[data-step="calendar-week"]')).toContainText("Customize calendar colors, show or hide accounts");
+    await expect(page.locator('[data-step="calendar-create"]')).toContainText("Edit or delete events you manage");
+    await expect(page.locator('[data-step="calendar-create"]')).toContainText("Yes, No, or Maybe");
+    await expect(page.locator(".detail-grid")).toContainText("no AI required");
+    await expect(page.locator(".detail-grid")).toContainText("On macOS, choose ThreeStrands as your default mail app");
   });
 
   test("explains AI activation, sharing choices, and reviewed actions", async ({ page }) => {
@@ -89,6 +141,9 @@ test.describe("feature claims", () => {
     await expect(ai).toContainText("You review and apply tasks, calendar events, contact changes, and drafts. You choose when to send.");
     await expect(ai).toContainText("estimated costs");
     await expect(ai).toContainText("optional fast model");
+    await expect(ai).toContainText("preview of the subject, written text, and optional goal");
+    await expect(ai).toContainText("Recipient fields, separately stored quoted history, and attachments are excluded");
+    await expect(ai).toContainText("Review suggested wording before applying it; revisions can be undone");
     for (const scene of ["thread-assist", "thread-chat"]) {
       const shot = ai.locator(`picture:has(img[src*="${scene}-"])`);
       await expect(shot).toHaveCount(1);
@@ -102,10 +157,13 @@ test.describe("feature claims", () => {
     for (const title of ["Encrypted Settings Export", "Encrypted Sync"]) {
       const stamp = stamps.locator("li").filter({ has: page.getByRole("heading", { name: new RegExp(title) }) });
       await expect(stamp).toContainText("saved contacts");
-      await expect(stamp).toContainText("Mail, drafts, queued sends");
+      await expect(stamp).toContainText("Mail, drafts, queued send");
     }
     const sync = stamps.locator("li").filter({ has: page.getByRole("heading", { name: "Encrypted Sync", exact: true }) });
     await expect(sync).toContainText("tasks, goals, saved contacts");
+    await expect(sync).toContainText("Scheduled-send summaries share the account, subject, timing, sending computer, and last reported status");
+    await expect(sync).toContainText("queued send payloads, and provider credentials stay on each device");
+    await expect(sync).toContainText("Scheduled bodies, recipients, and attachments never sync");
     await expect(stamps.locator(".tag")).toHaveCount(0);
     await expect(stamps).not.toContainText(/\bbeta\b/i);
   });
@@ -440,6 +498,22 @@ test.describe("legal pages", () => {
     await expect(body).toContainText("AI is off until you choose a provider");
     await expect(body).toContainText("Remote images in email are blocked by default");
     await expect(body).toContainText("Removing an account in the app does not revoke the grant with Google");
+    await expect(body.locator("#device")).toContainText("IMAP/SMTP passwords or app passwords");
+    await expect(body.locator("#connections")).toContainText("IMAP reads and synchronizes your mail and folders; SMTP submits outgoing messages");
+    await expect(body.locator("#connections")).toContainText("Bridge running on your computer");
+    await expect(body.locator("#connections")).toContainText("IMAP does not grant calendar or address-book access");
+    await expect(body.locator("#ai")).toContainText("draft subject, written text, and optional goal shown in the preview");
+    await expect(body.locator("#ai")).toContainText("Recipient fields, separately stored quoted history, and attachments are excluded");
+    await expect(body.locator("#ai")).toContainText("Checks for likely compose mistakes run locally without AI");
+    const sync = body.locator("#sync");
+    await expect(sync).toContainText("queued sends, scheduled-send summaries, or credentials");
+    await expect(sync).toContainText("Mail, drafts, queued send payloads, and credentials never sync");
+    await expect(sync).toContainText("sending account, subject, chosen time and timezone, owning computer, and last reported delivery status");
+    await expect(sync).toContainText("Message bodies, recipients (including Bcc), and attachments are excluded");
+    await expect(sync).toContainText("other computers show a read-only summary");
+    await expect(sync).toContainText("A stale summary does not establish whether delivery succeeded or failed");
+    await expect(sync).toContainText("CSV and vCard exports are unencrypted");
+    await expect(sync).toContainText("Recipient-suggestion suppression preferences stay on this computer");
     for (const scope of ["gmail.modify", "gmail.labels", "calendar.readonly", "calendar.events"]) {
       await expect(body.locator("code", { hasText: scope })).toHaveCount(1);
     }
