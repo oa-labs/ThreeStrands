@@ -166,6 +166,238 @@ impl SearchQuery {
     // express server-side, so the caller post-filters or keeps local results.
 }
 
+// ---------------------------------------------------------------------------
+// Phase 5 run 2a: operator-aware LOCAL search.
+//
+// The result list the user sees is a re-query of the LOCAL index
+// (`Database::search_threads`). Historically that function handed the raw
+// string to `fts_query`, so operators (`from:`, `is:unread`, dates, …) never
+// worked locally. This section is the NEUTRAL, provider-independent decision
+// of whether a parsed query engages the structured local path or the unchanged
+// legacy FTS path, plus the limits that path enforces and the day-comparison
+// it uses for dates. The SQL that executes a `StructuredLocalSearch` lives in
+// `db::search` (it needs the schema); everything here is pure and directly
+// tested. The parser and `render_gmail` above are deliberately NOT touched.
+// ---------------------------------------------------------------------------
+
+/// Most operator terms a structured local query may carry.
+///
+/// A real operator query is a handful of terms; dozens is a mistake or abuse.
+/// 16 is generous while bounding the SQL a structured query builds. This is
+/// the LOCAL analogue of `provider::imap::policy::MAX_SEARCH_TERMS` and is
+/// kept here, in the neutral query module, so the local path depends on no
+/// provider code. Over the limit is a typed rejection, never a silent clamp or
+/// a fall back to the legacy path. Counts only the terms the structured path
+/// acts on (operators + free text), i.e. every parsed term, since a structured
+/// query by construction has no `Raw`/`Label`/`In` term.
+pub const MAX_LOCAL_SEARCH_TERMS: usize = 16;
+
+/// Longest one user operator VALUE may be, in UTF-8 bytes (a `from:`, `to:`,
+/// `subject:` or free-text value). 256 bytes is far longer than any real
+/// search value while bounding one `LIKE`/`MATCH` parameter. Over the limit is
+/// a typed rejection, never truncated. (Date and state terms carry no
+/// user-controlled free value — a date is already parsed to a `NaiveDate` and
+/// a state is an enum — so only textual values are measured.)
+pub const MAX_LOCAL_SEARCH_TERM_BYTES: usize = 256;
+
+/// Why a structured local query was refused outright (NOT routed to legacy).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LocalSearchLimit {
+    /// Over [`MAX_LOCAL_SEARCH_TERMS`].
+    TooManyTerms,
+    /// Some operator/free-text value is over [`MAX_LOCAL_SEARCH_TERM_BYTES`].
+    TermTooLong,
+}
+
+impl LocalSearchLimit {
+    /// A plain, user-facing message. The caller surfaces this through the
+    /// `DbResult`/`DatabaseError` path, so the string is what the user reads.
+    pub fn message(self) -> &'static str {
+        match self {
+            // Deliberately the same plain sentence for both: the brief asks for
+            // "That search is too long." and the user does not need to know
+            // which internal bound they crossed.
+            LocalSearchLimit::TooManyTerms | LocalSearchLimit::TermTooLong => {
+                "That search is too long."
+            }
+        }
+    }
+}
+
+/// Reject a structured local query that is over a limit. Returns `Ok(())` when
+/// every bound holds (including exactly at it); the first bound crossed wins.
+/// This is checked only for a query already decided to be `Structured` — a
+/// legacy query is never length-limited here, since it takes the unchanged
+/// path with its own existing behaviour.
+pub fn check_local_search_limits(plan: &StructuredLocalSearch) -> Result<(), LocalSearchLimit> {
+    if plan.term_count() > MAX_LOCAL_SEARCH_TERMS {
+        return Err(LocalSearchLimit::TooManyTerms);
+    }
+    for value in plan.text_values() {
+        if value.len() > MAX_LOCAL_SEARCH_TERM_BYTES {
+            return Err(LocalSearchLimit::TermTooLong);
+        }
+    }
+    Ok(())
+}
+
+/// The decision of how a parsed query runs against the LOCAL index.
+///
+/// This is the core routing invariant of run 2a, as a pure function so it is
+/// table-testable in isolation. The structured path engages iff (1) at least
+/// one term is a recognised structured operator — `From`, `To`, `Subject`,
+/// `Date`, `State` or `HasAttachment` — AND (2) NO term is `Raw`, `Label` or
+/// `In`. Everything else — free text only, any `Raw` term (negation, `OR`,
+/// parentheses, unknown operators, unparseable colons), and any `label:`/`in:`
+/// query — is [`LocalSearchPlan::Legacy`] and takes the unchanged
+/// `fts_query(raw)` path with byte-identical results to before this run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LocalSearchPlan {
+    /// Run the pre-run-2a path unchanged on the raw query string.
+    Legacy,
+    /// Run the operator-aware structured path.
+    Structured(StructuredLocalSearch),
+}
+
+impl LocalSearchPlan {
+    /// Decide the plan from an already-parsed query.
+    pub fn from_query(query: &SearchQuery) -> Self {
+        let has_blocker = query.terms.iter().any(|term| {
+            matches!(
+                term,
+                QueryTerm::Raw(_) | QueryTerm::Label(_) | QueryTerm::In(_)
+            )
+        });
+        if has_blocker {
+            return LocalSearchPlan::Legacy;
+        }
+        let has_operator = query.terms.iter().any(|term| {
+            matches!(
+                term,
+                QueryTerm::From(_)
+                    | QueryTerm::To(_)
+                    | QueryTerm::Subject(_)
+                    | QueryTerm::Date { .. }
+                    | QueryTerm::State(_)
+                    | QueryTerm::HasAttachment
+            )
+        });
+        if !has_operator {
+            return LocalSearchPlan::Legacy;
+        }
+        LocalSearchPlan::Structured(StructuredLocalSearch {
+            terms: query.terms.clone(),
+        })
+    }
+
+    /// Parse `raw` and decide the plan in one step.
+    pub fn parse(raw: &str) -> Self {
+        Self::from_query(&SearchQuery::parse(raw))
+    }
+}
+
+/// A query routed to the structured local path. Holds the parsed terms (every
+/// one is `From`/`To`/`Subject`/`Date`/`State`/`HasAttachment`/`FreeText` by
+/// construction — never `Raw`/`Label`/`In`, which would have routed to
+/// legacy). The SQL builder in `db::search` consumes this.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StructuredLocalSearch {
+    pub terms: Vec<QueryTerm>,
+}
+
+impl StructuredLocalSearch {
+    /// How many terms the structured path acts on (all of them).
+    pub fn term_count(&self) -> usize {
+        self.terms.len()
+    }
+
+    /// The free user text, rebuilt exactly as the legacy FTS path would see
+    /// it: the `FreeText` terms only, in order, with quoted terms re-quoted.
+    /// `None` when the query has no free text (so the SQL omits `MATCH`
+    /// entirely). This reuses the SAME quoting the raw path uses so free-text
+    /// matching is unchanged.
+    pub fn free_text(&self) -> Option<String> {
+        let parts: Vec<String> = self
+            .terms
+            .iter()
+            .filter_map(|term| match term {
+                QueryTerm::FreeText { text, quoted: true } => Some(format!("\"{text}\"")),
+                QueryTerm::FreeText { text, quoted: false } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join(" "))
+        }
+    }
+
+    /// Every user-controlled TEXT value in the query (operator values and
+    /// free-text words), for the per-value byte-length limit. Dates and states
+    /// carry no free text and are excluded.
+    pub fn text_values(&self) -> Vec<&str> {
+        self.terms
+            .iter()
+            .filter_map(|term| match term {
+                QueryTerm::From(v)
+                | QueryTerm::To(v)
+                | QueryTerm::Subject(v)
+                | QueryTerm::FreeText { text: v, .. } => Some(v.as_str()),
+                QueryTerm::Date { .. } | QueryTerm::State(_) | QueryTerm::HasAttachment => None,
+                // Unreachable for a structured plan, but handled so a new
+                // variant forces a compile error rather than a silent skip.
+                QueryTerm::Label(v) | QueryTerm::In(v) | QueryTerm::Raw(v) => Some(v.as_str()),
+            })
+            .collect()
+    }
+}
+
+/// Escape a user substring for a SQL `LIKE ? ESCAPE '\'` pattern: the three
+/// LIKE metacharacters `%`, `_` and the escape char `\` are each prefixed with
+/// `\` so they match LITERALLY, and the result is wrapped in `%…%` for a
+/// substring match. The value goes in as a bound PARAMETER; this only shapes
+/// the pattern, never interpolates the value into SQL.
+///
+/// NOTE: SQLite's `LIKE` is ASCII case-insensitive ONLY (`a`==`A`, but `é` and
+/// `É` are distinct). That is accepted for this run: a non-ASCII value matches
+/// its own exact case. `thread_search` (FTS5) handles diacritic-folded free
+/// text; operator substring matches do not fold case outside ASCII.
+pub fn like_contains_pattern(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('%');
+    for ch in value.chars() {
+        if matches!(ch, '%' | '_' | '\\') {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped.push('%');
+    escaped
+}
+
+/// The inclusive-lower / exclusive-upper RFC 3339 instant bounds for comparing
+/// `messages.sent_at` against a calendar day in UTC.
+///
+/// `messages.sent_at` is an RFC 3339 string (the message's arrival time; for
+/// Gmail its `internalDate`). `after:d` means "on or at/after the START of day
+/// d (UTC)" and `before:d` means "strictly before the START of day d (UTC)",
+/// which is a DATE-ONLY comparison on UTC days. Returned as the start-of-day
+/// instant `d` formatted `YYYY-MM-DDT00:00:00+00:00`: because RFC 3339 UTC
+/// timestamps sort lexicographically in time order, a plain string `>=` / `<`
+/// against this bound is the correct day comparison for any UTC-offset
+/// timestamp SQLite normalises the same way. (The IMAP server search instead
+/// compares its own `INTERNALDATE` in SERVER time, so edge-of-day results can
+/// differ between the local list and a server search — an accepted, documented
+/// difference.)
+///
+/// Kept pure and tested so the comparison is defined in exactly one place.
+pub fn utc_day_start_rfc3339(date: NaiveDate) -> String {
+    // Midnight UTC at the start of `date`. `and_hms_opt(0,0,0)` is always Some.
+    let start = date.and_hms_opt(0, 0, 0).expect("00:00:00 is a valid time");
+    chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(start, chrono::Utc).to_rfc3339()
+}
+
 /// Whether `candidate`, parsed on its own, yields exactly `term`.
 fn renders_as(candidate: &str, term: &QueryTerm) -> bool {
     SearchQuery::parse(candidate).terms == [term.clone()]
@@ -687,5 +919,196 @@ mod tests {
             ]
         );
         assert_eq!(parsed.render_gmail(), input);
+    }
+
+    // --- Phase 5 run 2a: local-search routing, limits, date & escaping ----
+
+    fn plan(input: &str) -> LocalSearchPlan {
+        LocalSearchPlan::parse(input)
+    }
+
+    fn structured_terms(input: &str) -> Vec<QueryTerm> {
+        match plan(input) {
+            LocalSearchPlan::Structured(s) => s.terms,
+            LocalSearchPlan::Legacy => panic!("{input:?} expected Structured, got Legacy"),
+        }
+    }
+
+    #[test]
+    fn routing_structured_queries_engage_the_operator_path() {
+        // At least one recognised operator and no Raw/Label/In => Structured.
+        for input in [
+            "from:alice",
+            "From:Alice",
+            "is:unread budget",
+            "before:2024/01/01",
+            "has:attachment",
+            "to:bob",
+            "subject:report",
+            "after:2024-01-01",
+            "is:starred",
+            "from:alice is:unread budget", // combination with free text
+        ] {
+            assert!(
+                matches!(plan(input), LocalSearchPlan::Structured(_)),
+                "{input:?} should be Structured"
+            );
+        }
+    }
+
+    #[test]
+    fn routing_legacy_queries_take_the_unchanged_fts_path() {
+        // Free text only, any Raw term, and any label:/in: query are legacy.
+        for input in [
+            "budget",                 // free text only
+            "\"exact phrase\"",       // quoted free text only
+            "foo:bar",                // unknown operator => Raw
+            "10:30",                  // not an operator (field must be letters)
+            "Re: meeting",            // "Re:" empty value => Raw, "meeting" free text
+            "-in:trash",              // negation => Raw
+            "from:alice OR from:bob", // contains Raw ("OR")
+            "category:promotions",    // unknown operator => Raw
+            "label:work",             // Label => legacy (2b)
+            "in:inbox",               // In => legacy (2b)
+            "from:alice label:work",  // operator + Label => legacy
+            "from:alice -in:trash",   // operator + Raw => legacy
+            "from:(a b)",             // grouped => two Raw terms
+            "from:",                  // empty value => Raw
+            "",                       // nothing => legacy
+        ] {
+            assert_eq!(
+                plan(input),
+                LocalSearchPlan::Legacy,
+                "{input:?} should be Legacy"
+            );
+        }
+    }
+
+    #[test]
+    fn routing_re_meeting_is_legacy_and_keeps_both_terms() {
+        // "Re:" has an empty value so it is Raw; "meeting" is free text. A Raw
+        // term forces legacy regardless of the free text beside it.
+        assert_eq!(
+            SearchQuery::parse("Re: meeting").terms,
+            vec![raw("Re:"), word("meeting")]
+        );
+        assert_eq!(plan("Re: meeting"), LocalSearchPlan::Legacy);
+    }
+
+    #[test]
+    fn structured_free_text_is_rebuilt_from_free_terms_only() {
+        // Operators drop out; quoted free text is re-quoted; order preserved.
+        let s = match plan("from:alice \"q3 report\" is:unread later") {
+            LocalSearchPlan::Structured(s) => s,
+            LocalSearchPlan::Legacy => unreachable!(),
+        };
+        assert_eq!(s.free_text().as_deref(), Some("\"q3 report\" later"));
+        // No free text at all => None (so the SQL omits MATCH).
+        let s2 = match plan("from:alice is:unread") {
+            LocalSearchPlan::Structured(s) => s,
+            LocalSearchPlan::Legacy => unreachable!(),
+        };
+        assert_eq!(s2.free_text(), None);
+    }
+
+    #[test]
+    fn structured_term_count_and_text_values() {
+        let s = match plan("from:alice subject:report before:2024-01-01 is:unread budget") {
+            LocalSearchPlan::Structured(s) => s,
+            LocalSearchPlan::Legacy => unreachable!(),
+        };
+        // 5 terms total (from, subject, date, state, free text).
+        assert_eq!(s.term_count(), 5);
+        // Only the textual values are measured for the per-value byte limit:
+        // the date and the state carry no user free text.
+        assert_eq!(s.text_values(), vec!["alice", "report", "budget"]);
+        let _ = structured_terms; // keep the helper referenced
+    }
+
+    #[test]
+    fn local_search_limits_are_the_documented_bounds() {
+        assert_eq!(MAX_LOCAL_SEARCH_TERMS, 16);
+        assert_eq!(MAX_LOCAL_SEARCH_TERM_BYTES, 256);
+        assert!(MAX_LOCAL_SEARCH_TERMS > 0);
+        assert!(MAX_LOCAL_SEARCH_TERM_BYTES > 0);
+    }
+
+    /// A structured plan of `n` `from:` operator terms.
+    fn from_terms(n: usize) -> StructuredLocalSearch {
+        StructuredLocalSearch {
+            terms: (0..n).map(|i| QueryTerm::From(format!("a{i}"))).collect(),
+        }
+    }
+
+    #[test]
+    fn term_count_limit_below_at_and_above_the_bound() {
+        // Below: ok.
+        assert!(check_local_search_limits(&from_terms(MAX_LOCAL_SEARCH_TERMS - 1)).is_ok());
+        // Exactly at the bound: ok (accepted).
+        assert!(check_local_search_limits(&from_terms(MAX_LOCAL_SEARCH_TERMS)).is_ok());
+        // One over: typed rejection, never a clamp or a legacy fallback.
+        assert_eq!(
+            check_local_search_limits(&from_terms(MAX_LOCAL_SEARCH_TERMS + 1)),
+            Err(LocalSearchLimit::TooManyTerms)
+        );
+    }
+
+    #[test]
+    fn term_byte_limit_below_at_and_above_the_bound() {
+        let at = StructuredLocalSearch {
+            terms: vec![QueryTerm::From("a".repeat(MAX_LOCAL_SEARCH_TERM_BYTES))],
+        };
+        let below = StructuredLocalSearch {
+            terms: vec![QueryTerm::From("a".repeat(MAX_LOCAL_SEARCH_TERM_BYTES - 1))],
+        };
+        let above = StructuredLocalSearch {
+            terms: vec![QueryTerm::From("a".repeat(MAX_LOCAL_SEARCH_TERM_BYTES + 1))],
+        };
+        assert!(check_local_search_limits(&below).is_ok());
+        assert!(check_local_search_limits(&at).is_ok());
+        assert_eq!(
+            check_local_search_limits(&above),
+            Err(LocalSearchLimit::TermTooLong)
+        );
+        // A byte limit, not a char limit: a multi-byte value over 256 BYTES
+        // (but far fewer chars) is still rejected.
+        let multibyte = StructuredLocalSearch {
+            terms: vec![QueryTerm::Subject("é".repeat(MAX_LOCAL_SEARCH_TERM_BYTES))],
+        };
+        assert_eq!(
+            check_local_search_limits(&multibyte),
+            Err(LocalSearchLimit::TermTooLong)
+        );
+    }
+
+    #[test]
+    fn limit_message_is_the_plain_user_sentence() {
+        assert_eq!(LocalSearchLimit::TooManyTerms.message(), "That search is too long.");
+        assert_eq!(LocalSearchLimit::TermTooLong.message(), "That search is too long.");
+    }
+
+    #[test]
+    fn like_pattern_escapes_metacharacters_and_wraps_in_percent() {
+        assert_eq!(like_contains_pattern("alice"), "%alice%");
+        // The three LIKE metacharacters are escaped so they match literally.
+        assert_eq!(like_contains_pattern("50%_off"), "%50\\%\\_off%");
+        assert_eq!(like_contains_pattern("a\\b"), "%a\\\\b%");
+        // Quotes and other characters pass through untouched (they are not LIKE
+        // metacharacters; SQL injection is handled by binding, not escaping).
+        assert_eq!(like_contains_pattern("o'brien \"x\""), "%o'brien \"x\"%");
+        assert_eq!(like_contains_pattern(""), "%%");
+    }
+
+    #[test]
+    fn utc_day_start_is_midnight_utc_and_orders_lexicographically() {
+        let d = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        assert_eq!(utc_day_start_rfc3339(d), "2024-01-01T00:00:00+00:00");
+        // Lexicographic ordering of RFC 3339 UTC strings is time ordering, so
+        // a message just before the boundary sorts below it and one at/after
+        // sorts at-or-above it — the property the SQL `<` / `>=` relies on.
+        let bound = utc_day_start_rfc3339(d);
+        assert!("2023-12-31T23:59:59+00:00".to_string() < bound);
+        assert!("2024-01-01T00:00:00+00:00".to_string() >= bound);
+        assert!("2024-01-01T00:00:01+00:00".to_string() >= bound);
     }
 }

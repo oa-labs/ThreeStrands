@@ -3,13 +3,26 @@
 use super::messages::{compress_body, resolve_body};
 use super::threads::THREAD_COLUMNS;
 use super::{decode_json, Database, DbResult};
+use crate::db::DatabaseError;
 use crate::mime::{normalize, readable_body_text, RawMessage};
 use crate::models::{SearchThreadsRequest, Thread};
-use rusqlite::{params, OptionalExtension};
+use crate::search_query::{
+    check_local_search_limits, DateBound, LocalSearchPlan, MessageState, QueryTerm,
+    StructuredLocalSearch,
+};
+use rusqlite::{params, types::Value, OptionalExtension};
 
 impl Database {
     /// `account_id` merges every account when `None` — the unified inbox —
     /// or scopes to just that account when set, same as [`Self::list_threads`].
+    ///
+    /// Phase 5 run 2a: a query that contains at least one recognised operator
+    /// (`from:`/`to:`/`subject:`/`before:`/`after:`/`is:`/`has:attachment`) and
+    /// no `Raw`/`label:`/`in:` term takes the OPERATOR-AWARE structured path
+    /// ([`Self::structured_search_threads`]); every other query — free text
+    /// only, anything with unmodelled syntax, and any `label:`/`in:` query —
+    /// takes the unchanged legacy FTS path below, byte-identical to before this
+    /// run. The decision is the pure [`LocalSearchPlan`] in `search_query.rs`.
     pub fn search_threads(
         &self,
         request: &SearchThreadsRequest,
@@ -18,6 +31,22 @@ impl Database {
         if request.query.trim().is_empty() {
             return self.list_threads(account_id);
         }
+        match LocalSearchPlan::parse(&request.query) {
+            LocalSearchPlan::Structured(plan) => {
+                self.structured_search_threads(&plan, request, account_id)
+            }
+            LocalSearchPlan::Legacy => self.legacy_search_threads(request, account_id),
+        }
+    }
+
+    /// The pre-run-2a local search: hand the raw query string to `fts_query`
+    /// and MATCH it against `thread_search`. Unchanged — a legacy query
+    /// produces the same SQL and the same results as before run 2a.
+    fn legacy_search_threads(
+        &self,
+        request: &SearchThreadsRequest,
+        account_id: Option<&str>,
+    ) -> DbResult<Vec<Thread>> {
         self.with_connection(|connection| {
             let limit = request.limit.unwrap_or(50).min(200) as i64;
             let offset = request.offset.unwrap_or(0) as i64;
@@ -52,32 +81,160 @@ impl Database {
                  LIMIT ?2 OFFSET ?3"
             );
             let mut statement = connection.prepare(&sql)?;
-            let map_row = |row: &rusqlite::Row<'_>| {
-                Ok(Thread {
-                    id: row.get(0)?,
-                    provider_thread_id: row.get(1)?,
-                    subject: row.get(2)?,
-                    snippet: row.get(3)?,
-                    participants: decode_json(row.get::<_, String>(4)?)?,
-                    last_message_at: row.get(5)?,
-                    unread: row.get(6)?,
-                    starred: row.get(7)?,
-                    archived: row.get(8)?,
-                    labels: decode_json(row.get::<_, String>(9)?)?,
-                    trashed: row.get(10)?,
-                    account_id: row.get(11)?,
-                    summary: row.get(12)?,
-                    summary_generated_at: row.get(13)?,
-                    has_attachments: row.get(14)?,
-                    last_received_at: row.get(15)?,
-                    summary_revision: row.get(16)?,
-                    match_snippet: row.get(17)?,
-                })
-            };
             let rows = match account_id {
-                Some(id) => statement.query_map(params![query, limit, offset, id], map_row)?,
-                None => statement.query_map(params![query, limit, offset], map_row)?,
+                Some(id) => {
+                    statement.query_map(params![query, limit, offset, id], map_thread_row)?
+                }
+                None => statement.query_map(params![query, limit, offset], map_thread_row)?,
             };
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+    }
+
+    /// Operator-aware local search. Builds a single query whose structured
+    /// terms become `WHERE` predicates — `threads` columns directly, `messages`
+    /// facts as `EXISTS` subqueries by `thread_id` (so a thread matching
+    /// through several messages is returned ONCE, never duplicated as a JOIN
+    /// would), and free text through the unchanged `fts_query`/`MATCH` only
+    /// when present. All user text goes in as bound PARAMETERS; nothing is
+    /// interpolated. Shares the legacy path's archived/trashed default
+    /// exclusion, account filter, limit/offset and recency ordering.
+    fn structured_search_threads(
+        &self,
+        plan: &StructuredLocalSearch,
+        request: &SearchThreadsRequest,
+        account_id: Option<&str>,
+    ) -> DbResult<Vec<Thread>> {
+        // Reject an over-limit query outright with a plain message — never
+        // truncate and never fall back to the legacy path.
+        if let Err(limit) = check_local_search_limits(plan) {
+            return Err(DatabaseError::invalid(limit.message()));
+        }
+
+        self.with_connection(|connection| {
+            let limit = request.limit.unwrap_or(50).min(200) as i64;
+            let offset = request.offset.unwrap_or(0) as i64;
+
+            // Bound parameters, in the order the `?N` placeholders below are
+            // appended. Everything user-controlled is a parameter.
+            let mut binds: Vec<Value> = Vec::new();
+            let mut predicates: Vec<String> = Vec::new();
+
+            // Free text, rebuilt exactly as the legacy path would see it and
+            // passed through the SAME `fts_query`. Only present when the query
+            // has free-text terms; with none, no `MATCH` is used at all.
+            let fts = plan.free_text().map(|text| fts_query(&text));
+            // An all-whitespace / empty FTS expression matches nothing, exactly
+            // as the legacy path returns an empty result for one.
+            let uses_match = fts.as_deref().is_some_and(|q| !q.trim().is_empty());
+            if let Some(fts) = &fts {
+                if !uses_match {
+                    return Ok(Vec::new());
+                }
+                binds.push(Value::Text(fts.clone()));
+                predicates.push("t.id IN (SELECT thread_id FROM thread_search \
+                                 WHERE thread_search MATCH ?)"
+                    .to_string());
+            }
+
+            for term in &plan.terms {
+                match term {
+                    QueryTerm::FreeText { .. } => {} // handled by the MATCH above
+                    QueryTerm::From(value) => {
+                        binds.push(Value::Text(crate::search_query::like_contains_pattern(value)));
+                        predicates.push(
+                            "EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id \
+                             AND m.sender LIKE ? ESCAPE '\\')"
+                                .to_string(),
+                        );
+                    }
+                    QueryTerm::To(value) => {
+                        binds.push(Value::Text(crate::search_query::like_contains_pattern(value)));
+                        // Matched against the stored recipients (the To header
+                        // only; see the module note and the report's Cc/Bcc
+                        // finding). `recipients_json` is a JSON array string, so
+                        // a substring LIKE over it is sufficient to find a
+                        // recipient address without parsing the JSON per row.
+                        predicates.push(
+                            "EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id \
+                             AND m.recipients_json LIKE ? ESCAPE '\\')"
+                                .to_string(),
+                        );
+                    }
+                    QueryTerm::Subject(value) => {
+                        binds.push(Value::Text(crate::search_query::like_contains_pattern(value)));
+                        predicates.push("t.subject LIKE ? ESCAPE '\\'".to_string());
+                    }
+                    QueryTerm::Date { bound, date } => {
+                        let day = crate::search_query::utc_day_start_rfc3339(*date);
+                        binds.push(Value::Text(day));
+                        let op = match bound {
+                            // `after:d` = on or after the start of day d (UTC).
+                            DateBound::After => ">=",
+                            // `before:d` = strictly before the start of day d.
+                            DateBound::Before => "<",
+                        };
+                        predicates.push(format!(
+                            "EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id \
+                             AND m.sent_at {op} ?)"
+                        ));
+                    }
+                    QueryTerm::State(MessageState::Unread) => {
+                        predicates.push("t.unread = 1".to_string());
+                    }
+                    QueryTerm::State(MessageState::Starred) => {
+                        predicates.push("t.starred = 1".to_string());
+                    }
+                    QueryTerm::HasAttachment => {
+                        predicates.push("t.has_attachments = 1".to_string());
+                    }
+                    // Unreachable: a Raw/Label/In term would have routed to
+                    // legacy. Listed so a new term fails to compile here.
+                    QueryTerm::Label(_) | QueryTerm::In(_) | QueryTerm::Raw(_) => {
+                        return Err(DatabaseError::invalid(
+                            "internal: non-structured term reached the structured path",
+                        ));
+                    }
+                }
+            }
+
+            if !request.include_archived.unwrap_or(false) {
+                predicates.push("t.archived = 0 AND t.trashed = 0".to_string());
+            }
+            if let Some(id) = account_id {
+                binds.push(Value::Text(id.to_string()));
+                predicates.push("t.account_id = ?".to_string());
+            }
+
+            // When MATCH is used, keep its relevance tiebreak and FTS snippet.
+            // With no MATCH there is no rank and no snippet, so order on recency
+            // then a deterministic `t.id`, and return NULL for the snippet.
+            let (snippet_select, order_by) = if uses_match {
+                (
+                    "(SELECT snippet(thread_search, -1, '\u{1}', '\u{2}', '…', 12) \
+                      FROM thread_search WHERE thread_id = t.id) AS match_snippet",
+                    "ORDER BY t.last_received_at DESC, t.id",
+                )
+            } else {
+                ("NULL AS match_snippet", "ORDER BY t.last_received_at DESC, t.id")
+            };
+
+            // Rewrite the sequential `?` placeholders into positional `?N` so
+            // the bind order is explicit and the limit/offset tail is stable.
+            let where_clause = predicates.join(" AND ");
+            let sql = number_placeholders(&format!(
+                "SELECT {THREAD_COLUMNS}, {snippet_select}
+                 FROM threads t
+                 WHERE {where_clause}
+                 {order_by}
+                 LIMIT ? OFFSET ?"
+            ));
+            binds.push(Value::Integer(limit));
+            binds.push(Value::Integer(offset));
+
+            let mut statement = connection.prepare(&sql)?;
+            let rows = statement
+                .query_map(rusqlite::params_from_iter(binds.iter()), map_thread_row)?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
         })
     }
@@ -159,6 +316,56 @@ impl Database {
             Ok(queued.len())
         })
     }
+}
+
+/// Maps a thread result row (the `THREAD_COLUMNS` plus a trailing
+/// `match_snippet`) into a [`Thread`]. Shared by the legacy and structured
+/// local-search paths so both decode a row identically.
+fn map_thread_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
+    Ok(Thread {
+        id: row.get(0)?,
+        provider_thread_id: row.get(1)?,
+        subject: row.get(2)?,
+        snippet: row.get(3)?,
+        participants: decode_json(row.get::<_, String>(4)?)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?,
+        last_message_at: row.get(5)?,
+        unread: row.get(6)?,
+        starred: row.get(7)?,
+        archived: row.get(8)?,
+        labels: decode_json(row.get::<_, String>(9)?)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?,
+        trashed: row.get(10)?,
+        account_id: row.get(11)?,
+        summary: row.get(12)?,
+        summary_generated_at: row.get(13)?,
+        has_attachments: row.get(14)?,
+        last_received_at: row.get(15)?,
+        summary_revision: row.get(16)?,
+        match_snippet: row.get(17)?,
+    })
+}
+
+/// Rewrites sequential anonymous `?` placeholders into positional `?1`, `?2`,
+/// … left to right. The structured query is assembled from a variable number
+/// of predicate fragments, so numbering them after assembly keeps each bound
+/// value tied to its position without the fragments having to know their own
+/// index. There are no literal `?` characters in the generated SQL other than
+/// placeholders (user text is bound, never inlined), so a plain left-to-right
+/// rewrite is unambiguous.
+fn number_placeholders(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len() + 16);
+    let mut index = 0u32;
+    for ch in sql.chars() {
+        if ch == '?' {
+            index += 1;
+            out.push('?');
+            out.push_str(&index.to_string());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 /// Builds an FTS5 MATCH expression, ANDing together every unquoted word and
