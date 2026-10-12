@@ -2271,6 +2271,12 @@ impl ImapProvider {
         let mut unsynced_mailboxes: Vec<String> = Vec::new();
         let mut partial: Option<PartialReason> = None;
         let mut mailboxes_searched = 0usize;
+        // Set when the deadline cancelled a command mid-flight. The connection
+        // then holds a half-read response, so LOGOUT would be parsed against
+        // stale data and, against a stalled server, wait forever while this
+        // search holds the account's sync gate. Such a session is dropped
+        // (closing the socket and releasing the lease) without LOGOUT.
+        let mut connection_poisoned = false;
 
         for wire in search_plan.mailboxes.iter() {
             // Deadline: stop STARTING a new mailbox once the budget is spent;
@@ -2313,6 +2319,7 @@ impl ImapProvider {
                 Ok(Ok(pair)) => pair,
                 // Deadline hit mid-EXAMINE/SEARCH: partial, stop.
                 Err(_elapsed) => {
+                    connection_poisoned = true;
                     partial = Some(PartialReason::DeadlineExpired {
                         mailboxes_searched,
                         mailboxes_planned,
@@ -2362,6 +2369,7 @@ impl ImapProvider {
             let outcome = match acquire {
                 Ok(Ok(outcome)) => outcome,
                 Err(_elapsed) => {
+                    connection_poisoned = true;
                     partial = Some(PartialReason::DeadlineExpired {
                         mailboxes_searched,
                         mailboxes_planned,
@@ -2415,7 +2423,9 @@ impl ImapProvider {
         // 7. Logout AND drop the session before anything else (the body reads
         // for the attachment filter and the caller's later sync must not race a
         // held connection lease — run 3's deadlock).
-        let _ = session.logout().await;
+        if !connection_poisoned {
+            let _ = session.logout().await;
+        }
         drop(session);
 
         // 6. Apply has:attachment to the acquired threads, from the stored MIME
@@ -4853,6 +4863,9 @@ mod tests {
         /// EXAMINE of this folder answers `NO [NONEXISTENT]` (a catalog row
         /// whose mailbox was renamed or deleted on the server).
         examine_fails: bool,
+        /// `UID SEARCH` in this folder never answers, and the server stops
+        /// serving the connection (a stalled server). Search-deadline tests.
+        search_stalls: bool,
     }
 
     impl FakeFolder {
@@ -4863,6 +4876,7 @@ mod tests {
                 messages: Vec::new(),
                 fail_after_body_fetches: None,
                 examine_fails: false,
+                search_stalls: false,
             }
         }
         fn add_sized(&mut self, flags: &[&str], raw: &str, advertised_size: Option<usize>) -> u32 {
@@ -5021,6 +5035,10 @@ mod tests {
                 } else if upper.starts_with("UID SEARCH") {
                     let folder = folders.get(&selected).unwrap_or(&empty);
                     counts.lock().unwrap().entry(selected.clone()).or_default().0 += 1;
+                    if folder.search_stalls {
+                        // Never answer anything again on this connection.
+                        std::future::pending::<()>().await;
+                    }
                     let uids: Vec<String> =
                         folder.messages.iter().map(|m| m.uid.to_string()).collect();
                     let body = format!("* SEARCH {}\r\n{tag} OK done\r\n", uids.join(" "));
@@ -10155,6 +10173,50 @@ mod tests {
 
         // --- 1) an OLD out-of-window hit is returned, pinned, and survives a
         //        following sync ------------------------------------------------
+        /// Review addition: the real backfill path. `search_and_ingest_missing`
+        /// (what "include archived" runs) must turn an IMAP search hit into an
+        /// ENGINE thread row, which is what the local search then displays.
+        /// The acquire writes only the IMAP store, so the engine row comes from
+        /// `fetch_thread` on the returned id: this proves the ids match.
+        #[tokio::test]
+        async fn the_backfill_path_ingests_an_old_hit_into_the_engine_thread_list() {
+            let mut mb = FakeMailbox::new(100);
+            mb.add_to("Archive", 50, &["\\Seen"], &message("<a1@x>", "old one", ""));
+            mb.add_to("Archive", 50, &["\\Seen"], &message("<a2@x>", "new two", ""));
+            let mailbox = Arc::new(Mutex::new(mb));
+            let (provider, store, _opens) = counting_provider(mailbox);
+            let db = store.database();
+            // Baseline so the engine account and cursor exist; with window 1
+            // only the newest Archive message is synced.
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+                .await
+                .unwrap();
+            let before = db.local_provider_thread_ids("me@example.com").unwrap();
+
+            crate::sync::search_and_ingest_missing(
+                db.as_ref(),
+                "me@example.com",
+                &provider,
+                "in:archive subject:old",
+                50,
+            )
+            .await
+            .expect("backfill search");
+
+            let page = provider.search("in:archive subject:old", None).await.unwrap();
+            let after = db.local_provider_thread_ids("me@example.com").unwrap();
+            let old_thread = store
+                .thread_of_message(
+                    &store.location_message_id("Archive", 50, 1).unwrap().expect("uid 1 located"),
+                )
+                .unwrap()
+                .expect("uid 1 threaded");
+            let old_thread = store.resolve_thread_alias(&old_thread).unwrap();
+            assert!(page.thread_ids.contains(&old_thread), "search returns the old hit");
+            assert!(!before.contains(&old_thread), "the old hit was not in the engine before");
+            assert!(after.contains(&old_thread), "the backfill put it in the engine thread list");
+        }
+
         #[tokio::test]
         async fn an_old_out_of_window_hit_is_returned_pinned_and_survives_a_sync() {
             // Archive with 3 messages, window 1: uids 1 and 2 are out of
@@ -10321,6 +10383,41 @@ mod tests {
             assert!(result.thread_ids.is_empty(), "nothing acquired past the deadline");
             // Nothing was pinned (no acquire ran).
             assert_eq!(store.search_pin_count().unwrap(), 0);
+        }
+
+        /// Review fix: the deadline expires WHILE a command is in flight (the
+        /// server stalls on Archive's UID SEARCH). The first mailbox's hits are
+        /// kept and the search RETURNS: it must not then send LOGOUT on the
+        /// half-read connection and wait forever, which would hold the
+        /// account's sync gate and stop its sync. The outer timeout turns a
+        /// hang into a failure instead of a stuck test run.
+        #[tokio::test(start_paused = true)]
+        async fn a_deadline_that_cancels_an_in_flight_command_returns_without_hanging() {
+            let mut mb = multi_mailbox();
+            mb.folder("Archive", 50).search_stalls = true;
+            let mailbox = Arc::new(Mutex::new(mb));
+            let (mut provider, store, _opens) = counting_provider(mailbox);
+            provider.search_deadline_override = Some(std::time::Duration::from_secs(5));
+
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(120),
+                provider.search_detailed("from:someone", None),
+            )
+            .await
+            .expect("search must return after its deadline, not hang on LOGOUT")
+            .unwrap();
+            match result.partial {
+                Some(super::super::PartialReason::DeadlineExpired {
+                    mailboxes_searched,
+                    mailboxes_planned,
+                }) => {
+                    assert_eq!(mailboxes_planned, 3);
+                    assert_eq!(mailboxes_searched, 1, "INBOX finished, Archive stalled");
+                }
+                other => panic!("expected DeadlineExpired, got {other:?}"),
+            }
+            assert_eq!(result.thread_ids.len(), 2, "INBOX's two hits are returned");
+            assert_eq!(store.search_pin_count().unwrap(), 2, "and stay pinned");
         }
 
         // --- 5) Skipped and NoServerMatches make NO network call and return

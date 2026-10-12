@@ -2272,7 +2272,6 @@ mod tests {
     #[test]
     fn the_search_execution_limits_are_the_documented_bounds() {
         assert_eq!(MAX_SEARCH_ACQUIRE, 50);
-        assert!(MAX_SEARCH_ACQUIRE > 0);
         // The deadline is a positive, bounded wall-clock budget.
         assert_eq!(SEARCH_DEADLINE, std::time::Duration::from_secs(20));
         assert!(SEARCH_DEADLINE > std::time::Duration::ZERO);

@@ -826,7 +826,9 @@ async fn reconcile_and_mark(
     pause_for_permanent_auth_failure(database, account_id, result)
 }
 
-async fn search_and_ingest_missing(
+/// `pub(crate)` so the IMAP provider tests can drive the real backfill path
+/// end to end (search, then engine ingest of the returned ids).
+pub(crate) async fn search_and_ingest_missing(
     database: &Database,
     account_id: &str,
     provider: &(impl MailSync + ?Sized),
