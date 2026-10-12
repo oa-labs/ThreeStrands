@@ -38,7 +38,7 @@ export function DefaultAppsSettings() {
         <p className="settings-hint">Default apps can be set from the installed ThreeStrands app on macOS.</p>
       ) : null}
       {status?.supported ? ROLES.map(({ role, label, hint }) => (
-        <div key={role}>
+        <div key={role} className="settings-default-app-row">
           <div className="settings-field settings-field-inline">
             <span>{label}</span>
             <div className="settings-row">

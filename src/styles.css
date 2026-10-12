@@ -2619,6 +2619,11 @@ form.split-inbox-add select {
 .frontier-conflict-editor label span { min-width: 0; }
 .frontier-conflict-editor input[type="radio"] { width: auto; flex: 0 0 auto; margin-top: var(--space-1); padding: 0; }
 .settings-field-inline { flex-direction: row; align-items: center; justify-content: space-between; gap: var(--space-3); }
+/* Each Default Apps role is a wrapper div (field + hint + error). The section
+   column uses align-items: flex-start, so without this the wrapper shrinks to
+   its content and the inline field's 100% width collapses — leaving the
+   "Default" status mid-line. Full width lets space-between push it right. */
+.settings-default-app-row { width: 100%; }
 .settings-field.settings-field-inline input { width: 76px; }
 .settings-row { display: flex; align-items: center; gap: var(--space-2-5); }
 .settings-radio-row { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); font-size: var(--text-body); }
