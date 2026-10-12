@@ -616,7 +616,9 @@ first:
 run 1): `to:` renders `(OR OR TO … CC … BCC …)` to match Gmail, where `to:`
 includes Cc and Bcc; `before:`/`after:` use `BEFORE`/`SINCE` with fixed English
 month abbreviations (`1-Jan-2024`, day unpadded) and are server-timezone,
-date-only comparisons. A term the server cannot honestly evaluate — a `Raw`
+date-only comparisons of the server's INTERNALDATE (arrival time), not the
+`Date:` header; address matching (`from:`, `to:`) is a substring match on the
+server, unlike Gmail's. A term the server cannot honestly evaluate — a `Raw`
 token (negation, `OR`/`AND`, an unknown operator), a value with CR/LF/NUL, an
 over-limit value, or an empty query — SKIPS the whole server search and keeps
 local results only; a `Raw` token is never sent as `TEXT`. A term the server

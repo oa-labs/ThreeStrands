@@ -1194,6 +1194,62 @@ mod tests {
             assert!(!notice.to_string().is_empty());
         }
     }
+
+    /// The parser can never put a `"` inside a term, but the renderer must not
+    /// rely on that: an AST built by any other caller still has to stay inside
+    /// one balanced quoted string.
+    #[test]
+    fn ast_values_with_quotes_and_backslashes_stay_in_one_quoted_string() {
+        for (value, expected) in [
+            ("a\"b", "\"a\\\"b\""),
+            ("a\\b", "\"a\\\\b\""),
+            ("ends with backslash\\", "\"ends with backslash\\\\\""),
+            ("\\\"", "\"\\\\\\\"\""),
+            ("\"; UNSEEN \"", "\"\\\"; UNSEEN \\\"\""),
+            ("x\") OR ALL (\"", "\"x\\\") OR ALL (\\\"\""),
+        ] {
+            for term in [
+                QueryTerm::From(value.to_string()),
+                QueryTerm::Subject(value.to_string()),
+                QueryTerm::FreeText {
+                    text: value.to_string(),
+                    quoted: true,
+                },
+            ] {
+                let config = settings(LabelStorage::Keywords, None);
+                let plan = standard_plan(&config);
+                let context = ctx(&plan, &config);
+                let outcome = render_imap(&SearchQuery { terms: vec![term] }, &context);
+                let rendered = plan_of(&outcome);
+                assert!(
+                    rendered.criteria.ends_with(expected),
+                    "{value:?} rendered as {:?}",
+                    rendered.criteria
+                );
+                let (keys, quoted) = tokenise(&rendered.criteria);
+                assert_eq!(quoted, vec![value.to_string()], "{value:?}");
+                for key in &keys {
+                    assert!(
+                        matches!(key.as_str(), "CHARSET" | "UTF-8" | "FROM" | "SUBJECT" | "TEXT"),
+                        "{value:?} introduced stray key {key:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn to_term_repeats_one_quoted_value_three_times_and_nothing_else() {
+        let term = QueryTerm::To("a\"b\\".to_string());
+        let config = settings(LabelStorage::Keywords, None);
+        let plan = standard_plan(&config);
+        let context = ctx(&plan, &config);
+        let outcome = render_imap(&SearchQuery { terms: vec![term] }, &context);
+        assert_eq!(
+            criteria_of(&outcome),
+            "CHARSET UTF-8 (OR OR TO \"a\\\"b\\\\\" CC \"a\\\"b\\\\\" BCC \"a\\\"b\\\\\")"
+        );
+    }
 }
 
 // ===========================================================================
@@ -1275,9 +1331,19 @@ mod live_search {
         )
     }
 
-    fn message(message_id: &str, from: &str, to: &str, subject: &str, date: &str, body: &str) -> Vec<u8> {
+    /// `extra` is zero or more complete `Name: value\r\n` header lines (used to
+    /// give a message a real `Cc:` or `Bcc:` header).
+    fn message(
+        message_id: &str,
+        from: &str,
+        to: &str,
+        extra: &str,
+        subject: &str,
+        date: &str,
+        body: &str,
+    ) -> Vec<u8> {
         format!(
-            "Message-ID: {message_id}\r\nFrom: {from}\r\nTo: {to}\r\nSubject: {subject}\r\n\
+            "Message-ID: {message_id}\r\nFrom: {from}\r\nTo: {to}\r\n{extra}Subject: {subject}\r\n\
              Date: {date}\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{body}\r\n"
         )
         .into_bytes()
@@ -1302,40 +1368,21 @@ mod live_search {
         // Seed a handful of known messages. UID order follows APPEND order
         // (UIDs assigned sequentially from UIDNEXT), so we record them in order
         // and map rendered cases to the expected positions.
-        let seeds: &[(&str, &str, &str, &str, &str, &str)] = &[
-            // (message-id, from, to, subject, date, body)
-            ("<p5r1-a@x>", "alice@example.com", "bob@example.com", "ASCII hello", "01 Jan 2024 10:00:00 +0000", "plain ascii body"),
-            ("<p5r1-b@x>", "éve@example.com", "cc-person@example.com", "Éléments", "15 Feb 2024 10:00:00 +0000", "contient des Éléments"),
-            ("<p5r1-c@x>", "someone@example.com", "bcc-person@example.com", "日本語 word", "20 Mar 2024 10:00:00 +0000", "CJK body"),
-            ("<p5r1-d@x>", "quote@example.com", "team@example.com", "has a \" and \\ in it", "10 Apr 2024 10:00:00 +0000", "quote and backslash"),
+        let seeds: &[(&str, &str, &str, &str, &str, &str, &str)] = &[
+            // (message-id, from, to, extra headers, subject, date, body)
+            ("<p5r1-a@x>", "alice@example.com", "bob@example.com", "", "ASCII hello", "01 Jan 2024 10:00:00 +0000", "plain ascii body"),
+            ("<p5r1-b@x>", "éve@example.com", "team-b@example.com", "Cc: carol-cc@example.com\r\n", "Éléments", "15 Feb 2024 10:00:00 +0000", "contient des Éléments"),
+            ("<p5r1-c@x>", "someone@example.com", "team-c@example.com", "Bcc: dave-bcc@example.com\r\n", "日本語 word", "20 Mar 2024 10:00:00 +0000", "CJK body"),
+            ("<p5r1-d@x>", "quote@example.com", "team@example.com", "", "has a \" and \\ in it", "10 Apr 2024 10:00:00 +0000", "quote and backslash"),
         ];
         {
             let write = session.as_write_session().expect("write session");
-            for (mid, from, to, subject, date, body) in seeds {
-                let raw = message(mid, from, to, subject, date, body);
-                // Flag the second message \Seen and the third \Flagged so the
-                // UNSEEN / FLAGGED cases have known answers.
-                let flags: Vec<String> = if *mid == "<p5r1-b@x>" {
-                    vec!["\\Seen".into()]
-                } else if *mid == "<p5r1-c@x>" {
-                    vec!["\\Flagged".into()]
-                } else {
-                    vec![]
-                };
-                // APPEND requires at least one flag through the primitive's
-                // validation; an empty list means "no flags", which `append`
-                // rejects — so for the no-flag messages use \Seen then clear is
-                // unnecessary here: pass \Seen-free by appending with a benign
-                // keyword the server stores, or just \Seen. To keep answers
-                // simple, append unflagged messages with an empty flag list is
-                // not allowed, so append them \Seen and rely on UNSEEN target
-                // being b/d only where we set it. Instead: append all unflagged
-                // ones with no flags via a direct APPEND is not exposed; use the
-                // write append with a single harmless keyword is also validated.
-                // Simplest correct path: append with the chosen flags, and for
-                // the "unflagged" ones pass an empty slice is rejected — so we
-                // append them with \Seen too and DO NOT rely on their unseen-ness.
-                let flags = if flags.is_empty() { vec!["\\Seen".into()] } else { flags };
+            for (mid, from, to, extra, subject, date, body) in seeds {
+                let raw = message(mid, from, to, extra, subject, date, body);
+                // Every seed is appended \Seen (the primitive needs a flag
+                // list); the per-case flags are set afterwards with UID STORE,
+                // the same path the app uses for read/star.
+                let flags: Vec<String> = vec!["\\Seen".into()];
                 write.append(SCRATCH, &flags, &raw).await.expect("append seed");
             }
         }
@@ -1348,6 +1395,23 @@ mod live_search {
         assert_eq!(all_uids.len(), seeds.len(), "all seeds present");
         // Position i (APPEND order) maps to the i-th smallest UID.
         let uid_of = |i: usize| all_uids[i];
+        {
+            use super::super::write::{build_uid_set, StoreOp};
+            // STORE needs a read-write SELECT, not the read-only EXAMINE above.
+            session.select(SCRATCH).await.expect("select scratch");
+            let write = session.as_write_session().expect("write session");
+            // a and d are unread (the \Seen flag is removed). \Flagged cannot be
+            // set on this container: its global ACL grants `lrstiepxka`, which
+            // has no `w` (write-flags) right, so `+FLAGS (\Flagged)` is silently
+            // ignored. Do not "fix" that here: the same ACL is what withholds
+            // keyword creation to mirror Proton Bridge.
+            let unread = build_uid_set(&[uid_of(0), uid_of(3)]).unwrap();
+            write
+                .uid_store(&unread, StoreOp::Remove, &["\\Seen".into()])
+                .await
+                .expect("unread a and d");
+        }
+        session.examine(SCRATCH).await.expect("re-examine after flags");
 
         let config = live_settings();
         let plan = scratch_plan(&config);
@@ -1361,22 +1425,30 @@ mod live_search {
         // Run a rendered query restricted to the scratch mailbox via in:, and
         // return the sorted UID result. The `in:` term names SCRATCH by its
         // exact wire name (case-insensitive match in the plan).
+        async fn run_query(
+            session: &mut dyn ImapSession,
+            context: &ImapSearchContext<'_>,
+            query: &SearchQuery,
+        ) -> Vec<u32> {
+            let outcome = render_imap(query, context);
+            let plan = match outcome {
+                ImapSearchOutcome::Plan(plan) => plan,
+                other => panic!("{query:?}: expected a Plan, got {other:?}"),
+            };
+            assert_eq!(plan.mailboxes, vec![SCRATCH.to_string()], "{query:?}");
+            session.examine(&plan.mailboxes[0]).await.expect("examine");
+            let mut uids = session.uid_search(&plan.criteria).await.expect("uid_search");
+            uids.sort_unstable();
+            uids
+        }
+
         async fn run(
             session: &mut dyn ImapSession,
             context: &ImapSearchContext<'_>,
             query: &str,
         ) -> Vec<u32> {
             let scoped = format!("in:{SCRATCH} {query}");
-            let outcome = render_imap(&SearchQuery::parse(&scoped), context);
-            let plan = match outcome {
-                ImapSearchOutcome::Plan(plan) => plan,
-                other => panic!("{scoped}: expected a Plan, got {other:?}"),
-            };
-            assert_eq!(plan.mailboxes, vec![SCRATCH.to_string()], "{scoped}");
-            session.examine(&plan.mailboxes[0]).await.expect("examine");
-            let mut uids = session.uid_search(&plan.criteria).await.expect("uid_search");
-            uids.sort_unstable();
-            uids
+            run_query(session, context, &SearchQuery::parse(&scoped)).await
         }
 
         // ASCII text in the body/subject of message a.
@@ -1384,43 +1456,78 @@ mod live_search {
         // Non-ASCII text (accented + CJK) — matches b and c respectively.
         assert_eq!(run(&mut session, &context, "Éléments").await, vec![uid_of(1)]);
         assert_eq!(run(&mut session, &context, "日本語").await, vec![uid_of(2)]);
-        // A phrase containing a quote and a backslash (message d).
+        // A value containing a quote and a backslash (message d). The parser
+        // can never produce a `"` inside a term (a quote toggles phrase mode),
+        // so build the AST directly: this exercises the renderer's escaping
+        // against the real server, which is the point of the case.
+        let escaped = SearchQuery {
+            terms: vec![
+                QueryTerm::In(SCRATCH.to_string()),
+                QueryTerm::Subject("has a \" and \\ in it".to_string()),
+            ],
+        };
         assert_eq!(
-            run(&mut session, &context, "subject:\"has a \\\" and \\\\ in it\"").await,
+            run_query(&mut session, &context, &escaped).await,
             vec![uid_of(3)]
+        );
+        // A value that ENDS in a backslash must not swallow its closing quote.
+        let trailing = SearchQuery {
+            terms: vec![
+                QueryTerm::In(SCRATCH.to_string()),
+                QueryTerm::Subject("in it\\".to_string()),
+            ],
+        };
+        assert_eq!(
+            run_query(&mut session, &context, &trailing).await,
+            Vec::<u32>::new(),
+            "a trailing backslash must stay inside its quoted string and match nothing here"
         );
         // FROM.
         assert_eq!(run(&mut session, &context, "from:alice@example.com").await, vec![uid_of(0)]);
-        // The TO/CC/BCC OR: message a is a To:, b is a Cc:, c is a Bcc:.
+        // The TO/CC/BCC OR: message a is a To:, b has a real Cc:, c a real Bcc:.
         assert_eq!(run(&mut session, &context, "to:bob@example.com").await, vec![uid_of(0)]);
-        assert_eq!(run(&mut session, &context, "to:cc-person@example.com").await, vec![uid_of(1)]);
-        // SINCE/BEFORE at a boundary day: SINCE 15-Feb-2024 includes b,c,d.
+        assert_eq!(run(&mut session, &context, "to:carol-cc@example.com").await, vec![uid_of(1)]);
+        assert_eq!(run(&mut session, &context, "to:dave-bcc@example.com").await, vec![uid_of(2)]);
+        // IMAP address matching is a SUBSTRING match, unlike Gmail's: a shorter
+        // address matches every address that contains it. Pin that behaviour so
+        // a later run does not assume otherwise.
+        assert_eq!(run(&mut session, &context, "to:ve-bcc@example.com").await, vec![uid_of(2)]);
+        // SINCE/BEFORE compare the server's INTERNALDATE (arrival time), NOT the
+        // `Date:` header: APPEND without a date stamps "now", so the seeds'
+        // header dates (Jan-Apr 2024) play no part. Assert against days
+        // relative to today (two days either side, so a timezone edge at
+        // midnight cannot flip the answer), and pin that SINCE/BEFORE take the
+        // rendered `d-Mon-yyyy` form.
+        let today = chrono::Utc::now().date_naive();
+        let fmt = |days: i64| (today + chrono::Duration::days(days)).format("%Y-%m-%d").to_string();
+        let everything = vec![uid_of(0), uid_of(1), uid_of(2), uid_of(3)];
+        assert_eq!(run(&mut session, &context, &format!("after:{}", fmt(-2))).await, everything);
+        assert_eq!(run(&mut session, &context, &format!("before:{}", fmt(-2))).await, Vec::<u32>::new());
+        assert_eq!(run(&mut session, &context, &format!("after:{}", fmt(2))).await, Vec::<u32>::new());
+        assert_eq!(run(&mut session, &context, &format!("before:{}", fmt(2))).await, everything);
+        // FLAGGED: nothing in this container can be starred (see the ACL note
+        // above), so a positive hit is not testable here. The case proves the
+        // rendered `FLAGGED` is valid syntax the server accepts: an empty set,
+        // not BAD.
         assert_eq!(
-            run(&mut session, &context, "after:2024-02-15").await,
-            vec![uid_of(1), uid_of(2), uid_of(3)]
+            run(&mut session, &context, "is:starred").await,
+            Vec::<u32>::new()
         );
+        // UNSEEN: a and d had \Seen removed.
         assert_eq!(
-            run(&mut session, &context, "before:2024-02-15").await,
-            vec![uid_of(0)]
+            run(&mut session, &context, "is:unread").await,
+            vec![uid_of(0), uid_of(3)]
         );
-        // FLAGGED: only message c was \Flagged.
-        assert_eq!(run(&mut session, &context, "is:starred").await, vec![uid_of(2)]);
-        // UNSEEN: every seed was appended \Seen (see the note above), so UNSEEN
-        // is empty — a known answer either way.
-        assert_eq!(run(&mut session, &context, "is:unread").await, Vec::<u32>::new());
 
-        // KEYWORD: set a keyword on message a, then search for it.
-        {
-            let write = session.as_write_session().expect("write session");
-            let set = super::super::write::build_uid_set(&[uid_of(0)]).unwrap();
-            // STORE the keyword directly (the scratch mailbox on Dovecot
-            // permits new keywords via \*).
-            let _ = write
-                .uid_store(&set, super::super::write::StoreOp::Add, &["p5label".into()])
-                .await;
-        }
-        session.examine(SCRATCH).await.expect("re-examine");
-        assert_eq!(run(&mut session, &context, "label:p5label").await, vec![uid_of(0)]);
+        // KEYWORD: this container withholds keyword creation (it mirrors Proton
+        // Bridge, whose PERMANENTFLAGS omits `\*`), so no keyword can be stored
+        // and a positive hit is not testable here. The case still proves the
+        // rendered `KEYWORD <atom>` is valid syntax the server accepts: it must
+        // answer with an empty set, not BAD.
+        assert_eq!(
+            run(&mut session, &context, "label:p5label").await,
+            Vec::<u32>::new()
+        );
 
         // Clean up: delete the scratch mailbox (seed mailboxes untouched).
         {
