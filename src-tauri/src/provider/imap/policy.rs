@@ -840,6 +840,48 @@ pub fn check_smtp_recipient_count(count: usize) -> Result<usize, ProviderError> 
     Ok(count)
 }
 
+/// Most sending identities one IMAP account may store (the login address plus
+/// its secondary addresses). An account has a handful of real send-as
+/// addresses — a combined-addresses Proton Bridge mailbox, a couple of
+/// aliases — never dozens; 20 is generous for every real case while bounding
+/// the stored list, the From-picker menu, and the per-send identity scan. The
+/// lenient read builder ([`super::account_identities`]) silently drops a stale
+/// over-count, but an interactive EDIT must tell the user, so
+/// [`check_identity_count`] returns a typed rejection rather than clamping.
+pub const IMAP_MAX_IDENTITIES: usize = 20;
+
+/// Longest display name on a stored sending identity, in characters (Unicode
+/// scalar values, not bytes). A From display name is header data shown to the
+/// user; a real name is short. 100 bounds the stored string and the From
+/// header line while never getting in a real name's way. Over the limit is a
+/// rejection on edit, never a silent truncation.
+pub const MAX_IDENTITY_DISPLAY_NAME_CHARS: usize = 100;
+
+/// Reject a sending-identity count over [`IMAP_MAX_IDENTITIES`]. Returns the
+/// count unchanged when within the limit (including exactly at it), so the
+/// caller reads "ok, this many". Unlike the lenient read-time builder, an edit
+/// uses this to refuse an over-limit list outright with a plain message.
+pub fn check_identity_count(count: usize) -> Result<usize, ProviderError> {
+    if count > IMAP_MAX_IDENTITIES {
+        return Err(ProviderError::PermanentClientRejection(format!(
+            "{count} sending addresses, over the {IMAP_MAX_IDENTITIES}-address limit for one account"
+        )));
+    }
+    Ok(count)
+}
+
+/// Reject a display name longer than [`MAX_IDENTITY_DISPLAY_NAME_CHARS`]
+/// characters. Returns the char count unchanged when within the limit
+/// (including exactly at it).
+pub fn check_identity_display_name_len(chars: usize) -> Result<usize, ProviderError> {
+    if chars > MAX_IDENTITY_DISPLAY_NAME_CHARS {
+        return Err(ProviderError::PermanentClientRejection(format!(
+            "a sender name is {chars} characters, over the {MAX_IDENTITY_DISPLAY_NAME_CHARS}-character limit"
+        )));
+    }
+    Ok(chars)
+}
+
 /// Minimum gap, in milliseconds, between two `prepare_delivery` attempts for
 /// the SAME queued outbox item after a TRANSIENT prepare failure.
 ///
@@ -1670,6 +1712,37 @@ mod tests {
     }
 
     // --- Phase 4 run 4a: the Sent-copy APPEND primitive --------------------
+
+    #[test]
+    fn identity_count_gates_below_at_and_above_the_limit() {
+        assert_eq!(check_identity_count(0).unwrap(), 0);
+        assert_eq!(
+            check_identity_count(IMAP_MAX_IDENTITIES - 1).unwrap(),
+            IMAP_MAX_IDENTITIES - 1
+        );
+        assert_eq!(check_identity_count(IMAP_MAX_IDENTITIES).unwrap(), IMAP_MAX_IDENTITIES);
+        assert!(matches!(
+            check_identity_count(IMAP_MAX_IDENTITIES + 1).unwrap_err(),
+            ProviderError::PermanentClientRejection(_)
+        ));
+    }
+
+    #[test]
+    fn identity_display_name_len_gates_below_at_and_above_the_limit() {
+        assert_eq!(check_identity_display_name_len(0).unwrap(), 0);
+        assert_eq!(
+            check_identity_display_name_len(MAX_IDENTITY_DISPLAY_NAME_CHARS - 1).unwrap(),
+            MAX_IDENTITY_DISPLAY_NAME_CHARS - 1
+        );
+        assert_eq!(
+            check_identity_display_name_len(MAX_IDENTITY_DISPLAY_NAME_CHARS).unwrap(),
+            MAX_IDENTITY_DISPLAY_NAME_CHARS
+        );
+        assert!(matches!(
+            check_identity_display_name_len(MAX_IDENTITY_DISPLAY_NAME_CHARS + 1).unwrap_err(),
+            ProviderError::PermanentClientRejection(_)
+        ));
+    }
 
     #[test]
     fn append_bytes_gates_below_at_and_above_the_limit() {

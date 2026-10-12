@@ -120,7 +120,17 @@ export function demoCorrespondence(getSourceThread: (messageId: string) => Promi
     async setDraftAccount(id, account) {
       const store = read(); const d = draft(store, id);
       if (d.mode !== "new") throw new Error("Only new messages can change the sending account");
-      d.account = account; d.revision++; d.updatedAt = Date.now(); write(store); return d;
+      d.account = account; d.from = null; d.revision++; d.updatedAt = Date.now(); write(store); return d;
+    },
+    // Browser preview has no IMAP account, so every account is single-identity.
+    async listIdentities(account) { return [{ address: account }]; },
+    async setDraftFrom(id, from) {
+      const store = read(); const d = draft(store, id);
+      // Single-identity in preview: only the account's own address (or null) is valid.
+      if (from && from.toLowerCase() !== d.account.toLowerCase()) {
+        throw new Error(`${from} is not one of this account's sending addresses.`);
+      }
+      d.from = null; d.revision++; d.updatedAt = Date.now(); write(store); return d;
     },
     async saveDraft(next) {
       const store = read(); const previous = draft(store, next.id);

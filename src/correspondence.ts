@@ -4,11 +4,16 @@ import {
   type InvokePolicy,
   WAIT_FOR_NATIVE_COMPLETION,
 } from "./invoke";
+import type { SendingIdentity } from "./domain";
 
 export type ComposeMode = "new" | "reply" | "replyAll" | "forward";
 export type Attachment = { id: string; name: string; size: number; mime: string; ready: boolean; messageId: string | null; providerId: string | null; inline?: boolean; contentId?: string | null };
+/** Re-exported for convenience; the canonical definition lives in domain.ts. */
+export type { SendingIdentity };
 export type Draft = {
   id: string; revision: number; account: string; mode: ComposeMode;
+  /** The chosen sending identity address, when a non-primary identity was selected (multi-identity IMAP accounts only). `null`/absent means "send as `account`". */
+  from?: string | null;
   sourceId: string | null; threadId: string | null; replyId: string | null; references: string[];
   to: string; cc: string; bcc: string; subject: string; body: string; bodyHtml?: string;
   /** Preserved sender content, rendered only through SafeMessage and appended by native MIME assembly. */
@@ -16,7 +21,9 @@ export type Draft = {
   followUpTaskId?: string | null;
   attachments: Attachment[]; updatedAt: number;
 };
-export type OutboxItem = { id: string; draft: Draft; state: "scheduled" | "overdue" | "undo_pending" | "ready" | "sending" | "sent" | "failed" | "uncertain" | "unverifiable" | "canceled"; deadline: number; error: string | null; providerId?: string | null; schedule?: ScheduledSend | null };
+/** The run-4b Sent-copy job state surfaced on an outbox item; `null` for Gmail, legacy rows, and servers that save their own copy. */
+export type SentCopyStatus = { state: "pending" | "verify" | "done" | "abandoned"; error?: string | null };
+export type OutboxItem = { id: string; draft: Draft; state: "scheduled" | "overdue" | "undo_pending" | "ready" | "sending" | "sent" | "failed" | "uncertain" | "unverifiable" | "canceled"; deadline: number; error: string | null; providerId?: string | null; schedule?: ScheduledSend | null; sentCopy?: SentCopyStatus | null };
 export type ScheduleSelection = { localTime: string; timeZone: string; offsetSeconds?: number | null };
 export type ScheduleTimeChoice = { scheduledAt: number; offsetSeconds: number };
 export type ScheduledSendReport = {
@@ -38,6 +45,10 @@ export interface CorrespondenceClient {
   createDraft(mode: ComposeMode, sourceId?: string, account?: string): Promise<Draft>;
   /** Changes a "new" message's sending account; reply/replyAll/forward stay locked to their source thread's account. */
   setDraftAccount(id: string, account: string): Promise<Draft>;
+  /** The account's ordered sending identities (login first), with display names. Offline-safe. */
+  listIdentities(account: string): Promise<SendingIdentity[]>;
+  /** Sets the draft's chosen sending identity. `null` or the primary address stores "send as the account". Allowed for every compose mode. */
+  setDraftFrom(id: string, from: string | null): Promise<Draft>;
   saveDraft(draft: Draft): Promise<Draft>;
   listDrafts(): Promise<Draft[]>;
   discardDraft(id: string): Promise<void>;
@@ -55,7 +66,7 @@ export interface CorrespondenceClient {
 
 type CorrespondenceOperation =
   | "schedulingInfo" | "scheduleChoices" | "schedule" | "reschedule" | "sendScheduledNow" | "listScheduledSummaries"
-  | "identity" | "create" | "setAccount" | "save" | "listDrafts"
+  | "identity" | "create" | "setAccount" | "identities" | "setFrom" | "save" | "listDrafts"
   | "discard" | "queue" | "listOutbox" | "cancel" | "recover"
   | "reconcile" | "attach" | "attachInline" | "readInline"
   | "removeAttachment" | "fetchAttachment";
@@ -70,6 +81,8 @@ const OPERATION_POLICY: Record<CorrespondenceOperation, InvokePolicy> = {
   identity: BOUNDED_LOCAL_READ,
   create: WAIT_FOR_NATIVE_COMPLETION,
   setAccount: WAIT_FOR_NATIVE_COMPLETION,
+  identities: BOUNDED_LOCAL_READ,
+  setFrom: WAIT_FOR_NATIVE_COMPLETION,
   save: WAIT_FOR_NATIVE_COMPLETION,
   listDrafts: BOUNDED_LOCAL_READ,
   discard: WAIT_FOR_NATIVE_COMPLETION,
@@ -101,6 +114,8 @@ export const nativeCorrespondence: CorrespondenceClient = {
   listScheduledSummaries: () => request("listScheduledSummaries"),
   createDraft: (mode, sourceId, account) => request("create", { mode, sourceId, account }),
   setDraftAccount: (id, account) => request("setAccount", { id, account }),
+  listIdentities: (account) => request("identities", { account }),
+  setDraftFrom: (id, from) => request("setFrom", { id, from }),
   saveDraft: (draft) => request("save", { draft }),
   listDrafts: () => request("listDrafts"),
   discardDraft: (id) => request("discard", { id }),

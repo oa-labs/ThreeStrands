@@ -45,20 +45,48 @@ fn now() -> i64 {
 }
 
 /// A short, plain-language note stored in `sent_copy_error` for a Sent-copy
-/// job that failed. The provider's error messages are already user-facing
-/// (e.g. "the Sent mailbox does not exist; configure it"); this maps the
-/// transient transport/auth classes to a stable "will retry" phrasing and
-/// passes a permanent class's own message through, so the stored note never
-/// leaks a raw transport string. Never includes a path or host name.
+/// job that failed. The message WAS sent; only the sender's own copy to the
+/// Sent folder could not be saved. The transient transport/auth classes get a
+/// stable "will retry" phrasing; the PERMANENT classes
+/// ([`ProviderError::InvalidOperation`] / [`PermanentClientRejection`]) are
+/// rewritten here from the provider's developer wording ("...refusing
+/// permanently", APPEND/quota jargon, wire mailbox names) into one plain
+/// sentence that states the fact the user needs: the message was sent, a copy
+/// could not be saved to the Sent folder, and why in one short clause. Never
+/// includes a path, host name, IMAP/Rust jargon, or a folder wire name.
 fn sent_copy_error_message(err: &crate::provider::ProviderError) -> String {
     use crate::provider::ProviderError;
     match err {
         ProviderError::InvalidOperation(message)
-        | ProviderError::PermanentClientRejection(message) => message.clone(),
+        | ProviderError::PermanentClientRejection(message) => permanent_sent_copy_message(message),
         ProviderError::ReauthenticationRequired(_) | ProviderError::Authentication(_) => {
             "Couldn't sign in to save the sent copy. Will retry.".into()
         }
         _ => "Couldn't save the sent copy yet. Will retry.".into(),
+    }
+}
+
+/// Classify a PERMANENT Sent-copy failure (the provider's own, developer-worded
+/// message) into one plain user sentence. Classification is by stable
+/// substring of the provider messages this build produces; an unrecognised
+/// permanent message falls back to a generic "couldn't be saved" sentence that
+/// still never leaks jargon. Each class is pinned by a Rust test.
+fn permanent_sent_copy_message(provider_message: &str) -> String {
+    const SENT_PREFIX: &str =
+        "Your message was sent, but a copy couldn't be saved to your Sent folder";
+    let lower = provider_message.to_ascii_lowercase();
+    if lower.contains("no sent mailbox") || lower.contains("no sent folder") {
+        format!("{SENT_PREFIX} because no Sent folder is set up for this account.")
+    } else if lower.contains("over quota")
+        || lower.contains("append limit")
+        || lower.contains("too large")
+        || lower.contains("over the")
+    {
+        format!("{SENT_PREFIX} because the message is too large for the Sent folder.")
+    } else if lower.contains("message-id") {
+        format!("{SENT_PREFIX} because it is missing a Message-ID.")
+    } else {
+        format!("{SENT_PREFIX}.")
     }
 }
 
@@ -156,6 +184,25 @@ pub struct OutboxItem {
     pub archive_on_send: bool,
     #[serde(default)]
     pub schedule: Option<crate::scheduled_send::Schedule>,
+    /// The run-4b Sent-copy job's state for this item, surfaced to the UI so
+    /// an ABANDONED copy can be shown as a one-line notice. `None` for every
+    /// row with no Sent-copy job: Gmail, a legacy row, and any IMAP row whose
+    /// server saves its own copy. Serialized as `sentCopy`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sent_copy: Option<SentCopyStatus>,
+}
+
+/// The Sent-copy job state exposed to the UI. `state` mirrors the
+/// `sent_copy_state` column exactly (`pending` queued, `verify` awaiting a
+/// delivery re-check, `done` saved, `abandoned` gave up); `error` is the
+/// already-plain `sent_copy_error` note (set only on `abandoned` or while
+/// retrying). Only `abandoned` is shown to the user.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SentCopyStatus {
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
@@ -180,6 +227,20 @@ pub enum Request {
     SetAccount {
         id: String,
         account: String,
+    },
+    /// The sending identities (address + optional display name) available on
+    /// `account`, in order. Offline-safe: read from the stored list, no
+    /// provider call. Used by the compose From picker.
+    Identities {
+        account: String,
+    },
+    /// Set a draft's chosen sending identity. `from` must be one of the
+    /// account's identities, or `null` / the primary address (which stores
+    /// `from = None`). Allowed for every compose mode.
+    SetFrom {
+        id: String,
+        #[serde(default)]
+        from: Option<String>,
     },
     Save {
         draft: Draft,
@@ -611,6 +672,12 @@ impl Database {
             return Err("Only new messages can change the sending account".into());
         }
         d.account = account.to_string();
+        // A chosen secondary identity belongs to the OLD account. Moving the
+        // draft to another account must drop it, or the draft keeps a `from`
+        // that is not on the new account's identity list and `queue` later
+        // rejects it with "no longer on this account". Clear it so the new
+        // account sends from its own primary identity (`from = None`).
+        d.from = None;
         let expected = d.revision;
         d.revision += 1;
         d.updated_at = now();
@@ -625,6 +692,66 @@ impl Database {
             return Err("Draft changed elsewhere. Reopen it before editing.".into());
         }
         self.set_compose_identity(account)?;
+        Ok(d)
+    }
+    /// Sets the draft's chosen sending identity (`Draft.from`). Allowed for
+    /// EVERY compose mode — replying from a legitimate secondary address of
+    /// the SAME account is valid (`docs/imap-design.md`, "Identities"); only
+    /// the account itself is locked (that is `set_draft_account`'s job). The
+    /// address must be one of the account's identities (normalized compare).
+    /// `None`, or an address equal to the FIRST identity (the account's
+    /// primary/login), stores `from = None` ("send as the account"), so the
+    /// stored value stays canonical. An unknown address is rejected with a
+    /// plain-language error and NOTHING is written. Bumps the revision under
+    /// the same optimistic-concurrency guard `set_draft_account` uses.
+    pub fn set_draft_from(&self, id: &str, from: Option<&str>) -> Result<Draft, String> {
+        let mut d = self.draft(id)?;
+        let identities = self.account_sending_identities(&d.account)?;
+        let resolved: Option<String> = match from.map(str::trim).filter(|s| !s.is_empty()) {
+            // No address, or an explicit null -> primary identity.
+            None => None,
+            Some(address) => {
+                let normalized =
+                    crate::provider::imap::normalize_identity_address(address);
+                let matched = identities.iter().find(|identity| {
+                    crate::provider::imap::identity_normalized(identity) == normalized
+                });
+                match matched {
+                    None => {
+                        return Err(format!(
+                            "{address} is not one of this account's sending addresses. \
+                             Add it in the account's Sending settings first."
+                        ));
+                    }
+                    // The primary (first) identity is "send as the account":
+                    // store None so the canonical form never records a `from`
+                    // equal to the account's own address.
+                    Some(identity)
+                        if crate::provider::imap::identity_normalized(identity)
+                            == crate::provider::imap::identity_normalized(&identities[0]) =>
+                    {
+                        None
+                    }
+                    // A genuine secondary identity: store its address exactly
+                    // as the identity list spells it (original case).
+                    Some(identity) => Some(identity.address.clone()),
+                }
+            }
+        };
+        d.from = resolved;
+        let expected = d.revision;
+        d.revision += 1;
+        d.updated_at = now();
+        let changed = self
+            .connection()?
+            .execute(
+                "UPDATE drafts SET revision=?1,payload=?2 WHERE id=?3 AND revision=?4",
+                params![d.revision, json(&d)?, d.id, expected],
+            )
+            .map_err(error)?;
+        if changed != 1 {
+            return Err("Draft changed elsewhere. Reopen it before editing.".into());
+        }
         Ok(d)
     }
     pub fn discard_draft(&self, id: &str) -> Result<(), String> {
@@ -653,7 +780,7 @@ impl Database {
         let c = self.connection()?;
         let mut q = c
             .prepare(
-                "SELECT id,payload,state,deadline,error,provider_id,archive_on_send,schedule_json,last_attempt_at FROM outbox_messages ORDER BY rowid DESC",
+                "SELECT id,payload,state,deadline,error,provider_id,archive_on_send,schedule_json,last_attempt_at,sent_copy_state,sent_copy_error FROM outbox_messages ORDER BY rowid DESC",
             )
             .map_err(error)?;
         let rows = q
@@ -668,11 +795,13 @@ impl Database {
                     r.get::<_, bool>(6)?,
                     r.get::<_, Option<String>>(7)?,
                     r.get::<_, Option<i64>>(8)?,
+                    r.get::<_, Option<String>>(9)?,
+                    r.get::<_, Option<String>>(10)?,
                 ))
             })
             .map_err(error)?;
         rows.map(|r| {
-            let (id, payload, state, deadline, error, provider_id, archive_on_send, schedule_json, last_attempt_at) =
+            let (id, payload, state, deadline, error, provider_id, archive_on_send, schedule_json, last_attempt_at, sent_copy_state, sent_copy_error) =
                 r.map_err(error)?;
             Ok(OutboxItem {
                 id,
@@ -684,6 +813,9 @@ impl Database {
                 last_attempt_at,
                 archive_on_send,
                 schedule: schedule_json.map(|s|serde_json::from_str(&s)).transpose().map_err(crate::correspondence::error)?,
+                // A row with no Sent-copy job (Gmail, legacy, or a server that
+                // saves its own copy) has a NULL sent_copy_state -> no status.
+                sent_copy: sent_copy_state.map(|state| SentCopyStatus { state, error: sent_copy_error }),
             })
         })
         .collect()
@@ -764,6 +896,7 @@ impl Database {
             last_attempt_at: None,
             archive_on_send,
             schedule: None,
+            sent_copy: None,
         };
         let mut c = self.connection()?;
         let tx = c.transaction().map_err(error)?;
@@ -1277,6 +1410,14 @@ impl Correspondence {
             }
             SetAccount { id, account } => Ok(serde_json::to_value(
                 self.database.set_draft_account(&id, &account)?,
+            )
+            .map_err(error)?),
+            Identities { account } => Ok(serde_json::to_value(
+                self.database.account_sending_identities(&account)?,
+            )
+            .map_err(error)?),
+            SetFrom { id, from } => Ok(serde_json::to_value(
+                self.database.set_draft_from(&id, from.as_deref())?,
             )
             .map_err(error)?),
             Save { draft } => {
@@ -2166,6 +2307,186 @@ mod tests {
         d.subject = "Hello".into();
         d.body = "Saved work ✓".into();
         db.save_draft(d).unwrap()
+    }
+
+    /// A database with a multi-identity IMAP account `me@proton.me` set up
+    /// (login first, one secondary `work@proton.me`), for the From-picker ops.
+    fn imap_database() -> Database {
+        use crate::provider::imap::{Identity, ImapAccountSettings, LabelStorage, SecurityMode};
+        let db = Database::open_memory();
+        db.adopt_mail_account("me@proton.me", crate::models::MailProviderKind::Imap)
+            .unwrap();
+        db.set_compose_identity("me@proton.me").unwrap();
+        let settings = ImapAccountSettings {
+            imap_host: "127.0.0.1".into(),
+            imap_port: 1143,
+            imap_security: SecurityMode::StartTls,
+            imap_username: "me@proton.me".into(),
+            smtp_host: "127.0.0.1".into(),
+            smtp_port: 1025,
+            smtp_security: SecurityMode::StartTls,
+            smtp_username: "me@proton.me".into(),
+            mailbox_overrides: Default::default(),
+            archive_mailbox: None,
+            label_storage: LabelStorage::None,
+            label_container: None,
+            identities: vec![
+                Identity { address: "me@proton.me".into(), display_name: None },
+                Identity { address: "work@proton.me".into(), display_name: Some("Work".into()) },
+            ],
+            pinned_fingerprints: Default::default(),
+            server_saves_sent: false,
+        };
+        db.save_imap_account_settings("me@proton.me", &settings).unwrap();
+        db
+    }
+
+    #[test]
+    fn account_sending_identities_lists_login_first_with_display_names() {
+        let db = imap_database();
+        let identities = db.account_sending_identities("me@proton.me").unwrap();
+        assert_eq!(identities.len(), 2);
+        assert_eq!(identities[0].address, "me@proton.me");
+        assert_eq!(identities[1].address, "work@proton.me");
+        assert_eq!(identities[1].display_name.as_deref(), Some("Work"));
+        // A Gmail account (no settings row) is exactly [account].
+        let gmail = database();
+        let only = gmail.account_sending_identities("you@example.com").unwrap();
+        assert_eq!(only.len(), 1);
+        assert_eq!(only[0].address, "you@example.com");
+    }
+
+    #[test]
+    fn set_draft_from_accepts_a_secondary_identity_and_bumps_the_revision() {
+        let db = imap_database();
+        let d = db.create_draft("new", None, "me@proton.me", &[]).unwrap();
+        let updated = db.set_draft_from(&d.id, Some("work@proton.me")).unwrap();
+        assert_eq!(updated.from.as_deref(), Some("work@proton.me"));
+        assert_eq!(updated.revision, d.revision + 1);
+        assert_eq!(db.draft(&d.id).unwrap().from.as_deref(), Some("work@proton.me"));
+    }
+
+    #[test]
+    fn set_draft_from_normalizes_the_primary_and_null_to_none() {
+        let db = imap_database();
+        let d = db.create_draft("new", None, "me@proton.me", &[]).unwrap();
+        let on_secondary = db.set_draft_from(&d.id, Some("work@proton.me")).unwrap();
+        // The account's own address stores None ("send as the account").
+        let back = db.set_draft_from(&d.id, Some("ME@Proton.ME")).unwrap();
+        assert_eq!(back.from, None, "the primary identity (any case) stores None");
+        assert!(on_secondary.revision < back.revision);
+        // An explicit null also stores None.
+        let on_secondary = db.set_draft_from(&d.id, Some("work@proton.me")).unwrap();
+        let cleared = db.set_draft_from(&on_secondary.id, None).unwrap();
+        assert_eq!(cleared.from, None);
+    }
+
+    #[test]
+    fn set_draft_from_is_allowed_for_a_reply_mode_draft() {
+        let db = imap_database();
+        // A reply/forward can legitimately send from a secondary identity.
+        let d = Draft {
+            id: Uuid::new_v4().to_string(),
+            revision: 0,
+            account: "me@proton.me".into(),
+            from: None,
+            mode: "reply".into(),
+            source_id: None,
+            thread_id: None,
+            reply_id: None,
+            references: vec![],
+            to: String::new(),
+            cc: String::new(),
+            bcc: String::new(),
+            subject: String::new(),
+            body: String::new(),
+            body_html: String::new(),
+            forwarded_content: None,
+            follow_up_task_id: None,
+            attachments: vec![],
+            updated_at: now(),
+        };
+        db.connection()
+            .unwrap()
+            .execute("INSERT INTO drafts VALUES (?1,?2,?3)", params![d.id, d.revision, json(&d).unwrap()])
+            .unwrap();
+        let updated = db.set_draft_from(&d.id, Some("work@proton.me")).unwrap();
+        assert_eq!(updated.from.as_deref(), Some("work@proton.me"));
+    }
+
+    #[test]
+    fn set_draft_from_rejects_an_address_not_on_the_account_and_writes_nothing() {
+        let db = imap_database();
+        let d = db.create_draft("new", None, "me@proton.me", &[]).unwrap();
+        let err = db.set_draft_from(&d.id, Some("stranger@elsewhere.com")).unwrap_err();
+        assert!(err.contains("stranger@elsewhere.com"));
+        // Nothing was written: revision and from unchanged.
+        let reread = db.draft(&d.id).unwrap();
+        assert_eq!(reread.revision, d.revision);
+        assert_eq!(reread.from, None);
+    }
+
+    #[test]
+    fn set_draft_account_clears_a_stale_from() {
+        // A draft on the IMAP account with a chosen secondary identity, moved
+        // to another account, must drop the stale `from` (fact 2) so a later
+        // queue does not reject "from no longer on this account".
+        let db = imap_database();
+        db.adopt_account("other@example.com").unwrap();
+        let d = db.create_draft("new", None, "me@proton.me", &[]).unwrap();
+        let with_from = db.set_draft_from(&d.id, Some("work@proton.me")).unwrap();
+        assert_eq!(with_from.from.as_deref(), Some("work@proton.me"));
+        let moved = db.set_draft_account(&d.id, "other@example.com").unwrap();
+        assert_eq!(moved.account, "other@example.com");
+        assert_eq!(moved.from, None, "moving the account must clear the stale from");
+        assert_eq!(db.draft(&d.id).unwrap().from, None);
+    }
+
+    #[test]
+    fn permanent_sent_copy_message_is_plain_for_each_class() {
+        // Each class rewrites the provider's developer wording into one plain
+        // sentence that never leaks jargon.
+        let no_folder = permanent_sent_copy_message(
+            "cannot save the Sent copy: this account has no Sent mailbox configured; refusing permanently",
+        );
+        assert!(no_folder.starts_with("Your message was sent, but a copy couldn't be saved to your Sent folder"));
+        assert!(no_folder.contains("no Sent folder is set up"));
+        for jargon in ["refusing permanently", "mailbox", "APPEND"] {
+            assert!(!no_folder.contains(jargon), "leaked jargon {jargon:?}: {no_folder}");
+        }
+
+        let too_large = permanent_sent_copy_message("message is 70000000 bytes, over the 67108865-byte (64 MiB) APPEND limit");
+        assert!(too_large.contains("too large for the Sent folder"));
+        assert!(!too_large.contains("APPEND"));
+
+        let over_quota = permanent_sent_copy_message(
+            "the mail server refused the APPEND of the Sent copy (e.g. over quota or a rejected message); it was not saved. The specific reason was not reported by the IMAP library.",
+        );
+        assert!(over_quota.contains("too large for the Sent folder"));
+
+        let no_mid = permanent_sent_copy_message(
+            "cannot save the Sent copy: the message has no Message-ID header to locate it by; refusing permanently",
+        );
+        assert!(no_mid.contains("missing a Message-ID"));
+        assert!(!no_mid.contains("refusing permanently"));
+
+        // An unrecognised permanent message still yields a jargon-free sentence.
+        let generic = permanent_sent_copy_message("message contains a NUL byte, which an IMAP4rev1 literal cannot carry; refusing to APPEND");
+        assert!(generic.starts_with("Your message was sent, but a copy couldn't be saved to your Sent folder"));
+    }
+
+    #[test]
+    fn sent_copy_error_message_classes_transient_vs_permanent() {
+        use crate::provider::ProviderError;
+        // Transient auth/transport -> "will retry".
+        assert!(sent_copy_error_message(&ProviderError::Authentication("x".into())).contains("retry"));
+        assert!(sent_copy_error_message(&ProviderError::TransientTransport("x".into())).contains("retry"));
+        // Permanent -> plain "was sent, couldn't save a copy" with no retry promise.
+        let permanent = sent_copy_error_message(&ProviderError::InvalidOperation(
+            "cannot save the Sent copy: this account has no Sent mailbox configured; refusing permanently".into(),
+        ));
+        assert!(permanent.contains("Your message was sent"));
+        assert!(!permanent.contains("retry"));
     }
     #[test]
     fn retention_days_defaults_to_unlimited_and_round_trips() {
@@ -3406,7 +3727,14 @@ mod tests {
             let row = job_row(&service, "j1");
             assert_eq!(row.1.as_deref(), Some("abandoned"));
             assert_eq!(row.2, 0, "a permanent failure does not count a retry attempt");
-            assert_eq!(row.6.as_deref(), Some("no Sent mailbox configured"));
+            // run 5 rewrites the permanent-class provider message into plain
+            // user wording before it is stored in sent_copy_error (the raw
+            // "no Sent mailbox configured" developer text no longer reaches
+            // the user). See sent_copy_error_message / permanent_sent_copy_message.
+            assert_eq!(
+                row.6.as_deref(),
+                Some("Your message was sent, but a copy couldn't be saved to your Sent folder because no Sent folder is set up for this account.")
+            );
             assert_send_state_untouched(&row);
             assert_eq!(provider.send_calls.load(Ordering::SeqCst), 0);
         }

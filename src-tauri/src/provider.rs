@@ -274,11 +274,13 @@ pub enum SentCopyStep {
 /// `docs/imap-design.md` ("Identities") and
 /// [`crate::provider::imap::account_identities`], the one builder that applies
 /// the normalization/validation rules.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SendingIdentity {
     /// The address as displayed (original case preserved for the header).
     pub address: String,
     /// An optional display name for the From header.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
 }
 

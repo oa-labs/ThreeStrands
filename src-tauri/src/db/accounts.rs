@@ -123,6 +123,38 @@ impl Database {
         })
     }
 
+    /// The account's ordered, validated, login-anchored sending identities,
+    /// WITH display names — the same list the From picker and the account
+    /// Sending panel read (`docs/imap-design.md`, "Identities"). Built by the
+    /// one shared [`crate::provider::imap::account_identities`] builder from
+    /// the account's stored identity list, so it never branches on a provider
+    /// name: an IMAP account with a settings row returns its stored list
+    /// (login first, deduped, hostile entries dropped); an account with NO
+    /// IMAP settings row (a Gmail account) returns exactly `[account]`. Offline
+    /// safe — one local query, no provider call.
+    ///
+    /// Distinct from [`crate::db::sending_addresses_for_account`], which
+    /// returns a NORMALIZED set for "is this From mine" membership tests; this
+    /// returns the ORDERED display list the UI renders.
+    pub fn account_sending_identities(
+        &self,
+        account_id: &str,
+    ) -> DbResult<Vec<crate::provider::SendingIdentity>> {
+        use rusqlite::OptionalExtension;
+        self.with_connection(|connection| {
+            let stored: Vec<crate::provider::imap::Identity> = connection
+                .query_row(
+                    "SELECT identities_json FROM imap_account_settings WHERE account_id = ?1",
+                    [account_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .and_then(|json| serde_json::from_str(&json).ok())
+                .unwrap_or_default();
+            Ok(crate::provider::imap::account_identities(account_id, &stored))
+        })
+    }
+
     /// Inserts or replaces one account's non-secret IMAP settings. Called by
     /// the "test and save" setup command after a successful connection test.
     pub fn save_imap_account_settings(

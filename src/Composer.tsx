@@ -1,7 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Paperclip, Send, Sparkles, Trash, X } from "lucide-react";
 import { mailClient } from "./data/client";
-import type { Draft, OutboxItem } from "./correspondence";
+import type { Draft, OutboxItem, SendingIdentity } from "./correspondence";
 import type { Account, ReplyAssistContext, Snippet } from "./domain";
 import {
   isAiApiKeyConfigured,
@@ -16,7 +16,7 @@ import { ComposeBodyEditor, type ComposeBodyEditorHandle } from "./ComposeBodyEd
 import { useDraftAutosave } from "./useDraftAutosave";
 import { moveAddressesToBcc, replaceAddress } from "./composeChecks";
 import { useEscapeDismiss } from "./useEscapeDismiss";
-import { errorMessage } from "./errors";
+import { errorMessage, logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import type { DraftReviewActions } from "./draftReview";
 import { plainTextToHtml } from "./richText";
@@ -60,6 +60,11 @@ export const Composer = forwardRef<ComposerHandle, {
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  // The draft account's ordered sending identities, for the From picker.
+  // Fetched when the account changes; cached per account. A failed fetch
+  // leaves this empty (the picker is hidden) and never blocks sending.
+  const [identities, setIdentities] = useState<SendingIdentity[]>([]);
+  const identityCache = useRef(new Map<string, SendingIdentity[]>());
   const [showBlankCopies, setShowBlankCopies] = useState(false);
   const [replyAssistAvailable, setReplyAssistAvailable] = useState(false);
   const [replyAssistOpen, setReplyAssistOpen] = useState(false);
@@ -119,7 +124,17 @@ export const Composer = forwardRef<ComposerHandle, {
   }
   function changeAccount(email: string) {
     if (email === latest.current.account) return;
+    // Switching the account resets the From picker: the new account's
+    // identities are refetched by the effect below, and the backend clears
+    // any stale `from` on the moved draft.
+    setIdentities([]);
     void run(async () => { await flush(); const next = await mailClient.setDraftAccount(latest.current.id, email); replaceDraft(next); });
+  }
+  function changeFrom(address: string) {
+    const primary = identities[0]?.address;
+    const value = !address || address === primary ? null : address;
+    if ((latest.current.from ?? null) === value) return;
+    void run(async () => { await flush(); const next = await mailClient.setDraftFrom(latest.current.id, value); replaceDraft(next); });
   }
   function insertText(text: string) {
     if (!busyRef.current) bodyEditor.current?.insertText(text);
@@ -210,7 +225,7 @@ export const Composer = forwardRef<ComposerHandle, {
       id: current.id, subject: current.subject, body: authored.text, bodyHtml: authored.html,
       hasInlineImages: authored.hasInlineImages,
       hasInlineQuotes: authored.hasInlineQuotes,
-      fingerprint: JSON.stringify([current.id, current.account, current.to, current.cc, current.bcc,
+      fingerprint: JSON.stringify([current.id, current.account, current.from ?? null, current.to, current.cc, current.bcc,
         current.subject, current.body, current.bodyHtml, current.attachments]),
     };
   }
@@ -275,6 +290,23 @@ export const Composer = forwardRef<ComposerHandle, {
     panel.current?.querySelector<HTMLInputElement>(`[name="${field}"]`)?.focus();
   }, [showBlankCopies]);
   useEffect(() => { onDraftChange?.(draft); }, [draft, onDraftChange]);
+  useEffect(() => {
+    const account = draft.account;
+    const cached = identityCache.current.get(account);
+    if (cached) { setIdentities(cached); return; }
+    let active = true;
+    void mailClient.listIdentities(account)
+      .then((list) => {
+        identityCache.current.set(account, list);
+        if (active) setIdentities(list);
+      })
+      .catch((reason) => {
+        // A failed fetch hides the picker (empty) and never blocks sending.
+        if (active) setIdentities([]);
+        logBackgroundFailure("Sending identities")(reason);
+      });
+    return () => { active = false; };
+  }, [draft.account]);
   useEscapeDismiss(close, !scheduleOpen);
   return <div ref={panel} className={initial.mode === "new" ? "composer composer-inline composer-new" : "composer composer-inline"} role="dialog" data-shortcut-scope="compose" aria-label={initial.mode === "new" ? "New Message" : initial.mode === "forward" ? "Forward Message" : "Reply Message"}
       onKeyDown={(event) => {
@@ -296,7 +328,13 @@ export const Composer = forwardRef<ComposerHandle, {
         <label className="compose-from"><span>From</span><select aria-label="Send From" value={draft.account} disabled={busy} onChange={(e) => changeAccount(e.target.value)}>
           {accounts.map((a) => <option key={a.email} value={a.email}>{a.email}</option>)}
         </select></label>
-      ) : <span>From {draft.account}</span>}</div><button className="btn-icon" aria-label="Save and Close Draft" onClick={close} disabled={busy}><X size={ICON_SIZE.lg} /></button></header>
+      ) : <span>From {draft.from ?? draft.account}</span>}{identities.length > 1 ? (
+        <label className="compose-from compose-sending-address"><span>Sending address</span>
+          <select aria-label="Sending address" value={draft.from ?? identities[0].address} disabled={busy} onChange={(e) => changeFrom(e.target.value)}>
+            {identities.map((identity) => <option key={identity.address} value={identity.address}>{identity.displayName ? `${identity.displayName} <${identity.address}>` : identity.address}</option>)}
+          </select>
+        </label>
+      ) : null}</div><button className="btn-icon" aria-label="Save and Close Draft" onClick={close} disabled={busy}><X size={ICON_SIZE.lg} /></button></header>
       <div className="composer-content">
         <RecipientField id="to" label="To" value={draft.to} account={draft.account} disabled={busy} labelExpanded={showBlankCopies} onLabelClick={() => setShowBlankCopies((visible) => !visible)} onChange={(value) => edit("to", value)} />
         {(["cc", "bcc"] as const).map((field) => (

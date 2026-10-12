@@ -752,6 +752,22 @@ export type ImapMailboxMappingCommit = {
   labelContainer: string | null;
 };
 
+/** One address an account may send as, with an optional display name. The first in an account's list is its primary (login) address. */
+export type SendingIdentity = { address: string; displayName?: string };
+
+/** An account's sending options for the Settings "Sending" panel (IMAP only). */
+export type ImapSendingOptions = {
+  /** Ordered send-as identities (login/sign-in address first), with display names. */
+  identities: SendingIdentity[];
+  /** The user override: true = the server saves its own sent mail, so don't save a copy. */
+  serverSavesSentOverride: boolean;
+  /** This device's local Sent-copy detection: true server saves its own, false it does not, null not yet decided. */
+  sentCopyDetected: boolean | null;
+};
+
+/** One submitted sending-identity row from the Settings edit form. */
+export type SendingIdentityInput = { address: string; displayName?: string | null };
+
 /** The payload the IMAP setup form sends for "test and save". */
 export type ImapSetupRequest = {
   email: string;

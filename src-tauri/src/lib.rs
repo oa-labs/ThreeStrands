@@ -2580,6 +2580,121 @@ async fn commit_imap_mailbox_mapping(
     save_imap_mailbox_mapping(&state.database, settings, commit)
 }
 
+/// The account's sending-related options for the Settings "Sending" panel
+/// (IMAP accounts only). `identities` is the ordered send-as list WITH display
+/// names (login first); `serverSavesSentOverride` is the exported user override
+/// (`imap_account_settings.server_saves_sent`, true = never save a copy);
+/// `sentCopyDetected` is this device's LOCAL detection result (`true` the
+/// server saves its own copy, `false` it does not, `null` not yet decided).
+/// No secret ever appears here.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImapSendingOptions {
+    identities: Vec<crate::provider::SendingIdentity>,
+    server_saves_sent_override: bool,
+    sent_copy_detected: Option<bool>,
+}
+
+/// One submitted sending-identity row from the Settings edit form.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SendingIdentityInput {
+    address: String,
+    #[serde(default)]
+    display_name: Option<String>,
+}
+
+/// Load the IMAP settings for `account`, erroring clearly when the account is
+/// not an IMAP account (no settings row) — shared by all four sending-option
+/// commands so the "IMAP only" refusal is spelled once. The password is never
+/// touched; only the non-secret settings row is read.
+fn imap_settings_or_reject(
+    database: &Database,
+    account: &str,
+) -> Result<imap::ImapAccountSettings, String> {
+    database
+        .imap_account_settings(account)?
+        .ok_or_else(|| format!("{account} is not an IMAP account, so it has no sending settings."))
+}
+
+/// Read an IMAP account's sending options for the Settings panel. Refuses a
+/// non-IMAP or unknown account (no settings row). Offline-safe.
+#[tauri::command(async)]
+fn get_imap_sending_options(
+    account: String,
+    state: State<'_, AppState>,
+) -> Result<ImapSendingOptions, String> {
+    let settings = imap_settings_or_reject(&state.database, &account)?;
+    let identities = state.database.account_sending_identities(&account)?;
+    let store = imap::ImapStateStore::new(state.database.clone(), account.clone());
+    let sent_copy_detected = store.sent_copy_detection()?;
+    Ok(ImapSendingOptions {
+        identities,
+        server_saves_sent_override: settings.server_saves_sent,
+        sent_copy_detected,
+    })
+}
+
+/// Replace an IMAP account's sending identities. Validates STRICTLY (unlike
+/// the lenient read builder): each address must pass envelope validation,
+/// display names reject CR/LF/NUL and are length-capped, duplicates are
+/// rejected, the login address stays first and cannot be removed, and the list
+/// is capped at `IMAP_MAX_IDENTITIES`. Persists ONLY the identities (every
+/// other settings column is round-tripped unchanged). Hostile input is
+/// rejected with ZERO writes. Returns the saved identities (login first, with
+/// display names). Refuses a non-IMAP/unknown account.
+#[tauri::command(async)]
+fn set_imap_identities(
+    account: String,
+    identities: Vec<SendingIdentityInput>,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::provider::SendingIdentity>, String> {
+    let mut settings = imap_settings_or_reject(&state.database, &account)?;
+    let submitted: Vec<imap::Identity> = identities
+        .into_iter()
+        .map(|input| imap::Identity {
+            address: input.address,
+            display_name: input.display_name,
+        })
+        .collect();
+    // Validate first; nothing is written unless this returns Ok. The login/
+    // account address anchors the list and cannot be removed or renamed away.
+    let validated = imap::validate_identity_edit(&account, &submitted)?;
+    settings.identities = validated;
+    state.database.save_imap_account_settings(&account, &settings)?;
+    Ok(state.database.account_sending_identities(&account)?)
+}
+
+/// Set the "server saves its own sent mail" user override only (true = never
+/// save a copy). Writes just that column; everything else is round-tripped.
+/// Refuses a non-IMAP/unknown account.
+#[tauri::command(async)]
+fn set_imap_server_saves_sent(
+    account: String,
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut settings = imap_settings_or_reject(&state.database, &account)?;
+    settings.server_saves_sent = enabled;
+    state.database.save_imap_account_settings(&account, &settings)?;
+    Ok(())
+}
+
+/// Clear this device's local Sent-copy detection result, so the next send
+/// re-detects from scratch ("Check again"). Refuses a non-IMAP/unknown
+/// account. Confirm-free: undoable by nature (the next send re-detects).
+#[tauri::command(async)]
+fn reset_imap_sent_copy_detection(
+    account: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    // Reject a non-IMAP/unknown account before touching local state.
+    imap_settings_or_reject(&state.database, &account)?;
+    let store = imap::ImapStateStore::new(state.database.clone(), account);
+    store.clear_sent_copy_detection()?;
+    Ok(())
+}
+
 #[tauri::command]
 async fn remove_account(
     email: String,
@@ -4804,6 +4919,10 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         test_and_save_imap_account,
         discover_imap_mailboxes,
         commit_imap_mailbox_mapping,
+        get_imap_sending_options,
+        set_imap_identities,
+        set_imap_server_saves_sent,
+        reset_imap_sent_copy_detection,
         remove_account,
         remove_synced_mail_account,
         reconnect_account,

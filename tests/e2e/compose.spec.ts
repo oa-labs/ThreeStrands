@@ -554,3 +554,33 @@ test("peer scheduled visibility cannot send or restore message content", async (
   await expect(item).toContainText("Manage on MacBook");
   await expect(item.getByRole("button")).toHaveCount(0);
 });
+
+test("the composer shows a sending-address picker for a multi-identity account and records the choice", async ({ page }) => {
+  await page.goto("/");
+  // Make the demo account report two sending identities, using the existing
+  // demo mail client (no new mock framework) — the browser-preview account is
+  // normally single-identity, which hides the picker.
+  await page.evaluate(`import("/src/data/client.ts").then(({ mailClient }) => {
+    mailClient.listIdentities = async () => [
+      { address: "demo@example.com" },
+      { address: "work@example.com", displayName: "Work" },
+    ];
+    window.__lastSetFrom = undefined;
+    mailClient.setDraftFrom = async (id, from) => {
+      window.__lastSetFrom = from;
+      const drafts = await mailClient.listDrafts();
+      const draft = drafts.find((d) => d.id === id) ?? drafts[0];
+      return { ...draft, from, revision: draft.revision + 1 };
+    };
+  })`);
+  await page.getByRole("button", { name: "New Message (c)" }).click();
+  const composer = page.getByRole("dialog", { name: "New Message" });
+  const picker = composer.getByRole("combobox", { name: "Sending address" });
+  await expect(picker).toBeVisible();
+  // Native <option>s are not "visible" while the select is closed; assert the
+  // option exists and that selecting it drives the backend call instead.
+  await expect(picker.locator("option")).toHaveCount(2);
+  await picker.selectOption("work@example.com");
+  // The chosen identity reached setDraftFrom.
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __lastSetFrom?: string }).__lastSetFrom)).toBe("work@example.com");
+});

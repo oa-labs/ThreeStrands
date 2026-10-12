@@ -12,6 +12,7 @@ import { moveItem, useSettingsOperation } from "./settingsOperations";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import { ImapAccountSetup } from "./ImapAccountSetup";
+import { ImapSendingSettings } from "./ImapSendingSettings";
 import { AccountStatusBadge, AccountDisconnectConfirm } from "./accountSettingsParts";
 
 export function AccountsSettings({
@@ -237,6 +238,7 @@ export function AccountsSettings({
                   </button>
                 </span>
               </div>
+              {account.provider === "imap" ? <ImapSendingSettings account={account.email} /> : null}
               {confirmEmail === account.email ? (
                 <AccountDisconnectConfirm
                   kind="mail"

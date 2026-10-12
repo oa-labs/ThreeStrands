@@ -1425,3 +1425,71 @@ describe("Composer scheduled sending", () => {
     await waitFor(() => expect(screen.queryByRole("dialog",{name:"Send later"})).not.toBeInTheDocument());expect(close).not.toHaveBeenCalled();expect(screen.getByRole("dialog",{name:"New Message"})).toBeInTheDocument();
   });
 });
+
+describe("Composer sending-address picker", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  const imapAccounts: Account[] = ["me@proton.me"].map((email) => ({
+    email,
+    displayName: null,
+    color: "#6D4AFF",
+    status: "connected",
+    provider: "imap",
+    labelModel: "imapLabelFolders",
+    sortOrder: 0,
+    connectedAt: "2026-01-01T00:00:00Z",
+    lastSyncedAt: null,
+  }));
+  const imapDraft: Draft = { ...draft, account: "me@proton.me" };
+  const twoIdentities = [
+    { address: "me@proton.me" },
+    { address: "work@proton.me", displayName: "Work" },
+  ];
+
+  it("hides the picker when the account has a single identity", async () => {
+    vi.spyOn(mailClient, "listIdentities").mockResolvedValue([{ address: "me@proton.me" }]);
+    render(<Composer draft={imapDraft} accounts={imapAccounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    await waitFor(() => expect(mailClient.listIdentities).toHaveBeenCalledWith("me@proton.me"));
+    expect(screen.queryByRole("combobox", { name: "Sending address" })).not.toBeInTheDocument();
+  });
+
+  it.each(["new", "reply"] as const)("shows the picker with several identities (%s mode) and sets from", async (mode) => {
+    vi.spyOn(mailClient, "listIdentities").mockResolvedValue(twoIdentities);
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    const setDraftFrom = vi.spyOn(mailClient, "setDraftFrom").mockResolvedValue({ ...imapDraft, mode, revision: 5, from: "work@proton.me" });
+    render(<Composer draft={{ ...imapDraft, mode }} accounts={imapAccounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const picker = await screen.findByRole("combobox", { name: "Sending address" });
+    expect(within(picker).getByRole("option", { name: "Work <work@proton.me>" })).toBeInTheDocument();
+    await act(async () => { fireEvent.change(picker, { target: { value: "work@proton.me" } }); });
+    await waitFor(() => expect(setDraftFrom).toHaveBeenCalledWith("draft-1", "work@proton.me"));
+  });
+
+  it("stores null when the primary identity is chosen", async () => {
+    vi.spyOn(mailClient, "listIdentities").mockResolvedValue(twoIdentities);
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    const setDraftFrom = vi.spyOn(mailClient, "setDraftFrom").mockResolvedValue({ ...imapDraft, revision: 5, from: null });
+    render(<Composer draft={{ ...imapDraft, from: "work@proton.me" }} accounts={imapAccounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const picker = await screen.findByRole("combobox", { name: "Sending address" });
+    await act(async () => { fireEvent.change(picker, { target: { value: "me@proton.me" } }); });
+    await waitFor(() => expect(setDraftFrom).toHaveBeenCalledWith("draft-1", null));
+  });
+
+  it("shows the draft's chosen from in the picker value", async () => {
+    vi.spyOn(mailClient, "listIdentities").mockResolvedValue(twoIdentities);
+    render(<Composer draft={{ ...imapDraft, from: "work@proton.me" }} accounts={imapAccounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const picker = await screen.findByRole("combobox", { name: "Sending address" }) as HTMLSelectElement;
+    expect(picker.value).toBe("work@proton.me");
+  });
+
+  it("hides the picker when fetching identities fails and never blocks sending", async () => {
+    vi.spyOn(mailClient, "listIdentities").mockRejectedValue(new Error("offline"));
+    render(<Composer draft={imapDraft} accounts={imapAccounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    await waitFor(() => expect(mailClient.listIdentities).toHaveBeenCalled());
+    expect(screen.queryByRole("combobox", { name: "Sending address" })).not.toBeInTheDocument();
+    // Send is still available (not disabled by the failed fetch).
+    expect(screen.getByRole("button", { name: /Send ⌘\/Ctrl/ })).toBeEnabled();
+  });
+});

@@ -27,6 +27,8 @@ import type {
   CreateGoalRequest,
   Goal,
   ImapMailboxMapping,
+  ImapSendingOptions,
+  SendingIdentity,
   Label,
   Message,
   ReplyAssistContext,
@@ -1056,6 +1058,21 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       // The demo has no settings row to persist into; accept and no-op so the
       // confirm step completes in browser preview.
     },
+    async getImapSendingOptions(account): Promise<ImapSendingOptions> {
+      // Browser preview has no real IMAP account: a single identity, no
+      // override, detection not yet decided.
+      return { identities: [{ address: account }], serverSavesSentOverride: false, sentCopyDetected: null };
+    },
+    async setImapIdentities(account, identities): Promise<SendingIdentity[]> {
+      // Accept the submission in preview; the login stays first and the rest
+      // echo back (no persistence).
+      const rest = identities
+        .filter((identity) => identity.address.trim().toLowerCase() !== account.toLowerCase())
+        .map((identity) => ({ address: identity.address.trim(), displayName: identity.displayName?.trim() || undefined }));
+      return [{ address: account }, ...rest];
+    },
+    async setImapServerSavesSent(): Promise<void> {},
+    async resetImapSentCopyDetection(): Promise<void> {},
     async reconnectAccount(email) {
       const account = accounts.find((candidate) => candidate.email === email);
       if (!account) throw new Error("Account not found");

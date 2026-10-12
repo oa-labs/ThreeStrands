@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Draft, OutboxItem, ScheduledSendReport } from "./correspondence";
 import { mailClient } from "./data/client";
 import type { Snippet } from "./domain";
-import { OutboxList, useCorrespondence } from "./useCorrespondence";
+import { OutboxList, outboxStateLabel, useCorrespondence } from "./useCorrespondence";
 
 const draft: Draft = {
   id: "draft-1",
@@ -254,4 +254,59 @@ describe("useCorrespondence", () => {
     cleanup();
   });
 
+});
+
+describe("outboxStateLabel", () => {
+  it.each([
+    ["unverifiable", "May have been sent"],
+    ["uncertain", "Checking delivery"],
+    ["failed", "Not sent"],
+  ] as const)("maps %s to a plain label", (state, label) => {
+    expect(outboxStateLabel(state)).toBe(label);
+  });
+
+  it.each(["scheduled", "overdue", "ready", "sending", "sent", "canceled"] as const)(
+    "leaves %s unchanged so existing copy is unaffected",
+    (state) => {
+      expect(outboxStateLabel(state)).toBe(state);
+    },
+  );
+});
+
+describe("OutboxList send-state labels and Sent-copy notice", () => {
+  afterEach(cleanup);
+
+  it("shows the plain unverifiable label and keeps the explanatory error paragraph", () => {
+    const item: OutboxItem = {
+      ...outbox,
+      state: "unverifiable",
+      error: "This message may have been sent, but delivery could not be confirmed.",
+    };
+    render(<OutboxList outbox={[item]} clock={0} onUndo={vi.fn()} onRestore={vi.fn()} onReconcile={vi.fn()} />);
+    expect(screen.getByText("May have been sent")).toBeInTheDocument();
+    expect(screen.getByText(/delivery could not be confirmed/)).toBeInTheDocument();
+    expect(screen.queryByText("unverifiable")).not.toBeInTheDocument();
+  });
+
+  it("labels uncertain and failed in plain language", () => {
+    render(<OutboxList outbox={[{ ...outbox, id: "a", state: "uncertain" }, { ...outbox, id: "b", state: "failed" }]} clock={0} onUndo={vi.fn()} onRestore={vi.fn()} onReconcile={vi.fn()} />);
+    expect(screen.getByText("Checking delivery")).toBeInTheDocument();
+    expect(screen.getByText("Not sent")).toBeInTheDocument();
+  });
+
+  it("shows a one-line notice for an abandoned Sent copy using its plain error", () => {
+    const item: OutboxItem = {
+      ...outbox,
+      state: "sent",
+      sentCopy: { state: "abandoned", error: "Your message was sent, but a copy couldn't be saved to your Sent folder because no Sent folder is set up for this account." },
+    };
+    render(<OutboxList outbox={[item]} clock={0} onUndo={vi.fn()} onRestore={vi.fn()} onReconcile={vi.fn()} />);
+    expect(screen.getByText(/no Sent folder is set up/)).toBeInTheDocument();
+  });
+
+  it.each(["pending", "verify", "done"] as const)("shows nothing for a %s Sent-copy state", (state) => {
+    const item: OutboxItem = { ...outbox, state: "sent", sentCopy: { state, error: "should not appear" } };
+    render(<OutboxList outbox={[item]} clock={0} onUndo={vi.fn()} onRestore={vi.fn()} onReconcile={vi.fn()} />);
+    expect(screen.queryByText("should not appear")).not.toBeInTheDocument();
+  });
 });

@@ -167,6 +167,7 @@ pub use provider::{label_model_for, ImapProvider, ImapProviderConfig};
 pub use sending_identity::{
     account_identities, choose_reply_identity, identity_normalized,
     message_id_domain_for_address, normalize_identity_address, ReplyHeaders, SendingIdentity,
+    validate_identity_edit,
 };
 // Phase 4 run 3 SMTP prepare-retry gate: the engine's outbox tick reads the
 // predicate; the interval constant is read by the engine's gate tests. The

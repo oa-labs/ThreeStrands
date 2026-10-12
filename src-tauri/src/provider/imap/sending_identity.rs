@@ -111,6 +111,104 @@ fn sanitize_display_name(name: Option<&str>) -> Option<String> {
     Some(name.to_string())
 }
 
+/// Validate a user's EDIT of an account's sending-identity list, STRICTLY.
+///
+/// Unlike [`account_identities`] (the lenient read builder that silently drops
+/// a stale or hostile stored entry so sending never breaks), an interactive
+/// edit must tell the user exactly what is wrong and write NOTHING when any
+/// entry is bad. The rules (`docs/imap-design.md`, "Identities"):
+///
+/// * the account/login address is ALWAYS first and can never be removed or
+///   renamed away — if `submitted` omits it, it is re-inserted first; if an
+///   entry in `submitted` IS the login (normalized compare), its display name
+///   is kept and it is moved to the front;
+/// * every address must pass the strict envelope-address validator
+///   ([`smtp::validate_envelope_address`]: no CR/LF/NUL/space/brackets/control,
+///   one `@`, ASCII, within the length limit);
+/// * a display name may not contain CR/LF/NUL (header-injection) and is capped
+///   at [`policy::MAX_IDENTITY_DISPLAY_NAME_CHARS`] characters;
+/// * addresses are de-duplicated case-insensitively and a duplicate is a
+///   REJECTION (the lenient builder silently collapses them; an edit must not);
+/// * at most [`policy::IMAP_MAX_IDENTITIES`] identities.
+///
+/// Returns the identity list to persist (login first, in the user's order
+/// otherwise), or a plain-language error. On any error NOTHING should be
+/// written — the caller persists only on `Ok`.
+pub fn validate_identity_edit(
+    login: &str,
+    submitted: &[Identity],
+) -> Result<Vec<Identity>, String> {
+    let login_norm = normalize_identity_address(login);
+
+    // Find the login among the submitted entries (if present), to carry its
+    // chosen display name onto the mandatory first slot.
+    let login_display = submitted
+        .iter()
+        .find(|identity| normalize_identity_address(&identity.address) == login_norm)
+        .and_then(|identity| identity.display_name.clone());
+
+    // The login is always the first slot, keeping its own trimmed address.
+    let mut out: Vec<Identity> = vec![Identity {
+        address: login.trim().to_string(),
+        display_name: clean_display_name(login_display.as_deref())?,
+    }];
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    seen.insert(login_norm.clone());
+
+    for identity in submitted {
+        let address = identity.address.trim();
+        let normalized = normalize_identity_address(address);
+        // The login is already placed first; a submitted copy of it is not a
+        // duplicate error, its display name was already adopted above.
+        if normalized == login_norm {
+            continue;
+        }
+        if let Err(err) = smtp::validate_envelope_address(address) {
+            // The validator's message is already user-facing ("invalid email
+            // address: contains a line break"); surface it as-is.
+            return Err(provider_error_text(&err));
+        }
+        if !seen.insert(normalized) {
+            return Err(format!(
+                "{address} is listed more than once. Each sending address can appear only once."
+            ));
+        }
+        out.push(Identity {
+            address: address.to_string(),
+            display_name: clean_display_name(identity.display_name.as_deref())?,
+        });
+    }
+
+    policy::check_identity_count(out.len()).map_err(|err| provider_error_text(&err))?;
+    Ok(out)
+}
+
+/// Validate a display name for an EDIT: reject CR/LF/NUL (header injection)
+/// and cap the length. An empty/whitespace-only name becomes `None`. Unlike
+/// [`sanitize_display_name`] (which silently drops a bad name on READ), this
+/// returns an error so the edit tells the user what is wrong.
+fn clean_display_name(name: Option<&str>) -> Result<Option<String>, String> {
+    let Some(name) = name.map(str::trim).filter(|n| !n.is_empty()) else {
+        return Ok(None);
+    };
+    if name.contains(['\r', '\n', '\0']) {
+        return Err("A sender name cannot contain line breaks.".to_string());
+    }
+    policy::check_identity_display_name_len(name.chars().count())
+        .map_err(|err| provider_error_text(&err))?;
+    Ok(Some(name.to_string()))
+}
+
+/// The user-facing text of a [`ProviderError`] produced by the SMTP/policy
+/// validators, without the Rust enum variant wrapper.
+fn provider_error_text(err: &ProviderError) -> String {
+    match err {
+        ProviderError::PermanentClientRejection(message)
+        | ProviderError::InvalidOperation(message) => message.clone(),
+        other => other.to_string(),
+    }
+}
+
 /// The reply-selection headers read from the ORIGINAL message, each the raw
 /// header value (an address list) as it appeared. Any may be empty/missing.
 #[derive(Clone, Debug, Default)]
@@ -442,5 +540,107 @@ mod tests {
         assert!(message_id_domain_for_address("me@under_score.me").is_err());
         // Non-ASCII (IDN) is refused rather than silently converted.
         assert!(message_id_domain_for_address("me@pröton.me").is_err());
+    }
+
+    // ---- F. validate_identity_edit (strict, for the settings edit) ----
+
+    #[test]
+    fn edit_keeps_the_login_first_even_when_omitted() {
+        let got =
+            validate_identity_edit("me@proton.me", &[id("work@proton.me", Some("Work"))]).unwrap();
+        assert_eq!(
+            got,
+            vec![
+                id("me@proton.me", None),
+                id("work@proton.me", Some("Work")),
+            ]
+        );
+    }
+
+    #[test]
+    fn edit_adopts_the_login_display_name_and_moves_it_first() {
+        // The login submitted second, with a display name, is placed first and
+        // keeps that name.
+        let got = validate_identity_edit(
+            "me@proton.me",
+            &[
+                id("work@proton.me", Some("Work")),
+                id("me@proton.me", Some("Me")),
+            ],
+        )
+        .unwrap();
+        assert_eq!(got[0], id("me@proton.me", Some("Me")));
+        assert_eq!(got[1], id("work@proton.me", Some("Work")));
+    }
+
+    #[test]
+    fn edit_rejects_a_duplicate_address() {
+        let err = validate_identity_edit(
+            "me@proton.me",
+            &[
+                id("work@proton.me", Some("Work")),
+                id("WORK@proton.me", Some("Dup")),
+            ],
+        )
+        .unwrap_err();
+        assert!(err.to_lowercase().contains("more than once"), "{err}");
+    }
+
+    #[test]
+    fn edit_rejects_a_hostile_address_with_no_partial_write() {
+        // The caller persists only on Ok; an error means nothing is written.
+        let err = validate_identity_edit(
+            "me@proton.me",
+            &[id("inject@proton.me\r\nRCPT TO:<evil@x>", None)],
+        )
+        .unwrap_err();
+        assert!(err.to_lowercase().contains("line break") || err.to_lowercase().contains("invalid"), "{err}");
+    }
+
+    #[test]
+    fn edit_rejects_a_display_name_with_crlf() {
+        let err = validate_identity_edit(
+            "me@proton.me",
+            &[id("work@proton.me", Some("Bad\r\nName"))],
+        )
+        .unwrap_err();
+        assert!(err.to_lowercase().contains("line break"), "{err}");
+    }
+
+    #[test]
+    fn edit_rejects_an_over_long_display_name_but_accepts_at_the_limit() {
+        let at_limit = "x".repeat(policy::MAX_IDENTITY_DISPLAY_NAME_CHARS);
+        let over = "x".repeat(policy::MAX_IDENTITY_DISPLAY_NAME_CHARS + 1);
+        assert!(validate_identity_edit("me@proton.me", &[id("work@proton.me", Some(&at_limit))]).is_ok());
+        assert!(validate_identity_edit("me@proton.me", &[id("work@proton.me", Some(&over))]).is_err());
+    }
+
+    #[test]
+    fn edit_enforces_the_identity_count_below_at_and_above_the_limit() {
+        // Build submitted lists of distinct secondary addresses. The login is
+        // always first and counts toward the total, so a submitted list of
+        // (LIMIT - 1) secondaries is exactly AT the limit, and LIMIT is over.
+        let secondaries = |n: usize| -> Vec<Identity> {
+            (0..n).map(|i| id(&format!("a{i}@proton.me"), None)).collect()
+        };
+        // Below: LIMIT-2 secondaries + login = LIMIT-1 total.
+        assert!(validate_identity_edit("me@proton.me", &secondaries(policy::IMAP_MAX_IDENTITIES - 2)).is_ok());
+        // Exactly at: LIMIT-1 secondaries + login = LIMIT total.
+        assert!(validate_identity_edit("me@proton.me", &secondaries(policy::IMAP_MAX_IDENTITIES - 1)).is_ok());
+        // Above: LIMIT secondaries + login = LIMIT+1 total -> rejected.
+        let err = validate_identity_edit("me@proton.me", &secondaries(policy::IMAP_MAX_IDENTITIES)).unwrap_err();
+        assert!(err.to_lowercase().contains("over the"), "{err}");
+    }
+
+    #[test]
+    fn edit_cannot_remove_the_login_it_is_reinserted_first() {
+        // A submitted list that omits the login still returns the login first.
+        let got = validate_identity_edit(
+            "me@proton.me",
+            &[id("work@proton.me", None), id("other@proton.me", None)],
+        )
+        .unwrap();
+        assert_eq!(got[0].address, "me@proton.me");
+        assert_eq!(got.len(), 3);
     }
 }

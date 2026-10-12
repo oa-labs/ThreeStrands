@@ -15,6 +15,22 @@ import type { MailtoRequest } from "./mailtoLink";
 import { ScheduleSendPicker, formatScheduledTime } from "./ScheduleSendPicker";
 import type { DraftReviewActions } from "./draftReview";
 
+/**
+ * Plain, honest label for an outbox item's raw state string. Only the states
+ * whose raw word was itself shown to the user are remapped; every other state
+ * keeps its existing rendering (handled by the caller), so existing copy is
+ * unchanged. `unverifiable` keeps its explanatory `error` paragraph alongside
+ * this short label.
+ */
+export function outboxStateLabel(state: OutboxItem["state"]): string {
+  switch (state) {
+    case "unverifiable": return "May have been sent";
+    case "uncertain": return "Checking delivery";
+    case "failed": return "Not sent";
+    default: return state;
+  }
+}
+
 type ComposeOptions = {
   availabilityText?: string;
   selectedQuote?: string;
@@ -423,8 +439,9 @@ export function OutboxList({
         </>}
         {o.state === "overdue" && <p>Scheduled time missed. Confirm sending or reschedule on the sending computer.</p>}
       </>}
-      <small>{o.state === "undo_pending" ? (o.deadline > clock ? `Undo available · ${Math.ceil((o.deadline - clock) / 1000)}s` : "Waiting for connection") : o.state}</small>
+      <small>{o.state === "undo_pending" ? (o.deadline > clock ? `Undo available · ${Math.ceil((o.deadline - clock) / 1000)}s` : "Waiting for connection") : outboxStateLabel(o.state)}</small>
       {o.error && <p>{o.error}</p>}
+      {o.sentCopy?.state === "abandoned" && <p className="outbox-sent-copy-notice">{o.sentCopy.error ?? "Your message was sent, but a copy couldn't be saved to your Sent folder."}</p>}
       {(!o.schedule || o.schedule.canManage) && ["undo_pending", "ready"].includes(o.state) && <button className="btn btn-sm" onClick={() => onUndo(o.id)}>Undo Send</button>}
       {(!o.schedule || o.schedule.canManage) && o.state === "failed" && <button className="btn btn-sm" disabled={busy} onClick={() => onRestore(o.id)}>Restore Draft</button>}
       {(!o.schedule || o.schedule.canManage) && o.state === "uncertain" && <button className="btn btn-sm" disabled={busy} onClick={() => onReconcile(o.id)}>Check Sent Mail</button>}

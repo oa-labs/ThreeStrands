@@ -74,6 +74,9 @@ import type {
   ImapSetupRequest,
   ImapMailboxMapping,
   ImapMailboxMappingCommit,
+  ImapSendingOptions,
+  SendingIdentity,
+  SendingIdentityInput,
 } from "../domain";
 import type { AiProvider, AiReasoning } from "../aiSettings";
 import { nativeCorrespondence, type CorrespondenceClient } from "../correspondence";
@@ -234,6 +237,14 @@ export interface MailClient extends CorrespondenceClient {
   discoverImapMailboxes(email: string): Promise<ImapMailboxMapping>;
   /** Persist the user's confirmed mailbox mapping (Archive choice, per-role overrides, label container). */
   commitImapMailboxMapping(commit: ImapMailboxMappingCommit): Promise<void>;
+  /** An IMAP account's sending options for the Settings panel (identities, sent-copy override + detection). Refuses a non-IMAP account. */
+  getImapSendingOptions(account: string): Promise<ImapSendingOptions>;
+  /** Replace an IMAP account's sending identities (strict validation; login stays first). Returns the saved list. */
+  setImapIdentities(account: string, identities: SendingIdentityInput[]): Promise<SendingIdentity[]>;
+  /** Set the "my server saves sent mail itself" override (true = don't save a copy). */
+  setImapServerSavesSent(account: string, enabled: boolean): Promise<void>;
+  /** Clear this device's Sent-copy detection so the next send re-detects. */
+  resetImapSentCopyDetection(account: string): Promise<void>;
   removeAccount(email: string): Promise<void>;
   reconnectAccount(email: string): Promise<Account>;
   setAccountDisplayName(email: string, displayName: string | null): Promise<void>;
@@ -389,6 +400,10 @@ const tauriClient: MailClient = {
     complete("test_and_save_imap_account", { request }),
   discoverImapMailboxes: (email) => complete("discover_imap_mailboxes", { email }),
   commitImapMailboxMapping: (commit) => complete("commit_imap_mailbox_mapping", { commit }),
+  getImapSendingOptions: (account) => complete("get_imap_sending_options", { account }),
+  setImapIdentities: (account, identities) => complete("set_imap_identities", { account, identities }),
+  setImapServerSavesSent: (account, enabled) => complete("set_imap_server_saves_sent", { account, enabled }),
+  resetImapSentCopyDetection: (account) => complete("reset_imap_sent_copy_detection", { account }),
   removeAccount: (email) => complete("remove_account", { email }),
   reconnectAccount: (email) => complete("reconnect_account", { email }),
   setAccountDisplayName: (email, displayName) => complete("set_account_display_name", { email, displayName }),
