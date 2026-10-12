@@ -1780,31 +1780,52 @@ impl Correspondence {
     ) -> Result<(), String> {
         use crate::provider::ProviderError;
         match error {
-            // Transient: leave queued, set a plain retry note, DO NOT claim or
-            // bump attempts. We DO stamp `last_attempt_at` (without touching
-            // `attempts` or `state`) so the retry gate rate-limits the next
-            // probe against a down server; the item stays due and queued.
-            ProviderError::TransientTransport(_) | ProviderError::RetryableServer(_) => {
-                self.database.change_outbox(
-                    "UPDATE outbox_messages SET error=?2,last_attempt_at=?3 WHERE id=?1 AND state IN ('undo_pending','ready')",
-                    params![item.id, "Can't reach the mail server. Will retry.", at],
-                    &item.id,
-                    owner,
-                    at,
-                )?;
-                Ok(())
-            }
-            // Definite permanent: nothing was sent, so move to `failed` with a
-            // plain-language error so the draft stays restorable. Guard on the
-            // current queued state so a concurrent change is not clobbered.
-            ProviderError::ReauthenticationRequired(_) => {
-                self.fail_prepare(item, owner, at, "The mail server rejected the saved password. Reconnect this account, then restore the draft.")
-            }
-            other => {
-                let message = other.to_string();
+            // Only an explicitly PERMANENT class fails the row: nothing was
+            // sent, so the draft stays restorable. Guarded on the queued state
+            // so a concurrent transition is not clobbered.
+            ProviderError::InvalidOperation(_) | ProviderError::PermanentClientRejection(_) => {
+                let message = error.to_string();
                 self.fail_prepare(item, owner, at, &message)
             }
+            // EVERYTHING ELSE stays queued with a plain note and is retried
+            // behind the rate limiter, without claiming the row or bumping
+            // `attempts`. That deliberately includes `ReauthenticationRequired`,
+            // `Authentication`, `RateLimited`-style and `Other` errors: Gmail's
+            // `prepare_delivery` fetches/refreshes an OAuth access token, so it
+            // CAN fail with any of them, and until now such an item simply
+            // stayed queued and sent once the account was reconnected. Failing
+            // it would discard a send that used to survive. For an IMAP
+            // account with a rejected password the same rule means the message
+            // goes out after the user reconnects, instead of needing to be
+            // restored and re-sent.
+            ProviderError::ReauthenticationRequired(_) => self.note_prepare_retry(
+                item,
+                owner,
+                at,
+                "The mail server rejected the saved password. Reconnect this account and the message will be sent.",
+            ),
+            _ => self.note_prepare_retry(item, owner, at, "Can't reach the mail server. Will retry."),
         }
+    }
+
+    /// Leave a queued item queued: record a plain-language note and stamp
+    /// `last_attempt_at` (NOT `attempts`, NOT `state`) so the retry gate
+    /// rate-limits the next probe.
+    fn note_prepare_retry(
+        &self,
+        item: &OutboxItem,
+        owner: &str,
+        at: i64,
+        message: &str,
+    ) -> Result<(), String> {
+        self.database.change_outbox(
+            "UPDATE outbox_messages SET error=?2,last_attempt_at=?3 WHERE id=?1 AND state IN ('undo_pending','ready')",
+            params![item.id, message, at],
+            &item.id,
+            owner,
+            at,
+        )?;
+        Ok(())
     }
 
     /// Move a queued item to `failed` with `message` via a state-guarded
@@ -2573,6 +2594,52 @@ mod tests {
 
         #[tokio::test]
         async fn a_permanent_prepare_failure_moves_the_row_to_failed_restorable() {
+            for make in [
+                (|| ProviderError::InvalidOperation("no outgoing server configured".into())) as fn() -> ProviderError,
+                || ProviderError::PermanentClientRejection("refused".into()),
+            ] {
+                let service = service();
+                let item = ready_item(&service);
+                let provider = FakeSender { behaviour: PrepareBehaviour::Fail(make) };
+                service
+                    .send_due_item(&item, &provider, "you@example.com", "", now())
+                    .await
+                    .unwrap();
+                assert_eq!(state_of(&service, &item.id), "failed");
+                // Nothing was sent, so attempts stays 0 (never claimed).
+                assert_eq!(attempts_of(&service, &item.id), 0);
+            }
+        }
+
+        /// Gmail's `prepare_delivery` refreshes an OAuth token, so it can fail
+        /// with any of these. Before this change such an item stayed queued
+        /// (the tick errored) and sent after the account recovered; it must
+        /// not now be failed and discarded.
+        #[tokio::test]
+        async fn every_non_permanent_prepare_failure_keeps_the_send_queued() {
+            for make in [
+                (|| ProviderError::ReauthenticationRequired("token revoked".into())) as fn() -> ProviderError,
+                || ProviderError::Authentication("bad token".into()),
+                || ProviderError::RetryableServer("429".into()),
+                || ProviderError::Other("dns".into()),
+                || ProviderError::NotFound,
+            ] {
+                let service = service();
+                let item = ready_item(&service);
+                let provider = FakeSender { behaviour: PrepareBehaviour::Fail(make) };
+                service
+                    .send_due_item(&item, &provider, "you@example.com", "", now())
+                    .await
+                    .unwrap();
+                assert_eq!(state_of(&service, &item.id), "ready", "{:?}", make());
+                assert_eq!(attempts_of(&service, &item.id), 0);
+                let row = service.database.outbox().unwrap().remove(0);
+                assert!(row.error.is_some() && row.last_attempt_at.is_some());
+            }
+        }
+
+        #[tokio::test]
+        async fn a_rejected_password_message_tells_the_user_to_reconnect() {
             let service = service();
             let item = ready_item(&service);
             let provider = FakeSender {
@@ -2580,19 +2647,9 @@ mod tests {
                     ProviderError::ReauthenticationRequired("creds rejected".into())
                 }),
             };
-            service
-                .send_due_item(&item, &provider, "you@example.com", "", now())
-                .await
-                .unwrap();
-            assert_eq!(state_of(&service, &item.id), "failed");
+            service.send_due_item(&item, &provider, "you@example.com", "", now()).await.unwrap();
             let row = service.database.outbox().unwrap().remove(0);
-            assert!(
-                row.error.as_deref().unwrap().contains("rejected the saved password"),
-                "{:?}",
-                row.error
-            );
-            // Nothing was sent, so attempts stays 0 (never claimed).
-            assert_eq!(attempts_of(&service, &item.id), 0);
+            assert!(row.error.as_deref().unwrap().contains("Reconnect this account"), "{:?}", row.error);
         }
 
         #[tokio::test]
