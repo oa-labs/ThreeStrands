@@ -365,22 +365,28 @@ impl SyncService {
 
     pub async fn create_label(&self, name: &str) -> Result<Label, String> {
         validate_label_name(name)?;
-        self.auth
+        let label = self
+            .auth
             .provider(&self.database)
             .map_err(|error| error.to_string())?
             .create_label(name)
             .await
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        self.cache_label_change(&label);
+        Ok(label)
     }
 
     pub async fn update_label(&self, id: &str, name: &str) -> Result<Label, String> {
         validate_label_name(name)?;
-        self.auth
+        let label = self
+            .auth
             .provider(&self.database)
             .map_err(|error| error.to_string())?
             .update_label(id, name)
             .await
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        self.cache_label_change(&label);
+        Ok(label)
     }
 
     pub async fn delete_label(&self, id: &str) -> Result<(), String> {
@@ -389,7 +395,22 @@ impl SyncService {
             .map_err(|error| error.to_string())?
             .delete_label(id)
             .await
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        // Best-effort cache purge, mirroring create/update: never fail the
+        // user's action if the local cache update does.
+        if let Err(error) = self.database.delete_account_label(&self.account_id(), id) {
+            log::warn!("label cache: could not drop deleted label {id}: {error}");
+        }
+        Ok(())
+    }
+
+    /// Best-effort write-through after a successful provider create/update:
+    /// refresh this label's row in the local catalog cache (run 2b-1). A
+    /// failure is logged and swallowed, never failing the user's action.
+    fn cache_label_change(&self, label: &Label) {
+        if let Err(error) = self.database.upsert_account_label(&self.account_id(), label) {
+            log::warn!("label cache: could not cache label {}: {error}", label.id);
+        }
     }
 
     /// Syncs once right away when `sync_immediately`, then polls the
