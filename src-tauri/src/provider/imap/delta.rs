@@ -78,10 +78,24 @@ pub struct MailboxDelta {
 /// apply to the mailbox, so tests pass a tiny limit instead of a 5000-
 /// message fixture; production passes the policy constant for the mailbox's
 /// class.
+///
+/// `pinned` is the set of SEARCH-PINNED UIDs for this `(mailbox, uidvalidity)`
+/// (schema v70, Phase 5 run 3). It is passed IN rather than queried so this
+/// stays pure and table-testable. A pinned UID is a search-acquired location
+/// that is usually OLD — outside the newest-N window of an evicting mailbox —
+/// and must NOT be aged out: it is treated as retained exactly like a
+/// non-evicting mailbox's aged-out UID, so it is a DELETION only when the
+/// SERVER no longer has it (expunged elsewhere), never merely for falling
+/// outside the window. Pinned UIDs still on the server also have their flags
+/// refreshed (the caller extends `flags_by_uid` to cover them, the same way it
+/// extends coverage for a non-evicting mailbox's retained UIDs). On a
+/// UIDVALIDITY reset the pins are meaningless (the caller drops them with the
+/// locations), so an empty set is passed and the reset path ignores it.
 pub fn compute_delta(
     local: &LocalMailboxView,
     server: &ServerMailboxView,
     limits: &SyncLimits,
+    pinned: &BTreeSet<u32>,
 ) -> MailboxDelta {
     // UIDVALIDITY reset (or first sync against a mailbox we have never seen
     // but the server reports differently) — treat the whole server view as
@@ -111,10 +125,19 @@ pub fn compute_delta(
     // A NON-evicting class (Sent's acquisition bound) keeps an aged-out UID: it
     // is only deleted when the SERVER no longer has it, so we subtract from the
     // full server UID set, not the windowed one.
+    //
+    // SEARCH PINS (v70): a pinned UID is retained the same way — kept while the
+    // server still has it, deleted only when the server does not. So for an
+    // evicting mailbox the retained set is the windowed set PLUS any pinned UID
+    // the server still holds; a pinned UID the server expunged is NOT in that
+    // union and so IS reported deleted (the caller then drops its pin too).
+    let live_server: BTreeSet<u32> = server.all_uids.iter().copied().collect();
     let retained_set: BTreeSet<u32> = if limits.evicts {
-        server_set
+        let mut retained = server_set.clone();
+        retained.extend(pinned.intersection(&live_server).copied());
+        retained
     } else {
-        server.all_uids.iter().copied().collect()
+        live_server.clone()
     };
     let deleted_uids: Vec<u32> = local_set.difference(&retained_set).copied().collect();
 
@@ -182,11 +205,21 @@ mod tests {
         }
     }
 
+    /// No search pins — the common case for the pre-v70 delta cases.
+    fn no_pins() -> BTreeSet<u32> {
+        BTreeSet::new()
+    }
+
+    /// A pinned-UID set from a slice, for the v70 pin cases.
+    fn pins(uids: &[u32]) -> BTreeSet<u32> {
+        uids.iter().copied().collect()
+    }
+
     #[test]
     fn first_sync_treats_everything_as_new() {
         let local = local(None, &[]);
         let server = server(5, &[1, 2, 3], &[(1, &["\\Seen"]), (2, &[]), (3, &[])]);
-        let delta = compute_delta(&local, &server, &wide());
+        let delta = compute_delta(&local, &server, &wide(), &no_pins());
         assert!(!delta.uidvalidity_reset);
         assert_eq!(delta.new_uids, vec![1, 2, 3]);
         assert!(delta.deleted_uids.is_empty());
@@ -197,7 +230,7 @@ mod tests {
     fn new_mail_is_detected() {
         let local = local(Some(5), &[(1, &["\\Seen"]), (2, &["\\Seen"])]);
         let server = server(5, &[1, 2, 3, 4], &[]);
-        let delta = compute_delta(&local, &server, &wide());
+        let delta = compute_delta(&local, &server, &wide(), &no_pins());
         assert_eq!(delta.new_uids, vec![3, 4]);
         assert!(delta.deleted_uids.is_empty());
     }
@@ -207,7 +240,7 @@ mod tests {
         let local = local(Some(5), &[(1, &[]), (2, &["\\Seen"])]);
         // Server marked UID 1 \Seen; UID 2 unchanged (set-equal, reordered).
         let server = server(5, &[1, 2], &[(1, &["\\Seen"]), (2, &["\\Seen"])]);
-        let delta = compute_delta(&local, &server, &wide());
+        let delta = compute_delta(&local, &server, &wide(), &no_pins());
         assert_eq!(delta.flag_changed_uids, vec![1]);
         assert!(delta.new_uids.is_empty());
         assert!(delta.deleted_uids.is_empty());
@@ -217,7 +250,7 @@ mod tests {
     fn flag_order_and_duplicates_do_not_count_as_a_change() {
         let local = local(Some(5), &[(1, &["\\Seen", "\\Flagged"])]);
         let server = server(5, &[1], &[(1, &["\\Flagged", "\\Seen"])]);
-        let delta = compute_delta(&local, &server, &wide());
+        let delta = compute_delta(&local, &server, &wide(), &no_pins());
         assert!(delta.flag_changed_uids.is_empty(), "set-equal flags are not a change");
     }
 
@@ -225,7 +258,7 @@ mod tests {
     fn an_expunge_by_another_client_is_detected() {
         let local = local(Some(5), &[(1, &["\\Seen"]), (2, &["\\Seen"]), (3, &[])]);
         let server = server(5, &[1, 3], &[]); // UID 2 expunged
-        let delta = compute_delta(&local, &server, &wide());
+        let delta = compute_delta(&local, &server, &wide(), &no_pins());
         assert_eq!(delta.deleted_uids, vec![2]);
     }
 
@@ -233,7 +266,7 @@ mod tests {
     fn a_uidvalidity_change_signals_a_reset_and_treats_the_server_view_as_new() {
         let local = local(Some(5), &[(1, &["\\Seen"]), (2, &[])]);
         let server = server(9, &[10, 11], &[]); // new UIDVALIDITY
-        let delta = compute_delta(&local, &server, &wide());
+        let delta = compute_delta(&local, &server, &wide(), &no_pins());
         assert!(delta.uidvalidity_reset);
         assert_eq!(delta.new_uids, vec![10, 11]);
         // On a reset the caller drops locations, so we do not also report
@@ -251,6 +284,7 @@ mod tests {
             &local(Some(1), &[]),
             &server(1, &[1, 2], &[]),
             &limits,
+            &no_pins(),
         );
         assert_eq!(below.new_uids, vec![1, 2]);
         assert_eq!(below.beyond_window, 0);
@@ -260,6 +294,7 @@ mod tests {
             &local(Some(1), &[]),
             &server(1, &[1, 2, 3], &[]),
             &limits,
+            &no_pins(),
         );
         assert_eq!(exact.new_uids, vec![1, 2, 3]);
         assert_eq!(exact.beyond_window, 0);
@@ -269,6 +304,7 @@ mod tests {
             &local(Some(1), &[]),
             &server(1, &[1, 2, 3, 4], &[]),
             &limits,
+            &no_pins(),
         );
         assert_eq!(above.new_uids, vec![2, 3, 4]);
         assert_eq!(above.beyond_window, 1);
@@ -281,7 +317,7 @@ mod tests {
         // the window, nothing is beyond it.
         let limits = SyncLimits { mailbox_window: 4, evicts: true };
         let all: Vec<u32> = (1..=4).collect();
-        let delta = compute_delta(&local(Some(1), &[]), &server(1, &all, &[]), &limits);
+        let delta = compute_delta(&local(Some(1), &[]), &server(1, &all, &[]), &limits, &no_pins());
         assert_eq!(delta.new_uids, all);
         assert_eq!(delta.beyond_window, 0);
     }
@@ -299,13 +335,13 @@ mod tests {
 
         // Evicting (INBOX/Folder): UID 1 aged out of the window -> deleted.
         let evicting =
-            compute_delta(&local_view, &server_view, &SyncLimits { mailbox_window: 3, evicts: true });
+            compute_delta(&local_view, &server_view, &SyncLimits { mailbox_window: 3, evicts: true }, &no_pins());
         assert_eq!(evicting.deleted_uids, vec![1], "evicting class deletes the aged-out UID");
 
         // Non-evicting (Sent): UID 1 is still on the server, so it is KEPT even
         // though it aged out of the acquisition window.
         let sent =
-            compute_delta(&local_view, &server_view, &SyncLimits { mailbox_window: 3, evicts: false });
+            compute_delta(&local_view, &server_view, &SyncLimits { mailbox_window: 3, evicts: false }, &no_pins());
         assert!(
             sent.deleted_uids.is_empty(),
             "Sent keeps an aged-out UID the server still has"
@@ -320,6 +356,7 @@ mod tests {
             &expunged_local,
             &server(5, &[1, 2, 3, 4], &[]),
             &SyncLimits { mailbox_window: 3, evicts: false },
+            &no_pins(),
         );
         assert_eq!(
             expunged.deleted_uids,
@@ -347,7 +384,7 @@ mod tests {
                 mailbox_window: 2,
                 evicts,
             };
-            let delta = compute_delta(&local_view, &server_view, &limits);
+            let delta = compute_delta(&local_view, &server_view, &limits, &no_pins());
             assert_eq!(delta.new_uids, vec![4, 5], "acquisition stays windowed");
             assert_eq!(
                 delta.flag_changed_uids,
@@ -364,6 +401,7 @@ mod tests {
                 },
                 &server_view,
                 &limits,
+            &no_pins(),
             );
             assert!(reset.uidvalidity_reset);
             assert!(
@@ -379,9 +417,87 @@ mod tests {
         let local = local(Some(5), &[(1, &[]), (2, &["\\Seen"]), (3, &["\\Seen"])]);
         // UID 3 expunged, UID 1 now \Seen, UID 4 is new.
         let server = server(5, &[1, 2, 4], &[(1, &["\\Seen"]), (2, &["\\Seen"])]);
-        let delta = compute_delta(&local, &server, &wide());
+        let delta = compute_delta(&local, &server, &wide(), &no_pins());
         assert_eq!(delta.new_uids, vec![4]);
         assert_eq!(delta.flag_changed_uids, vec![1]);
         assert_eq!(delta.deleted_uids, vec![3]);
+    }
+
+    // --- Phase 5 run 3: search-pin delta cases -------------------------
+
+    /// A pinned UID that is IN the window behaves like any windowed UID: a pin
+    /// does not make it "new" or "deleted"; it is simply retained, and its
+    /// flags are compared like any other windowed UID.
+    #[test]
+    fn a_pinned_uid_in_the_window_is_retained_and_its_flags_are_compared() {
+        let limits = SyncLimits { mailbox_window: 3, evicts: true };
+        let local = local(Some(5), &[(2, &[]), (3, &["\\Seen"]), (4, &["\\Seen"])]);
+        // UID 2 is pinned AND in-window; its flag changed on the server.
+        let server = server(
+            5,
+            &[2, 3, 4],
+            &[(2, &["\\Seen"]), (3, &["\\Seen"]), (4, &["\\Seen"])],
+        );
+        let delta = compute_delta(&local, &server, &limits, &pins(&[2]));
+        assert!(delta.deleted_uids.is_empty(), "an in-window pinned UID is not deleted");
+        assert_eq!(delta.flag_changed_uids, vec![2], "its flags are still refreshed");
+        assert!(delta.new_uids.is_empty());
+    }
+
+    /// A pinned UID OUTSIDE the window of an EVICTING mailbox is NOT deleted
+    /// merely for being out of window — the pin keeps it alive — whereas an
+    /// identical UNpinned out-of-window local UID in the same mailbox IS
+    /// deleted (the sliding-window eviction).
+    #[test]
+    fn a_pinned_out_of_window_uid_survives_but_an_unpinned_one_is_evicted() {
+        // Window 2; local holds UID 1 (old) and 2 (old), server has 1..=4, so
+        // 1 and 2 are both outside the newest-2 window (3,4).
+        let limits = SyncLimits { mailbox_window: 2, evicts: true };
+        let local = local(Some(5), &[(1, &["\\Seen"]), (2, &["\\Seen"])]);
+        let server = server(5, &[1, 2, 3, 4], &[]);
+
+        // UID 1 is pinned, UID 2 is not. UID 1 survives; UID 2 is evicted.
+        let delta = compute_delta(&local, &server, &limits, &pins(&[1]));
+        assert_eq!(
+            delta.deleted_uids,
+            vec![2],
+            "the pinned out-of-window UID survives; the unpinned one is evicted"
+        );
+        assert_eq!(delta.new_uids, vec![3, 4], "the newest two are acquired");
+    }
+
+    /// A pinned UID is DELETED when the server no longer has it (expunged
+    /// elsewhere), exactly like a non-evicting mailbox's retained UID. The pin
+    /// does not keep a UID the server itself dropped.
+    #[test]
+    fn a_pinned_uid_the_server_expunged_is_deleted() {
+        let limits = SyncLimits { mailbox_window: 2, evicts: true };
+        // Local holds pinned UID 1 (out of window). The server no longer has
+        // UID 1 at all (expunged elsewhere).
+        let local = local(Some(5), &[(1, &["\\Seen"])]);
+        let server = server(5, &[2, 3, 4], &[]);
+        let delta = compute_delta(&local, &server, &limits, &pins(&[1]));
+        assert_eq!(
+            delta.deleted_uids,
+            vec![1],
+            "a pinned UID the server expunged is still deleted"
+        );
+    }
+
+    /// On a UIDVALIDITY reset the pins are meaningless (the caller drops them
+    /// with the mailbox's locations). The reset path ignores the pinned set:
+    /// the whole windowed server view is new, nothing is reported deleted.
+    #[test]
+    fn a_uidvalidity_reset_ignores_pins() {
+        let limits = SyncLimits { mailbox_window: 3, evicts: true };
+        let local = local(Some(5), &[(1, &["\\Seen"]), (2, &[])]);
+        let server = server(9, &[10, 11], &[]); // new UIDVALIDITY
+        // Even if UID 1 were "pinned" under the old incarnation, the reset
+        // path drops it; the delta reports only the fresh server view as new.
+        let delta = compute_delta(&local, &server, &limits, &pins(&[1]));
+        assert!(delta.uidvalidity_reset);
+        assert_eq!(delta.new_uids, vec![10, 11]);
+        assert!(delta.deleted_uids.is_empty());
+        assert!(delta.flag_changed_uids.is_empty());
     }
 }

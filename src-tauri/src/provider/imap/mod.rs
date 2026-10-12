@@ -1206,6 +1206,131 @@ impl ImapStateStore {
     }
 
     // -----------------------------------------------------------------------
+    // Phase 5 run 3: search pins (schema v70). A search-acquired location is
+    // PINNED so the next poll's delta does not age it out of the window and
+    // delete it (`docs/imap-design.md`, "Server search"; the brief). Scoped
+    // exactly like `imap_locations`: (mailbox, uidvalidity, uid).
+    // -----------------------------------------------------------------------
+
+    /// The pinned UIDs for one `(mailbox, uidvalidity)`, as the delta's pin
+    /// input. Only pins under the CURRENT incarnation matter — a reset renumbers
+    /// UIDs, and the caller drops the old incarnation's pins — so the lookup is
+    /// scoped by uidvalidity. Returned ascending for a stable set.
+    pub fn pinned_uids(&self, mailbox: &str, uidvalidity: i64) -> DbResult<Vec<u32>> {
+        self.database.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT uid FROM imap_search_pins
+                 WHERE account_id = ?1 AND mailbox = ?2 AND uidvalidity = ?3
+                 ORDER BY uid",
+            )?;
+            let rows = statement
+                .query_map(
+                    rusqlite::params![self.account_id, mailbox, uidvalidity],
+                    |row| row.get::<_, i64>(0).map(|u| u as u32),
+                )?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+    }
+
+    /// How many pins this account holds in total (across every mailbox and
+    /// incarnation). The acquisition cap ([`policy::MAX_SEARCH_PINS`]) is
+    /// per-account, so this is what the cap is measured against.
+    pub fn search_pin_count(&self) -> DbResult<usize> {
+        self.database.with_connection(|connection| {
+            let count: i64 = connection.query_row(
+                "SELECT COUNT(*) FROM imap_search_pins WHERE account_id = ?1",
+                [&self.account_id],
+                |row| row.get(0),
+            )?;
+            Ok(count as usize)
+        })
+    }
+
+    /// Whether a specific `(mailbox, uidvalidity, uid)` is already pinned. The
+    /// acquire path uses this to tell a re-acquire (refresh in place, does not
+    /// count against the cap) from a genuinely new pin.
+    pub fn is_pinned(&self, mailbox: &str, uidvalidity: i64, uid: i64) -> DbResult<bool> {
+        self.database.with_connection(|connection| {
+            let exists: bool = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM imap_search_pins
+                    WHERE account_id = ?1 AND mailbox = ?2 AND uidvalidity = ?3 AND uid = ?4)",
+                rusqlite::params![self.account_id, mailbox, uidvalidity, uid],
+                |row| row.get(0),
+            )?;
+            Ok(exists)
+        })
+    }
+
+    /// Insert or refresh one pin's `pinned_at`. Re-acquiring an already-pinned
+    /// UID refreshes its timestamp (resetting the TTL) rather than inserting a
+    /// duplicate. Used by the acquire round, in that round's transaction.
+    pub fn upsert_pin(&self, mailbox: &str, uidvalidity: i64, uid: i64, pinned_at: i64) -> DbResult<()> {
+        self.database.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO imap_search_pins
+                    (account_id, mailbox, uidvalidity, uid, pinned_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(account_id, mailbox, uidvalidity, uid) DO UPDATE SET
+                     pinned_at = excluded.pinned_at",
+                rusqlite::params![self.account_id, mailbox, uidvalidity, uid, pinned_at],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Release one pin. The location then follows normal window rules again.
+    /// A no-op when there is no such pin. Used by TTL release and by the delta
+    /// when a pinned UID is reported deleted (expunged on the server).
+    pub fn release_pin(&self, mailbox: &str, uidvalidity: i64, uid: i64) -> DbResult<()> {
+        self.database.with_connection(|connection| {
+            connection.execute(
+                "DELETE FROM imap_search_pins
+                 WHERE account_id = ?1 AND mailbox = ?2 AND uidvalidity = ?3 AND uid = ?4",
+                rusqlite::params![self.account_id, mailbox, uidvalidity, uid],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Drop every pin in one mailbox at a given incarnation. Called on a
+    /// UIDVALIDITY reset for that mailbox (alongside dropping its locations):
+    /// the old incarnation's UIDs are renumbered, so its pins are meaningless.
+    pub fn drop_pins_in_mailbox(&self, mailbox: &str, uidvalidity: i64) -> DbResult<()> {
+        self.database.with_connection(|connection| {
+            connection.execute(
+                "DELETE FROM imap_search_pins
+                 WHERE account_id = ?1 AND mailbox = ?2 AND uidvalidity = ?3",
+                rusqlite::params![self.account_id, mailbox, uidvalidity],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Every pin in one `(mailbox, uidvalidity)` whose `pinned_at` is at or
+    /// before `cutoff` — the TTL-expired pins the sync round releases. The
+    /// caller computes `cutoff = now - SEARCH_PIN_TTL` (via
+    /// [`policy::search_pin_expired`]) and releases each returned UID so its
+    /// location follows normal window rules again. Returned ascending.
+    pub fn expired_pins(&self, mailbox: &str, uidvalidity: i64, cutoff: i64) -> DbResult<Vec<u32>> {
+        self.database.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT uid FROM imap_search_pins
+                 WHERE account_id = ?1 AND mailbox = ?2 AND uidvalidity = ?3
+                   AND pinned_at <= ?4
+                 ORDER BY uid",
+            )?;
+            let rows = statement
+                .query_map(
+                    rusqlite::params![self.account_id, mailbox, uidvalidity, cutoff],
+                    |row| row.get::<_, i64>(0).map(|u| u as u32),
+                )?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+    }
+
+    // -----------------------------------------------------------------------
     // Slice 5b-2 fair-scheduling + emptied-hot-thread grace state (schema v62).
     // -----------------------------------------------------------------------
 
@@ -1565,6 +1690,10 @@ impl ImapStateStore {
                     )?;
                     Self::apply_sent_backfill_low_uid(transaction, &self.account_id, mailbox, round)?;
                 }
+                // Pins are metadata and may be written on an otherwise-empty
+                // round (a TTL-release-only round, or a re-pin that found the
+                // location already current).
+                Self::apply_pins(transaction, &self.account_id, round)?;
                 return Ok(current as u64);
             }
 
@@ -1723,6 +1852,7 @@ impl ImapStateStore {
                 )?;
                 Self::apply_sent_backfill_low_uid(transaction, &self.account_id, mailbox, round)?;
             }
+            Self::apply_pins(transaction, &self.account_id, round)?;
             Ok(next as u64)
         })
     }
@@ -1744,6 +1874,38 @@ impl ImapStateStore {
                 "UPDATE imap_mailbox_sync_state SET backfill_low_uid = ?3
                  WHERE account_id = ?1 AND mailbox = ?2",
                 rusqlite::params![account_id, mailbox, value],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Apply a round's search-pin writes (schema v70) in the round's
+    /// transaction: insert-or-refresh each `pin_upserts` entry (re-pinning
+    /// refreshes `pinned_at`, resetting the TTL) and delete each `pin_releases`
+    /// entry. Pins commit atomically with the locations they protect, so a
+    /// failed acquire round records neither. Releases run AFTER upserts so a
+    /// round that both re-pins and releases the same UID (never expected) ends
+    /// released rather than pinned — the conservative choice.
+    fn apply_pins(
+        connection: &rusqlite::Connection,
+        account_id: &str,
+        round: &SyncRoundWrite,
+    ) -> rusqlite::Result<()> {
+        for (mailbox, uidvalidity, uid, pinned_at) in &round.pin_upserts {
+            connection.execute(
+                "INSERT INTO imap_search_pins
+                    (account_id, mailbox, uidvalidity, uid, pinned_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(account_id, mailbox, uidvalidity, uid) DO UPDATE SET
+                     pinned_at = excluded.pinned_at",
+                rusqlite::params![account_id, mailbox, uidvalidity, uid, pinned_at],
+            )?;
+        }
+        for (mailbox, uidvalidity, uid) in &round.pin_releases {
+            connection.execute(
+                "DELETE FROM imap_search_pins
+                 WHERE account_id = ?1 AND mailbox = ?2 AND uidvalidity = ?3 AND uid = ?4",
+                rusqlite::params![account_id, mailbox, uidvalidity, uid],
             )?;
         }
         Ok(())
@@ -1870,6 +2032,19 @@ pub struct SyncRoundWrite {
     /// `mailbox_state` to be set for the same mailbox (the watermark lives on
     /// that row); ignored otherwise.
     pub sent_backfill_low_uid: Option<Option<i64>>,
+    /// Search pins to insert or refresh this round (schema v70, Phase 5 run 3):
+    /// `(mailbox, uidvalidity, uid, pinned_at)`. Written in the SAME
+    /// transaction as the acquired locations they protect, so a failed acquire
+    /// round records neither the location nor its pin. Re-pinning an existing
+    /// UID refreshes its `pinned_at` (resetting the TTL). Like `mailbox_state`,
+    /// a pin write is METADATA and is deliberately NOT counted by [`is_empty`]:
+    /// pinning alone does not bump the generation.
+    pub pin_upserts: Vec<(String, i64, i64, i64)>,
+    /// Search pins to release this round: `(mailbox, uidvalidity, uid)`. The
+    /// delta reports a pinned UID deleted when the server expunged it; its pin
+    /// is released here in the same transaction as the location deletion. TTL
+    /// release also goes through this. Not counted by [`is_empty`].
+    pub pin_releases: Vec<(String, i64, i64)>,
 }
 
 impl SyncRoundWrite {
@@ -1879,7 +2054,9 @@ impl SyncRoundWrite {
     /// provider skips the generation/journal work. `mailbox_state` is
     /// DELIBERATELY not counted here: persisting a folder's cadence counters is
     /// not a content change and must not bump the generation (item 4 / idle
-    /// rounds), so it is written separately in `commit_sync_round`.
+    /// rounds), so it is written separately in `commit_sync_round`. Pin
+    /// upserts/releases are likewise metadata (schema v70) and are not counted:
+    /// a round that only (re)pins or TTL-releases does not bump the generation.
     pub fn is_empty(&self) -> bool {
         self.locations.is_empty()
             && self.deletions.is_empty()

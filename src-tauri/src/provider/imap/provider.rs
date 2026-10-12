@@ -294,6 +294,88 @@ pub(super) struct Refreshed {
     pub last: u64,
 }
 
+/// The accumulated output of [`ImapProvider::ingest_new_uids`] — the location
+/// rows, threading inputs and message-id lists one UID list produced, for the
+/// caller to fold into its [`SyncRoundWrite`]. Shared by `refresh_mailbox_with`
+/// (new mail) and `acquire_uids` (a search's explicit UID list).
+#[derive(Debug, Default)]
+pub(super) struct IngestOutcome {
+    /// Location rows to insert (deferred to the atomic round commit).
+    pub locations: Vec<ImapLocation>,
+    /// Threading inputs for the batch's messages.
+    pub threading_inputs: Vec<ThreadingInput>,
+    /// Every message id touched this ingest (new mail), for change tracking.
+    pub changed_message_ids: Vec<String>,
+    /// Message ids newly located this ingest, for hotness/label transitions.
+    pub new_message_ids: Vec<String>,
+}
+
+/// What one [`ImapProvider::acquire_uids`] call did (Phase 5 run 3). Run 4
+/// consumes this to report a search's ingest result.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AcquireOutcome {
+    /// The sync generation after the acquire round committed.
+    pub generation: u64,
+    /// The thread ids affected (resolved through merge aliases), sorted.
+    pub affected_threads: Vec<String>,
+    /// How many requested UIDs were REFUSED because pinning them would exceed
+    /// [`policy::MAX_SEARCH_PINS`] for this account. Over-cap UIDs are refused
+    /// (newest-first acceptance keeps the highest UIDs) rather than acquired,
+    /// never silently dropped and never evicting an existing pin.
+    pub skipped_over_cap: usize,
+}
+
+/// Why an [`ImapProvider::acquire_uids`] call failed. Distinguishes the
+/// UIDVALIDITY-incarnation mismatch (the caller's UID list is addressed under a
+/// different incarnation than the server now reports — acquiring would ingest
+/// under the wrong incarnation) from any other provider error, so run 4 can
+/// drop a stale UID list and re-search rather than retrying blindly.
+#[derive(Debug)]
+pub enum AcquireError {
+    /// The server's current UIDVALIDITY differs from the one the UID list was
+    /// addressed under. NOTHING is ingested.
+    UidValidityMismatch {
+        mailbox: String,
+        expected: i64,
+        found: i64,
+    },
+    /// Any other error from the EXAMINE / fetch / commit path.
+    Provider(ProviderError),
+}
+
+impl std::fmt::Display for AcquireError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AcquireError::UidValidityMismatch {
+                mailbox,
+                expected,
+                found,
+            } => write!(
+                f,
+                "UIDVALIDITY mismatch acquiring {mailbox}: expected {expected}, server reports {found}"
+            ),
+            AcquireError::Provider(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for AcquireError {}
+
+impl From<AcquireError> for ProviderError {
+    /// Flatten to a `ProviderError` at the `MailSync` boundary: a UIDVALIDITY
+    /// mismatch is a transient, retry-after-research condition (re-search under
+    /// the new incarnation), so it maps to `InvalidOperation` with a clear
+    /// message rather than silently succeeding.
+    fn from(error: AcquireError) -> Self {
+        match error {
+            AcquireError::Provider(inner) => inner,
+            other @ AcquireError::UidValidityMismatch { .. } => {
+                ProviderError::InvalidOperation(other.to_string())
+            }
+        }
+    }
+}
+
 fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -753,6 +835,16 @@ impl ImapProvider {
             && policy::sent_backfill_incomplete(
                 self.store.sent_backfill_low_uid(mailbox).map_err(db_err)?,
             );
+        // A mailbox with a TTL-EXPIRED search pin must NOT be cheap-skipped:
+        // the pin's release (and the possible aging-out of its now-unprotected
+        // location) is work this poll owes even when EXISTS/UIDNEXT are
+        // unchanged. Mirrors the Sent-backfill-incomplete defeat of the gate.
+        let has_expired_pins = !uidvalidity_changed
+            && !self
+                .store
+                .expired_pins(mailbox, server_uidvalidity, now - policy::SEARCH_PIN_TTL)
+                .map_err(db_err)?
+                .is_empty();
         let sweep_due = match stored {
             Some((_, _, last_sweep_at)) => policy::folder_sweep_due(last_sweep_at, now),
             None => true, // never synced -> always sweep
@@ -769,6 +861,7 @@ impl ImapProvider {
         if !force_sweep
             && !uidvalidity_changed
             && !backfill_incomplete
+            && !has_expired_pins
             && counters_unchanged
             && !sweep_due
         {
@@ -819,6 +912,64 @@ impl ImapProvider {
                     .copied(),
             );
         }
+
+        // SEARCH PINS (schema v70, Phase 5 run 3). A pinned location is a
+        // search-acquired message that is usually OLD — outside this evicting
+        // mailbox's window — and must NOT age out. The pinned set is passed to
+        // the delta so a pinned out-of-window UID is retained (deleted only
+        // when the SERVER expunged it), and pinned UIDs still on the server get
+        // their flags refreshed like a non-evicting mailbox's retained UIDs.
+        //
+        // On a UIDVALIDITY reset the old incarnation's pins are meaningless
+        // (its UIDs are renumbered); they are dropped alongside the locations,
+        // and the EFFECTIVE pin set for this round's delta is empty.
+        //
+        // TTL (SEARCH_PIN_TTL): a pin older than the TTL is RELEASED this round
+        // and, once released, no longer protects its UID — it drops from the
+        // effective set, so an out-of-window evicting location ages out
+        // normally. Re-acquiring (the acquire path) refreshes `pinned_at`.
+        let mut pin_releases: Vec<(String, i64, i64)> = Vec::new();
+        let effective_pins: std::collections::BTreeSet<u32> = if uidvalidity_changed {
+            // Reset: drop every pin under the OLD incarnation. The local UID's
+            // uidvalidity (what we stored) is the incarnation whose pins die.
+            if let Some(old_uidvalidity) = local_uidvalidity {
+                for uid in self
+                    .store
+                    .pinned_uids(mailbox, old_uidvalidity)
+                    .map_err(db_err)?
+                {
+                    pin_releases.push((mailbox.to_string(), old_uidvalidity, uid as i64));
+                }
+            }
+            std::collections::BTreeSet::new()
+        } else {
+            let now_secs = now;
+            let cutoff = now_secs - policy::SEARCH_PIN_TTL;
+            let expired: std::collections::BTreeSet<u32> = self
+                .store
+                .expired_pins(mailbox, server_uidvalidity, cutoff)
+                .map_err(db_err)?
+                .into_iter()
+                .collect();
+            for uid in &expired {
+                pin_releases.push((mailbox.to_string(), server_uidvalidity, *uid as i64));
+            }
+            let all_pins: std::collections::BTreeSet<u32> = self
+                .store
+                .pinned_uids(mailbox, server_uidvalidity)
+                .map_err(db_err)?
+                .into_iter()
+                .collect();
+            // Effective = pinned AND not expired. Refresh flags for every live
+            // effective pin so a flag-only change on a pinned message is seen.
+            let live_server: std::collections::BTreeSet<u32> =
+                server_uids.iter().copied().collect();
+            let effective: std::collections::BTreeSet<u32> =
+                all_pins.difference(&expired).copied().collect();
+            flag_uids.extend(effective.iter().filter(|uid| live_server.contains(uid)).copied());
+            effective
+        };
+
         let server_flags = self
             .fetch_flags(session, &flag_uids.into_iter().collect::<Vec<_>>())
             .await?;
@@ -827,7 +978,8 @@ impl ImapProvider {
             all_uids: server_uids.clone(),
             flags_by_uid: server_flags,
         };
-        let mut delta = super::delta::compute_delta(&local_view, &server_view, &limits);
+        let mut delta =
+            super::delta::compute_delta(&local_view, &server_view, &limits, &effective_pins);
 
         if delta.beyond_window > 0 {
             log::info!(
@@ -912,6 +1064,11 @@ impl ImapProvider {
         // locations it accompanies (item 2). `None` for every non-Sent mailbox.
         round.sent_backfill_low_uid = sent_backfill_write;
 
+        // Search-pin releases decided above (TTL-expired pins, or every pin of
+        // the old incarnation on a UIDVALIDITY reset), committed in this same
+        // round's transaction so a released pin never outlives its decision.
+        round.pin_releases.append(&mut pin_releases);
+
         // On a UIDVALIDITY reset the local UIDs are meaningless: drop every
         // location IN THIS MAILBOX only (bodies survive — keyed by stable id,
         // and other mailboxes' locations and message->thread mappings are
@@ -932,105 +1089,19 @@ impl ImapProvider {
         // to compute hotness and label transitions.
         let mut new_message_ids: Vec<String> = Vec::new();
 
-        // New mail: identity pass. Only INBOX+Sent (hot) mailboxes fetch
-        // bodies at ingest; a non-hot (Trash/Junk) mailbox is index-only, so
-        // its threading inputs come from the INDEX identity pass headers and no
-        // body is fetched.
-        for batch in chunk(&delta.new_uids, policy::UID_BATCH_SIZE) {
-            let set = uid_set(batch);
-            if makes_hot {
-                // Hot mailbox: identity pass + body once (deferred location).
-                let rows = fetch_identity(session, &set).await?;
-                for row in rows {
-                    let mut fetcher = SessionBodyFetcher { session };
-                    let resolved = super::fetch::resolve_and_cache_body(
-                        &mut fetcher,
-                        &self.store,
-                        &self.cache,
-                        mailbox,
-                        server_uidvalidity,
-                        &row,
-                        (self.now)(),
-                    )
-                    .await?;
-                    let message_id = resolved.message_id;
-                    round.locations.push(ImapLocation {
-                        mailbox: mailbox.to_string(),
-                        uidvalidity: server_uidvalidity,
-                        uid: row.uid as i64,
-                        message_id: message_id.clone(),
-                        flags_json: serde_json::to_string(&row.flags)
-                            .unwrap_or_else(|_| "[]".to_string()),
-                        modseq: None,
-                    });
-                    let headers = if resolved.body_skipped {
-                        super::rfc822::ThreadingHeaders {
-                            message_id: row.inputs.message_id.clone(),
-                            ..Default::default()
-                        }
-                    } else {
-                        match self.cache.get(&message_id).map_err(db_err)? {
-                            Some(cached) => super::rfc822::threading_headers_from_raw(&cached.raw),
-                            None => super::rfc822::ThreadingHeaders {
-                                message_id: row.inputs.message_id.clone(),
-                                ..Default::default()
-                            },
-                        }
-                    };
-                    threading_inputs.push(ThreadingInput {
-                        message_id: message_id.clone(),
-                        message_id_header: headers
-                            .message_id
-                            .or_else(|| row.inputs.message_id.clone()),
-                        in_reply_to: headers.in_reply_to,
-                        references: headers.references,
-                    });
-                    changed_message_ids.push(message_id.clone());
-                    new_message_ids.push(message_id);
-                }
-            } else {
-                // Index-tier mailbox: INDEX identity pass (headers carry the
-                // threading triple); NO body fetched. The stable id is derived
-                // the same way, so a message in INBOX and in Trash is ONE id.
-                let rows = super::fetch::fetch_identity_index(session, &set).await?;
-                for (row, threading) in rows {
-                    let message_id = {
-                        // Sticky id: an id already recorded for this coordinate
-                        // wins; otherwise derive it from the identity inputs.
-                        match self
-                            .store
-                            .location_message_id(mailbox, server_uidvalidity, row.uid as i64)
-                            .map_err(db_err)?
-                        {
-                            Some(existing) => existing,
-                            None => super::identity::derive_message_id(
-                                self.store.account_id(),
-                                &row.inputs,
-                            ),
-                        }
-                    };
-                    round.locations.push(ImapLocation {
-                        mailbox: mailbox.to_string(),
-                        uidvalidity: server_uidvalidity,
-                        uid: row.uid as i64,
-                        message_id: message_id.clone(),
-                        flags_json: serde_json::to_string(&row.flags)
-                            .unwrap_or_else(|_| "[]".to_string()),
-                        modseq: None,
-                    });
-                    threading_inputs.push(ThreadingInput {
-                        message_id: message_id.clone(),
-                        message_id_header: threading
-                            .message_id
-                            .or_else(|| row.inputs.message_id.clone()),
-                        in_reply_to: threading.in_reply_to,
-                        references: threading.references,
-                    });
-                    changed_message_ids.push(message_id.clone());
-                    new_message_ids.push(message_id);
-                }
-            }
-        }
+        // New mail: identity pass + (for hot mailboxes) body fetch, threading
+        // inputs, and location rows. Factored into `ingest_new_uids` so the
+        // explicit-UID acquire path (`acquire_uids`, Phase 5 run 3) runs the
+        // byte-identical ingest for a search's UID list; `refresh_mailbox_with`
+        // keeps calling it with `delta.new_uids`, so the existing sync tests
+        // (the contract) are unchanged.
+        let ingest = self
+            .ingest_new_uids(session, mailbox, server_uidvalidity, &delta.new_uids, makes_hot)
+            .await?;
+        round.locations.extend(ingest.locations);
+        threading_inputs.extend(ingest.threading_inputs);
+        changed_message_ids.extend(ingest.changed_message_ids);
+        new_message_ids.extend(ingest.new_message_ids);
 
         // Flag changes: collect an updated location row (not applied yet).
         if !delta.uidvalidity_reset {
@@ -1066,6 +1137,14 @@ impl ImapProvider {
                         .deletions
                         .push((mailbox.to_string(), server_uidvalidity, uid as i64));
                     changed_message_ids.push(message_id);
+                }
+                // A pinned UID that the delta reports deleted was expunged on
+                // the server (a pin never ages out of the window). Release its
+                // pin in the same round so a stale pin cannot resurrect it.
+                if effective_pins.contains(&uid) {
+                    round
+                        .pin_releases
+                        .push((mailbox.to_string(), server_uidvalidity, uid as i64));
                 }
             }
         }
@@ -1154,6 +1233,412 @@ impl ImapProvider {
         let generation = self.store.commit_sync_round(&round).map_err(db_err)?;
         self.store.prune_journal().map_err(db_err)?;
         Ok(generation)
+    }
+
+    /// Ingest a list of UIDs in one mailbox: for each UID run the SAME identity
+    /// pass → (hot: body fetch) → threading-input derivation → location row the
+    /// live-sync new-mail loop runs, in UID batches. Returns the accumulated
+    /// location rows, threading inputs and message-id lists for the caller to
+    /// fold into its round. Does NOT touch the round, the delta or the store's
+    /// generation — it is the pure ingest step shared by `refresh_mailbox_with`
+    /// (driven by `delta.new_uids`) and `acquire_uids` (driven by a search's
+    /// explicit UID list), so both behave byte-identically. `makes_hot` selects
+    /// the hot (identity+body) vs index-tier (headers only) path exactly as the
+    /// live loop did.
+    async fn ingest_new_uids(
+        &self,
+        session: &mut dyn ImapSession,
+        mailbox: &str,
+        server_uidvalidity: i64,
+        uids: &[u32],
+        makes_hot: bool,
+    ) -> ProviderResult<IngestOutcome> {
+        let mut outcome = IngestOutcome::default();
+        for batch in chunk(uids, policy::UID_BATCH_SIZE) {
+            let set = uid_set(batch);
+            if makes_hot {
+                // Hot mailbox: identity pass + body once (deferred location).
+                let rows = fetch_identity(session, &set).await?;
+                for row in rows {
+                    let mut fetcher = SessionBodyFetcher { session };
+                    let resolved = super::fetch::resolve_and_cache_body(
+                        &mut fetcher,
+                        &self.store,
+                        &self.cache,
+                        mailbox,
+                        server_uidvalidity,
+                        &row,
+                        (self.now)(),
+                    )
+                    .await?;
+                    let message_id = resolved.message_id;
+                    outcome.locations.push(ImapLocation {
+                        mailbox: mailbox.to_string(),
+                        uidvalidity: server_uidvalidity,
+                        uid: row.uid as i64,
+                        message_id: message_id.clone(),
+                        flags_json: serde_json::to_string(&row.flags)
+                            .unwrap_or_else(|_| "[]".to_string()),
+                        modseq: None,
+                    });
+                    let headers = if resolved.body_skipped {
+                        super::rfc822::ThreadingHeaders {
+                            message_id: row.inputs.message_id.clone(),
+                            ..Default::default()
+                        }
+                    } else {
+                        match self.cache.get(&message_id).map_err(db_err)? {
+                            Some(cached) => super::rfc822::threading_headers_from_raw(&cached.raw),
+                            None => super::rfc822::ThreadingHeaders {
+                                message_id: row.inputs.message_id.clone(),
+                                ..Default::default()
+                            },
+                        }
+                    };
+                    outcome.threading_inputs.push(ThreadingInput {
+                        message_id: message_id.clone(),
+                        message_id_header: headers
+                            .message_id
+                            .or_else(|| row.inputs.message_id.clone()),
+                        in_reply_to: headers.in_reply_to,
+                        references: headers.references,
+                    });
+                    outcome.changed_message_ids.push(message_id.clone());
+                    outcome.new_message_ids.push(message_id);
+                }
+            } else {
+                // Index-tier mailbox: INDEX identity pass (headers carry the
+                // threading triple); NO body fetched. The stable id is derived
+                // the same way, so a message in INBOX and in Trash is ONE id.
+                let rows = super::fetch::fetch_identity_index(session, &set).await?;
+                for (row, threading) in rows {
+                    let message_id = {
+                        // Sticky id: an id already recorded for this coordinate
+                        // wins; otherwise derive it from the identity inputs.
+                        match self
+                            .store
+                            .location_message_id(mailbox, server_uidvalidity, row.uid as i64)
+                            .map_err(db_err)?
+                        {
+                            Some(existing) => existing,
+                            None => super::identity::derive_message_id(
+                                self.store.account_id(),
+                                &row.inputs,
+                            ),
+                        }
+                    };
+                    outcome.locations.push(ImapLocation {
+                        mailbox: mailbox.to_string(),
+                        uidvalidity: server_uidvalidity,
+                        uid: row.uid as i64,
+                        message_id: message_id.clone(),
+                        flags_json: serde_json::to_string(&row.flags)
+                            .unwrap_or_else(|_| "[]".to_string()),
+                        modseq: None,
+                    });
+                    outcome.threading_inputs.push(ThreadingInput {
+                        message_id: message_id.clone(),
+                        message_id_header: threading
+                            .message_id
+                            .or_else(|| row.inputs.message_id.clone()),
+                        in_reply_to: threading.in_reply_to,
+                        references: threading.references,
+                    });
+                    outcome.changed_message_ids.push(message_id.clone());
+                    outcome.new_message_ids.push(message_id);
+                }
+            }
+        }
+        Ok(outcome)
+    }
+
+    /// Acquire an EXPLICIT list of UIDs in one mailbox and PIN them, for the
+    /// server-search ingest path (Phase 5 run 3; run 4 is the only caller).
+    ///
+    /// A search hit is usually OLD — outside the mailbox's newest-N sync window
+    /// — so acquiring it the way `refresh_mailbox_with` acquires new mail is not
+    /// enough: the next poll's delta would age the out-of-window location out of
+    /// an evicting mailbox and delete it. So every UID this acquires is also
+    /// PINNED (schema v70): the delta then retains it until the SERVER expunges
+    /// it or the pin's TTL releases it. Acquired threads are marked HOT so the
+    /// engine ingests them (only hot threads are journaled) and the emptied-
+    /// thread grace protects them if a pinned location later vanishes; hotness
+    /// adds no INBOX label (labels come from the location's mailbox, not from
+    /// hotness), so INBOX semantics stay correct — an Archive hit is labelled
+    /// `folder:Archive`, never INBOX, and never appears in `list_inbox`.
+    ///
+    /// Steps, all in ONE transaction (a failure before commit writes nothing):
+    ///   1. EXAMINE (read-only — never SELECT, so acquiring never sets `\Seen`).
+    ///   2. Verify the server's UIDVALIDITY matches the caller's expectation
+    ///      (the incarnation its UID list is addressed under); on a mismatch
+    ///      REFUSE with [`AcquireError::UidValidityMismatch`] rather than
+    ///      ingesting under the wrong incarnation.
+    ///   3. Skip UIDs already located locally (no duplicate message/location),
+    ///      but still PIN them (idempotently refreshing an existing pin's TTL).
+    ///   4. Fetch + thread the rest (via the shared `ingest_new_uids`).
+    ///   5. Enforce [`policy::MAX_SEARCH_PINS`] per account: pin up to the cap,
+    ///      NEWEST (highest UID) first, and REFUSE the over-cap UIDs — reported
+    ///      in [`AcquireOutcome::skipped_over_cap`], never silently dropped and
+    ///      never evicting an existing pin. A refused UID is NOT acquired at all
+    ///      (acquiring an unpinned out-of-window hit would just let it age out
+    ///      next poll, which defeats the purpose), so partial acceptance is the
+    ///      documented behaviour.
+    ///
+    /// Returns the affected thread ids (resolved through merge aliases) so the
+    /// caller can report them. Bodies may be cached eagerly during the fetch
+    /// (the body cache is rebuildable and keyed by stable id), exactly as the
+    /// live sync does — only the durable location/thread/pin/hot/journal writes
+    /// are deferred to the atomic commit.
+    pub(super) async fn acquire_uids(
+        &self,
+        session: &mut dyn ImapSession,
+        entry: &plan::PlanEntry,
+        uids: &[u32],
+        expected_uidvalidity: i64,
+    ) -> Result<AcquireOutcome, AcquireError> {
+        let mailbox = entry.mailbox.as_str();
+
+        // 1. EXAMINE (read-only).
+        let status = session.examine(mailbox).await.map_err(AcquireError::Provider)?;
+        let server_uidvalidity = status.uid_validity.unwrap_or(0) as i64;
+
+        // 2. UIDVALIDITY guard: refuse rather than ingest under the wrong
+        // incarnation. The caller's UID list is meaningful only under the
+        // incarnation it was searched in.
+        if server_uidvalidity != expected_uidvalidity {
+            return Err(AcquireError::UidValidityMismatch {
+                mailbox: mailbox.to_string(),
+                expected: expected_uidvalidity,
+                found: server_uidvalidity,
+            });
+        }
+
+        let now = (self.now)();
+        // Acquired threads are hot (see the doc comment): the search ingest
+        // path always marks hot so the engine ingests the thread and the
+        // emptied-thread grace protects it. This is independent of the
+        // mailbox's role — an Archive hit is still hot (but unlabelled INBOX).
+        let makes_hot = true;
+        // Whether to fetch bodies at ingest: a message we will show needs its
+        // body, so the acquire path always fetches like a hot mailbox.
+        let fetch_bodies = true;
+
+        // 3. Partition the requested UIDs into already-local (skip the fetch,
+        // but still pin) and to-fetch. Dedup and sort so "newest first" for the
+        // cap is well-defined.
+        let mut unique: Vec<u32> = uids.to_vec();
+        unique.sort_unstable();
+        unique.dedup();
+
+        let mut already_local: Vec<u32> = Vec::new();
+        let mut to_fetch: Vec<u32> = Vec::new();
+        for &uid in &unique {
+            let located = self
+                .store
+                .location_message_id(mailbox, server_uidvalidity, uid as i64)
+                .map_err(|e| AcquireError::Provider(db_err(e)))?
+                .is_some();
+            if located {
+                already_local.push(uid);
+            } else {
+                to_fetch.push(uid);
+            }
+        }
+
+        // 5 (cap, applied before the fetch so a refused UID is never fetched).
+        // A UID already pinned refreshes in place and does NOT count against
+        // new-pin room; count only the requested UIDs that are not already
+        // pinned as "new". Accept NEWEST first.
+        let mut new_pin_candidates: Vec<u32> = Vec::new();
+        let mut refreshing: Vec<u32> = Vec::new();
+        for &uid in &unique {
+            if self
+                .store
+                .is_pinned(mailbox, server_uidvalidity, uid as i64)
+                .map_err(|e| AcquireError::Provider(db_err(e)))?
+            {
+                refreshing.push(uid);
+            } else {
+                new_pin_candidates.push(uid);
+            }
+        }
+        let existing_total = self
+            .store
+            .search_pin_count()
+            .map_err(|e| AcquireError::Provider(db_err(e)))?;
+        let cap = policy::cap_search_pins(existing_total, new_pin_candidates.len());
+        // Newest-first acceptance: keep the highest `accepted` UIDs among the
+        // new candidates; the rest are refused.
+        new_pin_candidates.sort_unstable();
+        let refused_count = cap.refused;
+        let accepted_new: std::collections::BTreeSet<u32> = new_pin_candidates
+            .iter()
+            .rev()
+            .take(cap.accepted)
+            .copied()
+            .collect();
+        // The UIDs this acquisition will PIN: every refresh (already pinned)
+        // plus the accepted new ones. A refused new UID is pinned by neither,
+        // and is not fetched/located either.
+        let pinned_now: std::collections::BTreeSet<u32> = refreshing
+            .iter()
+            .copied()
+            .chain(accepted_new.iter().copied())
+            .collect();
+
+        // The UIDs we will actually fetch bodies for: to-fetch UIDs that are
+        // being pinned this round (a refused UID is skipped entirely).
+        let fetch_set: Vec<u32> = to_fetch
+            .iter()
+            .copied()
+            .filter(|uid| pinned_now.contains(uid))
+            .collect();
+
+        // 4. Fetch + thread the to-acquire set via the shared ingest step.
+        let ingest = self
+            .ingest_new_uids(session, mailbox, server_uidvalidity, &fetch_set, fetch_bodies)
+            .await
+            .map_err(AcquireError::Provider)?;
+
+        let mut round = SyncRoundWrite {
+            locations: ingest.locations,
+            ..Default::default()
+        };
+
+        // Pin every UID we are keeping (refresh or newly accepted), at `now`.
+        for &uid in &pinned_now {
+            round
+                .pin_upserts
+                .push((mailbox.to_string(), server_uidvalidity, uid as i64, now));
+        }
+
+        // Thread the newly-fetched messages, seeding prior thread state from
+        // PERSISTED tokens, exactly as the live loop does.
+        let outcome = if ingest.threading_inputs.is_empty() {
+            threading::ThreadingOutcome::default()
+        } else {
+            self.ensure_tokens_backfilled().map_err(AcquireError::Provider)?;
+            let batch_tokens: Vec<String> = ingest
+                .threading_inputs
+                .iter()
+                .flat_map(|input| input.token_set())
+                .collect();
+            let mut thread_state = self
+                .load_thread_state_from_tokens(&batch_tokens)
+                .map_err(AcquireError::Provider)?;
+            threading::thread_batch(&mut thread_state, &ingest.threading_inputs)
+        };
+
+        let mut assignment_of: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for (message_id, thread_id) in &outcome.assignments {
+            assignment_of.insert(message_id.clone(), thread_id.clone());
+        }
+
+        // Affected threads: every acquired message's thread, plus every
+        // already-local pinned UID's thread (so re-pinning an existing hit also
+        // keeps/affirms its thread hot), resolved through aliases.
+        let mut affected_threads: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
+        for message_id in &ingest.new_message_ids {
+            let thread = match assignment_of.get(message_id) {
+                Some(t) => Some(t.clone()),
+                None => self
+                    .store
+                    .thread_of_message(message_id)
+                    .map_err(|e| AcquireError::Provider(db_err(e)))?,
+            };
+            if let Some(t) = thread {
+                affected_threads.insert(t);
+            }
+        }
+        // Already-local pinned UIDs: resolve their message -> thread so a
+        // re-pin affirms hotness and journals the thread.
+        for &uid in &already_local {
+            if !pinned_now.contains(&uid) {
+                continue;
+            }
+            if let Some(message_id) = self
+                .store
+                .location_message_id(mailbox, server_uidvalidity, uid as i64)
+                .map_err(|e| AcquireError::Provider(db_err(e)))?
+            {
+                if let Some(t) = self
+                    .store
+                    .thread_of_message(&message_id)
+                    .map_err(|e| AcquireError::Provider(db_err(e)))?
+                {
+                    affected_threads.insert(t);
+                }
+            }
+        }
+        for (_, thread_id) in &outcome.assignments {
+            affected_threads.insert(thread_id.clone());
+        }
+
+        round.thread_assignments = outcome.assignments;
+        round.aliases = outcome.aliases;
+        round.message_tokens = ingest
+            .threading_inputs
+            .iter()
+            .map(|input| (input.message_id.clone(), input.token_set()))
+            .collect();
+
+        // Mark every affected thread hot (the acquire decision) and journal it
+        // so the engine ingests it. Resolve through aliases to the survivor.
+        let mut hot_threads: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
+        if makes_hot {
+            for thread_id in &affected_threads {
+                let resolved = self
+                    .store
+                    .resolve_thread_alias(thread_id)
+                    .map_err(|e| AcquireError::Provider(db_err(e)))?;
+                hot_threads.insert(resolved);
+            }
+        }
+        round.hot_threads = hot_threads.into_iter().collect();
+        // Journal every affected thread (resolved) so the engine re-ingests the
+        // acquired hit. Unlike the sync loop, the acquire path journals ALL
+        // affected threads: they are all made hot here, so all are reportable.
+        let mut journaled: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
+        for thread_id in &affected_threads {
+            journaled.insert(thread_id.clone());
+            let resolved = self
+                .store
+                .resolve_thread_alias(thread_id)
+                .map_err(|e| AcquireError::Provider(db_err(e)))?;
+            journaled.insert(resolved);
+        }
+        round.changed_threads = journaled.into_iter().collect();
+
+        let generation = self
+            .store
+            .commit_sync_round(&round)
+            .map_err(|e| AcquireError::Provider(db_err(e)))?;
+        self.store
+            .prune_journal()
+            .map_err(|e| AcquireError::Provider(db_err(e)))?;
+
+        // The affected thread ids (resolved) for the caller to report.
+        let mut affected: Vec<String> = Vec::new();
+        for thread_id in &affected_threads {
+            let resolved = self
+                .store
+                .resolve_thread_alias(thread_id)
+                .map_err(|e| AcquireError::Provider(db_err(e)))?;
+            if !affected.contains(&resolved) {
+                affected.push(resolved);
+            }
+        }
+        affected.sort();
+
+        Ok(AcquireOutcome {
+            generation,
+            affected_threads: affected,
+            skipped_over_cap: refused_count,
+        })
     }
 
     fn local_view(
@@ -8314,6 +8799,683 @@ mod tests {
                 .expect("expunge scratch copy — cleanup must succeed");
             let _ = c.logout().await;
             let _ = worker.logout().await;
+        }
+    }
+
+    // ======================================================================
+    // Phase 5 run 3: acquire-by-UID + search pins.
+    // ======================================================================
+    //
+    // These drive `acquire_uids` (the explicit-UID ingest run 4 will call) and
+    // assert that a search-acquired OLD hit survives the delta's window
+    // eviction and the emptied-thread grace, is removed when the server
+    // expunges it or its UIDVALIDITY resets, pins idempotently, rolls back a
+    // mid-acquire failure, and honours the cap and TTL. The provider is built
+    // with a TINY `folder_window_override` so an acquired old UID is genuinely
+    // out of window and WOULD be evicted without a pin.
+    mod search_pins {
+        use super::*;
+
+        /// A provider whose non-INBOX window ceiling is `window`, so an
+        /// acquired UID older than the newest-`window` is out of window and
+        /// would be evicted on the next sweep without a pin.
+        fn provider_window(
+            mailbox: Arc<Mutex<FakeMailbox>>,
+            window: usize,
+        ) -> (ImapProvider, ImapStateStore) {
+            let (mut provider, store) = provider_with(mailbox);
+            provider.folder_window_override = Some(window);
+            (provider, store)
+        }
+
+        /// Open a bare scripted session over the CURRENT shared mailbox so a
+        /// test can call `acquire_uids` directly, the way run 4 will from
+        /// inside a sync round.
+        async fn session_for(mailbox: &Arc<Mutex<FakeMailbox>>) -> Box<dyn ImapSession> {
+            let snapshot = mailbox.lock().unwrap().clone();
+            open_scripted_session(snapshot).await
+        }
+
+        /// The plan entry for `mailbox` (role resolved from the catalog), or an
+        /// INBOX entry when asked for INBOX.
+        fn entry_for(provider: &ImapProvider, mailbox: &str) -> plan::PlanEntry {
+            let plan = provider.build_sync_plan().expect("plan");
+            plan.entries
+                .iter()
+                .find(|e| e.mailbox == mailbox)
+                .cloned()
+                .unwrap_or_else(|| panic!("no plan entry for {mailbox}"))
+        }
+
+        /// Thread ids currently listed from the local store for a mailbox (the
+        /// DB thread list, not the location table).
+        fn threads_in(store: &ImapStateStore, mailbox: &str) -> Vec<String> {
+            store.thread_ids_in_mailbox(mailbox).unwrap()
+        }
+
+        /// (required) An acquired OLD UID in an EVICTING mailbox (Archive)
+        /// survives: a full sweep, a window shift from new mail, a cadence-gated
+        /// no-op poll, and a flag-only change (whose new flags are picked up).
+        /// Its thread stays listed via the DB thread list after each sync.
+        #[tokio::test]
+        async fn an_acquired_old_uid_survives_sweeps_window_shifts_and_flag_changes() {
+            use std::sync::atomic::{AtomicI64, Ordering};
+            // A mutable clock so step 4 can advance past the folder-sweep
+            // interval and let the periodic sweep refresh the pinned message's
+            // flags — a flag-only change moves no counter, so (as for ANY
+            // folder message) it is the periodic sweep, not an immediate poll,
+            // that catches it.
+            static CLOCK: AtomicI64 = AtomicI64::new(1_700_000_000);
+            fn clock() -> i64 {
+                CLOCK.load(Ordering::Relaxed)
+            }
+
+            // Archive with 3 messages; window 1, so only the newest (uid 3) is
+            // in-window. We acquire the OLD uid 1 and pin it.
+            let mut mb = FakeMailbox::new(100);
+            mb.add_to("Archive", 50, &["\\Seen"], &message("<a1@x>", "Old one", ""));
+            mb.add_to("Archive", 50, &["\\Seen"], &message("<a2@x>", "Old two", ""));
+            mb.add_to("Archive", 50, &["\\Seen"], &message("<a3@x>", "New three", ""));
+            let mailbox = Arc::new(Mutex::new(mb));
+            let (mut provider, store) = provider_window(mailbox.clone(), 1);
+            provider.now = clock;
+            CLOCK.store(1_700_000_000, Ordering::Relaxed);
+            let db = store.database();
+
+            // Acquire the OLD uid 1 (out of the window-1).
+            let archive = entry_for(&provider, "Archive");
+            let mut session = session_for(&mailbox).await;
+            let outcome = provider
+                .acquire_uids(session.as_mut(), &archive, &[1], 50)
+                .await
+                .expect("acquire");
+            let _ = session.logout().await;
+            assert_eq!(outcome.skipped_over_cap, 0);
+            assert_eq!(outcome.affected_threads.len(), 1, "one thread acquired");
+            let acquired_thread = outcome.affected_threads[0].clone();
+
+            // The acquired location + pin exist.
+            assert_eq!(store.locations_in_mailbox("Archive").unwrap().len(), 1);
+            assert_eq!(store.pinned_uids("Archive", 50).unwrap(), vec![1]);
+            assert!(threads_in(&store, "Archive").contains(&acquired_thread));
+
+            // 1) A full sweep (normal sync) — uid 1 is out of window but pinned,
+            // so it is NOT evicted. (The window-1 sweep also acquires the newest
+            // in-window UID, so the count grows; assert uid 1 specifically.)
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+                .await
+                .unwrap();
+            assert!(
+                store
+                    .locations_in_mailbox("Archive")
+                    .unwrap()
+                    .iter()
+                    .any(|l| l.uid == 1),
+                "pinned old UID survives a full sweep"
+            );
+            assert!(threads_in(&store, "Archive").contains(&acquired_thread));
+
+            // 2) New mail arrives (window shifts): add uid 4. The window-1 now
+            // covers only uid 4; uid 1 is still pinned and survives.
+            mailbox
+                .lock()
+                .unwrap()
+                .add_to("Archive", 50, &["\\Seen"], &message("<a4@x>", "Newest", ""));
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+                .await
+                .unwrap();
+            assert!(
+                store
+                    .locations_in_mailbox("Archive")
+                    .unwrap()
+                    .iter()
+                    .any(|l| l.uid == 1),
+                "pinned old UID survives a window shift"
+            );
+
+            // 3) A cadence-gated no-op poll (nothing changed): uid 1 still there.
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+                .await
+                .unwrap();
+            assert!(
+                store
+                    .locations_in_mailbox("Archive")
+                    .unwrap()
+                    .iter()
+                    .any(|l| l.uid == 1),
+                "pinned old UID survives an idle poll"
+            );
+
+            // 4) A flag-only change on the pinned message is picked up by the
+            // periodic sweep. Advance the clock past the sweep interval so the
+            // sweep runs (a flag-only change bumps no counter, exactly like any
+            // other folder message), and the pinned UID's flags are refreshed
+            // because the sweep's flag coverage includes live pinned UIDs.
+            {
+                let mut mb = mailbox.lock().unwrap();
+                let folder = mb.folder("Archive", 50);
+                let m = folder.messages.iter_mut().find(|m| m.uid == 1).unwrap();
+                m.flags = vec!["\\Seen".into(), "\\Flagged".into()];
+            }
+            CLOCK.store(
+                1_700_000_000 + super::super::policy::FOLDER_SWEEP_INTERVAL_SECS + 1,
+                Ordering::Relaxed,
+            );
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+                .await
+                .unwrap();
+            let flags: Vec<String> = {
+                let loc = store.locations_in_mailbox("Archive").unwrap();
+                let row = loc.iter().find(|l| l.uid == 1).unwrap();
+                serde_json::from_str(&row.flags_json).unwrap()
+            };
+            assert!(
+                flags.iter().any(|f| f == "\\Flagged"),
+                "a flag-only change on the pinned message is picked up: {flags:?}"
+            );
+            // Still listed after all those syncs.
+            assert!(threads_in(&store, "Archive").contains(&acquired_thread));
+            assert!(
+                provider.fetch_thread(&acquired_thread).await.is_ok(),
+                "the acquired thread is still fetchable, not NotFound"
+            );
+        }
+
+        /// (required) An acquired pinned UID is removed when the server expunges
+        /// it (the pin never keeps a UID the server dropped), and its pin is
+        /// released.
+        #[tokio::test]
+        async fn a_pinned_uid_is_removed_when_the_server_expunges_it() {
+            let mut mb = FakeMailbox::new(100);
+            mb.add_to("Archive", 50, &["\\Seen"], &message("<a1@x>", "Old", ""));
+            mb.add_to("Archive", 50, &["\\Seen"], &message("<a2@x>", "New", ""));
+            let mailbox = Arc::new(Mutex::new(mb));
+            let (provider, store) = provider_window(mailbox.clone(), 1);
+            let db = store.database();
+
+            let archive = entry_for(&provider, "Archive");
+            let mut session = session_for(&mailbox).await;
+            provider
+                .acquire_uids(session.as_mut(), &archive, &[1], 50)
+                .await
+                .expect("acquire");
+            let _ = session.logout().await;
+            assert_eq!(store.pinned_uids("Archive", 50).unwrap(), vec![1]);
+
+            // The server expunges uid 1.
+            mailbox
+                .lock()
+                .unwrap()
+                .folder("Archive", 50)
+                .messages
+                .retain(|m| m.uid != 1);
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+                .await
+                .unwrap();
+
+            assert!(
+                !store
+                    .locations_in_mailbox("Archive")
+                    .unwrap()
+                    .iter()
+                    .any(|l| l.uid == 1),
+                "an expunged pinned UID is deleted"
+            );
+            assert!(
+                store.pinned_uids("Archive", 50).unwrap().is_empty(),
+                "its pin is released"
+            );
+        }
+
+        /// (required) Pins drop on a UIDVALIDITY reset (with the locations).
+        #[tokio::test]
+        async fn pins_drop_on_a_uidvalidity_reset() {
+            let mut mb = FakeMailbox::new(100);
+            mb.add_to("Archive", 50, &["\\Seen"], &message("<a1@x>", "Old", ""));
+            mb.add_to("Archive", 50, &["\\Seen"], &message("<a2@x>", "New", ""));
+            let mailbox = Arc::new(Mutex::new(mb));
+            let (provider, store) = provider_window(mailbox.clone(), 1);
+            let db = store.database();
+
+            let archive = entry_for(&provider, "Archive");
+            let mut session = session_for(&mailbox).await;
+            provider
+                .acquire_uids(session.as_mut(), &archive, &[1], 50)
+                .await
+                .expect("acquire");
+            let _ = session.logout().await;
+            assert_eq!(store.pinned_uids("Archive", 50).unwrap(), vec![1]);
+
+            // The server rebuilds Archive with a NEW UIDVALIDITY.
+            {
+                let mut mb = mailbox.lock().unwrap();
+                let folder = mb.folder("Archive", 50);
+                folder.uidvalidity = 77;
+                folder.uidnext = 1;
+                folder.messages.clear();
+                mb.add_to("Archive", 77, &["\\Seen"], &message("<b1@x>", "Fresh", ""));
+            }
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+                .await
+                .unwrap();
+
+            assert!(
+                store.pinned_uids("Archive", 50).unwrap().is_empty(),
+                "the old incarnation's pins are dropped"
+            );
+            assert!(
+                store.pinned_uids("Archive", 77).unwrap().is_empty(),
+                "no pins carried into the new incarnation"
+            );
+        }
+
+        /// (required) Acquiring an already-local UID creates no duplicate
+        /// message/location and pins it; acquiring twice is idempotent.
+        #[tokio::test]
+        async fn acquiring_an_already_local_uid_is_idempotent_and_pins_it() {
+            // uid 1 is IN the window, so the normal sync already acquired it.
+            let mut mb = FakeMailbox::new(100);
+            mb.add_to("Archive", 50, &["\\Seen"], &message("<a1@x>", "Known", ""));
+            let mailbox = Arc::new(Mutex::new(mb));
+            let (provider, store) = provider_window(mailbox.clone(), 5);
+            let db = store.database();
+
+            // Normal sync ingests uid 1 (in window).
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+                .await
+                .unwrap();
+            assert_eq!(store.locations_in_mailbox("Archive").unwrap().len(), 1);
+            let before_locations = store.locations_in_mailbox("Archive").unwrap().len();
+
+            // Acquire the SAME uid 1 twice.
+            let archive = entry_for(&provider, "Archive");
+            for _ in 0..2 {
+                let mut session = session_for(&mailbox).await;
+                let outcome = provider
+                    .acquire_uids(session.as_mut(), &archive, &[1], 50)
+                    .await
+                    .expect("acquire");
+                let _ = session.logout().await;
+                assert_eq!(outcome.skipped_over_cap, 0);
+            }
+            // No duplicate location/message, and it is pinned exactly once.
+            assert_eq!(
+                store.locations_in_mailbox("Archive").unwrap().len(),
+                before_locations,
+                "no duplicate location from acquiring an already-local UID"
+            );
+            assert_eq!(
+                store.pinned_uids("Archive", 50).unwrap(),
+                vec![1],
+                "the already-local UID is pinned exactly once"
+            );
+        }
+
+        /// (required) A failure injected mid-acquire (after the body fetch,
+        /// before commit) leaves ZERO locations, threads or pins. The injection
+        /// is asserted to have fired (the server dropped the connection).
+        #[tokio::test]
+        async fn a_failure_mid_acquire_leaves_no_locations_threads_or_pins() {
+            let mut mb = FakeMailbox::new(100);
+            mb.add_to("Archive", 50, &["\\Seen"], &message("<a1@x>", "Old", ""));
+            mb.add_to("Archive", 50, &["\\Seen"], &message("<a2@x>", "New", ""));
+            // The server DROPS the connection after the FIRST whole-body fetch,
+            // so acquiring two UIDs fails mid-way (after a fetch, before the
+            // round commits).
+            mb.folder("Archive", 50).fail_after_body_fetches = Some(1);
+            let mailbox = Arc::new(Mutex::new(mb));
+            let (provider, store) = provider_window(mailbox.clone(), 1);
+
+            let archive = entry_for(&provider, "Archive");
+            let mut session = session_for(&mailbox).await;
+            let result = provider
+                .acquire_uids(session.as_mut(), &archive, &[1, 2], 50)
+                .await;
+            let _ = session.logout().await;
+
+            // The injection fired: the acquire returned an error (the dropped
+            // connection), proving we reached the mid-fetch failure point.
+            assert!(
+                result.is_err(),
+                "the injected mid-acquire failure must surface as an error"
+            );
+            // Nothing durable was written: no locations, no threads, no pins.
+            assert!(
+                store.locations_in_mailbox("Archive").unwrap().is_empty(),
+                "a failed acquire writes no locations"
+            );
+            assert!(
+                threads_in(&store, "Archive").is_empty(),
+                "a failed acquire writes no threads"
+            );
+            assert!(
+                store.pinned_uids("Archive", 50).unwrap().is_empty(),
+                "a failed acquire writes no pins"
+            );
+        }
+
+        /// (required) A UIDVALIDITY mismatch at acquire time is refused with the
+        /// typed error and ingests nothing.
+        #[tokio::test]
+        async fn acquire_refuses_a_uidvalidity_mismatch() {
+            let mut mb = FakeMailbox::new(100);
+            mb.add_to("Archive", 50, &["\\Seen"], &message("<a1@x>", "Old", ""));
+            let mailbox = Arc::new(Mutex::new(mb));
+            let (provider, store) = provider_window(mailbox.clone(), 1);
+
+            let archive = entry_for(&provider, "Archive");
+            let mut session = session_for(&mailbox).await;
+            // We expect incarnation 999, but the server reports 50.
+            let result = provider
+                .acquire_uids(session.as_mut(), &archive, &[1], 999)
+                .await;
+            let _ = session.logout().await;
+            match result {
+                Err(AcquireError::UidValidityMismatch { expected, found, .. }) => {
+                    assert_eq!((expected, found), (999, 50));
+                }
+                other => panic!("expected a UIDVALIDITY mismatch, got {other:?}"),
+            }
+            assert!(
+                store.locations_in_mailbox("Archive").unwrap().is_empty(),
+                "a refused acquire ingests nothing"
+            );
+            assert!(store.pinned_uids("Archive", 50).unwrap().is_empty());
+        }
+
+        /// (required) Cap: below / exact / above, with over-cap UIDs reported
+        /// and existing pins untouched. Uses a tiny injected cap via seeding
+        /// the pin table directly, so no 2,000-message fixture is needed.
+        #[tokio::test]
+        async fn acquire_honours_the_pin_cap_and_reports_over_cap_uids() {
+            // Seed the account near the cap by pre-pinning UIDs in a DIFFERENT
+            // mailbox so the per-account count is close to MAX_SEARCH_PINS,
+            // then acquire into Archive and watch the cap bite.
+            let mut mb = FakeMailbox::new(100);
+            for uid in 1..=5u32 {
+                mb.add_to("Archive", 50, &["\\Seen"], &message(&format!("<a{uid}@x>"), "m", ""));
+            }
+            let mailbox = Arc::new(Mutex::new(mb));
+            let (provider, store) = provider_window(mailbox.clone(), 1);
+
+            // Pre-pin (MAX_SEARCH_PINS - 2) pins in a sentinel mailbox so only
+            // room for 2 new pins remains.
+            let base = super::super::policy::MAX_SEARCH_PINS - 2;
+            for uid in 0..base as u32 {
+                store
+                    .upsert_pin("OtherFolder", 1, uid as i64 + 1, 1_700_000_000)
+                    .unwrap();
+            }
+            assert_eq!(store.search_pin_count().unwrap(), base);
+
+            // Acquire 5 Archive UIDs; only room for 2 => 3 refused, and the
+            // ACCEPTED ones are the NEWEST (uids 4 and 5).
+            let archive = entry_for(&provider, "Archive");
+            let mut session = session_for(&mailbox).await;
+            let outcome = provider
+                .acquire_uids(session.as_mut(), &archive, &[1, 2, 3, 4, 5], 50)
+                .await
+                .expect("acquire");
+            let _ = session.logout().await;
+            assert_eq!(outcome.skipped_over_cap, 3, "3 over-cap UIDs reported");
+            // The accepted new pins are the newest two.
+            assert_eq!(
+                store.pinned_uids("Archive", 50).unwrap(),
+                vec![4, 5],
+                "newest-first acceptance under the cap"
+            );
+            // Existing pins in the sentinel mailbox are untouched.
+            assert_eq!(store.search_pin_count().unwrap(), base + 2);
+        }
+
+        /// Exactly-at-cap acquires everything; below the cap acquires
+        /// everything; above refuses the overflow (the boundary cases).
+        #[tokio::test]
+        async fn acquire_cap_below_exact_and_above() {
+            let mut mb = FakeMailbox::new(100);
+            for uid in 1..=3u32 {
+                mb.add_to("Archive", 50, &["\\Seen"], &message(&format!("<a{uid}@x>"), "m", ""));
+            }
+            let mailbox = Arc::new(Mutex::new(mb));
+            let (provider, store) = provider_window(mailbox.clone(), 1);
+            let archive = entry_for(&provider, "Archive");
+
+            // BELOW: room for many, acquire 2 => none refused.
+            let mut session = session_for(&mailbox).await;
+            let below = provider
+                .acquire_uids(session.as_mut(), &archive, &[1, 2], 50)
+                .await
+                .expect("acquire");
+            let _ = session.logout().await;
+            assert_eq!(below.skipped_over_cap, 0);
+
+            // Fill to EXACTLY one slot below the cap via sentinel pins, then
+            // acquire 1 new => exact, none refused.
+            let room_used = store.search_pin_count().unwrap();
+            let fill = super::super::policy::MAX_SEARCH_PINS - room_used - 1;
+            for i in 0..fill as u32 {
+                store.upsert_pin("Sentinel", 1, i as i64 + 1, 1_700_000_000).unwrap();
+            }
+            let mut session = session_for(&mailbox).await;
+            let exact = provider
+                .acquire_uids(session.as_mut(), &archive, &[3], 50)
+                .await
+                .expect("acquire");
+            let _ = session.logout().await;
+            assert_eq!(exact.skipped_over_cap, 0, "exactly at the cap accepts the last pin");
+            assert_eq!(store.search_pin_count().unwrap(), super::super::policy::MAX_SEARCH_PINS);
+
+            // ABOVE: now full; a fresh new UID is refused.
+            mailbox
+                .lock()
+                .unwrap()
+                .add_to("Archive", 50, &["\\Seen"], &message("<a9@x>", "overflow", ""));
+            let mut session = session_for(&mailbox).await;
+            let above = provider
+                .acquire_uids(session.as_mut(), &archive, &[4], 50)
+                .await
+                .expect("acquire");
+            let _ = session.logout().await;
+            assert_eq!(above.skipped_over_cap, 1, "over the cap refuses the overflow");
+            assert!(
+                !store.pinned_uids("Archive", 50).unwrap().contains(&4),
+                "the over-cap UID is not pinned"
+            );
+        }
+
+        /// (required) TTL: a pin just-before the TTL survives a sync; at/after
+        /// the TTL it is released and (if out of window) its location follows
+        /// normal window rules; re-acquiring refreshes `pinned_at`.
+        #[tokio::test]
+        async fn pin_ttl_releases_at_the_boundary_and_reacquire_refreshes_it() {
+            use std::sync::atomic::{AtomicI64, Ordering};
+            // A mutable clock so the test can advance `now` across the TTL.
+            static CLOCK: AtomicI64 = AtomicI64::new(1_700_000_000);
+            fn clock() -> i64 {
+                CLOCK.load(Ordering::Relaxed)
+            }
+
+            let mut mb = FakeMailbox::new(100);
+            mb.add_to("Archive", 50, &["\\Seen"], &message("<a1@x>", "Old", ""));
+            mb.add_to("Archive", 50, &["\\Seen"], &message("<a2@x>", "New", ""));
+            let mailbox = Arc::new(Mutex::new(mb));
+            let (mut provider, store) = provider_window(mailbox.clone(), 1);
+            provider.now = clock;
+            let db = store.database();
+
+            CLOCK.store(1_700_000_000, Ordering::Relaxed);
+            // Acquire the OLD uid 1 at t0.
+            let archive = entry_for(&provider, "Archive");
+            let mut session = session_for(&mailbox).await;
+            provider
+                .acquire_uids(session.as_mut(), &archive, &[1], 50)
+                .await
+                .expect("acquire");
+            let _ = session.logout().await;
+            assert_eq!(store.pinned_uids("Archive", 50).unwrap(), vec![1]);
+
+            // JUST BEFORE the TTL: sync keeps the pin and the location.
+            CLOCK.store(1_700_000_000 + super::super::policy::SEARCH_PIN_TTL - 1, Ordering::Relaxed);
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+                .await
+                .unwrap();
+            assert_eq!(
+                store.pinned_uids("Archive", 50).unwrap(),
+                vec![1],
+                "a pin one second short of the TTL survives"
+            );
+            assert!(store.locations_in_mailbox("Archive").unwrap().iter().any(|l| l.uid == 1));
+
+            // AT the TTL: the pin is released and the (out-of-window) location
+            // ages out under normal window rules.
+            CLOCK.store(1_700_000_000 + super::super::policy::SEARCH_PIN_TTL, Ordering::Relaxed);
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+                .await
+                .unwrap();
+            assert!(
+                store.pinned_uids("Archive", 50).unwrap().is_empty(),
+                "a pin at the TTL boundary is released"
+            );
+            assert!(
+                !store.locations_in_mailbox("Archive").unwrap().iter().any(|l| l.uid == 1),
+                "after release the out-of-window location ages out"
+            );
+
+            // RE-ACQUIRE refreshes pinned_at: acquire again at a later time, and
+            // a sync just-before the NEW TTL keeps it.
+            let t2 = 1_700_000_000 + super::super::policy::SEARCH_PIN_TTL + 100;
+            CLOCK.store(t2, Ordering::Relaxed);
+            let archive = entry_for(&provider, "Archive");
+            let mut session = session_for(&mailbox).await;
+            provider
+                .acquire_uids(session.as_mut(), &archive, &[1], 50)
+                .await
+                .expect("re-acquire");
+            let _ = session.logout().await;
+            assert_eq!(store.pinned_uids("Archive", 50).unwrap(), vec![1], "re-acquired");
+            // Just before the refreshed TTL: still pinned.
+            CLOCK.store(t2 + super::super::policy::SEARCH_PIN_TTL - 1, Ordering::Relaxed);
+            crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+                .await
+                .unwrap();
+            assert_eq!(
+                store.pinned_uids("Archive", 50).unwrap(),
+                vec![1],
+                "re-acquire refreshed pinned_at, so it survives relative to the new time"
+            );
+        }
+
+        // ---- live Dovecot integration (opt-in; does not run without the
+        // container). Marked exactly like the other live tests in this module:
+        // gated on THREESTRANDS_IMAP_IT=1 + DOVECOT_TEST_FP, returns early
+        // otherwise. It acquires an out-of-window UID and runs two syncs,
+        // asserting the acquired hit survives. NOTE (reported): this did NOT
+        // run here — Docker is unavailable in this environment, so it was
+        // written and gated but not executed.
+        mod live {
+            use super::*;
+            use crate::provider::imap::connection::{
+                ConnectionConfig, ImapConnectionManager, TlsMode,
+            };
+            use crate::provider::imap::tls::parse_sha256_fingerprint;
+
+            const HOST: &str = "127.0.0.1";
+            const PORT: u16 = 11143;
+            const USER: &str = "test@threestrands.test";
+            const PASSWORD: &str = "testpassword";
+
+            fn gated() -> Option<ConnectionConfig> {
+                if std::env::var("THREESTRANDS_IMAP_IT").ok().as_deref() != Some("1") {
+                    eprintln!("skipping: THREESTRANDS_IMAP_IT != 1");
+                    return None;
+                }
+                let Ok(fp_str) = std::env::var("DOVECOT_TEST_FP") else {
+                    eprintln!("skipping: DOVECOT_TEST_FP not set (Dovecot container absent)");
+                    return None;
+                };
+                let fp = parse_sha256_fingerprint(&fp_str)
+                    .expect("DOVECOT_TEST_FP must be a 64-hex-digit SHA-256 fingerprint");
+                Some(ConnectionConfig {
+                    host: HOST.into(),
+                    port: PORT,
+                    tls_mode: TlsMode::StartTls,
+                    pinned_fingerprint: Some(fp),
+                })
+            }
+
+            fn live_provider(config: ConnectionConfig) -> (ImapProvider, ImapStateStore) {
+                let database = Arc::new(Database::open_memory());
+                database
+                    .adopt_mail_account(USER, crate::models::MailProviderKind::Imap)
+                    .unwrap();
+                let store = ImapStateStore::new(database.clone(), USER);
+                let cache = BodyCache::new(store.clone());
+                let provider = ImapProvider::new(ImapProviderConfig {
+                    account_id: USER.into(),
+                    username: USER.into(),
+                    password: PASSWORD.into(),
+                    manager: ImapConnectionManager::new(config),
+                    store: store.clone(),
+                    cache,
+                    label_model: LabelModel::ImapLabelFolders,
+                    settings: super::super::test_settings(),
+                });
+                (provider, store)
+            }
+
+            /// Acquire an out-of-window UID against the live Dovecot harness and
+            /// run two syncs; the pinned hit must survive both. Gated — returns
+            /// immediately without the container.
+            #[tokio::test]
+            async fn live_acquire_out_of_window_uid_survives_two_syncs() {
+                let Some(config) = gated() else { return };
+                let (provider, store) = live_provider(config);
+                let db = store.database();
+
+                // Baseline so the catalog + INBOX are known.
+                let _ = provider.baseline_cursor().await.expect("baseline");
+
+                // Find a mailbox with mail to acquire an old UID from. The
+                // harness seeds INBOX/Sent/Archive; pick Archive if present,
+                // else INBOX.
+                let plan = provider.build_sync_plan().expect("plan");
+                let target = plan
+                    .entries
+                    .iter()
+                    .find(|e| e.mailbox == "Archive")
+                    .or_else(|| plan.entries.iter().find(|e| e.is_inbox))
+                    .cloned()
+                    .expect("a synced mailbox to acquire from");
+
+                // EXAMINE to learn the UIDVALIDITY and an existing UID.
+                let mut session = provider.open_session().await.expect("session");
+                let status = session.examine(&target.mailbox).await.expect("examine");
+                let uidvalidity = status.uid_validity.unwrap_or(0) as i64;
+                let all = session.uid_search("ALL").await.expect("search");
+                let Some(&uid) = all.first() else {
+                    let _ = session.logout().await;
+                    eprintln!("skipping: no mail seeded in {}", target.mailbox);
+                    return;
+                };
+                let outcome = provider
+                    .acquire_uids(session.as_mut(), &target, &[uid], uidvalidity)
+                    .await
+                    .expect("acquire");
+                let _ = session.logout().await;
+                assert_eq!(outcome.skipped_over_cap, 0);
+                assert!(store.is_pinned(&target.mailbox, uidvalidity, uid as i64).unwrap());
+
+                // Two syncs: the pinned hit must survive both.
+                for _ in 0..2 {
+                    crate::sync::sync_with(db.as_ref(), USER, &provider)
+                        .await
+                        .unwrap();
+                    assert!(
+                        store.is_pinned(&target.mailbox, uidvalidity, uid as i64).unwrap(),
+                        "the acquired pin survives sync"
+                    );
+                }
+            }
         }
     }
 }

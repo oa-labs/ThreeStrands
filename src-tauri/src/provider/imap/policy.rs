@@ -1167,6 +1167,83 @@ pub fn check_search_target_mailboxes(count: usize) -> Result<usize, ProviderErro
     Ok(count)
 }
 
+// ---------------------------------------------------------------------------
+// Phase 5 run 3: search-pin limits
+// ---------------------------------------------------------------------------
+//
+// A search (run 4) acquires mail that is usually OLD — outside the newest-N
+// sync window of an evicting mailbox — and PINS the acquired `(mailbox,
+// uidvalidity, uid)` so the next poll's delta does not age it out and delete
+// it (`docs/imap-design.md`, "Server search"). Two numeric limits bound that
+// LOCAL pin table, both in this one module with below/exact/above coverage.
+//
+// Unlike the search-render gates above, a pin cap is NOT a query refusal: it
+// bounds how many pins ONE account may hold at once, and the TTL bounds how
+// long a single pin survives before the sync releases it. Neither silently
+// drops data — the acquire path reports exactly how many over-cap UIDs it
+// refused ([`cap_search_pins`] returns the dropped count), and TTL release is
+// a comparison ([`search_pin_expired`]) after which the location simply
+// follows normal window rules again.
+
+/// Most search pins ONE account may hold at once.
+///
+/// A search-acquired pin keeps an old, out-of-window message alive against the
+/// delta's eviction, so the pin table bounds how much otherwise-evictable mail
+/// one account carries beyond its sync windows. 2,000 is generous for a user
+/// who searches a lot of old mail while bounding the pin-row count and the
+/// extra `imap_locations` the pins retain. An acquisition that would exceed
+/// the cap is REFUSED for the over-cap UIDs (reported, never silently dropped)
+/// and NEVER evicts an existing pin. See [`cap_search_pins`].
+pub const MAX_SEARCH_PINS: usize = 2_000;
+
+/// How long (seconds) a search pin survives before the sync RELEASES it. After
+/// release the location follows normal window rules again (an out-of-window
+/// evicting location then ages out as usual). Re-acquiring an already-pinned
+/// UID refreshes its `pinned_at`, so actively re-found mail stays pinned. 30
+/// days is long enough that a search result the user keeps returning to stays
+/// put, bounded so a one-off search does not pin old mail forever.
+pub const SEARCH_PIN_TTL: i64 = 30 * 24 * 60 * 60;
+
+/// The outcome of applying [`MAX_SEARCH_PINS`] to a pin acquisition: how many
+/// of the requested new pins fit under the cap given how many pins already
+/// exist, and how many were refused for being over the cap. NEWEST-first
+/// acceptance is the caller's responsibility (it orders the UIDs); this owns
+/// only the arithmetic. Never evicts an existing pin and never silently drops:
+/// `refused` is surfaced to the acquisition result.
+#[derive(Debug, PartialEq, Eq)]
+pub struct PinCapSelection {
+    /// How many of the `requested` new pins may be accepted.
+    pub accepted: usize,
+    /// How many were refused because the account is at/over the cap.
+    pub refused: usize,
+}
+
+/// Apply [`MAX_SEARCH_PINS`] to a pin acquisition. `existing` is how many pins
+/// the account already holds (that are NOT among the requested set — a
+/// re-acquire of an already-pinned UID refreshes in place and does not count
+/// against new room, so the caller excludes those first). `requested` is how
+/// many NEW UIDs this acquisition would pin. Returns how many fit (newest
+/// first, the caller's ordering) and how many are refused. Below/at the cap
+/// accepts everything; above it accepts only up to the remaining room and
+/// refuses the rest. Never negative, never evicting.
+pub fn cap_search_pins(existing: usize, requested: usize) -> PinCapSelection {
+    let room = MAX_SEARCH_PINS.saturating_sub(existing);
+    let accepted = requested.min(room);
+    PinCapSelection {
+        accepted,
+        refused: requested - accepted,
+    }
+}
+
+/// Whether a pin acquired at `pinned_at` (unix seconds) has EXPIRED at `now`
+/// and should be released: at least [`SEARCH_PIN_TTL`] seconds have elapsed.
+/// The boundary is inclusive — exactly at the TTL the pin is released. A clock
+/// that went backwards (`now < pinned_at`) is treated as not expired rather
+/// than panicking on the subtraction.
+pub fn search_pin_expired(pinned_at: i64, now: i64) -> bool {
+    now.saturating_sub(pinned_at) >= SEARCH_PIN_TTL
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2133,5 +2210,71 @@ mod tests {
             check_search_target_mailboxes(MAX_SEARCH_TARGET_MAILBOXES + 1).unwrap_err(),
             ProviderError::InvalidOperation(_)
         ));
+    }
+
+    // --- Phase 5 run 3: search-pin limits ------------------------------
+
+    #[test]
+    fn the_search_pin_limits_are_the_documented_bounds() {
+        assert_eq!(MAX_SEARCH_PINS, 2_000);
+        assert_eq!(SEARCH_PIN_TTL, 30 * 24 * 60 * 60);
+    }
+
+    #[test]
+    fn search_pin_cap_below_at_and_above_the_limit() {
+        // Below the cap: every requested pin fits, none refused.
+        let below = cap_search_pins(0, MAX_SEARCH_PINS - 1);
+        assert_eq!(below.accepted, MAX_SEARCH_PINS - 1);
+        assert_eq!(below.refused, 0);
+
+        // Exactly at the cap: every requested pin fits, none refused.
+        let exact = cap_search_pins(0, MAX_SEARCH_PINS);
+        assert_eq!(exact.accepted, MAX_SEARCH_PINS);
+        assert_eq!(exact.refused, 0);
+
+        // One over the cap: all but one fit; the single over-cap UID is
+        // refused and reported, never silently dropped.
+        let above = cap_search_pins(0, MAX_SEARCH_PINS + 1);
+        assert_eq!(above.accepted, MAX_SEARCH_PINS);
+        assert_eq!(above.refused, 1);
+    }
+
+    #[test]
+    fn search_pin_cap_accounts_for_existing_pins_and_never_evicts() {
+        // An account already at the cap accepts nothing new and refuses all.
+        let full = cap_search_pins(MAX_SEARCH_PINS, 5);
+        assert_eq!(full.accepted, 0);
+        assert_eq!(full.refused, 5, "existing pins are never evicted to make room");
+
+        // One slot left: exactly one new pin fits, the rest are refused.
+        let one_left = cap_search_pins(MAX_SEARCH_PINS - 1, 3);
+        assert_eq!(one_left.accepted, 1);
+        assert_eq!(one_left.refused, 2);
+
+        // Over-count existing (should not happen, but must not underflow):
+        // room is zero, everything refused.
+        let over = cap_search_pins(MAX_SEARCH_PINS + 10, 4);
+        assert_eq!(over.accepted, 0);
+        assert_eq!(over.refused, 4);
+
+        // No new pins requested: nothing accepted, nothing refused.
+        let none = cap_search_pins(10, 0);
+        assert_eq!(none.accepted, 0);
+        assert_eq!(none.refused, 0);
+    }
+
+    #[test]
+    fn search_pin_ttl_release_below_at_and_above_the_bound() {
+        let pinned_at = 1_000_000i64;
+        // Just inside the TTL (one second short): not yet expired.
+        assert!(!search_pin_expired(pinned_at, pinned_at + SEARCH_PIN_TTL - 1));
+        // Exactly at the TTL: released (inclusive boundary).
+        assert!(search_pin_expired(pinned_at, pinned_at + SEARCH_PIN_TTL));
+        // Past the TTL: released.
+        assert!(search_pin_expired(pinned_at, pinned_at + SEARCH_PIN_TTL + 1));
+        // Just acquired (zero elapsed): not expired.
+        assert!(!search_pin_expired(pinned_at, pinned_at));
+        // A clock that went backwards is treated as not expired, never a panic.
+        assert!(!search_pin_expired(pinned_at, pinned_at - 5));
     }
 }

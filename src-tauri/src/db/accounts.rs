@@ -370,6 +370,10 @@ fn purge_imap_cache(transaction: &rusqlite::Transaction<'_>, account: &str) -> D
         "imap_hot_threads",
         "imap_copy_intents",
         "imap_sent_copy_detection",
+        // The LOCAL search-pin table (run 3): provider-internal rebuildable
+        // state keyed by account. Drop it with the other IMAP caches so a
+        // removed/disconnected account leaves no pins behind.
+        "imap_search_pins",
         // The local label-catalog cache (run 2b-1) is provider-neutral
         // rebuildable cache state keyed by account; drop it alongside the
         // IMAP caches so a removed/disconnected account leaves none behind.

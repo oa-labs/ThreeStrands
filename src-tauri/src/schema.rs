@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 69;
+pub(crate) const LATEST_VERSION: i64 = 70;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1983,6 +1983,48 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 70 {
+        // Phase 5 run 3: the LOCAL search-pin table. A search (run 4) acquires
+        // mail that is usually OLD — outside the newest-N sync window of an
+        // EVICTING mailbox (INBOX, Archive, user folders) — so `compute_delta`
+        // would normally age the acquired UID out and delete it, and the thread
+        // would then be removed by the emptied-hot-thread grace. A pin records
+        // "this search-acquired `(mailbox, uidvalidity, uid)` must survive the
+        // window" so the acquired hit is kept until the SERVER no longer has
+        // the UID (expunged elsewhere) or the pin's own TTL releases it.
+        //
+        // Scoped EXACTLY like `imap_locations` (schema v54): keyed by
+        // `(account_id, mailbox, uidvalidity, uid)`, so a UIDVALIDITY reset —
+        // which drops that mailbox's `imap_locations` rows — drops its pins by
+        // the SAME `(account_id, mailbox, uidvalidity)` match, and the same UID
+        // under a new incarnation is a different pin. `pinned_at` is the unix
+        // second the pin was last (re)acquired; the sync releases a pin older
+        // than `policy::SEARCH_PIN_TTL`, and re-acquiring an already-pinned UID
+        // refreshes it.
+        //
+        // This is rebuildable, provider-internal LOCAL state: it is NOT part of
+        // the encrypted settings export (`transfer.rs` is untouched and its
+        // VERSION is unchanged) and is NOT replicated by sync — losing it only
+        // means a search-acquired hit may age out normally on the next poll.
+        // Existing databases get an empty table. Deleted when the account is
+        // removed (see `db::accounts::purge_imap_cache`). Reserve a new schema
+        // number for every later change rather than editing this block once it
+        // has shipped.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS imap_search_pins (
+                account_id TEXT NOT NULL,
+                mailbox TEXT NOT NULL,
+                uidvalidity INTEGER NOT NULL,
+                uid INTEGER NOT NULL,
+                pinned_at INTEGER NOT NULL,      -- unix seconds the pin was (re)acquired
+                PRIMARY KEY (account_id, mailbox, uidvalidity, uid)
+            );
+            CREATE INDEX IF NOT EXISTS imap_search_pins_by_account
+                ON imap_search_pins(account_id);
+            PRAGMA user_version=70;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -2178,6 +2220,95 @@ mod tests {
         assert_eq!(name, "Work", "re-running the migration preserves cached rows");
         assert_eq!(
             connection
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            super::LATEST_VERSION
+        );
+    }
+
+    #[test]
+    fn v70_adds_an_empty_search_pin_table_and_reruns_cleanly() {
+        // A fresh database reaches the latest version with the pins table and
+        // its by-account index present and queryable.
+        let mut fresh = unmigrated_database_with_one_account();
+        super::migrate(&mut fresh).unwrap();
+        fresh
+            .execute(
+                "SELECT account_id, mailbox, uidvalidity, uid, pinned_at FROM imap_search_pins",
+                [],
+            )
+            .unwrap_or_else(|error| panic!("imap_search_pins should exist: {error}"));
+        assert_eq!(
+            fresh.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
+            super::LATEST_VERSION
+        );
+
+        // An EXISTING, populated v69 database upgrades to v70 with an empty
+        // pins table (existing rows get none) and the index present. Rebuild
+        // the v69 shape (drop the v70 table, step user_version back), seed a
+        // v69-era IMAP location, re-run, and confirm the location survives and
+        // the pins table accepts a row keyed exactly like imap_locations.
+        let mut upgraded = unmigrated_database_with_one_account();
+        super::migrate(&mut upgraded).unwrap();
+        upgraded
+            .execute_batch(
+                "DROP INDEX imap_search_pins_by_account;
+                 DROP TABLE imap_search_pins;
+                 INSERT INTO imap_locations
+                     (account_id, mailbox, uidvalidity, uid, message_id, flags_json, modseq)
+                 VALUES ('you@gmail.com','INBOX',95479608,42,'imap:you@gmail.com:abc','[]',NULL);
+                 PRAGMA user_version=69;",
+            )
+            .unwrap();
+        super::migrate(&mut upgraded).unwrap();
+        let rows: i64 = upgraded
+            .query_row("SELECT COUNT(*) FROM imap_search_pins", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 0, "an existing database upgrades to an empty pin table");
+        // The pre-existing location survived the migration untouched.
+        let message_id: String = upgraded
+            .query_row(
+                "SELECT message_id FROM imap_locations WHERE account_id='you@gmail.com' AND uid=42",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(message_id, "imap:you@gmail.com:abc");
+        let index_present: i64 = upgraded
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='imap_search_pins_by_account'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(index_present, 1, "the by-account index exists");
+        upgraded
+            .execute(
+                "INSERT INTO imap_search_pins(account_id, mailbox, uidvalidity, uid, pinned_at)
+                 VALUES ('you@gmail.com', 'INBOX', 95479608, 42, 1700000000)",
+                [],
+            )
+            .unwrap();
+        let (uid, pinned_at): (i64, i64) = upgraded
+            .query_row(
+                "SELECT uid, pinned_at FROM imap_search_pins WHERE account_id='you@gmail.com'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((uid, pinned_at), (42, 1700000000));
+
+        // Re-running the migration again preserves the inserted pin and leaves
+        // the version unchanged (CREATE TABLE/INDEX IF NOT EXISTS, no
+        // destructive step).
+        upgraded.pragma_update(None, "user_version", 69).unwrap();
+        super::migrate(&mut upgraded).unwrap();
+        let still_there: i64 = upgraded
+            .query_row("SELECT COUNT(*) FROM imap_search_pins", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(still_there, 1, "re-running the migration preserves pins");
+        assert_eq!(
+            upgraded
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
             super::LATEST_VERSION
