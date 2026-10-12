@@ -1634,6 +1634,132 @@ mod tests {
         assert_eq!(database.retention_days().unwrap(), Some(365));
     }
 
+    // ---- Phase 4 run 2 (F): identity-list transfer regression coverage.
+    //      No schema change, no format-version change — these pin that the
+    //      ordered identity list survives export->import and that the identity
+    //      ACCESSOR behaves correctly on imported data (including pre-schema
+    //      exports with no `identities` key and hostile stored addresses). ----
+
+    /// Build the version-5 fixture but with a MULTI-identity IMAP account, so
+    /// the ordered list (with a display name) is what round-trips.
+    fn multi_identity_fixture() -> TransferPayload {
+        let mut payload = current_fixture_payload();
+        let imap = payload
+            .accounts
+            .iter_mut()
+            .find(|a| a.provider == "imap")
+            .and_then(|a| a.imap.as_mut())
+            .expect("the fixture has an IMAP account");
+        imap.identities = vec![
+            crate::provider::imap::Identity {
+                address: "me@proton.me".into(),
+                display_name: Some("Me".into()),
+            },
+            crate::provider::imap::Identity {
+                address: "work@proton.me".into(),
+                display_name: Some("Work".into()),
+            },
+        ];
+        payload
+    }
+
+    #[test]
+    fn a_multi_identity_list_round_trips_through_the_encrypted_export() {
+        let payload = multi_identity_fixture();
+        payload.validate().unwrap();
+        let encoded = encrypt(&payload, "correct horse").unwrap();
+        let path = crate::db::test_support::TempDbPath::new();
+        let database = Database::open(&path.path).unwrap();
+        apply_import(&database, decrypt(&encoded, "correct horse").unwrap()).unwrap();
+        let imap = database.imap_account_settings("me@proton.me").unwrap().unwrap();
+        assert_eq!(imap.identities.len(), 2);
+        assert_eq!(imap.identities[0].address, "me@proton.me");
+        assert_eq!(imap.identities[1].address, "work@proton.me");
+        assert_eq!(imap.identities[1].display_name.as_deref(), Some("Work"));
+        // The accessor built from the imported settings keeps order and the
+        // login first.
+        let identities =
+            crate::provider::imap::account_identities("me@proton.me", &imap.identities);
+        assert_eq!(
+            identities.iter().map(|i| i.address.as_str()).collect::<Vec<_>>(),
+            vec!["me@proton.me", "work@proton.me"]
+        );
+    }
+
+    #[test]
+    fn an_export_with_no_identities_key_imports_and_the_accessor_yields_the_login_first() {
+        // Serialize the fixture, then REMOVE the `identities` key from the IMAP
+        // account to simulate an export produced before the list existed (the
+        // field is `#[serde(default)]`, so a missing key is a legal empty list).
+        let mut value = serde_json::to_value(current_fixture_payload()).unwrap();
+        let accounts = value["accounts"].as_array_mut().unwrap();
+        for account in accounts {
+            if let Some(imap) = account.get_mut("imap") {
+                if imap.is_object() {
+                    imap.as_object_mut().unwrap().remove("identities");
+                }
+            }
+        }
+        let decoded: TransferPayload = serde_json::from_value(value).unwrap();
+        decoded.validate().unwrap();
+        let imap = decoded
+            .accounts
+            .iter()
+            .find(|a| a.provider == "imap")
+            .and_then(|a| a.imap.as_ref())
+            .unwrap();
+        assert!(imap.identities.is_empty(), "no key => empty stored list");
+        // The accessor still yields the login address, first.
+        let identities =
+            crate::provider::imap::account_identities("me@proton.me", &imap.identities);
+        assert_eq!(identities.len(), 1);
+        assert_eq!(identities[0].address, "me@proton.me");
+    }
+
+    #[test]
+    fn a_hostile_imported_identity_is_dropped_by_the_accessor_without_failing_import() {
+        // An imported export carries a hostile stored identity address. The
+        // IMPORT itself does not reject it (existing import validation does not
+        // inspect identity addresses — see the report), but the identity
+        // ACCESSOR drops it, so it can never become a From address.
+        let mut payload = current_fixture_payload();
+        {
+            let imap = payload
+                .accounts
+                .iter_mut()
+                .find(|a| a.provider == "imap")
+                .and_then(|a| a.imap.as_mut())
+                .unwrap();
+            imap.identities = vec![
+                crate::provider::imap::Identity {
+                    address: "me@proton.me".into(),
+                    display_name: None,
+                },
+                crate::provider::imap::Identity {
+                    address: "evil@proton.me\r\nRCPT TO:<x@y>".into(),
+                    display_name: Some("Nope".into()),
+                },
+            ];
+        }
+        // Import does not reject the whole export over the hostile entry.
+        payload.validate().unwrap();
+        let encoded = encrypt(&payload, "correct horse").unwrap();
+        let path = crate::db::test_support::TempDbPath::new();
+        let database = Database::open(&path.path).unwrap();
+        apply_import(&database, decrypt(&encoded, "correct horse").unwrap()).unwrap();
+        let imap = database.imap_account_settings("me@proton.me").unwrap().unwrap();
+        // The hostile entry is stored verbatim (import does not sanitize) ...
+        assert_eq!(imap.identities.len(), 2);
+        // ... but the accessor DROPS it, leaving only the valid login.
+        let identities =
+            crate::provider::imap::account_identities("me@proton.me", &imap.identities);
+        assert_eq!(
+            identities.iter().map(|i| i.address.as_str()).collect::<Vec<_>>(),
+            vec!["me@proton.me"],
+            "the hostile identity is dropped by the accessor"
+        );
+    }
+
     /// AGENTS.md's settings-transfer rule, exercised against the real frozen
     /// bytes: a complete VERSION-4 export (produced before this slice existed,
     /// so it has NO `imap` key on any account) must still import cleanly under

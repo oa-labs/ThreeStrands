@@ -47,6 +47,7 @@ mod plan;
 mod policy;
 mod provider;
 mod rfc822;
+mod sending_identity;
 mod session;
 mod settings;
 mod setup;
@@ -156,6 +157,15 @@ pub use rfc822::{threading_headers_from_raw, ThreadingHeaders};
 // Slice 5a live-sync surface: the provider the engine drives, plus the pure
 // logic modules it is built from.
 pub use provider::{label_model_for, ImapProvider, ImapProviderConfig};
+
+// Phase 4 run 2 sending-identity surface: the one source of truth for an
+// account's sending addresses and the two pure decisions built on it. The
+// MailSend seam (`identities`, `message_id_domain`) and the correspondence
+// reply/compose path consume these.
+pub use sending_identity::{
+    account_identities, choose_reply_identity, identity_normalized,
+    message_id_domain_for_address, normalize_identity_address, ReplyHeaders, SendingIdentity,
+};
 
 use std::sync::Arc;
 

@@ -3597,6 +3597,25 @@ impl MailSend for ImapProvider {
         Ok(self.username.clone())
     }
 
+    async fn identities(&self) -> ProviderResult<Vec<super::SendingIdentity>> {
+        // The one source of truth: the login address first and always, then
+        // the stored list, normalized/validated. `docs/imap-design.md`
+        // ("Identities"). No DB round trip — the settings are carried in the
+        // provider.
+        Ok(super::account_identities(
+            &self.username,
+            &self.settings.identities,
+        ))
+    }
+
+    fn message_id_domain(&self, from_address: &str) -> ProviderResult<Option<String>> {
+        // An IMAP send generates `<id@sender-domain>`, where the domain is the
+        // domain of the From address actually used. An invalid domain is an
+        // error BEFORE any send — never a silent fallback to the reserved
+        // `threestrands.local` (which would leak the client name).
+        super::message_id_domain_for_address(from_address).map(Some)
+    }
+
     async fn prepare_delivery(&self) -> ProviderResult<Box<dyn Delivery>> {
         Err(ProviderError::InvalidOperation(
             "IMAP/SMTP sending is not supported until phase 4".into(),

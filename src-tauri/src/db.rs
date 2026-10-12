@@ -149,6 +149,43 @@ fn normalize_sender(value: &str) -> (String, String) {
     (email, domain)
 }
 
+/// The NORMALIZED set of addresses that count as "sent by me" for one account:
+/// every sending identity, not only the login address (`docs/imap-design.md`,
+/// "Identities" > "Sent by me"). An IMAP account reads its stored identity
+/// list from `imap_account_settings.identities_json`; a Gmail account (no
+/// settings row) yields exactly `{account}`. The account/login address is
+/// always included and first (the identity accessor guarantees it), so a
+/// single-identity or Gmail account behaves exactly as before.
+///
+/// This is ONE query per call (the identities JSON for the account), so a
+/// caller running inside a sync/triage transaction loads it ONCE per
+/// thread/batch and reuses the returned set across every message — no second
+/// connection and no N+1. Addresses are normalized the same way
+/// `normalize_sender` normalizes a message's From (ASCII-lowercase, plus-tags
+/// preserved), so the two never disagree about whether a `From` is "mine".
+pub(crate) fn sending_addresses_for_account(
+    connection: &rusqlite::Connection,
+    account_id: &str,
+) -> std::collections::BTreeSet<String> {
+    use rusqlite::OptionalExtension;
+    // Read the stored identity list (if this is an IMAP account with a row).
+    let stored: Vec<crate::provider::imap::Identity> = connection
+        .query_row(
+            "SELECT identities_json FROM imap_account_settings WHERE account_id = ?1",
+            [account_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default();
+    crate::provider::imap::account_identities(account_id, &stored)
+        .iter()
+        .map(crate::provider::imap::identity_normalized)
+        .collect()
+}
+
 fn decode_json(value: String) -> rusqlite::Result<Vec<String>> {
     serde_json::from_str(&value).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(

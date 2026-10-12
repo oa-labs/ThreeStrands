@@ -122,3 +122,135 @@ fn triage_events_attribute_senders_and_rank_quick_dismissals() {
         .unwrap();
     assert_eq!(stats[0].trash_count, 0);
 }
+
+/// Phase 4 run 2 (B): a message From ANY of the account's sending identities
+/// counts as "sent by me", so a sent-only thread teaches nothing even when the
+/// sender is a SECONDARY identity (not the login). Proven by recording a
+/// triage event on such a thread and asserting NO triage row was written
+/// (`sender_identity_for_thread` returns `None` for a sent-only thread).
+#[test]
+fn a_sent_only_thread_from_a_secondary_identity_teaches_nothing() {
+    use crate::provider::imap::{
+        write_settings_row, Identity, ImapAccountSettings, LabelStorage, SecurityMode,
+    };
+    let database = database();
+    // Give the account an identity list: login first, then a secondary one.
+    let settings = ImapAccountSettings {
+        imap_host: "127.0.0.1".into(),
+        imap_port: 1143,
+        imap_security: SecurityMode::StartTls,
+        imap_username: "me@proton.me".into(),
+        smtp_host: "127.0.0.1".into(),
+        smtp_port: 1025,
+        smtp_security: SecurityMode::StartTls,
+        smtp_username: "me@proton.me".into(),
+        mailbox_overrides: Default::default(),
+        archive_mailbox: None,
+        label_storage: LabelStorage::None,
+        label_container: None,
+        identities: vec![
+            Identity { address: "me@proton.me".into(), display_name: None },
+            Identity { address: "work@proton.me".into(), display_name: Some("Work".into()) },
+        ],
+        pinned_fingerprints: Default::default(),
+        server_saves_sent: false,
+    };
+    {
+        let connection = database.connection().unwrap();
+        write_settings_row(&connection, "me@proton.me", &settings).unwrap();
+    }
+
+    // A thread whose only message is From the SECONDARY identity.
+    let mut sent = message(
+        "sent-msg",
+        "sent-thread",
+        "2026-01-01T00:00:00Z",
+        "sent body",
+    );
+    sent.from = "Work <work@proton.me>".into();
+    database.upsert_thread("me@proton.me", &[sent]).unwrap();
+
+    // Recording a disposition on this sent-only thread must write NOTHING,
+    // because the sender is one of my identities.
+    database
+        .record_triage_event(&TriageEvent {
+            thread_id: "me@proton.me:sent-thread".into(),
+            kind: TriageEventKind::Disposition,
+            context: TriageContext::Inbox,
+            action: Some(TriageAction::Archive),
+            opened: true,
+            dwell_ms: Some(100),
+            scrolled: false,
+            batch: false,
+        })
+        .unwrap();
+    let count: i64 = database
+        .connection()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM triage_events", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(
+        count, 0,
+        "a sent-only thread from a secondary identity must teach nothing"
+    );
+
+    // A thread from an OUTSIDE sender still learns (control).
+    let mut inbound = message(
+        "in-msg",
+        "in-thread",
+        "2026-01-02T00:00:00Z",
+        "inbound body",
+    );
+    inbound.from = "Someone <someone@else.com>".into();
+    database.upsert_thread("me@proton.me", &[inbound]).unwrap();
+    database
+        .record_triage_event(&TriageEvent {
+            thread_id: "me@proton.me:in-thread".into(),
+            kind: TriageEventKind::Disposition,
+            context: TriageContext::Inbox,
+            action: Some(TriageAction::Archive),
+            opened: true,
+            dwell_ms: Some(100),
+            scrolled: false,
+            batch: false,
+        })
+        .unwrap();
+    let stats = database.list_triage_sender_stats("me@proton.me", 100).unwrap();
+    assert_eq!(stats.len(), 1);
+    assert_eq!(stats[0].sender_email, "someone@else.com");
+}
+
+/// Phase 4 run 2 (B): a Gmail / single-identity account (no
+/// `imap_account_settings` row) is UNCHANGED — its sent-only thread (From the
+/// account's own login address) still teaches nothing, exactly as before the
+/// identity set widened.
+#[test]
+fn a_gmail_single_identity_sent_only_thread_is_unchanged() {
+    let database = database();
+    let mut sent = message(
+        "g-sent",
+        "g-thread",
+        "2026-01-01T00:00:00Z",
+        "sent body",
+    );
+    sent.from = "Me <you@example.com>".into();
+    database.upsert_thread("you@example.com", &[sent]).unwrap();
+    database
+        .record_triage_event(&TriageEvent {
+            thread_id: "you@example.com:g-thread".into(),
+            kind: TriageEventKind::Disposition,
+            context: TriageContext::Inbox,
+            action: Some(TriageAction::Archive),
+            opened: true,
+            dwell_ms: Some(100),
+            scrolled: false,
+            batch: false,
+        })
+        .unwrap();
+    let count: i64 = database
+        .connection()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM triage_events", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 0, "a single-identity sent-only thread teaches nothing, as before");
+}

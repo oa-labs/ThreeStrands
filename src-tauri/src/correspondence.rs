@@ -71,6 +71,16 @@ pub struct Draft {
     pub id: String,
     pub revision: i64,
     pub account: String,
+    /// The chosen sending identity ADDRESS, when the account has more than one
+    /// and a non-primary identity was selected (reply/forward identity match,
+    /// or a future From picker). `None` means "send as `account`", which is
+    /// every existing draft, every Gmail draft, and every single-identity
+    /// account — so this is a `#[serde(default)]` field and old drafts in the
+    /// `drafts` table deserialize unchanged with `from = None`. Never a display
+    /// name: the display name is looked up from the account's identity list at
+    /// `build_mime` time, not stored here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
     pub mode: String,
     pub source_id: Option<String>,
     pub thread_id: Option<String>,
@@ -91,6 +101,16 @@ pub struct Draft {
     pub follow_up_task_id: Option<String>,
     pub attachments: Vec<Attachment>,
     pub updated_at: i64,
+}
+impl Draft {
+    /// The address this draft sends FROM: the chosen identity `from` when set,
+    /// otherwise the account's own address. `None` on `from` means every
+    /// existing draft and every single-identity/Gmail account sends as
+    /// `account`, exactly as before. Returns a borrowed `&str` because both
+    /// sources are owned by the draft.
+    pub fn from_address(&self) -> &str {
+        self.from.as_deref().unwrap_or(&self.account)
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -363,6 +383,7 @@ impl Database {
         mode: &str,
         source_id: Option<String>,
         account: &str,
+        identities: &[crate::provider::SendingIdentity],
     ) -> Result<Draft, String> {
         if !["new", "reply", "replyAll", "forward"].contains(&mode) {
             return Err("Unknown compose mode".into());
@@ -380,6 +401,7 @@ impl Database {
             id: Uuid::new_v4().to_string(),
             revision: 0,
             account: account.to_string(),
+            from: None,
             mode: mode.into(),
             source_id: source_id.clone(),
             thread_id: None,
@@ -410,6 +432,25 @@ impl Database {
             let normalized = crate::mime::normalize(&source)?;
             let part = &source.payload;
             let from = header(part, "From");
+            // Reply/forward identity selection: for an account with MORE THAN
+            // ONE identity, send from whichever identity the ORIGINAL message
+            // was addressed to (`docs/imap-design.md`, "Identities"). A
+            // single-identity account takes the existing path untouched —
+            // `from` stays `None`, meaning "send as `account`". The chosen
+            // index 0 (the account's primary/login) also leaves `from = None`,
+            // so only a genuinely non-primary identity records a `from`.
+            if identities.len() > 1 {
+                let headers = crate::provider::imap::ReplyHeaders {
+                    to: header(part, "To").to_string(),
+                    cc: header(part, "Cc").to_string(),
+                    delivered_to: header(part, "Delivered-To").to_string(),
+                    x_original_to: header(part, "X-Original-To").to_string(),
+                };
+                let chosen = crate::provider::imap::choose_reply_identity(identities, &headers);
+                if chosen != 0 {
+                    d.from = Some(identities[chosen].address.clone());
+                }
+            }
             d.subject = normalized.subject.clone();
             let quote = if normalized.body_text.trim().is_empty() {
                 crate::html_plain_text::html_to_text(&normalized.body_html)
@@ -508,6 +549,7 @@ impl Database {
             return Err("Draft is too large".into());
         }
         draft.account = old.account;
+        draft.from = old.from;
         draft.mode = old.mode;
         draft.source_id = old.source_id;
         draft.thread_id = old.thread_id;
@@ -648,6 +690,8 @@ impl Database {
         id: &str,
         revision: i64,
         archive_on_send: bool,
+        identities: &[crate::provider::SendingIdentity],
+        message_id_domain: Option<&str>,
         root: &Path,
     ) -> Result<OutboxItem, String> {
         if let Some(item) = self
@@ -674,7 +718,14 @@ impl Database {
         let sender_name = self
             .get_account(&d.account)?
             .and_then(|account| account.display_name);
-        let raw = build_mime(&d, sender_name.as_deref(), &operation_id, root)?;
+        let raw = build_mime(
+            &d,
+            identities,
+            sender_name.as_deref(),
+            message_id_domain,
+            &operation_id,
+            root,
+        )?;
         let item = OutboxItem {
             id: operation_id,
             draft: d.clone(),
@@ -767,7 +818,9 @@ impl Database {
 
 pub(crate) fn build_mime(
     d: &Draft,
-    sender_name: Option<&str>,
+    identities: &[crate::provider::SendingIdentity],
+    account_display_name: Option<&str>,
+    message_id_domain: Option<&str>,
     id: &str,
     root: &Path,
 ) -> Result<Vec<u8>, String> {
@@ -780,11 +833,84 @@ pub(crate) fn build_mime(
     if to.len() + cc.len() + bcc.len() == 0 {
         return Err("Add at least one recipient".into());
     }
-    let builder = MessageBuilder::new();
-    let builder = if let Some(name) = sender_name {
-        builder.from((name.to_string(), d.account.clone()))
+
+    // Resolve the From address and its display name from the account's
+    // identity list (the one source of truth), NOT from a value stored on the
+    // draft. `from_address()` is `d.from` when a non-primary identity was
+    // chosen, else the account's own address.
+    //
+    // An EMPTY identity list is treated as the single identity `[account]`:
+    // the production callers always pass the provider's non-empty,
+    // login-first list, so this only serves a defensive/test path and keeps
+    // the account's own address a valid From.
+    let account_identity = [crate::provider::SendingIdentity {
+        address: d.account.clone(),
+        display_name: None,
+    }];
+    let identities: &[crate::provider::SendingIdentity] = if identities.is_empty() {
+        &account_identity
     } else {
-        builder.from(d.account.clone())
+        identities
+    };
+    let from_address = d.from_address();
+    let from_normalized =
+        crate::provider::imap::normalize_identity_address(from_address);
+    let matched = identities
+        .iter()
+        .find(|identity| {
+            crate::provider::imap::normalize_identity_address(&identity.address) == from_normalized
+        });
+    // A `from` explicitly set to an address that is NOT one of the account's
+    // identities (a stale identity removed from settings) must fail CLEARLY,
+    // never silently send as another address. When `from` is unset the From is
+    // the account address, which is always identity 0, so this only bites a
+    // deliberately-chosen stale identity.
+    if d.from.is_some() && matched.is_none() {
+        return Err(format!(
+            "The chosen sending identity ({from_address}) is no longer on this account. \
+             Pick a current identity before sending."
+        ));
+    }
+    // Display name: prefer the matched identity's own display name; for the
+    // account's primary address fall back to the account display name, so
+    // Gmail and single-identity sends keep their existing From display name
+    // byte-for-byte.
+    let display_name = matched
+        .and_then(|identity| identity.display_name.as_deref())
+        .or_else(|| {
+            let is_primary = identities
+                .first()
+                .map(|primary| {
+                    crate::provider::imap::normalize_identity_address(&primary.address)
+                        == from_normalized
+                })
+                .unwrap_or(true);
+            if is_primary {
+                account_display_name
+            } else {
+                None
+            }
+        });
+
+    // Header-injection guard: neither the From address nor its display name may
+    // carry CR/LF/NUL. The address already passed envelope validation when the
+    // identity set was built, but a draft's `from`/account could in principle
+    // hold anything, and the display name is free-form, so assert here at the
+    // point bytes are produced.
+    if from_address.contains(['\r', '\n', '\0']) {
+        return Err("Sender address cannot contain line breaks".into());
+    }
+    if let Some(name) = display_name {
+        if name.contains(['\r', '\n', '\0']) {
+            return Err("Sender display name cannot contain line breaks".into());
+        }
+    }
+
+    let builder = MessageBuilder::new();
+    let builder = if let Some(name) = display_name {
+        builder.from((name.to_string(), from_address.to_string()))
+    } else {
+        builder.from(from_address.to_string())
     };
     let mut body = d.body.clone();
     let mut body_html = d.body_html.clone();
@@ -795,13 +921,18 @@ pub(crate) fn build_mime(
         }
         body_html.push_str(&format!("<br><br>{}", forwarded.html));
     }
+    // The Message-ID domain: the provider's hook result when it supplied one
+    // (IMAP returns the From address's domain), else the app's reserved
+    // `threestrands.local`. Gmail passes `None`, so its Message-ID is
+    // byte-identical to before. The builder adds the surrounding `<…>`.
+    let domain = message_id_domain.unwrap_or("threestrands.local");
     let mut builder = builder
         .to(to)
         .cc(cc)
         .bcc(bcc)
         .subject(d.subject.clone())
         .text_body(body.clone())
-        .message_id(format!("{id}@threestrands.local"));
+        .message_id(format!("{id}@{domain}"));
     if !body_html.trim().is_empty() {
         builder = builder.html_body(body_html.clone());
     }
@@ -1029,9 +1160,12 @@ impl Correspondence {
                     return Ok(serde_json::to_value(item).map_err(error)?);
                 }
                 let draft=self.database.draft(&id)?;
-                if !self.provider_for(&draft.account).await?.capabilities().send_supported { return Err("Scheduled sending is not supported for this account yet".into()); }
+                let provider = self.provider_for(&draft.account).await?;
+                if !provider.capabilities().send_supported { return Err("Scheduled sending is not supported for this account yet".into()); }
+                let identities = provider.identities().await.map_err(error)?;
+                let message_id_domain = provider.message_id_domain(draft.from_address()).map_err(error)?;
                 let owner=schedule_owner;
-                Ok(serde_json::to_value(self.database.schedule_draft(&id,revision,&selection,&owner,&self.root,now())?).map_err(error)?)
+                Ok(serde_json::to_value(self.database.schedule_draft(&id,revision,&selection,&owner,&identities,message_id_domain.as_deref(),&self.root,now())?).map_err(error)?)
             }
             Reschedule {id,revision,selection} => {
                 let owner=schedule_owner;
@@ -1079,9 +1213,25 @@ impl Correspondence {
                         self.database.put_message_metadata(id, &json(&source)?)?;
                     }
                 }
+                // The account's sending identities, so a reply/forward from a
+                // multi-identity account starts on the identity the original
+                // was addressed to. Only resolved for reply/replyAll/forward:
+                // a NEW draft needs no identity selection (it starts on the
+                // first identity, `from = None`), so composing a blank message
+                // must never require a connected provider — this keeps compose
+                // responsive when the keychain/provider is unavailable.
+                let identities = if mode == "new" {
+                    Vec::new()
+                } else {
+                    self.provider_for(&resolved_account)
+                        .await?
+                        .identities()
+                        .await
+                        .map_err(error)?
+                };
                 let draft = self
                     .database
-                    .create_draft(&mode, source_id, &resolved_account)?;
+                    .create_draft(&mode, source_id, &resolved_account, &identities)?;
                 if mode == "new" {
                     let _ = self.database.set_compose_identity(&resolved_account);
                 }
@@ -1103,13 +1253,42 @@ impl Correspondence {
                 id,
                 revision,
                 archive_on_send,
-            } => Ok(serde_json::to_value(self.database.queue(
-                &id,
-                revision,
-                archive_on_send,
-                &self.root,
-            )?)
-            .map_err(error)?),
+            } => {
+                // Idempotent re-queue: if this draft is already in the outbox
+                // (its editable row removed), return the existing item without
+                // touching the provider — mirrors `Database::queue`'s own
+                // early return, and avoids `draft(&id)` erroring on a draft
+                // that was already consumed.
+                if let Some(item) = self
+                    .database
+                    .outbox()?
+                    .into_iter()
+                    .find(|o| o.draft.id == id && o.draft.revision == revision)
+                {
+                    return Ok(serde_json::to_value(item).map_err(error)?);
+                }
+                // Resolve the account's sending identities and the Message-ID
+                // domain from the provider BEFORE building the MIME, so the
+                // From is validated against the current identity list and the
+                // Message-ID carries the sender's domain (IMAP) or stays
+                // `threestrands.local` (Gmail, the provider default). Both come
+                // from the draft's own account's provider, not the active one.
+                let draft = self.database.draft(&id)?;
+                let provider = self.provider_for(&draft.account).await?;
+                let identities = provider.identities().await.map_err(error)?;
+                let message_id_domain = provider
+                    .message_id_domain(draft.from_address())
+                    .map_err(error)?;
+                Ok(serde_json::to_value(self.database.queue(
+                    &id,
+                    revision,
+                    archive_on_send,
+                    &identities,
+                    message_id_domain.as_deref(),
+                    &self.root,
+                )?)
+                .map_err(error)?)
+            }
             Cancel { id } => {
                 Ok(serde_json::to_value(self.database.cancel_send(&id, false)?).map_err(error)?)
             }
@@ -1557,7 +1736,7 @@ mod tests {
     }
     fn saved(db: &Database) -> Draft {
         let account = db.compose_identity().unwrap();
-        let mut d = db.create_draft("new", None, &account).unwrap();
+        let mut d = db.create_draft("new", None, &account, &[]).unwrap();
         d.to = "Jane <jane@example.com>".into();
         d.subject = "Hello".into();
         d.body = "Saved work ✓".into();
@@ -1649,7 +1828,7 @@ mod tests {
         db.set_account_display_name("you@example.com", Some("Joel Reed"))
             .unwrap();
         let d = saved(&db);
-        let item = db.queue(&d.id, d.revision, false, Path::new("/unused")).unwrap();
+        let item = db.queue(&d.id, d.revision, false, &[], None, Path::new("/unused")).unwrap();
         let raw: Vec<u8> = db
             .connection()
             .unwrap()
@@ -1669,7 +1848,7 @@ mod tests {
         );
         assert!(item.deadline > now());
         assert_eq!(
-            db.queue(&d.id, d.revision, false, Path::new("/unused"))
+            db.queue(&d.id, d.revision, false, &[], None, Path::new("/unused"))
                 .unwrap()
                 .id,
             item.id
@@ -1711,7 +1890,7 @@ mod tests {
                  WHERE id=?2",
                 params![thread_id, draft.id],
             ).unwrap();
-            db.queue(&draft.id, draft.revision, archive_on_send, Path::new("/unused")).unwrap()
+            db.queue(&draft.id, draft.revision, archive_on_send, &[], None, Path::new("/unused")).unwrap()
         };
         let target = queue_for("you@example.com", "reply-thread", false);
         let already_archiving = queue_for("you@example.com", "reply-thread", true);
@@ -1744,11 +1923,11 @@ mod tests {
     fn pausing_ready_sends_for_one_account_never_touches_another_accounts_outbox() {
         let db = database();
         let a = saved(&db);
-        let item_a = db.queue(&a.id, a.revision, false, Path::new("/unused")).unwrap();
+        let item_a = db.queue(&a.id, a.revision, false, &[], None, Path::new("/unused")).unwrap();
 
         db.set_compose_identity("other@example.com").unwrap();
         let b = saved(&db);
-        let item_b = db.queue(&b.id, b.revision, false, Path::new("/unused")).unwrap();
+        let item_b = db.queue(&b.id, b.revision, false, &[], None, Path::new("/unused")).unwrap();
 
         db.pause_ready_sends_for("you@example.com").unwrap();
 
@@ -1769,7 +1948,7 @@ mod tests {
             id = d.id.clone();
             let queued = saved(&db);
             let item = db
-                .queue(&queued.id, queued.revision, false, Path::new("/unused"))
+                .queue(&queued.id, queued.revision, false, &[], None, Path::new("/unused"))
                 .unwrap();
             db.connection()
                 .unwrap()
@@ -1795,7 +1974,7 @@ mod tests {
         // being left to re-check forever. `docs/imap-design.md` ("Sending").
         let db = database();
         let d = saved(&db);
-        let item = db.queue(&d.id, d.revision, false, Path::new("/unused")).unwrap();
+        let item = db.queue(&d.id, d.revision, false, &[], None, Path::new("/unused")).unwrap();
         db.connection()
             .unwrap()
             .execute(
@@ -1833,7 +2012,7 @@ mod tests {
         let db = database();
         for state in ["sent", "failed", "ready", "undo_pending", "sending"] {
             let d = saved(&db);
-            let item = db.queue(&d.id, d.revision, false, Path::new("/unused")).unwrap();
+            let item = db.queue(&d.id, d.revision, false, &[], None, Path::new("/unused")).unwrap();
             db.connection()
                 .unwrap()
                 .execute(
@@ -1963,7 +2142,7 @@ mod tests {
                     let draft = saved(&service.database);
                     let item = service
                         .database
-                        .queue(&draft.id, draft.revision, false, &service.root)
+                        .queue(&draft.id, draft.revision, false, &[], None, &service.root)
                         .unwrap();
                     service.database.connection().unwrap().execute(
                         "UPDATE outbox_messages SET state='uncertain', error='Connection dropped before SMTP acceptance' WHERE id=?1",
@@ -2037,7 +2216,7 @@ mod tests {
             inline: false,
             content_id: None,
         });
-        let raw = build_mime(&d, Some("Joel Reed"), "test-id", &root).unwrap();
+        let raw = build_mime(&d, &[], Some("Joel Reed"), None, "test-id", &root).unwrap();
         let parsed = MessageParser::default().parse(&raw).unwrap();
         assert_eq!(parsed.message_id(), Some("test-id@threestrands.local"));
         assert_eq!(
@@ -2070,7 +2249,7 @@ mod tests {
         d.subject = "Re: Café meeting — résumé ✓".into();
         d.reply_id = Some("original@example.com".into());
         d.references = vec!["ancestor@example.com".into(), "original@example.com".into()];
-        let raw = build_mime(&d, None, "headers-id", Path::new("/unused")).unwrap();
+        let raw = build_mime(&d, &[], None, None, "headers-id", Path::new("/unused")).unwrap();
         let parsed = MessageParser::default().parse(&raw).unwrap();
         let addresses = |list: Option<&mail_parser::Address>| -> Vec<String> {
             list.into_iter()
@@ -2097,13 +2276,117 @@ mod tests {
             Some(vec!["ancestor@example.com".into(), "original@example.com".into()])
         );
     }
+
+    // ---- Phase 4 run 2 (D): Draft.from, identity From selection, stale
+    //      identity rejection, Message-ID domain, header-injection bytes. ----
+
+    fn identity(address: &str, display: Option<&str>) -> crate::provider::SendingIdentity {
+        crate::provider::SendingIdentity {
+            address: address.into(),
+            display_name: display.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn build_mime_sends_from_the_chosen_identity_with_its_display_name_and_domain() {
+        let db = database();
+        let mut d = saved(&db);
+        // The account is you@example.com, but this draft was composed from a
+        // secondary identity.
+        d.account = "me@proton.me".into();
+        d.from = Some("work@proton.me".into());
+        let identities = [
+            identity("me@proton.me", Some("Me")),
+            identity("work@proton.me", Some("Work Account")),
+        ];
+        // An IMAP-style provider supplies the sender's domain.
+        let raw = build_mime(&d, &identities, None, Some("proton.me"), "op-1", Path::new("/unused"))
+            .unwrap();
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        let from = parsed.from().and_then(|f| f.first()).unwrap();
+        assert_eq!(from.address(), Some("work@proton.me"));
+        assert_eq!(from.name(), Some("Work Account"));
+        assert_eq!(parsed.message_id(), Some("op-1@proton.me"));
+    }
+
+    #[test]
+    fn build_mime_defaults_to_the_account_address_and_threestrands_domain() {
+        // No `from`, provider domain None (Gmail default) => byte-identical to
+        // the pre-change behaviour: From is the account, Message-ID domain is
+        // threestrands.local, and the account display name is used.
+        let db = database();
+        let d = saved(&db);
+        let identities = [identity(&d.account, None)];
+        let raw = build_mime(&d, &identities, Some("Joel Reed"), None, "op-2", Path::new("/unused"))
+            .unwrap();
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        let from = parsed.from().and_then(|f| f.first()).unwrap();
+        assert_eq!(from.address(), Some(d.account.as_str()));
+        assert_eq!(from.name(), Some("Joel Reed"));
+        assert_eq!(parsed.message_id(), Some("op-2@threestrands.local"));
+    }
+
+    #[test]
+    fn build_mime_rejects_a_stale_identity_not_on_the_account() {
+        let db = database();
+        let mut d = saved(&db);
+        d.account = "me@proton.me".into();
+        // `from` names an identity that was removed from the account's list.
+        d.from = Some("removed@proton.me".into());
+        let identities = [identity("me@proton.me", None), identity("work@proton.me", None)];
+        let err = build_mime(&d, &identities, None, Some("proton.me"), "op-3", Path::new("/unused"))
+            .unwrap_err();
+        assert!(
+            err.contains("no longer on this account"),
+            "a stale identity must fail clearly, not send as another address: {err}"
+        );
+    }
+
+    #[test]
+    fn build_mime_blocks_header_injection_via_display_name_and_address() {
+        let db = database();
+        let mut d = saved(&db);
+        d.account = "me@proton.me".into();
+
+        // A hostile DISPLAY NAME carrying CRLF must be refused — proven by the
+        // error AND, where accepted elsewhere, by the absence of an injected
+        // header in the bytes.
+        let injected_name = [identity("me@proton.me", Some("Evil\r\nBcc: victim@x.com"))];
+        let err = build_mime(&d, &injected_name, None, Some("proton.me"), "op-4", Path::new("/unused"))
+            .unwrap_err();
+        assert!(err.contains("line breaks"), "{err}");
+
+        // A hostile FROM ADDRESS carrying CRLF must be refused too.
+        d.from = Some("me@proton.me\r\nBcc: victim@x.com".into());
+        let ids = [identity("me@proton.me\r\nBcc: victim@x.com", None)];
+        let err = build_mime(&d, &ids, None, Some("proton.me"), "op-5", Path::new("/unused"))
+            .unwrap_err();
+        assert!(err.contains("line breaks"), "{err}");
+
+        // A clean send with a non-ASCII display name produces bytes with NO
+        // injected header: assert on the produced bytes directly.
+        d.from = None;
+        let clean = [identity("me@proton.me", Some("Zoë O'Brien"))];
+        let raw = build_mime(&d, &clean, None, Some("proton.me"), "op-6", Path::new("/unused"))
+            .unwrap();
+        let text = String::from_utf8_lossy(&raw);
+        // The From header line must be a single logical header (no bare CRLF
+        // introducing a "Bcc:" or similar), and no stray Bcc appears.
+        assert!(!text.to_ascii_lowercase().contains("\nbcc: victim"));
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        assert_eq!(
+            parsed.from().and_then(|f| f.first()).and_then(|a| a.address()),
+            Some("me@proton.me")
+        );
+    }
+
     #[test]
     fn mime_includes_rich_html_and_plain_text_fallback() {
         let db = database();
         let mut d = saved(&db);
         d.body = "Formatted message".into();
         d.body_html = "<p><strong>Formatted</strong> message</p>".into();
-        let raw = build_mime(&d, None, "rich-id", Path::new("/unused")).unwrap();
+        let raw = build_mime(&d, &[], None, None, "rich-id", Path::new("/unused")).unwrap();
         let parsed = MessageParser::default().parse(&raw).unwrap();
         assert_eq!(parsed.body_text(0).as_deref(), Some("Formatted message"));
         assert_eq!(
@@ -2134,7 +2417,7 @@ mod tests {
             content_id: Some(content_id.clone()),
         });
 
-        let raw = build_mime(&d, None, "inline-id", &root).unwrap();
+        let raw = build_mime(&d, &[], None, None, "inline-id", &root).unwrap();
         let source = String::from_utf8_lossy(&raw);
         assert!(source.contains(&format!("Content-ID: <{content_id}>")));
         assert!(source.contains("Content-Disposition: inline"));
@@ -2157,13 +2440,13 @@ mod tests {
             )
             .unwrap();
         let reply = db
-            .create_draft("replyAll", Some("source".into()), "you@example.com")
+            .create_draft("replyAll", Some("source".into()), "you@example.com", &[])
             .unwrap();
         assert_eq!(reply.to, "reply@example.com, colleague@example.com");
         assert_eq!(reply.cc, "cc@example.com");
         assert_eq!(reply.thread_id, Some("thread".into()));
         let forward = db
-            .create_draft("forward", Some("source".into()), "you@example.com")
+            .create_draft("forward", Some("source".into()), "you@example.com", &[])
             .unwrap();
         assert!(forward.to.is_empty());
         assert!(forward.reply_id.is_none());
@@ -2180,7 +2463,7 @@ mod tests {
             let source_id = format!("html-forward-{index}");
             let source = serde_json::json!({"id":source_id,"threadId":"thread","payload":{"mimeType":"multipart/alternative","headers":[{"name":"From","value":"Other <other@example.com>"},{"name":"To","value":"you@example.com"},{"name":"Subject","value":"Golf <Monday> & friends"}],"parts":[{"mimeType":"text/plain","body":{"data":URL_SAFE_NO_PAD.encode("Plain alternative [Profile] and [image]")}},{"mimeType":"text/html","body":{"data":URL_SAFE_NO_PAD.encode(html)}}]}});
             db.connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES (?1, ?2)", params![source_id, source.to_string()]).unwrap();
-            let mut draft = db.create_draft("forward", Some(source_id), "you@example.com").unwrap();
+            let mut draft = db.create_draft("forward", Some(source_id), "you@example.com", &[]).unwrap();
             let preserved = draft.forwarded_content.as_ref().unwrap();
             assert!(preserved.html.ends_with(html));
             assert!(preserved.html.contains("Other &lt;other@example.com&gt;"));
@@ -2195,7 +2478,7 @@ mod tests {
             let saved = db.save_draft(draft).unwrap();
             let reopened = db.draft(&saved.id).unwrap();
             assert_eq!(reopened.forwarded_content.as_ref().unwrap().html, expected_html);
-            let raw = build_mime(&reopened, None, "forward", Path::new(".")).unwrap();
+            let raw = build_mime(&reopened, &[], None, None, "forward", Path::new(".")).unwrap();
             let parsed = MessageParser::default().parse(&raw).unwrap();
             assert_eq!(parsed.body_html(0).unwrap(), format!("Take a look &lt;please&gt;<br><br>{expected_html}"));
             let plain = parsed.body_text(0).unwrap().replace("\r\n", "\n");
@@ -2212,7 +2495,7 @@ mod tests {
         value.as_object_mut().unwrap().remove("forwardedContent");
         let old: Draft = serde_json::from_value(value).unwrap();
         assert!(old.forwarded_content.is_none());
-        let raw = build_mime(&old, None, "legacy", Path::new(".")).unwrap();
+        let raw = build_mime(&old, &[], None, None, "legacy", Path::new(".")).unwrap();
         let parsed = MessageParser::default().parse(&raw).unwrap();
         assert_eq!(parsed.body_text(0).unwrap(), draft.body);
     }
@@ -2223,7 +2506,7 @@ mod tests {
         let html = "<p>Photos</p><img src=\"cid:first@example.com\"><table><tr><td><img src=\"cid:second@example.com\"></td></tr></table>";
         let source = serde_json::json!({"id":"inline-forward","threadId":"thread","payload":{"mimeType":"multipart/related","headers":[{"name":"From","value":"other@example.com"},{"name":"Subject","value":"Photos"}],"parts":[{"mimeType":"text/html","body":{"data":URL_SAFE_NO_PAD.encode(html)}},{"mimeType":"image/png","filename":"photo.png","headers":[{"name":"Content-ID","value":"<first@example.com>"}],"body":{"attachmentId":"remote-part","size":3}},{"mimeType":"image/png","headers":[{"name":"Content-ID","value":"<second@example.com>"},{"name":"Content-Disposition","value":"inline"}],"body":{"data":URL_SAFE_NO_PAD.encode("png"),"size":3}}]}});
         db.connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES ('inline-forward', ?1)", [source.to_string()]).unwrap();
-        let mut draft = db.create_draft("forward", Some("inline-forward".into()), "you@example.com").unwrap();
+        let mut draft = db.create_draft("forward", Some("inline-forward".into()), "you@example.com", &[]).unwrap();
         assert_eq!(draft.attachments.len(), 2);
         assert!(draft.attachments.iter().all(|attachment| attachment.inline && !attachment.ready));
         assert_eq!(draft.attachments[0].provider_id.as_deref(), Some("remote-part"));
@@ -2236,7 +2519,7 @@ mod tests {
         }
         draft.to = "friend@example.com".into();
         draft.body_html = "<p>Please see below.</p>".into();
-        let raw = build_mime(&draft, None, "inline-forward", &root).unwrap();
+        let raw = build_mime(&draft, &[], None, None, "inline-forward", &root).unwrap();
         let parsed = MessageParser::default().parse(&raw).unwrap();
         assert!(parsed.body_html(0).unwrap().starts_with("<p>Please see below.</p><br><br>"));
         assert!(parsed.body_html(0).unwrap().ends_with(html));
@@ -2272,7 +2555,7 @@ mod tests {
             .unwrap();
         let date = attribution_date("2026-10-05T14:32:48+00:00", &chrono::Local);
         let reply = db
-            .create_draft("reply", Some("source-q".into()), "you@example.com")
+            .create_draft("reply", Some("source-q".into()), "you@example.com", &[])
             .unwrap();
         assert_eq!(
             reply.body,
@@ -2280,7 +2563,7 @@ mod tests {
         );
         assert!(!reply.body.contains("T14:32:48"));
         let forward = db
-            .create_draft("forward", Some("source-q".into()), "you@example.com")
+            .create_draft("forward", Some("source-q".into()), "you@example.com", &[])
             .unwrap();
         assert!(forward.body.contains(&format!("\nDate: {date}\n")));
     }
@@ -2299,7 +2582,7 @@ mod tests {
             )
             .unwrap();
         let reply = db
-            .create_draft("reply", Some("source-b".into()), "you@example.com")
+            .create_draft("reply", Some("source-b".into()), "you@example.com", &[])
             .unwrap();
         assert_eq!(reply.account, "you@example.com");
     }
@@ -2320,7 +2603,7 @@ mod tests {
             )
             .unwrap();
         let reply = db
-            .create_draft("reply", Some("source-c".into()), "you@example.com")
+            .create_draft("reply", Some("source-c".into()), "you@example.com", &[])
             .unwrap();
         assert!(db.set_draft_account(&reply.id, "nope@example.com").is_err());
     }
@@ -2331,12 +2614,12 @@ mod tests {
         // account; queuing must still succeed, since replying from a
         // non-active account is exactly what multi-account send-as needs.
         db.set_compose_identity("active@example.com").unwrap();
-        let mut d = db.create_draft("new", None, "you@example.com").unwrap();
+        let mut d = db.create_draft("new", None, "you@example.com", &[]).unwrap();
         d.to = "Jane <jane@example.com>".into();
         d.subject = "Hello".into();
         d.body = "Body".into();
         let d = db.save_draft(d).unwrap();
-        let item = db.queue(&d.id, d.revision, false, Path::new("/unused")).unwrap();
+        let item = db.queue(&d.id, d.revision, false, &[], None, Path::new("/unused")).unwrap();
         assert_eq!(item.draft.account, "you@example.com");
     }
     #[test]
@@ -2351,7 +2634,7 @@ mod tests {
             )
             .unwrap();
         let d = saved(&db);
-        assert!(db.queue(&d.id, d.revision, false, Path::new("/unused")).is_err());
+        assert!(db.queue(&d.id, d.revision, false, &[], None, Path::new("/unused")).is_err());
     }
     #[test]
     fn rerunning_migrations_on_a_current_database_keeps_its_threads() {
@@ -2378,7 +2661,7 @@ mod tests {
         let d = saved(&service.database);
         let item = service
             .database
-            .queue(&d.id, d.revision, false, &service.root)
+            .queue(&d.id, d.revision, false, &[], None, &service.root)
             .unwrap();
         let calls = std::sync::atomic::AtomicUsize::new(0);
         let send = |_, _| {
@@ -2413,7 +2696,7 @@ mod tests {
         let d = saved(&service.database);
         let item = service
             .database
-            .queue(&d.id, d.revision, false, &service.root)
+            .queue(&d.id, d.revision, false, &[], None, &service.root)
             .unwrap();
         service.database.cancel_send(&item.id, false).unwrap();
         service
@@ -2430,7 +2713,7 @@ mod tests {
         let d = saved(&service.database);
         let item = service
             .database
-            .queue(&d.id, d.revision, false, &service.root)
+            .queue(&d.id, d.revision, false, &[], None, &service.root)
             .unwrap();
         service
             .dispatch_due(&item, item.deadline, |_, _| async {
@@ -2457,7 +2740,7 @@ mod tests {
         let d = saved(&service.database);
         let item = service
             .database
-            .queue(&d.id, d.revision, false, &service.root)
+            .queue(&d.id, d.revision, false, &[], None, &service.root)
             .unwrap();
         service
             .dispatch_due(&item, item.deadline, |_, _| async {
@@ -2477,7 +2760,7 @@ mod tests {
         let d = saved(&service.database);
         let item = service
             .database
-            .queue(&d.id, d.revision, false, &service.root)
+            .queue(&d.id, d.revision, false, &[], None, &service.root)
             .unwrap();
         let result=service.dispatch_due(&item,item.deadline,|_,_|async {
             service.database.connection().unwrap().execute_batch("CREATE TRIGGER fail_ack BEFORE UPDATE ON outbox_messages WHEN NEW.state='sent' BEGIN SELECT RAISE(FAIL,'disk failure'); END;").unwrap();
@@ -2503,9 +2786,9 @@ mod tests {
             inline: false,
             content_id: None,
         });
-        assert!(build_mime(&d, None, "id", Path::new("/unused")).is_err());
+        assert!(build_mime(&d, &[], None, None, "id", Path::new("/unused")).is_err());
         d.attachments[0].ready = true;
-        assert!(build_mime(&d, None, "id", Path::new("/unused")).is_err());
+        assert!(build_mime(&d, &[], None, None, "id", Path::new("/unused")).is_err());
     }
     #[test]
     fn mime_rejects_header_injection_and_unsafe_attachment_ids() {
@@ -2516,19 +2799,19 @@ mod tests {
             let mut d = base.clone();
             d.subject = subject.into();
             assert_eq!(
-                build_mime(&d, None, "id", Path::new("/unused")).unwrap_err(),
+                build_mime(&d, &[], None, None, "id", Path::new("/unused")).unwrap_err(),
                 "Subject cannot contain newlines"
             );
         }
 
         let mut d = base.clone();
         d.reply_id = Some("original@example.com\r\nBcc: attacker@example.net".into());
-        assert_eq!(build_mime(&d, None, "id", Path::new("/unused")).unwrap_err(), "Invalid reply headers");
+        assert_eq!(build_mime(&d, &[], None, None, "id", Path::new("/unused")).unwrap_err(), "Invalid reply headers");
 
         let mut d = base.clone();
         d.reply_id = Some("original@example.com".into());
         d.references = vec!["ancestor@example.com".into(), "x@example.com\nBcc: attacker@example.net".into()];
-        assert_eq!(build_mime(&d, None, "id", Path::new("/unused")).unwrap_err(), "Invalid reply headers");
+        assert_eq!(build_mime(&d, &[], None, None, "id", Path::new("/unused")).unwrap_err(), "Invalid reply headers");
 
         // A path-shaped attachment id must never be joined onto the
         // attachment root, even when a file exists at the traversal target.
@@ -2549,13 +2832,13 @@ mod tests {
                 inline: false,
                 content_id: None,
             });
-            assert_eq!(build_mime(&d, None, "id", &inner).unwrap_err(), "Invalid attachment ID", "id {id:?}");
+            assert_eq!(build_mime(&d, &[], None, None, "id", &inner).unwrap_err(), "Invalid attachment ID", "id {id:?}");
         }
         std::fs::remove_dir_all(root).unwrap();
     }
     fn scheduled(service: &Correspondence) -> OutboxItem {
         let d=saved(&service.database);
-        service.database.schedule_draft(&d.id,d.revision,&crate::scheduled_send::Selection {local_time:"2030-01-01T09:00".into(),time_zone:"America/New_York".into(),offset_seconds:None},"00000000-0000-4000-8000-000000000001",&service.root,1_800_000_000_000).unwrap()
+        service.database.schedule_draft(&d.id,d.revision,&crate::scheduled_send::Selection {local_time:"2030-01-01T09:00".into(),time_zone:"America/New_York".into(),offset_seconds:None},"00000000-0000-4000-8000-000000000001",&[],None,&service.root,1_800_000_000_000).unwrap()
     }
 
     #[tokio::test]
@@ -2670,7 +2953,7 @@ mod tests {
         assert_eq!(late.state,"overdue");assert_eq!(late.schedule.as_ref().unwrap().report.state,"overdue");
         owner.database.manage_schedule(&item.id,late.schedule.unwrap().report.report_revision,None,true,"00000000-0000-4000-8000-000000000001",item.deadline+60_001).unwrap();
         let now_send=owner.database.outbox().unwrap().remove(0);assert_eq!(now_send.state,"undo_pending");assert_eq!(now_send.deadline,item.deadline+70_001);
-        let d=saved(&owner.database);let immediate=owner.database.queue(&d.id,d.revision,false,&owner.root).unwrap();
+        let d=saved(&owner.database);let immediate=owner.database.queue(&d.id,d.revision,false,&[],None,&owner.root).unwrap();
         crate::schema::migrate(&mut owner.database.connection().unwrap()).unwrap();
         let items=owner.database.outbox().unwrap();
         assert!(items.iter().find(|o|o.id==immediate.id).unwrap().deadline>now());

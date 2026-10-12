@@ -203,6 +203,25 @@ pub struct DeliveryReceipt {
     pub thread_id: Option<String>,
 }
 
+/// One address an account may send as, with an optional display name.
+///
+/// Provider-neutral by design: Gmail and any single-identity account report
+/// exactly one (their account address, no display name); an IMAP account
+/// reports its ordered, login-anchored identity list. The list's FIRST entry
+/// is always the account's primary (login) address — callers that need "the
+/// account's own address" read `identities()[0]`, and every "sent by me"
+/// decision treats a `From` matching ANY entry as the user's own. See
+/// `docs/imap-design.md` ("Identities") and
+/// [`crate::provider::imap::account_identities`], the one builder that applies
+/// the normalization/validation rules.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SendingIdentity {
+    /// The address as displayed (original case preserved for the header).
+    pub address: String,
+    /// An optional display name for the From header.
+    pub display_name: Option<String>,
+}
+
 /// Everything the local cache is populated from.
 #[async_trait]
 pub trait MailSync: Send + Sync {
@@ -299,6 +318,38 @@ pub trait Delivery: Send {
 pub trait MailSend: Send + Sync {
     /// The address this account actually sends as, according to the server.
     async fn sender_identity(&self) -> ProviderResult<String>;
+
+    /// The account's ordered sending identities. The default is the single
+    /// identity `[sender_identity()]` with no display name — correct for
+    /// Gmail and any account that sends as exactly one address. The IMAP
+    /// provider overrides this from its stored identity list
+    /// (`docs/imap-design.md`, "Identities"): login first, then the addresses
+    /// the user added, normalized and validated. The FIRST entry is always
+    /// the account's primary (login) address, so callers may rely on
+    /// `identities()[0]` being that address.
+    async fn identities(&self) -> ProviderResult<Vec<SendingIdentity>> {
+        Ok(vec![SendingIdentity {
+            address: self.sender_identity().await?,
+            display_name: None,
+        }])
+    }
+
+    /// The domain to put in a generated `Message-ID` for a send from
+    /// `from_address`, or `None` to keep the app's reserved
+    /// `threestrands.local` domain.
+    ///
+    /// The default is `None`: Gmail (and every account that has not opted in)
+    /// keeps `<{id}@threestrands.local>`, so `find_sent_copy`'s exact
+    /// Message-ID match is unchanged. The IMAP provider overrides this to
+    /// return the domain of the From address actually used
+    /// (`docs/imap-design.md`, "Sending" > "Message-ID domain"), so an IMAP
+    /// send is `<{id}@{sender-domain}>`. An invalid domain is an `Err` BEFORE
+    /// any send — never a silent fallback for IMAP, which would leak the
+    /// client name. This is the ONLY provider difference in the Message-ID; no
+    /// code path branches on a provider name or id.
+    fn message_id_domain(&self, _from_address: &str) -> ProviderResult<Option<String>> {
+        Ok(None)
+    }
 
     /// Authorizes one delivery. See [`Delivery`] for why this is separate.
     async fn prepare_delivery(&self) -> ProviderResult<Box<dyn Delivery>>;

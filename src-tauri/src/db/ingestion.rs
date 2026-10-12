@@ -126,6 +126,9 @@ impl Database {
                 ],
             )?;
         transaction.execute("DELETE FROM messages WHERE thread_id = ?1", [&thread_id])?;
+        // The account's "sent by me" identity set, loaded ONCE per thread and
+        // reused for every message below — not once per message (no N+1).
+        let mine = crate::db::sending_addresses_for_account(transaction, account_id);
         transaction.execute(
             "DELETE FROM thread_search WHERE thread_id = ?1",
             [&thread_id],
@@ -157,7 +160,7 @@ impl Database {
                     serde_json::to_string(&message.attachments).map_err(serialization_error)?,
                 ],
             )?;
-            contacts::index_contact_message(transaction, account_id, &thread_id, message)?;
+            contacts::index_contact_message(transaction, account_id, &thread_id, message, &mine)?;
         }
         transaction.execute(
             "INSERT INTO thread_search(thread_id, subject, snippet, participants, body)

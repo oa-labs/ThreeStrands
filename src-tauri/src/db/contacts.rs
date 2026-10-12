@@ -33,6 +33,7 @@ pub(super) fn index_contact_message(
     account_id: &str,
     thread_id: &str,
     message: &NormalizedMessage,
+    mine: &std::collections::BTreeSet<String>,
 ) -> DbResult<()> {
     index_contact_addresses(
         tx,
@@ -43,9 +44,18 @@ pub(super) fn index_contact_message(
         &message.to,
         message.unsubscribe.is_some(),
         &message.date,
+        mine,
     )
 }
 
+/// Index one message's contact interactions, deciding `sent` vs `received` by
+/// whether the From is one of the ACCOUNT'S sending identities — not only the
+/// login address (`docs/imap-design.md`, "Identities" > "Sent by me"). `mine`
+/// is the normalized identity set, loaded ONCE by the caller per message/batch
+/// (see [`sending_addresses_for_account`]) so this stays O(1) per message with
+/// no second connection. A Gmail / single-identity account's `mine` is
+/// `{account}`, so its sent/received split is unchanged.
+#[allow(clippy::too_many_arguments)]
 fn index_contact_addresses(
     tx: &rusqlite::Transaction<'_>,
     account_id: &str,
@@ -55,16 +65,24 @@ fn index_contact_addresses(
     recipients: &[String],
     automated: bool,
     sent_at: &str,
+    mine: &std::collections::BTreeSet<String>,
 ) -> DbResult<()> {
+    // The `account_id` column still records the owning account key, lowercased
+    // exactly as before — only the sent/received DECISION widened to the whole
+    // identity set.
     let owner = account_id.trim().to_ascii_lowercase();
     let from = crate::correspondence::stored_addresses(sender);
     if let Some((name, email)) = from.into_iter().next() {
         let email = email.to_ascii_lowercase();
-        if email == owner {
+        // "Sent by me" when the From is ANY of my identities.
+        if mine.contains(&email) {
             for raw in recipients {
                 for (name, address) in crate::correspondence::stored_addresses(raw) {
                     let address = address.to_ascii_lowercase();
-                    if address.is_empty() || address == owner {
+                    // Skip an empty recipient and any recipient that is one of
+                    // MY OWN identities (self-addressed Bcc, or a copy to
+                    // another of my addresses) — it is not an outbound contact.
+                    if address.is_empty() || mine.contains(&address) {
                         continue;
                     }
                     tx.execute("INSERT OR IGNORE INTO contact_interactions(message_id,thread_id,account_id,email,display_name,direction,sent_at) VALUES(?1,?2,?3,?4,?5,'sent',?6)",params![message_id,thread_id,owner,address,(!name.is_empty()&&!name.eq_ignore_ascii_case(&address)).then_some(name),sent_at])?;
@@ -84,7 +102,17 @@ impl Database {
             let mut statement=tx.prepare("SELECT m.id,m.thread_id,t.account_id,m.sender,m.recipients_json,m.unsubscribe_json,m.sent_at FROM messages m JOIN threads t ON t.id=m.thread_id")?;
             let rows=statement.query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?,row.get::<_,Option<String>>(5)?.is_some(),row.get::<_,String>(6)?)))?;
             let collected=rows.collect::<Result<Vec<_>,_>>()?;drop(statement);
-            for (message_id,thread_id,account_id,sender,recipients_json,automated,sent_at) in collected {let recipients=serde_json::from_str::<Vec<String>>(&recipients_json).unwrap_or_default();index_contact_addresses(tx,&account_id,&message_id,&thread_id,&sender,&recipients,automated,&sent_at)?;}
+            // Cache each account's identity set so a full rebuild reads the
+            // identities JSON ONCE per account, not once per message.
+            let mut identity_sets: std::collections::HashMap<String, std::collections::BTreeSet<String>> = std::collections::HashMap::new();
+            for (message_id,thread_id,account_id,sender,recipients_json,automated,sent_at) in collected {
+                let recipients=serde_json::from_str::<Vec<String>>(&recipients_json).unwrap_or_default();
+                let mine = identity_sets
+                    .entry(account_id.clone())
+                    .or_insert_with(|| super::sending_addresses_for_account(tx, &account_id))
+                    .clone();
+                index_contact_addresses(tx,&account_id,&message_id,&thread_id,&sender,&recipients,automated,&sent_at,&mine)?;
+            }
             Ok(())
         })
     }

@@ -1354,3 +1354,88 @@ fn contact_request(name: &str, email: &str) -> SaveContactRequest {
         addresses: vec![email.into()],
     }
 }
+
+
+/// Phase 4 run 2 (B): a message From a SECONDARY sending identity is indexed
+/// as an outbound ("sent") interaction with its recipient, not as a "received"
+/// interaction from the identity itself — because any identity counts as "sent
+/// by me". A Gmail / single-identity account (no settings row) is unchanged:
+/// only its own login address produces "sent".
+#[test]
+fn a_message_from_a_secondary_identity_is_indexed_as_sent() {
+    use crate::provider::imap::{
+        write_settings_row, Identity, ImapAccountSettings, LabelStorage, SecurityMode,
+    };
+    let database = database();
+    let settings = ImapAccountSettings {
+        imap_host: "127.0.0.1".into(),
+        imap_port: 1143,
+        imap_security: SecurityMode::StartTls,
+        imap_username: "me@proton.me".into(),
+        smtp_host: "127.0.0.1".into(),
+        smtp_port: 1025,
+        smtp_security: SecurityMode::StartTls,
+        smtp_username: "me@proton.me".into(),
+        mailbox_overrides: Default::default(),
+        archive_mailbox: None,
+        label_storage: LabelStorage::None,
+        label_container: None,
+        identities: vec![
+            Identity { address: "me@proton.me".into(), display_name: None },
+            Identity { address: "work@proton.me".into(), display_name: Some("Work".into()) },
+        ],
+        pinned_fingerprints: Default::default(),
+        server_saves_sent: false,
+    };
+    {
+        let connection = database.connection().unwrap();
+        write_settings_row(&connection, "me@proton.me", &settings).unwrap();
+    }
+
+    // A message sent FROM the secondary identity TO an outside contact.
+    let mut sent = message("m-sec", "t-sec", "2026-01-01T00:00:00Z", "hi");
+    sent.from = "Work <work@proton.me>".into();
+    sent.to = vec!["Client <client@acme.com>".into()];
+    database.upsert_thread("me@proton.me", &[sent]).unwrap();
+
+    let connection = database.connection().unwrap();
+    // The outside recipient is recorded as a SENT interaction.
+    let direction: String = connection
+        .query_row(
+            "SELECT direction FROM contact_interactions WHERE email = 'client@acme.com'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(direction, "sent", "From a secondary identity is sent-by-me");
+    // The identity itself is never recorded as an inbound contact.
+    let identity_rows: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM contact_interactions WHERE email = 'work@proton.me'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(identity_rows, 0, "my own identity is not a received contact");
+}
+
+#[test]
+fn a_gmail_message_from_a_non_login_address_is_received_as_before() {
+    // No settings row => single-identity account. A message whose From is NOT
+    // the login address is "received", exactly as before this change.
+    let database = database();
+    let mut inbound = message("g-m", "g-t", "2026-01-01T00:00:00Z", "hi");
+    inbound.from = "Someone <someone@else.com>".into();
+    inbound.to = vec!["you@example.com".into()];
+    database.upsert_thread("you@example.com", &[inbound]).unwrap();
+    let direction: String = database
+        .connection()
+        .unwrap()
+        .query_row(
+            "SELECT direction FROM contact_interactions WHERE email = 'someone@else.com'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(direction, "received");
+}

@@ -166,7 +166,13 @@ fn sender_identity_for_thread(
              ORDER BY sent_at DESC, id DESC",
     )?;
     let rows = statement.query_map([thread_id], |row| row.get::<_, String>(0))?;
-    let account_email = normalize_sender(&account_id).0;
+    // Every address that counts as "sent by me" for this account — ANY sending
+    // identity, not only the login (`docs/imap-design.md`, "Identities" >
+    // "Sent by me"). Loaded ONCE per thread (one query), reused for every
+    // message below. A Gmail / single-identity account yields `{account}`, so
+    // its behaviour is identical to the previous single-address compare.
+    let mine = super::sending_addresses_for_account(transaction, &account_id);
+    let is_mine = |email: &str| !email.is_empty() && mine.contains(email);
     let mut fallback = None;
     for row in rows {
         let sender = row?;
@@ -177,14 +183,15 @@ fn sender_identity_for_thread(
         if fallback.is_none() {
             fallback = Some((email.clone(), domain.clone()));
         }
-        if account_email.is_empty() || email != account_email {
+        if mine.is_empty() || !is_mine(&email) {
             return Ok(Some((account_id, email, domain)));
         }
     }
-    if account_email.is_empty() {
+    if mine.is_empty() {
         Ok(fallback.map(|(email, domain)| (account_id, email, domain)))
     } else {
-        // A sent-only thread has no sender preference to learn from.
+        // A sent-only thread (every sender is one of MY identities) has no
+        // sender preference to learn from.
         Ok(None)
     }
 }

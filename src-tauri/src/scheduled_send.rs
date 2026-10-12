@@ -196,6 +196,8 @@ impl Database {
         revision: i64,
         selection: &Selection,
         owner: &str,
+        identities: &[crate::provider::SendingIdentity],
+        message_id_domain: Option<&str>,
         root: &Path,
         at: i64,
     ) -> Result<OutboxItem, String> {
@@ -215,7 +217,14 @@ impl Database {
             .get_account(&draft.account)?
             .and_then(|a| a.display_name);
         let operation_id = uuid::Uuid::new_v4().to_string();
-        let raw = build_mime(&draft, sender_name.as_deref(), &operation_id, root)?;
+        let raw = build_mime(
+            &draft,
+            identities,
+            sender_name.as_deref(),
+            message_id_domain,
+            &operation_id,
+            root,
+        )?;
         let mut c = self.connection()?;
         let tx = c.transaction().map_err(|e| e.to_string())?;
         let visibility_group_id = group(&tx).map_err(|e| e.to_string())?;
@@ -500,7 +509,7 @@ mod tests {
         db
     }
     fn queue(db: &Database) -> OutboxItem {
-        let mut draft = db.create_draft("new", None, "me@example.com").unwrap();
+        let mut draft = db.create_draft("new", None, "me@example.com", &[]).unwrap();
         draft.to = "to@example.com".into();
         draft.bcc = "hidden@example.com".into();
         draft.subject = "Summary only".into();
@@ -515,6 +524,11 @@ mod tests {
                 offset_seconds: None,
             },
             OWNER,
+            &[crate::provider::SendingIdentity {
+                address: "me@example.com".into(),
+                display_name: None,
+            }],
+            None,
             Path::new("/unused"),
             1_800_000_000_000,
         )

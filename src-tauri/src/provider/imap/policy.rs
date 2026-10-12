@@ -772,6 +772,84 @@ pub fn check_smtp_recipient_count(count: usize) -> Result<usize, ProviderError> 
     Ok(count)
 }
 
+// ---------------------------------------------------------------------------
+// Message-ID domain (docs/imap-design.md, "Sending" > "Message-ID domain")
+// ---------------------------------------------------------------------------
+//
+// An IMAP send generates `<uuid@sender-domain>`, where the domain is the part
+// after the last `@` of the From address actually used. The domain is a DNS
+// name, so its syntax is bounded by the RFC 1035 presentation-format limits.
+// An invalid or over-limit domain is a typed error before any send — never a
+// silent fallback to `threestrands.local` (which would leak the client name,
+// defeating the whole decision), and never a silent clamp.
+
+/// Longest a single DNS label (one dot-separated component) may be, in bytes
+/// (RFC 1035 §2.3.4). A label at exactly 63 is valid; 64 is rejected.
+pub const MAX_DNS_LABEL_BYTES: usize = 63;
+
+/// Longest a full DNS name may be in its presentation form, in bytes
+/// (RFC 1035 §2.3.4 / RFC 1123). 253 is the printable-form ceiling (the
+/// 255-octet wire limit minus the length/terminator octets). A name at exactly
+/// 253 is valid; 254 is rejected.
+pub const MAX_DNS_NAME_BYTES: usize = 253;
+
+/// Validate a Message-ID domain's SYNTAX against the DNS presentation-format
+/// limits, returning it ASCII-lowercased when it is well formed. The input is
+/// the already-extracted domain (the part after the last `@`), assumed ASCII;
+/// a non-ASCII domain is handled (refused) by the caller before this runs.
+///
+/// Accepts only: one or more dot-separated labels; each label 1..=63 bytes of
+/// ASCII letters, digits or hyphen; no label beginning or ending with a
+/// hyphen; no empty label (so no leading/trailing dot and no `..`); total
+/// length 1..=253. Everything else is a typed [`ProviderError`], never a
+/// clamp. A `_`-prefixed service label is NOT accepted: a Message-ID domain is
+/// an ordinary host name, not an SRV owner.
+pub fn check_message_id_domain(domain: &str) -> Result<String, ProviderError> {
+    let reject = |m: &str| {
+        Err(ProviderError::InvalidOperation(format!(
+            "invalid Message-ID domain: {m}"
+        )))
+    };
+    if domain.is_empty() {
+        return reject("empty");
+    }
+    if domain.len() > MAX_DNS_NAME_BYTES {
+        return reject(&format!(
+            "{} bytes, over the {MAX_DNS_NAME_BYTES}-byte DNS name limit",
+            domain.len()
+        ));
+    }
+    // Must be ASCII to reason about labels byte-wise; the caller refuses a
+    // non-ASCII domain before this, but guard here too so the function is
+    // safe in isolation.
+    if !domain.is_ascii() {
+        return reject("contains non-ASCII characters");
+    }
+    for label in domain.split('.') {
+        if label.is_empty() {
+            return reject("has an empty label (a leading/trailing dot or '..')");
+        }
+        if label.len() > MAX_DNS_LABEL_BYTES {
+            return reject(&format!(
+                "label {label:?} is {} bytes, over the {MAX_DNS_LABEL_BYTES}-byte label limit",
+                label.len()
+            ));
+        }
+        if label.starts_with('-') || label.ends_with('-') {
+            return reject(&format!("label {label:?} begins or ends with a hyphen"));
+        }
+        if !label
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        {
+            return reject(&format!(
+                "label {label:?} has a character other than a letter, digit or hyphen"
+            ));
+        }
+    }
+    Ok(domain.to_ascii_lowercase())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1410,5 +1488,101 @@ mod tests {
         assert!(SMTP_FINAL_REPLY_TIMEOUT >= SMTP_COMMAND_TIMEOUT);
         assert!(SMTP_CONNECT_TIMEOUT.as_secs() > 0);
         assert!(SMTP_COMMAND_TIMEOUT.as_secs() > 0);
+    }
+
+    // --- Message-ID domain ---------------------------------------------
+
+    #[test]
+    fn message_id_domain_numeric_limits_are_the_dns_bounds() {
+        assert_eq!(MAX_DNS_LABEL_BYTES, 63);
+        assert_eq!(MAX_DNS_NAME_BYTES, 253);
+    }
+
+    #[test]
+    fn message_id_domain_accepts_a_plain_host_and_lowercases_it() {
+        assert_eq!(check_message_id_domain("proton.me").unwrap(), "proton.me");
+        assert_eq!(check_message_id_domain("Proton.ME").unwrap(), "proton.me");
+        assert_eq!(
+            check_message_id_domain("mail.example.co.uk").unwrap(),
+            "mail.example.co.uk"
+        );
+        // Hyphen and digits inside a label are fine.
+        assert_eq!(check_message_id_domain("x-1.a0").unwrap(), "x-1.a0");
+    }
+
+    #[test]
+    fn message_id_domain_label_length_below_at_above_the_limit() {
+        let label_at = "a".repeat(MAX_DNS_LABEL_BYTES);
+        let label_below = "a".repeat(MAX_DNS_LABEL_BYTES - 1);
+        let label_above = "a".repeat(MAX_DNS_LABEL_BYTES + 1);
+        assert!(check_message_id_domain(&format!("{label_below}.me")).is_ok());
+        assert!(
+            check_message_id_domain(&format!("{label_at}.me")).is_ok(),
+            "a 63-byte label is exactly at the limit and accepted"
+        );
+        let err = check_message_id_domain(&format!("{label_above}.me")).unwrap_err();
+        assert!(
+            matches!(err, ProviderError::InvalidOperation(_)),
+            "a 64-byte label is over the limit — a typed error, not a clamp: {err:?}"
+        );
+    }
+
+    #[test]
+    fn message_id_domain_total_length_below_at_above_the_limit() {
+        // Build names whose TOTAL length is exactly MAX_DNS_NAME_BYTES, one
+        // below, and one above, while keeping every label within 63 bytes.
+        fn name_of_len(total: usize) -> String {
+            // Labels of 63 "a" joined by dots, trimmed to `total`.
+            let mut s = String::new();
+            while s.len() < total {
+                if !s.is_empty() {
+                    s.push('.');
+                }
+                let remaining = total - s.len();
+                let take = remaining.min(MAX_DNS_LABEL_BYTES);
+                s.push_str(&"a".repeat(take));
+            }
+            debug_assert_eq!(s.len(), total);
+            s
+        }
+        let at = name_of_len(MAX_DNS_NAME_BYTES);
+        let below = name_of_len(MAX_DNS_NAME_BYTES - 1);
+        let above = name_of_len(MAX_DNS_NAME_BYTES + 1);
+        assert_eq!(below.len(), MAX_DNS_NAME_BYTES - 1);
+        assert!(check_message_id_domain(&below).is_ok());
+        assert_eq!(at.len(), MAX_DNS_NAME_BYTES);
+        assert!(
+            check_message_id_domain(&at).is_ok(),
+            "a 253-byte name is exactly at the limit and accepted"
+        );
+        assert_eq!(above.len(), MAX_DNS_NAME_BYTES + 1);
+        assert!(matches!(
+            check_message_id_domain(&above).unwrap_err(),
+            ProviderError::InvalidOperation(_)
+        ));
+    }
+
+    #[test]
+    fn message_id_domain_rejects_malformed_syntax() {
+        for bad in [
+            "",                 // empty
+            ".me",              // leading dot => empty label
+            "me.",              // trailing dot => empty label
+            "a..b",             // empty inner label
+            "-lead.me",         // label begins with hyphen
+            "trail-.me",        // label ends with hyphen
+            "under_score.me",   // underscore is not a letter/digit/hyphen
+            "spa ce.me",        // whitespace
+            "pröton.me",        // non-ASCII (caller refuses first; guarded here too)
+            "a@b.me",           // '@' is not a legal label character
+        ] {
+            assert!(
+                matches!(
+                    check_message_id_domain(bad),
+                    Err(ProviderError::InvalidOperation(_))
+                ),
+                "expected {bad:?} to be rejected"
+            );
+        }
     }
 }
