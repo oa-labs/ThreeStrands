@@ -558,7 +558,9 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
           .slice(offset, offset + limit),
       );
     },
-    async backfillSearchThreads(_query, _accountId) {},
+    async backfillSearchThreads(_query, _accountId) {
+      return { status: { kind: "complete" }, unsyncedMailboxes: 0, skippedOverCap: 0 };
+    },
     async mutateThread(mutation) {
       update(mutation);
     },

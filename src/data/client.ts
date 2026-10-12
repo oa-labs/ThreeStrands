@@ -43,6 +43,7 @@ import type {
   DraftReviewRequest,
   DraftReviewResult,
   SearchThreadsRequest,
+  SearchReport,
   ScheduleResult,
   ScheduleEvent,
   Snippet,
@@ -147,8 +148,8 @@ export interface MailClient extends CorrespondenceClient {
     reasoning?: AiReasoning,
   ): Promise<ReplyAssistResult>;
   searchThreads(request: SearchThreadsRequest, accountId?: string): Promise<Thread[]>;
-  /** Fetches Gmail search hits missing from the local cache so a subsequent local search can include historical archived mail. */
-  backfillSearchThreads(query: string, accountId?: string): Promise<void>;
+  /** Fetches Gmail search hits missing from the local cache so a subsequent local search can include historical archived mail. Returns a report of what the server search could do, for the UI to word. */
+  backfillSearchThreads(query: string, accountId?: string): Promise<SearchReport>;
   mutateThread(mutation: ThreadMutation): Promise<void>;
   mutateThreads(mutations: ThreadMutation[]): Promise<void>;
   recordTriageEvent(event: TriageEvent): Promise<void>;

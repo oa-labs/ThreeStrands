@@ -157,7 +157,8 @@ export function App() {
   });
   const {
     threads, setThreads, query, setQuery, queryRef, searchOpen, setSearchOpen, includeArchived,
-    setIncludeArchived, remoteSearchState, hasMoreResults, loading, mailboxError, loadingMoreState,
+    setIncludeArchived, remoteSearchState, searchStatus, setSearchStatus, hasMoreResults, loading,
+    mailboxError, loadingMoreState,
     loadThreads, loadThreadsRef, loadMoreResults, contextOpenedThreadRef,
   } = mailboxThreads;
   const selection = useThreadSelection({ threads, selectedId, setSelectedId, query, includeArchived, contextOpenedThreadRef });
@@ -1205,6 +1206,12 @@ export function App() {
         <div className="toast search-status-toast error" role="status" aria-live="polite">
           <CircleAlert size={ICON_SIZE.sm} />
           Gmail search unavailable
+        </div>
+      ) : null}
+      {isTabbedMailbox && searchOpen && query.trim() && includeArchived && remoteSearchState !== "searching" && searchStatus ? (
+        <div className="toast search-status-toast" role="status" aria-live="polite">
+          {searchStatus}
+          <button className="btn-icon btn-icon-sm" aria-label="Dismiss" onClick={() => setSearchStatus(null)}><X size={ICON_SIZE.sm} /></button>
         </div>
       ) : null}
       {lightboxImageSrc ? (

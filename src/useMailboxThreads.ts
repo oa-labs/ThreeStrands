@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { listen } from "@tauri-apps/api/event";
 import type { MailboxKind } from "./commands";
-import type { Thread } from "./domain";
+import type { SearchReport, Thread } from "./domain";
 import { mailClient } from "./data/client";
+import { searchStatusMessage } from "./searchStatusCopy";
 import { errorMessage, logBackgroundFailure } from "./errors";
 
 const SEARCH_PAGE_SIZE = 50;
@@ -33,6 +34,11 @@ export function useMailboxThreads({
   const [searchOpen, setSearchOpen] = useState(false);
   const [includeArchived, setIncludeArchived] = useState(false);
   const [remoteSearchState, setRemoteSearchState] = useState<"idle" | "searching" | "error">("idle");
+  // Phase 5 run 5: the ONE quiet status line for the current search (a partial,
+  // skipped, or no-matches outcome worded in `searchStatusCopy`), or null when
+  // there is nothing to say. Cleared whenever the query, account, or "include
+  // archived" changes — never carried from an earlier search.
+  const [searchStatus, setSearchStatus] = useState<string | null>(null);
   const [hasMoreResults, setHasMoreResults] = useState(false);
   const [loading, setLoading] = useState(true);
   const [mailboxError, setMailboxError] = useState("");
@@ -42,7 +48,7 @@ export function useMailboxThreads({
   const [loadingMoreState, setLoadingMoreState] = useState(false);
   const remoteSearchKeyRef = useRef<string | null>(null);
   const remoteSearchRequestRef = useRef(0);
-  const remoteSearchPromiseRef = useRef<Promise<void> | null>(null);
+  const remoteSearchPromiseRef = useRef<Promise<SearchReport> | null>(null);
   const remoteSearchInFlightRef = useRef(false);
   const fetchMailboxPage = useCallback((box: MailboxKind, accountId: string | undefined, offset: number) => {
     if (box === "allMail") return mailClient.listAllMailPage(accountId, offset, SEARCH_PAGE_SIZE);
@@ -73,6 +79,7 @@ export function useMailboxThreads({
       remoteSearchPromiseRef.current = null;
       remoteSearchInFlightRef.current = false;
       setRemoteSearchState("idle");
+      setSearchStatus(null);
     }
     const commitPage = (page: { threads: Thread[]; hasMore: boolean }) => {
       if (requestId !== threadsRequest.current) return false;
@@ -115,15 +122,19 @@ export function useMailboxThreads({
           };
           const pollInterval = window.setInterval(pollForRemoteMatches, REMOTE_SEARCH_POLL_MS);
           void backfillPromise
-            .then(async () => {
+            .then(async (report) => {
               window.clearInterval(pollInterval);
               if (remoteRequestId !== remoteSearchRequestRef.current) return;
               const refreshed = await mailClient.searchThreads(searchRequest, accountId);
+              // The remoteRequestId guard also covers the REPORT: a stale
+              // result from an earlier query (its id already superseded) never
+              // sets the status line for the current one.
               if (remoteRequestId !== remoteSearchRequestRef.current) return;
               remoteSearchInFlightRef.current = false;
               if (requestId === threadsRequest.current) {
                 commitPage({ threads: refreshed, hasMore: refreshed.length === SEARCH_PAGE_SIZE });
                 setRemoteSearchState("idle");
+                setSearchStatus(searchStatusMessage(report, refreshed.length === 0));
               }
             })
             .catch(() => {
@@ -134,19 +145,21 @@ export function useMailboxThreads({
                 remoteSearchInFlightRef.current = false;
                 remoteSearchKeyRef.current = null;
                 setRemoteSearchState("error");
+                setSearchStatus(null);
               }
             });
         } else if (includeArchived && remoteSearchKeyRef.current === remoteSearchKey && remoteSearchInFlightRef.current) {
           const remoteRequestId = remoteSearchRequestRef.current;
           const remotePromise = remoteSearchPromiseRef.current;
           if (remotePromise) {
-            void remotePromise.then(async () => {
+            void remotePromise.then(async (report) => {
               if (requestId !== threadsRequest.current || remoteRequestId !== remoteSearchRequestRef.current) return;
               const refreshed = await mailClient.searchThreads(searchRequest, accountId);
               if (requestId !== threadsRequest.current || remoteRequestId !== remoteSearchRequestRef.current) return;
               commitPage({ threads: refreshed, hasMore: refreshed.length === SEARCH_PAGE_SIZE });
               remoteSearchInFlightRef.current = false;
               setRemoteSearchState("idle");
+              setSearchStatus(searchStatusMessage(report, refreshed.length === 0));
             }).catch(logBackgroundFailure("Remote search refresh"));
           }
         }
@@ -251,12 +264,14 @@ export function useMailboxThreads({
       remoteSearchPromiseRef.current = null;
       remoteSearchInFlightRef.current = false;
       setRemoteSearchState("idle");
+      setSearchStatus(null);
     }
   }, [includeArchived]);
 
   return {
     threads, setThreads, query, setQuery, queryRef, searchOpen, setSearchOpen, includeArchived,
-    setIncludeArchived, remoteSearchState, hasMoreResults, loading, mailboxError, loadingMoreState,
+    setIncludeArchived, remoteSearchState, searchStatus, setSearchStatus, hasMoreResults, loading,
+    mailboxError, loadingMoreState,
     loadThreads, loadThreadsRef, loadMoreResults, contextOpenedThreadRef,
   };
 }

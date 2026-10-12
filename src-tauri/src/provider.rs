@@ -112,6 +112,153 @@ pub struct ThreadPage {
     pub next: Option<String>,
 }
 
+/// What a server search was able to do, carried out of the provider WITHOUT
+/// branching on provider kind (Phase 5 run 5). A provider error still returns
+/// an `Err` from [`MailSync::search_with_report`]; this type only describes a
+/// search that RAN (fully, partially, or not at all because a term could not
+/// be expressed). The frontend words it — the status is a typed CODE, never a
+/// developer string, a mailbox wire name or the user's query — so wording
+/// lives and is tested in TypeScript.
+///
+/// Serialised camelCase (externally tagged on `status`) for the Tauri command,
+/// like the app's other command results.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchReport {
+    pub status: SearchReportStatus,
+    /// How many PLANNED mailboxes were skipped because they are not synced, so
+    /// a pin there would never be maintained. Summed across accounts.
+    pub unsynced_mailboxes: usize,
+    /// How many hits were refused across all mailboxes because keeping them
+    /// would exceed the per-account search-pin cap. Summed across accounts.
+    pub skipped_over_cap: usize,
+}
+
+impl SearchReport {
+    /// A fully-complete search touching nothing worth wording. The default a
+    /// provider inherits unless it reports otherwise.
+    pub fn complete() -> Self {
+        Self {
+            status: SearchReportStatus::Complete,
+            unsynced_mailboxes: 0,
+            skipped_over_cap: 0,
+        }
+    }
+
+    /// Combine this account's report with another's for a unified search over
+    /// several accounts. Counts SUM; the status takes the most-severe of the
+    /// two by [`SearchReportStatus::severity`] (a reason-carrying status keeps
+    /// ALL reasons, concatenated in account order), so one account's partial
+    /// or skipped outcome is never hidden by another's `Complete`. Commutative
+    /// in counts; status order follows the fold order (account iteration
+    /// order) when two statuses tie on severity.
+    pub fn combine(self, other: SearchReport) -> SearchReport {
+        let unsynced_mailboxes = self.unsynced_mailboxes + other.unsynced_mailboxes;
+        let skipped_over_cap = self.skipped_over_cap + other.skipped_over_cap;
+        let status = SearchReportStatus::combine(self.status, other.status);
+        SearchReport {
+            status,
+            unsynced_mailboxes,
+            skipped_over_cap,
+        }
+    }
+}
+
+/// The outcome of one server search, as a typed code the UI words.
+///
+/// Severity order (least → most, for the multi-account combine): `Complete` <
+/// `Partial` < `NoServerMatches` < `Skipped`. `Skipped` wins because it means
+/// "only locally-synced mail is shown" — the strongest caveat; `NoServerMatches`
+/// outranks `Partial` because, when it survives to the UI (only when the local
+/// result is empty too), it is a definite "nothing by that name" the user must
+/// see over a partial-coverage note.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SearchReportStatus {
+    /// Every planned mailbox was searched to completion.
+    Complete,
+    /// The search ran but did not cover everything (deadline, server budget,
+    /// or a single mailbox erroring). Carries one or more typed reasons.
+    Partial { reasons: Vec<PartialSearchReason> },
+    /// No server search ran: a term the server cannot honestly evaluate. Only
+    /// locally-synced mail is shown. Carries one or more typed reasons.
+    Skipped { reasons: Vec<SkipSearchReason> },
+    /// The server proved the answer is empty (an unknown folder/label by that
+    /// name). The UI shows this only when the local result is also empty.
+    NoServerMatches { reason: NoMatchSearchReason },
+}
+
+impl SearchReportStatus {
+    /// Severity rank for the multi-account combine (higher wins).
+    fn severity(&self) -> u8 {
+        match self {
+            SearchReportStatus::Complete => 0,
+            SearchReportStatus::Partial { .. } => 1,
+            SearchReportStatus::NoServerMatches { .. } => 2,
+            SearchReportStatus::Skipped { .. } => 3,
+        }
+    }
+
+    /// Fold two statuses: keep the more severe; when both are the SAME
+    /// reason-carrying variant, concatenate their reasons (so two accounts can
+    /// each contribute a partial reason). A `NoServerMatches` tie keeps the
+    /// first (`self`) — a single reason suffices for the UI's one-line note.
+    fn combine(self, other: SearchReportStatus) -> SearchReportStatus {
+        use SearchReportStatus::*;
+        match (self, other) {
+            (Partial { mut reasons }, Partial { reasons: more }) => {
+                reasons.extend(more);
+                Partial { reasons }
+            }
+            (Skipped { mut reasons }, Skipped { reasons: more }) => {
+                reasons.extend(more);
+                Skipped { reasons }
+            }
+            (a, b) => {
+                if b.severity() > a.severity() {
+                    b
+                } else {
+                    a
+                }
+            }
+        }
+    }
+}
+
+/// Why a search returned fewer results than a full scan would. A typed code,
+/// no developer strings or wire names reach the UI.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "code", rename_all = "camelCase")]
+pub enum PartialSearchReason {
+    /// A wall-clock deadline expired before every planned mailbox ran.
+    Deadline,
+    /// A server-side result budget was reached; older matches were not fetched.
+    Budget,
+    /// A single folder errored mid-search; the rest were returned.
+    FolderError,
+}
+
+/// Why a server search was skipped entirely (a term the server cannot honestly
+/// evaluate). A typed code; the user's query is NEVER echoed back.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "code", rename_all = "camelCase")]
+pub enum SkipSearchReason {
+    /// A syntax/term the server cannot search for (negation, `OR`, an unknown
+    /// operator, invalid characters, an over-limit value, an empty query, a
+    /// cross-mailbox combination, no label storage). All collapse to this one
+    /// user-facing code: the UI tells the user only that the search fell back
+    /// to local mail, never the internal reason or their query text.
+    Unsupported,
+}
+
+/// Why the server proved there are no matches. A typed code.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "code", rename_all = "camelCase")]
+pub enum NoMatchSearchReason {
+    /// No folder or label by that name exists on the server.
+    UnknownName,
+}
+
 /// One round of incremental change detection.
 ///
 /// `more` drives the caller's paging loop; the paging position itself is
@@ -318,6 +465,22 @@ pub trait MailSync: Send + Sync {
             "server-side search is not supported by this provider".into(),
         ))
     }
+
+    /// Server-side search that also reports WHAT the search could do (Phase 5
+    /// run 5), so the caller can word the UI without branching on provider
+    /// kind. The default runs [`MailSync::search`] and reports
+    /// [`SearchReport::complete`]: a provider that cannot describe partial /
+    /// skipped outcomes (Gmail) stays byte-identical in behaviour and always
+    /// reports `Complete`. IMAP overrides this to map its rich outcome. A
+    /// provider error is still an `Err`, exactly as [`MailSync::search`].
+    async fn search_with_report(
+        &self,
+        query: &str,
+        page: Option<&str>,
+    ) -> ProviderResult<(ThreadPage, SearchReport)> {
+        let page = self.search(query, page).await?;
+        Ok((page, SearchReport::complete()))
+    }
 }
 
 /// On-demand reads of a single item, for the parts of the UI that reach past
@@ -477,5 +640,204 @@ mod sending_identity_default_tests {
             got,
             vec![SendingIdentity { address: "me@example.com".into(), display_name: None }]
         );
+    }
+}
+
+
+/// Phase 5 run 5: the provider-neutral `SearchReport` combining rule for a
+/// unified search over several accounts, and the `search_with_report` DEFAULT
+/// (a provider that cannot describe partial/skip outcomes always reports
+/// `Complete` and stays byte-identical to its `search`).
+#[cfg(test)]
+mod search_report_tests {
+    use super::*;
+
+    fn partial(reason: PartialSearchReason) -> SearchReportStatus {
+        SearchReportStatus::Partial {
+            reasons: vec![reason],
+        }
+    }
+
+    #[test]
+    fn complete_combined_with_complete_is_complete() {
+        let got = SearchReport::complete().combine(SearchReport::complete());
+        assert_eq!(got.status, SearchReportStatus::Complete);
+        assert_eq!(got.unsynced_mailboxes, 0);
+        assert_eq!(got.skipped_over_cap, 0);
+    }
+
+    #[test]
+    fn counts_sum_across_accounts() {
+        let a = SearchReport {
+            status: SearchReportStatus::Complete,
+            unsynced_mailboxes: 2,
+            skipped_over_cap: 3,
+        };
+        let b = SearchReport {
+            status: SearchReportStatus::Complete,
+            unsynced_mailboxes: 1,
+            skipped_over_cap: 4,
+        };
+        let got = a.combine(b);
+        assert_eq!(got.unsynced_mailboxes, 3);
+        assert_eq!(got.skipped_over_cap, 7);
+    }
+
+    #[test]
+    fn a_partial_account_is_not_masked_by_a_complete_one() {
+        let complete = SearchReport::complete();
+        let partial_report = SearchReport {
+            status: partial(PartialSearchReason::Deadline),
+            unsynced_mailboxes: 0,
+            skipped_over_cap: 0,
+        };
+        // Either fold order yields the partial status.
+        assert_eq!(
+            complete.clone().combine(partial_report.clone()).status,
+            partial(PartialSearchReason::Deadline)
+        );
+        assert_eq!(
+            partial_report.combine(complete).status,
+            partial(PartialSearchReason::Deadline)
+        );
+    }
+
+    #[test]
+    fn skipped_outranks_everything() {
+        let skipped = SearchReport {
+            status: SearchReportStatus::Skipped {
+                reasons: vec![SkipSearchReason::Unsupported],
+            },
+            unsynced_mailboxes: 0,
+            skipped_over_cap: 0,
+        };
+        for other in [
+            SearchReportStatus::Complete,
+            partial(PartialSearchReason::Budget),
+            SearchReportStatus::NoServerMatches {
+                reason: NoMatchSearchReason::UnknownName,
+            },
+        ] {
+            let combined = skipped.clone().combine(SearchReport {
+                status: other,
+                unsynced_mailboxes: 0,
+                skipped_over_cap: 0,
+            });
+            assert_eq!(
+                combined.status,
+                SearchReportStatus::Skipped {
+                    reasons: vec![SkipSearchReason::Unsupported]
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn no_server_matches_outranks_partial_but_not_skipped() {
+        let no_match = SearchReportStatus::NoServerMatches {
+            reason: NoMatchSearchReason::UnknownName,
+        };
+        let a = SearchReport {
+            status: no_match.clone(),
+            unsynced_mailboxes: 0,
+            skipped_over_cap: 0,
+        };
+        let b = SearchReport {
+            status: partial(PartialSearchReason::Deadline),
+            unsynced_mailboxes: 0,
+            skipped_over_cap: 0,
+        };
+        assert_eq!(a.combine(b).status, no_match);
+    }
+
+    #[test]
+    fn two_partial_accounts_concatenate_their_reasons() {
+        let a = SearchReport {
+            status: partial(PartialSearchReason::Deadline),
+            unsynced_mailboxes: 0,
+            skipped_over_cap: 0,
+        };
+        let b = SearchReport {
+            status: partial(PartialSearchReason::Budget),
+            unsynced_mailboxes: 0,
+            skipped_over_cap: 0,
+        };
+        assert_eq!(
+            a.combine(b).status,
+            SearchReportStatus::Partial {
+                reasons: vec![PartialSearchReason::Deadline, PartialSearchReason::Budget],
+            }
+        );
+    }
+
+    /// A provider that only implements `search` (never overriding
+    /// `search_with_report`) inherits the default: the page is byte-identical
+    /// to its `search`, and the report is always `Complete`. This is the Gmail
+    /// contract (its 50-thread scan limit stays unreported).
+    struct DefaultSearchProvider {
+        ids: Vec<String>,
+    }
+
+    #[async_trait]
+    impl MailSync for DefaultSearchProvider {
+        async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
+            unreachable!()
+        }
+        async fn poll(&self, _cursor: &SyncCursor) -> ProviderResult<SyncBatch> {
+            unreachable!()
+        }
+        async fn list_inbox(&self, _page: Option<&str>) -> ProviderResult<ThreadPage> {
+            unreachable!()
+        }
+        async fn fetch_thread(&self, _id: &str) -> ProviderResult<Vec<RawMessage>> {
+            unreachable!()
+        }
+        async fn search(&self, _query: &str, _page: Option<&str>) -> ProviderResult<ThreadPage> {
+            Ok(ThreadPage {
+                thread_ids: self.ids.clone(),
+                next: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn the_default_report_is_complete_and_the_page_is_unchanged() {
+        let provider = DefaultSearchProvider {
+            ids: vec!["t1".into(), "t2".into()],
+        };
+        let (page, report) = provider.search_with_report("anything", None).await.unwrap();
+        let plain = provider.search("anything", None).await.unwrap();
+        assert_eq!(page.thread_ids, plain.thread_ids);
+        assert_eq!(page.thread_ids, vec!["t1".to_string(), "t2".to_string()]);
+        assert_eq!(report, SearchReport::complete());
+    }
+
+    /// A provider error from the default path still propagates as `Err`,
+    /// exactly as `search` — the UI's "unavailable" state is unchanged.
+    struct ErroringProvider;
+
+    #[async_trait]
+    impl MailSync for ErroringProvider {
+        async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
+            unreachable!()
+        }
+        async fn poll(&self, _cursor: &SyncCursor) -> ProviderResult<SyncBatch> {
+            unreachable!()
+        }
+        async fn list_inbox(&self, _page: Option<&str>) -> ProviderResult<ThreadPage> {
+            unreachable!()
+        }
+        async fn fetch_thread(&self, _id: &str) -> ProviderResult<Vec<RawMessage>> {
+            unreachable!()
+        }
+        async fn search(&self, _query: &str, _page: Option<&str>) -> ProviderResult<ThreadPage> {
+            Err(ProviderError::TransientTransport("offline".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_provider_error_still_propagates_from_the_report_path() {
+        let got = ErroringProvider.search_with_report("q", None).await;
+        assert!(matches!(got, Err(ProviderError::TransientTransport(_))));
     }
 }

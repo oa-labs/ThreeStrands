@@ -1326,21 +1326,32 @@ async fn backfill_search_threads(
     query: String,
     account_id: Option<String>,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> Result<crate::provider::SearchReport, String> {
     if query.trim().is_empty() {
-        return Ok(());
+        return Ok(crate::provider::SearchReport::complete());
     }
 
     let services = sync_services(&state, account_id.as_deref()).await;
 
+    // Combining rule for a unified search over several accounts (Phase 5 run
+    // 5): fold every account's report together with `SearchReport::combine` —
+    // counts SUM, and the status takes the most-severe across accounts
+    // (Complete < Partial < NoServerMatches < Skipped), keeping ALL partial /
+    // skip reasons. So if any one account only managed a partial or skipped
+    // search, the unified result says so rather than being masked by another
+    // account's clean `Complete`. A provider ERROR (one account offline) is
+    // still collected into `errors` and fails the command exactly as before —
+    // the UI's existing "unavailable" state is unchanged.
     let mut errors = Vec::new();
+    let mut report = crate::provider::SearchReport::complete();
     for service in services {
-        if let Err(error) = service.backfill_search(&query).await {
-            errors.push(error);
+        match service.backfill_search(&query).await {
+            Ok(account_report) => report = report.combine(account_report),
+            Err(error) => errors.push(error),
         }
     }
     if errors.is_empty() {
-        Ok(())
+        Ok(report)
     } else {
         Err(errors.join("\n"))
     }

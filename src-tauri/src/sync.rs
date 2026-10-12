@@ -17,7 +17,7 @@ use crate::{
         MAX_THREAD_MESSAGES,
     },
     models::{Label, SyncStatus, ThreadMutation},
-    provider::{MailMutate, MailSync, ProviderError, ProviderResult, SyncCursor},
+    provider::{MailMutate, MailSync, ProviderError, ProviderResult, SearchReport, SyncCursor},
 };
 
 /// Floor used by adaptive polling and by resume/foreground catch-up.
@@ -333,9 +333,14 @@ impl SyncService {
     /// Imports server-side search hits absent from the local cache. Existing
     /// local threads are deliberately skipped so an archived search does not
     /// turn into a costly refresh of every ordinary inbox match.
-    pub async fn backfill_search(&self, query: &str) -> Result<(), String> {
+    ///
+    /// Returns the provider's [`SearchReport`] (Phase 5 run 5) so the command
+    /// can word the UI. A no-op early return (empty query, offline, or a
+    /// provider that cannot search the server) reports `Complete`: there is
+    /// nothing to caveat.
+    pub async fn backfill_search(&self, query: &str) -> Result<SearchReport, String> {
         if query.trim().is_empty() || !self.is_connected() {
-            return Ok(());
+            return Ok(SearchReport::complete());
         }
         self.exclusive(async {
             let account_id = self.account_id();
@@ -347,7 +352,7 @@ impl SyncService {
             // look past the local index simply has nothing to contribute, so
             // asking is a guaranteed round trip to an error.
             if !provider.capabilities().server_search {
-                return Ok(());
+                return Ok(SearchReport::complete());
             }
             search_and_ingest_missing(
                 self.database.as_ref(),
@@ -360,7 +365,7 @@ impl SyncService {
             .map_err(|error| error.to_string())
         })
         .await
-        .unwrap_or(Ok(()))
+        .unwrap_or_else(|| Ok(SearchReport::complete()))
     }
 
     pub async fn create_label(&self, name: &str) -> Result<Label, String> {
@@ -828,15 +833,22 @@ async fn reconcile_and_mark(
 
 /// `pub(crate)` so the IMAP provider tests can drive the real backfill path
 /// end to end (search, then engine ingest of the returned ids).
+///
+/// Returns the provider's [`SearchReport`] (Phase 5 run 5) so the caller can
+/// word the UI. The report is taken from the FIRST `search` call (the search
+/// is one bounded page for IMAP; `next` paging exists only for Gmail, which
+/// always reports `Complete`), so a multi-page Gmail scan still reports
+/// `Complete`. An early return (empty query, zero scan limit) reports
+/// `Complete` without a round trip.
 pub(crate) async fn search_and_ingest_missing(
     database: &Database,
     account_id: &str,
     provider: &(impl MailSync + ?Sized),
     query: &str,
     scan_limit: usize,
-) -> ProviderResult<()> {
+) -> ProviderResult<SearchReport> {
     if query.trim().is_empty() || scan_limit == 0 {
-        return Ok(());
+        return Ok(SearchReport::complete());
     }
 
     let cached: HashSet<String> = database
@@ -848,8 +860,13 @@ pub(crate) async fn search_and_ingest_missing(
     let mut missing = Vec::new();
     let mut scanned = 0;
     let mut page = None;
+    let mut report = None;
     loop {
-        let result = provider.search(query, page.as_deref()).await?;
+        let (result, this_report) = provider.search_with_report(query, page.as_deref()).await?;
+        // The report describes the whole bounded search; keep the first one.
+        // (IMAP returns a single page; Gmail paginates but always reports
+        // `Complete`, so the first report is representative either way.)
+        report.get_or_insert(this_report);
         for id in result.thread_ids {
             if scanned >= scan_limit {
                 break;
@@ -865,10 +882,12 @@ pub(crate) async fn search_and_ingest_missing(
         page = result.next;
     }
 
+    let report = report.unwrap_or_else(SearchReport::complete);
     if missing.is_empty() {
-        return Ok(());
+        return Ok(report);
     }
-    ingest_threads(database, account_id, provider, missing).await
+    ingest_threads(database, account_id, provider, missing).await?;
+    Ok(report)
 }
 
 /// Imports up to [`SENT_BACKFILL_FETCHES_PER_STEP`] uncached sent threads
@@ -1794,9 +1813,15 @@ mod tests {
         search_and_ingest_missing(&database, "default", &provider, "126", 200)
             .await
             .unwrap();
-        search_and_ingest_missing(&database, "default", &provider, "126", 200)
+        let report = search_and_ingest_missing(&database, "default", &provider, "126", 200)
             .await
             .unwrap();
+        // A Gmail-shaped provider inherits the default report path: always
+        // Complete, byte-identical ingest behaviour (its scan limit stays
+        // unreported). No branching on provider kind was needed.
+        assert_eq!(report.status, crate::provider::SearchReportStatus::Complete);
+        assert_eq!(report.unsynced_mailboxes, 0);
+        assert_eq!(report.skipped_over_cap, 0);
 
         let matches = database
             .search_threads(
@@ -1812,6 +1837,43 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert!(matches[0].archived);
         assert_eq!(provider.thread_fetches.load(Ordering::SeqCst), 1);
+    }
+
+    /// Phase 5 run 5: a provider error during the backfill search still
+    /// propagates as `Err` from `search_and_ingest_missing` (the command then
+    /// surfaces the existing "unavailable" state), never a silent `Complete`.
+    #[tokio::test]
+    async fn a_search_error_propagates_from_the_backfill_path() {
+        use crate::provider::{MailSync, ProviderError, ProviderResult, SyncBatch, ThreadPage};
+
+        struct FailingSearch;
+
+        #[async_trait::async_trait]
+        impl MailSync for FailingSearch {
+            async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
+                unreachable!()
+            }
+            async fn poll(&self, _cursor: &SyncCursor) -> ProviderResult<SyncBatch> {
+                unreachable!()
+            }
+            async fn list_inbox(&self, _page: Option<&str>) -> ProviderResult<ThreadPage> {
+                unreachable!()
+            }
+            async fn fetch_thread(&self, _id: &str) -> ProviderResult<Vec<RawMessage>> {
+                unreachable!()
+            }
+            async fn search(
+                &self,
+                _query: &str,
+                _page: Option<&str>,
+            ) -> ProviderResult<ThreadPage> {
+                Err(ProviderError::TransientTransport("offline".into()))
+            }
+        }
+
+        let database = Database::open_memory();
+        let got = search_and_ingest_missing(&database, "default", &FailingSearch, "126", 200).await;
+        assert!(matches!(got, Err(ProviderError::TransientTransport(_))));
     }
 
     #[tokio::test]

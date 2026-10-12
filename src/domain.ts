@@ -584,6 +584,35 @@ export type SearchThreadsRequest = {
   includeArchived?: boolean;
 };
 
+// Phase 5 run 5: what a server search was able to do, carried out of the
+// backend as typed CODES (never developer strings, mailbox wire names, or the
+// user's query). The UI maps these codes to copy in `searchStatusCopy.ts`, so
+// the exact wording is testable in vitest. Mirrors the Rust `SearchReport`
+// serde shape (camelCase; `status` is internally tagged on `kind`, each reason
+// tagged on `code`).
+export type PartialSearchReason =
+  | { code: "deadline" }
+  | { code: "budget" }
+  | { code: "folderError" };
+
+export type SkipSearchReason = { code: "unsupported" };
+
+export type NoMatchSearchReason = { code: "unknownName" };
+
+export type SearchReportStatus =
+  | { kind: "complete" }
+  | { kind: "partial"; reasons: PartialSearchReason[] }
+  | { kind: "skipped"; reasons: SkipSearchReason[] }
+  | { kind: "noServerMatches"; reason: NoMatchSearchReason };
+
+export type SearchReport = {
+  status: SearchReportStatus;
+  /** Planned folders skipped because they are not synced (summed across accounts). */
+  unsyncedMailboxes: number;
+  /** Hits refused because keeping them would exceed the search-pin cap (summed). */
+  skippedOverCap: number;
+};
+
 export type ThreadMutation =
   | { kind: "archive"; threadId: string; value: boolean }
   | { kind: "trash"; threadId: string; value: boolean }

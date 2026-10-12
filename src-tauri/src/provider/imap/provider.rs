@@ -45,7 +45,8 @@ use crate::mime::RawMessage;
 use crate::models::Label;
 use crate::provider::{
     Delivery, DeliveryReceipt, LabelModel, MailFetch, MailMutate, MailProvider, MailSend,
-    MailSync, ProviderCapabilities, ProviderError, ProviderResult, SyncBatch, SyncCursor,
+    MailSync, NoMatchSearchReason, PartialSearchReason, ProviderCapabilities, ProviderError,
+    ProviderResult, SearchReport, SearchReportStatus, SkipSearchReason, SyncBatch, SyncCursor,
     ThreadPage,
 };
 
@@ -2163,6 +2164,26 @@ impl MailSync for ImapProvider {
             next: None,
         })
     }
+
+    /// IMAP's report-carrying search (Phase 5 run 5): run the rich
+    /// [`ImapProvider::search_detailed`] and map its outcome to the
+    /// provider-neutral [`SearchReport`] the UI words, WITHOUT the caller ever
+    /// branching on provider kind. A provider error still propagates as `Err`
+    /// (the UI's existing "unavailable" state), unchanged. The thread-id page
+    /// is byte-identical to [`MailSync::search`]'s (same ids, `next: None`).
+    async fn search_with_report(
+        &self,
+        query: &str,
+        page: Option<&str>,
+    ) -> ProviderResult<(ThreadPage, SearchReport)> {
+        let result = self.search_detailed(query, page).await?;
+        let report = imap_search_report(&result);
+        let page = ThreadPage {
+            thread_ids: result.thread_ids,
+            next: None,
+        };
+        Ok((page, report))
+    }
 }
 
 impl ImapProvider {
@@ -2494,6 +2515,65 @@ fn empty_search_result(
         no_matches,
         unsynced_mailboxes: Vec::new(),
         skipped_over_cap: 0,
+    }
+}
+
+/// Map one IMAP [`ImapSearchResult`] to the provider-neutral [`SearchReport`]
+/// the UI words (Phase 5 run 5). Precedence mirrors `search_detailed`'s own:
+///
+/// 1. a `Skipped` render (a term the server cannot honestly evaluate) →
+///    [`SearchReportStatus::Skipped`];
+/// 2. else a `NoServerMatches` render → [`SearchReportStatus::NoServerMatches`];
+/// 3. else a partial run (deadline / budget / a folder erroring) →
+///    [`SearchReportStatus::Partial`];
+/// 4. else [`SearchReportStatus::Complete`].
+///
+/// The internal [`search::SearchNotice`] / [`PartialReason`] detail is
+/// collapsed to the small typed codes the UI maps to copy — the user's query,
+/// mailbox wire names and developer strings never cross this boundary. The
+/// unsynced-mailbox and over-cap counts ride on the report regardless of
+/// status, so a `Complete` run that nonetheless skipped an unsynced folder is
+/// still worded.
+fn imap_search_report(result: &ImapSearchResult) -> SearchReport {
+    let unsynced_mailboxes = result.unsynced_mailboxes.len();
+    let skipped_over_cap = result.skipped_over_cap;
+
+    let status = if let Some(reasons) = &result.skipped {
+        // Every skip notice collapses to the one user-facing "unsupported"
+        // code: the UI never shows the internal reason or the query text.
+        SearchReportStatus::Skipped {
+            reasons: reasons
+                .iter()
+                .map(|_| SkipSearchReason::Unsupported)
+                .collect(),
+        }
+    } else if result.no_matches.is_some() {
+        SearchReportStatus::NoServerMatches {
+            reason: NoMatchSearchReason::UnknownName,
+        }
+    } else if let Some(partial) = &result.partial {
+        SearchReportStatus::Partial {
+            reasons: vec![partial_reason_code(partial)],
+        }
+    } else {
+        SearchReportStatus::Complete
+    };
+
+    SearchReport {
+        status,
+        unsynced_mailboxes,
+        skipped_over_cap,
+    }
+}
+
+/// Collapse a [`PartialReason`] to its UI code. The named mailbox and the
+/// error string on `MailboxError` are deliberately dropped — a wire name or a
+/// server error string must never reach the UI.
+fn partial_reason_code(partial: &PartialReason) -> PartialSearchReason {
+    match partial {
+        PartialReason::DeadlineExpired { .. } => PartialSearchReason::Deadline,
+        PartialReason::BudgetReached => PartialSearchReason::Budget,
+        PartialReason::MailboxError { .. } => PartialSearchReason::FolderError,
     }
 }
 
@@ -10608,6 +10688,189 @@ mod tests {
                 }
             }
             String::new()
+        }
+
+        // --- Phase 5 run 5: ImapSearchResult -> SearchReport mapping ----------
+        //
+        // Each IMAP search OUTCOME must map to the right provider-neutral
+        // `SearchReport` the UI words, reusing the run-4 fixtures above. The
+        // mapping function and the `search_with_report` override are proven
+        // here; the internal `SearchNotice` / `PartialReason` detail must NOT
+        // leak into the report (only the small typed codes).
+        mod report_mapping {
+            use super::*;
+            use crate::provider::{
+                NoMatchSearchReason, PartialSearchReason, SearchReportStatus, SkipSearchReason,
+            };
+
+            /// A complete search over the default set reports `Complete` with
+            /// no caveats, and `search_with_report`'s page matches `search`.
+            #[tokio::test]
+            async fn a_complete_search_reports_complete_and_byte_identical_page() {
+                let mailbox = Arc::new(Mutex::new(multi_mailbox()));
+                let (provider, _store, _opens) = counting_provider(mailbox);
+                let (page, report) = provider
+                    .search_with_report("from:someone", None)
+                    .await
+                    .expect("search");
+                let plain = provider.search("from:someone", None).await.expect("search");
+                assert_eq!(page.thread_ids, plain.thread_ids, "same ids as search()");
+                assert!(page.next.is_none());
+                assert_eq!(report.status, SearchReportStatus::Complete);
+                assert_eq!(report.unsynced_mailboxes, 0);
+                assert_eq!(report.skipped_over_cap, 0);
+            }
+
+            /// `-from:alice` (a negation -> Raw -> Skipped) reports `Skipped`
+            /// with the one user-facing `Unsupported` code — never the query.
+            #[tokio::test]
+            async fn a_skipped_render_reports_skipped_unsupported() {
+                let mailbox = Arc::new(Mutex::new(multi_mailbox()));
+                let (provider, _store, opens) = counting_provider(mailbox);
+                let (page, report) = provider
+                    .search_with_report("-from:alice", None)
+                    .await
+                    .unwrap();
+                assert!(page.thread_ids.is_empty());
+                assert_eq!(
+                    report.status,
+                    SearchReportStatus::Skipped {
+                        reasons: vec![SkipSearchReason::Unsupported]
+                    }
+                );
+                assert_eq!(
+                    opens.load(Ordering::SeqCst),
+                    0,
+                    "a skipped render still makes no network call under the report path"
+                );
+            }
+
+            /// `in:nowhere` (an unknown mailbox -> NoServerMatches) reports
+            /// `NoServerMatches { UnknownName }`.
+            #[tokio::test]
+            async fn a_no_server_matches_render_reports_unknown_name() {
+                let mailbox = Arc::new(Mutex::new(multi_mailbox()));
+                let (provider, _store, _opens) = counting_provider(mailbox);
+                let (_page, report) = provider
+                    .search_with_report("in:nowhere from:a", None)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    report.status,
+                    SearchReportStatus::NoServerMatches {
+                        reason: NoMatchSearchReason::UnknownName
+                    }
+                );
+            }
+
+            /// A zero deadline reports `Partial { Deadline }`.
+            #[tokio::test(start_paused = true)]
+            async fn a_deadline_partial_reports_partial_deadline() {
+                let mailbox = Arc::new(Mutex::new(multi_mailbox()));
+                let (mut provider, _store, _opens) = counting_provider(mailbox);
+                provider.search_deadline_override = Some(std::time::Duration::ZERO);
+                let (_page, report) =
+                    provider.search_with_report("from:someone", None).await.unwrap();
+                assert_eq!(
+                    report.status,
+                    SearchReportStatus::Partial {
+                        reasons: vec![PartialSearchReason::Deadline]
+                    }
+                );
+            }
+
+            /// Hits above the acquire budget report `Partial { Budget }`.
+            #[tokio::test]
+            async fn a_budget_partial_reports_partial_budget() {
+                use super::super::super::policy::MAX_SEARCH_ACQUIRE;
+                let mut mb = FakeMailbox::new(100);
+                for i in 0..(MAX_SEARCH_ACQUIRE + 5) {
+                    mb.add_to(
+                        "Archive",
+                        50,
+                        &["\\Seen"],
+                        &message(&format!("<a{i}@x>"), &format!("m{i}"), ""),
+                    );
+                }
+                let (provider, _store, _opens) = counting_provider(Arc::new(Mutex::new(mb)));
+                let (_page, report) =
+                    provider.search_with_report("in:archive from:a", None).await.unwrap();
+                assert_eq!(
+                    report.status,
+                    SearchReportStatus::Partial {
+                        reasons: vec![PartialSearchReason::Budget]
+                    }
+                );
+            }
+
+            /// A mapped partial from a FOLDER error drops the mailbox name and
+            /// error string: only the `FolderError` code reaches the report.
+            #[tokio::test]
+            async fn a_folder_error_partial_reports_folder_error_without_the_name() {
+                let mut mb = multi_mailbox();
+                mb.folder("Archive", 50).examine_fails = true;
+                let (provider, _store, _opens) = counting_provider(Arc::new(Mutex::new(mb)));
+                let (_page, report) =
+                    provider.search_with_report("from:someone", None).await.unwrap();
+                assert_eq!(
+                    report.status,
+                    SearchReportStatus::Partial {
+                        reasons: vec![PartialSearchReason::FolderError]
+                    }
+                );
+            }
+
+            /// An unsynced planned mailbox is COUNTED on the report regardless
+            /// of status (here the run is otherwise complete).
+            #[tokio::test]
+            async fn an_unsynced_mailbox_is_counted_on_the_report() {
+                let mailbox = Arc::new(Mutex::new(multi_mailbox()));
+                let (provider, _store, _opens) = counting_provider(mailbox);
+                let mut plan = provider.build_sync_plan().unwrap();
+                for entry in plan.entries.iter_mut() {
+                    if entry.mailbox == "Archive" {
+                        entry.synced_now = false;
+                    }
+                }
+                let search_plan = super::super::super::search::ImapSearchPlan {
+                    mailboxes: vec!["INBOX".into(), "Archive".into(), "Sent".into()],
+                    criteria: "CHARSET UTF-8 FROM \"someone\"".into(),
+                    local_filters: Vec::new(),
+                };
+                let result = provider.run_search_plan(&plan, search_plan).await.unwrap();
+                let report = super::super::imap_search_report(&result);
+                assert_eq!(report.unsynced_mailboxes, 1, "Archive counted unsynced");
+                assert_eq!(report.status, SearchReportStatus::Complete);
+            }
+
+            /// The report survives the whole backfill path:
+            /// `search_and_ingest_missing` returns the IMAP provider's report.
+            #[tokio::test]
+            async fn the_report_survives_search_and_ingest_missing() {
+                let mailbox = Arc::new(Mutex::new(multi_mailbox()));
+                let (provider, store, _opens) = counting_provider(mailbox);
+                let db = store.database();
+                crate::sync::sync_with(db.as_ref(), "me@example.com", &provider)
+                    .await
+                    .unwrap();
+                // A skipped render: the report must carry Skipped through
+                // search_and_ingest_missing.
+                let report = crate::sync::search_and_ingest_missing(
+                    db.as_ref(),
+                    "me@example.com",
+                    &provider,
+                    "-from:alice",
+                    50,
+                )
+                .await
+                .expect("backfill");
+                assert_eq!(
+                    report.status,
+                    SearchReportStatus::Skipped {
+                        reasons: vec![SkipSearchReason::Unsupported]
+                    }
+                );
+            }
         }
     }
 }
