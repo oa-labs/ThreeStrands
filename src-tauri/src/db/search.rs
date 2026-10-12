@@ -7,8 +7,8 @@ use crate::db::DatabaseError;
 use crate::mime::{normalize, readable_body_text, RawMessage};
 use crate::models::{SearchThreadsRequest, Thread};
 use crate::search_query::{
-    check_local_search_limits, DateBound, LocalSearchPlan, MessageState, QueryTerm,
-    StructuredLocalSearch,
+    check_local_search_limits, default_archived_trashed_filter, DateBound, DefaultFilter,
+    LocalSearchPlan, MessageState, QueryTerm, StructuredLocalSearch,
 };
 use rusqlite::{params, types::Value, OptionalExtension};
 
@@ -16,13 +16,14 @@ impl Database {
     /// `account_id` merges every account when `None` — the unified inbox —
     /// or scopes to just that account when set, same as [`Self::list_threads`].
     ///
-    /// Phase 5 run 2a: a query that contains at least one recognised operator
-    /// (`from:`/`to:`/`subject:`/`before:`/`after:`/`is:`/`has:attachment`) and
-    /// no `Raw`/`label:`/`in:` term takes the OPERATOR-AWARE structured path
-    /// ([`Self::structured_search_threads`]); every other query — free text
-    /// only, anything with unmodelled syntax, and any `label:`/`in:` query —
-    /// takes the unchanged legacy FTS path below, byte-identical to before this
-    /// run. The decision is the pure [`LocalSearchPlan`] in `search_query.rs`.
+    /// Phase 5: a query that contains at least one recognised operator
+    /// (`from:`/`to:`/`subject:`/`before:`/`after:`/`is:`/`has:attachment`/
+    /// `label:`/`in:`) and no `Raw` term takes the OPERATOR-AWARE structured
+    /// path ([`Self::structured_search_threads`]); every other query — free
+    /// text only, and anything with unmodelled syntax (negation, `OR`,
+    /// parentheses, an empty `label:`/`in:`) — takes the unchanged legacy FTS
+    /// path below, byte-identical to before. The decision is the pure
+    /// [`LocalSearchPlan`] in `search_query.rs`.
     pub fn search_threads(
         &self,
         request: &SearchThreadsRequest,
@@ -193,9 +194,31 @@ impl Database {
                     QueryTerm::HasAttachment => {
                         predicates.push("t.has_attachments = 1".to_string());
                     }
-                    // Unreachable: a Raw/Label/In term would have routed to
-                    // legacy. Listed so a new term fails to compile here.
-                    QueryTerm::Label(_) | QueryTerm::In(_) | QueryTerm::Raw(_) => {
+                    QueryTerm::Label(value) => {
+                        // Resolve a label NAME to the ids in `t.labels_json`
+                        // through the per-account cache. See `label_name_sql`.
+                        // The fragment has TWO placeholders (exact name and
+                        // hyphen-folded name), so NAME is bound twice.
+                        binds.push(Value::Text(value.clone()));
+                        binds.push(Value::Text(value.clone()));
+                        predicates.push(label_name_sql());
+                    }
+                    QueryTerm::In(value) => {
+                        // A fixed set of system LOCATION words resolves without
+                        // the cache (system ids are provider-neutral); any
+                        // other value resolves exactly like a label NAME.
+                        match system_location_predicate(value) {
+                            Some(predicate) => predicates.push(predicate),
+                            None => {
+                                binds.push(Value::Text(value.clone()));
+                                binds.push(Value::Text(value.clone()));
+                                predicates.push(label_name_sql());
+                            }
+                        }
+                    }
+                    // Unreachable: a Raw term would have routed to legacy.
+                    // Listed so a new term fails to compile here.
+                    QueryTerm::Raw(_) => {
                         return Err(DatabaseError::invalid(
                             "internal: non-structured term reached the structured path",
                         ));
@@ -203,8 +226,21 @@ impl Database {
                 }
             }
 
-            if !request.include_archived.unwrap_or(false) {
-                predicates.push("t.archived = 0 AND t.trashed = 0".to_string());
+            // The archived/trashed default exclusion, relaxed for a query that
+            // names a location (`label:`/`in:`). Computed by the pure
+            // `default_archived_trashed_filter`; see its rules.
+            let DefaultFilter {
+                exclude_archived,
+                exclude_trashed,
+            } = default_archived_trashed_filter(
+                &plan.terms,
+                request.include_archived.unwrap_or(false),
+            );
+            if exclude_archived {
+                predicates.push("t.archived = 0".to_string());
+            }
+            if exclude_trashed {
+                predicates.push("t.trashed = 0".to_string());
             }
             if let Some(id) = account_id {
                 binds.push(Value::Text(id.to_string()));
@@ -353,6 +389,75 @@ fn map_thread_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
         summary_revision: row.get(16)?,
         match_snippet: row.get(17)?,
     })
+}
+
+/// The SQL predicate that matches a thread whose `labels_json` holds any id
+/// that is a label of the THREAD'S OWN account whose cached `name` equals the
+/// bound NAME. Two placeholders: the first matches the name exactly, the
+/// second lets a hyphen form (`label:my-label`) find a spaced name ("My
+/// Label") — Gmail users type labels with hyphens for spaces. The CALLER binds
+/// NAME to BOTH placeholders (two pushes), in order.
+///
+/// Matching is `COLLATE NOCASE`, i.e. ASCII case-insensitive ONLY (`a`==`A`,
+/// but `é`/`É` are distinct) — the same limitation as the rest of the
+/// structured path and `label_ids_named`. The comparison is `=`/NOCASE, not
+/// `LIKE`, so SQL wildcards (`%`, `_`) and quotes in the name are matched
+/// LITERALLY, never as patterns. Several labels sharing a name are all
+/// accepted. A name nobody has yields an empty `EXISTS` — no match, not an
+/// error. `EXISTS` (not a JOIN) so a thread matching through several labels is
+/// returned ONCE.
+///
+/// CACHE CAVEAT: resolution is only as good as the `account_labels` cache. If
+/// the cache for an account is empty or stale, `label:` and non-system `in:`
+/// find NOTHING for that account. That is expected until the frontend's label
+/// listing has run once for the account (it warms every connected account at
+/// startup). This is a rebuildable cache, not a source of truth; there is
+/// deliberately no provider call or migration here to work around a cold
+/// cache.
+fn label_name_sql() -> String {
+    "EXISTS (SELECT 1 FROM account_labels al, json_each(t.labels_json) j \
+     WHERE al.account_id = t.account_id AND al.label_id = j.value \
+     AND (al.name = ? COLLATE NOCASE OR replace(al.name, ' ', '-') = ? COLLATE NOCASE))"
+        .to_string()
+}
+
+/// Matches a thread whose `labels_json` holds the system label id `id`. `id`
+/// is a hard-coded CONSTANT (never user text), so it is safe to inline into
+/// the SQL — it binds no parameter and is not a `LIKE` pattern.
+fn thread_has_system_id(id: &str) -> String {
+    format!("EXISTS (SELECT 1 FROM json_each(t.labels_json) j WHERE j.value = '{id}')")
+}
+
+/// The predicate for a system `in:` LOCATION word, or `None` when the value is
+/// not a system word (the caller then resolves it through the label cache like
+/// a `label:` NAME). Case-insensitive on the word. These resolve WITHOUT the
+/// cache because system ids are the same on every provider, so `in:inbox`,
+/// `in:sent`, `in:trash`, `in:spam`/`junk`, `in:archive` and `in:anywhere`
+/// work offline and with an empty cache.
+///
+/// `archive` is defined BY EXCLUSION (archived, not trashed, not spam): an
+/// IMAP Archive mailbox contributes no label of its own, so an archived thread
+/// cannot be told apart from other non-inbox mail by a positive id — it is
+/// simply mail that is out of the inbox but not in trash or spam.
+///
+/// `anywhere` carries no predicate; the breadth it needs comes from the
+/// default archived/trashed filter being fully relaxed for it (see
+/// `default_archived_trashed_filter`).
+fn system_location_predicate(value: &str) -> Option<String> {
+    let word = value.to_ascii_lowercase();
+    match word.as_str() {
+        "inbox" => Some(thread_has_system_id("INBOX")),
+        "sent" => Some(thread_has_system_id("SENT")),
+        "trash" => Some("t.trashed = 1".to_string()),
+        "spam" | "junk" => Some(thread_has_system_id("SPAM")),
+        "archive" => Some(format!(
+            "t.archived = 1 AND t.trashed = 0 AND NOT {}",
+            thread_has_system_id("SPAM")
+        )),
+        // No positive predicate; the relaxed default filter does the work.
+        "anywhere" => Some("1 = 1".to_string()),
+        _ => None,
+    }
 }
 
 /// Rewrites sequential anonymous `?` placeholders into positional `?1`, `?2`,

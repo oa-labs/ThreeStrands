@@ -12,9 +12,11 @@
 //! from `list_labels` and the `SyncService` label mutations. It is a
 //! rebuildable cache: it is deliberately NOT part of the encrypted settings
 //! export and NOT replicated by sync (losing it only forces a re-fetch on the
-//! next `list_labels`). Run 2b-2 will add the `label:` / `in:` search filters
-//! that consume [`Database::label_ids_named`]; this run changes no search
-//! behaviour.
+//! next `list_labels`). Run 2b-2 added the `label:` / `in:` search filters
+//! that CONSUME this cache: the structured search path resolves a label NAME
+//! to the ids in `threads.labels_json` with an inline `EXISTS` join against
+//! `account_labels` (see `db::search::label_name_sql`), not through
+//! [`Database::label_ids_named`].
 
 use super::{Database, DbResult};
 use crate::models::Label;
@@ -136,9 +138,14 @@ impl Database {
     /// `=`/NOCASE, NOT `LIKE`, so SQL wildcards (`%`, `_`) and quotes in
     /// `name` are matched literally rather than as patterns.
     ///
-    /// This is the lookup run 2b-2 will call to resolve `label:` / `in:`.
-    // First production caller lands in run 2b-2 (`label:` / `in:` search);
-    // until then this is exercised only by this module's tests.
+    /// This mirrors the lookup `label:` / `in:` search performs, but is NOT
+    /// how production resolves them: the structured search path (run 2b-2,
+    /// `db::search::label_name_sql`) does the resolution INLINE as an `EXISTS`
+    /// join against `account_labels` within the single search query, so it
+    /// never calls this helper. It is kept — with `#[allow(dead_code)]` — as a
+    /// tested, standalone name->ids lookup for callers that need it outside a
+    /// search query; until such a caller lands it is exercised only by this
+    /// module's tests.
     #[allow(dead_code)]
     pub fn label_ids_named(&self, account_id: &str, name: &str) -> DbResult<Vec<String>> {
         self.with_connection(|connection| {

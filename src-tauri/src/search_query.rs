@@ -189,7 +189,7 @@ impl SearchQuery {
 /// provider code. Over the limit is a typed rejection, never a silent clamp or
 /// a fall back to the legacy path. Counts only the terms the structured path
 /// acts on (operators + free text), i.e. every parsed term, since a structured
-/// query by construction has no `Raw`/`Label`/`In` term.
+/// query by construction has no `Raw` term (`Label`/`In` ARE counted).
 pub const MAX_LOCAL_SEARCH_TERMS: usize = 16;
 
 /// Longest one user operator VALUE may be, in UTF-8 bytes (a `from:`, `to:`,
@@ -243,14 +243,19 @@ pub fn check_local_search_limits(plan: &StructuredLocalSearch) -> Result<(), Loc
 
 /// The decision of how a parsed query runs against the LOCAL index.
 ///
-/// This is the core routing invariant of run 2a, as a pure function so it is
+/// This is the core routing invariant, as a pure function so it is
 /// table-testable in isolation. The structured path engages iff (1) at least
 /// one term is a recognised structured operator — `From`, `To`, `Subject`,
-/// `Date`, `State` or `HasAttachment` — AND (2) NO term is `Raw`, `Label` or
-/// `In`. Everything else — free text only, any `Raw` term (negation, `OR`,
-/// parentheses, unknown operators, unparseable colons), and any `label:`/`in:`
-/// query — is [`LocalSearchPlan::Legacy`] and takes the unchanged
-/// `fts_query(raw)` path with byte-identical results to before this run.
+/// `Date`, `State`, `HasAttachment`, `Label` or `In` — AND (2) NO term is
+/// `Raw`. Everything else — free text only, and any `Raw` term (negation,
+/// `OR`, parentheses, unknown operators, unparseable colons, an empty
+/// `label:`/`in:`) — is [`LocalSearchPlan::Legacy`] and takes the unchanged
+/// `fts_query(raw)` path with byte-identical results to before.
+///
+/// Run 2b-2 promoted `Label`/`In` from blockers to structured operators: a
+/// `label:NAME` or `in:LOCATION` term is now resolved in SQL against the
+/// `account_labels` cache (and, for system locations, against the thread's own
+/// label set), so a query like `from:alice label:work` is Structured.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LocalSearchPlan {
     /// Run the pre-run-2a path unchanged on the raw query string.
@@ -262,12 +267,16 @@ pub enum LocalSearchPlan {
 impl LocalSearchPlan {
     /// Decide the plan from an already-parsed query.
     pub fn from_query(query: &SearchQuery) -> Self {
-        let has_blocker = query.terms.iter().any(|term| {
-            matches!(
-                term,
-                QueryTerm::Raw(_) | QueryTerm::Label(_) | QueryTerm::In(_)
-            )
-        });
+        // `Raw` is the ONLY blocker as of run 2b-2: a negation (`-label:work`,
+        // `-in:trash`), `OR`/`AND`, parentheses, an unknown operator or an
+        // empty `label:`/`in:` value parses to a `Raw` term and keeps the whole
+        // query on the legacy path, byte-identical to before. `Label`/`In`
+        // became locally evaluable in run 2b-2 (resolved in SQL against the
+        // `account_labels` cache), so they no longer block.
+        let has_blocker = query
+            .terms
+            .iter()
+            .any(|term| matches!(term, QueryTerm::Raw(_)));
         if has_blocker {
             return LocalSearchPlan::Legacy;
         }
@@ -280,6 +289,8 @@ impl LocalSearchPlan {
                     | QueryTerm::Date { .. }
                     | QueryTerm::State(_)
                     | QueryTerm::HasAttachment
+                    | QueryTerm::Label(_)
+                    | QueryTerm::In(_)
             )
         });
         if !has_operator {
@@ -297,8 +308,8 @@ impl LocalSearchPlan {
 }
 
 /// A query routed to the structured local path. Holds the parsed terms (every
-/// one is `From`/`To`/`Subject`/`Date`/`State`/`HasAttachment`/`FreeText` by
-/// construction — never `Raw`/`Label`/`In`, which would have routed to
+/// one is `From`/`To`/`Subject`/`Date`/`State`/`HasAttachment`/`Label`/`In`/
+/// `FreeText` by construction — never `Raw`, which would have routed to
 /// legacy). The SQL builder in `db::search` consumes this.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StructuredLocalSearch {
@@ -335,7 +346,8 @@ impl StructuredLocalSearch {
 
     /// Every user-controlled TEXT value in the query (operator values and
     /// free-text words), for the per-value byte-length limit. Dates and states
-    /// carry no free text and are excluded.
+    /// carry no free text and are excluded. `Label`/`In` values ARE
+    /// user-controlled text (run 2b-2), so they are measured too.
     pub fn text_values(&self) -> Vec<&str> {
         self.terms
             .iter()
@@ -343,11 +355,14 @@ impl StructuredLocalSearch {
                 QueryTerm::From(v)
                 | QueryTerm::To(v)
                 | QueryTerm::Subject(v)
+                | QueryTerm::Label(v)
+                | QueryTerm::In(v)
                 | QueryTerm::FreeText { text: v, .. } => Some(v.as_str()),
                 QueryTerm::Date { .. } | QueryTerm::State(_) | QueryTerm::HasAttachment => None,
-                // Unreachable for a structured plan, but handled so a new
-                // variant forces a compile error rather than a silent skip.
-                QueryTerm::Label(v) | QueryTerm::In(v) | QueryTerm::Raw(v) => Some(v.as_str()),
+                // Unreachable for a structured plan (a `Raw` term routes to
+                // legacy), but handled so a new variant forces a compile error
+                // rather than a silent skip.
+                QueryTerm::Raw(v) => Some(v.as_str()),
             })
             .collect()
     }
@@ -396,6 +411,59 @@ pub fn utc_day_start_rfc3339(date: NaiveDate) -> String {
     // Midnight UTC at the start of `date`. `and_hms_opt(0,0,0)` is always Some.
     let start = date.and_hms_opt(0, 0, 0).expect("00:00:00 is a valid time");
     chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(start, chrono::Utc).to_rfc3339()
+}
+
+/// Which halves of the default archived/trashed exclusion a structured query
+/// applies. The everyday inbox view hides archived and trashed mail; a search
+/// that names a LOCATION is explicit intent to look outside the inbox, so the
+/// structured path relaxes the default per [`default_archived_trashed_filter`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DefaultFilter {
+    /// Apply `t.archived = 0` (hide archived threads).
+    pub exclude_archived: bool,
+    /// Apply `t.trashed = 0` (hide trashed threads).
+    pub exclude_trashed: bool,
+}
+
+/// Decide which halves of the default `archived = 0 AND trashed = 0` filter a
+/// structured query keeps, from its parsed terms and the `include_archived`
+/// toggle. Pure, so it is table-tested directly.
+///
+/// Rules (run 2b-2):
+/// - `include_archived == true` keeps today's meaning: BOTH halves are
+///   dropped (the user asked to see everything).
+/// - Otherwise, if the query contains ANY `label:` or `in:` term, the
+///   `archived = 0` half is dropped: naming a location is explicit intent, and
+///   sent mail and folder mail are "archived" by the data model's definition
+///   (archived == no `INBOX` label).
+/// - The `trashed = 0` half is kept UNLESS the query has `in:trash` or
+///   `in:anywhere`. `in:spam`/`in:junk` do NOT waive it.
+/// - A query with no `label:`/`in:` term keeps BOTH halves (today's default).
+pub fn default_archived_trashed_filter(
+    terms: &[QueryTerm],
+    include_archived: bool,
+) -> DefaultFilter {
+    if include_archived {
+        return DefaultFilter {
+            exclude_archived: false,
+            exclude_trashed: false,
+        };
+    }
+    let has_label_or_in = terms
+        .iter()
+        .any(|term| matches!(term, QueryTerm::Label(_) | QueryTerm::In(_)));
+    // `in:trash` and `in:anywhere` are the only locations that reach trashed
+    // mail. Compared ASCII-case-insensitively, matching the resolution path.
+    let waives_trashed = terms.iter().any(|term| match term {
+        QueryTerm::In(value) => {
+            value.eq_ignore_ascii_case("trash") || value.eq_ignore_ascii_case("anywhere")
+        }
+        _ => false,
+    });
+    DefaultFilter {
+        exclude_archived: !has_label_or_in,
+        exclude_trashed: !waives_trashed,
+    }
 }
 
 /// Whether `candidate`, parsed on its own, yields exactly `term`.
@@ -936,7 +1004,8 @@ mod tests {
 
     #[test]
     fn routing_structured_queries_engage_the_operator_path() {
-        // At least one recognised operator and no Raw/Label/In => Structured.
+        // At least one recognised operator and no Raw => Structured.
+        // Run 2b-2: `label:`/`in:` are now recognised operators too.
         for input in [
             "from:alice",
             "From:Alice",
@@ -948,6 +1017,10 @@ mod tests {
             "after:2024-01-01",
             "is:starred",
             "from:alice is:unread budget", // combination with free text
+            "label:work",                  // 2b-2: Label is now structured
+            "in:inbox",                    // 2b-2: In is now structured
+            "from:alice label:work",       // 2b-2: operator + Label => Structured
+            "in:Clients/Acme",             // 2b-2: non-system in: via the cache
         ] {
             assert!(
                 matches!(plan(input), LocalSearchPlan::Structured(_)),
@@ -958,20 +1031,22 @@ mod tests {
 
     #[test]
     fn routing_legacy_queries_take_the_unchanged_fts_path() {
-        // Free text only, any Raw term, and any label:/in: query are legacy.
+        // Free text only and any Raw term are legacy. Run 2b-2: a `label:`/`in:`
+        // term NO LONGER forces legacy, but a Raw term (negation, OR, empty
+        // value) still does.
         for input in [
             "budget",                 // free text only
             "\"exact phrase\"",       // quoted free text only
             "foo:bar",                // unknown operator => Raw
             "10:30",                  // not an operator (field must be letters)
             "Re: meeting",            // "Re:" empty value => Raw, "meeting" free text
-            "-in:trash",              // negation => Raw
+            "-in:trash",              // negation => Raw (2b-2: still legacy)
+            "-label:work",            // negation => Raw (2b-2: still legacy)
             "from:alice OR from:bob", // contains Raw ("OR")
             "category:promotions",    // unknown operator => Raw
-            "label:work",             // Label => legacy (2b)
-            "in:inbox",               // In => legacy (2b)
-            "from:alice label:work",  // operator + Label => legacy
             "from:alice -in:trash",   // operator + Raw => legacy
+            "label:",                 // empty value => Raw => legacy
+            "in:",                    // empty value => Raw => legacy
             "from:(a b)",             // grouped => two Raw terms
             "from:",                  // empty value => Raw
             "",                       // nothing => legacy
@@ -1085,6 +1160,111 @@ mod tests {
     fn limit_message_is_the_plain_user_sentence() {
         assert_eq!(LocalSearchLimit::TooManyTerms.message(), "That search is too long.");
         assert_eq!(LocalSearchLimit::TermTooLong.message(), "That search is too long.");
+    }
+
+    #[test]
+    fn label_and_in_values_count_toward_the_term_and_byte_limits() {
+        // A structured plan built entirely of label:/in: terms is counted the
+        // same as operator terms.
+        let many = StructuredLocalSearch {
+            terms: (0..=MAX_LOCAL_SEARCH_TERMS)
+                .map(|i| QueryTerm::Label(format!("l{i}")))
+                .collect(),
+        };
+        assert_eq!(
+            check_local_search_limits(&many),
+            Err(LocalSearchLimit::TooManyTerms)
+        );
+        // A label value over the byte limit is rejected.
+        let long_label = StructuredLocalSearch {
+            terms: vec![QueryTerm::Label("a".repeat(MAX_LOCAL_SEARCH_TERM_BYTES + 1))],
+        };
+        assert_eq!(
+            check_local_search_limits(&long_label),
+            Err(LocalSearchLimit::TermTooLong)
+        );
+        // An in: value over the byte limit is rejected.
+        let long_in = StructuredLocalSearch {
+            terms: vec![QueryTerm::In("a".repeat(MAX_LOCAL_SEARCH_TERM_BYTES + 1))],
+        };
+        assert_eq!(
+            check_local_search_limits(&long_in),
+            Err(LocalSearchLimit::TermTooLong)
+        );
+        // text_values exposes the label and in values.
+        let both = StructuredLocalSearch {
+            terms: vec![
+                QueryTerm::Label("work".into()),
+                QueryTerm::In("Clients/Acme".into()),
+            ],
+        };
+        assert_eq!(both.text_values(), vec!["work", "Clients/Acme"]);
+    }
+
+    #[test]
+    fn default_filter_no_location_term_keeps_both_halves() {
+        let terms = SearchQuery::parse("from:alice is:unread").terms;
+        assert_eq!(
+            default_archived_trashed_filter(&terms, false),
+            DefaultFilter {
+                exclude_archived: true,
+                exclude_trashed: true
+            }
+        );
+    }
+
+    #[test]
+    fn default_filter_label_or_in_drops_archived_keeps_trashed() {
+        for input in ["label:work", "in:inbox", "in:sent", "in:spam", "in:junk"] {
+            let terms = SearchQuery::parse(input).terms;
+            assert_eq!(
+                default_archived_trashed_filter(&terms, false),
+                DefaultFilter {
+                    exclude_archived: false,
+                    exclude_trashed: true
+                },
+                "{input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn default_filter_in_trash_and_anywhere_drop_both_halves() {
+        for input in ["in:trash", "in:anywhere", "label:work in:trash"] {
+            let terms = SearchQuery::parse(input).terms;
+            assert_eq!(
+                default_archived_trashed_filter(&terms, false),
+                DefaultFilter {
+                    exclude_archived: false,
+                    exclude_trashed: false
+                },
+                "{input:?}"
+            );
+        }
+        // Case-insensitive on the location word.
+        let terms = SearchQuery::parse("in:TRASH").terms;
+        assert_eq!(
+            default_archived_trashed_filter(&terms, false),
+            DefaultFilter {
+                exclude_archived: false,
+                exclude_trashed: false
+            }
+        );
+    }
+
+    #[test]
+    fn default_filter_include_archived_drops_both_halves_regardless() {
+        for input in ["from:alice", "label:work", "in:spam"] {
+            let terms = SearchQuery::parse(input).terms;
+            assert_eq!(
+                default_archived_trashed_filter(&terms, true),
+                DefaultFilter {
+                    exclude_archived: false,
+                    exclude_trashed: false
+                },
+                "{input:?}"
+            );
+        }
     }
 
     #[test]

@@ -1490,3 +1490,750 @@ fn structured_to_matches_recipients_not_json_punctuation() {
         vec![tid("work", "w-alice")]
     );
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5 run 2b-2: `label:` and `in:` in the LOCAL search.
+//
+// CHARACTERISATION TESTS — these record TODAY's behaviour BEFORE the label/in
+// path lands. On the unchanged code `label:work` and `in:inbox` take the
+// LEGACY FTS path (a `Label`/`In` term is a routing blocker in run 2a), so the
+// raw string is handed to `fts_query` and becomes the adjacent-token prefix
+// phrase `"label:work"*` / `"in:inbox"*`, which matches the literal words in a
+// body and nothing useful otherwise. When the structured path lands, the
+// assertions below are FLIPPED on purpose (listed as deliberate contract
+// changes in the report).
+// ---------------------------------------------------------------------------
+
+// NOTE (run 2b-2): the two tests immediately below were written in their
+// legacy-recording form, run green on unchanged code, then flipped to the new
+// contract. The old (legacy) expectation is quoted beside each new assertion.
+
+#[test]
+fn characterisation_label_resolves_through_the_cache_now() {
+    let database = database();
+    let (work_thread, _) = label_in_fixture(&database);
+    // OLD (legacy, pre-2b-2): `label:work` was handed to fts_query as
+    // `"label:work"*` and matched nothing on this fixture (no body contains
+    // the literal token). NEW (2b-2): it resolves "Work" through
+    // `account_labels` PER ACCOUNT, so the unified search returns the Gmail
+    // thread carrying `Label_18` AND the IMAP thread carrying `lf:Work`.
+    let mut found = search_ids(&database, "label:Work");
+    found.sort();
+    let mut expected = vec![work_thread, tid("imap", "i-work")];
+    expected.sort();
+    assert_eq!(found, expected);
+}
+
+#[test]
+fn characterisation_in_inbox_resolves_the_system_id_now() {
+    let database = database();
+    label_in_fixture(&database);
+    // OLD (legacy, pre-2b-2): `in:inbox` was `"in:inbox"*` and matched nothing.
+    // NEW (2b-2): it resolves to the system id `INBOX` without the cache and
+    // returns the inbox threads.
+    let inbox = search_ids(&database, "in:inbox");
+    assert!(
+        inbox.contains(&tid("gmail", "g-inbox")) && inbox.contains(&tid("imap", "i-inbox")),
+        "in:inbox should return the inbox threads: {inbox:?}"
+    );
+}
+
+// --- run 2b-2 fixture and behavioural tests --------------------------------
+
+use crate::models::Label;
+use crate::search_query::{default_archived_trashed_filter, DefaultFilter, SearchQuery};
+
+fn label(id: &str, name: &str) -> Label {
+    Label {
+        id: id.into(),
+        name: name.into(),
+        kind: "user".into(),
+    }
+}
+
+/// A labelled fixture across a Gmail-shaped account (`gmail`, opaque ids like
+/// `Label_18` named in `account_labels`) and an IMAP-shaped account (`imap`,
+/// ids like `lf:Work` / `folder:Clients/Acme`). Seeds the label cache the way
+/// production does, with `replace_account_labels`. Returns the handles for the
+/// two user-labelled threads: (gmail work thread, imap work thread).
+fn label_in_fixture(database: &Database) -> (String, String) {
+    crate::db::test_support::clear_seed_threads(database);
+
+    // Gmail catalog: opaque id -> display name.
+    database
+        .replace_account_labels(
+            "gmail",
+            &[
+                label("Label_18", "Work"),
+                label("Label_42", "My Label"),
+                label("Label_7", "Clients/Acme"),
+            ],
+        )
+        .unwrap();
+    // IMAP catalog: the id IS derived from the folder, name is the leaf/path.
+    database
+        .replace_account_labels(
+            "imap",
+            &[
+                label("lf:Work", "Work"),
+                label("folder:Clients/Acme", "Clients/Acme"),
+            ],
+        )
+        .unwrap();
+
+    // gmail: an INBOX thread (no user label).
+    database
+        .upsert_thread(
+            "gmail",
+            &[op_message(
+                "g1", "g-inbox", "Gmail inbox", "a@example.com",
+                vec!["you@example.com"], "2024-06-01T00:00:00Z", "hello inbox",
+                vec!["INBOX"], vec![],
+            )],
+        )
+        .unwrap();
+    // gmail: an ARCHIVED thread carrying the user label `Label_18` (= "Work").
+    // No INBOX => archived = 1.
+    database
+        .upsert_thread(
+            "gmail",
+            &[op_message(
+                "g2", "g-work", "Gmail work", "a@example.com",
+                vec!["you@example.com"], "2024-06-02T00:00:00Z", "archived work thread",
+                vec!["Label_18"], vec![],
+            )],
+        )
+        .unwrap();
+    // gmail: a nested-label thread (`Label_7` = "Clients/Acme"), archived.
+    database
+        .upsert_thread(
+            "gmail",
+            &[op_message(
+                "g3", "g-acme", "Acme", "a@example.com",
+                vec!["you@example.com"], "2024-06-03T00:00:00Z", "nested label thread",
+                vec!["Label_7"], vec![],
+            )],
+        )
+        .unwrap();
+    // imap: an INBOX thread.
+    database
+        .upsert_thread(
+            "imap",
+            &[op_message(
+                "i1", "i-inbox", "Imap inbox", "b@example.com",
+                vec!["you@example.com"], "2024-06-04T00:00:00Z", "imap inbox body",
+                vec!["INBOX"], vec![],
+            )],
+        )
+        .unwrap();
+    // imap: an archived thread carrying `lf:Work` (= "Work").
+    database
+        .upsert_thread(
+            "imap",
+            &[op_message(
+                "i2", "i-work", "Imap work", "b@example.com",
+                vec!["you@example.com"], "2024-06-05T00:00:00Z", "imap work body",
+                vec!["lf:Work"], vec![],
+            )],
+        )
+        .unwrap();
+    // imap: a nested folder label `folder:Clients/Acme`.
+    database
+        .upsert_thread(
+            "imap",
+            &[op_message(
+                "i3", "i-acme", "Imap acme", "b@example.com",
+                vec!["you@example.com"], "2024-06-06T00:00:00Z", "imap acme body",
+                vec!["folder:Clients/Acme"], vec![],
+            )],
+        )
+        .unwrap();
+    // gmail: a SENT-only thread (SENT, no INBOX => archived by the data model).
+    database
+        .upsert_thread(
+            "gmail",
+            &[op_message(
+                "g4", "g-sent", "Gmail sent", "you@example.com",
+                vec!["c@example.com"], "2024-06-07T00:00:00Z", "sent only body",
+                vec!["SENT"], vec![],
+            )],
+        )
+        .unwrap();
+    // gmail: a TRASHED thread that ALSO carries the user label `Label_18`.
+    database
+        .upsert_thread(
+            "gmail",
+            &[op_message(
+                "g5", "g-trash", "Gmail trash", "a@example.com",
+                vec!["you@example.com"], "2024-06-08T00:00:00Z", "trashed work body",
+                vec!["TRASH", "Label_18"], vec![],
+            )],
+        )
+        .unwrap();
+    // gmail: a SPAM thread.
+    database
+        .upsert_thread(
+            "gmail",
+            &[op_message(
+                "g6", "g-spam", "Gmail spam", "a@example.com",
+                vec!["you@example.com"], "2024-06-09T00:00:00Z", "spam body",
+                vec!["SPAM"], vec![],
+            )],
+        )
+        .unwrap();
+
+    (tid("gmail", "g-work"), tid("imap", "i-work"))
+}
+
+#[test]
+fn label_matches_the_same_name_in_each_account_unified_and_scoped() {
+    let database = database();
+    let (gmail_work, imap_work) = label_in_fixture(&database);
+    // Unified: "Work" resolves to Label_18 in gmail AND lf:Work in imap.
+    assert_eq!(
+        ids_scoped(&database, "label:Work", None),
+        {
+            let mut v = vec![gmail_work.clone(), imap_work.clone()];
+            v.sort();
+            v
+        }
+    );
+    // Scoped to gmail: only its own thread.
+    assert_eq!(
+        ids_scoped(&database, "label:Work", Some("gmail")),
+        vec![gmail_work]
+    );
+    // Scoped to imap: only its own thread.
+    assert_eq!(
+        ids_scoped(&database, "label:Work", Some("imap")),
+        vec![imap_work]
+    );
+}
+
+#[test]
+fn label_resolves_per_account_when_the_same_id_has_different_names() {
+    let database = database();
+    crate::db::test_support::clear_seed_threads(&database);
+    // The SAME label id "shared" names "Alpha" in one account and "Beta" in the
+    // other. Resolution is per the thread's OWN account.
+    database
+        .replace_account_labels("acctA", &[label("shared", "Alpha")])
+        .unwrap();
+    database
+        .replace_account_labels("acctB", &[label("shared", "Beta")])
+        .unwrap();
+    database
+        .upsert_thread(
+            "acctA",
+            &[op_message(
+                "a1", "ta", "A", "x@example.com", vec!["y@example.com"],
+                "2024-01-01T00:00:00Z", "body", vec!["INBOX", "shared"], vec![],
+            )],
+        )
+        .unwrap();
+    database
+        .upsert_thread(
+            "acctB",
+            &[op_message(
+                "b1", "tb", "B", "x@example.com", vec!["y@example.com"],
+                "2024-01-02T00:00:00Z", "body", vec!["INBOX", "shared"], vec![],
+            )],
+        )
+        .unwrap();
+    // "Alpha" only resolves in acctA; "Beta" only in acctB — even though both
+    // threads carry the literal id "shared".
+    assert_eq!(ids_scoped(&database, "label:Alpha", None), vec![tid("acctA", "ta")]);
+    assert_eq!(ids_scoped(&database, "label:Beta", None), vec![tid("acctB", "tb")]);
+}
+
+#[test]
+fn in_non_system_value_resolves_through_the_cache_like_a_label() {
+    let database = database();
+    let database_ref = &database;
+    label_in_fixture(database_ref);
+    // in:Clients/Acme resolves the nested label in both accounts.
+    assert_eq!(
+        ids_scoped(database_ref, "in:Clients/Acme", None),
+        {
+            let mut v = vec![tid("gmail", "g-acme"), tid("imap", "i-acme")];
+            v.sort();
+            v
+        }
+    );
+}
+
+#[test]
+fn label_hyphen_and_quoted_forms_find_a_spaced_name() {
+    let database = database();
+    label_in_fixture(&database);
+    // "My Label" is Label_42 in gmail. Both the hyphen form and the quoted
+    // form must find it.
+    database
+        .upsert_thread(
+            "gmail",
+            &[op_message(
+                "gm", "g-mylabel", "ML", "a@example.com", vec!["you@example.com"],
+                "2024-06-10T00:00:00Z", "my label body", vec!["Label_42"], vec![],
+            )],
+        )
+        .unwrap();
+    assert_eq!(
+        ids_scoped(&database, "label:my-label", None),
+        vec![tid("gmail", "g-mylabel")]
+    );
+    assert_eq!(
+        ids_scoped(&database, "label:\"my label\"", None),
+        vec![tid("gmail", "g-mylabel")]
+    );
+}
+
+#[test]
+fn in_system_words_work_against_an_empty_cache() {
+    let database = database();
+    crate::db::test_support::clear_seed_threads(&database);
+    // No `replace_account_labels` at all: the cache is empty. System `in:`
+    // words must still work; cache-backed ones must return nothing (no error).
+    database
+        .upsert_thread(
+            "acct",
+            &[
+                op_message("m-in", "t-in", "In", "a@x", vec!["b@x"],
+                    "2024-01-01T00:00:00Z", "x", vec!["INBOX"], vec![]),
+            ],
+        )
+        .unwrap();
+    database
+        .upsert_thread(
+            "acct",
+            &[op_message("m-sent", "t-sent", "Sent", "me@x", vec!["b@x"],
+                "2024-01-02T00:00:00Z", "x", vec!["SENT"], vec![])],
+        )
+        .unwrap();
+    database
+        .upsert_thread(
+            "acct",
+            &[op_message("m-trash", "t-trash", "Trash", "a@x", vec!["b@x"],
+                "2024-01-03T00:00:00Z", "x", vec!["INBOX", "TRASH"], vec![])],
+        )
+        .unwrap();
+    database
+        .upsert_thread(
+            "acct",
+            &[op_message("m-spam", "t-spam", "Spam", "a@x", vec!["b@x"],
+                "2024-01-04T00:00:00Z", "x", vec!["SPAM"], vec![])],
+        )
+        .unwrap();
+    database
+        .upsert_thread(
+            "acct",
+            &[op_message("m-arch", "t-arch", "Arch", "a@x", vec!["b@x"],
+                "2024-01-05T00:00:00Z", "x", vec!["Label_X"], vec![])],
+        )
+        .unwrap();
+
+    assert_eq!(ids_scoped(&database, "in:inbox", None), vec![tid("acct", "t-in")]);
+    assert_eq!(ids_scoped(&database, "in:sent", None), vec![tid("acct", "t-sent")]);
+    assert_eq!(ids_scoped(&database, "in:trash", None), vec![tid("acct", "t-trash")]);
+    assert_eq!(ids_scoped(&database, "in:spam", None), vec![tid("acct", "t-spam")]);
+    // archive = archived and not trashed and not spam, i.e. defined by
+    // exclusion. t-arch (a user label, no INBOX) qualifies, and so does the
+    // sent-only thread: it is out of the inbox, not trashed and not spam, and
+    // an IMAP Archive mailbox adds no label that could tell the two apart.
+    assert_eq!(
+        ids_scoped(&database, "in:archive", None),
+        vec![tid("acct", "t-arch"), tid("acct", "t-sent")]
+    );
+    // Cache-backed lookups find nothing (empty cache) and do NOT error.
+    assert!(ids_scoped(&database, "label:work", None).is_empty());
+    assert!(ids_scoped(&database, "in:Clients/Acme", None).is_empty());
+}
+
+#[test]
+fn in_junk_is_an_alias_for_spam() {
+    let database = database();
+    label_in_fixture(&database);
+    assert_eq!(ids_scoped(&database, "in:junk", None), vec![tid("gmail", "g-spam")]);
+    assert_eq!(ids_scoped(&database, "in:spam", None), vec![tid("gmail", "g-spam")]);
+}
+
+#[test]
+fn in_sent_returns_a_sent_thread_the_default_view_hides() {
+    let database = database();
+    label_in_fixture(&database);
+    // The sent-only thread is archived (no INBOX). in:sent drops the archived
+    // half of the default filter, so it is returned.
+    assert_eq!(ids_scoped(&database, "in:sent", None), vec![tid("gmail", "g-sent")]);
+}
+
+#[test]
+fn label_returns_an_archived_labelled_thread_but_hides_the_trashed_one() {
+    let database = database();
+    let (gmail_work, imap_work) = label_in_fixture(&database);
+    // label:Work drops the archived half (so the archived g-work and i-work
+    // show) but KEEPS the trashed half (so the trashed g-trash is hidden).
+    assert_eq!(
+        ids_scoped(&database, "label:Work", None),
+        {
+            let mut v = vec![gmail_work, imap_work];
+            v.sort();
+            v
+        }
+    );
+}
+
+#[test]
+fn in_trash_reveals_the_trashed_labelled_thread() {
+    let database = database();
+    label_in_fixture(&database);
+    // `in:trash label:Work` ANDs the two: only the trashed thread that also
+    // carries the Work label.
+    assert_eq!(
+        ids_scoped(&database, "in:trash label:Work", None),
+        vec![tid("gmail", "g-trash")]
+    );
+}
+
+#[test]
+fn in_anywhere_shows_both_archived_and_trashed() {
+    let database = database();
+    label_in_fixture(&database);
+    // `in:anywhere label:Work` shows the archived AND the trashed Work threads.
+    let mut got = ids_scoped(&database, "in:anywhere label:Work", None);
+    got.sort();
+    let mut want = vec![
+        tid("gmail", "g-work"),
+        tid("gmail", "g-trash"),
+        tid("imap", "i-work"),
+    ];
+    want.sort();
+    assert_eq!(got, want);
+}
+
+#[test]
+fn include_archived_true_drops_both_halves_unchanged() {
+    let database = database();
+    label_in_fixture(&database);
+    // With include_archived, label:Work returns the archived AND trashed Work
+    // threads, same meaning as before this run for the archived/trashed toggle.
+    let mut got = database
+        .search_threads(
+            &SearchThreadsRequest {
+                query: "label:Work".into(),
+                limit: None,
+                offset: None,
+                include_archived: Some(true),
+            },
+            None,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|t| t.id)
+        .collect::<Vec<_>>();
+    got.sort();
+    let mut want = vec![tid("gmail", "g-work"), tid("gmail", "g-trash"), tid("imap", "i-work")];
+    want.sort();
+    assert_eq!(got, want);
+}
+
+#[test]
+fn root_only_rule_for_a_user_label_that_a_later_message_adds() {
+    let database = database();
+    crate::db::test_support::clear_seed_threads(&database);
+    database
+        .replace_account_labels("acct", &[label("Label_9", "Later")])
+        .unwrap();
+    // A two-message thread: the ROOT (earlier) message has NO user label; a
+    // LATER message carries `Label_9`. The ingestion rule unions SYSTEM ids
+    // across all messages but takes NON-system (user) ids from the ROOT only.
+    database
+        .upsert_thread(
+            "acct",
+            &[
+                op_message("root", "t-later", "Later", "a@x", vec!["b@x"],
+                    "2024-01-01T00:00:00Z", "root body", vec!["INBOX"], vec![]),
+                op_message("tail", "t-later", "Later", "a@x", vec!["b@x"],
+                    "2024-01-02T00:00:00Z", "tail body", vec!["INBOX", "Label_9"], vec![]),
+            ],
+        )
+        .unwrap();
+    // The data model yields NO `Label_9` on the thread (root-only rule), so
+    // `label:Later` does NOT match. This documents the actual behaviour.
+    assert!(
+        ids_scoped(&database, "label:Later", None).is_empty(),
+        "a user label only on a non-root message is not on the thread"
+    );
+}
+
+#[test]
+fn label_and_in_count_toward_the_term_and_byte_limits() {
+    let database = database();
+    label_in_fixture(&database);
+    // Over the per-value byte limit on a label value -> plain error.
+    let huge = "x".repeat(100 * 1024);
+    let err = database
+        .search_threads(
+            &SearchThreadsRequest {
+                query: format!("label:{huge}"),
+                limit: None,
+                offset: None,
+                include_archived: None,
+            },
+            None,
+        )
+        .unwrap_err();
+    assert_eq!(err.to_string(), "That search is too long.");
+    // Over the per-value byte limit on an in: value -> plain error.
+    let err2 = database
+        .search_threads(
+            &SearchThreadsRequest {
+                query: format!("in:{huge}"),
+                limit: None,
+                offset: None,
+                include_archived: None,
+            },
+            None,
+        )
+        .unwrap_err();
+    assert_eq!(err2.to_string(), "That search is too long.");
+    // Too many terms, built from label: terms -> plain error.
+    let many = (0..17).map(|i| format!("label:a{i}")).collect::<Vec<_>>().join(" ");
+    let err3 = database
+        .search_threads(
+            &SearchThreadsRequest { query: many, limit: None, offset: None, include_archived: None },
+            None,
+        )
+        .unwrap_err();
+    assert_eq!(err3.to_string(), "That search is too long.");
+}
+
+#[test]
+fn label_values_are_bound_not_interpolated_and_wildcards_are_literal() {
+    let database = database();
+    crate::db::test_support::clear_seed_threads(&database);
+    // Labels whose NAMES contain SQL-wildcard, quote, backslash and injection
+    // characters. Each is seeded in the cache with its own id, and a thread
+    // carries that id.
+    database
+        .replace_account_labels(
+            "acct",
+            &[
+                label("l_pct", "a%b"),
+                label("l_usc", "a_b"),
+                label("l_bs", "a\\b"),
+                label("l_sq", "a'b"),
+                label("l_dq", "a\"b"),
+                label("l_drop", "'; DROP TABLE threads; --"),
+                label("l_plain", "aXb"),
+            ],
+        )
+        .unwrap();
+    for (i, id) in ["l_pct", "l_usc", "l_bs", "l_sq", "l_dq", "l_drop", "l_plain"]
+        .iter()
+        .enumerate()
+    {
+        database
+            .upsert_thread(
+                "acct",
+                &[op_message(
+                    &format!("m{i}"), &format!("t{i}"), "S", "a@x", vec!["b@x"],
+                    &format!("2024-01-0{}T00:00:00Z", i + 1), "x",
+                    vec!["INBOX", id], vec![],
+                )],
+            )
+            .unwrap();
+    }
+    let before = table_rows(&database, "threads").len();
+    // `%` and `_` must be LITERAL via COLLATE NOCASE equality, not wildcards.
+    assert_eq!(ids_scoped(&database, "label:a%b", None), vec![tid("acct", "t0")]);
+    assert_eq!(ids_scoped(&database, "label:a_b", None), vec![tid("acct", "t1")]);
+    // A would-be wildcard matches nothing (equality, not LIKE).
+    assert!(ids_scoped(&database, "label:a%", None).is_empty());
+    assert_eq!(ids_scoped(&database, "label:a\\b", None), vec![tid("acct", "t2")]);
+    assert_eq!(ids_scoped(&database, "label:a'b", None), vec![tid("acct", "t3")]);
+    // The injection string resolves as a literal label name (its thread) and
+    // does NOT execute: the table survives.
+    assert_eq!(
+        ids_scoped(&database, "label:\"'; DROP TABLE threads; --\"", None),
+        vec![tid("acct", "t5")]
+    );
+    assert_eq!(
+        table_rows(&database, "threads").len(),
+        before,
+        "threads table intact after an injection-shaped label name"
+    );
+}
+
+#[test]
+fn label_pagination_has_no_duplicate_when_a_thread_matches_through_several_labels() {
+    let database = database();
+    crate::db::test_support::clear_seed_threads(&database);
+    // Two DISTINCT label ids that both resolve to the name "Dup". A thread
+    // carrying both ids must be returned ONCE (EXISTS, not JOIN).
+    database
+        .replace_account_labels(
+            "acct",
+            &[label("d1", "Dup"), label("d2", "Dup")],
+        )
+        .unwrap();
+    database
+        .upsert_thread(
+            "acct",
+            &[op_message(
+                "m", "t-dup", "Dup", "a@x", vec!["b@x"],
+                "2024-01-01T00:00:00Z", "x", vec!["INBOX", "d1", "d2"], vec![],
+            )],
+        )
+        .unwrap();
+    let got = ids_scoped(&database, "label:Dup", None);
+    assert_eq!(got, vec![tid("acct", "t-dup")], "thread counted once: {got:?}");
+}
+
+#[test]
+fn label_and_in_combine_with_other_operators_and_free_text() {
+    let database = database();
+    crate::db::test_support::clear_seed_threads(&database);
+    database
+        .replace_account_labels(
+            "acct",
+            &[label("Lw", "work"), label("La", "a"), label("Lb", "b")],
+        )
+        .unwrap();
+    // A thread from alice, unread, labelled work, body contains "budget".
+    database
+        .upsert_thread(
+            "acct",
+            &[op_message(
+                "c1", "t-combo", "S", "alice@example.com", vec!["b@x"],
+                "2024-01-01T00:00:00Z", "quarterly budget notes",
+                vec!["INBOX", "UNREAD", "Lw"], vec![],
+            )],
+        )
+        .unwrap();
+    assert_eq!(
+        ids_scoped(&database, "from:alice label:work is:unread budget", None),
+        vec![tid("acct", "t-combo")]
+    );
+    // Two label: terms are ANDed: a thread must carry BOTH names.
+    database
+        .upsert_thread(
+            "acct",
+            &[op_message(
+                "c2", "t-ab", "S", "x@x", vec!["b@x"],
+                "2024-01-02T00:00:00Z", "x", vec!["INBOX", "La", "Lb"], vec![],
+            )],
+        )
+        .unwrap();
+    database
+        .upsert_thread(
+            "acct",
+            &[op_message(
+                "c3", "t-a", "S", "x@x", vec!["b@x"],
+                "2024-01-03T00:00:00Z", "x", vec!["INBOX", "La"], vec![],
+            )],
+        )
+        .unwrap();
+    assert_eq!(ids_scoped(&database, "label:a label:b", None), vec![tid("acct", "t-ab")]);
+    // in:inbox in:sent ANDs two system predicates: no thread is in both here.
+    assert!(ids_scoped(&database, "in:inbox in:sent", None).is_empty());
+}
+
+#[test]
+fn explain_query_plan_for_label_and_in_queries_is_recorded() {
+    // Guards that a `label:` EXISTS-over-account_labels query and an
+    // `in:inbox` EXISTS-over-labels_json query PREPARE and EXPLAIN cleanly.
+    // The plan text is captured in the run report.
+    let database = database();
+    label_in_fixture(&database);
+    let connection = database.connection().unwrap();
+    let label_plan: Vec<String> = connection
+        .prepare(
+            "EXPLAIN QUERY PLAN \
+             SELECT t.id FROM threads t WHERE EXISTS ( \
+               SELECT 1 FROM account_labels al, json_each(t.labels_json) j \
+               WHERE al.account_id = t.account_id AND al.label_id = j.value \
+               AND (al.name = ?1 COLLATE NOCASE OR replace(al.name, ' ', '-') = ?1 COLLATE NOCASE)) \
+             AND t.trashed = 0 \
+             ORDER BY t.last_received_at DESC, t.id LIMIT ?2 OFFSET ?3",
+        )
+        .unwrap()
+        .query_map(params!["Work", 50i64, 0i64], |row| row.get::<_, String>(3))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(!label_plan.is_empty(), "label: EXPLAIN QUERY PLAN produced rows");
+
+    let in_plan: Vec<String> = connection
+        .prepare(
+            "EXPLAIN QUERY PLAN \
+             SELECT t.id FROM threads t WHERE EXISTS ( \
+               SELECT 1 FROM json_each(t.labels_json) j WHERE j.value = ?1) \
+             AND t.trashed = 0 \
+             ORDER BY t.last_received_at DESC, t.id LIMIT ?2 OFFSET ?3",
+        )
+        .unwrap()
+        .query_map(params!["INBOX", 50i64, 0i64], |row| row.get::<_, String>(3))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(!in_plan.is_empty(), "in:inbox EXPLAIN QUERY PLAN produced rows");
+}
+
+// --- the pure default-filter function -------------------------------------
+
+#[test]
+fn default_filter_rules_table() {
+    // Helper: parse to terms, then compute the filter.
+    let f = |query: &str, include_archived: bool| {
+        let terms = SearchQuery::parse(query).terms;
+        default_archived_trashed_filter(&terms, include_archived)
+    };
+    // No label:/in: term: both halves apply (today's default).
+    assert_eq!(
+        f("from:alice", false),
+        DefaultFilter { exclude_archived: true, exclude_trashed: true }
+    );
+    // A label: term drops the archived half, keeps trashed.
+    assert_eq!(
+        f("label:work", false),
+        DefaultFilter { exclude_archived: false, exclude_trashed: true }
+    );
+    // Any in: term drops the archived half, keeps trashed...
+    assert_eq!(
+        f("in:inbox", false),
+        DefaultFilter { exclude_archived: false, exclude_trashed: true }
+    );
+    // ...except in:trash, which also drops the trashed half.
+    assert_eq!(
+        f("in:trash", false),
+        DefaultFilter { exclude_archived: false, exclude_trashed: false }
+    );
+    // in:anywhere drops both halves.
+    assert_eq!(
+        f("in:anywhere", false),
+        DefaultFilter { exclude_archived: false, exclude_trashed: false }
+    );
+    // in:spam / in:junk do NOT waive the trashed exclusion.
+    assert_eq!(
+        f("in:spam", false),
+        DefaultFilter { exclude_archived: false, exclude_trashed: true }
+    );
+    assert_eq!(
+        f("in:junk", false),
+        DefaultFilter { exclude_archived: false, exclude_trashed: true }
+    );
+    // include_archived: true drops BOTH halves regardless of the terms.
+    assert_eq!(
+        f("from:alice", true),
+        DefaultFilter { exclude_archived: false, exclude_trashed: false }
+    );
+    assert_eq!(
+        f("label:work", true),
+        DefaultFilter { exclude_archived: false, exclude_trashed: false }
+    );
+    // A mix: label: present AND in:trash present -> archived dropped, trashed
+    // dropped (by in:trash).
+    assert_eq!(
+        f("label:work in:trash", false),
+        DefaultFilter { exclude_archived: false, exclude_trashed: false }
+    );
+}
