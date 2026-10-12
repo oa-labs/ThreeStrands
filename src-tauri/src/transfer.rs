@@ -499,13 +499,17 @@ pub struct ImportResult {
     pub contact_group_count: usize,
 }
 
-pub fn export(
+/// Builds the transfer payload from the database — every field the encrypted
+/// settings export carries, and ONLY those fields. This is an explicit
+/// allowlist (accounts with their non-secret IMAP settings, split inboxes,
+/// snippets, contacts, contact groups, retention, preferences): a new local
+/// table such as the run 2b-1 label-catalog cache is never read here, so it
+/// cannot leak into an export. Factored out of [`export`] so a test can build
+/// the payload without the file dialog.
+fn build_export_payload(
     database: &Database,
     preferences: TransferPreferences,
-    password: &str,
-) -> Result<Option<String>, String> {
-    preferences.validate()?;
-    validate_password(password)?;
+) -> Result<TransferPayload, String> {
     let accounts = database
         .list_accounts()?
         .into_iter()
@@ -531,7 +535,7 @@ pub fn export(
         .collect();
     let contacts=database.list_saved_contact_profiles()?.into_iter().map(TransferContact::from).collect();
     let contact_groups = database.list_contact_groups()?.into_iter().map(TransferContactGroup::from).collect();
-    let payload = TransferPayload {
+    Ok(TransferPayload {
         version: VERSION,
         exported_at: Utc::now().to_rfc3339(),
         preferences,
@@ -541,7 +545,17 @@ pub fn export(
         contacts,
         retention_days: database.retention_days()?,
         contact_groups: Some(contact_groups),
-    };
+    })
+}
+
+pub fn export(
+    database: &Database,
+    preferences: TransferPreferences,
+    password: &str,
+) -> Result<Option<String>, String> {
+    preferences.validate()?;
+    validate_password(password)?;
+    let payload = build_export_payload(database, preferences)?;
     let encoded = encrypt(&payload, password)?;
     validate_export_size(encoded.len() as u64)?;
     let Some(path) = rfd::FileDialog::new()
@@ -2064,6 +2078,45 @@ mod tests {
             seal_current_fixture() == fixtures::V5_CURRENT,
             "the export shape changed; freeze the old v5-current fixture, then run \
              `cargo test --lib transfer::tests::regenerate_current_settings_transfer_fixture -- --ignored`"
+        );
+    }
+
+    #[test]
+    fn caching_labels_does_not_change_the_export_payload_shape() {
+        // The run 2b-1 label-catalog cache is LOCAL state that must never
+        // reach the settings export. Build the export payload from a database,
+        // then cache a catalog and rebuild: the payload must be identical in
+        // shape (every field but the wall-clock `exported_at`), proving the
+        // export reads nothing from `account_labels`.
+        let database = Database::open_memory();
+        database.adopt_account("current@example.com").unwrap();
+        let preferences = current_fixture_payload().preferences;
+
+        let before = build_export_payload(&database, preferences.clone()).unwrap();
+
+        // Cache a non-trivial catalog for the account.
+        database
+            .replace_account_labels(
+                "current@example.com",
+                &[
+                    crate::models::Label { id: "Label_18".into(), name: "Work".into(), kind: "user".into() },
+                    crate::models::Label { id: "lf:Clients/Acme".into(), name: "Clients/Acme".into(), kind: "user".into() },
+                ],
+            )
+            .unwrap();
+
+        let after = build_export_payload(&database, preferences).unwrap();
+
+        // Compare by serialized shape, normalizing only the timestamp.
+        let normalize = |payload: &TransferPayload| {
+            let mut value = serde_json::to_value(payload).unwrap();
+            value["exportedAt"] = serde_json::Value::Null;
+            value
+        };
+        assert_eq!(
+            normalize(&before),
+            normalize(&after),
+            "cached labels must not leak into the settings export"
         );
     }
 

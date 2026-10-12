@@ -471,6 +471,10 @@ fn account_removal_and_local_disconnect_purge_only_that_accounts_imap_state() {
                 c.execute("INSERT INTO imap_copy_intents VALUES (?1, 'm', 'Labels/A', 'identity')", [account])?;
                 c.execute("INSERT INTO imap_mailboxes(account_id, name, uidvalidity, uidnext, permanent_flags_json, permanent_keywords)
                     VALUES (?1, 'INBOX', 1, 2, '[]', 0)", [account])?;
+                // The local label-catalog cache (run 2b-1) is purged by the
+                // same per-account path; seed a row so this test proves it.
+                c.execute("INSERT INTO account_labels(account_id, label_id, name, kind)
+                    VALUES (?1, 'Label_18', 'Work', 'user')", [account])?;
                 Ok(())
             }).unwrap();
         }
@@ -508,6 +512,7 @@ fn account_removal_and_local_disconnect_purge_only_that_accounts_imap_state() {
                     "imap_hot_threads",
                     "imap_copy_intents",
                     "imap_account_settings",
+                    "account_labels",
                 ] {
                     for account in ["remove@example.com", "keep@example.com"] {
                         let count: i64 = c.query_row(
