@@ -74,9 +74,10 @@ pub use session::{ImapSession, MailboxStatus};
 // above; the allow is removed with that first consumer.
 #[allow(unused_imports)]
 pub use write::{
-    build_mailbox_arg, build_uid_set, build_uid_set_batches, relocate_uids, select_for_write,
-    validate_flag, validate_flags, verified_store, CopyOutcome, CopyUid, ImapWriteSession,
-    RelocateOutcome, RelocationStrategy, StoreOp, WriteCaps, WriteContext, WriteError, WriteResult,
+    build_mailbox_arg, build_uid_set, build_uid_set_batches, find_by_message_id, relocate_uids,
+    save_sent_copy, select_for_write, validate_flag, validate_flags, verified_store, CopyOutcome,
+    CopyUid, ImapWriteSession, Located, RelocateOutcome, RelocationStrategy, SaveSentConfig,
+    SentCopy, StoreOp, WriteCaps, WriteContext, WriteError, WriteResult,
 };
 #[allow(unused_imports)]
 pub use tls::{parse_sha256_fingerprint, PinnedCertVerifier, Sha256Fingerprint};

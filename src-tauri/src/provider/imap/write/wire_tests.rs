@@ -696,6 +696,665 @@ async fn a_read_only_select_is_detectable_through_the_response_code_classifier()
     assert!(!super::select_is_read_only(&ResponseCode::ReadWrite));
 }
 
+// ===========================================================================
+// Phase 4 run 4a: the Sent-copy APPEND primitive.
+//
+// These drive a REAL `AsyncImapSession` over a duplex stream against a scripted
+// server that implements a genuine message store: EXAMINE, APPEND (with the
+// `+`-continuation literal handshake, storing the bytes and honouring flags and
+// assigning UIDs), `UID SEARCH HEADER Message-ID` (SUBSTRING match, as the real
+// RFC says), and `UID FETCH ... BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]`. Each
+// failing case makes the server actually DO the failing thing (the lost-reply
+// case stores the message THEN drops the connection before the tagged OK) and
+// asserts both the outcome AND the number of stored copies, so none passes
+// vacuously.
+// ===========================================================================
+mod sent_copy_tests {
+    use super::*;
+    use crate::provider::imap::policy;
+    use std::time::Duration;
+
+    /// One stored message in the fake Sent mailbox.
+    #[derive(Clone)]
+    struct Stored {
+        uid: u32,
+        bytes: Vec<u8>,
+        flags: Vec<String>,
+    }
+
+    /// The scripted Sent-mailbox server's knobs.
+    #[derive(Clone, Default)]
+    struct SentScript {
+        /// EXAMINE answers `NO [TRYCREATE] <text>` instead of OK.
+        examine_trycreate: Option<String>,
+        /// EXAMINE answers `NO [NONEXISTENT] <text>`.
+        examine_nonexistent: Option<String>,
+        /// APPEND answers `NO [OVERQUOTA] <text>` (a definite pre-store NO).
+        append_overquota: Option<String>,
+        /// After the APPEND literal is received and STORED, drop the connection
+        /// WITHOUT sending the tagged OK — the lost-reply case.
+        drop_after_store: bool,
+        /// Pretend a just-stored message is invisible to SEARCH for this many
+        /// SEARCH calls after the store (a server with delayed visibility).
+        hide_from_search_for: usize,
+    }
+
+    /// Shared mutable state the server task owns.
+    #[derive(Clone)]
+    struct SentState {
+        messages: Arc<Mutex<Vec<Stored>>>,
+        next_uid: Arc<Mutex<u32>>,
+        uidvalidity: u32,
+        /// How many SEARCHes have run since the last store (for delayed
+        /// visibility).
+        searches_since_store: Arc<Mutex<usize>>,
+        /// How many APPEND commands the server fully stored (asserted by the
+        /// lost-reply test to prove the failed attempt really stored).
+        stored_count: Arc<Mutex<usize>>,
+    }
+
+    impl SentState {
+        fn new(uidvalidity: u32) -> Self {
+            Self {
+                messages: Arc::new(Mutex::new(Vec::new())),
+                next_uid: Arc::new(Mutex::new(1)),
+                uidvalidity,
+                searches_since_store: Arc::new(Mutex::new(usize::MAX)),
+                stored_count: Arc::new(Mutex::new(0)),
+            }
+        }
+        fn count(&self) -> usize {
+            self.messages.lock().unwrap().len()
+        }
+        fn stored_count(&self) -> usize {
+            *self.stored_count.lock().unwrap()
+        }
+    }
+
+    /// Spawn the scripted Sent server and return a logged-in session, the
+    /// shared state, the wire log and the task handle. `preload` seeds messages
+    /// already present (for the AlreadyPresent / near-miss tests).
+    async fn connect_sent(
+        script: SentScript,
+        preload: &[(&str, &[&str])],
+    ) -> (
+        AsyncImapSession<DuplexStream>,
+        SentState,
+        WireLog,
+        JoinHandle<()>,
+    ) {
+        let (client, server) = tokio::io::duplex(1 << 20);
+        let log = WireLog::default();
+        let server_log = log.clone();
+        let state = SentState::new(777);
+        // Seed preloaded messages.
+        {
+            let mut msgs = state.messages.lock().unwrap();
+            let mut next = state.next_uid.lock().unwrap();
+            for (body, flags) in preload {
+                msgs.push(Stored {
+                    uid: *next,
+                    bytes: body.as_bytes().to_vec(),
+                    flags: flags.iter().map(|f| f.to_string()).collect(),
+                });
+                *next += 1;
+            }
+        }
+        let server_state = state.clone();
+        let task = tokio::spawn(async move {
+            serve_sent(server, script, server_state, server_log).await;
+        });
+        let session = Client::new(client)
+            .login("user", "password")
+            .await
+            .expect("scripted login should succeed");
+        (AsyncImapSession::new(session), state, log, task)
+    }
+
+    /// Does a stored message's raw bytes carry a Message-ID header whose value
+    /// CONTAINS `needle` (the SEARCH HEADER substring semantics)?
+    fn message_id_contains(bytes: &[u8], needle: &str) -> bool {
+        let text = String::from_utf8_lossy(bytes);
+        for line in text.split("\r\n") {
+            if let Some((name, value)) = line.split_once(':') {
+                if name.trim().eq_ignore_ascii_case("message-id") {
+                    return value.contains(needle);
+                }
+            }
+        }
+        false
+    }
+
+    /// Extract the quoted search needle from `HEADER Message-ID "<...>"`.
+    fn search_needle(rest: &str) -> Option<String> {
+        let (open, close) = (rest.find('"')?, rest.rfind('"')?);
+        if close > open {
+            Some(rest[open + 1..close].to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Extract the literal byte count `{N}` at the end of an APPEND command.
+    fn append_literal_len(rest: &str) -> Option<usize> {
+        let open = rest.rfind('{')?;
+        let close = rest.rfind('}')?;
+        rest.get(open + 1..close)?.parse().ok()
+    }
+
+    /// The scripted Sent-mailbox server loop.
+    async fn serve_sent(
+        server: DuplexStream,
+        script: SentScript,
+        state: SentState,
+        log: WireLog,
+    ) {
+        let mut server = BufReader::new(server);
+        reply(&mut server, "* OK ready\r\n").await;
+        loop {
+            let mut line = String::new();
+            if server.read_line(&mut line).await.unwrap() == 0 {
+                break;
+            }
+            let line = line.trim_end().to_string();
+            let mut parts = line.splitn(2, ' ');
+            let tag = parts.next().unwrap_or("").to_string();
+            let rest = parts.next().unwrap_or("").to_string();
+            let upper = rest.to_ascii_uppercase();
+
+            if !upper.starts_with("LOGIN") && !upper.starts_with("LOGOUT") {
+                log.commands.lock().unwrap().push(rest.clone());
+            }
+
+            if upper.starts_with("LOGIN") {
+                reply(&mut server, &format!("{tag} OK logged in\r\n")).await;
+            } else if upper.starts_with("CAPABILITY") {
+                reply(
+                    &mut server,
+                    &format!("* CAPABILITY IMAP4REV1 UIDPLUS\r\n{tag} OK done\r\n"),
+                )
+                .await;
+            } else if upper.starts_with("EXAMINE") {
+                if let Some(text) = &script.examine_trycreate {
+                    reply(&mut server, &format!("{tag} NO [TRYCREATE] {text}\r\n")).await;
+                } else if let Some(text) = &script.examine_nonexistent {
+                    reply(&mut server, &format!("{tag} NO [NONEXISTENT] {text}\r\n")).await;
+                } else {
+                    let n = state.messages.lock().unwrap().len();
+                    reply(
+                        &mut server,
+                        &format!(
+                            "* {n} EXISTS\r\n\
+                             * OK [UIDVALIDITY {}] uids valid\r\n\
+                             * OK [UIDNEXT 500] next\r\n\
+                             {tag} OK [READ-ONLY] EXAMINE done\r\n",
+                            state.uidvalidity
+                        ),
+                    )
+                    .await;
+                }
+            } else if upper.starts_with("APPEND") {
+                let Some(len) = append_literal_len(&rest) else {
+                    reply(&mut server, &format!("{tag} BAD malformed APPEND\r\n")).await;
+                    continue;
+                };
+                if let Some(text) = &script.append_overquota {
+                    // A definite pre-store NO: nothing is read as a literal.
+                    reply(&mut server, &format!("{tag} NO [OVERQUOTA] {text}\r\n")).await;
+                    continue;
+                }
+                // Continuation, then read exactly `len` + 2 (CRLF) bytes.
+                reply(&mut server, "+ OK send literal\r\n").await;
+                let mut buf = vec![0u8; len + 2];
+                use tokio::io::AsyncReadExt;
+                if server.read_exact(&mut buf).await.is_err() {
+                    break;
+                }
+                buf.truncate(len); // drop the trailing CRLF the client adds.
+                // Parse the flag list from the command (between the first '('
+                // and the matching ')').
+                let flags = store_flags(&rest);
+                let uid = {
+                    let mut next = state.next_uid.lock().unwrap();
+                    let u = *next;
+                    *next += 1;
+                    u
+                };
+                state.messages.lock().unwrap().push(Stored {
+                    uid,
+                    bytes: buf,
+                    flags,
+                });
+                *state.stored_count.lock().unwrap() += 1;
+                *state.searches_since_store.lock().unwrap() = 0;
+                if script.drop_after_store {
+                    // Stored, but the tagged OK never arrives: the client sees
+                    // the connection drop (a transient-class error).
+                    break;
+                }
+                reply(&mut server, &format!("{tag} OK [APPENDUID {} {uid}] appended\r\n", state.uidvalidity)).await;
+            } else if upper.starts_with("UID SEARCH") {
+                let needle = search_needle(&rest).unwrap_or_default();
+                let hidden = {
+                    let mut s = state.searches_since_store.lock().unwrap();
+                    let hide = *s < script.hide_from_search_for;
+                    *s = s.saturating_add(1);
+                    hide
+                };
+                let mut uids: Vec<u32> = if hidden {
+                    Vec::new()
+                } else {
+                    state
+                        .messages
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .filter(|m| message_id_contains(&m.bytes, &needle))
+                        .map(|m| m.uid)
+                        .collect()
+                };
+                uids.sort_unstable();
+                let list = uids
+                    .iter()
+                    .map(|u| u.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                reply(
+                    &mut server,
+                    &format!("* SEARCH {list}\r\n{tag} OK SEARCH done\r\n"),
+                )
+                .await;
+            } else if upper.starts_with("UID FETCH") {
+                // Serve BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)] for the named UID.
+                // Parse the leading UID (the set is a single uid in this path).
+                let uid: Option<u32> = rest
+                    .split_whitespace()
+                    .nth(2)
+                    .and_then(|s| s.split(':').next())
+                    .and_then(|s| s.parse().ok());
+                // Extract an OWNED header string, then DROP the guard before any
+                // await (a MutexGuard is not Send across .await).
+                let header = uid.and_then(|uid| {
+                    let msgs = state.messages.lock().unwrap();
+                    msgs.iter()
+                        .find(|m| m.uid == uid)
+                        .map(|m| extract_message_id_header(&m.bytes))
+                });
+                if let (Some(uid), Some(header)) = (uid, header) {
+                    let octets = header.len();
+                    reply(
+                        &mut server,
+                        &format!(
+                            "* 1 FETCH (UID {uid} BODY[HEADER.FIELDS (MESSAGE-ID)] {{{octets}}}\r\n{header})\r\n{tag} OK FETCH done\r\n",
+                        ),
+                    )
+                    .await;
+                    continue;
+                }
+                reply(&mut server, &format!("{tag} OK FETCH done\r\n")).await;
+            } else if upper.starts_with("LOGOUT") {
+                reply(&mut server, &format!("* BYE\r\n{tag} OK logout\r\n")).await;
+                break;
+            } else {
+                reply(&mut server, &format!("{tag} OK done\r\n")).await;
+            }
+        }
+    }
+
+    /// The `Message-ID:` header line (with its CRLF and the trailing blank
+    /// line a HEADER.FIELDS section carries), or just a blank line if absent.
+    fn extract_message_id_header(bytes: &[u8]) -> String {
+        let text = String::from_utf8_lossy(bytes);
+        for line in text.split("\r\n") {
+            if let Some((name, _)) = line.split_once(':') {
+                if name.trim().eq_ignore_ascii_case("message-id") {
+                    return format!("{line}\r\n\r\n");
+                }
+            }
+        }
+        "\r\n".to_string()
+    }
+
+    fn instant_config(rechecks: usize) -> SaveSentConfig {
+        SaveSentConfig {
+            relocate_rechecks: rechecks,
+            recheck_delay: Duration::ZERO,
+        }
+    }
+
+    /// A raw message with the given Message-ID, a Bcc header, a non-ASCII body
+    /// line, and a line that is a single `.` (dot-stuffing edge).
+    fn raw_with(message_id: &str) -> Vec<u8> {
+        format!(
+            "From: me@proton.me\r\nTo: a@x.test\r\nBcc: blind@z.test\r\nMessage-ID: {message_id}\r\nSubject: Grüße\r\n\r\nhello\r\n.\r\nafter the dot\r\n"
+        )
+        .into_bytes()
+    }
+
+    // ---- happy path -------------------------------------------------------
+
+    #[tokio::test]
+    async fn append_then_located_returns_appended_with_byte_identical_seen_only_copy() {
+        let (mut session, state, log, task) =
+            connect_sent(SentScript::default(), &[]).await;
+        let raw = raw_with("<abc@proton.me>");
+        let outcome = save_sent_copy(&mut session, "Sent", &raw, "<abc@proton.me>", instant_config(2))
+            .await
+            .expect("append + locate");
+        match outcome {
+            SentCopy::Appended { uidvalidity, uid } => {
+                assert_eq!(uidvalidity, 777);
+                assert!(uid >= 1);
+            }
+            other => panic!("expected Appended, got {other:?}"),
+        }
+        // Exactly one stored copy, byte-identical to raw (incl. the Bcc header,
+        // the non-ASCII subject, CRLF, and the single-dot line).
+        let msgs = state.messages.lock().unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].bytes, raw, "stored bytes are byte-identical to raw");
+        assert!(
+            String::from_utf8_lossy(&msgs[0].bytes).contains("Bcc: blind@z.test"),
+            "the Sent copy KEEPS its Bcc header"
+        );
+        // Flags = \Seen only.
+        assert_eq!(msgs[0].flags, vec!["\\Seen".to_string()]);
+        // One APPEND reached the wire.
+        assert_eq!(log.count_starting("APPEND"), 1);
+        drop(msgs);
+        let _ = session.logout().await;
+        task.await.unwrap();
+    }
+
+    // ---- second call is idempotent ---------------------------------------
+
+    #[tokio::test]
+    async fn a_second_call_returns_already_present_and_appends_nothing() {
+        // Pre-seed the Sent mailbox with the SAME Message-ID already present.
+        let raw = raw_with("<dup@proton.me>");
+        let seeded = String::from_utf8(raw.clone()).unwrap();
+        let seeded_leak: &'static str = Box::leak(seeded.into_boxed_str());
+        let (mut session, state, log, task) =
+            connect_sent(SentScript::default(), &[(seeded_leak, &["\\Seen"])]).await;
+        let outcome = save_sent_copy(&mut session, "Sent", &raw, "<dup@proton.me>", instant_config(2))
+            .await
+            .expect("already present");
+        match outcome {
+            SentCopy::AlreadyPresent { uids, .. } => assert_eq!(uids.len(), 1),
+            other => panic!("expected AlreadyPresent, got {other:?}"),
+        }
+        assert_eq!(state.count(), 1, "still exactly one copy");
+        assert_eq!(log.count_starting("APPEND"), 0, "nothing appended on the second call");
+        let _ = session.logout().await;
+        task.await.unwrap();
+    }
+
+    // ---- the lost-reply case (the core idempotency proof) ----------------
+
+    #[tokio::test]
+    async fn a_lost_reply_then_retry_leaves_exactly_one_copy() {
+        // First attempt: the server STORES the message, then drops the
+        // connection before the tagged OK — the client sees a transient error.
+        let raw = raw_with("<lost@proton.me>");
+        let (mut session, state, _log, task) =
+            connect_sent(SentScript { drop_after_store: true, ..Default::default() }, &[]).await;
+        let err = save_sent_copy(&mut session, "Sent", &raw, "<lost@proton.me>", instant_config(1))
+            .await
+            .expect_err("the dropped connection is surfaced");
+        // The message was REALLY stored by the failed attempt (otherwise this
+        // test would prove nothing).
+        assert_eq!(state.stored_count(), 1, "the failed attempt actually stored the message");
+        assert_eq!(state.count(), 1);
+        // The error keeps a transient (retryable) class — NOT a permanent
+        // InvalidOperation that would strand the message.
+        match err.into_provider_error() {
+            ProviderError::TransientTransport(_) => {}
+            other => panic!("a dropped connection must be transient, got {other:?}"),
+        }
+        task.await.unwrap();
+
+        // The retry runs over a FRESH connection against the SAME server state
+        // (the stored message persists). Its step 2 finds the copy ->
+        // AlreadyPresent, and still exactly one copy on the server.
+        let (client, server) = tokio::io::duplex(1 << 20);
+        let log2 = WireLog::default();
+        let server_log = log2.clone();
+        let state2 = state.clone();
+        let task2 = tokio::spawn(async move {
+            serve_sent(server, SentScript::default(), state2, server_log).await;
+        });
+        let mut session2 = AsyncImapSession::new(
+            Client::new(client).login("user", "password").await.unwrap(),
+        );
+        let retry = save_sent_copy(&mut session2, "Sent", &raw, "<lost@proton.me>", instant_config(1))
+            .await
+            .expect("the retry finds the already-stored copy");
+        match retry {
+            SentCopy::AlreadyPresent { uids, .. } => assert_eq!(uids.len(), 1),
+            other => panic!("expected AlreadyPresent on retry, got {other:?}"),
+        }
+        assert_eq!(state.count(), 1, "exactly ONE copy after the retry — no duplicate");
+        assert_eq!(log2.count_starting("APPEND"), 0, "the retry appends nothing");
+        let _ = session2.logout().await;
+        task2.await.unwrap();
+    }
+
+    // ---- a definite server NO before storing -----------------------------
+
+    #[tokio::test]
+    async fn an_overquota_no_is_permanent_and_stores_nothing() {
+        let raw = raw_with("<oq@proton.me>");
+        let (mut session, state, _log, task) = connect_sent(
+            SentScript { append_overquota: Some("mailbox full".into()), ..Default::default() },
+            &[],
+        )
+        .await;
+        let err = save_sent_copy(&mut session, "Sent", &raw, "<oq@proton.me>", instant_config(1))
+            .await
+            .expect_err("OVERQUOTA is a definite NO");
+        match err.into_provider_error() {
+            ProviderError::PermanentClientRejection(_) => {}
+            other => panic!("expected a permanent OVERQUOTA rejection, got {other:?}"),
+        }
+        assert_eq!(state.count(), 0, "nothing stored on a pre-store NO");
+        let _ = session.logout().await;
+        task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_trycreate_examine_is_a_typed_missing_mailbox_error_and_creates_nothing() {
+        for script in [
+            SentScript { examine_trycreate: Some("Mailbox doesn't exist: Sent".into()), ..Default::default() },
+            SentScript { examine_nonexistent: Some("Unknown mailbox: Sent".into()), ..Default::default() },
+        ] {
+            let raw = raw_with("<nm@proton.me>");
+            let (mut session, state, log, task) = connect_sent(script, &[]).await;
+            let err = save_sent_copy(&mut session, "Sent", &raw, "<nm@proton.me>", instant_config(1))
+                .await
+                .expect_err("a missing Sent mailbox is an error");
+            match err.into_provider_error() {
+                ProviderError::InvalidOperation(m) => assert!(m.contains("Sent"), "{m}"),
+                other => panic!("expected a permanent missing-mailbox error, got {other:?}"),
+            }
+            assert_eq!(state.count(), 0);
+            assert_eq!(log.count_starting("APPEND"), 0, "no APPEND, no CREATE");
+            assert_eq!(log.count_starting("CREATE"), 0, "this primitive never creates the mailbox");
+            let _ = session.logout().await;
+            task.await.unwrap();
+        }
+    }
+
+    // ---- APPEND OK but SEARCH never finds it -> AppendedUnlocated ---------
+
+    #[tokio::test]
+    async fn append_ok_but_never_located_is_appended_unlocated() {
+        // The server stores the message but hides it from SEARCH for more
+        // re-checks than we allow, so the locate never succeeds.
+        let raw = raw_with("<unloc@proton.me>");
+        let (mut session, state, log, task) = connect_sent(
+            SentScript { hide_from_search_for: 999, ..Default::default() },
+            &[],
+        )
+        .await;
+        let outcome = save_sent_copy(&mut session, "Sent", &raw, "<unloc@proton.me>", instant_config(2))
+            .await
+            .expect("stored but unlocatable is still success");
+        match outcome {
+            SentCopy::AppendedUnlocated { uidvalidity } => assert_eq!(uidvalidity, 777),
+            other => panic!("expected AppendedUnlocated, got {other:?}"),
+        }
+        assert_eq!(state.count(), 1, "the message IS stored");
+        assert_eq!(log.count_starting("APPEND"), 1, "appended exactly once");
+        let _ = session.logout().await;
+        task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_delayed_visibility_server_locates_within_the_rechecks() {
+        // Hidden for the first SEARCH (the pre-APPEND existence check and the
+        // first post-APPEND check), then visible — so a re-check finds it and
+        // we get Appended, having appended exactly once (not twice).
+        let raw = raw_with("<delay@proton.me>");
+        let (mut session, state, log, task) = connect_sent(
+            SentScript { hide_from_search_for: 1, ..Default::default() },
+            &[],
+        )
+        .await;
+        let outcome = save_sent_copy(&mut session, "Sent", &raw, "<delay@proton.me>", instant_config(3))
+            .await
+            .expect("located within the re-checks");
+        match outcome {
+            SentCopy::Appended { .. } => {}
+            other => panic!("expected Appended after a re-check, got {other:?}"),
+        }
+        assert_eq!(state.count(), 1, "appended exactly once despite the delay");
+        assert_eq!(log.count_starting("APPEND"), 1);
+        let _ = session.logout().await;
+        task.await.unwrap();
+    }
+
+    // ---- near-miss Message-IDs -------------------------------------------
+
+    #[tokio::test]
+    async fn a_near_miss_message_id_does_not_count_as_present() {
+        // The mailbox holds <xabc@x> and <abc@xy>; searching for <abc@x> must
+        // NOT match either (SEARCH HEADER is substring, but the verify step
+        // compares the normalized token EXACTLY), so the primitive APPENDs the
+        // real <abc@x> rather than reporting AlreadyPresent.
+        let m1 = String::from_utf8(raw_with("<xabc@x>")).unwrap();
+        let m2 = String::from_utf8(raw_with("<abc@xy>")).unwrap();
+        let (mut session, state, log, task) = connect_sent(
+            SentScript::default(),
+            &[
+                (Box::leak(m1.into_boxed_str()), &["\\Seen"]),
+                (Box::leak(m2.into_boxed_str()), &["\\Seen"]),
+            ],
+        )
+        .await;
+        let raw = raw_with("<abc@x>");
+        let outcome = save_sent_copy(&mut session, "Sent", &raw, "<abc@x>", instant_config(2))
+            .await
+            .expect("near-misses are not matches");
+        // It APPENDED (did not treat a near-miss as already-present) and then
+        // located its own exact copy.
+        match outcome {
+            SentCopy::Appended { .. } => {}
+            other => panic!("a near-miss must not short-circuit to AlreadyPresent: {other:?}"),
+        }
+        assert_eq!(state.count(), 3, "the two near-misses plus the new exact copy");
+        assert_eq!(log.count_starting("APPEND"), 1);
+        let _ = session.logout().await;
+        task.await.unwrap();
+    }
+
+    // ---- hostile / malformed inputs refused with ZERO commands -----------
+
+    #[tokio::test]
+    async fn a_hostile_message_id_is_refused_before_any_command() {
+        for hostile in ["<a\"b@x>", "<a\\b@x>", "<a b@x>", "<a\r\nb@x>", "<a\0b@x>"] {
+            let (mut session, state, log, task) = connect_sent(SentScript::default(), &[]).await;
+            let raw = raw_with("<ok@x>");
+            let err = save_sent_copy(&mut session, "Sent", &raw, hostile, instant_config(1))
+                .await
+                .unwrap_err();
+            assert!(matches!(err.into_provider_error(), ProviderError::InvalidOperation(_)));
+            assert_eq!(state.count(), 0);
+            // Nothing reached the wire: not even an EXAMINE.
+            assert_eq!(log.count_starting("EXAMINE"), 0, "hostile id refused before any command");
+            assert_eq!(log.count_starting("APPEND"), 0);
+            let _ = session.logout().await;
+            task.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_nul_and_oversize_content_are_refused_before_any_command() {
+        // Empty.
+        let cases: Vec<(Vec<u8>, &str)> = vec![
+            (Vec::new(), "empty"),
+            (b"From: a\r\nMessage-ID: <x@x>\r\n\r\nhas a \0 nul".to_vec(), "nul"),
+            (vec![b'x'; policy::APPEND_MAX_BYTES + 1], "oversize"),
+        ];
+        for (content, label) in cases {
+            let (mut session, state, log, task) = connect_sent(SentScript::default(), &[]).await;
+            let err = save_sent_copy(&mut session, "Sent", &content, "<x@x>", instant_config(1))
+                .await
+                .unwrap_err();
+            match err.into_provider_error() {
+                ProviderError::InvalidOperation(_) | ProviderError::PermanentClientRejection(_) => {}
+                other => panic!("{label}: expected a typed rejection, got {other:?}"),
+            }
+            assert_eq!(state.count(), 0, "{label}: nothing stored");
+            assert_eq!(log.count_starting("APPEND"), 0, "{label}: no APPEND reached the wire");
+            assert_eq!(log.count_starting("EXAMINE"), 0, "{label}: refused before any command");
+            let _ = session.logout().await;
+            task.await.unwrap();
+        }
+    }
+
+    // ---- a non-ASCII Sent mailbox name round-trips as modified UTF-7 ------
+
+    #[tokio::test]
+    async fn a_non_ascii_sent_mailbox_name_is_appended_as_modified_utf7() {
+        // The Sent mailbox is "Gesendet/Entwürfe" (ü). The APPEND command on
+        // the wire must carry the modified-UTF-7 encoding, not raw UTF-8.
+        let (mut session, state, log, task) = connect_sent(SentScript::default(), &[]).await;
+        let raw = raw_with("<nonascii@x>");
+        let mailbox = "Gesendet/Entw\u{00fc}rfe";
+        let outcome = save_sent_copy(&mut session, mailbox, &raw, "<nonascii@x>", instant_config(2))
+            .await
+            .expect("append to a non-ASCII mailbox");
+        assert!(matches!(outcome, SentCopy::Appended { .. }));
+        assert_eq!(state.count(), 1);
+        // The modified-UTF-7 encoding of "Gesendet/Entwürfe": ü -> &APw-.
+        let expected_wire = super::encode_modified_utf7(mailbox);
+        assert_eq!(expected_wire, "Gesendet/Entw&APw-rfe");
+        let saw_encoded = log
+            .seen()
+            .iter()
+            .any(|c| c.to_ascii_uppercase().starts_with("APPEND") && c.contains(&expected_wire));
+        assert!(saw_encoded, "APPEND must carry the modified-UTF-7 name: {:?}", log.seen());
+        // And NOT the raw UTF-8 ü in ANY command (EXAMINE included — EXAMINE
+        // must also use the modified-UTF-7 name, not the decoded one).
+        let saw_raw_utf8 = log.seen().iter().any(|c| c.contains('\u{00fc}'));
+        assert!(!saw_raw_utf8, "the raw UTF-8 name must never reach the wire");
+        let _ = session.logout().await;
+        task.await.unwrap();
+    }
+
+    // ---- object-safety / both real impls compile -------------------------
+
+    #[test]
+    fn the_write_trait_is_object_safe_with_append() {
+        // If `append` broke object safety, `&mut dyn ImapWriteSession` would
+        // not type-check; `save_sent_copy` takes exactly that, so this
+        // compiling is the proof. A pointer-cast to the trait object pins it.
+        fn _assert_object_safe(s: &mut dyn ImapWriteSession) -> &mut dyn ImapWriteSession {
+            s
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Live tests against the Dovecot harness (GATED).
 // ---------------------------------------------------------------------------
@@ -1040,6 +1699,184 @@ mod live {
             return;
         }
         assert!(build_mailbox_arg("Archive\r\nA1 DELETE INBOX").is_err());
+    }
+
+    // -------------------------------------------------------------------
+    // Phase 4 run 4a: the Sent-copy APPEND primitive, against live Dovecot.
+    // These APPEND into a SCRATCH mailbox (never Sent, never INBOX), locate by
+    // Message-ID, verify \Seen + byte-identical content via FETCH BODY.PEEK[],
+    // a second call -> AlreadyPresent, a near-miss message not matched, and a
+    // non-ASCII scratch name. Each cleans up and leaves the seeded fixtures
+    // untouched. The orchestrator runs these; this worker cannot run docker.
+    // -------------------------------------------------------------------
+
+    use crate::provider::imap::write::{save_sent_copy, SaveSentConfig, SentCopy};
+
+    /// Create an EMPTY scratch mailbox for an APPEND test (unlike
+    /// `seed_message`, this does NOT copy a seed in — APPEND provides the
+    /// content). Self-heals a leftover from an aborted run first.
+    async fn create_empty_scratch(
+        session: &mut crate::provider::imap::connection::ConnectedSession,
+        mailbox: &str,
+    ) {
+        let _ = session.select("INBOX").await;
+        let _ = session
+            .run_command_capture_code(&format!("DELETE {}", build_mailbox_arg(mailbox).unwrap()))
+            .await;
+        session
+            .create_mailbox(mailbox)
+            .await
+            .expect("create empty scratch mailbox");
+    }
+
+    fn live_raw(message_id: &str) -> Vec<u8> {
+        // A Bcc header (which the Sent copy KEEPS), a non-ASCII line and a
+        // single-dot line, so byte-identity across the APPEND literal is a real
+        // test of the dot-stuffing / 8-bit path.
+        format!(
+            "From: test@threestrands.test\r\nTo: rcpt@threestrands.test\r\nBcc: blind@threestrands.test\r\nMessage-ID: {message_id}\r\nSubject: Grüße\r\n\r\nhello\r\n.\r\nafter the dot\r\n"
+        )
+        .into_bytes()
+    }
+
+    #[tokio::test]
+    async fn live_save_sent_copy_appends_locates_and_is_idempotent() {
+        let Some((mut session, _lease)) = live_session().await else {
+            return;
+        };
+        let mailbox = "P4R4-Sent";
+        create_empty_scratch(&mut session, mailbox).await;
+        let message_id = "<p4r4-live-1@threestrands.test>";
+        let raw = live_raw(message_id);
+        let config = SaveSentConfig {
+            relocate_rechecks: 3,
+            recheck_delay: std::time::Duration::from_millis(50),
+        };
+
+        // First call: appended and located.
+        let first = save_sent_copy(&mut session, mailbox, &raw, message_id, config)
+            .await
+            .expect("live append + locate");
+        let uid = match first {
+            SentCopy::Appended { uid, .. } => uid,
+            SentCopy::AppendedUnlocated { .. } => {
+                // A server with delayed SEARCH visibility: still success. Give
+                // it a moment and locate directly for the content assertions.
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                let located =
+                    crate::provider::imap::write::find_by_message_id(&mut session, message_id, 0)
+                        .await
+                        .expect("locate after settle");
+                *located.uids.first().expect("the appended copy is now visible")
+            }
+            SentCopy::AlreadyPresent { .. } => panic!("scratch mailbox should have been empty"),
+        };
+
+        // Verify the stored copy: \Seen set, and byte-identical to raw.
+        session.select(mailbox).await.unwrap();
+        let flags = session
+            .uid_fetch(&uid.to_string(), "FLAGS")
+            .await
+            .unwrap();
+        assert!(
+            flags.iter().any(|m| m
+                .flags()
+                .any(|f| matches!(f, async_imap::types::Flag::Seen))),
+            "the Sent copy is \\Seen"
+        );
+        let fetched = session
+            .uid_fetch(&uid.to_string(), "BODY.PEEK[]")
+            .await
+            .unwrap();
+        let stored = fetched
+            .iter()
+            .find_map(|m| m.body().map(<[u8]>::to_vec))
+            .expect("the appended body is fetchable");
+        assert_eq!(stored, raw, "the stored Sent copy is byte-identical to raw (Bcc kept)");
+
+        // Second call: AlreadyPresent, still exactly one copy.
+        let second = save_sent_copy(&mut session, mailbox, &raw, message_id, config)
+            .await
+            .expect("idempotent second call");
+        match second {
+            SentCopy::AlreadyPresent { uids, .. } => assert_eq!(uids.len(), 1),
+            other => panic!("expected AlreadyPresent, got {other:?}"),
+        }
+        session.select(mailbox).await.unwrap();
+        assert_eq!(
+            session.uid_search("ALL").await.unwrap().len(),
+            1,
+            "exactly one copy after the second call"
+        );
+
+        drop_scratch(&mut session, &[mailbox]).await;
+        let _ = session.logout().await;
+    }
+
+    #[tokio::test]
+    async fn live_a_near_miss_message_id_in_the_same_mailbox_is_not_matched() {
+        let Some((mut session, _lease)) = live_session().await else {
+            return;
+        };
+        let mailbox = "P4R4-NearMiss";
+        create_empty_scratch(&mut session, mailbox).await;
+        let config = SaveSentConfig {
+            relocate_rechecks: 3,
+            recheck_delay: std::time::Duration::from_millis(50),
+        };
+        // Put a NEAR-MISS message in the mailbox first: <xabc@x> is a superstring
+        // of <abc@x>.
+        let near = "<xabc@threestrands.test>";
+        save_sent_copy(&mut session, mailbox, &live_raw(near), near, config)
+            .await
+            .expect("append the near-miss");
+        // Now save <abc@x>: the SEARCH HEADER substring match may surface the
+        // near-miss, but the exact verify must reject it, so this APPENDs
+        // rather than reporting AlreadyPresent.
+        let exact = "<abc@threestrands.test>";
+        let outcome = save_sent_copy(&mut session, mailbox, &live_raw(exact), exact, config)
+            .await
+            .expect("append the exact id");
+        assert!(
+            matches!(outcome, SentCopy::Appended { .. } | SentCopy::AppendedUnlocated { .. }),
+            "a near-miss must not short-circuit to AlreadyPresent: {outcome:?}"
+        );
+        session.select(mailbox).await.unwrap();
+        assert_eq!(
+            session.uid_search("ALL").await.unwrap().len(),
+            2,
+            "both the near-miss and the exact copy are present (no false dedup)"
+        );
+        drop_scratch(&mut session, &[mailbox]).await;
+        let _ = session.logout().await;
+    }
+
+    #[tokio::test]
+    async fn live_save_sent_copy_into_a_non_ascii_scratch_mailbox() {
+        let Some((mut session, _lease)) = live_session().await else {
+            return;
+        };
+        // A non-ASCII scratch name exercises the modified-UTF-7 EXAMINE/APPEND
+        // path end to end against the real server.
+        let mailbox = "P4R4-Gesendet-Entw\u{00fc}rfe";
+        create_empty_scratch(&mut session, mailbox).await;
+        let message_id = "<p4r4-nonascii@threestrands.test>";
+        let raw = live_raw(message_id);
+        let config = SaveSentConfig {
+            relocate_rechecks: 3,
+            recheck_delay: std::time::Duration::from_millis(50),
+        };
+        let outcome = save_sent_copy(&mut session, mailbox, &raw, message_id, config)
+            .await
+            .expect("append to a non-ASCII scratch mailbox");
+        assert!(matches!(
+            outcome,
+            SentCopy::Appended { .. } | SentCopy::AppendedUnlocated { .. }
+        ));
+        session.select(mailbox).await.unwrap();
+        assert_eq!(session.uid_search("ALL").await.unwrap().len(), 1);
+        drop_scratch(&mut session, &[mailbox]).await;
+        let _ = session.logout().await;
     }
 }
 

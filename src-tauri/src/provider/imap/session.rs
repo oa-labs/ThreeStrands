@@ -566,6 +566,29 @@ where
         self.run_write_command_plain(&format!("RENAME {from} {to}"))
             .await
     }
+
+    async fn append(
+        &mut self,
+        mailbox: &str,
+        flags: &[String],
+        content: &[u8],
+    ) -> super::write::WriteResult<()> {
+        // Validate + encode BEFORE any wire I/O. `prepare_append` returns the
+        // modified-UTF-7 mailbox name (async-imap quotes it with `quote!`,
+        // which only escapes `"`/`\`; the encoded name is ASCII, so a non-ASCII
+        // Sent mailbox round trips as modified UTF-7, not raw UTF-8) and the
+        // parenthesised flag list.
+        let (encoded_mailbox, flag_list) =
+            super::write::prepare_append(mailbox, flags, content)
+                .map_err(super::write::WriteError::Provider)?;
+        // The library `append` performs the `+`-continuation handshake and
+        // writes the literal; a hand-rolled literal desynchronises the stream
+        // (Phase 3 run 1). No INTERNALDATE: the server stamps "now".
+        self.session
+            .append(&encoded_mailbox, Some(&flag_list), None, content)
+            .await
+            .map_err(|e| super::write::map_append_error(&e))
+    }
 }
 
 #[cfg(test)]

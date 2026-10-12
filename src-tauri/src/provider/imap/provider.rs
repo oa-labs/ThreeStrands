@@ -193,6 +193,17 @@ impl super::write::ImapWriteSession for LeasedSession {
     async fn rename_mailbox_arg(&mut self, from: &str, to: &str) -> ProviderResult<()> {
         self.session.rename_mailbox_arg(from, to).await
     }
+    async fn append(
+        &mut self,
+        mailbox: &str,
+        flags: &[String],
+        content: &[u8],
+    ) -> super::write::WriteResult<()> {
+        // Delegate to the inner `AsyncImapSession`'s own `ImapWriteSession::
+        // append` (which validates, encodes modified UTF-7, and uses the
+        // library `append`); `ConnectedSession` is an `AsyncImapSession`.
+        super::write::ImapWriteSession::append(&mut self.session, mailbox, flags, content).await
+    }
 }
 
 /// A live IMAP account provider.
@@ -2203,6 +2214,55 @@ impl ImapProvider {
             .iter()
             .find(|e| e.role == Some(role))
             .map(|e| e.mailbox.clone())
+    }
+
+    /// Save the sender's own copy of a just-sent message into the account's
+    /// Sent mailbox, IDEMPOTENTLY (Phase 4 run 4a). Resolves the Sent mailbox
+    /// from the sync plan (overrides > RFC 6154 `\Sent` > name match, exactly
+    /// like the move paths resolve Archive/Trash/Junk), opens its OWN leased
+    /// session (the command slot, like every other write path), and runs the
+    /// [`super::write::save_sent_copy`] primitive.
+    ///
+    /// `raw` is the OUTBOX raw bytes UNMODIFIED — the Sent copy keeps its
+    /// `Bcc:` header (only the SMTP wire copy stripped it). `message_id` is our
+    /// own generated id for the message (its raw `Message-ID` header value).
+    ///
+    /// Run 4b owns WHEN this is called (first-send detection against
+    /// `settings.server_saves_sent`, a durable retry job, per-message
+    /// serialisation + settle delay); nothing in shipped code calls it yet, so
+    /// it carries the module's scoped `dead_code` allow until then. A missing
+    /// Sent mailbox is a typed permanent error naming it (this never creates
+    /// one).
+    async fn save_sent_copy_for(
+        &self,
+        raw: &[u8],
+        message_id: &str,
+        config: super::write::SaveSentConfig,
+    ) -> super::write::WriteResult<super::write::SentCopy> {
+        let plan = self
+            .build_sync_plan()
+            .map_err(super::write::WriteError::Provider)?;
+        let mailbox = self
+            .mailbox_with_role(&plan, super::MailboxRole::Sent)
+            .ok_or_else(|| {
+                super::write::WriteError::Provider(ProviderError::InvalidOperation(
+                    "cannot save the Sent copy: this account has no Sent mailbox configured; \
+                     refusing permanently"
+                        .into(),
+                ))
+            })?;
+
+        let mut session = self
+            .open_session()
+            .await
+            .map_err(super::write::WriteError::Provider)?;
+        let result = {
+            let write_session =
+                as_write_session(session.as_mut()).map_err(super::write::WriteError::Provider)?;
+            super::write::save_sent_copy(write_session, &mailbox, raw, message_id, config).await
+        };
+        let _ = session.logout().await;
+        result
     }
 
     /// Apply a system-label move to every (surviving) message of a thread,

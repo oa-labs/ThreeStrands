@@ -212,6 +212,49 @@ pub trait ImapWriteSession: ImapSession {
     /// `RENAME <from> <to>` where both are already-encoded mailbox arguments.
     /// Maps `NO`/`BAD` through the RFC 5530 map.
     async fn rename_mailbox_arg(&mut self, from: &str, to: &str) -> Result<(), ProviderError>;
+
+    /// `APPEND <mailbox> (<flags>) {<n>}` + the message literal, through the
+    /// async-imap library `append` (which performs the `+`-continuation
+    /// handshake and writes the literal correctly — Phase 3 run 1 proved a
+    /// hand-rolled literal through [`ImapSession::run_command_capture_code`]
+    /// desynchronises the connection, so this MUST go through the library).
+    ///
+    /// `mailbox` is the DECODED mailbox name (not an encoded arg): the impl
+    /// encodes it to modified UTF-7 with [`encode_modified_utf7`] and lets
+    /// async-imap quote the ASCII result, so a non-ASCII Sent mailbox round
+    /// trips correctly (proven by a test). `flags` are the flags to set on the
+    /// appended copy (the Sent copy uses `\Seen`); they are validated through
+    /// [`validate_flags`] and emitted as a parenthesised list. No INTERNALDATE
+    /// is sent (the server stamps "now", which is correct for a just-sent
+    /// message).
+    ///
+    /// Rejected BEFORE any I/O (nothing reaches the wire): a non-ASCII-safe or
+    /// hostile mailbox name ([`build_mailbox_arg`]'s control-char/length
+    /// rules), an invalid/empty flag list, content containing a NUL byte (an
+    /// IMAP4rev1 literal cannot carry one), empty content, and content over
+    /// [`policy::APPEND_MAX_BYTES`].
+    ///
+    /// Error mapping: a server rejection that arrives BEFORE the `+`
+    /// continuation (the shape `NO [OVERQUOTA]` / `NO [TRYCREATE]` / a `BAD`
+    /// takes for APPEND) is collapsed by async-imap into an opaque
+    /// `Error::Append` that DISCARDS the response code, so it maps to a
+    /// PERMANENT rejection (definite "refused, nothing stored") with a message
+    /// saying the specific code was not reported — the honest limit of using
+    /// the library `append`. `save_sent_copy` sidesteps this for the
+    /// missing-mailbox case by EXAMINEing first, so a `[TRYCREATE]` is caught
+    /// there as a typed missing-Sent-mailbox error. A dropped connection
+    /// (mid-literal, or after the store but before the tagged OK) stays
+    /// TRANSIENT with its retry class intact (Phase 3 run 3 lesson: never turn
+    /// a transient cause into a permanent `InvalidOperation`) — which is what
+    /// makes the lost-reply retry idempotent. A tagged `NO` that DOES carry a
+    /// code (some servers) is still lifted to [`WriteError::TryCreate`] for
+    /// TRYCREATE/NONEXISTENT.
+    async fn append(
+        &mut self,
+        mailbox: &str,
+        flags: &[String],
+        content: &[u8],
+    ) -> WriteResult<()>;
 }
 
 // ===========================================================================
@@ -1256,6 +1299,439 @@ pub(super) fn select_is_read_only(code: &async_imap::imap_proto::ResponseCode<'_
     matches!(code, async_imap::imap_proto::ResponseCode::ReadOnly)
 }
 
+// ===========================================================================
+// The Sent-copy APPEND primitive (Phase 4 run 4a)
+// ===========================================================================
+//
+// `docs/imap-design.md` ("Sending", steps 3–4). After SMTP accepts a message,
+// IMAP saves the sender's own copy in the Sent mailbox with `APPEND` (flag
+// `\Seen`). The one hard requirement is IDEMPOTENCE: calling the primitive
+// twice — a deliberate retry, or a retry after a reply was lost — must never
+// produce two copies. Run 4b decides WHEN to call this (first-send detection
+// against `settings.server_saves_sent`, a durable retry job); run 4a is only
+// the correct, well-tested primitive and its session plumbing.
+//
+// NOTE on Bcc: the raw bytes saved here are the OUTBOX raw, UNMODIFIED — they
+// still carry the `Bcc:` header. Only the SMTP WIRE copy had Bcc stripped
+// (`send::strip_bcc_header`); a sender's own Sent copy keeps its Bcc line, so
+// they can see whom they blind-copied. This primitive deliberately does NOT
+// strip anything.
+
+/// Prepare the validated wire inputs for an `APPEND`: the modified-UTF-7
+/// mailbox name async-imap will quote, and the parenthesised flag list. All
+/// rejection happens here, BEFORE any byte reaches the wire.
+///
+/// Returns `(encoded_mailbox, flag_list)` where `encoded_mailbox` is the
+/// modified-UTF-7 encoding of the DECODED name (async-imap's `append` quotes
+/// it; passing it the raw name would send UTF-8, not modified UTF-7, for a
+/// non-ASCII mailbox — the bug a non-ASCII round-trip test pins) and
+/// `flag_list` is e.g. `"(\\Seen)"`.
+pub(super) fn prepare_append(
+    mailbox: &str,
+    flags: &[String],
+    content: &[u8],
+) -> Result<(String, String), ProviderError> {
+    // Reuse the audited mailbox-name gate (control chars + length) by building
+    // (and discarding) the quoted arg; it rejects exactly what APPEND must.
+    let _ = build_mailbox_arg(mailbox)?;
+    let encoded = encode_modified_utf7(mailbox);
+
+    let validated = validate_flags(flags)?;
+    let flag_list = format!("({})", validated.join(" "));
+
+    if content.is_empty() {
+        return Err(ProviderError::InvalidOperation(
+            "refusing to APPEND an empty message".into(),
+        ));
+    }
+    if content.contains(&0u8) {
+        return Err(ProviderError::InvalidOperation(
+            "message contains a NUL byte, which an IMAP4rev1 literal cannot carry; refusing to \
+             APPEND"
+                .into(),
+        ));
+    }
+    policy::check_append_bytes(content.len())?;
+
+    Ok((encoded, flag_list))
+}
+
+/// Map an `async-imap` APPEND error to a [`WriteError`], recovering the typed
+/// `TRYCREATE`/`NONEXISTENT` outcome from the lossy `Error::No` text.
+///
+/// async-imap collapses a tagged `NO [TRYCREATE] ...` into
+/// `Error::No("code: Some(TryCreate), info: Some(..)")`; the shared RFC 5530
+/// classifier recognises that exact shape as [`ImapFailure::TryCreate`]
+/// (and a bare `[NONEXISTENT]`-coded NO likewise), so we lift it to the typed
+/// [`WriteError::TryCreate`] here. Everything else goes through the normal map
+/// ([`map_imap_error`]), preserving its retry class — a dropped connection
+/// stays [`ProviderError::TransientTransport`], `[OVERQUOTA]` stays permanent.
+pub(super) fn map_append_error(err: &async_imap::error::Error) -> WriteError {
+    use super::error::{classify_async_imap_status_text, ImapFailure};
+    use async_imap::error::Error as E;
+    if let E::No(text) | E::Bad(text) = err {
+        match classify_async_imap_status_text(text) {
+            ImapFailure::TryCreate(info) => return WriteError::TryCreate(info),
+            // NONEXISTENT arrives WITHOUT a recognised code word (imap-proto
+            // does not type it), so it classifies as `Bad`; a Sent mailbox
+            // that is simply gone is the same "create it / the caller decides"
+            // situation as TRYCREATE for this primitive, so detect it by its
+            // (bracketed, server-neutral) code position.
+            _ if code_word_is(text, "NONEXISTENT") => {
+                return WriteError::TryCreate(text.clone());
+            }
+            _ => {}
+        }
+    }
+    // async-imap collapses a server rejection that arrives BEFORE the `+`
+    // continuation (the correct protocol shape for an APPEND the server refuses
+    // outright — `NO [OVERQUOTA]`, `NO [TRYCREATE]`, a `BAD`) into the opaque
+    // `Error::Append`, discarding the response code. By the time `save_sent_
+    // copy` APPENDs it has already EXAMINEd the mailbox, so a missing-mailbox
+    // TRYCREATE cannot reach here through that path; a bare `Error::Append` is
+    // therefore a DEFINITE "the server refused and stored nothing" — a
+    // PERMANENT rejection, never a transient retry (a mid-literal DROP is an
+    // `Io`/`ConnectionLost`, which maps to transient below, so the lost-reply
+    // retry still works). We cannot recover the specific code async-imap threw
+    // away; the message says so.
+    if matches!(err, E::Append) {
+        return WriteError::Provider(ProviderError::PermanentClientRejection(
+            "the mail server refused the APPEND of the Sent copy (e.g. over quota or a rejected \
+             message); it was not saved. The specific reason was not reported by the IMAP library."
+                .into(),
+        ));
+    }
+    WriteError::Provider(super::error::map_imap_error(err))
+}
+
+/// Whether the async-imap `Error::No`/`Bad` debug text carries the bracketed
+/// RFC 5530 code `word` in its leading code position. Server-neutral: it reads
+/// only the `info: Some("[WORD] …")` field async-imap formats, never a mailbox
+/// name or diagnostic tail, so `Unknown mailbox: NONEXISTENT` is NOT matched.
+fn code_word_is(async_imap_no_text: &str, word: &str) -> bool {
+    // Shape: `code: None, info: Some("[WORD] human text")` (or `outcome:` for
+    // some parsers). Find the quoted information and read its bracketed head.
+    let Some(open_quote) = async_imap_no_text.find('"') else {
+        return false;
+    };
+    let tail = &async_imap_no_text[open_quote + 1..];
+    tail.trim_start()
+        .strip_prefix('[')
+        .and_then(|rest| rest.split_once(']'))
+        .map(|(code, _)| code.eq_ignore_ascii_case(word))
+        .unwrap_or(false)
+}
+
+/// A located copy of a message in one mailbox: the mailbox's `UIDVALIDITY` at
+/// the time of the search and the UID(s) of every message whose `Message-ID`
+/// header EXACTLY matched (there is normally one; more than one means the
+/// server already holds duplicates, which the caller treats as "present").
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Located {
+    pub uidvalidity: u32,
+    pub uids: Vec<u32>,
+}
+
+/// The outcome of [`save_sent_copy`]. The three states are the whole
+/// idempotency contract made explicit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SentCopy {
+    /// A copy with this `Message-ID` already existed in the Sent mailbox, so
+    /// NOTHING was appended. The idempotent outcome of a retry.
+    AlreadyPresent { uidvalidity: u32, uids: Vec<u32> },
+    /// We appended the copy and then located it by `Message-ID`.
+    Appended { uidvalidity: u32, uid: u32 },
+    /// `APPEND` returned OK but the follow-up search did not find the copy
+    /// within the bounded re-checks. This is SUCCESS: the message is stored and
+    /// the next sync will discover it. The caller must NOT retry the append on
+    /// this outcome (that is exactly how a duplicate would be created).
+    AppendedUnlocated { uidvalidity: u32 },
+}
+
+/// Injectable timing/limits for [`save_sent_copy`], so tests run instantly.
+#[derive(Clone, Copy, Debug)]
+pub struct SaveSentConfig {
+    /// How many times to re-run the locate SEARCH after a successful APPEND
+    /// whose first search found nothing, before returning `AppendedUnlocated`.
+    pub relocate_rechecks: usize,
+    /// Delay between those re-checks. Zero in tests.
+    pub recheck_delay: std::time::Duration,
+}
+
+impl Default for SaveSentConfig {
+    fn default() -> Self {
+        Self {
+            relocate_rechecks: policy::SENT_COPY_RELOCATE_RECHECKS,
+            // A short settle so a server that makes a stored message visible to
+            // SEARCH only after a beat is given a chance before we give up and
+            // leave discovery to the next sync. Run 4b owns the real per-send
+            // serialisation + settle; this is a conservative default.
+            recheck_delay: std::time::Duration::from_millis(200),
+        }
+    }
+}
+
+/// Find every copy of `message_id` in the SELECTED/EXAMINED `mailbox` and
+/// return their UIDs plus the mailbox UIDVALIDITY, VERIFYING each hit.
+///
+/// `UID SEARCH HEADER Message-ID "<value>"` is a SUBSTRING match (RFC 3501
+/// §6.4.4), so a hit is only a CANDIDATE: each is confirmed by fetching its own
+/// `Message-ID` header (`BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]`, which does not
+/// set `\Seen`) and comparing the normalized token EXACTLY. A near-miss
+/// (`<abc@x>` vs `<xabc@x>` or `<abc@xy>`) is rejected.
+///
+/// `message_id` must be our OWN generated id (the raw header value); it is
+/// validated to contain no quote, backslash, CR, LF, NUL or whitespace before
+/// anything is sent, so it cannot break out of the quoted search string. The
+/// number of candidates examined is bounded by
+/// [`policy::MAX_MESSAGE_ID_SEARCH_HITS`].
+///
+/// `uidvalidity` is read from the caller's prior SELECT/EXAMINE (passed in),
+/// since SEARCH does not report it.
+pub async fn find_by_message_id(
+    session: &mut dyn ImapWriteSession,
+    message_id: &str,
+    uidvalidity: u32,
+) -> Result<Located, ProviderError> {
+    let normalized_target = validate_search_message_id(message_id)?;
+
+    // SEARCH HEADER with the raw id value, quoted. The value is validated to
+    // carry no quote/backslash/CR/LF/NUL/whitespace, so this quoting is safe.
+    let query = format!("HEADER Message-ID \"{message_id}\"");
+    let mut hits = session.uid_search(&query).await?;
+    hits.sort_unstable();
+    hits.dedup();
+    policy::check_message_id_search_hits(hits.len())?;
+
+    // Verify each candidate by fetching ITS Message-ID header and comparing
+    // the normalized token exactly.
+    let mut confirmed = Vec::new();
+    for uid in hits {
+        let Some(set) = build_uid_set(&[uid]) else {
+            continue;
+        };
+        let fetched = session
+            .uid_fetch(&set, "BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]")
+            .await?;
+        for message in &fetched {
+            if let Some(header_bytes) = message.header() {
+                if header_message_id_matches(header_bytes, &normalized_target) {
+                    confirmed.push(uid);
+                    break;
+                }
+            }
+        }
+    }
+    confirmed.sort_unstable();
+    confirmed.dedup();
+    Ok(Located {
+        uidvalidity,
+        uids: confirmed,
+    })
+}
+
+/// Validate that a Message-ID is safe to embed in a quoted SEARCH string and
+/// return its normalized token for exact comparison. Rejects (nothing sent)
+/// any quote, backslash, CR, LF, NUL or ASCII whitespace, and an id whose
+/// normalized form is empty.
+fn validate_search_message_id(message_id: &str) -> Result<String, ProviderError> {
+    for ch in message_id.chars() {
+        if matches!(ch, '"' | '\\' | '\r' | '\n' | '\0') || (ch.is_whitespace()) {
+            return Err(ProviderError::InvalidOperation(format!(
+                "Message-ID contains a forbidden character ({:#04x}) for a SEARCH; refusing to \
+                 build a command",
+                ch as u32
+            )));
+        }
+    }
+    let normalized = super::identity::normalize_message_id(message_id);
+    if normalized.is_empty() {
+        return Err(ProviderError::InvalidOperation(
+            "Message-ID normalizes to empty; refusing to search for it".into(),
+        ));
+    }
+    Ok(normalized)
+}
+
+/// Whether a fetched `HEADER.FIELDS (MESSAGE-ID)` block carries a `Message-ID`
+/// whose normalized token EXACTLY equals `normalized_target`. The block is the
+/// header line(s) the server returned; we take the value after the first
+/// colon, normalize it with the same [`identity::normalize_message_id`] every
+/// other part of the provider compares by, and compare exactly.
+fn header_message_id_matches(header_bytes: &[u8], normalized_target: &str) -> bool {
+    let text = match std::str::from_utf8(header_bytes) {
+        Ok(text) => text,
+        // A Message-ID header is ASCII; non-UTF-8 bytes cannot be our own id.
+        Err(_) => return false,
+    };
+    // The block may contain the field name and folded continuation lines. Join
+    // continuation lines, then take everything after the first colon.
+    let unfolded = text.replace("\r\n", "\n").replace('\n', " ");
+    let Some((name, value)) = unfolded.split_once(':') else {
+        return false;
+    };
+    if !name.trim().eq_ignore_ascii_case("message-id") {
+        return false;
+    }
+    super::identity::normalize_message_id(value) == normalized_target
+}
+
+/// Save the sender's own copy of a just-sent message into `mailbox` (the Sent
+/// mailbox), IDEMPOTENTLY. The core guarantee of Phase 4 run 4.
+///
+/// Algorithm:
+/// 1. EXAMINE the mailbox for its UIDVALIDITY (read-only — we never need a
+///    writable select to APPEND, and EXAMINE never sets `\Seen` on the seed
+///    messages). A `[TRYCREATE]`/`[NONEXISTENT]`/absent mailbox is a typed
+///    permanent error naming the mailbox; this primitive does NOT create it.
+/// 2. [`find_by_message_id`]; if any copy exists → `AlreadyPresent` (nothing
+///    appended).
+/// 3. `APPEND` the raw bytes with flag `\Seen`, no INTERNALDATE.
+/// 4. Re-run [`find_by_message_id`] (a short bounded re-check from `config`,
+///    injectable) to locate the UID → `Appended`, else `AppendedUnlocated`.
+///
+/// IDEMPOTENCY CONTRACT (the heart of this run): if step 3 fails with ANY
+/// transient/unknown error — INCLUDING the connection dropping AFTER the server
+/// stored the message but BEFORE the tagged OK reached us — the caller will
+/// retry; the retry's step 2 then finds the copy and returns `AlreadyPresent`
+/// with exactly ONE copy on the server. Only a DEFINITE server `NO` (before
+/// storing, e.g. `[OVERQUOTA]`) is treated as "not appended". This function
+/// NEVER EXPUNGEs or deletes anything.
+///
+/// RESIDUAL RACE: a server that makes a just-stored message visible to SEARCH
+/// only after a delay can, on a fast retry, pass step 2 (not yet visible) and
+/// APPEND a second copy. The bounded re-check narrows this; run 4b closes it by
+/// SERIALISING per message and adding a settle delay before any retry's step 2.
+/// On this primitive alone the window is the re-check budget wide, documented
+/// here rather than hidden.
+pub async fn save_sent_copy(
+    session: &mut dyn ImapWriteSession,
+    mailbox: &str,
+    raw: &[u8],
+    message_id: &str,
+    config: SaveSentConfig,
+) -> WriteResult<SentCopy> {
+    // Validate the APPEND inputs up front (nothing on the wire if they are
+    // bad). We need the validated flag list only inside `append`, but failing
+    // fast here keeps a bad id/content from even EXAMINEing.
+    let seen = vec!["\\Seen".to_string()];
+    prepare_append(mailbox, &seen, raw).map_err(WriteError::Provider)?;
+    // Validate the id now too, so a hostile id is refused before any command.
+    validate_search_message_id(message_id).map_err(WriteError::Provider)?;
+
+    // 1. EXAMINE for UIDVALIDITY. A missing Sent mailbox is a typed permanent
+    // error (NoSentMailbox-style); the caller decides whether to create one.
+    let uidvalidity = examine_for_append(session, mailbox).await?;
+
+    // 2. Already present? Then nothing to do (idempotent).
+    let existing = find_by_message_id(session, message_id, uidvalidity)
+        .await
+        .map_err(WriteError::Provider)?;
+    if !existing.uids.is_empty() {
+        return Ok(SentCopy::AlreadyPresent {
+            uidvalidity: existing.uidvalidity,
+            uids: existing.uids,
+        });
+    }
+
+    // 3. APPEND with \Seen. A definite NO (OVERQUOTA, …) is "not appended" and
+    // propagates; a TRYCREATE is the typed missing-mailbox outcome; a transient
+    // error (incl. a drop after the server stored it) propagates so the caller
+    // retries and step 2 then finds the copy.
+    session.append(mailbox, &seen, raw).await?;
+
+    // 4. Locate the appended copy, with bounded re-checks for a server that
+    // makes it visible to SEARCH only after a beat.
+    let mut attempts = 0;
+    loop {
+        let located = find_by_message_id(session, message_id, uidvalidity)
+            .await
+            .map_err(WriteError::Provider)?;
+        if let Some(&uid) = located.uids.first() {
+            return Ok(SentCopy::Appended {
+                uidvalidity: located.uidvalidity,
+                uid,
+            });
+        }
+        if attempts >= config.relocate_rechecks {
+            // Stored but not yet locatable: success, the next sync finds it.
+            // Never retry the APPEND on this outcome.
+            return Ok(SentCopy::AppendedUnlocated { uidvalidity });
+        }
+        attempts += 1;
+        if !config.recheck_delay.is_zero() {
+            tokio::time::sleep(config.recheck_delay).await;
+        }
+    }
+}
+
+/// EXAMINE `mailbox` and return its UIDVALIDITY, mapping an absent mailbox to a
+/// typed PERMANENT [`WriteError`] naming it (this primitive never creates the
+/// Sent mailbox). A `[TRYCREATE]`/`[NONEXISTENT]` NO becomes a
+/// permanent `InvalidOperation` (NOT the retryable TryCreate — there is no
+/// create-and-retry here, the caller decides out of band). A missing
+/// UIDVALIDITY is a permanent error (we cannot anchor a `Located` without it).
+async fn examine_for_append(
+    session: &mut dyn ImapWriteSession,
+    mailbox: &str,
+) -> WriteResult<u32> {
+    // Validate the name (control chars + length) and EXAMINE its MODIFIED
+    // UTF-7 encoding: async-imap's `examine` only quotes, it does not encode,
+    // so a non-ASCII Sent mailbox examined by its decoded name would reach the
+    // wrong mailbox (the raw UTF-8 bytes). Passing the encoded ASCII name lets
+    // async-imap's `quote!` produce the correct modified-UTF-7 token — the same
+    // trick `append` uses.
+    let _ = build_mailbox_arg(mailbox).map_err(WriteError::Provider)?;
+    let encoded = encode_modified_utf7(mailbox);
+    match session.examine(&encoded).await {
+        Ok(status) => status.uid_validity.ok_or_else(|| {
+            WriteError::Provider(ProviderError::InvalidOperation(format!(
+                "Sent mailbox {mailbox:?} reported no UIDVALIDITY on EXAMINE; cannot save a copy"
+            )))
+        }),
+        Err(error) => Err(WriteError::Provider(no_sent_mailbox_error(mailbox, &error))),
+    }
+}
+
+/// Build the typed "no Sent mailbox" error from an EXAMINE failure. A missing
+/// mailbox — `[TRYCREATE]` or `[NONEXISTENT]`, whichever the server sends —
+/// becomes a PERMANENT `InvalidOperation` naming the mailbox, so run 4b can
+/// present "configure a Sent mailbox" rather than retrying forever (this
+/// primitive never creates it). A genuinely transient EXAMINE failure (a
+/// dropped connection, `[UNAVAILABLE]`) KEEPS its transient class so the caller
+/// retries (Phase 3 run 3 lesson: never turn a transient cause permanent).
+fn no_sent_mailbox_error(mailbox: &str, cause: &ProviderError) -> ProviderError {
+    // A missing mailbox is reported by the RFC 5530 map either as the Slice-3
+    // TRYCREATE-transient placeholder (text names TRYCREATE) or as a plain
+    // InvalidOperation (NONEXISTENT has no typed code). Both mean "the mailbox
+    // is not there" — a permanent configuration issue for this primitive.
+    let text = cause.to_string();
+    let missing = text.contains("TRYCREATE") || text.to_ascii_uppercase().contains("NONEXISTENT");
+    if missing {
+        return ProviderError::InvalidOperation(format!(
+            "cannot save the Sent copy: the Sent mailbox {mailbox:?} does not exist; configure or \
+             create it, then retry ({cause})"
+        ));
+    }
+    match cause {
+        // A transient EXAMINE failure KEEPS its class so the caller retries;
+        // ProviderError is not Clone, so re-wrap the cause's text in the same
+        // variant rather than cloning it.
+        ProviderError::TransientTransport(_) => ProviderError::TransientTransport(text),
+        ProviderError::RetryableServer(_) => ProviderError::RetryableServer(text),
+        ProviderError::Authentication(_) => ProviderError::Authentication(text),
+        ProviderError::ReauthenticationRequired(_) => {
+            ProviderError::ReauthenticationRequired(text)
+        }
+        // Any other failure (a plain NO/BAD) is a permanent inability to reach
+        // the Sent mailbox.
+        _ => ProviderError::InvalidOperation(format!(
+            "cannot save the Sent copy: the Sent mailbox {mailbox:?} is not available ({cause}); \
+             configure or create it, then retry"
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1642,6 +2118,126 @@ mod tests {
             store.mailboxes().unwrap().is_empty(),
             "an uncatalogued mailbox must not be created with sync counters"
         );
+    }
+
+    // ---- Phase 4 run 4a: Sent-copy pure helpers -----------------------
+
+    #[test]
+    fn prepare_append_encodes_the_mailbox_and_builds_the_flag_list() {
+        // A non-ASCII mailbox name is modified-UTF-7 encoded (async-imap then
+        // quotes the ASCII result), and the flag list is parenthesised.
+        let (mailbox, flags) =
+            prepare_append("Gesendet/Entw\u{00fc}rfe", &["\\Seen".into()], b"hi").unwrap();
+        assert_eq!(mailbox, "Gesendet/Entw&APw-rfe");
+        assert_eq!(flags, "(\\Seen)");
+        // ASCII name passes through unchanged.
+        let (mailbox, _) = prepare_append("Sent", &["\\Seen".into()], b"hi").unwrap();
+        assert_eq!(mailbox, "Sent");
+    }
+
+    #[test]
+    fn prepare_append_rejects_empty_nul_oversize_and_bad_flags_and_names() {
+        // Empty content.
+        assert!(matches!(
+            prepare_append("Sent", &["\\Seen".into()], b"").unwrap_err(),
+            ProviderError::InvalidOperation(_)
+        ));
+        // NUL in content.
+        assert!(matches!(
+            prepare_append("Sent", &["\\Seen".into()], b"a\0b").unwrap_err(),
+            ProviderError::InvalidOperation(_)
+        ));
+        // Over-limit content is a PERMANENT rejection.
+        let oversize = vec![b'x'; policy::APPEND_MAX_BYTES + 1];
+        assert!(matches!(
+            prepare_append("Sent", &["\\Seen".into()], &oversize).unwrap_err(),
+            ProviderError::PermanentClientRejection(_)
+        ));
+        // Exactly at the limit is accepted (below/exact/above lives in policy).
+        let exact = vec![b'x'; policy::APPEND_MAX_BYTES];
+        assert!(prepare_append("Sent", &["\\Seen".into()], &exact).is_ok());
+        // An empty flag list is refused (a STORE/APPEND needs a flag or the
+        // caller means "no flags" — this primitive always sets \Seen).
+        assert!(prepare_append("Sent", &[], b"hi").is_err());
+        // A hostile mailbox name (CRLF injection) is refused before anything.
+        assert!(prepare_append("Sent\r\nA1 DELETE INBOX", &["\\Seen".into()], b"hi").is_err());
+    }
+
+    #[test]
+    fn validate_search_message_id_rejects_unsafe_values_and_empty_normalization() {
+        for bad in ["<a\"b@x>", "<a\\b@x>", "<a b@x>", "<a\rb@x>", "<a\nb@x>", "<a\0b@x>"] {
+            assert!(validate_search_message_id(bad).is_err(), "{bad} must be refused");
+        }
+        // Normalizes to empty (only brackets) -> refused.
+        assert!(validate_search_message_id("<>").is_err());
+        // A clean id is accepted and returns its normalized token.
+        assert_eq!(validate_search_message_id("<ABC@Example.com>").unwrap(), "abc@example.com");
+    }
+
+    #[test]
+    fn header_message_id_matches_compares_the_normalized_token_exactly() {
+        let target = super::super::identity::normalize_message_id("<abc@x>");
+        // An exact match (case/bracket/folding insensitive).
+        assert!(header_message_id_matches(b"Message-ID: <ABC@x>\r\n\r\n", &target));
+        assert!(header_message_id_matches(b"Message-Id: <abc@x>", &target));
+        // Near-misses must NOT match (substring hits the SEARCH would surface).
+        assert!(!header_message_id_matches(b"Message-ID: <xabc@x>\r\n", &target));
+        assert!(!header_message_id_matches(b"Message-ID: <abc@xy>\r\n", &target));
+        // A different header, or no colon, never matches.
+        assert!(!header_message_id_matches(b"Subject: <abc@x>\r\n", &target));
+        assert!(!header_message_id_matches(b"garbage", &target));
+    }
+
+    #[test]
+    fn code_word_is_reads_only_the_bracketed_leading_code_position() {
+        // The async-imap NO text shape for a coded NO.
+        assert!(code_word_is(
+            r#"code: None, info: Some("[NONEXISTENT] Unknown mailbox: Sent")"#,
+            "NONEXISTENT"
+        ));
+        // A code word appearing only in the DIAGNOSTIC TAIL must NOT match
+        // (server-neutral: a mailbox named like a code cannot forge one).
+        assert!(!code_word_is(
+            r#"code: None, info: Some("Unknown mailbox: NONEXISTENT")"#,
+            "NONEXISTENT"
+        ));
+        // No quoted info -> no match.
+        assert!(!code_word_is("code: None, info: None", "NONEXISTENT"));
+    }
+
+    #[test]
+    fn map_append_error_classifies_the_append_outcomes() {
+        use async_imap::error::Error as E;
+        // A pre-continuation refusal collapses to Error::Append -> PERMANENT.
+        match map_append_error(&E::Append) {
+            WriteError::Provider(ProviderError::PermanentClientRejection(_)) => {}
+            other => panic!("Error::Append must be a permanent rejection, got {other:?}"),
+        }
+        // A dropped connection stays TRANSIENT (idempotent-retry depends on it).
+        match map_append_error(&E::ConnectionLost) {
+            WriteError::Provider(ProviderError::TransientTransport(_)) => {}
+            other => panic!("a drop must stay transient, got {other:?}"),
+        }
+        // A coded TRYCREATE NO (the shape async-imap uses when it DOES surface a
+        // code) lifts to the typed TryCreate.
+        let trycreate = E::No(r#"code: Some(TryCreate), info: Some("Mailbox doesn't exist: Sent")"#.into());
+        assert!(matches!(map_append_error(&trycreate), WriteError::TryCreate(_)));
+        // A coded NONEXISTENT NO likewise.
+        let nonexistent = E::No(r#"code: None, info: Some("[NONEXISTENT] no such mailbox")"#.into());
+        assert!(matches!(map_append_error(&nonexistent), WriteError::TryCreate(_)));
+        // An OVERQUOTA NO that DID carry through as text stays permanent.
+        let overquota = E::No(r#"code: None, info: Some("[OVERQUOTA] mailbox full")"#.into());
+        match map_append_error(&overquota) {
+            WriteError::Provider(ProviderError::PermanentClientRejection(_)) => {}
+            other => panic!("OVERQUOTA stays permanent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn save_sent_config_default_uses_the_policy_recheck_count() {
+        let config = SaveSentConfig::default();
+        assert_eq!(config.relocate_rechecks, policy::SENT_COPY_RELOCATE_RECHECKS);
+        assert!(!config.recheck_delay.is_zero(), "the production default settles between re-checks");
     }
 }
 

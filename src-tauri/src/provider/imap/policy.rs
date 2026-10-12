@@ -681,6 +681,74 @@ pub fn check_flags_per_command(count: usize) -> Result<usize, ProviderError> {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 4 run 4a: the Sent-copy APPEND primitive
+// ---------------------------------------------------------------------------
+//
+// `docs/imap-design.md` ("Sending", steps 3–4): after SMTP accepts a message,
+// IMAP saves the sender's own copy in the Sent mailbox with `APPEND` (flag
+// `\Seen`). These bound that one write, following the same "never silently
+// clamp — a value over the limit is a typed, PERMANENT error and NOTHING is
+// sent" rule as every limit above.
+
+/// Largest raw message, in bytes, the Sent-copy `APPEND` will put on the wire.
+///
+/// Tied to [`MAX_RAW_MESSAGE_BYTES`] (the body-cache ingest ceiling): a Sent
+/// copy we save is a message we will also sync back and cache, so refusing to
+/// APPEND anything the cache would then refuse keeps the two gates consistent —
+/// a message small enough to save is small enough to re-ingest. (It is set
+/// EQUAL rather than independently so the two cannot drift; a test below pins
+/// them together.) The sender's own raw bytes are built locally, so hitting
+/// this is a pathological attachment, not hostile input — but an over-limit
+/// APPEND is still refused with a typed PERMANENT error BEFORE any command or
+/// literal reaches the wire, never truncated.
+pub const APPEND_MAX_BYTES: usize = MAX_RAW_MESSAGE_BYTES;
+
+/// Most `UID SEARCH HEADER Message-ID` hits the Sent-copy locator will VERIFY
+/// (fetch-and-compare the Message-ID header of) before giving up.
+///
+/// `SEARCH HEADER` is a SUBSTRING match (RFC 3501 §6.4.4), so a short or
+/// common Message-ID can match many messages; each candidate must then be
+/// confirmed by fetching its own `Message-ID` header and comparing the
+/// normalized token exactly. 64 is far more than the handful of copies one
+/// Message-ID can legitimately produce (at most one real match, plus any
+/// substring near-misses in a small mailbox), while bounding how many verify
+/// FETCHes a pathological or hostile server can force. Over the limit is a
+/// typed error — the locator refuses rather than fetching unboundedly.
+pub const MAX_MESSAGE_ID_SEARCH_HITS: usize = 64;
+
+/// How many times `save_sent_copy` re-runs the locate SEARCH after a
+/// successful `APPEND` whose immediate search found nothing, before returning
+/// `AppendedUnlocated`. A server may make a just-stored message visible to
+/// SEARCH only after a short delay; a couple of bounded re-checks catches the
+/// common case without hanging the send path. Injectable in tests (so they run
+/// instantly with zero delay); this is the production default.
+pub const SENT_COPY_RELOCATE_RECHECKS: usize = 2;
+
+/// Reject a Sent-copy `APPEND` whose raw byte length exceeds
+/// [`APPEND_MAX_BYTES`]. Returns the length unchanged when within the limit
+/// (including exactly at it), so the caller reads "ok, this many bytes".
+pub fn check_append_bytes(len: usize) -> Result<usize, ProviderError> {
+    if len > APPEND_MAX_BYTES {
+        return Err(ProviderError::PermanentClientRejection(format!(
+            "message is {len} bytes, over the {APPEND_MAX_BYTES}-byte ({} MiB) APPEND limit",
+            APPEND_MAX_BYTES / 1024 / 1024
+        )));
+    }
+    Ok(len)
+}
+
+/// Reject a Message-ID search-hit count over [`MAX_MESSAGE_ID_SEARCH_HITS`].
+/// Returns the count unchanged when within the limit (including exactly at it).
+pub fn check_message_id_search_hits(count: usize) -> Result<usize, ProviderError> {
+    if count > MAX_MESSAGE_ID_SEARCH_HITS {
+        return Err(ProviderError::InvalidOperation(format!(
+            "{count} Message-ID search hits, over the {MAX_MESSAGE_ID_SEARCH_HITS}-hit verify limit"
+        )));
+    }
+    Ok(count)
+}
+
+// ---------------------------------------------------------------------------
 // Phase 4 run 1: SMTP submission limits
 // ---------------------------------------------------------------------------
 //
@@ -1473,6 +1541,51 @@ mod tests {
         // a fetch split a large UID set identically.
         assert_eq!(MAX_UIDS_PER_COMMAND, UID_BATCH_SIZE);
         assert!(MAX_UIDS_PER_COMMAND > 0);
+    }
+
+    // --- Phase 4 run 4a: the Sent-copy APPEND primitive --------------------
+
+    #[test]
+    fn append_bytes_gates_below_at_and_above_the_limit() {
+        assert_eq!(check_append_bytes(0).unwrap(), 0);
+        assert_eq!(
+            check_append_bytes(APPEND_MAX_BYTES - 1).unwrap(),
+            APPEND_MAX_BYTES - 1
+        );
+        assert_eq!(check_append_bytes(APPEND_MAX_BYTES).unwrap(), APPEND_MAX_BYTES);
+        // One over is a PERMANENT rejection, never a silent clamp.
+        assert!(matches!(
+            check_append_bytes(APPEND_MAX_BYTES + 1).unwrap_err(),
+            ProviderError::PermanentClientRejection(_)
+        ));
+    }
+
+    #[test]
+    fn message_id_search_hits_gate_below_at_and_above_the_limit() {
+        assert_eq!(check_message_id_search_hits(0).unwrap(), 0);
+        assert_eq!(
+            check_message_id_search_hits(MAX_MESSAGE_ID_SEARCH_HITS - 1).unwrap(),
+            MAX_MESSAGE_ID_SEARCH_HITS - 1
+        );
+        assert_eq!(
+            check_message_id_search_hits(MAX_MESSAGE_ID_SEARCH_HITS).unwrap(),
+            MAX_MESSAGE_ID_SEARCH_HITS
+        );
+        assert!(matches!(
+            check_message_id_search_hits(MAX_MESSAGE_ID_SEARCH_HITS + 1).unwrap_err(),
+            ProviderError::InvalidOperation(_)
+        ));
+    }
+
+    #[test]
+    fn the_append_limits_are_tied_to_their_anchors() {
+        // The APPEND ceiling is pinned to the body-cache ingest ceiling so a
+        // message small enough to save is small enough to re-ingest; the two
+        // must never drift.
+        assert_eq!(APPEND_MAX_BYTES, MAX_RAW_MESSAGE_BYTES);
+        assert_eq!(MAX_MESSAGE_ID_SEARCH_HITS, 64);
+        assert!(MAX_MESSAGE_ID_SEARCH_HITS > 0);
+        assert!(SENT_COPY_RELOCATE_RECHECKS >= 1);
     }
 
     // --- Phase 4 run 1: SMTP submission limits -----------------------------

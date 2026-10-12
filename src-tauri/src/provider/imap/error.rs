@@ -120,7 +120,7 @@ pub fn classify_status_text(text: &str) -> ImapFailure {
 /// use `outcome: Outcome { code: ..., information: ... }`. Inspect only their
 /// leading fields. Unknown codes survive at the start of the quoted
 /// information; recognized typed codes must not fall back to that text.
-fn classify_async_imap_status_text(text: &str) -> ImapFailure {
+pub(super) fn classify_async_imap_status_text(text: &str) -> ImapFailure {
     let fields = text
         .strip_prefix("code: ")
         .map(|fields| (fields, "None, info: Some(\""))
