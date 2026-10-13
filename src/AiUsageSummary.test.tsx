@@ -32,16 +32,16 @@ describe("AiUsageSummary", () => {
     expect(within(usage).getByText(/5 requests have no price yet/)).toBeInTheDocument();
     expect(summary).toHaveBeenCalledWith(7);
 
-    fireEvent.change(within(usage).getByLabelText("Input price"), { target: { value: "2" } });
-    fireEvent.change(within(usage).getByLabelText("Output price"), { target: { value: "10" } });
+    fireEvent.change(within(usage).getByLabelText("Input Price"), { target: { value: "2" } });
+    fireEvent.change(within(usage).getByLabelText("Output Price"), { target: { value: "10" } });
 
     expect(within(usage).getByText("3 requests · 1.6M tokens · $4.00")).toBeInTheDocument();
     expect(within(usage).getByText("5 requests · 2.1M tokens · $5.00")).toBeInTheDocument();
     expect(within(usage).queryByText(/no price yet/)).not.toBeInTheDocument();
     expect(readAiPrices()).toEqual({ "openai:gpt-4o": { inputPerMillion: 2, outputPerMillion: 10 } });
 
-    fireEvent.change(within(usage).getByLabelText("Input price"), { target: { value: "" } });
-    fireEvent.change(within(usage).getByLabelText("Output price"), { target: { value: "" } });
+    fireEvent.change(within(usage).getByLabelText("Input Price"), { target: { value: "" } });
+    fireEvent.change(within(usage).getByLabelText("Output Price"), { target: { value: "" } });
     expect(readAiPrices()).toEqual({});
   });
 
@@ -55,11 +55,11 @@ describe("AiUsageSummary", () => {
     expect(await within(usage).findByText(/2 requests have no price yet/)).toBeInTheDocument();
 
     const main = within(usage).getByRole("group", { name: "Prices for gpt-4o" });
-    fireEvent.change(within(main).getByLabelText("Input price"), { target: { value: "2" } });
+    fireEvent.change(within(main).getByLabelText("Input Price"), { target: { value: "2" } });
     expect(within(usage).getByText(/1 request has no price yet/)).toBeInTheDocument();
 
     const fast = within(usage).getByRole("group", { name: "Prices for gpt-4o-mini" });
-    fireEvent.change(within(fast).getByLabelText("Input price"), { target: { value: "0.5" } });
+    fireEvent.change(within(fast).getByLabelText("Input Price"), { target: { value: "0.5" } });
     expect(within(usage).queryByText(/no price yet/)).not.toBeInTheDocument();
     expect(within(usage).getAllByText("2 requests · 2M tokens · $2.50")).toHaveLength(2);
     expect(readAiPrices()).toEqual({
@@ -79,7 +79,7 @@ describe("AiUsageSummary", () => {
     vi.spyOn(mailClient, "aiUsageSummary").mockResolvedValue([]);
     render(<AiUsageSummary provider="anthropic" model="claude-sonnet-5" />);
     await screen.findByText("Today");
-    fireEvent.change(screen.getByLabelText("Input price"), { target: { value: "-3" } });
+    fireEvent.change(screen.getByLabelText("Input Price"), { target: { value: "-3" } });
     expect(readAiPrices()).toEqual({});
   });
 
@@ -91,7 +91,7 @@ describe("AiUsageSummary", () => {
 
     expect(await screen.findAllByText("2 requests · 1K tokens · $0.25")).toHaveLength(2);
     expect(screen.getByText("OpenRouter reports the exact cost of each request.")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Input price")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Input Price")).not.toBeInTheDocument();
   });
 
   it("reports a failure to load usage", async () => {

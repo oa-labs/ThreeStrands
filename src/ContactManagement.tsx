@@ -63,7 +63,7 @@ export function ContactManagement({ addresses, onChanged, hasUnsavedChanges = fa
         {mode === "suggestions" ? <>
           <p>Hide an address from automatic recipient suggestions on this device, across all accounts. You can still type it or deliberately choose a group containing it. This preference survives deleting a contact and stays on this device.</p>
           {addresses.filter(address => !suppressed.includes(address.toLowerCase())).map(address => <p key={address}><button type="button" className="btn" disabled={busy} onClick={() => void suppress(address, true)}>Never suggest {address}</button></p>)}
-          <form onSubmit={event => { event.preventDefault(); void suppress(email, true); }}><label>Email address<input type="email" required value={email} disabled={busy} onChange={event => setEmail(event.target.value)}/></label><button type="submit" className="btn" disabled={busy || !email.trim()}>Never suggest this address</button></form>
+          <form onSubmit={event => { event.preventDefault(); void suppress(email, true); }}><label>Email Address<input type="email" required value={email} disabled={busy} onChange={event => setEmail(event.target.value)}/></label><button type="submit" className="btn" disabled={busy || !email.trim()}>Never suggest this address</button></form>
           {suppressed.length ? <ul>{suppressed.map(address => <li key={address}><span>{address}</span><button type="button" className="btn btn-sm" disabled={busy} onClick={() => void suppress(address, false)}>Allow suggestions for {address}</button></li>)}</ul> : <p>No addresses are hidden.</p>}
         </> : null}
         {busy ? <p role="status">Working…</p> : null}

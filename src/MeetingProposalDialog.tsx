@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { Modal } from "./AppChrome";
 import type { MeetingProposal } from "./domain";
+import { EmailBadgeField } from "./ContactAddressField";
 
 function dateTimeInputValue(value: string | null): string {
   if (!value) return "";
@@ -26,7 +27,7 @@ export function MeetingProposalDialog({
   onSave(proposal: MeetingProposal): void;
 }) {
   const [title, setTitle] = useState(proposal.title);
-  const [participants, setParticipants] = useState(proposal.participants.join(", "));
+  const [participants, setParticipants] = useState<string[]>(proposal.participants);
   const [location, setLocation] = useState(proposal.location ?? "");
   const [start, setStart] = useState(dateTimeInputValue(proposal.normalizedStart ?? proposal.searchRangeStart));
   const [end, setEnd] = useState(dateTimeInputValue(proposal.normalizedEnd ?? proposal.searchRangeEnd));
@@ -40,7 +41,7 @@ export function MeetingProposalDialog({
     onSave({
       ...proposal,
       title: title.trim(),
-      participants: participants.split(",").map((value) => value.trim()).filter(Boolean),
+      participants,
       location: location.trim() || null,
       normalizedStart: isoDateTime(start),
       normalizedEnd: isoDateTime(end),
@@ -60,7 +61,7 @@ export function MeetingProposalDialog({
         }
       }}>
         <label><span>Title</span><input ref={titleRef} value={title} onChange={(event) => setTitle(event.target.value)} /></label>
-        <label><span>Participants</span><input value={participants} onChange={(event) => setParticipants(event.target.value)} placeholder="Comma-separated email addresses" /></label>
+        <EmailBadgeField label="Participants" values={participants} onChange={setParticipants} />
         <label><span>Start</span><input type="datetime-local" value={start} onChange={(event) => setStart(event.target.value)} /></label>
         <label><span>End</span><input type="datetime-local" value={end} onChange={(event) => setEnd(event.target.value)} /></label>
         <label><span>Duration (Minutes)</span><input type="number" min="5" max="1440" value={duration} onChange={(event) => setDuration(event.target.value)} /></label>

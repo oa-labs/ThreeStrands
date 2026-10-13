@@ -286,6 +286,7 @@ describe("settings section keyboard navigation", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Appearance" }));
 
     const search = within(dialog).getByRole("searchbox", { name: "Search Settings" });
+    expect(search).toHaveAttribute("writingsuggestions", "false");
     search.focus();
     fireEvent.change(search, { target: { value: "minimum email font size" } });
     expect(within(dialog).getByRole("button", { name: "Appearance" })).toHaveAttribute("aria-current", "true");

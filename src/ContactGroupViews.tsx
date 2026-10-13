@@ -54,7 +54,7 @@ export function ContactGroupList({
     {creating ? <form className="contact-group-create" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
       <input
         autoFocus
-        aria-label="New group name"
+        aria-label="New Group Name"
         placeholder="Group name"
         maxLength={MAX_CONTACT_GROUP_NAME}
         value={name}
@@ -130,7 +130,7 @@ export function ContactGroupDetail({
         <div>
           <input
             className="contact-name-input"
-            aria-label="Group name"
+            aria-label="Group Name"
             maxLength={MAX_CONTACT_GROUP_NAME}
             value={name}
             disabled={busy}

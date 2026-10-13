@@ -235,7 +235,7 @@ function IdentityRowFields({
           placeholder="alias@example.com"
           onChange={(event) => onChange({ address: event.target.value })}
         />
-        <label htmlFor={nameId}>Name (optional)</label>
+        <label htmlFor={nameId}>Name (Optional)</label>
         <input
           id={nameId}
           value={row.displayName}

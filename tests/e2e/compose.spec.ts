@@ -88,12 +88,12 @@ test("reviews a new email in the context panel, applies and undoes without sendi
   await page.getByRole("button", { name: "New Message (c)" }).click();
   await enableDraftReview(page);
   const composer = page.getByRole("dialog", { name: "New Message" });
-  const panel = page.getByRole("region", { name: "Draft review" });
+  const panel = page.getByRole("region", { name: "Draft Review" });
   const body = composer.getByRole("textbox", { name: "Message Body" });
   await composer.getByRole("textbox", { name: "To", exact: true }).fill("client@example.com");
   await composer.getByRole("textbox", { name: "Subject" }).fill("An introduction");
   await body.fill("I help teams improve their workflow.");
-  await panel.getByRole("textbox", { name: /What do you want/ }).fill("Get an introductory call");
+  await panel.getByRole("textbox", { name: /Goal for This Email/ }).fill("Get an introductory call");
   await panel.getByRole("button", { name: "Review Draft", exact: true }).click();
   await expect(panel.locator("pre")).toHaveText("I help teams improve their workflow.");
   await expect(body).toHaveText("I help teams improve their workflow.");
@@ -107,7 +107,7 @@ test("reviews a new email in the context panel, applies and undoes without sendi
   await (await openFolders(page)).getByRole("button", { name: /Drafts/ }).click();
   await page.getByRole("button", { name: /An introduction/ }).click();
   await expect(body).toHaveText("I help teams improve their workflow.");
-  await expect(panel.getByRole("textbox", { name: /What do you want/ })).toHaveValue("");
+  await expect(panel.getByRole("textbox", { name: /Goal for This Email/ })).toHaveValue("");
   await expect(panel.getByRole("button", { name: "Apply Revision" })).toHaveCount(0);
 });
 
@@ -116,7 +116,7 @@ test("draft review protects changes made after requesting feedback", async ({ pa
   await enableDraftReview(page);
   await page.getByRole("button", { name: "New Message (c)" }).click();
   const composer = page.getByRole("dialog", { name: "New Message" });
-  const panel = page.getByRole("region", { name: "Draft review" });
+  const panel = page.getByRole("region", { name: "Draft Review" });
   const body = composer.getByRole("textbox", { name: "Message Body" });
   await body.fill("Let me know your thoughts.");
   await panel.getByRole("button", { name: "Review Draft", exact: true }).click();

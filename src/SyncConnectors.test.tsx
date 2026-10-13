@@ -128,9 +128,9 @@ function fillS3(form: HTMLElement) {
   set("Endpoint URL", "https://s3.example.com");
   set("Region", "auto");
   set("Bucket", "sync-bucket");
-  set("Folder in the bucket (optional)", "team");
-  set("Access key ID", "AKIAEXAMPLE");
-  set("Secret access key", "s3-secret");
+  set("Folder in the Bucket (Optional)", "team");
+  set("Access Key ID", "AKIAEXAMPLE");
+  set("Secret Access Key", "s3-secret");
 }
 
 describe("adding an S3 connector", () => {
@@ -138,7 +138,7 @@ describe("adding an S3 connector", () => {
     vi.mocked(sync.replicatedSyncProbeS3).mockResolvedValue(passing);
     vi.mocked(sync.replicatedSyncAddS3).mockResolvedValue(null);
     const form = await openS3Form();
-    expect(within(form).getByLabelText("Secret access key")).toHaveAttribute("type", "password");
+    expect(within(form).getByLabelText("Secret Access Key")).toHaveAttribute("type", "password");
     const test = within(form).getByRole("button", { name: "Test connection" });
     const add = within(form).getByRole("button", { name: "Add connector" });
     expect(test).toBeDisabled();
@@ -205,8 +205,8 @@ async function openIpfsForm() {
 }
 
 function fillIpfs(form: HTMLElement, baseUrl: string, token: string) {
-  fireEvent.change(within(form).getByLabelText("RPC base URL"), { target: { value: baseUrl } });
-  fireEvent.change(within(form).getByLabelText("Access token (optional)"), { target: { value: token } });
+  fireEvent.change(within(form).getByLabelText("RPC Base URL"), { target: { value: baseUrl } });
+  fireEvent.change(within(form).getByLabelText("Access Token (Optional)"), { target: { value: token } });
 }
 
 const ipfsStatus: sync.ReplicatedSyncTransportStatus = {
@@ -222,7 +222,7 @@ describe("adding an IPFS connector", () => {
   it("keeps the token in a password field and probes the endpoint with it", async () => {
     vi.mocked(sync.replicatedSyncProbeIpfsRpc).mockResolvedValue({ versionOk: true, headDiscoveryAvailable: true });
     const form = await openIpfsForm();
-    expect(within(form).getByLabelText("Access token (optional)")).toHaveAttribute("type", "password");
+    expect(within(form).getByLabelText("Access Token (Optional)")).toHaveAttribute("type", "password");
     const test = within(form).getByRole("button", { name: "Test connection" });
     expect(test).toBeDisabled();
     expect(within(form).getByRole("button", { name: "Add IPFS RPC endpoint" })).toBeDisabled();
@@ -235,7 +235,7 @@ describe("adding an IPFS connector", () => {
     expect(sync.replicatedSyncAddIpfsRpc).not.toHaveBeenCalled();
 
     // Editing the URL throws the result away.
-    fireEvent.change(within(form).getByLabelText("RPC base URL"), { target: { value: "https://ipfs.example.com:5001" } });
+    fireEvent.change(within(form).getByLabelText("RPC Base URL"), { target: { value: "https://ipfs.example.com:5001" } });
     expect(within(form).queryByText(/^Reachable/)).not.toBeInTheDocument();
   });
 
@@ -292,7 +292,7 @@ describe("adding an IPFS connector", () => {
     fireEvent.click(within(form).getByRole("button", { name: "Add IPFS RPC endpoint" }));
 
     expect(await within(form).findByText("Could not add that endpoint.")).toBeInTheDocument();
-    expect(within(form).getByLabelText("RPC base URL")).toHaveValue("https://rpc.filebase.io");
+    expect(within(form).getByLabelText("RPC Base URL")).toHaveValue("https://rpc.filebase.io");
     expect(refresh).not.toHaveBeenCalled();
   });
 });
@@ -333,8 +333,8 @@ describe("connector cards", () => {
     const panel = within(card).getByRole("group", { name: "Replace credentials" });
     const save = within(panel).getByRole("button", { name: "Test and save" });
     expect(save).toBeDisabled();
-    fireEvent.change(within(panel).getByLabelText("Access key ID"), { target: { value: "AKIANEW" } });
-    fireEvent.change(within(panel).getByLabelText("Secret access key"), { target: { value: "new-secret" } });
+    fireEvent.change(within(panel).getByLabelText("Access Key ID"), { target: { value: "AKIANEW" } });
+    fireEvent.change(within(panel).getByLabelText("Secret Access Key"), { target: { value: "new-secret" } });
     fireEvent.click(save);
 
     await waitFor(() => expect(sync.replicatedSyncUpdateConnector).toHaveBeenCalledWith("s3-1", {
@@ -349,8 +349,8 @@ describe("connector cards", () => {
     fireEvent.click(within(card).getByRole("button", { name: "Edit…" }));
     fireEvent.click(within(card).getByRole("button", { name: "Replace credentials…" }));
     const panel = within(card).getByRole("group", { name: "Replace credentials" });
-    fireEvent.change(within(panel).getByLabelText("Access key ID"), { target: { value: "AKIANEW" } });
-    fireEvent.change(within(panel).getByLabelText("Secret access key"), { target: { value: "wrong" } });
+    fireEvent.change(within(panel).getByLabelText("Access Key ID"), { target: { value: "AKIANEW" } });
+    fireEvent.change(within(panel).getByLabelText("Secret Access Key"), { target: { value: "wrong" } });
     fireEvent.click(within(panel).getByRole("button", { name: "Test and save" }));
 
     expect(await within(card).findByText("SignatureDoesNotMatch")).toBeInTheDocument();

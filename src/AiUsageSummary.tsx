@@ -80,10 +80,10 @@ function ModelPrices({ provider, model, onSaved }: { provider: AiProvider; model
   return <div role="group" aria-label={`Prices for ${model}`}>
     <p className="settings-hint">Prices for {model}, in US dollars per million tokens. Check your provider&rsquo;s pricing page; they stay on this device.</p>
     <div className="ai-usage-prices">
-      <label>Input price
+      <label>Input Price
         <input type="number" inputMode="decimal" min={0} step="any" value={inputPrice} onChange={(event) => { setInputPrice(event.target.value); commitPrice(event.target.value, outputPrice); }} />
       </label>
-      <label>Output price
+      <label>Output Price
         <input type="number" inputMode="decimal" min={0} step="any" value={outputPrice} onChange={(event) => { setOutputPrice(event.target.value); commitPrice(inputPrice, event.target.value); }} />
       </label>
     </div>

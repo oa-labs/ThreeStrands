@@ -52,7 +52,7 @@ describe("ThreadChat", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
 
     fireEvent.click(prompt);
-    const input = screen.getByRole("textbox", { name: "Ask about this conversation" });
+    const input = screen.getByRole("textbox", { name: "Ask About This Conversation" });
     expect(input).toHaveFocus();
     expect(input.closest("[data-shortcut-scope]")).toHaveAttribute("data-shortcut-scope", "modal");
   });
@@ -61,7 +61,7 @@ describe("ThreadChat", () => {
     const { rerender } = render(<ThreadChat {...props({ focusRequest: 3 })} />);
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     rerender(<ThreadChat {...props({ focusRequest: 4 })} />);
-    expect(screen.getByRole("textbox", { name: "Ask about this conversation" })).toHaveFocus();
+    expect(screen.getByRole("textbox", { name: "Ask About This Conversation" })).toHaveFocus();
   });
 
   it("returns to read mode and the previous focus on Escape, keeping unsent text", () => {
@@ -74,7 +74,7 @@ describe("ThreadChat", () => {
       <button type="button">Reader</button>
       <ThreadChat {...props({ focusRequest: 1 })} />
     </>);
-    const input = screen.getByRole("textbox", { name: "Ask about this conversation" });
+    const input = screen.getByRole("textbox", { name: "Ask About This Conversation" });
     fireEvent.change(input, { target: { value: "When is the deadline?" } });
     const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
     const windowListener = vi.fn();
@@ -86,14 +86,14 @@ describe("ThreadChat", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reader" })).toHaveFocus();
     fireEvent.click(screen.getByRole("button", { name: /When is the deadline\?/ }));
-    expect(screen.getByRole("textbox", { name: "Ask about this conversation" })).toHaveValue("When is the deadline?");
+    expect(screen.getByRole("textbox", { name: "Ask About This Conversation" })).toHaveValue("When is the deadline?");
   });
 
   it("asks on Enter, keeps Shift+Enter for new lines, and resets the mailbox search after each question", () => {
     const onAsk = vi.fn();
     render(<ThreadChat {...props({ onAsk })} />);
     fireEvent.click(screen.getByRole("button", { name: /Ask about this conversation/ }));
-    const input = screen.getByRole("textbox", { name: "Ask about this conversation" });
+    const input = screen.getByRole("textbox", { name: "Ask About This Conversation" });
 
     fireEvent.change(input, { target: { value: "Line one" } });
     fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
@@ -172,7 +172,7 @@ describe("ThreadChat", () => {
       const onAsk = vi.fn();
       render(<ThreadChat {...props({ onAsk, attachments: [report, budget, notes], ...overrides })} />);
       fireEvent.click(screen.getByRole("button", { name: /Ask about this conversation/ }));
-      return { onAsk, input: screen.getByRole("textbox", { name: "Ask about this conversation" }) };
+      return { onAsk, input: screen.getByRole("textbox", { name: "Ask About This Conversation" }) };
     }
 
     it("lists matching attachments after @ and shares only the chosen one with the question", () => {

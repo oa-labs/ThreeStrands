@@ -52,6 +52,7 @@ describe("TaskSidebar", () => {
     expect(dialog).toHaveAttribute("data-shortcut-scope", "modal");
     expect(workspace.querySelector("input, select, textarea")).toBeNull();
     expect(within(dialog).getByRole("textbox", { name: "Task Title" })).toHaveFocus();
+    expect(within(dialog).getByRole("textbox", { name: "Task Title" })).toHaveAttribute("writingsuggestions", "false");
     expect(workspace.closest('[aria-hidden="true"]')).not.toBeNull();
     expectPrimaryActionLast(within(dialog).getByRole("button", { name: "Add Task" }).parentElement!);
 
@@ -183,7 +184,7 @@ describe("TaskSidebar", () => {
 
     const dialog = await openTask("Plan launch");
     fireEvent.change(dialog.getByRole("combobox", { name: "Due" }), { target: { value: "datetime" } });
-    fireEvent.change(dialog.getByLabelText("Due date and time"), { target: { value: "2030-10-02T14:30" } });
+    fireEvent.change(dialog.getByLabelText("Due Date and Time"), { target: { value: "2030-10-02T14:30" } });
     fireEvent.change(dialog.getByRole("combobox", { name: "Timezone" }), { target: { value: "America/New Yok" } });
     fireEvent.blur(dialog.getByRole("combobox", { name: "Timezone" }));
 
@@ -205,12 +206,12 @@ describe("TaskSidebar", () => {
 
     const dialog = await openTask("Plan launch");
     fireEvent.change(dialog.getByRole("combobox", { name: "Due" }), { target: { value: "date" } });
-    fireEvent.change(dialog.getByLabelText("Due date"), { target: { value: "2030-10-01" } });
+    fireEvent.change(dialog.getByLabelText("Due Date"), { target: { value: "2030-10-01" } });
     fireEvent.change(dialog.getByRole("combobox", { name: "Due" }), { target: { value: "datetime" } });
-    expect(dialog.getByLabelText("Due date and time")).toHaveValue("2030-10-01T09:00");
+    expect(dialog.getByLabelText("Due Date and Time")).toHaveValue("2030-10-01T09:00");
 
     fireEvent.change(dialog.getByRole("combobox", { name: "Due" }), { target: { value: "date" } });
-    expect(dialog.getByLabelText("Due date")).toHaveValue("2030-10-01");
+    expect(dialog.getByLabelText("Due Date")).toHaveValue("2030-10-01");
   });
 
   it("hides completed tasks older than a few days from the board's Done column", async () => {
@@ -751,9 +752,9 @@ describe("TaskSidebar", () => {
 
     fireEvent.change(dialog.getByRole("combobox", { name: "Due" }), { target: { value: "date" } });
     expect(updateTask).toHaveBeenCalledTimes(2);
-    fireEvent.change(dialog.getByLabelText("Due date"), { target: { value: "2030-10-01" } });
+    fireEvent.change(dialog.getByLabelText("Due Date"), { target: { value: "2030-10-01" } });
     // Enter in an input saves it in place.
-    fireEvent.keyDown(dialog.getByLabelText("Due date"), { key: "Enter" });
+    fireEvent.keyDown(dialog.getByLabelText("Due Date"), { key: "Enter" });
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", dueKind: "date", dueValue: "2030-10-01", timeZone: null }));
 
     fireEvent.change(dialog.getByRole("combobox", { name: "Due" }), { target: { value: "none" } });
@@ -761,7 +762,7 @@ describe("TaskSidebar", () => {
 
     fireEvent.change(dialog.getByRole("combobox", { name: "Type" }), { target: { value: "follow_up" } });
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", kind: "follow_up" }));
-    const repeat = dialog.getByRole("spinbutton", { name: "Repeat every (days)" });
+    const repeat = dialog.getByRole("spinbutton", { name: "Repeat Every (Days)" });
     fireEvent.change(repeat, { target: { value: "0" } });
     fireEvent.blur(repeat);
     expect(await dialog.findByRole("alert")).toHaveTextContent("Repeat every 1 to 365 days.");
@@ -1152,7 +1153,7 @@ describe("TaskSidebar goals", () => {
   it("shows the supported goal on cards and links a task added while one goal is in view", async () => {
     setup([workspaceTask("linked", { title: "Linked", goalId: "ship" })], [workspaceGoal("ship", { title: "Ship IMAP", accountId: "work@example.com" })]);
     const onCreateTask = vi.fn().mockResolvedValue(workspaceTask("new", { title: "Write tests", goalId: "ship" }));
-    const { container } = renderGoals(<TaskSidebar accountId={null} accountOptions={["you@example.com", "work@example.com"]} onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
+    renderGoals(<TaskSidebar accountId={null} accountOptions={["you@example.com", "work@example.com"]} onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
 
     const card = (await screen.findByText("Linked", { selector: "strong" })).closest("article")!;
     await waitFor(() => expect(card.querySelector(".task-card-goal")).toHaveTextContent("Supports Ship IMAP"));

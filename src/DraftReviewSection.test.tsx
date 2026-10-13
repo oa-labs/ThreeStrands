@@ -57,7 +57,7 @@ describe("Draft review", () => {
     const { body } = setup();
     body.innerHTML = "<p>A fresh edit.</p>";
     fireEvent.input(body);
-    fireEvent.change(screen.getByRole("textbox", { name: /What do you want/ }), { target: { value: "Get an introductory call" } });
+    fireEvent.change(screen.getByRole("textbox", { name: /Goal for This Email/ }), { target: { value: "Get an introductory call" } });
     fireEvent.click(screen.getByRole("button", { name: "Review Draft" }));
     expect(screen.getByText("A fresh edit.", { selector: "pre" })).toBeInTheDocument();
     expect(mailClient.reviewDraft).not.toHaveBeenCalled();

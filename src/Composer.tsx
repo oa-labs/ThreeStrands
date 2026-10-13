@@ -329,7 +329,7 @@ export const Composer = forwardRef<ComposerHandle, {
           {accounts.map((a) => <option key={a.email} value={a.email}>{a.email}</option>)}
         </select></label>
       ) : <span>From {draft.from ?? draft.account}</span>}{identities.length > 1 ? (
-        <label className="compose-from compose-sending-address"><span>Sending address</span>
+        <label className="compose-from compose-sending-address"><span>Sending Address</span>
           <select aria-label="Sending Address" value={draft.from ?? identities[0].address} disabled={busy} onChange={(e) => changeFrom(e.target.value)}>
             {identities.map((identity) => <option key={identity.address} value={identity.address}>{identity.displayName ? `${identity.displayName} <${identity.address}>` : identity.address}</option>)}
           </select>

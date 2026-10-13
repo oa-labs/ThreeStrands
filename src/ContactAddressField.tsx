@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
+import { flushSync } from "react-dom";
 import { Check, Copy, Star, X } from "lucide-react";
 import { ICON_SIZE } from "./iconSizes";
+import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 
 const EMAIL_SEPARATOR_KEYS = new Set(["Enter", ",", ";", " "]);
 const LINK_SEPARATOR_KEYS = new Set(["Enter", " "]);
@@ -29,7 +31,20 @@ export function ContactAddressField({ addresses, disabled, onChange }: {
   disabled?: boolean;
   onChange(addresses: string[]): void;
 }) {
-  return <ContactMultiValueField kind="email" values={addresses} disabled={disabled} onChange={onChange} />;
+  return <ContactMultiValueField kind="email" label="Emails" inputLabel="Email Addresses" primary values={addresses} disabled={disabled} onChange={onChange} />;
+}
+
+/**
+ * A list of email addresses, such as meeting invitees, as removable badges
+ * that commit the same way as a contact's addresses. The form validates them.
+ */
+export function EmailBadgeField({ label, values, disabled, onChange }: {
+  label: string;
+  values: string[];
+  disabled?: boolean;
+  onChange(values: string[]): void;
+}) {
+  return <ContactMultiValueField kind="email" label={label} inputLabel={label} values={values} disabled={disabled} onChange={onChange} />;
 }
 
 export function ContactLinksField({ links, disabled, onChange }: {
@@ -37,17 +52,20 @@ export function ContactLinksField({ links, disabled, onChange }: {
   disabled?: boolean;
   onChange(links: string[]): void;
 }) {
-  return <ContactMultiValueField kind="link" values={links} disabled={disabled} onChange={onChange} />;
+  return <ContactMultiValueField kind="link" label="Links" inputLabel="Links" values={links} disabled={disabled} onChange={onChange} />;
 }
 
-function ContactMultiValueField({ kind, values, disabled, onChange }: {
+function ContactMultiValueField({ kind, label, inputLabel, primary = false, values, disabled, onChange }: {
   kind: "email" | "link";
+  label: string;
+  inputLabel: string;
+  /** The first address is the contact's primary one, and any other can be promoted. */
+  primary?: boolean;
   values: string[];
   disabled?: boolean;
   onChange(values: string[]): void;
 }) {
   const isEmail = kind === "email";
-  const label = isEmail ? "Emails" : "Links";
   const itemName = isEmail ? "address" : "link";
   const labelId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -81,6 +99,11 @@ function ContactMultiValueField({ kind, values, disabled, onChange }: {
     inputRef.current?.focus();
   };
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      // Commit before the form's submit shortcut reads the list, and let it bubble.
+      flushSync(() => commit(draft));
+      return;
+    }
     if ((isEmail ? EMAIL_SEPARATOR_KEYS : LINK_SEPARATOR_KEYS).has(event.key)) {
       event.preventDefault();
       commit(draft);
@@ -103,7 +126,7 @@ function ContactMultiValueField({ kind, values, disabled, onChange }: {
         {values.map((value, index) => (
           <span key={value} className="recipient-chip contact-multi-value-chip">
             <span className="recipient-chip-label" title={value}>{value}</span>
-            {isEmail && values.length > 1 ? index === 0
+            {primary && values.length > 1 ? index === 0
               ? <span className="contact-primary-tag">Primary</span>
               : <button type="button" className="recipient-chip-remove" aria-label={`Make ${value} primary`} title="Make primary address" disabled={disabled} onClick={() => makePrimary(value)}>
                 <Star size={ICON_SIZE.xs} aria-hidden="true" />
@@ -118,12 +141,12 @@ function ContactMultiValueField({ kind, values, disabled, onChange }: {
         ))}
         <input
           ref={inputRef}
-          aria-label={isEmail ? "Email addresses" : "Links"}
+          className="contact-multi-value-input"
+          aria-label={inputLabel}
           aria-describedby={labelId}
           type="text"
           inputMode={isEmail ? "email" : "url"}
-          autoComplete="off"
-          spellCheck={false}
+          {...SEARCH_INPUT_ATTRIBUTES}
           placeholder={values.length ? `Add another ${itemName}` : isEmail ? "name@example.com" : "https://example.com"}
           disabled={disabled}
           value={draft}

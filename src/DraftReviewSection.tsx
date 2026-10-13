@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Sparkles } from "lucide-react";
 import { ContextSectionHeader } from "./ContextSections";
 import { mailClient } from "./data/client";
 import { readAiProvider, readAiRequestConfig } from "./aiSettings";
 import type { DraftReviewResult } from "./domain";
 import { reviewHasRevision, type DraftReviewActions, type DraftReviewSnapshot } from "./draftReview";
 import { errorMessage } from "./errors";
-import { ICON_SIZE } from "./iconSizes";
 
 export function DraftReviewSection({ actions, available, onOpenSettings }: {
   actions: DraftReviewActions;
@@ -77,11 +75,11 @@ export function DraftReviewSection({ actions, available, onOpenSettings }: {
   }
 
   return <section className="context-section draft-review" aria-labelledby="draft-review-title">
-    <ContextSectionHeader title="Draft review" titleId="draft-review-title" icon={<Sparkles size={ICON_SIZE.xs} />} />
+    <ContextSectionHeader title="Draft Review" titleId="draft-review-title" />
     {available ? <div className="draft-review-content">
       <p className="context-section-note">Get specific suggestions while keeping your voice.</p>
       <label className="draft-review-goal">
-        <span>What do you want this email to achieve? <small>(optional)</small></span>
+        <span>Goal for This Email <small>(optional)</small></span>
         <input value={goal} disabled={busy} placeholder="e.g. Get an introductory call" onChange={(event) => setGoal(event.target.value)} />
       </label>
       <button type="button" className="btn btn-sm" disabled={busy} onClick={prepare}>

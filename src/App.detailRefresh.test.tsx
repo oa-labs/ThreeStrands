@@ -358,7 +358,7 @@ describe("conversation brief", () => {
 
       const dialog = await screen.findByRole("dialog", { name: "New event" });
       expect(within(dialog).getByLabelText("Title")).toHaveValue("Budget review");
-      expect(within(dialog).getByLabelText("Invite people")).toHaveValue("jane@example.com");
+      expect(within(dialog).getByRole("button", { name: "Remove jane@example.com" })).toBeInTheDocument();
       expect(within(dialog).getByLabelText("Description")).toHaveValue("Scheduled from “Welcome to ThreeStrands”.\n\n“command palette”");
       expect(create).not.toHaveBeenCalled();
       await waitFor(() => expect(within(dialog).getByLabelText("Calendar")).toHaveValue("calendar@example.com\nprimary"));
@@ -407,7 +407,7 @@ describe("conversation brief", () => {
       vi.mocked(mailClient.listScheduleEvents).mockImplementation(async () => ({ events: create.mock.calls.length >= 2 ? [saved] : [], errors: [] }));
       const remove = vi.spyOn(mailClient, "removeThreadSuggestion").mockResolvedValue(true);
       fireEvent.click(within(panel).getByRole("button", { name: /Ask about this conversation/ }));
-      const input = within(panel).getByRole("textbox", { name: "Ask about this conversation" });
+      const input = within(panel).getByRole("textbox", { name: "Ask About This Conversation" });
       fireEvent.change(input, { target: { value: "add this class to my calendar" } });
       fireEvent.keyDown(input, { key: "Enter" });
       const review = await within(panel).findByRole("button", { name: "Added 1 suggestion to review" });
@@ -454,7 +454,7 @@ describe("conversation brief", () => {
       const panel = screen.getByRole("complementary", { name: "Conversation context" });
 
       fireEvent.keyDown(window, { key: "q" });
-      const input = await within(panel).findByRole("textbox", { name: "Ask about this conversation" });
+      const input = await within(panel).findByRole("textbox", { name: "Ask About This Conversation" });
       fireEvent.change(input, { target: { value: "When am I free next week?" } });
       fireEvent.keyDown(input, { key: "Enter" });
 
@@ -544,7 +544,7 @@ describe("conversation brief", () => {
       await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
       const panel = screen.getByRole("complementary", { name: "Conversation context" });
       fireEvent.click(within(panel).getByRole("button", { name: /Ask about this conversation/ }));
-      const input = within(panel).getByRole("textbox", { name: "Ask about this conversation" });
+      const input = within(panel).getByRole("textbox", { name: "Ask About This Conversation" });
       fireEvent.change(input, { target: { value: "Suggest tasks" } });
       fireEvent.keyDown(input, { key: "Enter" });
       await within(panel).findByText("Two suggestions.");
@@ -575,7 +575,7 @@ describe("conversation brief", () => {
       expect(within(panel).queryByRole("textbox")).not.toBeInTheDocument();
 
       fireEvent.keyDown(window, { key: "q" });
-      const input = await within(panel).findByRole("textbox", { name: "Ask about this conversation" });
+      const input = await within(panel).findByRole("textbox", { name: "Ask About This Conversation" });
       await waitFor(() => expect(input).toHaveFocus());
       fireEvent.keyDown(input, { key: "j" });
       fireEvent.keyDown(input, { key: "e" });
@@ -597,7 +597,7 @@ describe("conversation brief", () => {
       const panel = screen.getByRole("complementary", { name: "Conversation context" });
 
       fireEvent.keyDown(window, { key: "q" });
-      const input = await within(panel).findByRole("textbox", { name: "Ask about this conversation" });
+      const input = await within(panel).findByRole("textbox", { name: "Ask About This Conversation" });
       fireEvent.change(input, { target: { value: "What is this about?" } });
       fireEvent.click(within(panel).getByRole("checkbox", { name: "Search all mail" }));
       fireEvent.keyDown(input, { key: "Enter" });
@@ -633,7 +633,7 @@ describe("conversation brief", () => {
       const panel = screen.getByRole("complementary", { name: "Conversation context" });
 
       fireEvent.keyDown(window, { key: "q" });
-      const input = await within(panel).findByRole("textbox", { name: "Ask about this conversation" });
+      const input = await within(panel).findByRole("textbox", { name: "Ask About This Conversation" });
       fireEvent.change(input, { target: { value: "Anything due?" } });
       fireEvent.keyDown(input, { key: "Enter" });
 
@@ -656,7 +656,7 @@ describe("conversation brief", () => {
       const panel = screen.getByRole("complementary", { name: "Conversation context" });
 
       fireEvent.keyDown(window, { key: "q" });
-      const input = await within(panel).findByRole("textbox", { name: "Ask about this conversation" });
+      const input = await within(panel).findByRole("textbox", { name: "Ask About This Conversation" });
       fireEvent.change(input, { target: { value: "Summarize @short" } });
       fireEvent.click(within(within(panel).getByRole("listbox", { name: "Attachments" })).getByRole("option", { name: /threestrands-shortcuts\.txt/ }));
       fireEvent.keyDown(input, { key: "Enter" });
@@ -686,7 +686,7 @@ describe("conversation brief", () => {
       await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
       const panel = screen.getByRole("complementary", { name: "Conversation context" });
       fireEvent.keyDown(window, { key: "q" });
-      const input = await within(panel).findByRole("textbox", { name: "Ask about this conversation" });
+      const input = await within(panel).findByRole("textbox", { name: "Ask About This Conversation" });
       fireEvent.change(input, { target: { value: "What does threestrands-shortcuts.txt say?" } });
       fireEvent.keyDown(input, { key: "Enter" });
       await waitFor(() => expect(threadChat).toHaveBeenCalled());

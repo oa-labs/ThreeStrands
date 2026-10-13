@@ -729,10 +729,13 @@ function PendingRequestCard({ request, operation }: { request: IncomingEnrollmen
           <p className="sync-fingerprint">{request.fingerprint}</p>
           <p className="settings-hint">If the codes don’t match, reject the request. Someone else may be trying to join.</p>
           {deviceId ? (
-            <label className="settings-field">
-              <span>Name this device (shared with your other devices)</span>
-              <input type="text" maxLength={MAX_DEVICE_LABEL_CHARS} value={name} disabled={busy} onChange={(event) => setName(event.target.value)} />
-            </label>
+            <>
+              <label className="settings-field">
+                <span>Name This Device</span>
+                <input type="text" maxLength={MAX_DEVICE_LABEL_CHARS} value={name} disabled={busy} onChange={(event) => setName(event.target.value)} />
+              </label>
+              <span className="settings-hint">Shared with your other devices.</span>
+            </>
           ) : null}
           <span className="settings-inline-confirm-actions">
             <button className="btn" type="button" disabled={busy} onClick={() => setReviewing(false)}>Cancel</button>
@@ -791,9 +794,10 @@ function DeviceCard({ device, operation }: { device: DeviceRosterEntry; operatio
           }}
         >
           <label className="settings-field">
-            <span>Name (shared with your other devices)</span>
+            <span>Device Name</span>
             <input type="text" maxLength={MAX_DEVICE_LABEL_CHARS} value={name} disabled={busy} autoFocus onChange={(event) => setName(event.target.value)} />
           </label>
+          <span className="settings-hint">Shared with your other devices.</span>
           <span className="settings-inline-confirm-actions">
             <button className="btn" type="button" disabled={busy} onClick={() => setRenaming(false)}>Cancel</button>
             <button type="submit" className="btn btn-primary" disabled={busy}>Save</button>

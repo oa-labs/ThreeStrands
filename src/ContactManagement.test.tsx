@@ -102,7 +102,7 @@ describe("contact management", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Never suggest jane@example.com" }));
     fireEvent.click(await screen.findByRole("button", { name: "Allow suggestions for jane@example.com" }));
     await screen.findByText("No addresses are hidden.");
-    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "unsaved@example.com" } });
+    fireEvent.change(screen.getByLabelText("Email Address"), { target: { value: "unsaved@example.com" } });
     fireEvent.click(screen.getByRole("button", { name: "Never suggest this address" }));
     await screen.findByRole("button", { name: "Allow suggestions for unsaved@example.com" });
     expect(mailClient.setContactSuppressed).toHaveBeenCalledWith("jane@example.com", true);

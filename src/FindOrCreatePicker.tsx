@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 
 type OptionProps = {
   id: string;
@@ -62,6 +63,7 @@ export function FindOrCreatePicker<T>({
     <>
       <div className="label-search">
         <input
+          {...SEARCH_INPUT_ATTRIBUTES}
           autoFocus
           value={query}
           onChange={(event) => setQuery(event.target.value)}

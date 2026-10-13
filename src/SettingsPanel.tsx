@@ -43,6 +43,7 @@ import type {
   SplitInboxSettingsState,
   SnippetSettingsState,
 } from "./settingsPanelTypes";
+import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 
 type SettingsGroup = "General" | "Accounts" | "Workflow" | "Integrations" | "System";
 
@@ -148,6 +149,7 @@ export function Settings({
             <Search size={ICON_SIZE.sm} aria-hidden="true" />
             <input
               type="search"
+              {...SEARCH_INPUT_ATTRIBUTES}
               value={settingsQuery}
               aria-label="Search Settings"
               placeholder="Search settings"

@@ -54,6 +54,7 @@ describe("App chrome", () => {
     render(<CommandPalette context={context} execute={execute} onClose={onClose} />);
 
     const input = screen.getByRole("textbox", { name: "Filter Commands" });
+    expect(input).toHaveAttribute("writingsuggestions", "false");
     fireEvent.change(input, { target: { value: "new message" } });
     const newMessage = screen.getByRole("button", { name: /New Message/ });
     expect(newMessage).toBeEnabled();

@@ -109,7 +109,7 @@ export function JoinCodePanel({ operation, refresh, inputId }: { operation: Oper
   return (
     <>
       <label className="settings-field">
-        <span>Join code</span>
+        <span>Join Code</span>
         <textarea
           id={inputId}
           rows={3}
@@ -227,7 +227,7 @@ export function AddDevicePanel({
       <p>Paste this code on your new device. It sets up the same connectors and joins this sync group in one step.</p>
       {created ? (
         <>
-          <textarea className="sync-join-code" readOnly rows={4} aria-label="Join code" value={created.code} onFocus={(event) => event.target.select()} />
+          <textarea className="sync-join-code" readOnly rows={4} aria-label="Join Code" value={created.code} onFocus={(event) => event.target.select()} />
           <div className="settings-row">
             <button type="button" className="btn btn-primary" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
           </div>
@@ -337,8 +337,8 @@ export function OutstandingJoinCodes({ codes, operation }: { codes: OutstandingJ
   if (shown.length === 0) return null;
   return (
     <>
-      <h4>Join codes</h4>
-      <ul className="accounts-list" aria-label="Join codes">
+      <h4>Join Codes</h4>
+      <ul className="accounts-list" aria-label="Join Codes">
         {shown.map((code) => <OutstandingJoinCodeRow key={code.invitationCid} code={code} operation={operation} />)}
       </ul>
     </>

@@ -13,6 +13,7 @@ import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import { fileTypeLabel } from "./attachmentKind";
 import { formatDisplayName, parseAddress } from "./emailAddress";
+import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 
 export type FilesWorkspaceSnapshot = { files: WorkspaceFile[]; total: number; selected: string | null; search: string; sender: string; type: string; direction: "" | "received" | "sent"; scope: string; after: string; before: string; starred: boolean; scroll: number };
 const PAGE_SIZE = 50;
@@ -121,7 +122,7 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, sessions, 
     <div className="files-workspace-body">
       <div ref={main} className="files-main">
         <div className="files-toolbar">
-          <label className="files-search"><span className="sr-only">Search files</span><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search filenames" /></label>
+          <label className="files-search"><span className="sr-only">Search Files</span><input type="search" {...SEARCH_INPUT_ATTRIBUTES} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search filenames" /></label>
           <button ref={filtersButton} type="button" className="btn" aria-expanded={filtersOpen} aria-controls="file-filter-controls" onClick={() => setFiltersOpen((value) => !value)}><SlidersHorizontal size={ICON_SIZE.sm} />Filters{filterChips.length ? <span className="context-count">{filterChips.length}</span> : null}</button>
           <details className="files-help" onKeyDown={(event) => {
             if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); }
@@ -133,12 +134,12 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, sessions, 
         <div id="file-filter-controls" className="files-filters" role="group" aria-label="File filters" hidden={!filtersOpen} onKeyDown={(event) => {
           if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setFiltersOpen(false); filtersButton.current?.focus(); }
         }}>
-          <label>Sender<input value={sender} onChange={(event) => setSender(event.target.value)} /></label>
+          <label>Sender<input {...SEARCH_INPUT_ATTRIBUTES} value={sender} onChange={(event) => setSender(event.target.value)} /></label>
           <label>File Type<select value={type} onChange={(event) => setType(event.target.value)}><option value="">All Types</option>{["document","spreadsheet","presentation","image","audio","video","archive","calendar"].map((kind) => <option key={kind} value={kind}>{kind[0].toUpperCase()+kind.slice(1)}</option>)}</select></label>
           <label>Direction<select value={direction} onChange={(event) => setDirection(event.target.value as typeof direction)}><option value="">Received and Sent</option><option value="received">Received</option><option value="sent">Sent</option></select></label>
           {!accountId ? <label>Account<select value={scope} onChange={(event) => setScope(event.target.value)}><option value="">All Accounts</option>{accountIds.map((email) => <option key={email}>{email}</option>)}</select></label> : null}
-          <FileDateFilter label="From date" value={after} onChange={setAfter} />
-          <FileDateFilter label="Through date" value={before} onChange={setBefore} />
+          <FileDateFilter label="From Date" value={after} onChange={setAfter} />
+          <FileDateFilter label="Through Date" value={before} onChange={setBefore} />
         </div>
         {filterChips.length ? <div className="files-active-filters" role="group" aria-label="Active file filters">
           {filterChips.map((filter) => <button type="button" key={filter.id} className="file-filter-chip" aria-label={`Remove ${filter.label} filter`} onClick={filter.clear}>{filter.label}<X size={ICON_SIZE.xs} /></button>)}

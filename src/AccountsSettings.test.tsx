@@ -48,23 +48,23 @@ describe("mail account settings", () => {
     const onSetNickname = vi.fn().mockResolvedValue(undefined);
     const onSetDisplayName = vi.fn();
     renderAccounts(vi.fn(), { onSetNickname, onSetDisplayName, accounts: [{ ...account, displayName: "Joel Reed" }] });
-    const input = screen.getByRole("textbox", { name: `Account nickname for ${account.email}` });
+    const input = screen.getByRole("textbox", { name: `Account Nickname for ${account.email}` });
     expect(input).toHaveAccessibleDescription(/only visible in ThreeStrands/i);
     expect(input).toHaveAttribute("placeholder", "Work, Personal…");
-    expect(screen.getByRole("textbox", { name: `Sender name for ${account.email}` }))
+    expect(screen.getByRole("textbox", { name: `Sender Name for ${account.email}` }))
       .toHaveAccessibleDescription(/shown to recipients/i);
     expect(screen.queryByRole("button", { name: /^Save/ })).not.toBeInTheDocument();
     fireEvent.change(input, { target: { value: "  Work  " } });
     await act(async () => { fireEvent.submit(input.closest("form")!); });
     expect(onSetNickname).toHaveBeenCalledWith(account.email, "Work");
     expect(onSetDisplayName).not.toHaveBeenCalled();
-    expect(screen.getByRole("textbox", { name: `Sender name for ${account.email}` })).toHaveValue("Joel Reed");
+    expect(screen.getByRole("textbox", { name: `Sender Name for ${account.email}` })).toHaveValue("Joel Reed");
   });
 
   it("autosaves a changed field on blur, confirms inline, and skips unchanged fields", async () => {
     const onSetDisplayName = vi.fn().mockResolvedValue(undefined);
     renderAccounts(vi.fn(), { onSetDisplayName, accounts: [{ ...account, displayName: "Joel Reed" }] });
-    const input = screen.getByRole("textbox", { name: `Sender name for ${account.email}` });
+    const input = screen.getByRole("textbox", { name: `Sender Name for ${account.email}` });
     const status = within(input.closest("form")!).getByRole("status");
 
     fireEvent.blur(input);
@@ -87,7 +87,7 @@ describe("mail account settings", () => {
     expect(screen.getByText("Personal", { selector: "strong" })).toBeVisible();
     expect(container.querySelector(".account-card-avatar")).toHaveTextContent("P");
     expect(container.querySelector(".account-card-email")).toHaveTextContent(account.email);
-    const input = screen.getByRole("textbox", { name: `Account nickname for ${account.email}` });
+    const input = screen.getByRole("textbox", { name: `Account Nickname for ${account.email}` });
     fireEvent.change(input, { target: { value: "   " } });
     await act(async () => { fireEvent.submit(input.closest("form")!); });
     expect(onSetNickname).toHaveBeenCalledWith(account.email, null);
@@ -97,7 +97,7 @@ describe("mail account settings", () => {
     let reject!: (reason: Error) => void;
     const onSetNickname = vi.fn(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
     renderAccounts(vi.fn(), { onSetNickname });
-    const input = screen.getByRole("textbox", { name: `Account nickname for ${account.email}` });
+    const input = screen.getByRole("textbox", { name: `Account Nickname for ${account.email}` });
     fireEvent.change(input, { target: { value: "Work" } });
     input.focus();
     fireEvent.submit(input.closest("form")!);

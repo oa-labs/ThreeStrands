@@ -187,7 +187,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
 
           <h3>Models</h3>
           <label className="settings-field settings-field-row">
-            <span>Reasoning model</span>
+            <span>Reasoning Model</span>
             <input
               value={model}
               placeholder={AI_MODEL_PLACEHOLDERS[provider]}
@@ -226,7 +226,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
           </div>
 
           <label className="settings-field settings-field-row">
-            <span>Fast model</span>
+            <span>Fast Model</span>
             <input
               value={fastModel}
               placeholder="Same as reasoning model"

@@ -487,11 +487,14 @@ describe("CalendarWeekView", () => {
       expect(within(form).getByLabelText("Starts")).toHaveValue("2026-09-22T09:00");
       expect(within(form).getByLabelText("Ends")).toHaveValue("2026-09-22T10:00");
       expect(within(form).getByLabelText("Location")).toHaveValue("Room 4B");
-      expect(within(form).getByLabelText("Invite people")).toHaveValue("jane@example.com");
+      expect(within(form).getByRole("button", { name: "Remove jane@example.com" })).toBeInTheDocument();
       expect(within(form).getByLabelText("All day")).not.toBeChecked();
       fireEvent.change(within(form).getByLabelText("Title"), { target: { value: "Quarterly planning" } });
       fireEvent.change(within(form).getByLabelText("Ends"), { target: { value: "2026-09-22T11:00" } });
-      fireEvent.change(within(form).getByLabelText("Invite people"), { target: { value: "jane@example.com, Theo@Example.com" } });
+      const invitees = within(form).getByRole("textbox", { name: "Invite People" });
+      fireEvent.change(invitees, { target: { value: "Theo@Example.com" } });
+      fireEvent.blur(invitees);
+      expect(within(form).getByRole("button", { name: "Remove Theo@Example.com" })).toBeInTheDocument();
       vi.mocked(mailClient.listScheduleEvents).mockImplementation(() => new Promise(() => {}));
       fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
       await waitFor(() => expect(update).toHaveBeenCalledWith({
@@ -727,7 +730,10 @@ describe("CalendarWeekView", () => {
     expect(within(dialog).getByLabelText("Ends")).toHaveValue("2026-09-22T10:15");
     expect(within(dialog).getByLabelText("Calendar")).toHaveValue("joel@example.com\nprimary");
     fireEvent.change(within(dialog).getByLabelText("Title"), { target: { value: "Planning" } });
-    fireEvent.change(within(dialog).getByLabelText("Invite people"), { target: { value: "Ada@Example.com, bob@example.com" } });
+    // A pasted or typed list becomes one badge per address when the field commits.
+    const invitees = within(dialog).getByRole("textbox", { name: "Invite People" });
+    fireEvent.change(invitees, { target: { value: "Ada@Example.com, bob@example.com" } });
+    fireEvent.blur(invitees);
     fireEvent.change(within(dialog).getByLabelText("Description"), { target: { value: "Review the plan" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
 

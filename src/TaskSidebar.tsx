@@ -15,6 +15,7 @@ import { TaskDetailDialog, type TaskDetailDrafts } from "./TaskDetailDialog";
 import { errorMessage } from "./errors";
 import { adjacentTaskStatus, compareTasksForDisplay, formatDue, isActiveTaskStatus, isDue, isOverdue, TASK_BOARD_COLUMNS, TASK_VIEWS, taskBoardColumn, taskBoardColumnStatus, taskMatchesView, taskViewForAll, type TaskBoardColumn, type TaskView } from "./taskViews";
 import { ICON_SIZE } from "./iconSizes";
+import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 
 export type TaskLayout = "board" | "list";
 const TASK_LAYOUT_KEY = "threestrands.tasks.layout";
@@ -632,7 +633,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           }
         }}>
           {filterGoal ? <p className="modal-form-context task-quick-add-goal"><Target size={ICON_SIZE.xs} aria-hidden="true" /> Supports {filterGoal.title}</p> : null}
-          <label><span>Task Title</span><input ref={newTaskInput} value={newTaskTitle} onChange={(event) => setNewTaskTitle(event.target.value)} placeholder="What needs doing?" maxLength={240} /></label>
+          <label><span>Task Title</span><input ref={newTaskInput} {...SEARCH_INPUT_ATTRIBUTES} value={newTaskTitle} onChange={(event) => setNewTaskTitle(event.target.value)} placeholder="What needs doing?" maxLength={240} /></label>
           {!accountId && !filterGoal && accountOptions.length > 1 ? <label><span>Account</span><select value={newTaskAccountId} onChange={(event) => setNewTaskAccountId(event.target.value)} required><option value="">Choose an account</option>{accountOptions.map((email) => <option key={email} value={email}>{email}</option>)}</select></label> : null}
           {newTaskError ? <p className="form-error" role="alert">{newTaskError}</p> : lastAddedTitle ? <p className="modal-form-context" role="status">Added “{lastAddedTitle}”. Add another, or close when done.</p> : null}
           <div className="modal-form-actions"><button type="button" className="btn" disabled={creatingTask} onClick={() => setAddingTask(false)}>{lastAddedTitle ? "Done" : "Cancel"}</button><button type="submit" className="btn btn-primary" disabled={creatingTask || !newTaskTitle.trim() || (!accountId && !filterGoal && accountOptions.length > 1 && !newTaskAccountId)}>{creatingTask ? "Adding…" : "Add Task"}</button></div>

@@ -104,9 +104,9 @@ export function AvailabilitySettings({
                 else onChange({ ...preferences, workingWindows: preferences.workingWindows.filter((candidate) => candidate.weekday !== weekday) });
               }} /> {label}</label>
               {window ? <>
-                <input type="time" aria-label={`${label} start`} value={window.start} onChange={(event) => updateWindow(weekday, { start: event.target.value })} />
+                <input type="time" aria-label={`${label} Start`} value={window.start} onChange={(event) => updateWindow(weekday, { start: event.target.value })} />
                 <span>to</span>
-                <input type="time" aria-label={`${label} end`} value={window.end} onChange={(event) => updateWindow(weekday, { end: event.target.value })} />
+                <input type="time" aria-label={`${label} End`} value={window.end} onChange={(event) => updateWindow(weekday, { end: event.target.value })} />
               </> : <span className="settings-hint">Unavailable</span>}
             </div>
           );

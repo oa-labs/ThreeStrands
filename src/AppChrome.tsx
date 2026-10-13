@@ -12,6 +12,7 @@ import { MESSAGE_FILTER_OPTIONS, type MessageFilterKind } from "./messageFilters
 import { formattingShortcuts } from "./richText";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { ICON_SIZE } from "./iconSizes";
+import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 
 export function FiltersButton({
   activeFilters,
@@ -148,7 +149,7 @@ export function CommandPalette({
     <Modal title="Command Palette" onClose={onClose} shortcutScope="palette" initialFocusRef={inputRef}>
       <label className="palette-search">
         <Search size={ICON_SIZE.lg} />
-        <input ref={inputRef} value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Type a command" aria-label="Filter Commands" />
+        <input ref={inputRef} {...SEARCH_INPUT_ATTRIBUTES} value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Type a command" aria-label="Filter Commands" />
       </label>
       <div className="command-list">
         {visible.map((command) => (

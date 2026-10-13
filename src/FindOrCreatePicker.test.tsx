@@ -34,6 +34,8 @@ describe("FindOrCreatePicker", () => {
   it("filters options and selects the active row with the keyboard", () => {
     const { onSelect, onCreate } = renderPicker();
     const input = screen.getByRole("combobox", { name: "Find or Create an Item" });
+    // macOS inline predictions would swallow the first Escape in this keyboard-driven field.
+    expect(input).toHaveAttribute("writingsuggestions", "false");
     fireEvent.change(input, { target: { value: "beta" } });
 
     expect(screen.getByRole("listbox", { name: "Items" })).toBeInTheDocument();

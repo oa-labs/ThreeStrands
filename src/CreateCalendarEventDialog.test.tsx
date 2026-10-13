@@ -29,7 +29,9 @@ describe("CreateCalendarEventDialog", () => {
 
     const dialog = screen.getByRole("dialog", { name: "New event" });
     expect(within(dialog).getByLabelText("Title")).toHaveValue("Website kickoff");
-    expect(within(dialog).getByLabelText("Invite people")).toHaveValue("jane@example.com, bob@example.com");
+    expect(within(dialog).getByRole("button", { name: "Remove jane@example.com" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Remove bob@example.com" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("textbox", { name: "Invite People" })).toHaveValue("");
     expect(within(dialog).getByLabelText("Description")).toHaveValue("From: Please set up the website by Friday.");
     expect(within(dialog).getByLabelText("Starts")).toHaveValue("2026-10-01T15:00");
     expect(create).not.toHaveBeenCalled();
@@ -39,6 +41,30 @@ describe("CreateCalendarEventDialog", () => {
       title: "Website kickoff", attendees: ["jane@example.com", "bob@example.com"], start: new Date(2026, 9, 1, 15, 0).toISOString(),
     })));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(saved));
+  });
+
+  it("shows invitees as badges, commits an unfinished address on Cmd+Enter, and names invalid ones", async () => {
+    const saved: ScheduleEvent = { id: "saved", accountId: accounts[0].email, calendarId: "primary", title: "Sync",
+      start: new Date(2026, 9, 1, 15, 0).toISOString(), end: new Date(2026, 9, 1, 15, 30).toISOString(), allDay: false };
+    const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(saved);
+    render(<CreateCalendarEventDialog start={new Date(2026, 9, 1, 15, 0)} end={new Date(2026, 9, 1, 15, 30)} accounts={accounts}
+      calendars={calendars} initialTitle="Sync" initialInvitees={["jane@example.com"]} onClose={vi.fn()} onCreated={vi.fn()} />);
+    const dialog = screen.getByRole("dialog", { name: "New event" });
+    const input = within(dialog).getByRole("textbox", { name: "Invite People" });
+    expect(input).toHaveAttribute("autocorrect", "off");
+
+    fireEvent.change(input, { target: { value: "not-an-address" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(within(dialog).getByRole("button", { name: "Remove not-an-address" })).toBeInTheDocument();
+    fireEvent.keyDown(input, { key: "Enter", metaKey: true });
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Check these invitee email addresses: not-an-address.");
+    expect(create).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove not-an-address" }));
+    expect(input).toHaveFocus();
+    fireEvent.change(input, { target: { value: "theo@example.com" } });
+    fireEvent.keyDown(input, { key: "Enter", metaKey: true });
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ attendees: ["jane@example.com", "theo@example.com"] })));
   });
 
   it("defaults to a visible writable calendar ahead of a hidden primary", () => {

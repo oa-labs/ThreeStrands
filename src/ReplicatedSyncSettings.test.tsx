@@ -79,7 +79,7 @@ describe("replicated sync setup choice", () => {
     render(<ReplicatedSyncSettings />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Paste a join code" }));
-    expect(screen.getByRole("textbox", { name: "Join code" })).toHaveFocus();
+    expect(screen.getByRole("textbox", { name: "Join Code" })).toHaveFocus();
   });
 
   it("creates a separate group over an existing one only after explicit confirmation", async () => {
@@ -194,7 +194,7 @@ describe("replicated sync setup steps", () => {
     setUp({ transports: [] });
     render(<ReplicatedSyncSettings />);
     const panel = await screen.findByRole("group", { name: "Join with a code from another device" });
-    expect(within(panel).getByRole("textbox", { name: "Join code" })).toBeInTheDocument();
+    expect(within(panel).getByRole("textbox", { name: "Join Code" })).toBeInTheDocument();
     expect(within(panel).getByRole("button", { name: "Join sync group" })).toBeDisabled();
     cleanup();
 
@@ -210,7 +210,7 @@ describe("replicated sync setup steps", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /^IPFS/ }));
     const ipfs = screen.getByRole("group", { name: "Add IPFS" });
-    const url = within(ipfs).getByRole("textbox", { name: "RPC base URL" });
+    const url = within(ipfs).getByRole("textbox", { name: "RPC Base URL" });
     expect(url).toHaveValue("");
     expect(url).not.toHaveAttribute("placeholder", "https://rpc.filebase.io");
     expect(within(ipfs).getByRole("button", { name: "Test connection" })).toBeDisabled();
@@ -579,7 +579,7 @@ describe("approving a device from an existing device", () => {
     render(<ReplicatedSyncSettings />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Review…" }));
-    fireEvent.change(screen.getByRole("textbox", { name: /Name this device/ }), { target: { value: "Work laptop" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Name This Device" }), { target: { value: "Work laptop" } });
     fireEvent.click(screen.getByRole("button", { name: "Codes match — approve" }));
 
     await waitFor(() => expect(sync.replicatedSyncSetDeviceLabel).toHaveBeenCalledWith("device-new", "Work laptop"));
@@ -642,7 +642,7 @@ describe("device names and activity", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Name" }));
     expect(screen.getByText("device-self")).toBeInTheDocument();
-    const input = screen.getByRole("textbox", { name: /Name \(shared with your other devices\)/ });
+    const input = screen.getByRole("textbox", { name: "Device Name" });
     expect(input).toHaveAttribute("maxLength", String(sync.MAX_DEVICE_LABEL_CHARS));
     fireEvent.change(input, { target: { value: "Desk" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));

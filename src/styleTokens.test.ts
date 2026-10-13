@@ -140,6 +140,29 @@ describe("form controls", () => {
     expect(overrides).toEqual([]);
   });
 
+  it("gives every styled text field an explicit control height instead of relying on padding", () => {
+    /** The selector without state and type filters, so `.modal-form input:not([type="checkbox"])` matches `.modal-form input`. */
+    const base = (selector: string) => selector.replace(/:not\((?:[^()]|\([^()]*\))*\)/g, "").replace(/\s+/g, " ").trim();
+    const isTextField = (selector: string) => /(^|[\s>+~])input(?![\w-])/.test(selector)
+      && !/checkbox|radio|range|color|file|switch|::|:focus|:disabled|:hover|:checked|placeholder|data-empty/.test(selector);
+    const sized = new Set<string>();
+    const styled = new Map<string, string>();
+    css.walkRules((rule) => {
+      const decls = rule.nodes.filter((node): node is Declaration => node.type === "decl");
+      for (const selector of rule.selectors ?? []) {
+        if (decls.some((declaration) => /^(min-)?height$/.test(declaration.prop))) sized.add(base(selector));
+        if (isTextField(selector) && decls.some((declaration) => /^(border|padding)/.test(declaration.prop))) styled.set(base(selector), rule.selector);
+      }
+    });
+    // The command palette's oversized search bar is a deliberate display field, not a form control.
+    // Recipient inputs are sized by the shared `.compose-field input` rule they also match.
+    const exempt = new Set([".palette-search input", ".recipient-chip-row input"]);
+    const unsized = [...styled.keys()].filter((selector) => !exempt.has(selector) && !sized.has(selector)
+      // A borderless field inside a sized wrapper, like the mail search box, takes the wrapper's height.
+      && !sized.has(selector.replace(/ input(\[[^\]]*\])?$/, "")));
+    expect(unsized).toEqual([]);
+  });
+
   it("sets inline dropdowns in control text and form dropdowns in body text", () => {
     const sizes = new Map<string, string>();
     css.walkDecls("font-size", (declaration) => {

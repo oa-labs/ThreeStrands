@@ -6,6 +6,7 @@ import { matchingGroups, memberCountLabel } from "./contactGroups";
 import { formatAddress, looksLikeCompleteAddress, parseAddress, splitAddressList } from "./emailAddress";
 import { logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
+import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 
 type Props = {
   id: "to" | "cc" | "bcc";
@@ -267,6 +268,7 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
           </span>
         ))}
         <input
+          {...SEARCH_INPUT_ATTRIBUTES}
           id={inputId}
           ref={inputRef}
           name={id}

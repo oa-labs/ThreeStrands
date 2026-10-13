@@ -114,7 +114,7 @@ describe("join code readiness", () => {
 describe("joining with a pasted code", () => {
   function renderPanel() {
     render(<Harness>{(operation) => <JoinCodePanel operation={operation} refresh={refresh} />}</Harness>);
-    return screen.getByRole("textbox", { name: "Join code" });
+    return screen.getByRole("textbox", { name: "Join Code" });
   }
 
   it("previews the code, collects what this device must supply, then joins", async () => {
@@ -137,8 +137,8 @@ describe("joining with a pasted code", () => {
     fireEvent.click(within(folderRow!).getByRole("button", { name: "Choose folder…" }));
     expect(await within(folderRow!).findByText("/Users/me/Dropbox/ThreeStrands")).toBeInTheDocument();
     expect(join).toBeDisabled();
-    fireEvent.change(within(s3Row!).getByLabelText("Access key ID"), { target: { value: "AKIA" } });
-    fireEvent.change(within(s3Row!).getByLabelText("Secret access key"), { target: { value: "secret" } });
+    fireEvent.change(within(s3Row!).getByLabelText("Access Key ID"), { target: { value: "AKIA" } });
+    fireEvent.change(within(s3Row!).getByLabelText("Secret Access Key"), { target: { value: "secret" } });
     expect(join).toBeEnabled();
 
     fireEvent.click(join);
@@ -198,10 +198,10 @@ describe("joining with a pasted code", () => {
   it("forgets the pasted code when the panel closes", async () => {
     vi.mocked(sync.replicatedSyncPreviewJoinCode).mockResolvedValue(preview());
     const { rerender } = render(<Harness>{(operation) => <JoinCodePanel operation={operation} refresh={refresh} />}</Harness>);
-    fireEvent.change(screen.getByRole("textbox", { name: "Join code" }), { target: { value: "TSJOIN1-secret" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Join Code" }), { target: { value: "TSJOIN1-secret" } });
     rerender(<Harness>{() => null}</Harness>);
     rerender(<Harness>{(operation) => <JoinCodePanel operation={operation} refresh={refresh} />}</Harness>);
-    expect(screen.getByRole("textbox", { name: "Join code" })).toHaveValue("");
+    expect(screen.getByRole("textbox", { name: "Join Code" })).toHaveValue("");
   });
 });
 
@@ -224,7 +224,7 @@ describe("adding a device", () => {
       { instanceId: "folder-1", includeCredentials: false },
       { instanceId: "s3-1", includeCredentials: false },
     ]));
-    expect(await within(panel).findByRole("textbox", { name: "Join code" })).toHaveValue("TSJOIN1-created");
+    expect(await within(panel).findByRole("textbox", { name: "Join Code" })).toHaveValue("TSJOIN1-created");
     expect(panel).toHaveTextContent("Anyone with this code can join your sync group.");
     expect(panel).not.toHaveTextContent("included storage credentials");
     expect(panel).toHaveTextContent("It works once and expires in 7 days");
@@ -235,7 +235,7 @@ describe("adding a device", () => {
     const onClose = vi.fn();
     const panel = renderPanel(onClose);
     fireEvent.click(within(panel).getByRole("button", { name: "Create join code" }));
-    await within(panel).findByRole("textbox", { name: "Join code" });
+    await within(panel).findByRole("textbox", { name: "Join Code" });
     expect(panel).toHaveTextContent("use the included storage credentials");
     expect(panel).toHaveTextContent("a key limited to this bucket is safest");
 
@@ -263,7 +263,7 @@ describe("outstanding join codes and notices", () => {
     vi.mocked(sync.replicatedSyncCancelJoinCode).mockResolvedValue(undefined);
     const used: sync.OutstandingJoinCode = { ...open, invitationCid: "c-used", status: "redeemed", redeemedByName: "Phone", rejectedAttempts: 1 };
     render(<Harness>{(operation) => <OutstandingJoinCodes codes={[used, open]} operation={operation} />}</Harness>);
-    const [openRow, usedRow] = within(screen.getByRole("list", { name: "Join codes" })).getAllByRole("listitem");
+    const [openRow, usedRow] = within(screen.getByRole("list", { name: "Join Codes" })).getAllByRole("listitem");
     expect(openRow).toHaveTextContent(/^Open · expires in/);
     expect(usedRow).toHaveTextContent("Used by Phone");
     expect(usedRow).toHaveTextContent("Refused 1 later attempt to use this code");
@@ -280,7 +280,7 @@ describe("outstanding join codes and notices", () => {
 
   it("shows nothing when there are no codes", () => {
     render(<Harness>{(operation) => <OutstandingJoinCodes codes={[]} operation={operation} />}</Harness>);
-    expect(screen.queryByRole("list", { name: "Join codes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Join Codes" })).not.toBeInTheDocument();
   });
 
   it("says who joined, offers revoking them, and dismisses notices", async () => {

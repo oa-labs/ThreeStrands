@@ -7,7 +7,7 @@ test("merges saved people and suppresses suggestions while allowing an explicit 
   for (const [name, email] of [["Primary Person", "primary@example.com"], ["Other Person", "other@example.com"]]) {
     await contacts.getByRole("button", { name: "New Contact", exact: true }).click();
     await contacts.getByRole("textbox", { name: "Name", exact: true }).fill(name);
-    const address = contacts.getByRole("textbox", { name: "Email addresses", exact: true });
+    const address = contacts.getByRole("textbox", { name: "Email Addresses", exact: true });
     await address.fill(email); await address.press("Enter");
     await contacts.getByRole("button", { name: "Save contact", exact: true }).click();
     await expect(contacts.getByRole("region", { name: "Save changes" })).not.toBeVisible();

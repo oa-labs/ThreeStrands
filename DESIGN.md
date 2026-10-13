@@ -34,7 +34,8 @@ Open a modal form when a user needs to create or edit structured data.
 
 The deliberate exceptions are:
 
-- message composition, which is an explicit writing mode;
+- message composition, which is an explicit writing mode, including the
+  optional goal field in the compose panel's Draft Review section;
 - mail search, entered explicitly with `/` and exited with Escape;
 - the command palette, entered explicitly with its shortcut; and
 - thread chat in the context panel, entered explicitly with `q` or `Mod+J`

@@ -203,7 +203,7 @@ export function AccountsSettings({
                 <AccountNameInput
                   email={account.email}
                   name={account.nickname ?? null}
-                  label="Account nickname"
+                  label="Account Nickname"
                   placeholder="Work, Personal…"
                   hint="Used for account icons. Only visible in ThreeStrands."
                   onCommit={(nickname) => onSetNickname(account.email, nickname).catch((reason: unknown) => {
@@ -214,7 +214,7 @@ export function AccountsSettings({
                 <AccountNameInput
                   email={account.email}
                   name={account.displayName}
-                  label="Sender name"
+                  label="Sender Name"
                   placeholder="Your name"
                   hint="Shown to recipients in the From line."
                   onCommit={(name) =>

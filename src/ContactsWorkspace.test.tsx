@@ -88,7 +88,7 @@ describe("ContactsWorkspace",()=>{
   it("clears search and returns focus to the selected contact on Escape",async()=>{
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
-    const search=screen.getByRole("textbox",{name:"Search contacts"});
+    const search=screen.getByRole("textbox",{name:"Search Contacts"});
     search.focus();
     fireEvent.change(search,{target:{value:"jane"}});
     await waitFor(()=>expect(mailClient.listContactProfiles).toHaveBeenLastCalledWith("jane",500,undefined));
@@ -103,7 +103,7 @@ describe("ContactsWorkspace",()=>{
 
   it("turns off inline predictions on the search box so one Escape clears it",async()=>{
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
-    const search=await screen.findByRole("textbox",{name:"Search contacts"});
+    const search=await screen.findByRole("textbox",{name:"Search Contacts"});
     expect(search).toHaveAttribute("writingsuggestions","false");
     expect(search).toHaveAttribute("autocorrect","off");
   });
@@ -112,7 +112,7 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.listContactProfiles).mockResolvedValue([]);
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByText(/No contacts found/);
-    const search=screen.getByRole("textbox",{name:"Search contacts"});
+    const search=screen.getByRole("textbox",{name:"Search Contacts"});
     search.focus();
     fireEvent.change(search,{target:{value:"zzz"}});
     fireEvent.keyDown(search,{key:"Escape"});
@@ -125,7 +125,7 @@ describe("ContactsWorkspace",()=>{
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={onSaved}/>);
     await screen.findByDisplayValue("Jane Doe");
     fireEvent.keyDown(window,{key:"/"});
-    const search=screen.getByRole("textbox",{name:"Search contacts"});
+    const search=screen.getByRole("textbox",{name:"Search Contacts"});
     expect(document.activeElement).toBe(search);
     fireEvent.change(search,{target:{value:"jane"}});
     await waitFor(()=>expect(mailClient.listContactProfiles).toHaveBeenLastCalledWith("jane",500,undefined));
@@ -187,7 +187,7 @@ describe("ContactsWorkspace",()=>{
   it("edits email addresses as removable badges",async()=>{
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
-    const input=screen.getByRole("textbox",{name:"Email addresses"});
+    const input=screen.getByRole("textbox",{name:"Email Addresses"});
     expect(screen.getByRole("button",{name:"Remove jane@example.com"})).toBeInTheDocument();
     fireEvent.change(input,{target:{value:"jane@work.example.com"}});
     fireEvent.keyDown(input,{key:"Enter"});
@@ -210,7 +210,7 @@ describe("ContactsWorkspace",()=>{
     await screen.findByDisplayValue("Jane Doe");
     // A single address needs no marker.
     expect(screen.queryByText("Primary")).not.toBeInTheDocument();
-    const input=screen.getByRole("textbox",{name:"Email addresses"});
+    const input=screen.getByRole("textbox",{name:"Email Addresses"});
     fireEvent.change(input,{target:{value:"jane@work.example.com"}});
     fireEvent.keyDown(input,{key:"Enter"});
     expect(screen.getByText("Primary").closest(".recipient-chip")).toHaveTextContent("jane@example.com");
@@ -732,7 +732,7 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.enrichContact).mockResolvedValue({suggestions:[{field:"role",value:"CEO",sourceMessageId:"m1",sourceThreadId:"thread-1",excerpt:"I am the CEO."}],messagesReviewed:3,hasMore:false});
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
-    fireEvent.change(screen.getByRole("textbox",{name:"Search contacts"}),{target:{value:"Founder"}});
+    fireEvent.change(screen.getByRole("textbox",{name:"Search Contacts"}),{target:{value:"Founder"}});
     await waitFor(()=>expect(mailClient.listContactProfiles).toHaveBeenLastCalledWith("Founder",500,undefined));
     // Only a cleared field can be enhanced; accepting the suggestion then
     // changes the term they were searched by.
@@ -744,7 +744,7 @@ describe("ContactsWorkspace",()=>{
 
     await waitFor(()=>expect(screen.getByDisplayValue("CEO")).toBeInTheDocument());
     expect(screen.getByDisplayValue("Jane Doe")).toBeInTheDocument();
-    expect(screen.getByRole("textbox",{name:"Search contacts"})).toHaveValue("Founder");
+    expect(screen.getByRole("textbox",{name:"Search Contacts"})).toHaveValue("Founder");
   });
 
   it("confirms deletion of a saved profile",async()=>{
@@ -783,7 +783,7 @@ describe("ContactsWorkspace",()=>{
     pressed(/Newer Person/);notPressed(/Favorite Person/);
     await screen.findByDisplayValue("Newer Person");
 
-    const search=screen.getByRole("textbox",{name:"Search contacts"});
+    const search=screen.getByRole("textbox",{name:"Search Contacts"});
     search.focus();
     fireEvent.keyDown(search,{key:"ArrowDown"});
     pressed(/Newer Person/);notPressed(/Jane Doe/);
@@ -906,7 +906,7 @@ describe("ContactsWorkspace",()=>{
       expect(screen.queryByRole("region",{name:"This Week"})).not.toBeInTheDocument();
       expect(within(screen.getByRole("region",{name:"Upcoming Birthdays"})).getByRole("button",{name:/Bea Birthday/})).toBeInTheDocument();
 
-      fireEvent.change(screen.getByRole("textbox",{name:"Search contacts"}),{target:{value:"tara"}});
+      fireEvent.change(screen.getByRole("textbox",{name:"Search Contacts"}),{target:{value:"tara"}});
       expect(screen.queryByRole("region",{name:"Overdue"})).not.toBeInTheDocument();
       expect(screen.getByRole("region",{name:"Due Today"})).toBeInTheDocument();
     });
@@ -978,16 +978,16 @@ describe("ContactsWorkspace",()=>{
       groupsView();
       expect(await screen.findByRole("button",{name:/Board.*1 member/})).toHaveAttribute("aria-pressed","true");
       expect(screen.getByRole("tab",{name:"Groups"})).toHaveAttribute("aria-selected","true");
-      expect(screen.getByRole("textbox",{name:"Group name"})).toHaveValue("Board");
+      expect(screen.getByRole("textbox",{name:"Group Name"})).toHaveValue("Board");
       fireEvent.click(screen.getByRole("button",{name:"New Group"}));
-      const name=screen.getByRole("textbox",{name:"New group name"});
+      const name=screen.getByRole("textbox",{name:"New Group Name"});
       expect(screen.getByRole("button",{name:"Create"})).toBeDisabled();
       fireEvent.change(name,{target:{value:"Family"}});
       fireEvent.submit(name);
       await waitFor(()=>expect(mailClient.createContactGroup).toHaveBeenCalledWith("Family"));
       expect(await screen.findByRole("button",{name:/Family.*0 members/})).toHaveAttribute("aria-pressed","true");
-      expect(screen.getByRole("textbox",{name:"Group name"})).toHaveValue("Family");
-      expect(screen.queryByRole("textbox",{name:"New group name"})).not.toBeInTheDocument();
+      expect(screen.getByRole("textbox",{name:"Group Name"})).toHaveValue("Family");
+      expect(screen.queryByRole("textbox",{name:"New Group Name"})).not.toBeInTheDocument();
       const list=screen.getByRole("region",{name:"Groups"});
       expect(within(list).getAllByRole("button").map(button=>button.querySelector("strong")?.textContent)).toEqual(["Board","Family"]);
     });
@@ -999,10 +999,10 @@ describe("ContactsWorkspace",()=>{
       await screen.findByDisplayValue("Jane Doe");
       fireEvent.click(screen.getByRole("button",{name:"New Group"}));
       expect(onViewChange).toHaveBeenCalledWith("groups");
-      const name=screen.getByRole("textbox",{name:"New group name"});
+      const name=screen.getByRole("textbox",{name:"New Group Name"});
       expect(name).toHaveFocus();
       fireEvent.keyDown(name,{key:"Escape"});
-      expect(screen.queryByRole("textbox",{name:"New group name"})).not.toBeInTheDocument();
+      expect(screen.queryByRole("textbox",{name:"New Group Name"})).not.toBeInTheDocument();
       expect(screen.getByRole("tab",{name:"Groups"})).toHaveAttribute("aria-selected","true");
     });
 
@@ -1012,21 +1012,21 @@ describe("ContactsWorkspace",()=>{
       groupsView();
       await screen.findByRole("button",{name:/Board/});
       fireEvent.click(screen.getByRole("button",{name:"New Group"}));
-      const name=screen.getByRole("textbox",{name:"New group name"});
+      const name=screen.getByRole("textbox",{name:"New Group Name"});
       fireEvent.change(name,{target:{value:"board"}});
       fireEvent.submit(name);
       expect(await screen.findByRole("alert")).toHaveTextContent("already exists");
-      expect(screen.getByRole("textbox",{name:"New group name"})).toHaveValue("board");
+      expect(screen.getByRole("textbox",{name:"New Group Name"})).toHaveValue("board");
     });
 
     it("searches groups by name and explains an empty Groups view",async()=>{
       vi.mocked(mailClient.listContactGroups).mockResolvedValue([board,{...board,id:"group-family",name:"Family"}]);
       groupsView();
       await screen.findByRole("button",{name:/Family/});
-      fireEvent.change(screen.getByRole("textbox",{name:"Search groups"}),{target:{value:"fam"}});
+      fireEvent.change(screen.getByRole("textbox",{name:"Search Groups"}),{target:{value:"fam"}});
       expect(screen.queryByRole("button",{name:/Board/})).not.toBeInTheDocument();
       expect(screen.getByRole("button",{name:/Family/})).toBeInTheDocument();
-      fireEvent.change(screen.getByRole("textbox",{name:"Search groups"}),{target:{value:"zzz"}});
+      fireEvent.change(screen.getByRole("textbox",{name:"Search Groups"}),{target:{value:"zzz"}});
       expect(screen.getByText("No groups match this search.")).toBeInTheDocument();
       cleanup();
       vi.mocked(mailClient.listContactGroups).mockResolvedValue([]);
@@ -1132,7 +1132,7 @@ describe("ContactsWorkspace",()=>{
       vi.mocked(mailClient.listContactGroups).mockResolvedValue([board]);
       vi.mocked(mailClient.renameContactGroup).mockResolvedValueOnce({...board,name:"Directors"}).mockRejectedValueOnce(new Error("A group named “Family” already exists"));
       groupsView();
-      const name=await screen.findByRole("textbox",{name:"Group name"});
+      const name=await screen.findByRole("textbox",{name:"Group Name"});
       fireEvent.change(name,{target:{value:"Directors"}});
       fireEvent.keyDown(name,{key:"Enter"});
       fireEvent.blur(name);
@@ -1169,7 +1169,7 @@ describe("ContactsWorkspace",()=>{
       await screen.findByRole("button",{name:/Board/,pressed:true});
       fireEvent.keyDown(window,{key:"ArrowDown"});
       expect(screen.getByRole("button",{name:/Family/})).toHaveAttribute("aria-pressed","true");
-      expect(screen.getByRole("textbox",{name:"Group name"})).toHaveValue("Family");
+      expect(screen.getByRole("textbox",{name:"Group Name"})).toHaveValue("Family");
       fireEvent.keyDown(window,{key:"ArrowUp"});
       expect(screen.getByRole("button",{name:/Board/})).toHaveAttribute("aria-pressed","true");
     });
@@ -1200,7 +1200,7 @@ describe("ContactsWorkspace",()=>{
       render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
       await screen.findByDisplayValue("Jane Doe");
       fireEvent.click(await within(screen.getByRole("region",{name:"Groups"})).findByRole("button",{name:"Board"}));
-      expect(await screen.findByRole("textbox",{name:"Group name"})).toHaveValue("Board");
+      expect(await screen.findByRole("textbox",{name:"Group Name"})).toHaveValue("Board");
       expect(screen.getByRole("tab",{name:"Groups"})).toHaveAttribute("aria-selected","true");
     });
 

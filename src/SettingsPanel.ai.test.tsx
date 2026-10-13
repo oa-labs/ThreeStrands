@@ -43,8 +43,8 @@ describe("AI provider feature settings", () => {
     saveAiProvider("custom");
     render(<AiProviderSettings onChange={queuePortablePreferences} />);
 
-    fireEvent.change(screen.getByRole("textbox", { name: "Fast model" }), { target: { value: "example/fast" } });
-    fireEvent.change(screen.getByRole("textbox", { name: "Reasoning model" }), { target: { value: "example/reasoning" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Fast Model" }), { target: { value: "example/fast" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Reasoning Model" }), { target: { value: "example/reasoning" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Endpoint URL" }), { target: { value: "https://api.example.com/v1" } });
 
     await waitFor(() => expect(vi.mocked(invoke).mock.calls
@@ -63,11 +63,11 @@ describe("AI provider feature settings", () => {
 
   it("saves a reasoning model and an optional fast model separately", () => {
     render(<AiProviderSettings />);
-    const fast = screen.getByRole("textbox", { name: "Fast model" });
+    const fast = screen.getByRole("textbox", { name: "Fast Model" });
     expect(fast).toHaveValue("");
     expect(fast).toHaveAttribute("placeholder", "Same as reasoning model");
 
-    fireEvent.change(screen.getByRole("textbox", { name: "Reasoning model" }), { target: { value: "example/reasoning" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Reasoning Model" }), { target: { value: "example/reasoning" } });
     fireEvent.change(fast, { target: { value: "example/fast" } });
 
     expect(readAiModel()).toBe("example/reasoning");

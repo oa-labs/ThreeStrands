@@ -6,6 +6,7 @@ import { FindOrCreatePicker } from "./FindOrCreatePicker";
 import { formatLabelName, isManageableLabel, type LabelCapabilities } from "./labels";
 import { readLabelUsage, recordLabelUsed } from "./settings";
 import { ICON_SIZE } from "./iconSizes";
+import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 
 export function LabelManager({
   labels,
@@ -145,6 +146,7 @@ export function LabelManager({
           }}
         >
           <input
+            {...SEARCH_INPUT_ATTRIBUTES}
             autoFocus
             value={renameValue}
             onChange={(event) => setRenameValue(event.target.value)}

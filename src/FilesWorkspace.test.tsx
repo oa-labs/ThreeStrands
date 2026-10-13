@@ -32,16 +32,16 @@ describe("Files workspace", () => {
   it("queries starred, filename, sender, type, direction, local-day dates and selected accounts without claiming offline retention", async () => {
     const query=vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[],total:0});
     render(<FilesWorkspace accountId={null} accountIds={[report.accountId,"other@example.com"]} onOpenThread={vi.fn()} />);
-    fireEvent.change(screen.getByLabelText("Search files"),{target:{value:"forecast"}});
+    fireEvent.change(screen.getByLabelText("Search Files"),{target:{value:"forecast"}});
     fireEvent.click(screen.getByRole("button",{name:"Filters"}));
-    expect(screen.getByLabelText("From date")).toHaveValue("");
-    expect(screen.getByLabelText("Through date")).toHaveValue("");
+    expect(screen.getByLabelText("From Date")).toHaveValue("");
+    expect(screen.getByLabelText("Through Date")).toHaveValue("");
     fireEvent.change(screen.getByLabelText("Sender"),{target:{value:"alice"}});
     fireEvent.change(screen.getByLabelText("File Type"),{target:{value:"document"}});
     fireEvent.change(screen.getByLabelText("Direction"),{target:{value:"received"}});
     fireEvent.change(screen.getByLabelText("Account"),{target:{value:report.accountId}});
-    fireEvent.change(screen.getByLabelText("From date"),{target:{value:"2026-10-01"}});
-    fireEvent.change(screen.getByLabelText("Through date"),{target:{value:"2026-10-02"}});
+    fireEvent.change(screen.getByLabelText("From Date"),{target:{value:"2026-10-01"}});
+    fireEvent.change(screen.getByLabelText("Through Date"),{target:{value:"2026-10-02"}});
     fireEvent.click(screen.getByRole("button",{name:"Starred"}));
     await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.objectContaining({accountIds:[report.accountId],search:"forecast",sender:"alice",type:"document",direction:"received",starred:true,after:new Date(2026,9,1).toISOString(),before:new Date(2026,9,3).toISOString(),offset:0})));
     fireEvent.click(screen.getByTitle("About Files"));
@@ -120,10 +120,10 @@ describe("Files workspace", () => {
   it("keeps secondary filters collapsed and lets users remove active filters without clearing search or stars", async () => {
     const query=vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[],total:0});
     render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} />);
-    expect(screen.getByRole("searchbox",{name:"Search files"})).toBeVisible();
+    expect(screen.getByRole("searchbox",{name:"Search Files"})).toBeVisible();
     expect(screen.queryByRole("group",{name:"File filters"})).not.toBeInTheDocument();
     expect(screen.getByTitle("About Files").closest("details")).not.toHaveAttribute("open");
-    fireEvent.change(screen.getByRole("searchbox",{name:"Search files"}),{target:{value:"forecast"}});
+    fireEvent.change(screen.getByRole("searchbox",{name:"Search Files"}),{target:{value:"forecast"}});
     fireEvent.click(screen.getByRole("button",{name:"Starred"}));
     fireEvent.click(screen.getByRole("button",{name:"Filters"}));
     fireEvent.change(screen.getByLabelText("Sender"),{target:{value:"alice"}});
@@ -181,15 +181,15 @@ describe("Files workspace", () => {
     const query=vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[],total:0});
     render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} />);
     fireEvent.click(screen.getByRole("button",{name:"Filters"}));
-    for (const label of ["From date","Through date"]) {
+    for (const label of ["From Date","Through Date"]) {
       expect(screen.getByLabelText(label)).toHaveValue("");
       expect(screen.getByLabelText(label)).toHaveAttribute("aria-description","Any date");
     }
     expect(screen.getAllByText("Any date")).toHaveLength(2);
-    fireEvent.change(screen.getByLabelText("From date"),{target:{value:"2026-10-01"}});
-    expect(screen.getByLabelText("From date")).not.toHaveAttribute("aria-description");
+    fireEvent.change(screen.getByLabelText("From Date"),{target:{value:"2026-10-01"}});
+    expect(screen.getByLabelText("From Date")).not.toHaveAttribute("aria-description");
     fireEvent.click(screen.getByRole("button",{name:/Remove From:/}));
-    expect(screen.getByLabelText("From date")).toHaveValue("");
+    expect(screen.getByLabelText("From Date")).toHaveValue("");
     await waitFor(()=>expect(query).toHaveBeenCalled());
     expect(query.mock.calls.at(-1)?.[0].after).toBeUndefined();
     expect(query.mock.calls.at(-1)?.[0].before).toBeUndefined();

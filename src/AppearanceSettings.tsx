@@ -13,6 +13,7 @@ import {
 import { EMAIL_MINIMUM_FONT_SIZE } from "./emailRenderingPolicy";
 import { listSystemFontFamilies } from "./systemFonts";
 import { ICON_SIZE } from "./iconSizes";
+import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 
 export function AppearanceSettings({
   theme,
@@ -191,6 +192,7 @@ export function AppearanceSettings({
               <Search size={ICON_SIZE.sm} aria-hidden="true" />
               <input
                 type="search"
+                {...SEARCH_INPUT_ATTRIBUTES}
                 autoFocus
                 value={fontQuery}
                 placeholder="Search installed fonts"

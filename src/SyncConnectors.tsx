@@ -202,16 +202,16 @@ export function S3CredentialFields({
   return (
     <>
       <label className="settings-field">
-        <span>Access key ID</span>
+        <span>Access Key ID</span>
         <input type="text" autoComplete="off" spellCheck={false} value={value.accessKeyId} disabled={disabled} onChange={(event) => onChange({ ...value, accessKeyId: event.target.value })} />
       </label>
       <label className="settings-field">
-        <span>Secret access key</span>
+        <span>Secret Access Key</span>
         <input type="password" autoComplete="off" value={value.secretAccessKey} disabled={disabled} onChange={(event) => onChange({ ...value, secretAccessKey: event.target.value })} />
       </label>
       <Disclosure summary="Temporary credentials">
         <label className="settings-field">
-          <span>Session token (optional)</span>
+          <span>Session Token (Optional)</span>
           <input type="password" autoComplete="off" value={value.sessionToken} disabled={disabled} onChange={(event) => onChange({ ...value, sessionToken: event.target.value })} />
         </label>
       </Disclosure>
@@ -317,12 +317,12 @@ function S3ConnectorForm({ operation, refresh, onAdded }: { operation: Operation
         <input type="text" spellCheck={false} value={form.bucket} disabled={busy} onChange={(event) => update({ bucket: event.target.value })} />
       </label>
       <label className="settings-field">
-        <span>Folder in the bucket (optional)</span>
+        <span>Folder in the Bucket (Optional)</span>
         <input type="text" spellCheck={false} placeholder="threestrands" value={form.prefix} disabled={busy} onChange={(event) => update({ prefix: event.target.value })} />
       </label>
       <S3CredentialFields value={credentials} disabled={busy} onChange={(next) => update(next)} />
       <label className="settings-field">
-        <span>Name (optional)</span>
+        <span>Name (Optional)</span>
         <input type="text" maxLength={MAX_CONNECTOR_LABEL_CHARS} value={form.label} disabled={busy} onChange={(event) => update({ label: event.target.value })} />
       </label>
       <Disclosure summary="Advanced">
@@ -381,11 +381,11 @@ function IpfsConnectorForm({ operation, refresh, onAdded }: { operation: Operati
         token is stored only in this device&apos;s OS keychain, never in a settings export.
       </p>
       <label className="settings-field">
-        <span>RPC base URL</span>
+        <span>RPC Base URL</span>
         <input type="text" placeholder="https://ipfs.example.com:5001" value={baseUrl} disabled={busy} onChange={(event) => { setBaseUrl(event.target.value); setProbe(null); }} />
       </label>
       <label className="settings-field">
-        <span>Access token (optional)</span>
+        <span>Access Token (Optional)</span>
         <input type="password" value={token} disabled={busy} onChange={(event) => { setToken(event.target.value); setProbe(null); }} />
       </label>
       <div className="settings-row">
@@ -498,7 +498,7 @@ function ReplaceCredentials({
         <S3CredentialFields value={s3} disabled={busy} onChange={setS3} />
       ) : (
         <label className="settings-field">
-          <span>New access token</span>
+          <span>New Access Token</span>
           <input type="password" autoComplete="off" value={token} disabled={busy} onChange={(event) => setToken(event.target.value)} />
         </label>
       )}

@@ -285,7 +285,7 @@ export function ThreadChat({
       >
         <textarea
           ref={input}
-          aria-label="Ask about this conversation"
+          aria-label="Ask About This Conversation"
           aria-describedby="thread-chat-hint"
           aria-autocomplete={attachments.length > 0 ? "list" : undefined}
           aria-expanded={attachments.length > 0 ? menuOpen : undefined}

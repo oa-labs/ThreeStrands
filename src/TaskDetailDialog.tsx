@@ -273,7 +273,7 @@ export function TaskDetailDialog({
             commit(next);
           }}><option value="none">No Due Date</option><option value="date">Date</option><option value="datetime">Date and Time</option></select></label>
           {drafts.dueKind !== "none" ? <label>
-            <span>{drafts.dueKind === "date" ? "Due date" : "Due date and time"}</span>
+            <span>{drafts.dueKind === "date" ? "Due Date" : "Due Date and Time"}</span>
             <input type={drafts.dueKind === "date" ? "date" : "datetime-local"} value={drafts.dueValue} onChange={(event) => change("dueValue", event.target.value)} onBlur={() => commit()} />
           </label> : null}
         </div>
@@ -283,7 +283,7 @@ export function TaskDetailDialog({
           <datalist id="task-detail-timezones">{timeZones.map((zone) => <option key={zone} value={zone} />)}</datalist>
         </label> : null}
         {drafts.kind === "follow_up" ? <label>
-          <span>Repeat every (days)</span>
+          <span>Repeat Every (Days)</span>
           <input type="number" min="1" max={MAX_REPEAT_INTERVAL_DAYS} value={drafts.repeatIntervalDays} onChange={(event) => change("repeatIntervalDays", event.target.value)} onBlur={() => commit()} placeholder="Optional" />
         </label> : null}
         <label>

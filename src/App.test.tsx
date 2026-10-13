@@ -922,7 +922,7 @@ describe("keyboard-first task and action workspaces", () => {
       expect(localStorage.getItem("threestrands.contacts.view")).toBe("keepInTouch");
 
       // Tab works from the search box too, as it does from mail search.
-      fireEvent.keyDown(screen.getByRole("textbox", { name: "Search contacts" }), { key: "Tab", shiftKey: true });
+      fireEvent.keyDown(screen.getByRole("textbox", { name: "Search Contacts" }), { key: "Tab", shiftKey: true });
       expect(await screen.findByRole("tab", { name: "All Contacts" })).toHaveAttribute("aria-selected", "true");
       fireEvent.keyDown(document.body, { key: "Tab" });
       expect(await screen.findByRole("tab", { name: /Keep in Touch/ })).toHaveAttribute("aria-selected", "true");
@@ -1070,8 +1070,8 @@ describe("keyboard-first task and action workspaces", () => {
       fireEvent.blur(titleField);
       await waitFor(() => expect(updateTask).toHaveBeenCalledWith(expect.objectContaining({ id: "task-roadmap", title: "Review the project roadmap" })));
       fireEvent.change(details.getByRole("combobox", { name: "Due" }), { target: { value: "date" } });
-      fireEvent.change(details.getByLabelText("Due date"), { target: { value: "2026-09-30" } });
-      fireEvent.keyDown(details.getByLabelText("Due date"), { key: "Escape" });
+      fireEvent.change(details.getByLabelText("Due Date"), { target: { value: "2026-09-30" } });
+      fireEvent.keyDown(details.getByLabelText("Due Date"), { key: "Escape" });
       await waitFor(() => expect(updateTask).toHaveBeenCalledWith(expect.objectContaining({ id: "task-roadmap", dueKind: "date", dueValue: "2026-09-30" })));
       await waitFor(() => expect(screen.queryByRole("dialog", { name: "Task details" })).not.toBeInTheDocument());
 
