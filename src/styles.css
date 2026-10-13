@@ -1166,8 +1166,11 @@ kbd {
   /* auto-fit, not auto-fill: auto-fill reserves tracks for additional
      attachments that do not exist, and that phantom width squeezes real badges
      below their content size, pushing the trailing icon under the container's
-     overflow clipping. */
-  grid-template-columns: repeat(auto-fit, minmax(170px, max-content));
+     overflow clipping. The minimum covers the badge's fixed chrome (star,
+     kind icon, size, open icon, download button: about 200px) plus room for
+     a readable filename, so a long list wraps to more rows instead of
+     truncating every name to its extension. */
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), max-content));
   justify-content: start;
   gap: var(--space-2);
   margin-top: var(--space-5);

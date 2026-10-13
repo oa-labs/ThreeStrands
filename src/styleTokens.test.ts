@@ -278,6 +278,16 @@ describe("component sizes", () => {
     expect(raw).toEqual([]);
   });
 
+  it("gives each message attachment column room for its filename beyond the badge chrome", () => {
+    // Star, kind icon, size, open icon, and download button take about 200px;
+    // a narrower column truncates every filename down to its extension.
+    let minimum = "";
+    css.walkRules(".message-attachments", (rule) => rule.walkDecls("grid-template-columns", (declaration) => { minimum = declaration.value; }));
+    const match = /minmax\(min\((\d+)px, 100%\), max-content\)/.exec(minimum);
+    expect(match, minimum).not.toBeNull();
+    expect(Number(match![1])).toBeGreaterThanOrEqual(280);
+  });
+
   it("gives count badges, dots, checks, and swatches one size each", () => {
     const families: [RegExp, string][] = [
       [/badge$|-view-count$/, "var(--badge-size)"],
