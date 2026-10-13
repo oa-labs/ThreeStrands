@@ -69,7 +69,7 @@ export function useAppCommandContext({
   const { messageStackRef, setMessageExpansionOverrides } = reader;
   const {
     rightWorkspace, setRightWorkspace, setContactsView, openToday, openTasks, openTasksView,
-    openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView,
+    openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView,
   } = workspaces;
   const {
     accountSplitInboxes, returnStep, goBack, goToInboxTab, openMailView, goToSplitTab,
@@ -90,7 +90,7 @@ export function useAppCommandContext({
     ...correspondence.context,
     toggleContextPanelFocus,
     interactionScope,
-    focusedPane: rightWorkspace === "tasks" ? "tasks" : rightWorkspace === "contacts" ? "contacts" : "mail",
+    focusedPane: rightWorkspace === "files" ? "files" : rightWorkspace === "week" ? "calendar" : rightWorkspace === "tasks" ? "tasks" : rightWorkspace === "contacts" ? "contacts" : "mail",
     compose: () => {
       setRightWorkspace(null);
       correspondence.context.compose();
@@ -246,6 +246,7 @@ export function useAppCommandContext({
     openTasks,
     openMailView,
     openTasksView,
+    openFilesView,
     openContactsView,
     openKeepInTouchView,
     openContactGroupsView,
@@ -267,7 +268,7 @@ export function useAppCommandContext({
     composerBelongsToVisibleThread, goToInboxTab, accountSplitInboxes.length, goToNextSplitTab,
     goToPreviousSplitTab, goToSplitTab, taskLayout, selectedTaskStatus, selectedTaskHasThread,
     aiSummaryAvailable, refreshMail, openToday, openTasks, openMailView, openTasksView,
-    openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, getSuggestions,
+    openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView, getSuggestions,
     openThreadChat, newTask, canUndoAction, canUndoArchive, switchAccount, toggleMessageFilter, setRightWorkspace,
     mutateIds, openFolder, selectedIndex, visibleThreads, setSelectedId, selectAdjacentMessage,
     taskWorkspaceRef, setContactsView, latestMessage, setUnsubscribeMessageId, labelTargetIds,

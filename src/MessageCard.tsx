@@ -1,3 +1,4 @@
+import { FileStarButton } from "./FileStarButton";
 import { Check, ChevronDown, ChevronUp, Copy, Download, ExternalLink, Forward, Paperclip, Reply, ReplyAll } from "lucide-react";
 import { memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
@@ -246,6 +247,7 @@ export const MessageCard = memo(function MessageCard({
           <div className="message-attachments" aria-label="Attachments">
             {downloadableAttachments.some(isCalendarAttachment) ? (
               <CalendarAttachmentGroup
+                threadId={message.threadId}
                 messageId={message.id}
                 attachments={downloadableAttachments.filter(isCalendarAttachment)}
                 onError={onNotice}
@@ -255,6 +257,7 @@ export const MessageCard = memo(function MessageCard({
                 const attachmentName = splitAttachmentName(attachment.filename);
                 return (
                 <div className="message-attachment" key={attachment.id}>
+                  <FileStarButton messageId={message.id} attachmentId={attachment.id} filename={attachment.filename} threadId={message.threadId} />
                   <HoverTooltip title={`Download ${attachment.filename}`} placement="bottom"><button
                     type="button"
                     className="attachment-badge"

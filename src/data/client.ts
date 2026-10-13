@@ -1,3 +1,4 @@
+import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
 import {
   BOUNDED_LOCAL_READ,
   invokeWithPolicy,
@@ -197,6 +198,10 @@ export interface MailClient extends CorrespondenceClient {
   /** Counts and timing of local correspondence with a saved id or `derived:<email>`. */
   contactActivity(id: string): Promise<ContactActivity>;
   /** Non-inline attachments the person sent, newest first. */
+  contextCandidates(query: ContextQuery): Promise<WorkspaceConversation[]>;
+  listFiles(query: FileQuery): Promise<FilePage>;
+  fileStars(messageIds: string[]): Promise<[string, string][]>;
+  setFileStar(accountId: string, messageId: string, attachmentId: string, starred: boolean): Promise<void>;
   contactFiles(id: string, limit: number): Promise<ContactFiles>;
   /** Other correspondents at `domain` and their conversations, leaving out `exclude`. */
   domainContext(domain: string, exclude: string[], limit: number): Promise<DomainContext>;
@@ -381,6 +386,10 @@ const tauriClient: MailClient = {
   markContacted: (id) => complete("mark_contacted", { id }),
   contactTimeline: (id, offset = 0, limit = 30, accountId) => read("contact_timeline", { id, offset, limit, accountId }),
   contactActivity: (id) => read("contact_activity", { id }),
+  contextCandidates: (query) => read("context_candidates", { query }),
+  listFiles: (query) => read("list_files", { query }),
+  fileStars: (messageIds) => read("file_stars", { messageIds }),
+  setFileStar: (accountId, messageId, attachmentId, starred) => complete("set_file_star", { accountId, messageId, attachmentId, starred }),
   contactFiles: (id, limit) => read("contact_files", { id, limit }),
   domainContext: (domain, exclude, limit) => read("domain_context", { domain, exclude, limit }),
   listContactTasks: (id) => read("list_contact_tasks", { id }),

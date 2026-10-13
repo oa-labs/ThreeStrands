@@ -415,6 +415,36 @@ export type ContactFile = {
 
 export type ContactFiles = { files: ContactFile[]; total: number };
 
+/** One attachment occurrence, never identified by filename or size. */
+export type WorkspaceFile = ContactFile & {
+  accountId: string;
+  sender: string;
+  direction: "received" | "sent";
+  starred: boolean;
+  availability: "offline" | "download" | "unknown";
+  reason?: string;
+};
+export type FileQuery = {
+  accountIds: string[];
+  threadId?: string;
+  threadIds?: string[];
+  priorityMessageId?: string;
+  prioritizeStarred?: boolean;
+  search?: string;
+  sender?: string;
+  after?: string;
+  before?: string;
+  type?: string;
+  direction?: "received" | "sent";
+  starred?: boolean;
+  offset?: number;
+  limit?: number;
+};
+export type FilePage = { files: WorkspaceFile[]; total: number };
+export type WorkspaceContextTarget = { kind: "task"; task: ThreadTask } | { kind: "meeting"; event: ScheduleEvent };
+export type ContextQuery = { accountIds: string[]; threadId?: string; terms: string[]; attendees: string[]; after?: string; before?: string };
+export type WorkspaceConversation = { threadId: string; accountId: string; subject: string; sentAt: string; participants: string[]; reason?: string };
+
 export type DomainPerson = { email: string; displayName: string | null; lastAt: string };
 
 /** Other correspondents at an email domain and their latest conversations. */

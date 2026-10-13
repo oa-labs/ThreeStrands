@@ -185,7 +185,7 @@ function EventLocation({ location }: { location: string }) {
   });
 }
 
-export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEvent; onDismiss(): void; onUpdated(event: ScheduleEvent): void }) {
+export function EventViewer({ event, onDismiss, onUpdated, embedded = false }: { embedded?: boolean; event: ScheduleEvent; onDismiss(): void; onUpdated(event: ScheduleEvent): void }) {
   const calendarColors = useCalendarColors();
   const viewerRef = useRef<HTMLDivElement>(null);
   const conferenceUrl = safeWebUrl(event.conferenceUrl);
@@ -205,9 +205,10 @@ export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEv
       setDeletePending(false);
     }
   };
-  useEscapeDismiss(onDismiss);
+  useEscapeDismiss(onDismiss, !embedded);
 
   useEffect(() => {
+    if (embedded) return;
     viewerRef.current?.focus();
     const dismissOnOutsidePointer = (pointerEvent: PointerEvent) => {
       const target = pointerEvent.target;
@@ -219,14 +220,14 @@ export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEv
     };
     document.addEventListener("pointerdown", dismissOnOutsidePointer);
     return () => document.removeEventListener("pointerdown", dismissOnOutsidePointer);
-  }, [onDismiss]);
+  }, [embedded, onDismiss]);
 
   return (
     <div
-      className="calendar-event-viewer"
+      className={embedded ? "calendar-event-details" : "calendar-event-viewer"}
       id="calendar-event-viewer"
       ref={viewerRef}
-      role="dialog"
+      role={embedded ? "region" : "dialog"}
       aria-label={`${event.title} details`}
       tabIndex={-1}
     >
@@ -262,7 +263,8 @@ export function EventViewer({ event, onDismiss, onUpdated }: { event: ScheduleEv
         {event.location ? <p><MapPin size={ICON_SIZE.lg} /><span><EventLocation location={event.location} /></span></p> : null}
         <p><CalendarDays size={ICON_SIZE.lg} /><span>{event.accountId}</span></p>
         <CalendarResponseControls event={event} onUpdated={onUpdated} />
-        {event.description ? <p className="calendar-event-viewer-description"><TextAlignStart size={ICON_SIZE.lg} /><span>{calendarDescriptionText(event.description)}</span></p> : null}
+        {event.attendees?.length ? <details><summary>{event.attendees.length} attendees</summary><ul>{event.attendees.map((email) => <li key={email}>{email}</li>)}</ul></details> : null}
+        {event.description ? embedded ? <details className="calendar-event-viewer-description"><summary>Description</summary><p>{calendarDescriptionText(event.description)}</p></details> : <p className="calendar-event-viewer-description"><TextAlignStart size={ICON_SIZE.lg} /><span>{calendarDescriptionText(event.description)}</span></p> : null}
       </div>
       {editing ? <EditCalendarEventDialog
         event={event}

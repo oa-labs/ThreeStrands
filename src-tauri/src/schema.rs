@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 71;
+pub(crate) const LATEST_VERSION: i64 = 72;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -2047,6 +2047,55 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
              PRAGMA user_version=71;",
         )
         .map_err(error)?;
+    }
+
+    if version < 72 {
+        // Device-local attachment metadata and annotations. No mail bytes or
+        // annotations enter settings transfer or replicated snapshots.
+        tx.execute_batch(r#"
+            CREATE TABLE IF NOT EXISTS file_attachments (
+                message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+                attachment_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                PRIMARY KEY(message_id, attachment_id)
+            );
+            CREATE INDEX IF NOT EXISTS file_attachments_by_name ON file_attachments(filename COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS messages_file_order ON messages(sent_at DESC,id);
+            CREATE TABLE IF NOT EXISTS file_stars (
+                message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+                attachment_id TEXT NOT NULL,
+                PRIMARY KEY(message_id, attachment_id)
+            );
+            INSERT OR REPLACE INTO file_attachments
+            SELECT m.id, json_extract(a.value,'$.id'), json_extract(a.value,'$.filename'),
+                   CASE WHEN json_type(a.value,'$.mimeType')='text' THEN json_extract(a.value,'$.mimeType') ELSE 'application/octet-stream' END,
+                   CASE WHEN json_type(a.value,'$.size')='integer' AND json_extract(a.value,'$.size')>=0 THEN json_extract(a.value,'$.size') ELSE 0 END
+              FROM messages m, json_each(CASE WHEN json_valid(m.attachments_json) THEN m.attachments_json ELSE '[]' END) a
+             WHERE a.type='object' AND COALESCE(json_extract(a.value,'$.inline'),0)=0
+               AND json_type(a.value,'$.id')='text' AND json_type(a.value,'$.filename')='text';
+            CREATE TRIGGER IF NOT EXISTS files_after_message_insert AFTER INSERT ON messages BEGIN
+                INSERT OR REPLACE INTO file_attachments
+                SELECT NEW.id, json_extract(a.value,'$.id'), json_extract(a.value,'$.filename'),
+                       CASE WHEN json_type(a.value,'$.mimeType')='text' THEN json_extract(a.value,'$.mimeType') ELSE 'application/octet-stream' END, CASE WHEN json_type(a.value,'$.size')='integer' AND json_extract(a.value,'$.size')>=0 THEN json_extract(a.value,'$.size') ELSE 0 END
+                  FROM json_each(CASE WHEN json_valid(NEW.attachments_json) THEN NEW.attachments_json ELSE '[]' END) a
+                 WHERE a.type='object' AND COALESCE(json_extract(a.value,'$.inline'),0)=0
+                   AND json_type(a.value,'$.id')='text' AND json_type(a.value,'$.filename')='text';
+            END;
+            CREATE TRIGGER IF NOT EXISTS files_after_message_update AFTER UPDATE OF attachments_json ON messages BEGIN
+                DELETE FROM file_attachments WHERE message_id=NEW.id;
+                INSERT OR REPLACE INTO file_attachments
+                SELECT NEW.id, json_extract(a.value,'$.id'), json_extract(a.value,'$.filename'),
+                       CASE WHEN json_type(a.value,'$.mimeType')='text' THEN json_extract(a.value,'$.mimeType') ELSE 'application/octet-stream' END, CASE WHEN json_type(a.value,'$.size')='integer' AND json_extract(a.value,'$.size')>=0 THEN json_extract(a.value,'$.size') ELSE 0 END
+                  FROM json_each(CASE WHEN json_valid(NEW.attachments_json) THEN NEW.attachments_json ELSE '[]' END) a
+                 WHERE a.type='object' AND COALESCE(json_extract(a.value,'$.inline'),0)=0
+                   AND json_type(a.value,'$.id')='text' AND json_type(a.value,'$.filename')='text';
+                DELETE FROM file_stars WHERE message_id=NEW.id AND attachment_id NOT IN
+                    (SELECT attachment_id FROM file_attachments WHERE message_id=NEW.id);
+            END;
+            PRAGMA user_version=72;
+        "#).map_err(error)?;
     }
     tx.commit().map_err(error)?;
 

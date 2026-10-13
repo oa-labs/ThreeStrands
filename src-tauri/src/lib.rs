@@ -1678,6 +1678,30 @@ async fn contact_activity(id: String, state: State<'_, AppState>) -> Result<Cont
 }
 
 #[tauri::command]
+async fn context_candidates(query: models::ContextQuery, state: State<'_, AppState>) -> Result<Vec<models::WorkspaceConversation>, String> {
+    let database = state.database.clone();
+    run_database_task(move || database.context_candidates(&query)).await
+}
+
+#[tauri::command]
+async fn list_files(query: models::FileQuery, state: State<'_, AppState>) -> Result<models::FilePage, String> {
+    let database = state.database.clone();
+    run_database_task(move || database.list_files(&query)).await
+}
+
+#[tauri::command]
+async fn file_stars(message_ids: Vec<String>, state: State<'_, AppState>) -> Result<Vec<(String,String)>, String> {
+    let database = state.database.clone();
+    run_database_task(move || database.file_stars(&message_ids)).await
+}
+
+#[tauri::command]
+async fn set_file_star(account_id: String, message_id: String, attachment_id: String, starred: bool, state: State<'_, AppState>) -> Result<(), String> {
+    let database = state.database.clone();
+    run_database_task(move || database.set_file_star(&account_id, &message_id, &attachment_id, starred)).await
+}
+
+#[tauri::command]
 async fn contact_files(id: String, limit: usize, state: State<'_, AppState>) -> Result<ContactFiles, String> {
     let database = state.database.clone();
     run_database_task(move || database.contact_files(&id, limit)).await
@@ -5336,6 +5360,10 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         contact_timeline,
         contact_activity,
         contact_files,
+        list_files,
+        context_candidates,
+        set_file_star,
+        file_stars,
         domain_context,
         list_contact_tasks,
         pin_contact,

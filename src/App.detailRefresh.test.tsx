@@ -185,7 +185,7 @@ it("shows a conversation participant on the next meeting and opens its details i
   fireEvent.click(within(meetings).getByRole("button", { name: /Onboarding kickoff/ }));
 
   expect(await screen.findByRole("region", { name: "Calendar week" })).toBeInTheDocument();
-  expect(await screen.findByRole("dialog", { name: "Onboarding kickoff details" })).toBeInTheDocument();
+  expect(await screen.findByRole("region", { name: "Onboarding kickoff details" })).toBeInTheDocument();
   expect(screen.queryByRole("complementary", { name: "Conversation context" })).not.toBeInTheDocument();
 });
 
@@ -370,7 +370,7 @@ describe("conversation brief", () => {
       })));
       expect(await screen.findByText("Added to calendar")).toBeInTheDocument();
       expect(await screen.findByRole("region", { name: "Calendar week" })).toBeInTheDocument();
-      expect(await screen.findByRole("dialog", { name: "Budget review details" })).toBeInTheDocument();
+      expect(await screen.findByRole("region", { name: "Budget review details" })).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Inbox (1)" }));
       await waitFor(() => expect(within(screen.getByRole("complementary", { name: "Conversation context" })).queryByText("Budget review")).not.toBeInTheDocument());
     });
@@ -423,7 +423,7 @@ describe("conversation brief", () => {
       fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
       const week = await screen.findByRole("region", { name: "Calendar week" });
       expect(await within(week).findByRole("button", { name: /^Budget review/ })).toBeInTheDocument();
-      expect(await screen.findByRole("dialog", { name: "Budget review details" })).toBeInTheDocument();
+      expect(await screen.findByRole("region", { name: "Budget review details" })).toBeInTheDocument();
       expect(remove).toHaveBeenCalledWith("welcome", expect.any(String), meeting);
 
       fireEvent.click(screen.getByRole("button", { name: "Inbox (1)" }));
@@ -431,7 +431,7 @@ describe("conversation brief", () => {
       expect(within(returned).queryByRole("button", { name: "Added 1 suggestion to review" })).not.toBeInTheDocument();
       expect(within(returned).getByText("Another meeting")).toBeInTheDocument();
       fireEvent.click(within(returned).getByRole("button", { name: "View Budget review in schedule" }));
-      expect(await screen.findByRole("dialog", { name: "Budget review details" })).toBeInTheDocument();
+      expect(await screen.findByRole("region", { name: "Budget review details" })).toBeInTheDocument();
       expect(create).toHaveBeenCalledTimes(2);
     });
 

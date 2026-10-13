@@ -1,6 +1,6 @@
 # Task and calendar context rails, then Files
 
-Status: proposed implementation plan, 2026-10-13. This document changes no application behavior.
+Status: implemented in 0.111.0 (2026-10-13). Hands-on UI verification remains the developer’s release check.
 
 ## Product outcome
 
@@ -12,7 +12,7 @@ Implement task and calendar workspace changes first, including useful automatic 
 
 - The established email context panel is the UI reference for right-side rails across Mail, Calendar, Tasks, Contacts, and Files. Extend that existing design language through shared components and styles. Workspace-specific content must still look and behave like the same application panel.
 - Match the email panel's surface/background, dividing border, horizontal insets, typography, section spacing and separators, section headers/counts, icon sizes and alignment, row anatomy, trailing actions, truncation/tooltips, hover/focus states, and collapse affordances. Reuse existing design tokens and `ContextSection`, `ContextSectionHeader`, and `ContextRow` wherever applicable. New editable detail sections must use the same visual hierarchy and existing form/control styles.
-- Use a standard resizable right rail. Treat the existing email panel's width as the starting reference; the proposed 360px default and 300–520px range are provisional and must align with the shared panel sizing convention rather than introduce a workspace-specific design. Reuse `useResizableWidth` and `PanelResizeHandle`; constrain the actual width to the workspace's available space. Keep preferred widths and collapsed state per device.
+- Use a standard resizable right rail. Treat the existing email panel's width as the starting reference; the implemented 340px default follows Mail, with a 300–520px resize range. Reuse `useResizableWidth` and `PanelResizeHandle`; constrain the actual width to the workspace's available space. Keep preferred widths and collapsed state per device.
 - The rail combines essential editable details and related content in one scrolling surface. Details appear first; Files, Conversations, and other useful sections follow. Share framing and section components, with workspace-specific content.
 - Selecting a task or event updates its rail without stealing keyboard focus from the board or grid. Enter or the existing detail command focuses details; Escape returns to the originating item. Shortcuts must not intercept typing in fields.
 - Preserve the selection when context loads, fails, or refreshes. Cancel or ignore stale requests after selection or account changes. Key draft edits by entity identity so changing selection cannot save one item's edits onto another.
@@ -53,7 +53,7 @@ Deliverable: selecting an event shows essential details in the right rail while 
 1. Extract event details/actions from `EventViewer`. In the primary calendar, render them in the rail rather than an outside-click-dismissed popover. Keep the availability sidebar's viewer as a wrapper around shared content.
 2. Keep title, time/timezone, location, join link, response controls, and permitted edit/delete actions near the top. Show attendees when available. Make long descriptions expandable. Preserve current permissions, safe URL handling, delete confirmation, error handling, and schedule-cache invalidation.
 3. Move mini-month and calendar selections into a header navigation control. Selected calendars and account scope remain visible and adjustable. The right rail has a helpful selection prompt when no event is selected.
-4. Add explicit Day, 3-day, Workweek, and Week modes. Proposed initial default: Workweek. Persist the user's choice per device; resizing must not silently change it. Keep weekends accessible through Day, 3-day, and Week.
+4. Add explicit Day, 3-day, Workweek, and Week modes. Initial default: Workweek. Persist the user's choice per device; resizing must not silently change it. Keep weekends accessible through Day, 3-day, and Week.
 5. Derive grid columns, visible dates, query interval, heading, navigation increments, all-day rows, overlap placement, and drag-to-create calculations from one range model. Workweek advances by calendar weeks; 3-day advances three days; Day advances one day. Today selects today's date; on weekends Workweek shows the following Monday–Friday and makes that range explicit. Week retains the existing week-start convention.
 6. When opening a specific event from mail, ensure its date is visible. If it falls outside Workweek, temporarily show Day without overwriting the user's saved range preference. Keep initial-event selection, timezone and DST behavior, and exclusive all-day end dates correct.
 7. Keep event creation and full editing dialogs initially; successful saves refresh the selected event and context. Identify selection by account, calendar, and event ID, not event ID alone. Preserve selection through response updates and reloads while the event remains present.

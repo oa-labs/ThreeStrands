@@ -19,6 +19,7 @@ pub(crate) mod contact_management;
 mod contact_suggestions;
 pub(crate) mod contacts;
 mod goals;
+mod files;
 mod ingestion;
 mod labels;
 mod mail_sync;

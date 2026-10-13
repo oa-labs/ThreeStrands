@@ -4,7 +4,7 @@
 use super::messages::{compress_body, store_message_metadata};
 use super::search::{list_preview, search_preview};
 use super::threads::local_thread_id;
-use super::{contacts, serialization_error, Database, DbResult};
+use super::{contacts, serialization_error, Database, DatabaseError, DbResult};
 use crate::mime::NormalizedMessage;
 use chrono::Utc;
 use rusqlite::{params, Transaction};
@@ -15,6 +15,10 @@ impl Database {
         account_id: &str,
         messages: &[NormalizedMessage],
     ) -> DbResult<()> {
+        let mut unique = std::collections::HashSet::new();
+        if messages.iter().any(|message| !unique.insert(message.id.as_str())) {
+            return Err(DatabaseError::invalid("Duplicate message in ingested thread"));
+        }
         let Some(latest) = messages
             .iter()
             .max_by(|a, b| a.date.cmp(&b.date).then_with(|| a.id.cmp(&b.id)))
@@ -125,7 +129,14 @@ impl Database {
                     last_received_at,
                 ],
             )?;
-        transaction.execute("DELETE FROM messages WHERE thread_id = ?1", [&thread_id])?;
+        // Keep stable message occurrences across a refresh so device-local
+        // attachment stars survive. Remove only messages absent from the new
+        // thread, then update existing rows in place below.
+        let incoming_ids: Vec<&str> = messages.iter().map(|message| message.id.as_str()).collect();
+        let incoming_json=serde_json::to_string(&incoming_ids).map_err(serialization_error)?;
+        let foreign_message:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM messages m JOIN threads t ON t.id=m.thread_id WHERE m.id IN (SELECT value FROM json_each(?1)) AND (t.account_id<>?2 OR m.thread_id<>?3))",params![incoming_json,account_id,thread_id],|row|row.get(0))?;
+        if foreign_message { return Err(DatabaseError::invalid("Message belongs to another thread or account")); }
+        transaction.execute("DELETE FROM messages WHERE thread_id = ?1 AND id NOT IN (SELECT value FROM json_each(?2))", params![thread_id,incoming_json])?;
         // The account's "sent by me" identity set, loaded ONCE per thread and
         // reused for every message below — not once per message (no N+1).
         let mine = crate::db::sending_addresses_for_account(transaction, account_id);
@@ -140,7 +151,12 @@ impl Database {
                 "INSERT INTO messages(
                         id, thread_id, sender, recipients_json, sent_at, body_html, body_text,
                         body_html_z, body_text_z, unsubscribe_json, unread, attachments_json
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                     ON CONFLICT(id) DO UPDATE SET thread_id=excluded.thread_id,
+                        sender=excluded.sender,recipients_json=excluded.recipients_json,sent_at=excluded.sent_at,
+                        body_html=excluded.body_html,body_text=excluded.body_text,body_html_z=excluded.body_html_z,
+                        body_text_z=excluded.body_text_z,unsubscribe_json=excluded.unsubscribe_json,
+                        unread=excluded.unread,attachments_json=excluded.attachments_json",
                 params![
                     message.id,
                     thread_id,
@@ -160,6 +176,7 @@ impl Database {
                     serde_json::to_string(&message.attachments).map_err(serialization_error)?,
                 ],
             )?;
+            transaction.execute("DELETE FROM contact_interactions WHERE message_id=?1", [&message.id])?;
             contacts::index_contact_message(transaction, account_id, &thread_id, message, &mine)?;
         }
         transaction.execute(
@@ -222,6 +239,7 @@ impl Database {
             // the survivor, regardless of fetch order or batch boundaries.
             // Do this only when that survivor was successfully fetched; a
             // failed fetch leaves the old cache and workflow links intact.
+            let mut retained_file_stars:Vec<(String,String)>=Vec::new();
             for (old, survivor) in aliases {
                 if old == survivor || !threads.iter().any(|(id, messages, _)| {
                     id == survivor || messages.iter().any(|m| &m.thread_id == survivor)
@@ -230,6 +248,10 @@ impl Database {
                 }
                 let old_local = local_thread_id(account_id, old);
                 let survivor_local = local_thread_id(account_id, survivor);
+                {
+                    let mut stars=transaction.prepare("SELECT s.message_id,s.attachment_id FROM file_stars s JOIN messages m ON m.id=s.message_id WHERE m.thread_id=?1")?;
+                    retained_file_stars.extend(stars.query_map([&old_local],|row|Ok((row.get(0)?,row.get(1)?)))?.collect::<Result<Vec<_>,_>>()?);
+                }
                 transaction.execute(
                     "UPDATE tasks SET thread_id = ?3 WHERE account_id = ?1 AND thread_id = ?2",
                     params![account_id, old_local, survivor_local],
@@ -269,6 +291,9 @@ impl Database {
                         ],
                     )?;
                 }
+            }
+            for (message_id,attachment_id) in retained_file_stars {
+                transaction.execute("INSERT OR IGNORE INTO file_stars SELECT ?1,?2 WHERE EXISTS(SELECT 1 FROM file_attachments a JOIN messages m ON m.id=a.message_id JOIN threads t ON t.id=m.thread_id WHERE a.message_id=?1 AND a.attachment_id=?2 AND t.account_id=?3)",params![message_id,attachment_id,account_id])?;
             }
             Ok(())
         })

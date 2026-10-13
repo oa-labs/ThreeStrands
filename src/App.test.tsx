@@ -868,6 +868,7 @@ describe("keyboard-first task and action workspaces", () => {
     fireEvent.keyDown(window, { key: "2" });
     const week = await screen.findByRole("region", { name: "Calendar week" });
     expect(container.querySelector("main")).toHaveClass("week-open");
+    fireEvent.click(within(week).getByRole("button", { name: "Calendars" }));
     expect(within(week).getByRole("region", { name: "Month picker" })).toBeInTheDocument();
     expect(within(week).getByRole("region", { name: "Calendars" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Inbox" })).not.toBeInTheDocument();
@@ -936,7 +937,9 @@ describe("keyboard-first task and action workspaces", () => {
     const contactsButton = within(navbar).getByRole("button", { name: "Contacts (4)" });
     expect(within(navbar).getByRole("tooltip", { name: /Contacts/ })).toHaveTextContent("Contacts4");
 
-    const separator = contactsButton.parentElement?.nextElementSibling;
+    const filesButton=within(navbar).getByRole("button", { name: "Files (5)" });
+    expect(contactsButton.parentElement?.nextElementSibling).toContainElement(filesButton);
+    const separator = filesButton.parentElement?.nextElementSibling;
     expect(separator).toHaveClass("sidebar-nav-separator");
     expect(separator?.nextElementSibling).toContainElement(within(navbar).getByRole("button", { name: "Refresh mail" }));
   });
@@ -1049,7 +1052,7 @@ describe("keyboard-first task and action workspaces", () => {
       fireEvent.keyDown(window, { key: "Escape" });
       await waitFor(() => expect(screen.queryByRole("dialog", { name: "Task details" })).not.toBeInTheDocument());
       fireEvent.keyDown(document.body, { key: "Enter" });
-      const details = within(await screen.findByRole("dialog", { name: "Task details" }));
+      const details = within(await screen.findByRole("complementary", { name: "Task context" }));
       const titleField = details.getByRole("textbox", { name: "Title" });
       // App shortcuts stay out of the dialog's fields: "e" and "v" are text here.
       fireEvent.keyDown(titleField, { key: "e" });

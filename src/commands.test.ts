@@ -235,7 +235,15 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "view.calendar")?.keys).toEqual(["2"]);
     expect(commands.find((command) => command.id === "view.tasks")?.keys).toEqual(["3"]);
     expect(commands.find((command) => command.id === "view.contacts")?.keys).toEqual(["4"]);
+    expect(commands.find((command) => command.id === "view.files")?.keys).toEqual(["5"]);
     expect(commands.some((command) => command.keys.includes("0"))).toBe(false);
+  });
+
+  it("routes the Files shortcut and disables it during composition", async () => {
+    const context=noopContext(); context.openFilesView=vi.fn();
+    const command=commands.find((item)=>item.id==="view.files")!;
+    await command.run(context); expect(context.openFilesView).toHaveBeenCalledOnce();
+    expect(command.enabled({...context,composerActive:true})).toBe(false);
   });
 
   it("routes the Contacts shortcut to the address book outside the composer", async () => {

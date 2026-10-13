@@ -1,3 +1,4 @@
+import { FileStarButton } from "./FileStarButton";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, Mail, MessageSquareText } from "lucide-react";
 import { mailClient } from "./data/client";
@@ -228,9 +229,9 @@ export function ContactFilesSection({ contactId, onShowMessage }: {
         date={formatHistoryDate(file.sentAt)}
         detail={formatAttachmentSize(file.attachment.size)}
         onActivate={() => open(file.messageId, file.attachment.id)}
-        action={<button type="button" className="btn-icon btn-icon-sm" aria-label={`Show the email with ${file.attachment.filename}`} title="Show email" onClick={() => onShowMessage(file.threadId, file.messageId)}>
+        action={<><FileStarButton messageId={file.messageId} attachmentId={file.attachment.id} filename={file.attachment.filename} threadId={file.threadId} /><button type="button" className="btn-icon btn-icon-sm" aria-label={`Show the email with ${file.attachment.filename}`} title="Show email" onClick={() => onShowMessage(file.threadId, file.messageId)}>
           <MessageSquareText size={ICON_SIZE.sm} />
-        </button>}
+        </button></>}
       />
     );
   });

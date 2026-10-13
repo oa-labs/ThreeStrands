@@ -10,7 +10,7 @@ import type { ScheduleResult } from "./domain";
 const fetchSchedule = (request: ScheduleRequest) => refreshScheduleCache(request, () =>
   mailClient.listScheduleEvents(request.timeMin, request.timeMax, request.timeZone));
 
-export function useCalendarSchedule({ timeMin, timeMax, timeZone }: ScheduleRequest, prefetchWeeks = false) {
+export function useCalendarSchedule({ timeMin, timeMax, timeZone }: ScheduleRequest, prefetchWeeks: boolean | number = false) {
   const generation = useSyncExternalStore(subscribeScheduleCache, scheduleCacheGeneration);
   const [retry, setRetry] = useState(0);
   const [state, setState] = useState<{
@@ -31,7 +31,7 @@ export function useCalendarSchedule({ timeMin, timeMax, timeZone }: ScheduleRequ
       setState({ key, result: failed && previous ? previous : result, loading: false,
         error: failed ? "Calendar schedule load failed" : null });
       if (prefetchWeeks && !failed) {
-        for (const offset of [-7, 7]) {
+        for (const offset of typeof prefetchWeeks === "number" ? [-prefetchWeeks, prefetchWeeks] : [-7, 7]) {
           const neighbor = { timeMin: addDays(new Date(timeMin), offset).toISOString(),
             timeMax: addDays(new Date(timeMax), offset).toISOString(), timeZone };
           // A speculative fetch failure should not mark the visible week as failed.

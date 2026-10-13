@@ -114,7 +114,7 @@ export function useMailNavigation({
   const pendingReaderRestoreRef = useRef<{ threadId: string; expanded: [string, boolean][]; anchor: ReaderAnchor | null; stage: "expand" | "scroll" } | null>(null);
   /** Where the user is now, captured before a jump so Back can return to it. */
   const captureReturnPoint = (): ReturnPoint => {
-    const workspaceLabel = rightWorkspace === "tasks" ? "Tasks" : rightWorkspace === "contacts" ? "Contacts" : rightWorkspace === "week" ? "Calendar" : null;
+    const workspaceLabel = rightWorkspace === "tasks" ? "Tasks" : rightWorkspace === "files" ? "Files" : rightWorkspace === "contacts" ? "Contacts" : rightWorkspace === "week" ? "Calendar" : null;
     const searchLabel = searchOpen && query.trim() ? `search “${query.trim()}”` : null;
     return {
       accountId: activeAccountId,

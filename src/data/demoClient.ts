@@ -1,3 +1,5 @@
+import type { WorkspaceFile } from "../domain";
+import { attachmentKind } from "../attachmentKind";
 import { demoCorrespondence } from "./demoCorrespondence";
 import { isActiveTaskStatus } from "../taskViews";
 import { goalPeriodMatches, parentCandidates } from "../goals";
@@ -68,6 +70,14 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
   let splitInboxes = seed.splitInboxes;
   let tasks = seed.tasks;
   let goals = seed.goals ?? [];
+  const fileStars = new Set<string>();
+  try {
+    const saved:unknown=JSON.parse(localStorage.getItem("threestrands.demo.fileStars") ?? "[]");
+    if (Array.isArray(saved)) for (const item of saved) {
+      if (typeof item!=="string") continue;
+      try { const pair:unknown=JSON.parse(item); if (Array.isArray(pair) && pair.length===2 && pair.every((value)=>typeof value==="string")) fileStars.add(item); } catch { /* Ignore malformed preview annotations. */ }
+    }
+  } catch { /* Browser preview also works without storage. */ }
   const ensureGoalLink = (accountId: string, goalId: string | null | undefined) => {
     if (!goalId) return;
     const goal = goals.find((candidate) => candidate.id === goalId);
@@ -844,6 +854,43 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         lastSentAt: sent.sort().at(-1) ?? null,
         recentReceivedAt: received.sort().reverse().slice(0, 24),
       };
+    },
+    async contextCandidates(query) {
+      const words=query.terms.map((term) => term.toLocaleLowerCase());
+      return threads.filter((thread) => query.accountIds.includes(thread.accountId) && !thread.trashed && !thread.labels.includes("SPAM")
+        && (thread.id===query.threadId || words.some((term) => `${thread.subject} ${thread.snippet}`.toLocaleLowerCase().includes(term))
+          || messagesFor(thread).some((message) => [message.sender,...message.recipients].some((address) => query.attendees.includes(parseAddress(address).email.toLocaleLowerCase()))))
+        && (query.threadId || ((!query.after || thread.lastMessageAt>=query.after) && (!query.before || thread.lastMessageAt<query.before))))
+        .sort((a,b) => Number(b.id===query.threadId)-Number(a.id===query.threadId) || b.lastMessageAt.localeCompare(a.lastMessageAt) || a.id.localeCompare(b.id))
+        .slice(0,120).map((thread) => ({threadId:thread.id, accountId:thread.accountId, subject:thread.subject, sentAt:thread.lastMessageAt,
+          participants:messagesFor(thread).flatMap((message) => [message.sender,...message.recipients])}));
+    },
+    async listFiles(query) {
+      const files: WorkspaceFile[]=[];
+      for (const thread of threads) {
+        if (!query.accountIds.includes(thread.accountId) || thread.trashed || thread.labels.includes("SPAM") || (query.threadId && thread.id!==query.threadId) || (query.threadIds && !query.threadIds.includes(thread.id))) continue;
+        for (const message of messagesFor(thread)) {
+          const direction=parseAddress(message.sender).email.toLocaleLowerCase()===thread.accountId.toLocaleLowerCase() ? "sent" : "received";
+          for (const attachment of message.attachments) {
+            const starred=fileStars.has(JSON.stringify([message.id,attachment.id]));
+            const kind=isCalendarAttachment(attachment) ? "calendar" : attachmentKind(attachment.filename,attachment.mimeType);
+            if (attachment.inline || (query.starred && !starred) || (query.search && !attachment.filename.toLocaleLowerCase().includes(query.search.toLocaleLowerCase()))
+              || (query.sender && !message.sender.toLocaleLowerCase().includes(query.sender.toLocaleLowerCase())) || (query.type && kind!==query.type)
+              || (query.direction && direction!==query.direction) || (query.after && message.sentAt<query.after) || (query.before && message.sentAt>=query.before)) continue;
+            files.push({accountId:thread.accountId,messageId:message.id,threadId:thread.id,subject:thread.subject,sentAt:message.sentAt,sender:message.sender,direction,attachment,starred,availability:"unknown"});
+          }
+        }
+      }
+      files.sort((a,b) => Number(b.messageId===query.priorityMessageId)-Number(a.messageId===query.priorityMessageId) || (query.prioritizeStarred ? Number(b.starred)-Number(a.starred) : 0) || b.sentAt.localeCompare(a.sentAt) || a.messageId.localeCompare(b.messageId) || a.attachment.id.localeCompare(b.attachment.id));
+      return structuredClone({files:files.slice(query.offset ?? 0,(query.offset ?? 0)+(query.limit ?? 50)),total:files.length});
+    },
+    async fileStars(messageIds) { return [...fileStars].map((key) => JSON.parse(key) as [string,string]).filter(([messageId]) => messageIds.includes(messageId)); },
+    async setFileStar(accountId,messageId,attachmentId,starred) {
+      const thread=threads.find((thread) => thread.accountId===accountId && messagesFor(thread).some((message) => message.id===messageId && message.attachments.some((attachment) => attachment.id===attachmentId && !attachment.inline)));
+      if (!thread) throw new Error("Attachment not found");
+      const key=JSON.stringify([messageId,attachmentId]);
+      if (starred) fileStars.add(key); else fileStars.delete(key);
+      try { localStorage.setItem("threestrands.demo.fileStars",JSON.stringify([...fileStars])); } catch { /* Keep the session usable without storage. */ }
     },
     async contactFiles(id, limit) {
       const profile = await client.getContactProfile(id);

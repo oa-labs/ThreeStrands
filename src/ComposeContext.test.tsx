@@ -10,7 +10,7 @@ import type { Account, AvailabilityPreferences, ContactActivity, ContactProfile,
 vi.mock("./data/client", () => ({ mailClient: {
   listContactSuggestions: vi.fn(), resolveContactIds: vi.fn(), getContactProfile: vi.fn(), contactActivity: vi.fn(),
   contactTimeline: vi.fn(), contactFiles: vi.fn(), domainContext: vi.fn(), listTasks: vi.fn(), listContactTasks: vi.fn(),
-  findAvailability: vi.fn(), listScheduleEvents: vi.fn(), openAttachment: vi.fn(), listContactGroupRecipients: vi.fn(),
+  findAvailability: vi.fn(), listScheduleEvents: vi.fn(), fileStars: vi.fn().mockResolvedValue([]),setFileStar: vi.fn().mockResolvedValue(undefined),openAttachment: vi.fn(), listContactGroupRecipients: vi.fn(),
 } }));
 
 const accounts = [{ email: "me@acme.com" }, { email: "me@gmail.com" }] as Account[];

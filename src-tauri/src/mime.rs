@@ -447,6 +447,11 @@ pub fn attachment_bytes_from_payload(
         .transpose()
 }
 
+/// Metadata-only availability check; does not decode or fetch attachment bytes.
+pub fn attachment_payload_available(message: &RawMessage, reference: &str) -> Result<bool, String> {
+    find_attachment_part(message, reference).map(|(_, part)| part.body.data.is_some())
+}
+
 /// Resolves an attachment reference to the provider attachment ID in this
 /// copy of the message, or `None` when the payload carries no provider ID.
 pub fn provider_attachment_id_from_payload(

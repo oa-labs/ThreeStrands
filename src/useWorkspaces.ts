@@ -10,7 +10,7 @@ import { errorMessage, logBackgroundFailure } from "./errors";
 import type { SettingsSection } from "./settingsPanelTypes";
 import type { Notice } from "./useNotice";
 
-export type RightWorkspace = "calendar" | "contacts" | "tasks" | "week" | null;
+export type RightWorkspace = "calendar" | "contacts" | "tasks" | "week" | "files" | null;
 // Keep-in-touch reminders fall due as time passes and as mail arrives,
 // without any local edit, so the Contacts badge is re-read on this cadence.
 const KEEP_IN_TOUCH_REFRESH_MS = 5 * 60_000;
@@ -84,6 +84,8 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, op
     setRightWorkspace("calendar");
   }, []);
 
+  const openFilesView = useCallback(() => setRightWorkspace("files"), []);
+
   const openTasksView = useCallback(() => {
     setRightWorkspace("tasks");
   }, []);
@@ -103,7 +105,7 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, op
       if (!visibleThreadId) return;
       setContextPersonPick({ threadId: visibleThreadId, email });
       // Picking a person asks to see them, so bring the context panel back from another workspace.
-      setRightWorkspace((current) => current === "tasks" || current === "week" || current === "contacts" ? null : current);
+      setRightWorkspace((current) => current === "tasks" || current === "week" || current === "contacts" || current === "files" ? null : current);
     },
     selectedEmail: contextPersonEmail,
   }), [openContactInAddressBook, visibleThreadId, contextPersonEmail]);
@@ -121,7 +123,7 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, op
     setContactAddressBookTarget, contactsView, setContactsView, keepInTouchDueCount,
     refreshKeepInTouchCount, calendar, refreshCalendarOptions,
     calendarConnected, calendarSidebarStart, openCalendarAt, openToday, openTasks, openTasksView,
-    openContactsView, openKeepInTouchView, openContactGroupsView, contactCardActions,
+    openFilesView, openContactsView, openKeepInTouchView, openContactGroupsView, contactCardActions,
     contextPersonEmail, openCalendarView,
   };
 }

@@ -1174,3 +1174,57 @@ mod mail_provider_kind_tests {
         assert_eq!(MailProviderKind::parse("exchange"), None);
     }
 }
+
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct FileQuery {
+    pub account_ids: Vec<String>,
+    pub thread_id: Option<String>,
+    pub thread_ids: Option<Vec<String>>,
+    pub priority_message_id: Option<String>,
+    pub prioritize_starred: Option<bool>,
+    pub search: Option<String>,
+    pub sender: Option<String>,
+    pub after: Option<String>,
+    pub before: Option<String>,
+    pub r#type: Option<String>,
+    pub direction: Option<String>,
+    pub starred: Option<bool>,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFile {
+    pub account_id: String,
+    pub message_id: String,
+    pub thread_id: String,
+    pub subject: String,
+    pub sent_at: String,
+    pub sender: String,
+    pub direction: String,
+    pub attachment: MessageAttachment,
+    pub starred: bool,
+    pub availability: String,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilePage {
+    pub files: Vec<WorkspaceFile>,
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextQuery {
+    pub account_ids: Vec<String>, pub thread_id: Option<String>,
+    pub terms: Vec<String>, pub attendees: Vec<String>,
+    pub after: Option<String>, pub before: Option<String>,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceConversation {
+    pub thread_id: String, pub account_id: String, pub subject: String,
+    pub sent_at: String, pub participants: Vec<String>,
+}

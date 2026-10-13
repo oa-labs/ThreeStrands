@@ -159,3 +159,28 @@ composing another message.
 - Gmail's existing `gmail.modify` scope covers sending; no additional OAuth
   scope is requested.
 - MIME is built and parsed with `mail-builder` and `mail-parser`.
+
+
+## Task, calendar, and file workspaces
+
+- Tasks and Calendar use right-side details and context rails following the email
+  panel’s typography, sections, rows, and keyboard conventions. Rails resize and
+  collapse; narrow windows use an overlay. Task details save automatically.
+- Calendar offers Day, 3-day, Workweek (default), and Week. Calendar navigation
+  and selections are available from the Calendars control. Opening a weekend
+  event temporarily uses Day when the saved preference is Workweek.
+- Tasks and meetings surface related conversations and attachments from local
+  mail without requiring AI. Direct sources come first; meeting suggestions
+  require topic evidence and, when attendees are known, participant overlap.
+- Press **5** to open Files. It includes attachments from synchronized received,
+  sent, and archived mail, with All/Starred, filename search, sender, date, type,
+  direction, and account filters. Inline resources, Spam, and Trash are excluded.
+- Attachment stars are independent of email stars, persist on this device, and
+  appear in Mail, Files, and contextual file rows. They are not synchronized or
+  included in settings exports. Starring does not retain a separate offline copy.
+- Files show known local availability and use the existing native open/download
+  actions. Source-email navigation supports returning to the workspace selection
+  and filters. Files cover mail synchronized on this device.
+
+See [the implementation plan](workspace-context-and-files-plan.md) for scope,
+acceptance criteria, and deferred work.

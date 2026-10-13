@@ -1,3 +1,4 @@
+import { FileStarButton } from "./FileStarButton";
 import { CalendarDays, Download, ExternalLink, MapPin, Repeat2, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { calendarDescriptionText } from "./calendarDescription";
@@ -26,13 +27,14 @@ function calendarPreviewKey(preview: CalendarPreview): string {
 
 type GroupProps = {
   messageId: string;
+  threadId?: string;
   attachments: MessageAttachment[];
   onError(message: string): void;
 };
 
 /** Renders one calendar-invitation card per distinct event among `attachments`, collapsing
  * attachments that turn out to describe the same event. */
-export function CalendarAttachmentGroup({ messageId, attachments, onError }: GroupProps) {
+export function CalendarAttachmentGroup({ messageId, threadId, attachments, onError }: GroupProps) {
   const [visibleIds, setVisibleIds] = useState<Set<string> | null>(null);
   const [loadedPreviews, setLoadedPreviews] = useState<Map<string, CalendarPreview | null> | null>(null);
   // Parents rebuild the attachment array on every render (e.g. after a background sync), so
@@ -92,6 +94,7 @@ export function CalendarAttachmentGroup({ messageId, attachments, onError }: Gro
         <CalendarAttachment
           key={attachment.id}
           messageId={messageId}
+          threadId={threadId}
           attachment={attachment}
           onError={onError}
           loadedPreview={loadedPreviews?.get(attachment.id)}
@@ -103,6 +106,7 @@ export function CalendarAttachmentGroup({ messageId, attachments, onError }: Gro
 
 type Props = {
   messageId: string;
+  threadId?: string;
   attachment: MessageAttachment;
   onError(message: string): void;
   /** A preview already loaded by CalendarAttachmentGroup. Null records a failed load;
@@ -110,7 +114,7 @@ type Props = {
   loadedPreview?: CalendarPreview | null;
 };
 
-export function CalendarAttachment({ messageId, attachment, onError, loadedPreview }: Props) {
+export function CalendarAttachment({ messageId, threadId, attachment, onError, loadedPreview }: Props) {
   const [preview, setPreview] = useState<CalendarPreview | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -146,7 +150,7 @@ export function CalendarAttachment({ messageId, attachment, onError, loadedPrevi
     });
   };
 
-  if (failed) return <StandardCalendarAttachment attachment={attachment} onOpen={open} onDownload={download} />;
+  if (failed) return <><StandardCalendarAttachment attachment={attachment} onOpen={open} onDownload={download} />{threadId ? <FileStarButton messageId={messageId} threadId={threadId} attachmentId={attachment.id} filename={attachment.filename} /> : null}</>;
   if (!preview) {
     return (
       <div className="calendar-card calendar-card-loading" role="status">
@@ -163,6 +167,7 @@ export function CalendarAttachment({ messageId, attachment, onError, loadedPrevi
       ))}
       {preview.truncated ? <p className="calendar-card-more">Additional events are included in this file.</p> : null}
       <footer className="calendar-card-actions">
+        {threadId ? <FileStarButton messageId={messageId} threadId={threadId} attachmentId={attachment.id} filename={attachment.filename} /> : null}
         <span><CalendarDays size={ICON_SIZE.sm} /> {attachment.filename}</span>
         <button type="button" className="btn btn-sm btn-ghost" onClick={open}><ExternalLink size={ICON_SIZE.sm} /> Open Invitation</button>
         <HoverTooltip title={`Download ${attachment.filename}`} placement="bottom"><button type="button" className="btn-icon btn-icon-sm" aria-label={`Download ${attachment.filename}`} onClick={download}>

@@ -6,7 +6,7 @@ import { formatHistoryDate } from "./contactContext";
 import type { Account, ContactActivity, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
 import { expectContextRows } from "./test/contextRows";
 
-vi.mock("./data/client",()=>({mailClient:{getContactProfile:vi.fn(),resolveContactIds:vi.fn(),contactTimeline:vi.fn(),saveContactProfile:vi.fn(),contactActivity:vi.fn(),contactFiles:vi.fn(),domainContext:vi.fn(),openAttachment:vi.fn()}}));
+vi.mock("./data/client",()=>({mailClient:{getContactProfile:vi.fn(),resolveContactIds:vi.fn(),contactTimeline:vi.fn(),saveContactProfile:vi.fn(),contactActivity:vi.fn(),contactFiles:vi.fn(),domainContext:vi.fn(),fileStars:vi.fn().mockResolvedValue([]),setFileStar:vi.fn().mockResolvedValue(undefined),openAttachment:vi.fn()}}));
 vi.mock("@tauri-apps/plugin-opener",()=>({openUrl:vi.fn()}));
 
 const jane:ContactProfile={id:"contact:jane@example.com",displayName:"Jane Doe",role:null,company:"Acme",location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:["jane@example.com"],sentCount:1,receivedCount:1,lastInteractedAt:null,birthday:null,keepInTouch:{intervalDays:null,startedAt:null,snoozedUntil:null,snoozedAt:null,lastTouchAt:null},keepInTouchDueAt:null};
@@ -233,6 +233,7 @@ describe("ContextPanel",()=>{
 
     const files=await screen.findByRole("region",{name:"Files"});
     expectContextRows(files);
+    expect(within(files).getByRole("button",{name:"Star Report 4.pdf"})).toBeInTheDocument();
     // A PDF shows the document icon, not a generic file.
     expect(files.querySelector(".context-row-icon [data-attachment-kind]")).toHaveAttribute("data-attachment-kind","document");
     expect(mailClient.contactFiles).toHaveBeenCalledWith(bob.id,50);

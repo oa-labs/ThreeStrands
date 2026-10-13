@@ -1,3 +1,5 @@
+import type { FilesWorkspaceSnapshot } from "./FilesWorkspace";
+import type { CalendarWorkspaceSnapshot } from "./CalendarWeekView";
 import {
   Archive,
   ArrowLeft,
@@ -5,6 +7,7 @@ import {
   CircleAlert,
   Command as CommandIcon,
   ContactRound,
+  Files,
   Inbox,
   Mail,
   MailOpen,
@@ -69,7 +72,7 @@ import { readSelectedAccountId, readSelectedMailboxForAccount } from "./settings
 import type { SettingsSection } from "./settingsPanelTypes";
 import { readSettingsSection, saveSettingsSection } from "./settingsNavigation";
 import { TaskEditorDialog } from "./TaskEditorDialog";
-import { TaskSidebar } from "./TaskSidebar";
+import { TaskSidebar, type TaskWorkspaceSnapshot } from "./TaskSidebar";
 import { THREAD_ASSIST_ID, ThreadAssist } from "./ThreadAssist";
 import { sharedChatAttachments, ThreadChat } from "./ThreadChat";
 import { ThreadRow } from "./ThreadList";
@@ -112,6 +115,7 @@ export { formatMailTimestamp } from "./threadPresentation";
 // Rarely opened workspaces load on demand so they stay off the startup bundle.
 const Settings = lazy(() => import("./SettingsPanel").then((m) => ({ default: m.Settings })));
 const CalendarWeekView = lazy(() => import("./CalendarWeekView").then((m) => ({ default: m.CalendarWeekView })));
+const FilesWorkspace = lazy(() => import("./FilesWorkspace").then((m) => ({ default: m.FilesWorkspace })));
 const ContactsWorkspace = lazy(() => import("./ContactsWorkspace").then((m) => ({ default: m.ContactsWorkspace })));
 
 export function App() {
@@ -213,6 +217,9 @@ export function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [unsubscribeMessageId, setUnsubscribeMessageId] = useState<string | null>(null);
+  const fileSessions = useRef(new Map<string, FilesWorkspaceSnapshot>());
+  const calendarSession = useRef<CalendarWorkspaceSnapshot | null>(null);
+  const taskSessions = useRef(new Map<string, TaskWorkspaceSnapshot>());
   const workspaces = useWorkspaces({ settingsOpen, settingsSection, visibleDetail, openSettingsAt, setNotice });
   const {
     rightWorkspace, setRightWorkspace, calendarWeekAnchor, setCalendarWeekAnchor,
@@ -420,7 +427,7 @@ export function App() {
   const batchStarLabel = allSelectedThreadsStarred ? "Unstar" : "Star";
 
   return (
-    <main className={`app-shell${rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : rightWorkspace ? " calendar-open" : ""}${rightWorkspace === "calendar" ? " mail-context-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
+    <main className={`app-shell${rightWorkspace === "files" ? " files-open" : rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : rightWorkspace ? " calendar-open" : ""}${rightWorkspace === "calendar" ? " mail-context-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <AccountSwitcher
           accounts={accounts}
@@ -435,7 +442,7 @@ export function App() {
           <HoverTooltip title="New message (c)"><button className="nav-button" aria-label="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={ICON_SIZE.lg} /></button></HoverTooltip>
           <HoverTooltip label="Inbox" shortcut="1">
             <button
-              className={`nav-button ${rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" ? "active" : ""}`}
+              className={`nav-button ${rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" && rightWorkspace !== "files" ? "active" : ""}`}
               aria-label="Inbox (1)"
               onClick={() => executeById("view.mail")}
             >
@@ -470,6 +477,7 @@ export function App() {
               {keepInTouchDueCount ? <span className="nav-button-badge" aria-hidden="true">{keepInTouchDueCount > 99 ? "99+" : keepInTouchDueCount}</span> : null}
             </button>
           </HoverTooltip>
+          <HoverTooltip label="Files" shortcut="5"><button className={`nav-button ${rightWorkspace === "files" ? "active" : ""}`} aria-label="Files (5)" onClick={() => executeById("view.files")}><Files size={ICON_SIZE.lg} /></button></HoverTooltip>
           <hr className="sidebar-nav-separator" aria-hidden="true" />
           <HoverTooltip title={checkingMail ? "Checking for mail…" : "Refresh mail"}><button className="nav-button" aria-label="Refresh mail" aria-busy={checkingMail} onClick={() => executeById("mail.refresh")}>
             <RefreshCw size={ICON_SIZE.lg} className={checkingMail ? "spin" : ""} />
@@ -494,7 +502,7 @@ export function App() {
         </div>
       </nav>
 
-      {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" ? <>
+      {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" && rightWorkspace !== "files" ? <>
       <section id="inbox-panel" className="thread-column" aria-label="Inbox">
         <PanelResizeHandle {...inboxSize} label="Resize Inbox" controlsId="inbox-panel" title="Drag to resize inbox. Use arrow keys to adjust; double-click to reset." />
         <header className="thread-header">
@@ -867,6 +875,9 @@ export function App() {
       {rightWorkspace === "week" ? (
         <Suspense fallback={null}>
           <CalendarWeekView
+            session={calendarSession}
+            mailAccountIds={activeAccountId ? [activeAccountId] : accounts.map((account) => account.email)}
+            onOpenThread={jumpToThread}
             anchor={calendarWeekAnchor ?? startOfLocalDay(new Date())}
             initialEvent={calendarEventToOpen}
             onAnchorChange={setCalendarWeekAnchor}
@@ -909,7 +920,7 @@ export function App() {
           }}
         />
       ) : null}
-      {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" && composingApart && correspondence.liveDraft ? (
+      {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" && rightWorkspace !== "files" && composingApart && correspondence.liveDraft ? (
         <ComposeContext
           key={correspondence.liveDraft.id}
           draft={correspondence.liveDraft}
@@ -938,7 +949,7 @@ export function App() {
           onTasksChanged={() => { setTaskRevision((current) => current + 1); void refreshTaskIndicators(); }}
         />
       ) : null}
-      {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" && !composingApart ? (
+      {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" && rightWorkspace !== "files" && !composingApart ? (
         <ContextPanel
           detail={visibleDetail}
           accounts={accounts}
@@ -1049,9 +1060,12 @@ export function App() {
           </> : null}
         />
       ) : null}
+      {rightWorkspace === "files" ? <Suspense fallback={null}><FilesWorkspace refreshKey={syncStatus?.lastSuccessfulSync ?? ""} key={activeAccountId ?? "all"} sessions={fileSessions} accountId={activeAccountId} accountIds={accounts.map((account) => account.email)} onOpenThread={jumpToThread} /></Suspense> : null}
       {rightWorkspace === "contacts" ? <Suspense fallback={null}><ContactsWorkspace key={`${activeAccountId ?? "all"}:${contactAddressBookTarget ?? ""}`} accountId={activeAccountId} onOpenThread={jumpToThread} onSaved={() => { setNotice({ message: "Contact saved" }); void refreshKeepInTouchCount(); }} initialContactId={contactAddressBookTarget} view={contactsView} onViewChange={setContactsView} onKeepInTouchChanged={() => void refreshKeepInTouchCount()} /></Suspense> : null}
       {rightWorkspace === "tasks" ? (
         <TaskSidebar
+          key={activeAccountId ?? "all"}
+          sessions={taskSessions}
           ref={taskWorkspaceRef}
           accountId={activeAccountId}
           accountOptions={accounts.map((account) => account.email)}

@@ -1,5 +1,5 @@
 import { MessageSquare } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Modal } from "./AppChrome";
 import { convertDueInputValue, isValidTimeZone, listSupportedTimeZones } from "./calendarTime";
 import { isEditableTarget } from "./commands";
@@ -115,7 +115,11 @@ export function TaskDetailDialog({
   onNavigate,
   onOpenThread,
   onClose,
+  embedded = false,
+  draftStore,
 }: {
+  embedded?: boolean;
+  draftStore?: Map<string, TaskDetailDrafts>;
   task: ThreadTask;
   /** Goals the task may support; only active goals in its account are offered. */
   goals?: readonly Goal[];
@@ -126,35 +130,67 @@ export function TaskDetailDialog({
   onOpenThread(threadId: string): void;
   onClose(): void;
 }) {
-  const [drafts, setDrafts] = useState(() => taskDetailDrafts(task));
+  const [drafts, setDrafts] = useState(() => draftStore?.get(task.id) ?? taskDetailDrafts(task));
   const [errors, setErrors] = useState<string[]>([]);
   const [saveError, setSaveError] = useState<string | null>(null);
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
   const bodyRef = useRef<HTMLDivElement>(null);
+  const pendingWrites=useRef(0);
+  const baseline=useRef(task);
+  const latestTask=useRef(task);
+  latestTask.current=task;
+  if (baseline.current.id!==task.id || pendingWrites.current===0) baseline.current=task;
   const timeZones = useMemo(() => listSupportedTimeZones(), []);
 
   // Reset in the render that changes tasks so the old task's drafts never diff against the new one.
   const [draftTaskId, setDraftTaskId] = useState(task.id);
   if (draftTaskId !== task.id) {
     setDraftTaskId(task.id);
-    setDrafts(taskDetailDrafts(task));
+    setDrafts(draftStore?.get(task.id) ?? taskDetailDrafts(task));
     setErrors([]);
     setSaveError(null);
   }
 
+  const observedTask = useRef(task);
+  useEffect(() => {
+    const previousTask = observedTask.current;
+    observedTask.current = task;
+    if (previousTask.id !== task.id) return;
+    const previous = taskDetailDrafts(previousTask);
+    const incoming = taskDetailDrafts(task);
+    setDrafts((current) => {
+      const next = { ...current };
+      for (const field of Object.keys(current) as (keyof TaskDetailDrafts)[]) {
+        if (current[field] === previous[field]) Object.assign(next, { [field]: incoming[field] });
+      }
+      if (JSON.stringify(next) === JSON.stringify(incoming)) draftStore?.delete(task.id);
+      else draftStore?.set(task.id, next);
+      draftsRef.current = next;
+      return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+    });
+  }, [task, draftStore]);
+
   const commit = (next: TaskDetailDrafts = draftsRef.current) => {
-    const { request, errors: nextErrors } = taskDetailChanges(task, next);
+    const { request, errors: nextErrors } = taskDetailChanges(baseline.current, next);
     setErrors(nextErrors);
     if (Object.keys(request).length === 0) return;
     setSaveError(null);
-    onUpdate(request).catch((reason) => setSaveError(errorMessage(reason)));
+    baseline.current={...baseline.current,...request};
+    pendingWrites.current++;
+    const savingId=task.id;
+    onUpdate(request).then(() => {
+      if (draftStore?.get(savingId) === next) draftStore.delete(savingId);
+    }).catch((reason) => {
+      if (latestTask.current.id===savingId) { baseline.current=latestTask.current; setSaveError(errorMessage(reason)); }
+    }).finally(() => { pendingWrites.current--; });
   };
 
   const change = <K extends keyof TaskDetailDrafts>(field: K, value: TaskDetailDrafts[K], save = false) => {
     const next = { ...draftsRef.current, [field]: value };
     draftsRef.current = next;
     setDrafts(next);
+    draftStore?.set(task.id, next);
     if (save) commit(next);
   };
 
@@ -169,6 +205,7 @@ export function TaskDetailDialog({
   };
 
   const onKeyDown = (event: React.KeyboardEvent) => {
+    if (embedded && event.key === "Escape") { commit(); return; }
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
       event.preventDefault();
       close();
@@ -197,8 +234,7 @@ export function TaskDetailDialog({
   const messages = [...errors, ...(saveError ? [saveError] : [])];
   const statusOptions = task.status === "cancelled" ? [...STATUS_OPTIONS, { value: "cancelled" as const, label: "Cancelled" }] : STATUS_OPTIONS;
 
-  return (
-    <Modal title="Task details" className="task-editor-modal task-detail-modal" onClose={close} initialFocusRef={bodyRef}>
+  const content = (
       <div ref={bodyRef} className="modal-form task-detail-form" tabIndex={-1} onKeyDown={onKeyDown}>
         <label className="task-detail-title-field">
           <span>Title</span>
@@ -233,6 +269,7 @@ export function TaskDetailDialog({
             const next = { ...draftsRef.current, dueKind: nextKind, dueValue: nextKind === "none" ? "" : convertDueInputValue(draftsRef.current.dueValue, nextKind) };
             draftsRef.current = next;
             setDrafts(next);
+            draftStore?.set(task.id, next);
             commit(next);
           }}><option value="none">No due date</option><option value="date">Date</option><option value="datetime">Date and time</option></select></label>
           {drafts.dueKind !== "none" ? <label>
@@ -265,6 +302,6 @@ export function TaskDetailDialog({
           <span><kbd>j</kbd>/<kbd>k</kbd> {position ? `${position.index + 1} of ${position.total}` : "next/previous"}{task.threadId ? <> · <kbd>o</kbd> open conversation</> : null} · <kbd>Esc</kbd> close</span>
         </footer>
       </div>
-    </Modal>
   );
+  return embedded ? content : <Modal title="Task details" className="task-editor-modal task-detail-modal" onClose={close} initialFocusRef={bodyRef}>{content}</Modal>;
 }

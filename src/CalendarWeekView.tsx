@@ -1,5 +1,9 @@
+import { WorkspaceContextRail } from "./WorkspaceContextRail";
+import { WorkspaceRelatedContext } from "./WorkspaceRelatedContext";
+import { ContextSectionHeader } from "./ContextSections";
+import { calendarRange, CALENDAR_RANGES, CALENDAR_RANGE_KEY, readCalendarRange, rangeForEvent, type CalendarRangeMode } from "./calendarRange";
 import { CalendarDays, ChevronLeft, ChevronRight, Plus } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { EventViewer } from "./CalendarSidebar";
 import { HoverTooltip } from "./AppChrome";
 import {
@@ -35,7 +39,7 @@ const NOW_TICK_MS = 60_000;
 const SLOT_MINUTES = 15;
 
 function sameEvent(left: ScheduleEvent | null, right: ScheduleEvent): boolean {
-  return left?.id === right.id && left.accountId === right.accountId;
+  return left?.id === right.id && left.accountId === right.accountId && left.calendarId === right.calendarId;
 }
 
 function slotAt(clientY: number, column: HTMLElement): number {
@@ -224,6 +228,8 @@ function CalendarList({
   );
 }
 
+export type CalendarWorkspaceSnapshot = { selected: ScheduleEvent | null; initialEvent: ScheduleEvent | null | undefined; mode: CalendarRangeMode; navigationOpen: boolean };
+
 export function CalendarWeekView({
   anchor,
   initialEvent,
@@ -234,7 +240,15 @@ export function CalendarWeekView({
   onAddCalendarAccount,
   onOpenSettings,
   onCreated,
+  mailAccountIds = [],
+  onOpenThread = () => {},
+  active = true,
+  session,
 }: {
+  session?: RefObject<CalendarWorkspaceSnapshot | null>;
+  active?: boolean;
+  mailAccountIds?: string[];
+  onOpenThread?(id: string): void;
   anchor: Date;
   /** Opens these event details when arriving from a conversation. */
   initialEvent?: ScheduleEvent | null;
@@ -247,7 +261,10 @@ export function CalendarWeekView({
   onCreated?(): void;
 }) {
   const [month, setMonth] = useState(() => startOfLocalDay(anchor));
-  const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
+  const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(() => session?.current?.initialEvent===initialEvent ? session?.current?.selected ?? initialEvent ?? null : initialEvent ?? null);
+  const [mode, setMode] = useState<CalendarRangeMode>(() => session?.current?.initialEvent===initialEvent && session?.current ? session.current.mode : initialEvent ? rangeForEvent(initialEvent, readCalendarRange()) : readCalendarRange());
+  const [navigationOpen, setNavigationOpen] = useState(session?.current?.navigationOpen ?? false);
+  const eventTrigger = useRef<HTMLButtonElement | null>(null);
   const calendarColors = useCalendarColors();
   const [newEventRange, setNewEventRange] = useState<{ start: Date; end: Date } | null>(null);
   const [dragPreview, setDragPreview] = useState<{ dayIndex: number; startMinutes: number; endMinutes: number } | null>(null);
@@ -255,8 +272,9 @@ export function CalendarWeekView({
   const [now, setNow] = useState(() => new Date());
   const gridRef = useRef<HTMLDivElement>(null);
 
-  const weekStart = useMemo(() => startOfWeek(anchor), [anchor]);
-  const days = useMemo(() => Array.from({ length: 7 }, (_, index) => addDays(weekStart, index)), [weekStart]);
+  const range = useMemo(() => calendarRange(anchor, mode), [anchor, mode]);
+  const weekStart = range.start;
+  const days = range.days;
   const today = startOfLocalDay(now);
   const selectedAccountEmails = [...new Set(calendars.filter((calendar) => calendar.selected).map((calendar) => calendar.accountId))];
   // The week merges every connected calendar account, so name the scope like the mail "All accounts" view.
@@ -265,12 +283,14 @@ export function CalendarWeekView({
 
   const { events, loading, error, reload } = useCalendarSchedule({
     timeMin: weekStart.toISOString(),
-    timeMax: addDays(weekStart, 7).toISOString(),
+    timeMax: range.end.toISOString(),
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-  }, true);
+  }, range.step);
 
-  useEffect(() => { setSelectedEvent(null); }, [weekStart]);
-  useEffect(() => { if (initialEvent) setSelectedEvent(initialEvent); }, [initialEvent]);
+  useEffect(() => { setSelectedEvent((current) => current && days.some((day) => occursOnDay(current, day)) ? current : null); }, [days]);
+  const restoredInitial=useRef(session?.current?.initialEvent===initialEvent && !!session?.current);
+  useEffect(() => { if (restoredInitial.current) { restoredInitial.current=false; return; } if (initialEvent) { setMode(rangeForEvent(initialEvent, readCalendarRange())); setSelectedEvent(initialEvent); } }, [initialEvent]);
+  useEffect(() => { if (!loading) setSelectedEvent((current) => current ? events.find((event) => sameEvent(current, event)) ?? (initialEvent && sameEvent(current, initialEvent) ? current : null) : null); }, [events, loading, initialEvent]);
 
   useEffect(() => {
     if (gridRef.current) gridRef.current.scrollTop = readWeekScrollTop();
@@ -289,10 +309,10 @@ export function CalendarWeekView({
   }, []);
 
   const moveWeek = useCallback((offset: number) => {
-    const next = addDays(anchor, offset * 7);
+    const next = addDays(anchor, offset * range.step);
     setMonth(next);
     onAnchorChange(next);
-  }, [anchor, onAnchorChange]);
+  }, [anchor, onAnchorChange, range.step]);
 
   const goToToday = useCallback(() => {
     const target = startOfLocalDay(new Date());
@@ -326,6 +346,7 @@ export function CalendarWeekView({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (!active) return;
       if (event.metaKey || event.ctrlKey || event.altKey || event.isComposing || event.defaultPrevented) return;
       if (event.target instanceof HTMLElement && event.target.closest("[data-shortcut-scope='modal'], [data-shortcut-scope='palette']")) return;
       if (isEditableTarget(event.target)) return;
@@ -344,8 +365,11 @@ export function CalendarWeekView({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [moveWeek]);
+  }, [moveWeek, active]);
 
+  const snapshot=useRef<CalendarWorkspaceSnapshot | null>(null);
+  snapshot.current={selected:selectedEvent,initialEvent,mode,navigationOpen};
+  useLayoutEffect(() => () => { if (session) session.current=snapshot.current; }, [session]);
   const allDayByDay = useMemo(
     () => days.map((day) => events.filter((event) => event.allDay && occursOnDay(event, day))),
     [days, events],
@@ -357,15 +381,17 @@ export function CalendarWeekView({
   );
 
   return (
-    <section className="calendar-week" aria-label="Calendar week">
+    <section className="calendar-week" aria-label="Calendar week" style={{ "--calendar-day-count": days.length } as CSSProperties}>
       <div className="calendar-week-main">
         <header className="calendar-week-header">
-          <div className="calendar-week-heading"><span className="eyebrow">Calendar <span className="eyebrow-account" title={selectedAccountEmails.join(", ") || undefined}>· {accountScope}</span></span><h1>{monthTitle(weekStart)}</h1></div>
+          <div className="calendar-week-heading"><span className="eyebrow">Calendar <span className="eyebrow-account" title={selectedAccountEmails.join(", ") || undefined}>· {accountScope}</span></span><h1>{monthTitle(weekStart)}</h1><p className="calendar-visible-range">{weekStart.toLocaleDateString(undefined, { month: "short", day: "numeric" })}{days.length > 1 ? ` – ${days.at(-1)!.toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</p></div>
           <div className="calendar-week-controls">
+            <label className="sr-only" htmlFor="calendar-range">Calendar range</label><select id="calendar-range" value={mode} onChange={(event) => { const next=event.target.value as CalendarRangeMode; setMode(next); try { localStorage.setItem(CALENDAR_RANGE_KEY,next); } catch { /* Session preference still applies. */ } }}>{CALENDAR_RANGES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select>
+            <button type="button" className="btn" aria-expanded={navigationOpen} onClick={() => setNavigationOpen((value) => !value)}><CalendarDays size={ICON_SIZE.sm} />Calendars</button>
             <button type="button" className="btn" onClick={goToToday}>Today</button>
             <div className="calendar-week-nav">
-              <HoverTooltip title="Previous week (-)"><button type="button" className="btn-icon" aria-label="Previous week (-)" onClick={() => moveWeek(-1)}><ChevronLeft size={ICON_SIZE.lg} /></button></HoverTooltip>
-              <HoverTooltip title="Next week (=)"><button type="button" className="btn-icon" aria-label="Next week (=)" onClick={() => moveWeek(1)}><ChevronRight size={ICON_SIZE.lg} /></button></HoverTooltip>
+              <HoverTooltip title={`Previous ${mode === "week" || mode === "workweek" ? "week" : "range"} (-)`}><button type="button" className="btn-icon" aria-label={`Previous ${mode === "week" || mode === "workweek" ? "week" : "range"} (-)`} onClick={() => moveWeek(-1)}><ChevronLeft size={ICON_SIZE.lg} /></button></HoverTooltip>
+              <HoverTooltip title={`Next ${mode === "week" || mode === "workweek" ? "week" : "range"} (=)`}><button type="button" className="btn-icon" aria-label={`Next ${mode === "week" || mode === "workweek" ? "week" : "range"} (=)`} onClick={() => moveWeek(1)}><ChevronRight size={ICON_SIZE.lg} /></button></HoverTooltip>
             </div>
             <button type="button" className="btn" onClick={newEventAtAnchor}><Plus size={ICON_SIZE.md} />New Event</button>
           </div>
@@ -400,11 +426,12 @@ export function CalendarWeekView({
                   <button
                     type="button"
                     className="calendar-all-day-event"
-                    key={`${event.accountId}:${event.id}`}
+                    key={`${event.accountId}:${event.calendarId}:${event.id}`}
                     data-calendar-event-trigger
                     data-response-status={event.responseStatus ?? undefined}
                     aria-expanded={sameEvent(selectedEvent, event)}
-                    onClick={() => setSelectedEvent((current) => sameEvent(current, event) ? null : event)}
+                    onClick={(click) => { eventTrigger.current=click.currentTarget; setSelectedEvent((current) => sameEvent(current,event) ? null : event); }}
+                    onKeyDown={(key) => { if (key.key==="Enter") { key.preventDefault(); setSelectedEvent(event); window.dispatchEvent(new CustomEvent("threestrands:focus-context", { detail: "Meeting context" })); } }}
                     style={calendarColorStyle(calendarColors, event.accountId, event.calendarId)}
                   >
                     {event.title}
@@ -473,11 +500,12 @@ export function CalendarWeekView({
                     <button
                       type="button"
                       className={className}
-                      key={`${event.accountId}:${event.id}`}
+                      key={`${event.accountId}:${event.calendarId}:${event.id}`}
                       data-calendar-event-trigger
                       data-response-status={event.responseStatus ?? undefined}
                       aria-expanded={sameEvent(selectedEvent, event)}
-                      onClick={() => setSelectedEvent((current) => sameEvent(current, event) ? null : event)}
+                      onClick={(click) => { eventTrigger.current=click.currentTarget; setSelectedEvent((current) => sameEvent(current,event) ? null : event); }}
+                    onKeyDown={(key) => { if (key.key==="Enter") { key.preventDefault(); setSelectedEvent(event); window.dispatchEvent(new CustomEvent("threestrands:focus-context", { detail: "Meeting context" })); } }}
                       style={{
                         ...calendarColorStyle(calendarColors, event.accountId, event.calendarId),
                         top: (startMinutes / 60) * HOUR_HEIGHT,
@@ -505,7 +533,6 @@ export function CalendarWeekView({
           </div>
           {loading ? <p className="calendar-grid-status">Loading schedule…</p> : null}
         </div>
-        {selectedEvent ? <EventViewer event={selectedEvent} onDismiss={() => setSelectedEvent(null)} onUpdated={setSelectedEvent} /> : null}
         {newEventRange ? <CreateCalendarEventDialog
           start={newEventRange.start}
           end={newEventRange.end}
@@ -515,7 +542,8 @@ export function CalendarWeekView({
           onCreated={(event) => { setNewEventRange(null); setSelectedEvent(event); revalidateScheduleCache(); onCreated?.(); }}
         /> : null}
       </div>
-      <aside className="calendar-week-side" aria-label="Calendar navigation">
+      {navigationOpen ? <aside className="calendar-week-side workspace-calendar-navigation" aria-label="Calendar navigation">
+        <button type="button" className="btn btn-sm" onClick={() => setNavigationOpen(false)}>Close calendars</button>
         <MiniMonth
           month={month}
           selected={anchor}
@@ -529,7 +557,14 @@ export function CalendarWeekView({
           onToggle={onToggleCalendar}
           onAdd={onAddCalendarAccount}
         />
-      </aside>
+      </aside> : null}
+      <WorkspaceContextRail label="Meeting context" onReturn={() => eventTrigger.current?.focus()}>
+        <ContextSectionHeader title="Event details" />
+        {selectedEvent ? <>
+          <EventViewer key={`${selectedEvent.accountId}:${selectedEvent.calendarId}:${selectedEvent.id}`} embedded event={selectedEvent} onDismiss={() => setSelectedEvent(null)} onUpdated={setSelectedEvent} />
+          <WorkspaceRelatedContext target={{ kind: "meeting", event: selectedEvent }} accountIds={mailAccountIds} onOpenThread={onOpenThread} />
+        </> : <p className="context-status">Select an event to see details and related information.</p>}
+      </WorkspaceContextRail>
     </section>
   );
 }

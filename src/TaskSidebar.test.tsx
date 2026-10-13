@@ -25,7 +25,7 @@ function localDate(offsetDays: number): string {
 
 async function openTask(title: string) {
   fireEvent.click(await screen.findByText(title, { selector: "strong" }));
-  return within(await screen.findByRole("dialog", { name: "Task details" }));
+  return within(await screen.findByRole("complementary", { name: "Task context" }));
 }
 
 describe("TaskSidebar", () => {
@@ -417,7 +417,7 @@ describe("TaskSidebar", () => {
     expect(await screen.findByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("gives the board the full workspace and opens task details in a dialog instead of a side pane", async () => {
+  it("shows task details beside the board using the shared context rail", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([workspaceTask("todo", { title: "Draft agenda" })]);
     render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
@@ -428,7 +428,7 @@ describe("TaskSidebar", () => {
 
     const dialog = await openTask("Draft agenda");
     expect(dialog.getByRole("textbox", { name: "Title" })).toHaveValue("Draft agenda");
-    expect(screen.getByRole("dialog", { name: "Task details" })).toHaveAttribute("aria-modal", "true");
+    expect(screen.getByRole("complementary", { name: "Task context" })).toHaveClass("context-panel");
   });
 
   it("moves cards between columns with buttons and keyboard handles, and undo restores the prior column", async () => {
@@ -619,7 +619,7 @@ describe("TaskSidebar", () => {
       const { container, main, point, setTaskStatus } = await renderDraggableBoard();
       fireEvent.click(screen.getByText("Other", { selector: "strong" }));
       expect(container.querySelector("#task-other")).toHaveClass("selected");
-      expect(screen.getByRole("dialog", { name: "Task details" })).toBeInTheDocument();
+      expect(screen.getByRole("complementary", { name: "Task context" })).toBeInTheDocument();
       fireEvent.keyDown(window, { key: "Escape" });
 
       point("Done");
@@ -629,7 +629,7 @@ describe("TaskSidebar", () => {
       fireEvent.pointerUp(main, { pointerId: 1, clientX: 12, clientY: 11 });
       fireEvent.click(main);
       expect(container.querySelector("#task-plan")).toHaveClass("selected");
-      expect(within(screen.getByRole("dialog", { name: "Task details" })).getByRole("textbox", { name: "Title" })).toHaveValue("Plan launch");
+      expect(within(screen.getByRole("complementary", { name: "Task context" })).getByRole("textbox", { name: "Title" })).toHaveValue("Plan launch");
       fireEvent.keyDown(window, { key: "Escape" });
 
       point("To Do");
@@ -659,9 +659,10 @@ describe("TaskSidebar", () => {
     const { container } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
     const dialog = await openTask("First");
-    const body = screen.getByRole("dialog", { name: "Task details" }).querySelector(".task-detail-form") as HTMLElement;
-    expect(body).toHaveFocus();
-    const position = screen.getByRole("dialog", { name: "Task details" }).querySelector(".task-detail-hints")!;
+    const body = screen.getByRole("complementary", { name: "Task context" }).querySelector(".task-detail-form") as HTMLElement;
+    expect(body).not.toHaveFocus();
+    body.focus();
+    const position = screen.getByRole("complementary", { name: "Task context" }).querySelector(".task-detail-hints")!;
     expect(position).toHaveTextContent("1 of 3");
 
     // Letters typed into a field are text, not navigation.
@@ -808,7 +809,7 @@ describe("TaskSidebar", () => {
     expect(dialog.getByRole("textbox", { name: "Title" })).toHaveValue("Prepare launch");
 
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not save task");
+    expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent("Could not save task");
   });
 
   it("has no close control, like the contacts manager", async () => {
@@ -850,7 +851,7 @@ describe("TaskSidebar", () => {
     const dialog = await openTask("Set up the website");
     fireEvent.keyDown(dialog.getByRole("textbox", { name: "Description" }), { key: "o" });
     expect(onOpenThread).not.toHaveBeenCalled();
-    fireEvent.keyDown(screen.getByRole("dialog", { name: "Task details" }).querySelector(".task-detail-form")!, { key: "o" });
+    fireEvent.keyDown(screen.getByRole("complementary", { name: "Task context" }).querySelector(".task-detail-form")!, { key: "o" });
     expect(onOpenThread).toHaveBeenCalledWith("thread-1");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
@@ -894,7 +895,7 @@ describe("TaskSidebar", () => {
     const dialog = await openTask("Buy printer paper");
     expect(dialog.queryByRole("region", { name: "Source conversation" })).not.toBeInTheDocument();
     expect(dialog.queryByRole("button", { name: "Open conversation" })).not.toBeInTheDocument();
-    fireEvent.keyDown(screen.getByRole("dialog", { name: "Task details" }).querySelector(".task-detail-form")!, { key: "o" });
+    fireEvent.keyDown(screen.getByRole("complementary", { name: "Task context" }).querySelector(".task-detail-form")!, { key: "o" });
     expect(onOpenThread).not.toHaveBeenCalled();
   });
 
@@ -907,11 +908,44 @@ describe("TaskSidebar", () => {
     await screen.findByText("Second", { selector: "strong" });
     act(() => ref.current!.selectNext());
     act(() => ref.current!.openDetails());
-    const dialog = within(await screen.findByRole("dialog", { name: "Task details" }));
+    const dialog = within(await screen.findByRole("complementary", { name: "Task context" }));
     expect(dialog.getByRole("textbox", { name: "Title" })).toHaveValue("Second");
   });
 
+  it("restores selection, layout and unsaved per-task drafts after a source jump", async () => {
+    vi.spyOn(mailClient,"listTasks").mockResolvedValue([workspaceTask("first",{title:"First"}),workspaceTask("second",{title:"Second"})]);
+    const sessions={current:new Map<string,import("./TaskSidebar").TaskWorkspaceSnapshot>()};
+    const props={accountId:"you@example.com",onOpenThread:vi.fn(),sessions};
+    const first=render(<TaskSidebar {...props} />);
+    fireEvent.click(await screen.findByText("Second",{selector:"strong"}));
+    const rail=within(screen.getByRole("complementary",{name:"Task context"}));
+    fireEvent.change(rail.getByRole("textbox",{name:"Description"}),{target:{value:"Unfinished notes"}});
+    first.unmount();
+    render(<TaskSidebar {...props} />);
+    await waitFor(()=>expect(within(screen.getByRole("complementary",{name:"Task context"})).getByRole("textbox",{name:"Title"})).toHaveValue("Second"));
+    expect(within(screen.getByRole("complementary",{name:"Task context"})).getByRole("textbox",{name:"Description"})).toHaveValue("Unfinished notes");
+  });
+
+  it("refreshes untouched detail fields while preserving unsaved edits", async () => {
+    const initial=workspaceTask("first",{title:"First",notes:"Original notes"});
+    const list=vi.spyOn(mailClient,"listTasks").mockResolvedValue([initial]);
+    const props={accountId:"you@example.com",onOpenThread:vi.fn()};
+    const view=render(<TaskSidebar {...props} refreshKey={0} />);
+    await waitFor(()=>expect(screen.getByRole("textbox",{name:"Title"})).toHaveValue("First"));
+    fireEvent.change(screen.getByRole("textbox",{name:"Description"}),{target:{value:"Local unsaved notes"}});
+    list.mockResolvedValue([{...initial,title:"Remote title",notes:"Remote notes"}]);
+    view.rerender(<TaskSidebar {...props} refreshKey={1} />);
+    await waitFor(()=>expect(screen.getByRole("textbox",{name:"Title"})).toHaveValue("Remote title"));
+    expect(screen.getByRole("textbox",{name:"Description"})).toHaveValue("Local unsaved notes");
+  });
+
 });
+
+function renderGoals(element: React.ReactElement) {
+  const result = render(element);
+  fireEvent.click(screen.getByRole("button", { name: "Goals" }));
+  return result;
+}
 
 describe("TaskSidebar goals", () => {
   const quarter = periodFor("quarter");
@@ -965,7 +999,7 @@ describe("TaskSidebar goals", () => {
       workspaceGoal("grow", { title: "Grow the practice", horizon: "year", period: year }),
       workspaceGoal("old", { title: "Old quarter", period: "2020-Q1", status: "achieved" }),
     ]);
-    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    renderGoals(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
     const pane = await screen.findByRole("complementary", { name: "Goals" });
     const quarterGoals = within(pane).getByRole("region", { name: "Quarter goals" });
@@ -985,7 +1019,7 @@ describe("TaskSidebar goals", () => {
       workspaceGoal("work-2", { title: "Work year", accountId: "work@example.com", horizon: "year", period: year }),
       workspaceGoal("home-1", { title: "Home goal", accountId: "home@example.com" }),
     ]);
-    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    renderGoals(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
     const pane = await screen.findByRole("complementary", { name: "Goals" });
     const note = await within(pane).findByRole("note");
@@ -997,7 +1031,7 @@ describe("TaskSidebar goals", () => {
 
   it("names no other accounts when none have goals, and shows no note once the account has goals or for all accounts", async () => {
     setup([workspaceTask("a")], []);
-    const { unmount } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    const { unmount } = renderGoals(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
     const note = await within(await screen.findByRole("complementary", { name: "Goals" })).findByRole("note");
     expect(note).toHaveTextContent("you@example.com has no goals yet.");
     expect(note).not.toHaveTextContent("other accounts");
@@ -1005,14 +1039,14 @@ describe("TaskSidebar goals", () => {
     vi.restoreAllMocks();
 
     setup([workspaceTask("a")], [workspaceGoal("mine", { title: "Mine" }), workspaceGoal("theirs", { title: "Theirs", accountId: "work@example.com" })]);
-    const { unmount: unmountMine } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    const { unmount: unmountMine } = renderGoals(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
     const pane = await screen.findByRole("complementary", { name: "Goals" });
     expect(await within(pane).findByRole("button", { name: /^Mine/ })).toBeInTheDocument();
     expect(within(pane).queryByRole("button", { name: /^Theirs/ })).not.toBeInTheDocument();
     expect(within(pane).queryByRole("note")).not.toBeInTheDocument();
     unmountMine();
 
-    render(<TaskSidebar accountId={null} onOpenThread={vi.fn()} />);
+    renderGoals(<TaskSidebar accountId={null} onOpenThread={vi.fn()} />);
     const allPane = await screen.findByRole("complementary", { name: "Goals" });
     expect(await within(allPane).findByRole("button", { name: /^Theirs/ })).toBeInTheDocument();
     expect(within(allPane).queryByRole("note")).not.toBeInTheDocument();
@@ -1027,7 +1061,7 @@ describe("TaskSidebar goals", () => {
       workspaceGoal("grow", { title: "Grow", horizon: "year", period: year }),
       workspaceGoal("ship", { title: "Ship", parentGoalId: "grow" }),
     ]);
-    const { container } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    const { container } = renderGoals(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
     const titles = () => [...container.querySelectorAll(".task-card strong")].map((node) => node.textContent);
     await waitFor(() => expect(titles()).toHaveLength(3));
     const pane = screen.getByRole("complementary", { name: "Goals" });
@@ -1058,7 +1092,7 @@ describe("TaskSidebar goals", () => {
   it("shows the supported goal on cards and links a task added while one goal is in view", async () => {
     setup([workspaceTask("linked", { title: "Linked", goalId: "ship" })], [workspaceGoal("ship", { title: "Ship IMAP", accountId: "work@example.com" })]);
     const onCreateTask = vi.fn().mockResolvedValue(workspaceTask("new", { title: "Write tests", goalId: "ship" }));
-    const { container } = render(<TaskSidebar accountId={null} accountOptions={["you@example.com", "work@example.com"]} onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
+    const { container } = renderGoals(<TaskSidebar accountId={null} accountOptions={["you@example.com", "work@example.com"]} onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
 
     const card = (await screen.findByText("Linked", { selector: "strong" })).closest("article")!;
     await waitFor(() => expect(card.querySelector(".task-card-goal")).toHaveTextContent("Supports Ship IMAP"));
@@ -1080,7 +1114,7 @@ describe("TaskSidebar goals", () => {
       workspaceGoal("done", { title: "Finished goal", status: "achieved" }),
       workspaceGoal("theirs", { title: "Other account goal", accountId: "other@example.com" }),
     ]);
-    render(<TaskSidebar accountId={null} onOpenThread={vi.fn()} />);
+    renderGoals(<TaskSidebar accountId={null} onOpenThread={vi.fn()} />);
 
     const dialog = await openTask("Plan launch");
     const select = dialog.getByRole("combobox", { name: "Goal" });
@@ -1095,7 +1129,7 @@ describe("TaskSidebar goals", () => {
 
   it("adds a goal that supports a longer one and shows its tasks", async () => {
     const { createGoal } = setup([], [workspaceGoal("grow", { title: "Grow", horizon: "year", period: year })]);
-    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    renderGoals(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
     fireEvent.click(await within(await screen.findByRole("complementary", { name: "Goals" })).findByRole("button", { name: "Add goal" }));
     const dialog = within(screen.getByRole("dialog", { name: "Add goal" }));
@@ -1115,7 +1149,7 @@ describe("TaskSidebar goals", () => {
 
   it("discards a new goal on Escape", async () => {
     const { createGoal } = setup([], []);
-    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    renderGoals(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
     fireEvent.click(await within(await screen.findByRole("complementary", { name: "Goals" })).findByRole("button", { name: "Add goal" }));
     fireEvent.change(within(screen.getByRole("dialog", { name: "Add goal" })).getByRole("textbox", { name: "Goal" }), { target: { value: "Half typed" } });
     fireEvent.keyDown(window, { key: "Escape" });
@@ -1128,7 +1162,7 @@ describe("TaskSidebar goals", () => {
       workspaceGoal("grow", { title: "Grow", horizon: "year", period: year }),
       workspaceGoal("ship", { title: "Ship", parentGoalId: "grow" }),
     ]);
-    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    renderGoals(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Edit goal Ship" }));
     const dialog = within(screen.getByRole("dialog", { name: "Goal" }));
@@ -1155,7 +1189,7 @@ describe("TaskSidebar goals", () => {
   it("deletes a goal only after confirmation and unlinks its tasks", async () => {
     const { deleteGoal } = setup([workspaceTask("linked", { title: "Linked", goalId: "ship" })], [workspaceGoal("ship", { title: "Ship" })]);
     const onTasksChanged = vi.fn();
-    const { container } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onTasksChanged={onTasksChanged} />);
+    const { container } = renderGoals(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onTasksChanged={onTasksChanged} />);
 
     await waitFor(() => expect(container.querySelector(".task-card-goal")).toHaveTextContent("Ship"));
     fireEvent.click(screen.getByRole("button", { name: /^Ship/ }));
@@ -1173,23 +1207,23 @@ describe("TaskSidebar goals", () => {
     expect(onTasksChanged).toHaveBeenCalled();
   });
 
-  it("resizes the goals pane from its divider and remembers the width", async () => {
+  it("resizes the shared task context rail and remembers the width", async () => {
     setup([workspaceTask("todo", { title: "Draft agenda" })], []);
     const originalInnerWidth = Object.getOwnPropertyDescriptor(window, "innerWidth");
     Object.defineProperty(window, "innerWidth", { value: 1600, configurable: true });
     try {
-      const { container } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
-      const handle = await screen.findByRole("separator", { name: "Resize goals" });
-      expect(handle).toHaveAttribute("aria-controls", "goals-pane");
-      expect(container.querySelector("#goals-pane")).toBeInTheDocument();
-      const body = container.querySelector(".tasks-workspace-body") as HTMLElement;
-      expect(body.style.getPropertyValue("--goals-pane-width")).toBe("320px");
+      const { container } = renderGoals(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+      const handle = await screen.findByRole("separator", { name: "Resize Task context" });
+      expect(handle).toHaveAttribute("aria-controls", "workspace-Task-context");
+      expect(container.querySelector("#workspace-Task-context")).toBeInTheDocument();
+      const body = container.querySelector(".workspace-context-container") as HTMLElement;
+      expect(body.style.getPropertyValue("--workspace-context-width")).toBe("340px");
       // The pane sits right of the divider, so ArrowLeft widens it.
       fireEvent.keyDown(handle, { key: "ArrowLeft" });
-      expect(body.style.getPropertyValue("--goals-pane-width")).toBe("330px");
-      await waitFor(() => expect(localStorage.getItem("threestrands.goalsPaneWidth")).toBe("330"));
+      expect(body.style.getPropertyValue("--workspace-context-width")).toBe("350px");
+      await waitFor(() => expect(localStorage.getItem("threestrands.workspaceContextWidth")).toBe("350"));
       fireEvent.dblClick(handle);
-      expect(body.style.getPropertyValue("--goals-pane-width")).toBe("320px");
+      expect(body.style.getPropertyValue("--workspace-context-width")).toBe("340px");
     } finally {
       if (originalInnerWidth) Object.defineProperty(window, "innerWidth", originalInnerWidth);
     }
@@ -1199,13 +1233,13 @@ describe("TaskSidebar goals", () => {
     setup([workspaceTask("first", { title: "First" }), workspaceTask("second", { title: "Second" })], [workspaceGoal("ship", { title: "Ship" })]);
     localStorage.setItem("threestrands.tasks.layout", "list");
     const ref = createRef<TaskWorkspaceHandle>();
-    const { container } = render(<TaskSidebar ref={ref} accountId="you@example.com" onOpenThread={vi.fn()} />);
+    const { container } = renderGoals(<TaskSidebar ref={ref} accountId="you@example.com" onOpenThread={vi.fn()} />);
     await screen.findByRole("button", { name: /^Ship/ });
     await waitFor(() => expect(container.querySelector("#task-first")).toHaveAttribute("aria-current", "true"));
 
     act(() => ref.current!.focusGoals());
     const allTasks = screen.getByRole("button", { name: /All tasks/ });
-    expect(allTasks).toHaveFocus();
+    await waitFor(() => expect(allTasks).toHaveFocus());
     const down = new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true });
     act(() => { allTasks.dispatchEvent(down); });
     expect(down.defaultPrevented).toBe(true);
@@ -1224,7 +1258,7 @@ describe("TaskSidebar goals", () => {
       workspaceGoal("quiet-goal", { title: "Quiet", createdAt: old }),
       workspaceGoal("fresh", { title: "Fresh" , createdAt: new Date().toISOString() }),
     ]);
-    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    renderGoals(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
     const quiet = await screen.findByRole("button", { name: /^Quiet/ });
     expect(within(quiet).getByText("Stale")).toHaveAttribute("title", "No task activity in 21 days");
@@ -1239,7 +1273,7 @@ describe("TaskSidebar goals", () => {
       workspaceGoal("carry", { title: "Carry", period: lastQuarter }),
       workspaceGoal("current", { title: "Current" }),
     ]);
-    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    renderGoals(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
     const prompt = await screen.findByText("3 goals from a past period need review.");
     fireEvent.click(within(prompt.closest(".goal-review-prompt") as HTMLElement).getByRole("button", { name: "Review" }));
@@ -1263,7 +1297,7 @@ describe("TaskSidebar goals", () => {
     const lastQuarter = shiftPeriod("quarter", quarter, -1);
     const { updateGoal } = setup([], [workspaceGoal("stuck", { title: "Stuck", period: lastQuarter })]);
     updateGoal.mockRejectedValueOnce(new Error("Some goals that support this one fall outside its new period. Unlink them first."));
-    const view = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    const view = renderGoals(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Review" }));
     const row = within(screen.getByRole("dialog", { name: "Review goals" }).querySelector("li")!);
@@ -1275,7 +1309,7 @@ describe("TaskSidebar goals", () => {
     expect(screen.queryByText(/needs review/)).not.toBeInTheDocument();
     expect(localStorage.getItem("threestrands.goals.reviewDeferredUntil")).toBe(quarter);
     view.unmount();
-    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+    renderGoals(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
     await screen.findByRole("button", { name: /^Stuck/ });
     expect(screen.queryByText(/needs review/)).not.toBeInTheDocument();
   });
@@ -1286,7 +1320,7 @@ describe("TaskSidebar goals", () => {
       workspaceGoal("closed", { title: "Closed goal", status: "achieved" }),
     ]);
     const ref = createRef<TaskWorkspaceHandle>();
-    render(<TaskSidebar ref={ref} accountId="you@example.com" onOpenThread={vi.fn()} />);
+    renderGoals(<TaskSidebar ref={ref} accountId="you@example.com" onOpenThread={vi.fn()} />);
     await screen.findByRole("button", { name: /^Ship IMAP/ });
     await waitFor(() => expect(screen.getByText("Plan launch", { selector: "strong" }).closest("article")).toHaveAttribute("aria-current", "true"));
 

@@ -1,5 +1,5 @@
 import { Check, ChevronLeft, ChevronRight, Clock3, Columns3, List, Mail, Plus, RotateCcw, Target, X } from "lucide-react";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import type { Goal, ThreadTask, UpdateGoalRequest, UpdateTaskRequest, TaskStatus } from "./domain";
 import { mailClient } from "./data/client";
 import { GoalDialog } from "./GoalDialog";
@@ -7,8 +7,10 @@ import { GoalLinkPicker } from "./GoalLinkPicker";
 import { GoalReviewDialog } from "./GoalReviewDialog";
 import { goalCountsByOtherAccount, goalWithSupporters } from "./goals";
 import { GoalsPane, type GoalFilter, type GoalsPaneHandle, type OtherAccountGoals } from "./GoalsPane";
-import { PanelResizeHandle, useGoalsPaneWidth } from "./PanelResizeHandle";
-import { TaskDetailDialog } from "./TaskDetailDialog";
+import { WorkspaceContextRail } from "./WorkspaceContextRail";
+import { WorkspaceRelatedContext } from "./WorkspaceRelatedContext";
+import { ContextSectionHeader } from "./ContextSections";
+import { TaskDetailDialog, type TaskDetailDrafts } from "./TaskDetailDialog";
 import { errorMessage } from "./errors";
 import { adjacentTaskStatus, compareTasksForDisplay, formatDue, isActiveTaskStatus, isDue, isOverdue, TASK_BOARD_COLUMNS, TASK_VIEWS, taskBoardColumn, taskBoardColumnStatus, taskMatchesView, taskViewForAll, type TaskBoardColumn, type TaskView } from "./taskViews";
 import { ICON_SIZE } from "./iconSizes";
@@ -85,9 +87,13 @@ export type TaskWorkspaceHandle = {
   linkSelectedToGoal(): void;
 };
 
+export type TaskWorkspaceSnapshot = { selectedId: string | null; goalFilter: GoalFilter; view: TaskView; layout: TaskLayout; olderDone: boolean; scroll: number[]; drafts: Map<string, TaskDetailDrafts> };
+export type TaskWorkspaceSessions = RefObject<Map<string, TaskWorkspaceSnapshot>>;
+
 /** The Tasks workspace: a list or board of tasks beside the account's goals; each task opens in a detail dialog. */
 export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   accountId: string | null;
+  sessions?: TaskWorkspaceSessions;
   accountOptions?: string[];
   onOpenThread(threadId: string): void;
   onTasksChanged?(): void;
@@ -98,6 +104,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   refreshKey?: number;
 }>(function TaskSidebar({
   accountId,
+  sessions,
   accountOptions = [],
   onOpenThread,
   onTasksChanged,
@@ -107,26 +114,29 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   onLayoutChange,
   refreshKey = 0,
 }, ref) {
+  const sessionKey=accountId ?? "all";
+  const restored=useRef(sessions?.current.get(sessionKey));
+  const root=useRef<HTMLElement>(null);
   const [tasks, setTasks] = useState<ThreadTask[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [otherAccountGoals, setOtherAccountGoals] = useState<OtherAccountGoals[]>([]);
-  const [goalFilter, setGoalFilter] = useState<GoalFilter>(null);
+  const [goalFilter, setGoalFilter] = useState<GoalFilter>(restored.current?.goalFilter ?? null);
   const [goalDialog, setGoalDialog] = useState<null | { goalId: string | null }>(null);
   const [reviewingGoals, setReviewingGoals] = useState(false);
   const [goalLinkTaskId, setGoalLinkTaskId] = useState<string | null>(null);
   const goalsPane = useRef<GoalsPaneHandle>(null);
-  const goalsPaneSize = useGoalsPaneWidth();
+  const [goalsOpen, setGoalsOpen] = useState(false);
+  const taskDrafts = useRef(restored.current?.drafts ?? new Map<string, TaskDetailDrafts>());
   const [now, setNow] = useState(() => new Date());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [view, setView] = useState<TaskView>(readTaskView);
-  const [showOlderDone, setShowOlderDone] = useState(false);
-  const [layout, setLayout] = useState<TaskLayout>(readTaskLayout);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(restored.current?.selectedId ?? null);
+  const [view, setView] = useState<TaskView>(() => restored.current?.view ?? readTaskView());
+  const [showOlderDone, setShowOlderDone] = useState(restored.current?.olderDone ?? false);
+  const [layout, setLayout] = useState<TaskLayout>(() => restored.current?.layout ?? readTaskLayout());
   const board = layout === "board";
-  const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
   const detailOpen = useRef(false);
-  detailOpen.current = detailTaskId !== null;
+  detailOpen.current = selectedTaskId !== null;
   const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
   const [addingTask, setAddingTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
@@ -145,7 +155,9 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   }, []);
   useEffect(() => clearCompletionToast, [clearCompletionToast]);
 
+  const loadGeneration=useRef(0);
   const load = useCallback(async () => {
+    const generation=++loadGeneration.current;
     setLoading(true);
     setError(null);
     try {
@@ -154,17 +166,19 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
         mailClient.listTasks(accountId ?? undefined),
         mailClient.listGoals(),
       ]);
+      if (generation!==loadGeneration.current) return;
       setTasks(nextTasks);
       setGoals(accountId ? allGoals.filter((goal) => goal.accountId === accountId) : allGoals);
       setOtherAccountGoals(accountId ? goalCountsByOtherAccount(allGoals, accountId) : []);
     } catch (reason) {
-      setError(errorMessage(reason));
+      if (generation===loadGeneration.current) setError(errorMessage(reason));
     } finally {
-      setLoading(false);
+      if (generation===loadGeneration.current) setLoading(false);
     }
   }, [accountId]);
 
-  useEffect(() => { void load(); }, [load, refreshKey]);
+  const cancelLoads=useCallback(() => { loadGeneration.current++; }, []);
+  useEffect(() => { void load(); return cancelLoads; }, [load, refreshKey, cancelLoads]);
   useEffect(() => {
     const interval = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(interval);
@@ -201,12 +215,13 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const selectedTask = orderedTasks.find((task) => task.id === selectedTaskId) ?? null;
 
   useEffect(() => {
+    if (loading) return;
     if (orderedTasks.length === 0) {
       setSelectedTaskId(null);
       return;
     }
     setSelectedTaskId((current) => current && orderedTasks.some((task) => task.id === current) ? current : orderedTasks[0].id);
-  }, [orderedTasks]);
+  }, [orderedTasks,loading]);
 
   useEffect(() => {
     if (selectedTaskId) taskCards.current.get(selectedTaskId)?.scrollIntoView?.({ block: "nearest" });
@@ -235,7 +250,9 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const setStatus = useCallback(async (task: ThreadTask, status: TaskStatus) => {
     try {
       const previous = tasks.find((candidate) => candidate.id === task.id)?.status ?? task.status;
-      const updated = await mailClient.setTaskStatus(task.id, status);
+      const operation=saveQueue.current.then(() => mailClient.setTaskStatus(task.id,status));
+      saveQueue.current=operation.catch(() => undefined);
+      const updated = await operation;
       setTasks((current) => current.map((candidate) => candidate.id === updated.id ? updated : candidate));
       const verb = status === "completed" ? "Completed"
         : status === "in_progress" ? "Started"
@@ -267,7 +284,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     saveQueue.current = save.catch(() => undefined);
     return save.catch((reason) => {
       // The dialog reports its own failures; once it has closed, the banner does.
-      if (!detailOpen.current) setError(errorMessage(reason));
+      setError(errorMessage(reason));
       throw reason;
     });
   }, [onTasksChanged]);
@@ -334,7 +351,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
 
   const openDetails = useCallback((taskId: string) => {
     setSelectedTaskId(taskId);
-    setDetailTaskId(taskId);
+    window.dispatchEvent(new CustomEvent("threestrands:focus-context", { detail: "Task context" }));
   }, []);
 
   useEffect(() => {
@@ -384,7 +401,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       }
     },
     toggleLayout: () => changeLayout(layout === "board" ? "list" : "board"),
-    focusGoals: () => goalsPane.current?.focus(),
+    focusGoals: () => { setGoalsOpen(true); requestAnimationFrame(() => goalsPane.current?.focus()); },
     linkSelectedToGoal: () => { if (selectedTask) setGoalLinkTaskId(selectedTask.id); },
     cycleView: (direction) => {
       const views: readonly TaskView[] = board ? BOARD_TASK_VIEWS : TASK_VIEWS;
@@ -417,7 +434,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
             suppressCardClick.current = false;
             return;
           }
-          openDetails(task.id);
+          setSelectedTaskId(task.id);
         }}
         onPointerDown={board ? (event) => {
           if (event.button !== 0) return;
@@ -470,13 +487,25 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     </article>;
   };
 
-  const detailTask = detailTaskId ? tasks.find((task) => task.id === detailTaskId) ?? null : null;
+  const detailTask = selectedTask;
   const goalLinkTask = goalLinkTaskId ? tasks.find((task) => task.id === goalLinkTaskId) ?? null : null;
   // A reload that drops the open task (another account, a sync delete) closes its dialog.
-  if (detailTaskId && !loading && !detailTask) setDetailTaskId(null);
-  const detailColumn = board ? boardColumns.find((column) => column.tasks.some((task) => task.id === detailTaskId))?.tasks : orderedTasks;
-  const detailIndex = detailColumn?.findIndex((task) => task.id === detailTaskId) ?? -1;
+  const detailColumn = board ? boardColumns.find((column) => column.tasks.some((task) => task.id === selectedTaskId))?.tasks : orderedTasks;
+  const detailIndex = detailColumn?.findIndex((task) => task.id === selectedTaskId) ?? -1;
   const detailPosition = detailColumn && detailIndex !== -1 ? { index: detailIndex, total: detailColumn.length } : null;
+
+  const snapshot=useRef<TaskWorkspaceSnapshot | null>(null);
+  snapshot.current={selectedId:selectedTaskId,goalFilter,view,layout,olderDone:showOlderDone,scroll:[],drafts:taskDrafts.current};
+  useLayoutEffect(() => () => {
+    if (sessions && snapshot.current) sessions.current.set(sessionKey,{...snapshot.current,scroll:[...(root.current?.querySelectorAll<HTMLElement>(".tasks-list, .task-board-cards") ?? [])].map((node) => node.scrollTop)});
+  }, [sessions,sessionKey]);
+  const scrollRestored=useRef(false);
+  useLayoutEffect(() => {
+    if (!loading && !scrollRestored.current) {
+      scrollRestored.current=true;
+      root.current?.querySelectorAll<HTMLElement>(".tasks-list, .task-board-cards").forEach((node,index) => { node.scrollTop=restored.current?.scroll[index] ?? 0; });
+    }
+  }, [loading]);
 
   const draggedTask = cardDrag?.active ? tasks.find((task) => task.id === cardDrag.taskId) ?? null : null;
   const taskList = board ? <div className="task-board" style={{ "--task-board-columns": visibleBoardColumns.length } as CSSProperties}>
@@ -503,7 +532,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   </div>;
 
   return (
-    <section className="tasks-workspace" aria-label="Tasks">
+    <section ref={root} className="tasks-workspace" aria-label="Tasks">
       <header className="tasks-sidebar-header">
         <div className="thread-header-title">
           <div>
@@ -520,6 +549,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           </div>
         </div>
         <div className="tasks-sidebar-header-actions">
+          <button type="button" className="btn" aria-expanded={goalsOpen} onClick={() => setGoalsOpen((value) => !value)}><Target size={ICON_SIZE.sm} />Goals</button>
           <div className="segmented" role="group" aria-label="Task layout">
             <button type="button" className="segment" aria-pressed={layout === "list"} onClick={() => changeLayout("list")}><List size={ICON_SIZE.md} />List</button>
             <button type="button" className="segment" aria-pressed={layout === "board"} onClick={() => changeLayout("board")}><Columns3 size={ICON_SIZE.md} />Board</button>
@@ -540,7 +570,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       ) : null}
       {loading ? <p className="tasks-status">Loading tasks…</p> : null}
       {!loading && tasks.length === 0 && !addingTask ? <p className="tasks-status">No tasks yet. Press d to add one.</p> : null}
-      <div className={`tasks-workspace-body${board ? " tasks-board-layout" : ""}`} style={{ "--goals-pane-width": `${goalsPaneSize.width}px` } as CSSProperties}>
+      <div className={`tasks-workspace-body${board ? " tasks-board-layout" : ""}`}>
         <div className={board ? "tasks-board-pane" : "tasks-list-pane"}>
           <nav className="task-view-nav" aria-label="Task views">
             {(board ? BOARD_TASK_VIEWS : TASK_VIEWS).map((name) => {
@@ -562,9 +592,9 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           {draggedTask && cardDrag ? <div className="task-drag-preview" aria-hidden="true" style={{ left: cardDrag.x - cardDrag.offsetX, top: cardDrag.y - cardDrag.offsetY, width: cardDrag.width }}>
             <strong>{draggedTask.title}</strong>
           </div> : null}
-          <PanelResizeHandle {...goalsPaneSize} panelSide="right" label="Resize goals" controlsId="goals-pane" title="Drag to resize the goals. Use arrow keys to adjust; double-click to reset." />
+
         </div>
-        <GoalsPane
+        {goalsOpen ? <div className="workspace-goals-drawer"><button type="button" className="btn btn-sm" onClick={() => setGoalsOpen(false)}>Close goals</button><GoalsPane
           ref={goalsPane}
           goals={goals}
           accountId={accountId}
@@ -575,8 +605,18 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           onAddGoal={() => setGoalDialog({ goalId: null })}
           onEditGoal={(goal) => setGoalDialog({ goalId: goal.id })}
           onReview={() => setReviewingGoals(true)}
-          onLeave={() => (selectedTaskId ? taskCards.current.get(selectedTaskId)?.querySelector<HTMLElement>(".task-card-main") : null)?.focus()}
-        />
+          onLeave={() => { setGoalsOpen(false); (selectedTaskId ? taskCards.current.get(selectedTaskId)?.querySelector<HTMLElement>(".task-card-main") : null)?.focus(); }}
+        /></div> : null}
+        <WorkspaceContextRail label="Task context" onReturn={() => taskCards.current.get(selectedTaskId ?? "")?.querySelector<HTMLElement>(".task-card-main")?.focus()}>
+          <ContextSectionHeader title="Task details" />
+          {detailTask ? <>
+            <TaskDetailDialog embedded draftStore={taskDrafts.current} task={detailTask} goals={goals} position={detailPosition}
+              onUpdate={(request) => updateTask(detailTask.id, request)} onSetStatus={(status) => void setStatus(detailTask, status)}
+              onNavigate={moveSelection} onOpenThread={onOpenThread}
+              onClose={() => taskCards.current.get(detailTask.id)?.querySelector<HTMLElement>(".task-card-main")?.focus()} />
+            <WorkspaceRelatedContext target={{ kind: "task", task: detailTask }} accountIds={accountId ? [accountId] : accountOptions} onOpenThread={onOpenThread} />
+          </> : <p className="context-status">Select a task to see details and related information.</p>}
+        </WorkspaceContextRail>
       </div>
       {reviewingGoals ? <GoalReviewDialog
         goals={goals}
@@ -615,19 +655,6 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           onTasksChanged?.();
         }}
         onClose={() => setGoalDialog(null)}
-      /> : null}
-      {detailTask ? <TaskDetailDialog
-        task={detailTask}
-        goals={goals}
-        position={detailPosition}
-        onUpdate={(request) => updateTask(detailTask.id, request)}
-        onSetStatus={(status) => void setStatus(detailTask, status)}
-        onNavigate={(direction) => {
-          const next = adjacentTaskId(direction);
-          if (next) openDetails(next);
-        }}
-        onOpenThread={onOpenThread}
-        onClose={() => setDetailTaskId(null)}
       /> : null}
     </section>
   );

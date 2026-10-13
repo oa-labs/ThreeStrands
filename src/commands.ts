@@ -4,7 +4,7 @@ import { adjacentTaskStatus, isActiveTaskStatus } from "./taskViews";
 
 export type MailboxKind = "inbox" | "allMail" | "trash" | "drafts" | "outbox" | "split";
 export type InteractionScope = "read" | "compose" | "search" | "modal" | "palette";
-export type FocusedPane = "mail" | "tasks" | "contacts";
+export type FocusedPane = "mail" | "tasks" | "contacts" | "files" | "calendar";
 
 export type CommandContext = {
   interactionScope: InteractionScope;
@@ -94,6 +94,7 @@ export type CommandContext = {
   openTasks(): void;
   openMailView(): void;
   openTasksView(): void;
+  openFilesView?(): void;
   openContactsView(): void;
   openKeepInTouchView(): void;
   openContactGroupsView(): void;
@@ -562,6 +563,11 @@ export const commands: Command[] = [
     group: "Navigation",
     enabled: (context) => !context.composerActive,
     run: (context) => complete(context.openContactsView),
+  },
+  {
+    id: "view.files", title: "Go to Files View", keys: ["5"], group: "Navigation",
+    enabled: (context) => !context.composerActive,
+    run: (context) => complete(() => context.openFilesView?.()),
   },
   {
     id: "view.keepInTouch",
