@@ -201,7 +201,8 @@ export interface MailClient extends CorrespondenceClient {
   contextCandidates(query: ContextQuery): Promise<WorkspaceConversation[]>;
   listFiles(query: FileQuery): Promise<FilePage>;
   fileStars(messageIds: string[]): Promise<[string, string][]>;
-  setFileStar(accountId: string, messageId: string, attachmentId: string, starred: boolean): Promise<void>;
+  /** Without an account, the message's owning account is used. */
+  setFileStar(accountId: string | undefined, messageId: string, attachmentId: string, starred: boolean): Promise<void>;
   contactFiles(id: string, limit: number): Promise<ContactFiles>;
   /** Other correspondents at `domain` and their conversations, leaving out `exclude`. */
   domainContext(domain: string, exclude: string[], limit: number): Promise<DomainContext>;

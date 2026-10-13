@@ -807,9 +807,29 @@ describe("TaskSidebar", () => {
 
     expect(await dialog.findByRole("alert")).toHaveTextContent("Could not save task");
     expect(dialog.getByRole("textbox", { name: "Title" })).toHaveValue("Prepare launch");
+    // The detail reports it; the workspace banner does not repeat it.
+    expect(screen.getAllByText("Could not save task")).toHaveLength(1);
 
     fireEvent.keyDown(window, { key: "Escape" });
     expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent("Could not save task");
+  });
+
+  it("reports a save that fails after the detail has moved to another task in the banner", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([workspaceTask("plan", { title: "Plan launch" }), workspaceTask("ship", { title: "Ship launch" })]);
+    let reject!: (reason: Error) => void;
+    vi.spyOn(mailClient, "updateTask").mockImplementation(() => new Promise((_, fail) => { reject = fail; }));
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} />);
+
+    const dialog = await openTask("Plan launch");
+    fireEvent.change(dialog.getByRole("textbox", { name: "Title" }), { target: { value: "Prepare launch" } });
+    fireEvent.blur(dialog.getByRole("textbox", { name: "Title" }));
+    await waitFor(() => expect(mailClient.updateTask).toHaveBeenCalled());
+    const next = await openTask("Ship launch");
+    await waitFor(() => expect(next.getByRole("textbox", { name: "Title" })).toHaveValue("Ship launch"));
+    await act(async () => reject(new Error("Could not save task")));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not save task");
+    expect(screen.getAllByText("Could not save task")).toHaveLength(1);
   });
 
   it("has no close control, like the contacts manager", async () => {

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FilesWorkspace, type FilesWorkspaceSnapshot } from "./FilesWorkspace";
 import { mailClient } from "./data/client";
@@ -27,7 +27,7 @@ describe("Files workspace", () => {
     fireEvent.keyDown(within(list).getAllByRole("button",{name:/^forecast\.pdf/})[0],{key:"j"});
     expect(within(list).getAllByRole("button",{name:/^forecast\.pdf/})[1]).toHaveAttribute("aria-current","true");
   });
-  it("queries starred, filename, sender, type, direction, dates and selected accounts without claiming offline retention", async () => {
+  it("queries starred, filename, sender, type, direction, local-day dates and selected accounts without claiming offline retention", async () => {
     const query=vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[],total:0});
     render(<FilesWorkspace accountId={null} accountIds={[report.accountId,"other@example.com"]} onOpenThread={vi.fn()} />);
     fireEvent.change(screen.getByLabelText("Search files"),{target:{value:"forecast"}});
@@ -38,8 +38,51 @@ describe("Files workspace", () => {
     fireEvent.change(screen.getByLabelText("From date"),{target:{value:"2026-10-01"}});
     fireEvent.change(screen.getByLabelText("Through date"),{target:{value:"2026-10-02"}});
     fireEvent.click(screen.getByRole("button",{name:"Starred"}));
-    await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.objectContaining({accountIds:[report.accountId],search:"forecast",sender:"alice",type:"document",direction:"received",starred:true,after:"2026-10-01T00:00:00Z",before:"2026-10-03T00:00:00.000Z",offset:0})));
+    await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.objectContaining({accountIds:[report.accountId],search:"forecast",sender:"alice",type:"document",direction:"received",starred:true,after:new Date(2026,9,1).toISOString(),before:new Date(2026,9,3).toISOString(),offset:0})));
     expect(screen.getByText(/Stars are stored on this device/)).toBeInTheDocument();
+  });
+  it("re-reads every loaded page when a sync or star change refreshes the list", async () => {
+    const make=(index:number):WorkspaceFile=>({...report,messageId:`m${index}`,attachment:{...report.attachment,id:`a${index}`,filename:`file-${index}.pdf`}});
+    let rows=Array.from({length:60},(_,index)=>make(index));
+    const query=vi.spyOn(mailClient,"listFiles").mockImplementation(async ({offset=0,limit=50})=>({files:rows.slice(offset,offset+limit),total:rows.length}));
+    const fileStars=vi.spyOn(mailClient,"fileStars").mockResolvedValue([]);
+    const props={accountId:report.accountId,accountIds:[report.accountId],onOpenThread:vi.fn()};
+    const view=render(<FilesWorkspace {...props} refreshKey="1" />);
+    fireEvent.click(await screen.findByRole("button",{name:"Load more files"}));
+    const list=within(screen.getByRole("list",{name:"Mail attachments"}));
+    await waitFor(() => expect(list.getAllByRole("listitem")).toHaveLength(60));
+    rows=[make(100),...rows.slice(1)];
+    query.mockClear();
+    view.rerender(<FilesWorkspace {...props} refreshKey="2" />);
+    await waitFor(() => expect(list.getByRole("button",{name:/^file-100\.pdf/})).toBeInTheDocument());
+    expect(list.queryByRole("button",{name:/^file-0\.pdf/})).not.toBeInTheDocument();
+    expect(list.getAllByRole("listitem")).toHaveLength(60);
+    expect(query.mock.calls.map(([request]) => request.offset)).toEqual([0,50]);
+    rows=rows.slice(0,55);
+    query.mockClear();
+    act(() => { window.dispatchEvent(new Event("threestrands:files-changed")); });
+    await waitFor(() => expect(list.getAllByRole("listitem")).toHaveLength(55));
+    expect(query.mock.calls.map(([request]) => request.offset)).toEqual([0,50]);
+    expect(screen.getByRole("heading",{name:"55 files"})).toBeInTheDocument();
+    expect(fileStars).not.toHaveBeenCalled();
+  });
+  it("sends only a file row's Enter to the context rail and leaves other buttons to activate natively", async () => {
+    vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[report,copy],total:2});
+    const focus=vi.fn();
+    window.addEventListener("threestrands:focus-context",focus);
+    try {
+      render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} />);
+      const list=within(await screen.findByRole("list",{name:"Mail attachments"}));
+      await waitFor(() => expect(list.getAllByRole("listitem")).toHaveLength(2));
+      for (const control of [list.getAllByRole("button",{name:"Star forecast.pdf"})[0],screen.getByRole("button",{name:"Starred"})]) {
+        expect(fireEvent.keyDown(control,{key:"Enter"})).toBe(true);
+      }
+      expect(focus).not.toHaveBeenCalled();
+      const second=list.getAllByRole("button",{name:/^forecast\.pdf/})[1];
+      expect(fireEvent.keyDown(second,{key:"Enter"})).toBe(false);
+      expect(second).toHaveAttribute("aria-current","true");
+      expect(focus).toHaveBeenCalledTimes(1);
+    } finally { window.removeEventListener("threestrands:focus-context",focus); }
   });
   it("rolls back a failed star and updates both visible representations after a successful retry", async () => {
     const query=vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[report],total:1});

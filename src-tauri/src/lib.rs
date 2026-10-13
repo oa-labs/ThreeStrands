@@ -1696,9 +1696,13 @@ async fn file_stars(message_ids: Vec<String>, state: State<'_, AppState>) -> Res
 }
 
 #[tauri::command]
-async fn set_file_star(account_id: String, message_id: String, attachment_id: String, starred: bool, state: State<'_, AppState>) -> Result<(), String> {
+async fn set_file_star(account_id: Option<String>, message_id: String, attachment_id: String, starred: bool, state: State<'_, AppState>) -> Result<(), String> {
     let database = state.database.clone();
-    run_database_task(move || database.set_file_star(&account_id, &message_id, &attachment_id, starred)).await
+    run_database_task(move || {
+        // Surfaces that show one message's attachments name no account; the message's own thread decides.
+        let account_id = match account_id { Some(account_id) => account_id, None => database.message_account(&message_id)? };
+        database.set_file_star(&account_id, &message_id, &attachment_id, starred)
+    }).await
 }
 
 #[tauri::command]

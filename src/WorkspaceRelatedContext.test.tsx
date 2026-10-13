@@ -1,8 +1,8 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceRelatedContext } from "./WorkspaceRelatedContext";
 import { mailClient } from "./data/client";
-import type { WorkspaceConversation, WorkspaceContextTarget } from "./domain";
+import type { WorkspaceConversation, WorkspaceContextTarget, WorkspaceFile } from "./domain";
 
 const meeting=(id:string,title:string):WorkspaceContextTarget=>({kind:"meeting",event:{id,title,accountId:"calendar@example.com",start:"2026-10-13T10:00:00Z",end:"2026-10-13T11:00:00Z",allDay:false,attendees:["alice@example.com"]}});
 describe("automatic workspace context", () => {
@@ -19,5 +19,15 @@ describe("automatic workspace context", () => {
     await act(async()=>resolveFirst([{threadId:"old",accountId:"work@example.com",subject:"Atlas forecast",sentAt:"2026-10-01T10:00:00Z",participants:["alice@example.com"]}]));
     expect(screen.queryByRole("button",{name:/Atlas forecast/})).not.toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("Files unavailable");
+  });
+  it("counts every related file and reaches the ones past the first rows",async()=>{
+    vi.spyOn(mailClient,"contextCandidates").mockResolvedValue([{threadId:"atlas",accountId:"work@example.com",subject:"Atlas forecast",sentAt:"2026-10-01T10:00:00Z",participants:["alice@example.com"]}]);
+    const files:WorkspaceFile[]=Array.from({length:8},(_,index)=>({accountId:"work@example.com",messageId:`m${index}`,threadId:"atlas",subject:"Atlas forecast",sentAt:`2026-10-0${index+1}T10:00:00Z`,sender:"alice@example.com",direction:"received",attachment:{id:"part:0.1",filename:`atlas-${index}.pdf`,mimeType:"application/pdf",size:10},starred:false,availability:"unknown"}));
+    vi.spyOn(mailClient,"listFiles").mockResolvedValue({files,total:files.length});
+    render(<WorkspaceRelatedContext accountIds={["work@example.com"]} onOpenThread={vi.fn()} target={meeting("atlas","Atlas forecast")} />);
+    const section=within(await screen.findByRole("region",{name:/Files/}));
+    expect(section.getAllByRole("button",{name:/^atlas-\d\.pdf/})).toHaveLength(6);
+    fireEvent.click(section.getByRole("button",{name:"Show 2 more"}));
+    expect(section.getAllByRole("button",{name:/^atlas-\d\.pdf/})).toHaveLength(8);
   });
 });

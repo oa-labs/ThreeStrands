@@ -150,7 +150,7 @@ export function CalendarAttachment({ messageId, threadId, attachment, onError, l
     });
   };
 
-  if (failed) return <><StandardCalendarAttachment attachment={attachment} onOpen={open} onDownload={download} />{threadId ? <FileStarButton messageId={messageId} threadId={threadId} attachmentId={attachment.id} filename={attachment.filename} /> : null}</>;
+  if (failed) return <><StandardCalendarAttachment attachment={attachment} onOpen={open} onDownload={download} />{threadId ? <FileStarButton messageId={messageId} attachmentId={attachment.id} filename={attachment.filename} /> : null}</>;
   if (!preview) {
     return (
       <div className="calendar-card calendar-card-loading" role="status">
@@ -167,7 +167,7 @@ export function CalendarAttachment({ messageId, threadId, attachment, onError, l
       ))}
       {preview.truncated ? <p className="calendar-card-more">Additional events are included in this file.</p> : null}
       <footer className="calendar-card-actions">
-        {threadId ? <FileStarButton messageId={messageId} threadId={threadId} attachmentId={attachment.id} filename={attachment.filename} /> : null}
+        {threadId ? <FileStarButton messageId={messageId} attachmentId={attachment.id} filename={attachment.filename} /> : null}
         <span><CalendarDays size={ICON_SIZE.sm} /> {attachment.filename}</span>
         <button type="button" className="btn btn-sm btn-ghost" onClick={open}><ExternalLink size={ICON_SIZE.sm} /> Open Invitation</button>
         <HoverTooltip title={`Download ${attachment.filename}`} placement="bottom"><button type="button" className="btn-icon btn-icon-sm" aria-label={`Download ${attachment.filename}`} onClick={download}>

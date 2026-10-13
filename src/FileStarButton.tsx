@@ -17,8 +17,8 @@ function readStars(messageId: string) {
   return read;
 }
 
-export function FileStarButton({ messageId, attachmentId, filename, threadId, accountId, starred: initial }: {
-  messageId: string; attachmentId: string; filename: string; threadId: string; accountId?: string; starred?: boolean;
+export function FileStarButton({ messageId, attachmentId, filename, accountId, starred: initial }: {
+  messageId: string; attachmentId: string; filename: string; accountId?: string; starred?: boolean;
 }) {
   const [starred, setStarred] = useState(initial ?? false);
   const [pending, setPending] = useState(false);
@@ -28,17 +28,17 @@ export function FileStarButton({ messageId, attachmentId, filename, threadId, ac
     const load = () => { void readStars(messageId).then((stars) => {
       if (active) { setStarred(stars.some(([message, attachment]) => message === messageId && attachment === attachmentId)); setError(null); }
     }).catch((reason) => { if (active) setError(errorMessage(reason)); }); };
-    if (initial === undefined) load(); else setStarred(initial);
-    const changed = () => load();
-    window.addEventListener(FILES_CHANGED, changed);
-    return () => { active = false; window.removeEventListener(FILES_CHANGED, changed); };
+    // A parent that supplies `starred` refetches its own rows when stars change.
+    if (initial !== undefined) { setStarred(initial); return () => { active = false; }; }
+    load();
+    window.addEventListener(FILES_CHANGED, load);
+    return () => { active = false; window.removeEventListener(FILES_CHANGED, load); };
   }, [attachmentId, initial, messageId]);
   const toggle = async () => {
     const previous = starred;
     setPending(true); setError(null); setStarred(!previous);
     try {
-      const owner = accountId ?? (await mailClient.getThread(threadId)).thread.accountId;
-      await mailClient.setFileStar(owner, messageId, attachmentId, !previous);
+      await mailClient.setFileStar(accountId, messageId, attachmentId, !previous);
       reads.delete(messageId);
       window.dispatchEvent(new Event(FILES_CHANGED));
     } catch (reason) { setStarred(previous); setError(errorMessage(reason)); }

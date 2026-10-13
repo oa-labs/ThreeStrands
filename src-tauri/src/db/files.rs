@@ -1,22 +1,34 @@
 //! Device-local attachment browsing. The projection is maintained by schema
 //! triggers, so ingestion, retention, and account deletion use one contract.
-use super::{Database, DatabaseError, DbResult};
+use super::{messages::resolve_body, Database, DatabaseError, DbResult};
+use crate::mime::RawMessage;
 use crate::models::{
     ContextQuery, FilePage, FileQuery, MessageAttachment, WorkspaceConversation, WorkspaceFile,
 };
-use rusqlite::{params, types::Value};
+use crate::search_query::like_contains_pattern;
+use rusqlite::{functions::FunctionFlags, params, types::Value, Connection, OptionalExtension};
+use std::collections::{BTreeSet, HashMap};
 
 const MAX_FILE_PAGE: usize = 100;
 const DIRECTION: &str = "CASE WHEN EXISTS(SELECT 1 FROM contact_interactions ci WHERE ci.message_id=m.id AND ci.account_id=t.account_id AND ci.direction='sent') OR lower(trim(m.sender))=lower(t.account_id) OR lower(trim(m.sender)) LIKE '%<'||lower(t.account_id)||'>' THEN 'sent' ELSE 'received' END";
 
-fn pattern(value: &str) -> String {
-    format!(
-        "%{}%",
-        value
-            .replace('\\', "\\\\")
-            .replace('%', "\\%")
-            .replace('_', "\\_")
+/// SQLite's `LIKE` and `lower()` fold ASCII only, so `fold_case(column) LIKE
+/// fold(value)` is how Files and context matching ignore case in any script.
+pub(super) fn register_functions(connection: &Connection) -> rusqlite::Result<()> {
+    connection.create_scalar_function(
+        "fold_case",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |context| {
+            Ok(context
+                .get::<Option<String>>(0)?
+                .map(|value| value.to_lowercase()))
+        },
     )
+}
+
+fn folded_pattern(value: &str) -> String {
+    like_contains_pattern(&value.to_lowercase())
 }
 
 impl Database {
@@ -60,12 +72,12 @@ impl Database {
         ] {
             if let Some(value) = value.as_ref().filter(|value| !value.is_empty()) {
                 filters.push(if like {
-                    format!("{column} LIKE ? ESCAPE '\\'")
+                    format!("fold_case({column}) LIKE ? ESCAPE '\\'")
                 } else {
                     format!("{column}=?")
                 });
                 values.push(Value::Text(if like {
-                    pattern(value)
+                    folded_pattern(value)
                 } else {
                     value.clone()
                 }));
@@ -105,7 +117,7 @@ impl Database {
             filters.push(format!("({condition})"));
         }
         let from = format!("FROM file_attachments a JOIN messages m ON m.id=a.message_id JOIN threads t ON t.id=m.thread_id LEFT JOIN file_stars s ON s.message_id=a.message_id AND s.attachment_id=a.attachment_id WHERE {}", filters.join(" AND "));
-        let mut page = self.with_connection(|connection| {
+        let (mut page, payloads) = self.with_connection(|connection| {
             let total = connection.query_row(&format!("SELECT COUNT(*) {from}"), rusqlite::params_from_iter(&values), |row| row.get::<_,i64>(0))? as usize;
             let priority = if let Some(id)=&query.priority_message_id { values.push(Value::Text(id.clone())); "CASE WHEN m.id=? THEN 0 ELSE 1 END," } else { "" };
             let importance = if query.prioritize_starred==Some(true) { "s.message_id IS NULL," } else { "" };
@@ -117,14 +129,30 @@ impl Database {
                 attachment: MessageAttachment { id: row.get(7)?, filename: row.get(8)?, mime_type: row.get(9)?, size: row.get::<_, i64>(10)?.max(0) as u64, content_id: None, inline: false },
                 starred: row.get(11)?, availability: "unknown".into(),
             }))?.collect::<Result<Vec<_>, _>>()?;
-            Ok(FilePage { files, total })
+            // One read per source message, however many of its files are listed.
+            let ids: BTreeSet<&str> = files.iter().map(|file| file.message_id.as_str()).collect();
+            let mut payloads = Vec::with_capacity(ids.len());
+            if !ids.is_empty() {
+                let mut statement = connection.prepare(&format!("SELECT id,payload,payload_z FROM message_metadata WHERE id IN ({})", vec!["?"; ids.len()].join(",")))?;
+                let rows = statement.query_map(rusqlite::params_from_iter(&ids), |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<Vec<u8>>>(2)?)))?;
+                for row in rows { payloads.push(row?); }
+            }
+            Ok((FilePage { files, total }, payloads))
         })?;
         // Inspect locally cached MIME metadata only; never download/decode bytes.
         // Missing metadata stays unknown rather than promising availability.
+        // Payloads are decoded after the connection is released.
+        let messages: HashMap<String, RawMessage> = payloads
+            .into_iter()
+            .filter_map(|(id, legacy, compressed)| {
+                let payload = resolve_body(1, legacy, compressed).ok()?;
+                Some((id, serde_json::from_str(&payload).ok()?))
+            })
+            .collect();
         for file in &mut page.files {
-            if let Ok((_, message)) = self.attachment_message(&file.message_id) {
+            if let Some(message) = messages.get(&file.message_id) {
                 if let Ok(local) =
-                    crate::mime::attachment_payload_available(&message, &file.attachment.id)
+                    crate::mime::attachment_payload_available(message, &file.attachment.id)
                 {
                     file.availability = if local { "offline" } else { "download" }.into();
                 }
@@ -141,24 +169,35 @@ impl Database {
             return Err(DatabaseError::invalid("Invalid context limits"));
         }
         let mut values: Vec<Value> = query.account_ids.iter().cloned().map(Value::Text).collect();
+        // Mirrors rankContext: a conversation other than the source needs a
+        // subject topic, and for a meeting an attendee too. Requiring both here
+        // keeps evidence rankContext would discard from filling the limit.
         let mut evidence = vec![];
         if let Some(id) = &query.thread_id {
             evidence.push("t.id=?".to_string());
             values.push(Value::Text(id.clone()));
         }
-        for term in &query.terms {
-            evidence.push("(t.subject LIKE ? ESCAPE '\\' OR t.snippet LIKE ? ESCAPE '\\')".into());
-            values.push(Value::Text(pattern(term)));
-            values.push(Value::Text(pattern(term)));
-        }
-        if !query.attendees.is_empty() {
-            evidence.push(format!("EXISTS(SELECT 1 FROM contact_interactions ci WHERE ci.thread_id=t.id AND lower(ci.email) IN ({}))",vec!["?";query.attendees.len()].join(",")));
+        if !query.terms.is_empty() {
+            let mut related = format!(
+                "({})",
+                vec!["fold_case(t.subject) LIKE ? ESCAPE '\\'"; query.terms.len()].join(" OR ")
+            );
             values.extend(
                 query
-                    .attendees
+                    .terms
                     .iter()
-                    .map(|email| Value::Text(email.to_ascii_lowercase())),
+                    .map(|term| Value::Text(folded_pattern(term))),
             );
+            if !query.attendees.is_empty() {
+                related.push_str(&format!(" AND EXISTS(SELECT 1 FROM contact_interactions ci WHERE ci.thread_id=t.id AND lower(ci.email) IN ({}))", vec!["?"; query.attendees.len()].join(",")));
+                values.extend(
+                    query
+                        .attendees
+                        .iter()
+                        .map(|email| Value::Text(email.to_ascii_lowercase())),
+                );
+            }
+            evidence.push(related);
         }
         if evidence.is_empty() {
             return Ok(vec![]);
@@ -208,6 +247,19 @@ impl Database {
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(rows)
+        })
+    }
+
+    /// The account that owns a stored message, for star requests that name none.
+    pub fn message_account(&self, message_id: &str) -> DbResult<String> {
+        self.with_connection(|c| {
+            c.query_row(
+                "SELECT t.account_id FROM messages m JOIN threads t ON t.id=m.thread_id WHERE m.id=?1",
+                [message_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(DatabaseError::NotFound("Message"))
         })
     }
 
@@ -443,6 +495,148 @@ mod tests {
             })
             .unwrap()
             .is_empty());
+    }
+    #[test]
+    fn availability_reads_each_source_message_once_and_reports_each_part() {
+        let db = database();
+        let mut mail = message("both", "both", "2026-10-01T10:00:00Z", "budget");
+        mail.metadata_json = r#"{"id":"both","threadId":"both","payload":{"mimeType":"multipart/mixed","parts":[{"filename":"local.pdf","body":{"data":"AA"}},{"filename":"remote.pdf","body":{"attachmentId":"provider-1"}}]}}"#.into();
+        mail.attachments = ["part:0.0", "part:0.1", "part:0.9"]
+            .into_iter()
+            .map(|id| MessageAttachment {
+                id: id.into(),
+                filename: format!("{id}.pdf"),
+                mime_type: "application/pdf".into(),
+                size: 1,
+                content_id: None,
+                inline: false,
+            })
+            .collect();
+        db.upsert_thread("you@example.com", &[mail]).unwrap();
+        seed(&db, "you@example.com", "unparsed");
+        let mut availability: Vec<(String, String)> = db
+            .list_files(&query("you@example.com"))
+            .unwrap()
+            .files
+            .into_iter()
+            .map(|file| {
+                (
+                    format!("{}/{}", file.message_id, file.attachment.id),
+                    file.availability,
+                )
+            })
+            .collect();
+        availability.sort();
+        assert_eq!(
+            availability,
+            [
+                ("both/part:0.0", "offline"),
+                ("both/part:0.1", "download"),
+                ("both/part:0.9", "unknown"),
+                ("unparsed/part:0.1", "unknown"),
+            ]
+            .map(|(file, state)| (file.to_string(), state.to_string()))
+        );
+    }
+    #[test]
+    fn file_search_folds_case_beyond_ascii() {
+        let db = database();
+        let mut mail = message("report", "report", "2026-10-01T10:00:00Z", "budget");
+        mail.from = "Ågot Ødegård <agot@example.com>".into();
+        mail.attachments = vec![MessageAttachment {
+            id: "part:0.1".into(),
+            filename: "Überprüfung.pdf".into(),
+            mime_type: "application/pdf".into(),
+            size: 1,
+            content_id: None,
+            inline: false,
+        }];
+        db.upsert_thread("you@example.com", &[mail]).unwrap();
+        let mut q = query("you@example.com");
+        for search in ["überprüfung", "ÜBERPRÜFUNG", "Überprüfung"] {
+            q.search = Some(search.into());
+            assert_eq!(db.list_files(&q).unwrap().total, 1, "{search}");
+        }
+        q.search = Some("prüfung_".into());
+        assert_eq!(db.list_files(&q).unwrap().total, 0);
+        q.search = None;
+        q.sender = Some("øDEGÅRD".into());
+        assert_eq!(db.list_files(&q).unwrap().total, 1);
+    }
+    #[test]
+    fn context_topics_fold_case_beyond_ascii() {
+        let db = database();
+        let mut mail = message("review", "review", "2026-10-01T10:00:00Z", "notes");
+        mail.subject = "Überprüfung Q3".into();
+        db.upsert_thread("you@example.com", &[mail]).unwrap();
+        let result = db
+            .context_candidates(&ContextQuery {
+                account_ids: vec!["you@example.com".into()],
+                thread_id: None,
+                terms: vec!["überprüfung".into()],
+                attendees: vec![],
+                after: None,
+                before: None,
+            })
+            .unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].subject, "Überprüfung Q3");
+    }
+    #[test]
+    fn attendee_only_threads_cannot_crowd_topic_matches_out_of_the_candidate_limit() {
+        let db = database();
+        let mut older = message("atlas", "atlas", "2026-09-01T10:00:00Z", "numbers");
+        older.subject = "Atlas budget".into();
+        older.from = "Alice <alice@example.com>".into();
+        db.upsert_thread("you@example.com", &[older]).unwrap();
+        for index in 0..150 {
+            let id = format!("chat-{index}");
+            let mut mail = message(
+                &id,
+                &id,
+                &format!("2026-10-01T10:{:02}:{:02}Z", index / 60, index % 60),
+                "hello",
+            );
+            mail.subject = "Lunch".into();
+            mail.from = "Alice <alice@example.com>".into();
+            db.upsert_thread("you@example.com", &[mail]).unwrap();
+        }
+        let mut snippet_only = message(
+            "snippet",
+            "snippet",
+            "2026-10-02T10:00:00Z",
+            "atlas mentioned in passing",
+        );
+        snippet_only.from = "Alice <alice@example.com>".into();
+        db.upsert_thread("you@example.com", &[snippet_only])
+            .unwrap();
+        let result = db
+            .context_candidates(&ContextQuery {
+                account_ids: vec!["you@example.com".into()],
+                thread_id: None,
+                terms: vec!["atlas".into()],
+                attendees: vec!["alice@example.com".into()],
+                after: Some("2026-08-01T00:00:00Z".into()),
+                before: None,
+            })
+            .unwrap();
+        assert_eq!(
+            result
+                .iter()
+                .map(|item| item.subject.as_str())
+                .collect::<Vec<_>>(),
+            ["Atlas budget"]
+        );
+    }
+    #[test]
+    fn star_requests_without_an_account_resolve_the_owning_account() {
+        let db = database();
+        seed(&db, "you@example.com", "mine");
+        assert_eq!(db.message_account("mine").unwrap(), "you@example.com");
+        assert!(matches!(
+            db.message_account("missing"),
+            Err(DatabaseError::NotFound(_))
+        ));
     }
     #[test]
     fn thread_merges_preserve_stars_and_cross_account_message_replacement_is_rejected() {

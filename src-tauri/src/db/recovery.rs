@@ -92,6 +92,7 @@ impl Database {
         let had_pending_wal = wal_sidecar_nonempty(path);
         let mut connection = Connection::open(path)?;
         restrict_to_owner(path);
+        super::files::register_functions(&connection)?;
         connection.execute_batch(crate::schema::INITIAL_SCHEMA)?;
         let reset_running = connection.execute(
             "UPDATE mutations SET state = 'pending', last_error = 'Interrupted before acknowledgement'
@@ -129,6 +130,7 @@ impl Database {
     #[cfg(test)]
     pub(crate) fn open_memory() -> Self {
         let mut connection = Connection::open_in_memory().unwrap();
+        super::files::register_functions(&connection).unwrap();
         connection
             .execute_batch(crate::schema::INITIAL_SCHEMA)
             .unwrap();

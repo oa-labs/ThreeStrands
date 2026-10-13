@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.111.0"
+version = "0.111.1"
 description = "A local-first, keyboard-driven email client"
 authors = ["OpenArc LLC"]
 license-file = "../LICENSE"
@@ -52,7 +52,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "mul
 # `http_client::builder` installs ring, matching tauri-plugin-updater.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rfd = "0.17"
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled", "functions"] }
 # Sans-IO SigV4 presigning and ListObjectsV2 parsing for the S3 sync
 # connector; requests go over the app's own `reqwest` client.
 rusty-s3 = { version = "0.10", default-features = false, features = ["rustcrypto", "xml"] }

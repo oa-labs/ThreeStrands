@@ -17,7 +17,7 @@ export function WorkspaceFileRow({ file, onOpenThread }: { file: WorkspaceFile; 
     <ContextRow icon={<AttachmentIcon filename={file.attachment.filename} mimeType={file.attachment.mimeType} size="sm" />}
       title={file.attachment.filename} date={formatHistoryDate(file.sentAt)} detail={`${file.reason ? `${file.reason} · ` : ""}${formatAttachmentSize(file.attachment.size)} · ${file.accountId}`}
       onActivate={() => { void mailClient.openAttachment(file.messageId, file.attachment.id).catch((reason) => setError(errorMessage(reason))); }}
-      action={<><FileStarButton accountId={file.accountId} messageId={file.messageId} attachmentId={file.attachment.id} threadId={file.threadId} filename={file.attachment.filename} starred={file.starred} /><button type="button" className="btn-icon btn-icon-sm" aria-label={`Show the email with ${file.attachment.filename}`} onClick={() => onOpenThread(file.threadId)}><MessageSquareText size={ICON_SIZE.sm} /></button></>} />
+      action={<><FileStarButton accountId={file.accountId} messageId={file.messageId} attachmentId={file.attachment.id} filename={file.attachment.filename} starred={file.starred} /><button type="button" className="btn-icon btn-icon-sm" aria-label={`Show the email with ${file.attachment.filename}`} onClick={() => onOpenThread(file.threadId)}><MessageSquareText size={ICON_SIZE.sm} /></button></>} />
     {error ? <p className="form-error" role="alert">{error}</p> : null}
   </>;
 }
@@ -58,7 +58,7 @@ export function WorkspaceRelatedContext({ target, accountIds, onOpenThread }: { 
     {loading ? <p className="context-status" role="status">Finding related information…</p> : null}
     {error ? <p className="form-error" role="alert">{error}<button type="button" className="btn-link" onClick={() => setRevision((value) => value + 1)}>Retry context</button></p> : null}
     {fileError ? <p className="form-error" role="alert">{fileError}<button type="button" className="btn-link" onClick={() => setRevision((value) => value + 1)}>Retry files</button></p> : null}
-    {files.length ? <ContextSection id="workspace-files" title="Files" count={files.length} rows={files.slice(0, CONTEXT_POLICY.rows).map((file) => <WorkspaceFileRow key={`${file.messageId}:${file.attachment.id}`} file={file} onOpenThread={onOpenThread} />)} /> : null}
+    {files.length ? <ContextSection id="workspace-files" title="Files" count={files.length} limit={CONTEXT_POLICY.rows} rows={files.map((file) => <WorkspaceFileRow key={`${file.messageId}:${file.attachment.id}`} file={file} onOpenThread={onOpenThread} />)} /> : null}
     {conversations.length ? <ContextSection id="workspace-conversations" title="Conversations" count={conversations.length} rows={conversations.map((item) => <ContextRow key={item.threadId} icon={<MessageSquareText size={ICON_SIZE.sm} />} title={item.subject} date={formatHistoryDate(item.sentAt)} detail={`${item.reason} · ${item.accountId}`} onActivate={() => onOpenThread(item.threadId)} />)} /> : null}
     {!loading && !error && !fileError && !conversations.length ? <p className="context-status">No related information found in synchronized mail.</p> : null}
   </>;

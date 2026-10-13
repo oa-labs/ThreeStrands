@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Download, ExternalLink, MessageSquareText } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { WorkspaceFile } from "./domain";
@@ -12,10 +12,14 @@ import { isEditableTarget } from "./commands";
 import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 
-export type FilesWorkspaceSnapshot = { files: WorkspaceFile[]; total: number; selected: string | null; search: string; sender: string; type: string; direction: "" | "received" | "sent"; scope: string; after: string; before: string; starred: boolean; offset: number; scroll: number };
+export type FilesWorkspaceSnapshot = { files: WorkspaceFile[]; total: number; selected: string | null; search: string; sender: string; type: string; direction: "" | "received" | "sent"; scope: string; after: string; before: string; starred: boolean; scroll: number };
 const PAGE_SIZE = 50;
 const keyFor = (file: WorkspaceFile) => JSON.stringify([file.accountId, file.messageId, file.attachment.id]);
 const availability = (file: WorkspaceFile) => file.availability==="offline" ? "Available offline" : file.availability==="download" ? "Download required" : "Availability not yet known";
+/** The instant a local calendar day (yyyy-mm-dd) starts, `days` days later. */
+const localDayStart = (day: string, days = 0) => { const [year, month, date] = day.split("-").map(Number); return new Date(year, month-1, date+days).toISOString(); };
+/** Rows to fetch: a refresh re-reads every loaded row, "Load more" appends one page. */
+type FileLoad = { offset: number; count: number; attempt: number };
 
 export function FilesWorkspace({ accountId, accountIds, onOpenThread, sessions, refreshKey = "" }: { refreshKey?: string; sessions?: RefObject<Map<string, FilesWorkspaceSnapshot>>; accountId: string | null; accountIds: string[]; onOpenThread(id: string): void }) {
   const sessionKey=accountId ?? "all";
@@ -32,35 +36,42 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, sessions, 
   const [after, setAfter] = useState(restored.current?.after ?? "");
   const [before, setBefore] = useState(restored.current?.before ?? "");
   const [starred, setStarred] = useState(restored.current?.starred ?? false);
-  const [offset, setOffset] = useState(restored.current?.offset ?? 0);
-  const [revision, setRevision] = useState(0);
+  const loaded = useRef(files.length);
+  loaded.current = files.length;
+  const [load, setLoad] = useState<FileLoad>(() => ({ offset: 0, count: Math.max(PAGE_SIZE, loaded.current), attempt: 0 }));
+  const reload = useCallback(() => setLoad((current) => ({ offset: 0, count: Math.max(PAGE_SIZE, loaded.current), attempt: current.attempt+1 })), []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const rows = useRef(new Map<string, HTMLButtonElement>());
   const scoped = accountId ? [accountId] : scope && accountIds.includes(scope) ? [scope] : accountIds;
-  const queryKey = JSON.stringify({ accountIds: scoped, search, sender, type, direction: direction || undefined, starred, after: after ? `${after}T00:00:00Z` : undefined, before: before ? new Date(new Date(`${before}T00:00:00Z`).getTime()+86_400_000).toISOString() : undefined, limit: PAGE_SIZE });
+  // Date inputs name days in the user's time zone.
+  const queryKey = JSON.stringify({ accountIds: scoped, search, sender, type, direction: direction || undefined, starred, after: after ? localDayStart(after) : undefined, before: before ? localDayStart(before, 1) : undefined });
   const lastQuery = useRef(queryKey);
-  if (lastQuery.current!==queryKey) { lastQuery.current=queryKey; setOffset(0); setFiles([]); setSelected(null); }
+  if (lastQuery.current!==queryKey) { lastQuery.current=queryKey; setLoad((current) => ({ offset: 0, count: PAGE_SIZE, attempt: current.attempt+1 })); setFiles([]); setSelected(null); }
+  const lastRefresh = useRef(refreshKey);
+  if (lastRefresh.current!==refreshKey) { lastRefresh.current=refreshKey; reload(); }
   useEffect(() => {
-    const changed=() => { setOffset(0); setRevision((value) => value+1); };
-    window.addEventListener(FILES_CHANGED, changed);
-    return () => window.removeEventListener(FILES_CHANGED, changed);
-  }, []);
+    window.addEventListener(FILES_CHANGED, reload);
+    return () => window.removeEventListener(FILES_CHANGED, reload);
+  }, [reload]);
   useEffect(() => {
     let active = true;
     setLoading(true); setError(null);
     const timer = window.setTimeout(() => {
-      void mailClient.listFiles({ ...JSON.parse(queryKey), offset }).then((page) => {
+      const query = JSON.parse(queryKey);
+      const pages = Array.from({ length: Math.ceil(load.count/PAGE_SIZE) }, (_, index) => mailClient.listFiles({ ...query, offset: load.offset+index*PAGE_SIZE, limit: PAGE_SIZE }));
+      void Promise.all(pages).then((results) => {
         if (!active) return;
-        setFiles((previous) => offset ? [...previous,...page.files.filter((file) => !previous.some((existing) => keyFor(existing)===keyFor(file)))] : page.files);
-        setTotal(page.total);
-        if (!offset) setSelected((current) => page.files.some((file) => keyFor(file)===current) ? current : page.files[0] ? keyFor(page.files[0]) : null);
+        const page = results.flatMap((result) => result.files);
+        setFiles((previous) => load.offset ? [...previous,...page.filter((file) => !previous.some((existing) => keyFor(existing)===keyFor(file)))] : page);
+        setTotal(results[results.length-1].total);
+        if (!load.offset) setSelected((current) => page.some((file) => keyFor(file)===current) ? current : page[0] ? keyFor(page[0]) : null);
       }).catch((reason) => { if (active) setError(errorMessage(reason)); }).finally(() => { if (active) setLoading(false); });
     }, 150);
     return () => { active=false; window.clearTimeout(timer); };
-  }, [queryKey, offset, revision, refreshKey]);
+  }, [queryKey, load]);
   const snapshot=useRef<FilesWorkspaceSnapshot | null>(null);
-  snapshot.current={files,total,selected,search,sender,type,direction,scope,after,before,starred,offset,scroll:0};
+  snapshot.current={files,total,selected,search,sender,type,direction,scope,after,before,starred,scroll:0};
   useLayoutEffect(() => () => { if (sessions && snapshot.current) sessions.current.set(sessionKey,{...snapshot.current,scroll:main.current?.scrollTop ?? 0}); }, [sessions,sessionKey]);
   const scrollRestored=useRef(false);
   useLayoutEffect(() => { if (!loading && !scrollRestored.current && main.current) { main.current.scrollTop=restored.current?.scroll ?? 0; scrollRestored.current=true; } }, [loading]);
@@ -68,7 +79,6 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, sessions, 
   const action = (operation: Promise<void>) => { void operation.catch((reason) => setError(errorMessage(reason))); };
   return <section className="files-workspace" aria-label="Files" onKeyDown={(event) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || isEditableTarget(event.target)) return;
-    if (event.key==="Enter" && !(event.target instanceof HTMLElement && event.target.closest(".workspace-context-rail"))) { event.preventDefault(); window.dispatchEvent(new CustomEvent("threestrands:focus-context", { detail: "File context" })); return; }
     if (["j","k","ArrowDown","ArrowUp"].includes(event.key)) {
       event.preventDefault(); event.stopPropagation();
       const index=files.findIndex((item) => keyFor(item)===selected);
@@ -91,26 +101,31 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, sessions, 
           <label>Through date<input type="date" value={before} onChange={(event) => setBefore(event.target.value)} /></label>
         </div>
         <p className="files-coverage">Attachments from mail synchronized on this device, including archived conversations. Stars are stored on this device.</p>
-        {error ? <p className="form-error" role="alert">{error}<button type="button" className="btn" onClick={() => setRevision((value) => value+1)}>Retry</button></p> : null}
+        {error ? <p className="form-error" role="alert">{error}<button type="button" className="btn" onClick={() => setLoad((current) => ({ ...current, attempt: current.attempt+1 }))}>Retry</button></p> : null}
         <div className="files-list" role="list" aria-label="Mail attachments">
           {files.map((item) => <div key={keyFor(item)} role="listitem" className={`file-list-item${selected===keyFor(item) ? " selected" : ""}`}>
             <button type="button" className="file-list-select" aria-current={selected===keyFor(item) ? "true" : undefined}
               ref={(node) => { if (node) rows.current.set(keyFor(item),node); else rows.current.delete(keyFor(item)); }}
-              onClick={() => setSelected(keyFor(item))} onDoubleClick={() => action(mailClient.openAttachment(item.messageId,item.attachment.id))}>
+              onClick={() => setSelected(keyFor(item))}
+              onKeyDown={(event) => {
+                // Enter on a file takes it to the context rail; other controls keep native Enter.
+                if (event.key!=="Enter" || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+                event.preventDefault(); setSelected(keyFor(item)); window.dispatchEvent(new CustomEvent("threestrands:focus-context", { detail: "File context" }));
+              }} onDoubleClick={() => action(mailClient.openAttachment(item.messageId,item.attachment.id))}>
               <AttachmentIcon filename={item.attachment.filename} mimeType={item.attachment.mimeType} size="sm" /><span><strong>{item.attachment.filename}</strong><small>{item.sender} · {formatHistoryDate(item.sentAt)} · {formatAttachmentSize(item.attachment.size)} · {item.accountId}</small><small>{availability(item)}</small></span>
             </button>
-            <FileStarButton accountId={item.accountId} messageId={item.messageId} attachmentId={item.attachment.id} threadId={item.threadId} filename={item.attachment.filename} starred={item.starred} />
+            <FileStarButton accountId={item.accountId} messageId={item.messageId} attachmentId={item.attachment.id} filename={item.attachment.filename} starred={item.starred} />
           </div>)}
         </div>
         {loading ? <p className="context-status" role="status">Loading files…</p> : !files.length ? <p className="context-status">{starred ? "No starred files yet." : "No files match these filters."}</p> : null}
-        {files.length<total ? <button type="button" className="btn" disabled={loading} onClick={() => setOffset(files.length)}>Load more files</button> : null}
+        {files.length<total ? <button type="button" className="btn" disabled={loading} onClick={() => setLoad((current) => ({ offset: files.length, count: PAGE_SIZE, attempt: current.attempt+1 }))}>Load more files</button> : null}
       </div>
       <WorkspaceContextRail label="File context" onReturn={() => rows.current.get(selected ?? "")?.focus()}>
         <ContextSectionHeader title="File details" />
         {file ? <>
           <h2 className="file-detail-name">{file.attachment.filename}</h2>
           <p>{formatAttachmentSize(file.attachment.size)} · {file.attachment.mimeType}</p><p>{availability(file)}</p>
-          <div className="file-detail-actions"><button type="button" className="btn" onClick={() => action(mailClient.openAttachment(file.messageId,file.attachment.id))}><ExternalLink size={ICON_SIZE.sm} />Open</button><button type="button" className="btn" onClick={() => action(mailClient.saveAttachment(file.messageId,file.attachment.id))}><Download size={ICON_SIZE.sm} />Download</button><FileStarButton accountId={file.accountId} messageId={file.messageId} attachmentId={file.attachment.id} threadId={file.threadId} filename={file.attachment.filename} starred={file.starred} /></div>
+          <div className="file-detail-actions"><button type="button" className="btn" onClick={() => action(mailClient.openAttachment(file.messageId,file.attachment.id))}><ExternalLink size={ICON_SIZE.sm} />Open</button><button type="button" className="btn" onClick={() => action(mailClient.saveAttachment(file.messageId,file.attachment.id))}><Download size={ICON_SIZE.sm} />Download</button><FileStarButton accountId={file.accountId} messageId={file.messageId} attachmentId={file.attachment.id} filename={file.attachment.filename} starred={file.starred} /></div>
           <ContextSection id="file-source" title="Source conversation" rows={[<ContextRow key="source" icon={<MessageSquareText size={ICON_SIZE.sm} />} title={file.subject} detail={`${file.sender} · ${file.accountId}`} date={formatHistoryDate(file.sentAt)} onActivate={() => onOpenThread(file.threadId)} />]} />
         </> : <p className="context-status">Select a file to see its details and source email.</p>}
       </WorkspaceContextRail>

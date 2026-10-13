@@ -233,7 +233,11 @@ describe("ContextPanel",()=>{
 
     const files=await screen.findByRole("region",{name:"Files"});
     expectContextRows(files);
-    expect(within(files).getByRole("button",{name:"Star Report 4.pdf"})).toBeInTheDocument();
+    // Contact files carry no account; the star names none and the backend uses the message's own.
+    vi.mocked(mailClient.fileStars).mockResolvedValueOnce([["m4","a4"]]);
+    fireEvent.click(within(files).getByRole("button",{name:"Star Report 4.pdf"}));
+    await waitFor(()=>expect(mailClient.setFileStar).toHaveBeenCalledWith(undefined,"m4","a4",true));
+    expect(await within(files).findByRole("button",{name:"Unstar Report 4.pdf"})).toBeInTheDocument();
     // A PDF shows the document icon, not a generic file.
     expect(files.querySelector(".context-row-icon [data-attachment-kind]")).toHaveAttribute("data-attachment-kind","document");
     expect(mailClient.contactFiles).toHaveBeenCalledWith(bob.id,50);

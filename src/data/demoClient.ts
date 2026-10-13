@@ -886,7 +886,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     },
     async fileStars(messageIds) { return [...fileStars].map((key) => JSON.parse(key) as [string,string]).filter(([messageId]) => messageIds.includes(messageId)); },
     async setFileStar(accountId,messageId,attachmentId,starred) {
-      const thread=threads.find((thread) => thread.accountId===accountId && messagesFor(thread).some((message) => message.id===messageId && message.attachments.some((attachment) => attachment.id===attachmentId && !attachment.inline)));
+      const thread=threads.find((thread) => (accountId===undefined || thread.accountId===accountId) && messagesFor(thread).some((message) => message.id===messageId && message.attachments.some((attachment) => attachment.id===attachmentId && !attachment.inline)));
       if (!thread) throw new Error("Attachment not found");
       const key=JSON.stringify([messageId,attachmentId]);
       if (starred) fileStars.add(key); else fileStars.delete(key);

@@ -135,8 +135,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const [showOlderDone, setShowOlderDone] = useState(restored.current?.olderDone ?? false);
   const [layout, setLayout] = useState<TaskLayout>(() => restored.current?.layout ?? readTaskLayout());
   const board = layout === "board";
-  const detailOpen = useRef(false);
-  detailOpen.current = selectedTaskId !== null;
+  const shownTaskId = useRef<string | null>(null);
+  shownTaskId.current = selectedTaskId;
   const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
   const [addingTask, setAddingTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
@@ -283,8 +283,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     });
     saveQueue.current = save.catch(() => undefined);
     return save.catch((reason) => {
-      // The dialog reports its own failures; once it has closed, the banner does.
-      setError(errorMessage(reason));
+      // The detail reports failures for the task it shows; the banner covers the rest.
+      if (shownTaskId.current !== taskId) setError(errorMessage(reason));
       throw reason;
     });
   }, [onTasksChanged]);

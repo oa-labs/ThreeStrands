@@ -257,7 +257,7 @@ export const MessageCard = memo(function MessageCard({
                 const attachmentName = splitAttachmentName(attachment.filename);
                 return (
                 <div className="message-attachment" key={attachment.id}>
-                  <FileStarButton messageId={message.id} attachmentId={attachment.id} filename={attachment.filename} threadId={message.threadId} />
+                  <FileStarButton messageId={message.id} attachmentId={attachment.id} filename={attachment.filename} />
                   <HoverTooltip title={`Download ${attachment.filename}`} placement="bottom"><button
                     type="button"
                     className="attachment-badge"
