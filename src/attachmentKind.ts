@@ -36,3 +36,25 @@ export function attachmentKind(filename: string, mimeType = ""): AttachmentKind 
   const extension = dot > 0 ? filename.slice(dot + 1).toLocaleLowerCase() : "";
   return KIND_BY_EXTENSION.get(extension) ?? kindFromMimeType(mimeType);
 }
+
+/** A readable type for file details; MIME identifiers stay out of the UI. */
+export function fileTypeLabel(filename: string, mimeType = ""): string {
+  const dot = filename.lastIndexOf(".");
+  const extension = dot > 0 ? filename.slice(dot + 1).toLocaleLowerCase() : "";
+  const formats: Record<string, string> = {
+    pdf: "PDF document", png: "PNG image", jpg: "JPEG image", jpeg: "JPEG image",
+    gif: "GIF image", webp: "WebP image", svg: "SVG image", avif: "AVIF image",
+    doc: "Word document", docx: "Word document", xls: "Excel spreadsheet", xlsx: "Excel spreadsheet",
+    csv: "CSV spreadsheet", tsv: "TSV spreadsheet", ppt: "PowerPoint presentation", pptx: "PowerPoint presentation",
+    txt: "Text document", md: "Markdown document", zip: "ZIP archive", ics: "Calendar invitation",
+  };
+  if (formats[extension]) return formats[extension];
+  const mime = mimeType.split(";", 1)[0].trim().toLocaleLowerCase();
+  if (mime === "application/pdf") return "PDF document";
+  if (mime === "text/calendar") return "Calendar invitation";
+  const labels: Record<AttachmentKind, string> = {
+    image: "Image", spreadsheet: "Spreadsheet", presentation: "Presentation", document: "Document",
+    archive: "Archive", audio: "Audio file", video: "Video file", code: "Source file", other: "File",
+  };
+  return labels[attachmentKind(filename, mimeType)];
+}

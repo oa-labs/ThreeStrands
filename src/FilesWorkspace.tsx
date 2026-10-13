@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { Download, ExternalLink, MessageSquareText } from "lucide-react";
+import { Download, ExternalLink, Info, MessageSquareText, SlidersHorizontal, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { WorkspaceFile } from "./domain";
 import { WorkspaceContextRail } from "./WorkspaceContextRail";
@@ -11,11 +11,22 @@ import { formatHistoryDate } from "./contactContext";
 import { isEditableTarget } from "./commands";
 import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
+import { fileTypeLabel } from "./attachmentKind";
+import { formatDisplayName, parseAddress } from "./emailAddress";
 
 export type FilesWorkspaceSnapshot = { files: WorkspaceFile[]; total: number; selected: string | null; search: string; sender: string; type: string; direction: "" | "received" | "sent"; scope: string; after: string; before: string; starred: boolean; scroll: number };
 const PAGE_SIZE = 50;
 const keyFor = (file: WorkspaceFile) => JSON.stringify([file.accountId, file.messageId, file.attachment.id]);
-const availability = (file: WorkspaceFile) => file.availability==="offline" ? "Available offline" : file.availability==="download" ? "Download required" : "Availability not yet known";
+const senderName = (file: WorkspaceFile) => formatDisplayName(parseAddress(file.sender).name);
+
+/** Empty native date controls can display today's date on macOS. Label the
+ * unrestricted state explicitly while retaining the native picker and local-day semantics. */
+function FileDateFilter({ label, value, onChange }: { label: string; value: string; onChange(value: string): void }) {
+  return <label>{label}<span className="file-date-control">
+    <input type="date" aria-label={label} aria-description={!value ? "Any date" : undefined} value={value} data-empty={!value} onChange={(event) => onChange(event.target.value)} />
+    {!value ? <span className="file-date-placeholder" aria-hidden="true">Any date</span> : null}
+  </span></label>;
+}
 /** The instant a local calendar day (yyyy-mm-dd) starts, `days` days later. */
 const localDayStart = (day: string, days = 0) => { const [year, month, date] = day.split("-").map(Number); return new Date(year, month-1, date+days).toISOString(); };
 /** Rows to fetch: a refresh re-reads every loaded row, "Load more" appends one page. */
@@ -36,6 +47,15 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, sessions, 
   const [after, setAfter] = useState(restored.current?.after ?? "");
   const [before, setBefore] = useState(restored.current?.before ?? "");
   const [starred, setStarred] = useState(restored.current?.starred ?? false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filtersButton = useRef<HTMLButtonElement>(null);
+  const [online, setOnline] = useState(() => navigator.onLine);
+  useEffect(() => {
+    const changed = () => setOnline(navigator.onLine);
+    window.addEventListener("online", changed);
+    window.addEventListener("offline", changed);
+    return () => { window.removeEventListener("online", changed); window.removeEventListener("offline", changed); };
+  }, []);
   const loaded = useRef(files.length);
   loaded.current = files.length;
   const [load, setLoad] = useState<FileLoad>(() => ({ offset: 0, count: Math.max(PAGE_SIZE, loaded.current), attempt: 0 }));
@@ -75,6 +95,15 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, sessions, 
   useLayoutEffect(() => () => { if (sessions && snapshot.current) sessions.current.set(sessionKey,{...snapshot.current,scroll:main.current?.scrollTop ?? 0}); }, [sessions,sessionKey]);
   const scrollRestored=useRef(false);
   useLayoutEffect(() => { if (!loading && !scrollRestored.current && main.current) { main.current.scrollTop=restored.current?.scroll ?? 0; scrollRestored.current=true; } }, [loading]);
+  const filterChips = [
+    ...(sender ? [{ id: "sender", label: `Sender: ${sender}`, clear: () => setSender("") }] : []),
+    ...(type ? [{ id: "type", label: `Type: ${type[0].toUpperCase()}${type.slice(1)}`, clear: () => setType("") }] : []),
+    ...(direction ? [{ id: "direction", label: direction === "sent" ? "Sent" : "Received", clear: () => setDirection("") }] : []),
+    ...(!accountId && scope && accountIds.includes(scope) ? [{ id: "account", label: `Account: ${scope}`, clear: () => setScope("") }] : []),
+    ...(after ? [{ id: "after", label: `From: ${new Date(localDayStart(after)).toLocaleDateString()}`, clear: () => setAfter("") }] : []),
+    ...(before ? [{ id: "before", label: `Through: ${new Date(localDayStart(before)).toLocaleDateString()}`, clear: () => setBefore("") }] : []),
+  ];
+  const showAccount = scoped.length > 1;
   const file = files.find((item) => keyFor(item)===selected);
   const action = (operation: Promise<void>) => { void operation.catch((reason) => setError(errorMessage(reason))); };
   return <section className="files-workspace" aria-label="Files" onKeyDown={(event) => {
@@ -91,17 +120,32 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, sessions, 
     </header>
     <div className="files-workspace-body">
       <div ref={main} className="files-main">
-        <div className="files-filters">
-          <label>Search files<input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filename" /></label>
+        <div className="files-toolbar">
+          <label className="files-search"><span className="sr-only">Search files</span><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search filenames" /></label>
+          <button ref={filtersButton} type="button" className="btn" aria-expanded={filtersOpen} aria-controls="file-filter-controls" onClick={() => setFiltersOpen((value) => !value)}><SlidersHorizontal size={ICON_SIZE.sm} />Filters{filterChips.length ? <span className="context-count">{filterChips.length}</span> : null}</button>
+          <details className="files-help" onKeyDown={(event) => {
+            if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); }
+          }}>
+            <summary className="btn-icon" aria-label="About Files" title="About Files"><Info size={ICON_SIZE.sm} /></summary>
+            <div className="files-help-panel" role="note" aria-label="About Files"><p>Includes attachments from mail on this device, including archived conversations. Stars stay on this device. Starring a file does not keep an offline copy.</p></div>
+          </details>
+        </div>
+        <div id="file-filter-controls" className="files-filters" role="group" aria-label="File filters" hidden={!filtersOpen} onKeyDown={(event) => {
+          if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setFiltersOpen(false); filtersButton.current?.focus(); }
+        }}>
           <label>Sender<input value={sender} onChange={(event) => setSender(event.target.value)} /></label>
           <label>File type<select value={type} onChange={(event) => setType(event.target.value)}><option value="">All types</option>{["document","spreadsheet","presentation","image","audio","video","archive","calendar"].map((kind) => <option key={kind} value={kind}>{kind[0].toUpperCase()+kind.slice(1)}</option>)}</select></label>
           <label>Direction<select value={direction} onChange={(event) => setDirection(event.target.value as typeof direction)}><option value="">Received and sent</option><option value="received">Received</option><option value="sent">Sent</option></select></label>
           {!accountId ? <label>Account<select value={scope} onChange={(event) => setScope(event.target.value)}><option value="">All accounts</option>{accountIds.map((email) => <option key={email}>{email}</option>)}</select></label> : null}
-          <label>From date<input type="date" value={after} onChange={(event) => setAfter(event.target.value)} /></label>
-          <label>Through date<input type="date" value={before} onChange={(event) => setBefore(event.target.value)} /></label>
+          <FileDateFilter label="From date" value={after} onChange={setAfter} />
+          <FileDateFilter label="Through date" value={before} onChange={setBefore} />
         </div>
-        <p className="files-coverage">Attachments from mail synchronized on this device, including archived conversations. Stars are stored on this device.</p>
+        {filterChips.length ? <div className="files-active-filters" role="group" aria-label="Active file filters">
+          {filterChips.map((filter) => <button type="button" key={filter.id} className="file-filter-chip" aria-label={`Remove ${filter.label} filter`} onClick={filter.clear}>{filter.label}<X size={ICON_SIZE.xs} /></button>)}
+          <button type="button" className="btn-link" onClick={() => { setSender(""); setType(""); setDirection(""); setScope(""); setAfter(""); setBefore(""); }}>Clear filters</button>
+        </div> : null}
         {error ? <p className="form-error" role="alert">{error}<button type="button" className="btn" onClick={() => setLoad((current) => ({ ...current, attempt: current.attempt+1 }))}>Retry</button></p> : null}
+        <div className="file-list-heading" aria-hidden="true"><span className="file-list-heading-main"><span>Filename</span><span>Sender</span><span>Date</span><span>Size</span></span><span className="file-list-star-heading" /></div>
         <div className="files-list" role="list" aria-label="Mail attachments">
           {files.map((item) => <div key={keyFor(item)} role="listitem" className={`file-list-item${selected===keyFor(item) ? " selected" : ""}`}>
             <button type="button" className="file-list-select" aria-current={selected===keyFor(item) ? "true" : undefined}
@@ -112,7 +156,10 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, sessions, 
                 if (event.key!=="Enter" || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
                 event.preventDefault(); setSelected(keyFor(item)); window.dispatchEvent(new CustomEvent("threestrands:focus-context", { detail: "File context" }));
               }} onDoubleClick={() => action(mailClient.openAttachment(item.messageId,item.attachment.id))}>
-              <AttachmentIcon filename={item.attachment.filename} mimeType={item.attachment.mimeType} size="sm" /><span><strong>{item.attachment.filename}</strong><small>{item.sender} · {formatHistoryDate(item.sentAt)} · {formatAttachmentSize(item.attachment.size)} · {item.accountId}</small><small>{availability(item)}</small></span>
+              <span className="file-list-name"><AttachmentIcon filename={item.attachment.filename} mimeType={item.attachment.mimeType} size="sm" /><strong title={item.attachment.filename}>{item.attachment.filename}</strong></span>
+              <span className="file-list-sender" title={item.sender}>{senderName(item)}{showAccount ? <small className="file-list-account">{item.accountId}</small> : null}</span>
+              <time className="file-list-date" dateTime={item.sentAt}>{formatHistoryDate(item.sentAt)}</time>
+              <span className="file-list-size">{formatAttachmentSize(item.attachment.size)}</span>
             </button>
             <FileStarButton accountId={item.accountId} messageId={item.messageId} attachmentId={item.attachment.id} filename={item.attachment.filename} starred={item.starred} />
           </div>)}
@@ -124,9 +171,15 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, sessions, 
         <ContextSectionHeader title="File details" />
         {file ? <>
           <h2 className="file-detail-name">{file.attachment.filename}</h2>
-          <p>{formatAttachmentSize(file.attachment.size)} · {file.attachment.mimeType}</p><p>{availability(file)}</p>
-          <div className="file-detail-actions"><button type="button" className="btn" onClick={() => action(mailClient.openAttachment(file.messageId,file.attachment.id))}><ExternalLink size={ICON_SIZE.sm} />Open</button><button type="button" className="btn" onClick={() => action(mailClient.saveAttachment(file.messageId,file.attachment.id))}><Download size={ICON_SIZE.sm} />Download</button><FileStarButton accountId={file.accountId} messageId={file.messageId} attachmentId={file.attachment.id} filename={file.attachment.filename} starred={file.starred} /></div>
-          <ContextSection id="file-source" title="Source conversation" rows={[<ContextRow key="source" icon={<MessageSquareText size={ICON_SIZE.sm} />} title={file.subject} detail={`${file.sender} · ${file.accountId}`} date={formatHistoryDate(file.sentAt)} onActivate={() => onOpenThread(file.threadId)} />]} />
+          <p className="file-detail-meta">{fileTypeLabel(file.attachment.filename, file.attachment.mimeType)} · {formatAttachmentSize(file.attachment.size)}</p>
+          <dl className="file-detail-metadata">
+            <div><dt>From</dt><dd>{senderName(file)}{parseAddress(file.sender).email !== senderName(file) ? <span>{parseAddress(file.sender).email}</span> : null}</dd></div>
+            <div><dt>{file.direction === "sent" ? "Sent" : "Received"}</dt><dd>{new Date(file.sentAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</dd></div>
+            {showAccount ? <div><dt>Account</dt><dd>{file.accountId}</dd></div> : null}
+          </dl>
+          {file.availability === "offline" ? <p className="file-detail-meta">Available offline</p> : !online ? <p className="file-detail-meta" role="status">{file.availability === "download" ? "Connect to the internet to open this file." : "This file may need an internet connection."}</p> : null}
+          <div className="file-detail-actions"><button type="button" className="btn" onClick={() => action(mailClient.openAttachment(file.messageId,file.attachment.id))}><ExternalLink size={ICON_SIZE.sm} />Open</button><button type="button" className="btn" onClick={() => action(mailClient.saveAttachment(file.messageId,file.attachment.id))}><Download size={ICON_SIZE.sm} />Save as…</button><FileStarButton accountId={file.accountId} messageId={file.messageId} attachmentId={file.attachment.id} filename={file.attachment.filename} starred={file.starred} /></div>
+          <ContextSection id="file-source" title="Source conversation" rows={[<ContextRow key="source" icon={<MessageSquareText size={ICON_SIZE.sm} />} title={file.subject} wrapTitle detail={senderName(file)} date={formatHistoryDate(file.sentAt)} onActivate={() => onOpenThread(file.threadId)} />]} />
         </> : <p className="context-status">Select a file to see its details and source email.</p>}
       </WorkspaceContextRail>
     </div>

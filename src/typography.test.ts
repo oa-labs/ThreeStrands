@@ -133,6 +133,16 @@ describe("component typography", () => {
     for (const selector of [".reader-empty p", ".contacts-empty-state p"]) expect(sizeOf(selector), selector).toBe("--text-body");
   });
 
+  it("keeps file browsing at the email list's UI size with quieter metadata and the shared section label", () => {
+    const emailSize = sizeOf(".thread-subject");
+    for (const selector of [".file-list-select", ".file-list-name strong", ".file-detail-name"]) {
+      expect(sizeOf(selector), selector).toBe(emailSize);
+    }
+    expect(rolePx(sizeOf(".file-detail-meta")!)).toBeLessThan(rolePx(emailSize!));
+    expect(rolePx(sizeOf(".file-list-sender")!)).toBeLessThan(rolePx(emailSize!));
+    expect(sizeOf(".context-section-header h3")).toBe("--text-label");
+  });
+
   it("keeps the micro size for badges, key hints, and dense calendar blocks", () => {
     const micro = componentDeclarations("font-size").filter((declaration) => declaration.value === "var(--text-micro)");
     expect(micro.length).toBeGreaterThan(0);

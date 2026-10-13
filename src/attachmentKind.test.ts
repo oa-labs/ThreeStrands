@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attachmentKind } from "./attachmentKind";
+import { attachmentKind, fileTypeLabel } from "./attachmentKind";
 
 describe("attachmentKind", () => {
   it("reads the kind from the extension, whatever its case", () => {
@@ -32,4 +32,14 @@ describe("attachmentKind", () => {
     // A leading dot is a hidden file's name, not an extension.
     expect(attachmentKind(".png")).toBe("other");
   });
+  it("uses readable file details for specific formats and falls back without exposing raw MIME identifiers", () => {
+    expect(fileTypeLabel("invoice.PDF","application/octet-stream")).toBe("PDF document");
+    expect(fileTypeLabel("Joel.png","image/png")).toBe("PNG image");
+    expect(fileTypeLabel("report.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")).toBe("Excel spreadsheet");
+    expect(fileTypeLabel("scan","application/pdf; name=scan")).toBe("PDF document");
+    expect(fileTypeLabel("invite.ics","text/calendar")).toBe("Calendar invitation");
+    expect(fileTypeLabel("unknown","application/x-unrecognized")).toBe("File");
+    expect(fileTypeLabel(".png","application/octet-stream")).toBe("File");
+  });
+
 });

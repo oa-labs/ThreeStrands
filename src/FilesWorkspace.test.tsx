@@ -18,9 +18,11 @@ describe("Files workspace", () => {
     await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(2));
     const rail=within(screen.getByRole("complementary",{name:"File context"}));
     expect(screen.getByRole("complementary",{name:"File context"})).toHaveClass("context-panel");
-    expect(rail.getByText("Download required")).toBeInTheDocument();
+    expect(screen.queryByText("Download required")).not.toBeInTheDocument();
+    expect(rail.getByText(/^PDF document/)).toBeInTheDocument();
+    expect(rail.queryByText(/application\/pdf/)).not.toBeInTheDocument();
     fireEvent.click(rail.getByRole("button",{name:"Open"}));
-    fireEvent.click(rail.getByRole("button",{name:"Download"}));
+    fireEvent.click(rail.getByRole("button",{name:"Save as…"}));
     fireEvent.click(rail.getByRole("button",{name:/Next quarter/}));
     expect(open).toHaveBeenCalledWith(report.messageId,"report");
     expect(download).toHaveBeenCalledWith(report.messageId,"report"); expect(source).toHaveBeenCalledWith("report-thread");
@@ -31,6 +33,9 @@ describe("Files workspace", () => {
     const query=vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[],total:0});
     render(<FilesWorkspace accountId={null} accountIds={[report.accountId,"other@example.com"]} onOpenThread={vi.fn()} />);
     fireEvent.change(screen.getByLabelText("Search files"),{target:{value:"forecast"}});
+    fireEvent.click(screen.getByRole("button",{name:"Filters"}));
+    expect(screen.getByLabelText("From date")).toHaveValue("");
+    expect(screen.getByLabelText("Through date")).toHaveValue("");
     fireEvent.change(screen.getByLabelText("Sender"),{target:{value:"alice"}});
     fireEvent.change(screen.getByLabelText("File type"),{target:{value:"document"}});
     fireEvent.change(screen.getByLabelText("Direction"),{target:{value:"received"}});
@@ -39,7 +44,8 @@ describe("Files workspace", () => {
     fireEvent.change(screen.getByLabelText("Through date"),{target:{value:"2026-10-02"}});
     fireEvent.click(screen.getByRole("button",{name:"Starred"}));
     await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.objectContaining({accountIds:[report.accountId],search:"forecast",sender:"alice",type:"document",direction:"received",starred:true,after:new Date(2026,9,1).toISOString(),before:new Date(2026,9,3).toISOString(),offset:0})));
-    expect(screen.getByText(/Stars are stored on this device/)).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("About Files"));
+    expect(screen.getByRole("note",{name:"About Files"})).toHaveTextContent("Stars stay on this device");
   });
   it("re-reads every loaded page when a sync or star change refreshes the list", async () => {
     const make=(index:number):WorkspaceFile=>({...report,messageId:`m${index}`,attachment:{...report.attachment,id:`a${index}`,filename:`file-${index}.pdf`}});
@@ -111,4 +117,82 @@ describe("Files workspace", () => {
     render(<FilesWorkspace {...props} />);
     await waitFor(() => expect(within(screen.getByRole("complementary",{name:"File context"})).getByRole("heading",{name:hostile.attachment.filename})).toBeInTheDocument());
   });
+  it("keeps secondary filters collapsed and lets users remove active filters without clearing search or stars", async () => {
+    const query=vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[],total:0});
+    render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} />);
+    expect(screen.getByRole("searchbox",{name:"Search files"})).toBeVisible();
+    expect(screen.queryByRole("group",{name:"File filters"})).not.toBeInTheDocument();
+    expect(screen.getByTitle("About Files").closest("details")).not.toHaveAttribute("open");
+    fireEvent.change(screen.getByRole("searchbox",{name:"Search files"}),{target:{value:"forecast"}});
+    fireEvent.click(screen.getByRole("button",{name:"Starred"}));
+    fireEvent.click(screen.getByRole("button",{name:"Filters"}));
+    fireEvent.change(screen.getByLabelText("Sender"),{target:{value:"alice"}});
+    fireEvent.change(screen.getByLabelText("File type"),{target:{value:"document"}});
+    fireEvent.keyDown(screen.getByLabelText("Sender"),{key:"Escape"});
+    expect(screen.queryByRole("group",{name:"File filters"})).not.toBeInTheDocument();
+    expect(screen.getByRole("button",{name:/^Filters/})).toHaveFocus();
+    const active=within(screen.getByRole("group",{name:"Active file filters"}));
+    fireEvent.click(active.getByRole("button",{name:"Remove Sender: alice filter"}));
+    await waitFor(()=>expect(query).toHaveBeenLastCalledWith(expect.objectContaining({search:"forecast",sender:"",type:"document",starred:true})));
+    fireEvent.click(active.getByRole("button",{name:"Clear filters"}));
+    await waitFor(()=>expect(query).toHaveBeenLastCalledWith(expect.objectContaining({search:"forecast",sender:"",type:"",starred:true})));
+    expect(screen.queryByRole("group",{name:"Active file filters"})).not.toBeInTheDocument();
+  });
+  it("shows clean sender names and keeps addresses in details, without repeating a single account in every row", async () => {
+    vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[report],total:1});
+    const {container}=render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} />);
+    const row=await screen.findByRole("listitem");
+    expect(within(row).getByText("Alice")).toHaveAttribute("title",report.sender);
+    expect(row).not.toHaveTextContent("alice@example.com");
+    expect(row).not.toHaveTextContent(report.accountId);
+    expect(within(screen.getByRole("complementary",{name:"File context"})).getByText("alice@example.com")).toBeInTheDocument();
+    expect(container.querySelector(".file-list-heading-main")).toHaveTextContent("FilenameSenderDateSize");
+    expect(container.querySelector(".context-row-wrap")).toHaveTextContent(report.subject);
+  });
+  it("labels accounts in the merged view so otherwise identical files remain distinguishable", async () => {
+    const other={...copy,accountId:"other@example.com"};
+    vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[report,other],total:2});
+    render(<FilesWorkspace accountId={null} accountIds={[report.accountId,other.accountId]} onOpenThread={vi.fn()} />);
+    await waitFor(()=>expect(screen.getAllByRole("listitem")).toHaveLength(2));
+    const rows=screen.getAllByRole("listitem");
+    expect(rows[0]).toHaveTextContent(report.accountId); expect(rows[1]).toHaveTextContent(other.accountId);
+  });
+  it("shows availability only in the selected file's details when it matters", async () => {
+    const query=vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[report],total:1});
+    const connection=vi.spyOn(navigator,"onLine","get").mockReturnValue(true);
+    const props={accountId:report.accountId,accountIds:[report.accountId],onOpenThread:vi.fn()};
+    const view=render(<FilesWorkspace {...props} refreshKey="1" />);
+    await screen.findByRole("listitem");
+    expect(screen.queryByText("Download required")).not.toBeInTheDocument();
+    expect(screen.queryByText("Availability not yet known")).not.toBeInTheDocument();
+    connection.mockReturnValue(false); act(()=>window.dispatchEvent(new Event("offline")));
+    expect(within(screen.getByRole("complementary",{name:"File context"})).getByRole("status")).toHaveTextContent("Connect to the internet to open this file.");
+    expect(within(screen.getByRole("listitem")).queryByRole("status")).not.toBeInTheDocument();
+    connection.mockReturnValue(true); act(()=>window.dispatchEvent(new Event("online")));
+    expect(screen.queryByText("Connect to the internet to open this file.")).not.toBeInTheDocument();
+    query.mockResolvedValue({files:[{...report,availability:"offline"}],total:1});
+    view.rerender(<FilesWorkspace {...props} refreshKey="2" />);
+    expect(await screen.findByText("Available offline")).toBeInTheDocument();
+    connection.mockReturnValue(false); act(()=>window.dispatchEvent(new Event("offline")));
+    expect(screen.getByRole("button",{name:"Open"})).toBeEnabled();
+    expect(screen.queryByText("Connect to the internet to open this file.")).not.toBeInTheDocument();
+  });
+  it("shows unrestricted dates explicitly and removes date restrictions with the filter chips", async () => {
+    const query=vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[],total:0});
+    render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button",{name:"Filters"}));
+    for (const label of ["From date","Through date"]) {
+      expect(screen.getByLabelText(label)).toHaveValue("");
+      expect(screen.getByLabelText(label)).toHaveAttribute("aria-description","Any date");
+    }
+    expect(screen.getAllByText("Any date")).toHaveLength(2);
+    fireEvent.change(screen.getByLabelText("From date"),{target:{value:"2026-10-01"}});
+    expect(screen.getByLabelText("From date")).not.toHaveAttribute("aria-description");
+    fireEvent.click(screen.getByRole("button",{name:/Remove From:/}));
+    expect(screen.getByLabelText("From date")).toHaveValue("");
+    await waitFor(()=>expect(query).toHaveBeenCalled());
+    expect(query.mock.calls.at(-1)?.[0].after).toBeUndefined();
+    expect(query.mock.calls.at(-1)?.[0].before).toBeUndefined();
+  });
+
 });
