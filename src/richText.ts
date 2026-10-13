@@ -30,6 +30,15 @@ export const formattingShortcuts: FormattingShortcut[] = [
   { id: "format.outdent", title: "Decrease Indent", key: "Mod+[", command: "outdent" },
 ];
 
+/** The everyday formats offered as hints while body text is selected. */
+export const selectionFormattingHints = ["format.bold", "format.italic", "format.underline", "format.strike", "format.link"]
+  .map((id) => formattingShortcuts.find((shortcut) => shortcut.id === id)!);
+
+/** Renders a shortcut like the compose footer's other hints: "Mod+Shift+x" → "⌘/Ctrl ⇧ X". */
+export function composeKeyLabel(key: string): string {
+  return key.split(/\+(?=.)/).map((part) => part === "Mod" ? "⌘/Ctrl" : part === "Shift" ? "⇧" : part.toUpperCase()).join(" ");
+}
+
 export function formattingShortcutFor(event: KeyboardEvent): FormattingShortcut | undefined {
   return formattingShortcuts.find((shortcut) => matchesShortcut(event, shortcut.key));
 }
@@ -148,7 +157,8 @@ function stripFixedWidth(editor: HTMLElement): void {
 export function applyFormattingShortcut(
   editor: HTMLElement,
   shortcut: FormattingShortcut,
-  ask: typeof window.prompt = window.prompt,
+  // Callers ask in-app (FormattingPromptDialog): the desktop webview has no `window.prompt`.
+  ask: (message: string, initial: string) => string | null = () => null,
 ): boolean {
   if (shortcut.listOnly && !selectionIsInList(editor)) return false;
 

@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 72;
+pub(crate) const LATEST_VERSION: i64 = 73;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -2097,6 +2097,16 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
             PRAGMA user_version=72;
         "#).map_err(error)?;
     }
+    if version < 73 {
+        // Inbox previews kept Markdown syntax and raw URLs from senders'
+        // plain-text parts. Rebuild previews in the existing bounded
+        // background queue, without a network refetch.
+        tx.execute_batch(
+            "INSERT OR IGNORE INTO pending_search_reindex(thread_id) SELECT thread_id FROM thread_search;
+             PRAGMA user_version=73;",
+        )
+        .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -2146,6 +2156,39 @@ mod tests {
             body, "@media screen",
             "repair runs later in bounded batches"
         );
+        connection
+            .execute("DELETE FROM pending_search_reindex", [])
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM pending_search_reindex", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0, "completed repairs are not requeued on restart");
+    }
+
+    #[test]
+    fn v73_requeues_cached_previews_for_markdown_and_urls_once() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "DELETE FROM pending_search_reindex;
+             INSERT INTO thread_search(thread_id, subject, snippet, participants, body)
+             VALUES ('you@gmail.com:t1', 'Intro', 'Hi [Amit](https://example.com/amit)', 'Sender', 'Hi [Amit](https://example.com/amit)');
+             PRAGMA user_version=72;",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let queued: Vec<String> = connection
+            .prepare("SELECT thread_id FROM pending_search_reindex")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(queued, vec!["you@gmail.com:t1".to_string()]);
         connection
             .execute("DELETE FROM pending_search_reindex", [])
             .unwrap();

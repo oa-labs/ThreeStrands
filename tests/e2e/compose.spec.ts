@@ -373,11 +373,25 @@ test("Superhuman formatting shortcuts edit rich compose content and appear in he
   await body.press("ControlOrMeta+b");
   await expect(body.locator("b, strong")).toHaveText("Bold text");
 
+  await body.fill("Italic text");
+  await body.press("ControlOrMeta+a");
+  await body.press("ControlOrMeta+i");
+  await expect(body.locator("i, em")).toHaveText("Italic text");
+
+  await body.fill("Underlined text");
+  await body.press("ControlOrMeta+a");
+  await body.press("ControlOrMeta+u");
+  await expect(body.locator("u")).toHaveText("Underlined text");
+
   await body.fill("ThreeStrands");
   await body.press("ControlOrMeta+a");
-  page.once("dialog", (dialog) => dialog.accept("https://threestrands.local"));
   await body.press("ControlOrMeta+k");
+  const linkDialog = page.getByRole("dialog", { name: "Insert Link" });
+  await linkDialog.getByRole("textbox", { name: "Link URL" }).fill("threestrands.local");
+  await linkDialog.getByRole("button", { name: "Insert Link" }).click();
+  await expect(linkDialog).toHaveCount(0);
   await expect(body.locator("a")).toHaveAttribute("href", "https://threestrands.local");
+  await expect(body.locator("a")).toHaveText("ThreeStrands");
 
   await body.fill("One");
   await body.press("ControlOrMeta+a");

@@ -2143,9 +2143,12 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .thread-assist-suggestions { display:grid; grid-template-columns:minmax(0,1fr); min-width:0; gap:var(--space-2); margin-top:var(--space-2-5); }
 .thread-assist-suggestions h4 { margin:0; color:var(--muted); }
 .context-meeting-details { min-width:0; overflow:hidden; text-overflow:ellipsis; }
-.context-chat-dock { position:sticky; bottom:0; margin:auto calc(var(--space-4) * -1) 0; padding:0 var(--space-4) var(--space-1); border-top:1px solid var(--border); background:var(--surface); }
-.thread-chat { border-bottom:0; }
-.thread-chat-log { display:grid; gap:var(--space-2-5); max-height:min(40vh, 360px); margin-bottom:var(--space-2-5); overflow:auto; }
+.context-chat-dock { position:sticky; bottom:0; display:flex; flex-direction:column; margin:auto calc(var(--space-4) * -1) 0; padding:0 var(--space-4) var(--space-1); border-top:1px solid var(--border); background:var(--surface); }
+/* Once there is a conversation, it takes whatever height the collapsed sections leave free. */
+.context-chat-dock:has(.thread-chat-log) { flex:1 0 auto; }
+.thread-chat { display:flex; flex:1 1 auto; flex-direction:column; min-height:0; border-bottom:0; }
+/* Grows into free space; with none, it falls back to its content height capped at min(40vh, 360px). */
+.thread-chat-log { display:grid; flex:1 1 0; align-content:start; gap:var(--space-2-5); min-height:min(var(--thread-chat-log-content, 0px), 40vh, 360px); margin-bottom:var(--space-2-5); overflow:auto; }
 .thread-chat-question { justify-self:end; max-width:88%; margin:0; padding:var(--space-2) var(--space-2-5); border-radius:var(--radius-md); color:var(--text); background:color-mix(in srgb,var(--accent) 12%,var(--surface)); font-size:var(--text-body); white-space:pre-wrap; overflow-wrap:anywhere; }
 .thread-chat-question small { display:block; margin-top:var(--space-1); color:var(--muted); font-size:var(--text-meta); }
 .thread-chat-answer { display:grid; gap:var(--space-1-5); font-size:var(--text-body); }
@@ -2941,7 +2944,9 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .recipient-suggestion-group > svg { flex-shrink: 0; color: var(--muted); }
 /* What choosing a group added, on its own line under that field's row. */
 .recipient-group-note { flex-shrink: 0; margin: 0; padding-bottom: var(--space-1-5); color: var(--muted); font-size: var(--text-meta); }
-.compose-body { display: block; width: 100%; min-height: 200px; height: min(32vh, 360px); flex-shrink: 0; padding: var(--space-3) 0; overflow-y: auto; color: var(--body-text); background: transparent; border: 0; outline: 0; font-family: inherit; font-size: var(--text-reading); line-height: var(--leading-normal); white-space: pre-wrap; }
+/* The root disables font synthesis for UI chrome, but authored italics must stay visible
+   when the chosen font (e.g. Tahoma) ships no italic face, so the editor may slant it. */
+.compose-body { font-synthesis: style; display: block; width: 100%; min-height: 200px; height: min(32vh, 360px); flex-shrink: 0; padding: var(--space-3) 0; overflow-y: auto; color: var(--body-text); background: transparent; border: 0; outline: 0; font-family: inherit; font-size: var(--text-reading); line-height: var(--leading-normal); white-space: pre-wrap; }
 /* A new message has no thread above it, so its window is ~40% taller than a reply's;
    the 100vh cap keeps Send on screen in short windows, where the 200px floor applies. */
 .composer-new .compose-body:not(.compose-quoted) { height: min(45vh + 90px, 600px, 100vh - 400px); }
@@ -2979,6 +2984,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .composer footer { display: flex; align-items: center; gap: var(--space-2-5); padding: var(--space-4) var(--pane-inset); border-top: 1px solid var(--border); flex-shrink: 0; }
 .save-status { margin-left: auto; font-size: var(--text-meta); color: var(--muted); }
 .compose-note { flex-shrink: 0; margin: 0; padding: 0 var(--pane-inset) var(--space-4); color: var(--muted); font-size: var(--text-meta); }
+.compose-format-hints { display: inline-flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); }
 .compose-error { margin: var(--space-2) 0 var(--space-3); }
 .compose-error .btn { flex-shrink: 0; }
 .attachment-list { margin: 0 0 var(--space-4); padding: 0; list-style: none; flex-shrink: 0; }

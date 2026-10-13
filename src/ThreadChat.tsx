@@ -149,6 +149,36 @@ export function ThreadChat({
     log.current?.scrollTo?.({ top: log.current.scrollHeight });
   }, [entries.length, pending]);
 
+  // The log grows into free panel space, so its own box height can exceed its
+  // content. Publish the content height as the log's floor; CSS caps it, so a
+  // full panel still shows a short log instead of reserving blank space.
+  useLayoutEffect(() => {
+    const element = log.current;
+    if (!element) return;
+    const measure = () => {
+      const first = element.firstElementChild;
+      const last = element.lastElementChild;
+      const height = first && last ? last.getBoundingClientRect().bottom - first.getBoundingClientRect().top : 0;
+      const value = `${Math.ceil(height)}px`;
+      if (element.style.getPropertyValue("--thread-chat-log-content") !== value) element.style.setProperty("--thread-chat-log-content", value);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    // Measure on the next frame: changing the floor inside the callback would
+    // resize the observed log within the same notification pass.
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
+    });
+    observer.observe(element);
+    for (const child of element.children) observer.observe(child);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [entries, pending]);
+
   const leave = () => {
     setOpen(false);
     const target = returnFocus.current;

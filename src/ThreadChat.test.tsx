@@ -45,6 +45,19 @@ describe("ThreadChat", () => {
     expect(screen.getByText("Suggestions reviewed")).toBeInTheDocument();
   });
 
+  it("publishes the log's content height so it only grows into free panel space", () => {
+    const rect = (top: number, bottom: number) => ({ top, bottom, left: 0, right: 0, width: 0, height: bottom - top, x: 0, y: top, toJSON: () => ({}) });
+    const spy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("thread-chat-question") ? rect(100, 140) : rect(150, 230.4);
+    });
+    try {
+      render(<ThreadChat {...props({ entries: [{ id: "q1", role: "user", content: "When?", searchMailbox: false, attachments: [] }, answer()] })} />);
+      expect(screen.getByRole("log").style.getPropertyValue("--thread-chat-log-content")).toBe("131px");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("stays a read-only prompt until activated, so single-key shortcuts keep working", () => {
     render(<ThreadChat {...props()} />);
     const prompt = screen.getByRole("button", { name: /Ask about this conversation/ });

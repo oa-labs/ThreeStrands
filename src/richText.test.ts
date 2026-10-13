@@ -6,11 +6,13 @@ import {
   composeHtmlToText,
   draftTextToComposeHtml,
   applyFormattingShortcut,
+  composeKeyLabel,
   formattingShortcutFor,
   formattingShortcuts,
   insertHtmlAtRange,
   pastedLinkHref,
   plainTextToHtml,
+  selectionFormattingHints,
   sanitizeComposeHtml,
   serializeComposeBody,
   serializeComposeHtml,
@@ -84,6 +86,18 @@ describe("Superhuman formatting shortcuts", () => {
     selection.addRange(range);
     expect(applyFormattingShortcut(editor, indent)).toBe(true);
     expect(execute).toHaveBeenCalledWith("indent", false, "");
+  });
+});
+
+describe("selection formatting hints", () => {
+  it("offers the everyday formats with footer-style key labels", () => {
+    expect(selectionFormattingHints.map(({ title, key }) => [title, composeKeyLabel(key)])).toEqual([
+      ["Bold", "⌘/Ctrl B"],
+      ["Italics", "⌘/Ctrl I"],
+      ["Underline", "⌘/Ctrl U"],
+      ["Strikethrough", "⌘/Ctrl ⇧ X"],
+      ["Hyperlink", "⌘/Ctrl K"],
+    ]);
   });
 });
 

@@ -148,7 +148,8 @@ pub struct ThreadSearchText {
     /// repeated at `MIN_SEEN_LINE_COVERAGE`, not 100%) are kept, so every
     /// word stays searchable.
     pub body: String,
-    /// The latest message before any quoted history, whitespace collapsed and
+    /// The latest message before any quoted history, Markdown and URLs
+    /// removed (see [`crate::preview_text`]), whitespace collapsed, and
     /// capped at `SEARCH_PREVIEW_CHARS`; empty when that message has no text.
     /// Everything here is also in `body`, so cutting at an unconfirmed quote
     /// loses no matches.
@@ -163,7 +164,17 @@ pub fn searchable_thread_text<'a>(bodies: impl IntoIterator<Item = &'a str>) -> 
     let mut latest_preview = String::new();
     for body in bodies {
         let preview = &body[..history.preview_text_len(body)];
-        latest_preview = preview.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(SEARCH_PREVIEW_CHARS).collect();
+        // Markdown and raw URLs are noise in a one-line preview; a body that
+        // is nothing but a link still previews as that link.
+        let readable = crate::preview_text::readable_preview(preview);
+        let collapse = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+        latest_preview = match collapse(&readable) {
+            cleaned if cleaned.is_empty() => collapse(preview),
+            cleaned => cleaned,
+        }
+        .chars()
+        .take(SEARCH_PREVIEW_CHARS)
+        .collect();
         let new_len = history.new_text_len(body);
         let (new_text, removed) = body.split_at(new_len);
         out.push_str(new_text);
@@ -513,6 +524,16 @@ mod tests {
         // A body that is only a quote keeps it, so the preview is never empty for a message with text.
         assert_eq!(searchable_thread_text(["On Mon, A wrote:\n> hello"]).latest_preview, "On Mon, A wrote: > hello");
         assert_eq!(searchable_thread_text([original, ""]).latest_preview, "");
+    }
+
+    #[test]
+    fn search_preview_drops_markdown_and_urls_but_body_keeps_them() {
+        let body = "Hey Joel I'm [Amit](https://www.example.com/in/amit/) and **this** is the list:\nhttps://example.com/list?id=1";
+        let text = searchable_thread_text([body]);
+        assert_eq!(text.latest_preview, "Hey Joel I'm Amit and this is the list:");
+        assert!(text.body.contains("https://example.com/list?id=1"));
+        // Nothing but a link still previews as the link.
+        assert_eq!(searchable_thread_text(["https://example.com/x"]).latest_preview, "https://example.com/x");
     }
 
     #[test]

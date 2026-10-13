@@ -19,7 +19,7 @@ import { useEscapeDismiss } from "./useEscapeDismiss";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import type { DraftReviewActions } from "./draftReview";
-import { plainTextToHtml } from "./richText";
+import { composeKeyLabel, plainTextToHtml, selectionFormattingHints } from "./richText";
 import { ScheduleSendPicker } from "./ScheduleSendPicker";
 
 export type ComposerHandle = {
@@ -58,6 +58,8 @@ export const Composer = forwardRef<ComposerHandle, {
   const [error, setError] = useState("");
   const { draft, latest, status, edit, markChanged, captureBody, flush, replaceDraft } = useDraftAutosave(initial, captureChanges, setError);
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  // While body text is selected, the footer note trades its draft reminder for formatting shortcuts.
+  const [textSelected, setTextSelected] = useState(false);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   // The draft account's ordered sending identities, for the From picker.
@@ -357,6 +359,7 @@ export const Composer = forwardRef<ComposerHandle, {
           onUpdateSnippet={onUpdateSnippet}
           onDeleteSnippet={onDeleteSnippet}
           onChange={markChanged}
+          onSelectionChange={setTextSelected}
           onError={setError}
           onAttachImage={attachInlineImage}
           onRemoveImage={removeInlineImage}
@@ -376,7 +379,12 @@ export const Composer = forwardRef<ComposerHandle, {
         {error && <div className="notice compose-error" role="alert">{error} <button className="btn btn-sm" onClick={() => void run(async () => { await flush(); })}>Retry Save</button></div>}
       </div>
       <footer><button className="btn btn-primary send-button" onClick={() => send()} disabled={busy}><Send size={ICON_SIZE.md} /> Send <kbd>⌘/Ctrl ↵</kbd></button><button className="btn" onClick={() => setScheduleOpen(true)} disabled={busy} aria-label="Send later" aria-keyshortcuts="Meta+Shift+L Control+Shift+L">Send later <kbd>⌘/Ctrl ⇧ L</kbd></button><button className="btn-icon" onClick={attach} disabled={busy} aria-label="Attach Files"><Paperclip size={ICON_SIZE.lg} /></button><span className="save-status" role="status">{status}</span><button className="btn-icon" disabled={busy} aria-label="Discard Draft" onClick={discard}><Trash size={ICON_SIZE.lg} /></button></footer>
-      <p className="compose-note">Drafts are saved on this device. Send has a 10-second undo window.{!("__TAURI_INTERNALS__" in window) && " Browser preview: delivery and attachments are simulated."}</p>
+      <p className="compose-note">
+        {textSelected
+          ? <span className="compose-format-hints" aria-label="Formatting shortcuts">{selectionFormattingHints.map((shortcut) => <span key={shortcut.id}>{shortcut.title} <kbd>{composeKeyLabel(shortcut.key)}</kbd></span>)}</span>
+          : "Drafts are saved on this device. Send has a 10-second undo window."}
+        {!("__TAURI_INTERNALS__" in window) && " Browser preview: delivery and attachments are simulated."}
+      </p>
       {scheduleOpen && <ScheduleSendPicker onClose={() => setScheduleOpen(false)} onSchedule={async (selection) => {
         if (busyRef.current) throw new Error("Finish the current composer action first");
         busyRef.current = true; setBusy(true);

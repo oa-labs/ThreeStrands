@@ -77,6 +77,12 @@ describe("component typography", () => {
     }
   });
 
+  it("lets authored text show italics even in a chosen font without an italic face", () => {
+    // The root turns synthesis off for UI chrome; the editor must re-allow slanting,
+    // or Mod+I inserts <i> that renders upright in fonts like Tahoma.
+    expect(componentDeclarations("font-synthesis").map(describeDeclaration)).toEqual([".compose-body { font-synthesis: style }"]);
+  });
+
   it("uses size steps only to define roles", () => {
     const stepUses: string[] = [];
     css.walkDecls((declaration) => {

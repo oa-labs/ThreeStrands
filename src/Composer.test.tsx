@@ -144,6 +144,72 @@ describe("Composer recipient visibility and shortcuts", () => {
   });
 });
 
+describe("Composer formatting hints", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    window.getSelection()?.removeAllRanges();
+  });
+
+  const select = (node: Node, start: number, end: number) => {
+    const range = document.createRange();
+    range.setStart(node, start);
+    range.setEnd(node, end);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    act(() => { document.dispatchEvent(new Event("selectionchange")); });
+  };
+
+  it("trades the draft reminder for formatting shortcuts only while body text is selected", () => {
+    render(<Composer draft={{ ...draft, body: "Hello there" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
+    expect(screen.getByText(/Drafts are saved on this device/)).toBeInTheDocument();
+
+    select(editor.firstChild!, 0, 5);
+    const hints = screen.getByLabelText("Formatting shortcuts");
+    expect(hints).toHaveTextContent("Bold ⌘/Ctrl B");
+    expect(hints).toHaveTextContent("Italics ⌘/Ctrl I");
+    expect(hints).toHaveTextContent("Strikethrough ⌘/Ctrl ⇧ X");
+    expect(screen.queryByText(/Drafts are saved on this device/)).not.toBeInTheDocument();
+
+    select(editor.firstChild!, 2, 2);
+    expect(screen.queryByLabelText("Formatting shortcuts")).not.toBeInTheDocument();
+    expect(screen.getByText(/Drafts are saved on this device/)).toBeInTheDocument();
+  });
+
+  it("asks for a link in-app, since the desktop webview has no window.prompt", () => {
+    const execute = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", { configurable: true, value: execute });
+    const nativePrompt = vi.spyOn(window, "prompt");
+    render(<Composer draft={{ ...draft, body: "Hello there" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
+    const text = editor.firstChild!;
+
+    select(text, 0, 5);
+    fireEvent.keyDown(editor, { key: "k", metaKey: true });
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Insert Link" })).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog", { name: "Insert Link" })).not.toBeInTheDocument();
+    expect(execute).not.toHaveBeenCalled();
+
+    select(text, 0, 5);
+    fireEvent.keyDown(editor, { key: "k", metaKey: true });
+    const dialog = screen.getByRole("dialog", { name: "Insert Link" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Link URL" }), { target: { value: "example.com" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Insert Link" }));
+
+    expect(execute).toHaveBeenCalledWith("createLink", false, "https://example.com");
+    const range = window.getSelection()!.getRangeAt(0);
+    expect([range.startContainer, range.startOffset, range.endOffset]).toEqual([text, 0, 5]);
+    expect(nativePrompt).not.toHaveBeenCalled();
+  });
+
+  it("keeps the draft reminder for selections outside the message body", () => {
+    render(<Composer draft={{ ...draft, subject: "Status", body: "Hello there" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    select(screen.getByText(/Drafts are saved on this device/).firstChild!, 0, 6);
+    expect(screen.queryByLabelText("Formatting shortcuts")).not.toBeInTheDocument();
+  });
+});
+
 describe("Composer list marker shortcuts", () => {
   afterEach(() => {
     cleanup();

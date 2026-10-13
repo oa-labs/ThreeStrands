@@ -5,7 +5,9 @@ import {
   applyListShortcut, applyFormattingShortcut, formattingShortcutFor,
   insertHtmlAtRange, linkifyPlainText, pastedLinkHref, draftTextToComposeHtml,
   plainTextToHtml, sanitizeComposeHtml, serializeComposeBody, splitReplyQuote,
+  type FormattingShortcut,
 } from "./richText";
+import { FormattingPromptDialog } from "./FormattingPromptDialog";
 import { SafeMessage, type MessageAppearance } from "./SafeMessage";
 import { mailClient } from "./data/client";
 import { normalizeContentId } from "./inlineAttachments";
@@ -44,6 +46,8 @@ type ComposeBodyEditorProps = {
   onUpdateSnippet(id: string, name: string, body: string): Promise<Snippet>;
   onDeleteSnippet(id: string): Promise<void>;
   onChange(): void;
+  /** Called when a non-empty selection inside the editable text starts or ends. */
+  onSelectionChange?(hasSelection: boolean): void;
   onError(message: string): void;
   onAttachImage(file: File, data: string): Promise<Attachment | undefined>;
   onRemoveImage(attachmentId: string): void;
@@ -54,7 +58,7 @@ type ComposeBodyEditorProps = {
 export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBodyEditorProps>(function ComposeBodyEditor({
   initial, attachments, messageAppearance, busy, recipientTo, availabilityText, expandQuotedText = false, snippets,
   onCreateSnippet, onUpdateSnippet, onDeleteSnippet,
-  onChange, onError, onAttachImage, onRemoveImage, readInlineImage,
+  onChange, onSelectionChange, onError, onAttachImage, onRemoveImage, readInlineImage,
 }, ref) {
   const bodyEditor = useRef<HTMLDivElement>(null);
   const quotedEditor = useRef<HTMLDivElement>(null);
@@ -65,6 +69,23 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
   const savedSnippetRange = useRef<Range | null>(null);
   const insertedAvailabilityText = useRef<string | null>(null);
   const [snippetPickerOpen, setSnippetPickerOpen] = useState(false);
+  useEffect(() => {
+    if (!onSelectionChange) return;
+    let selected = false;
+    const update = () => {
+      const selection = document.getSelection();
+      const next = Boolean(selection && !selection.isCollapsed && selection.rangeCount
+        && [bodyEditor.current, quotedEditor.current].some((editor) => editor?.contains(selection.getRangeAt(0).commonAncestorContainer)));
+      if (next === selected) return;
+      selected = next;
+      onSelectionChange(next);
+    };
+    document.addEventListener("selectionchange", update);
+    return () => {
+      document.removeEventListener("selectionchange", update);
+      if (selected) onSelectionChange(false);
+    };
+  }, [onSelectionChange]);
   const [quoteExpanded, setQuoteExpanded] = useState(expandQuotedText);
   // Lazy initializer: `useRef(expr)` would evaluate `expr` on every render, so
   // each status change re-sanitized the whole quoted thread before the next paint.
@@ -85,6 +106,25 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
     bodyDirty.current = true;
     onChange();
   }, [onChange]);
+  // A link or color shortcut asks for its value in-app, then applies it to the
+  // saved selection once the dialog has closed and the editor is no longer inert.
+  type FormattingPrompt = { shortcut: FormattingShortcut; editor: HTMLElement; range: Range | null };
+  const [formattingPrompt, setFormattingPrompt] = useState<FormattingPrompt | null>(null);
+  const finishedPrompt = useRef<(FormattingPrompt & { value: string | null }) | null>(null);
+  useEffect(() => {
+    const finished = finishedPrompt.current;
+    if (formattingPrompt || !finished) return;
+    finishedPrompt.current = null;
+    finished.editor.focus();
+    if (finished.range) {
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(finished.range);
+    }
+    if (finished.value === null) return;
+    applyFormattingShortcut(finished.editor, finished.shortcut, () => finished.value);
+    editBody();
+  }, [formattingPrompt, editBody]);
   const captureChanges = useCallback(() => {
     if (!bodyDirty.current || !bodyEditor.current) return null;
     const { html, text } = serializeComposeBody(bodyEditor.current, quotedEditor.current);
@@ -292,6 +332,14 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
       }
       const shortcut = formattingShortcutFor(event.nativeEvent);
       if (!shortcut) return;
+      if (shortcut.prompt) {
+        event.preventDefault();
+        event.stopPropagation();
+        const selection = window.getSelection();
+        const range = selection?.rangeCount && event.currentTarget.contains(selection.anchorNode) ? selection.getRangeAt(0).cloneRange() : null;
+        setFormattingPrompt({ shortcut, editor: event.currentTarget, range });
+        return;
+      }
       if (applyFormattingShortcut(event.currentTarget, shortcut)) {
         event.preventDefault();
         event.stopPropagation();
@@ -348,6 +396,19 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
         <SafeMessage {...messageAppearance} foldQuotes={false} html={initial.forwardedContent.html} text={initial.forwardedContent.text}
           resolveImage={resolveForwardedImage} imageCacheKey={`${initial.id}:${attachments.filter((attachment) => attachment.inline && attachment.ready).map((attachment) => attachment.id).join(",")}`} />
       </section>
+    ) : null}
+    {formattingPrompt?.shortcut.prompt ? (
+      <FormattingPromptDialog
+        kind={formattingPrompt.shortcut.prompt}
+        onClose={() => {
+          finishedPrompt.current = { ...formattingPrompt, value: null };
+          setFormattingPrompt(null);
+        }}
+        onSubmit={(value) => {
+          finishedPrompt.current = { ...formattingPrompt, value };
+          setFormattingPrompt(null);
+        }}
+      />
     ) : null}
     {snippetPickerOpen ? (
       <SnippetPicker
