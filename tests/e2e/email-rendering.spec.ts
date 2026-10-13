@@ -148,6 +148,44 @@ test.describe("email rendering fixtures", () => {
     }
   }
 
+  for (const { fixture, alt, size } of [
+    { fixture: "iconCalloutFlexTable", alt: "info", size: 18 },
+    { fixture: "iconCalloutTable", alt: "note", size: 24 },
+  ]) {
+    for (const width of [390, 1200]) {
+      test(`${fixture} keeps its declared icon size beside wrapping text at ${width}px`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto(`/tests/email-rendering.html?theme=light&images&fixture=${fixture}`);
+        const icon = page.locator("iframe.message-body").contentFrame().getByAltText(alt);
+        await expect(icon).toHaveAttribute("src", /^data:image\//);
+        await expect.poll(async () => (await icon.boundingBox())?.width).toBe(size);
+        expect((await icon.boundingBox())!.height).toBe(size);
+      });
+    }
+  }
+
+  for (const { fixture, alt } of [
+    { fixture: "heroInTable", alt: "hero" },
+    { fixture: "heroInFlow", alt: "banner" },
+  ]) {
+    test(`${fixture} scales a wide image to fit a narrow pane`, async ({ page }) => {
+      await page.setViewportSize({ width: 390, height: 900 });
+      await page.goto(`/tests/email-rendering.html?theme=light&images&fixture=${fixture}`);
+      const frame = page.locator("iframe.message-body");
+      const image = frame.contentFrame().getByAltText(alt);
+      await expect(image).toHaveAttribute("src", /^data:image\//);
+      const frameBox = (await frame.boundingBox())!;
+      await expect.poll(async () => (await image.boundingBox())?.width).toBeLessThan(600);
+      const imageBox = (await image.boundingBox())!;
+      expect(imageBox.x + imageBox.width).toBeLessThanOrEqual(frameBox.x + frameBox.width);
+      const overflow = await frame.evaluate((element) => {
+        const root = (element as HTMLIFrameElement).contentDocument!.documentElement;
+        return root.scrollWidth - root.clientWidth;
+      });
+      expect(overflow).toBeLessThanOrEqual(0);
+    });
+  }
+
   for (const { fixture, current } of [
     { fixture: "replyAttributionWithLinkedAddress", current: "Thanks, that works." },
     { fixture: "replyAttributionInsideCitation", current: "Sounds good." },

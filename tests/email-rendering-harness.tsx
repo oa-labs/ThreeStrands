@@ -29,6 +29,10 @@ document.body.style.padding = "24px";
 document.body.style.background = theme === "light" ? "#fff" : "#17171c";
 document.body.style.color = theme === "light" ? "#24242c" : "#e8e8eb";
 
+// A tiny opaque PNG stands in for the native image proxy, so rendered images
+// size from their declared attributes rather than placeholder styling.
+const FIXTURE_IMAGE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+const resolveFixtureImage = async () => FIXTURE_IMAGE;
 
 function RenderingHarness() {
   const [minimum, setMinimum] = useState(Number(params.get("minimumFontSize") ?? 0));
@@ -41,7 +45,7 @@ function RenderingHarness() {
       {params.has("tone") ? <select aria-label="Message tone" value={tone} onChange={(event) => setTone(event.target.value as typeof tone)}>
         <option value="default">Unread</option><option value="muted">Read</option><option value="current">Latest</option>
       </select> : null}
-      <SafeMessage html={params.has("plain") ? "" : fixture} text="Plain text message" theme={theme} loadImages={false} emailMinimumFontSize={minimum} priorThreadText={priorThreadText} tone={tone} />
+      <SafeMessage html={params.has("plain") ? "" : fixture} text="Plain text message" theme={theme} loadImages={params.has("images")} resolveImage={resolveFixtureImage} emailMinimumFontSize={minimum} priorThreadText={priorThreadText} tone={tone} />
     </div>
   );
 }

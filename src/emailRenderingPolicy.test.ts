@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EMAIL_MINIMUM_FONT_SIZE, parseEmailMinimumFontSize, EMAIL_CSS_LIMITS, emailFrameHeight, sanitizeCssDeclaration, sanitizeHtmlDimension } from "./emailRenderingPolicy";
+import { EMAIL_MINIMUM_FONT_SIZE, parseEmailMinimumFontSize, EMAIL_CSS_LIMITS, EMAIL_IMAGE_LIMITS, preservedImageMinWidth, emailFrameHeight, sanitizeCssDeclaration, sanitizeHtmlDimension } from "./emailRenderingPolicy";
 
 describe("email rendering numeric policy", () => {
   it("validates the reader font floor at both boundaries without silently clamping", () => {
@@ -15,6 +15,25 @@ describe("email rendering numeric policy", () => {
       expect(parseEmailMinimumFontSize(value)).toBe(0);
     }
   });
+  it("preserves declared image widths only up to the preserved-width limit", () => {
+    const max = EMAIL_IMAGE_LIMITS.maxPreservedImageWidthPx;
+    expect(preservedImageMinWidth(null, String(max - 1))).toBe(`${max - 1}px`);
+    expect(preservedImageMinWidth(null, String(max))).toBe(`${max}px`);
+    expect(preservedImageMinWidth(null, String(max + 1))).toBeNull();
+    expect(preservedImageMinWidth(`${max - 1}px`, null)).toBe(`${max - 1}px`);
+    expect(preservedImageMinWidth(`${max}px`, null)).toBe(`${max}px`);
+    expect(preservedImageMinWidth(`${max + 1}px`, null)).toBeNull();
+    expect(preservedImageMinWidth(null, "17.5")).toBe("17.5px");
+    // An inline CSS width overrides the attribute, so it alone decides.
+    expect(preservedImageMinWidth(`${max + 1}px`, "18")).toBeNull();
+    expect(preservedImageMinWidth("50%", "18")).toBeNull();
+    expect(preservedImageMinWidth("auto", "18")).toBeNull();
+    expect(preservedImageMinWidth("18", null)).toBeNull();
+    for (const value of ["0", "10%", "2em", "-4", "calc(10px)", ""]) {
+      expect(preservedImageMinWidth(null, value)).toBeNull();
+    }
+  });
+
   it("grows the message frame with its content up to the frame-height limit", () => {
     const limit = EMAIL_CSS_LIMITS.maxFrameHeightPx;
     expect(emailFrameHeight(limit - 1)).toBe(limit - 1);

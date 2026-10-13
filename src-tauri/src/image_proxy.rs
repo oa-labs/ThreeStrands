@@ -26,6 +26,10 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_CACHE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_CONCURRENT_REQUESTS: usize = 4;
+// Some CDNs and bot filters reject requests that carry no User-Agent at all.
+// A fixed, versionless value identifies the proxy without exposing the
+// reader's browser, OS, or app version, and is identical for every reader.
+const IMAGE_PROXY_USER_AGENT: &str = "ThreeStrands-ImageProxy";
 
 #[derive(Clone)]
 pub(crate) struct ImageCache {
@@ -53,6 +57,7 @@ impl ImageCache {
         let client = crate::http_client::builder()
             .dns_resolver(net_safety::dns_resolver())
             .redirect(Policy::limited(5))
+            .user_agent(IMAGE_PROXY_USER_AGENT)
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
             .build()
@@ -250,6 +255,51 @@ mod tests {
             crate::image_format::MAX_RASTER_BYTES,
             "an oversized chunk must not be appended"
         );
+    }
+
+    #[tokio::test]
+    async fn requests_carry_a_fixed_proxy_user_agent() {
+        use std::io::{Read, Write};
+
+        // The guarded resolver isn't consulted for IP literals and
+        // `validate_public_image_url` is bypassed here, so the shared client
+        // can talk to a loopback listener that records the request.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = stream.read(&mut buffer).unwrap();
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+            }
+            stream
+                .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            String::from_utf8(request).unwrap().to_ascii_lowercase()
+        });
+
+        let cache = ImageCache::new().unwrap();
+        cache
+            .client
+            .get(format!("http://127.0.0.1:{port}/icon.png"))
+            .send()
+            .await
+            .unwrap();
+        let request = server.join().unwrap();
+        assert!(
+            request.contains(&format!(
+                "\r\nuser-agent: {}\r\n",
+                IMAGE_PROXY_USER_AGENT.to_ascii_lowercase()
+            )),
+            "{request}"
+        );
+        assert!(!request.contains("cookie:"), "{request}");
+        assert!(!request.contains("referer:"), "{request}");
     }
 
     #[test]

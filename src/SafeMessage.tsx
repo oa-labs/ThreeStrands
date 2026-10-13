@@ -7,6 +7,7 @@ import {
   blockedSrcAttr,
   safeColor,
   safeImageSrc,
+  preservedImageMinWidth,
   safeStyleProperties,
   emailFrameHeight,
   EMAIL_IMAGE_LIMITS,
@@ -373,6 +374,11 @@ export function sanitizeMessageHtml(html: string): string {
       const value = bgcolor.trim().toLowerCase();
       if (safeColor.test(value)) element.setAttribute("bgcolor", value);
       else element.removeAttribute("bgcolor");
+    }
+    if (tag === "img" && !declarations.some((declaration) => declaration.startsWith("min-width:"))) {
+      const cssWidth = declarations.find((declaration) => declaration.startsWith("width:"))?.slice("width:".length) ?? null;
+      const minWidth = preservedImageMinWidth(cssWidth, element.getAttribute("width"));
+      if (minWidth !== null) declarations.push(`min-width: ${minWidth}`);
     }
     element.removeAttribute("style");
     if (declarations.length) element.setAttribute("style", declarations.join("; "));

@@ -49,6 +49,13 @@ export const EMAIL_IMAGE_LIMITS = {
   maxConcurrentPerMessage: 2,
   maxImagesPerMessage: 40,
   maxDataUriBytesPerMessage: 20 * 1024 * 1024,
+  /**
+   * Largest declared pixel width kept as an image's minimum width. The frame's
+   * `max-width: 100%` fallback lets table layout compress an image to nothing
+   * beside wrapping text; icons, avatars and social buttons up to this width
+   * keep their declared size, while wider images still scale to fit.
+   */
+  maxPreservedImageWidthPx: 64,
 } as const;
 
 /**
@@ -346,6 +353,21 @@ export function sanitizeHtmlDimension(value: string, allowPercent: boolean): str
   if (!Number.isFinite(amount)) return null;
   if (trimmed.endsWith("%")) return allowPercent && amount <= EMAIL_CSS_LIMITS.maxPercentage ? trimmed : null;
   return amount <= EMAIL_CSS_LIMITS.maxAbsolutePx ? trimmed : null;
+}
+
+/**
+ * The minimum width that keeps a small image at its declared size, taken from
+ * its sanitized inline CSS width when present and otherwise from its sanitized
+ * `width` attribute. Only plain pixel widths within
+ * `EMAIL_IMAGE_LIMITS.maxPreservedImageWidthPx` qualify; anything else is left
+ * to the frame's fallback scaling.
+ */
+export function preservedImageMinWidth(cssWidth: string | null, attributeWidth: string | null): string | null {
+  const declared = cssWidth?.trim().toLowerCase() || attributeWidth?.trim() || "";
+  const match = /^(\d+(?:\.\d+)?)(px)?$/.exec(declared);
+  if (!match || (cssWidth?.trim() && !match[2])) return null;
+  const amount = Number(match[1]);
+  return amount > 0 && amount <= EMAIL_IMAGE_LIMITS.maxPreservedImageWidthPx ? `${match[1]}px` : null;
 }
 
 export function isAllowedCssProperty(property: string): boolean {

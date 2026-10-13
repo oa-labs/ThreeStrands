@@ -171,6 +171,31 @@ export const emailRenderingFixtures = {
     <div>On Mon, Oct 5, 2026 at 9:00 AM, B. Reader &lt;reader@example.com&gt; wrote:</div>
     <blockquote><p>Earlier message content.</p></blockquote>
   `,
+  // Small declared-size images beside text that must wrap. Table auto layout
+  // must keep the icon at its declared size instead of compressing it.
+  iconCalloutFlexTable: `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td style="border-radius:8px;background-color:#f0f2f2;padding:12px 8px;gap:8px;align-items:flex-start;display:flex">
+        <table role="presentation"><tr>
+          <td style="padding-right:8px"><img src="https://example.com/info.png" alt="info" width="18" height="18"></td>
+          <td style="font-size:15px;line-height:20px">A courier may contact you on the day of arrival. For everyone's safety, keep the entrance clear and well lit before the visit.</td>
+        </tr></table>
+      </td>
+    </tr></table>
+  `,
+  iconCalloutTable: `
+    <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef3ff"><tr>
+      <td valign="top" style="padding:12px"><img src="https://example.com/note.png" alt="note" width="24" height="24"></td>
+      <td style="padding:12px 12px 12px 0;font-size:14px;line-height:20px">Your scheduled maintenance window starts tonight. Services may be briefly unavailable while the update completes, and no action is required.</td>
+    </tr></table>
+  `,
+  // Images wider than a narrow reading pane must still scale to fit.
+  heroInTable: `
+    <table width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td style="padding:0 16px"><img src="https://example.com/hero.png" alt="hero" width="600" style="display:block"></td>
+    </tr></table>
+  `,
+  heroInFlow: `<div style="padding:0 16px"><img src="https://example.com/banner.png" alt="banner" width="600"></div>`,
   malformed: `
     <div style="position:fixed;top:0;left:0;z-index:99;animation:spin 1s;cursor:pointer">No overlay</div>
     <img src="javascript:alert(1)"><form action="https://example.com"><input value="bad"></form>

@@ -355,6 +355,46 @@ describe("SafeMessage", () => {
     expect(container.querySelector("img")?.hasAttribute("height")).toBe(false);
   });
 
+  it("keeps small declared image widths as minimums so table layout cannot compress them", () => {
+    const max = EMAIL_IMAGE_LIMITS.maxPreservedImageWidthPx;
+    const sanitized = sanitizeMessageHtml(`
+      <table><tr><td><img src="https://example.com/a.png" width="18" height="18"></td><td>Wrapping text</td></tr></table>
+      <div style="display:flex"><img src="https://example.com/b.png" style="width:24px"><span>Flow text</span></div>
+      <img src="https://example.com/c.png" width="${max}">
+      <img src="https://example.com/d.png" width="${max + 1}">
+      <img src="https://example.com/e.png" width="10%">
+      <img src="https://example.com/f.png" width="12" style="width:50%">
+      <img src="https://example.com/g.png" width="12" style="min-width:4px">
+      <table width="20"><tr><td width="20">Not an image</td></tr></table>
+    `);
+    const container = document.createElement("div");
+    container.innerHTML = sanitized;
+    const minWidths = Array.from(container.querySelectorAll("img"), (image) => image.style.minWidth);
+
+    expect(minWidths).toEqual(["18px", "24px", `${max}px`, "", "", "", "4px"]);
+    expect(container.querySelectorAll("img")[0].getAttribute("width")).toBe("18");
+    expect(container.querySelector("table[width]")?.getAttribute("style")).toBeNull();
+    expect(container.querySelector("td[width]")?.getAttribute("style")).toBeNull();
+  });
+
+  it("derives no minimum width from unsafe or out-of-policy image dimensions", () => {
+    const sanitized = sanitizeMessageHtml(`
+      <img src="https://example.com/a.png" width="calc(100vw)">
+      <img src="https://example.com/b.png" width="-10">
+      <img src="https://example.com/c.png" width="0">
+      <img src="https://example.com/d.png" style="width:expression(alert(1))" width="20">
+      <img src="https://example.com/e.png" style="width:10vw">
+      <img src="javascript:alert(1)" width="20">
+    `);
+    const container = document.createElement("div");
+    container.innerHTML = sanitized;
+    const images = Array.from(container.querySelectorAll("img"));
+
+    expect(images).toHaveLength(5);
+    expect(images.map((image) => image.style.minWidth)).toEqual(["", "", "", "20px", ""]);
+    expect(sanitized).not.toMatch(/expression|javascript|calc/i);
+  });
+
   it("renders safe message formatting inside a sandboxed, CSP-scoped iframe that only allows data: images", () => {
     render(<SafeMessage html="<p>Hello <strong>friend</strong></p>" />);
     const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
