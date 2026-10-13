@@ -444,6 +444,186 @@ fn reorder_accounts_updates_sort_order_by_position() {
     assert_eq!(accounts[1].email, "first@gmail.com");
 }
 
+fn seed_imap_cache(database: &Database, account: &str) {
+    database
+        .with_connection(|c| {
+            c.execute("INSERT INTO imap_account_settings(account_id, imap_host, imap_port, imap_security, imap_username, smtp_host, smtp_port, smtp_security, smtp_username, label_storage)
+                VALUES (?1, 'imap.example.com', 993, 'implicit_tls', ?1, 'smtp.example.com', 465, 'implicit_tls', ?1, 'none')", [account])?;
+            c.execute("INSERT INTO imap_bodies VALUES (?1, 'm', X'736563726574', 6, 1)", [account])?;
+            c.execute("INSERT INTO imap_locations VALUES (?1, 'INBOX', 1, 1, 'm', '[]', NULL)", [account])?;
+            c.execute("INSERT INTO imap_threads VALUES (?1, 'm', 't', 1)", [account])?;
+            c.execute("INSERT INTO imap_thread_aliases VALUES (?1, 'old', 't')", [account])?;
+            c.execute("INSERT INTO imap_sync_state(account_id, generation, complete_walks) VALUES (?1, 1, 4)", [account])?;
+            c.execute("INSERT INTO imap_change_journal VALUES (?1, 1, 't')", [account])?;
+            c.execute("INSERT INTO imap_message_tokens VALUES (?1, 'm', '<m@x>')", [account])?;
+            // Populate the Slice 5b-2 columns (last_visited_at, emptied_at_walk)
+            // so this test proves the purge covers them too (item i).
+            c.execute("INSERT INTO imap_mailbox_sync_state(account_id, mailbox, last_exists, last_uidnext, last_sweep_at, backfill_low_uid, last_visited_at)
+                VALUES (?1, 'Trash', 3, 9, 100, NULL, 200)", [account])?;
+            c.execute("INSERT INTO imap_hot_threads(account_id, thread_id, emptied_at_walk) VALUES (?1, 't', 2)", [account])?;
+            c.execute("INSERT INTO imap_copy_intents VALUES (?1, 'm', 'Labels/A', 'identity')", [account])?;
+            c.execute("INSERT INTO imap_mailboxes(account_id, name, uidvalidity, uidnext, permanent_flags_json, permanent_keywords)
+                VALUES (?1, 'INBOX', 1, 2, '[]', 0)", [account])?;
+            // The local label-catalog cache (run 2b-1) is purged by the
+            // same per-account path; seed a row so this test proves it.
+            c.execute("INSERT INTO account_labels(account_id, label_id, name, kind)
+                VALUES (?1, 'Label_18', 'Work', 'user')", [account])?;
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[test]
+fn connection_changes_invalidate_only_the_changed_mailbox_namespace() {
+    use crate::provider::imap::{Identity, ImapStateStore, SecurityMode};
+    use std::sync::Arc;
+    for change in [
+        "host",
+        "port",
+        "username",
+        "smtp_host",
+        "smtp_port",
+        "smtp_username",
+        "tls",
+        "identity",
+    ] {
+        let db = Arc::new(database());
+        let account = "you@example.com";
+        db.adopt_mail_account(account, crate::models::MailProviderKind::Imap)
+            .unwrap();
+        db.adopt_mail_account("keep@example.com", crate::models::MailProviderKind::Imap)
+            .unwrap();
+        for email in [account, "keep@example.com"] {
+            seed_imap_cache(&db, email);
+            let store = ImapStateStore::new(db.clone(), email);
+            store.upsert_pin("INBOX", 1, 1, 100).unwrap();
+            store.set_sent_copy_detection(true, 100).unwrap();
+        }
+        db.with_connection(|c| {
+            c.execute("UPDATE sync_state SET cursor='old-cursor' WHERE account_id=?1", [account])?;
+            c.execute("INSERT INTO mutations(id,account_id,thread_id,kind,payload_json,state,created_at)
+                VALUES ('pending',?1,'roadmap','archive','{}','pending','2026-10-12T00:00:00Z'),
+                       ('running',?1,'roadmap','star','{}','running','2026-10-12T00:00:00Z')", [account])?;
+            c.execute("INSERT INTO drafts VALUES ('draft',1,'{}')", [])?;
+            c.execute("INSERT INTO pinned_contacts(account_id,email,pinned_at) VALUES (?1,'friend@example.com','2026-10-12')", [account])?;
+            Ok(())
+        }).unwrap();
+        let mut settings = db.imap_account_settings(account).unwrap().unwrap();
+        match change {
+            "host" => settings.imap_host = "new.example.com".into(),
+            "port" => settings.imap_port = 1143,
+            "username" => settings.imap_username = "another-login".into(),
+            "smtp_host" => settings.smtp_host = "relay.example.com".into(),
+            "smtp_port" => settings.smtp_port = 587,
+            "smtp_username" => settings.smtp_username = "another-smtp-login".into(),
+            "tls" => settings.imap_security = SecurityMode::StartTls,
+            "identity" => settings.identities.push(Identity {
+                address: "alias@example.com".into(),
+                display_name: None,
+            }),
+            _ => unreachable!(),
+        }
+        db.save_imap_connection_settings(account, &settings)
+            .unwrap();
+        assert_eq!(
+            db.imap_account_settings(account).unwrap().unwrap(),
+            settings
+        );
+        let reset = matches!(change, "host" | "port" | "username");
+        let store = ImapStateStore::new(db.clone(), account);
+        assert_eq!(
+            store.locations_in_mailbox("INBOX").unwrap().is_empty(),
+            reset,
+            "{change}"
+        );
+        assert_eq!(store.search_pin_count().unwrap(), usize::from(!reset));
+        assert_eq!(
+            store
+                .pending_copy_identity("m", "Labels/A")
+                .unwrap()
+                .is_none(),
+            reset
+        );
+        assert_eq!(store.mailboxes().unwrap().is_empty(), reset);
+        assert_eq!(store.generation().unwrap(), if reset { 0 } else { 1 });
+        let c = db.connection().unwrap();
+        for (table, expected) in [
+            ("threads", 2 * i64::from(!reset)),
+            ("thread_search", 2 * i64::from(!reset)),
+            ("drafts", 1),
+            ("pinned_contacts", 1),
+        ] {
+            let count: i64 = c
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(count, expected, "{change}: {table}");
+        }
+        let cursor: Option<String> = c
+            .query_row(
+                "SELECT cursor FROM sync_state WHERE account_id=?1",
+                [account],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            cursor.as_deref(),
+            if reset { None } else { Some("old-cursor") }
+        );
+        let failed: i64 = c
+            .query_row(
+                "SELECT count(*) FROM mutations WHERE state='failed'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(failed, if reset { 2 } else { 0 });
+        drop(c);
+        assert_eq!(
+            store.sent_copy_detection().unwrap().is_none(),
+            reset || change.starts_with("smtp_")
+        );
+        let kept = ImapStateStore::new(db.clone(), "keep@example.com");
+        assert_eq!(kept.locations_in_mailbox("INBOX").unwrap().len(), 1);
+        assert_eq!(kept.search_pin_count().unwrap(), 1);
+        assert_eq!(kept.generation().unwrap(), 1);
+        assert_eq!(kept.sent_copy_detection().unwrap(), Some(true));
+    }
+}
+
+#[test]
+fn a_failed_connection_settings_write_rolls_back_cache_invalidation() {
+    use crate::provider::imap::ImapStateStore;
+    use std::sync::Arc;
+    let db = Arc::new(database());
+    let account = "you@example.com";
+    db.adopt_mail_account(account, crate::models::MailProviderKind::Imap)
+        .unwrap();
+    seed_imap_cache(&db, account);
+    let original = db.imap_account_settings(account).unwrap().unwrap();
+    let mut changed = original.clone();
+    changed.imap_host = "new.example.com".into();
+    db.connection()
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER reject_connection BEFORE UPDATE ON imap_account_settings
+        BEGIN SELECT RAISE(ABORT,'settings write failed'); END;",
+        )
+        .unwrap();
+    assert!(db.save_imap_connection_settings(account, &changed).is_err());
+    assert_eq!(
+        db.imap_account_settings(account).unwrap().unwrap(),
+        original
+    );
+    assert_eq!(
+        ImapStateStore::new(db.clone(), account)
+            .locations_in_mailbox("INBOX")
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(db.list_threads(Some(account)).unwrap().len(), 2);
+}
+
 #[test]
 fn account_removal_and_local_disconnect_purge_only_that_accounts_imap_state() {
     use crate::models::MailProviderKind;
@@ -453,30 +633,7 @@ fn account_removal_and_local_disconnect_purge_only_that_accounts_imap_state() {
             database
                 .adopt_mail_account(account, MailProviderKind::Imap)
                 .unwrap();
-            database.with_connection(|c| {
-                c.execute("INSERT INTO imap_account_settings(account_id, imap_host, imap_port, imap_security, imap_username, smtp_host, smtp_port, smtp_security, smtp_username, label_storage)
-                    VALUES (?1, 'imap.example.com', 993, 'implicit_tls', ?1, 'smtp.example.com', 465, 'implicit_tls', ?1, 'none')", [account])?;
-                c.execute("INSERT INTO imap_bodies VALUES (?1, 'm', X'736563726574', 6, 1)", [account])?;
-                c.execute("INSERT INTO imap_locations VALUES (?1, 'INBOX', 1, 1, 'm', '[]', NULL)", [account])?;
-                c.execute("INSERT INTO imap_threads VALUES (?1, 'm', 't', 1)", [account])?;
-                c.execute("INSERT INTO imap_thread_aliases VALUES (?1, 'old', 't')", [account])?;
-                c.execute("INSERT INTO imap_sync_state(account_id, generation, complete_walks) VALUES (?1, 1, 4)", [account])?;
-                c.execute("INSERT INTO imap_change_journal VALUES (?1, 1, 't')", [account])?;
-                c.execute("INSERT INTO imap_message_tokens VALUES (?1, 'm', '<m@x>')", [account])?;
-                // Populate the Slice 5b-2 columns (last_visited_at, emptied_at_walk)
-                // so this test proves the purge covers them too (item i).
-                c.execute("INSERT INTO imap_mailbox_sync_state(account_id, mailbox, last_exists, last_uidnext, last_sweep_at, backfill_low_uid, last_visited_at)
-                    VALUES (?1, 'Trash', 3, 9, 100, NULL, 200)", [account])?;
-                c.execute("INSERT INTO imap_hot_threads(account_id, thread_id, emptied_at_walk) VALUES (?1, 't', 2)", [account])?;
-                c.execute("INSERT INTO imap_copy_intents VALUES (?1, 'm', 'Labels/A', 'identity')", [account])?;
-                c.execute("INSERT INTO imap_mailboxes(account_id, name, uidvalidity, uidnext, permanent_flags_json, permanent_keywords)
-                    VALUES (?1, 'INBOX', 1, 2, '[]', 0)", [account])?;
-                // The local label-catalog cache (run 2b-1) is purged by the
-                // same per-account path; seed a row so this test proves it.
-                c.execute("INSERT INTO account_labels(account_id, label_id, name, kind)
-                    VALUES (?1, 'Label_18', 'Work', 'user')", [account])?;
-                Ok(())
-            }).unwrap();
+            seed_imap_cache(&database, account);
         }
         if disconnect {
             database

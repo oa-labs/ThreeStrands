@@ -3029,14 +3029,16 @@ async fn update_imap_connection(
         update.smtp_pinned_fingerprint.as_deref(),
     )?;
     let new_password = update.password.clone().filter(|password| !password.is_empty());
+    let credential = crate::auth::ImapCredential::for_account(&email);
+    let saved_password = credential.load().ok();
     let password = match &new_password {
         Some(password) => crate::credentials::ImapPassword {
             imap: password.clone(),
             smtp: None,
         },
-        None => crate::auth::ImapCredential::for_account(&email)
-            .load()
-            .map_err(|_| "Enter your password to reconnect this account.".to_string())?,
+        None => saved_password
+            .clone()
+            .ok_or_else(|| "Enter your password to reconnect this account.".to_string())?,
     };
     let smtp_password = password.smtp.clone().unwrap_or_else(|| password.imap.clone());
 
@@ -3061,33 +3063,55 @@ async fn update_imap_connection(
     .await
     .map_err(|error| imap::plain_language(&error))?;
 
-    let servers_changed =
-        previous.imap_host != update.imap_host || previous.smtp_host != update.smtp_host;
     let settings = merge_imap_connection_update(previous.clone(), &update, imap_pin, smtp_pin);
-    state.database.save_imap_account_settings(&email, &settings)?;
-    if new_password.is_some() {
-        let auth = state.auth_config.mail_account(MailProviderKind::Imap, &email)?;
-        let AccountAuth::Imap(credential) = &auth else {
-            return Err("expected an IMAP credential for an IMAP account".to_string());
-        };
-        // Keep settings and keychain consistent: a failed password write
-        // restores the settings that matched the old password.
-        if let Err(error) = credential.save(&password) {
-            let _ = state.database.save_imap_account_settings(&email, &previous);
+    let auth = state
+        .auth_config
+        .mail_account(MailProviderKind::Imap, &email)?;
+    let _guard = state.correspondence.gate.lock().await;
+    let service = state
+        .accounts
+        .lock()
+        .await
+        .get(&email)
+        .map(|connected| connected.sync.clone());
+    if let Some(service) = &service {
+        service.retire().await;
+    }
+    let persisted = (|| -> Result<Account, String> {
+        // Write credentials first: a keychain failure must not invalidate the
+        // old server's cache. Roll back credentials if the DB transaction fails.
+        if new_password.is_some() {
+            credential.save(&password)?;
+        }
+        if let Err(error) = state
+            .database
+            .save_imap_connection_settings(&email, &settings)
+        {
+            if new_password.is_some() {
+                match &saved_password {
+                    Some(saved) => {
+                        let _ = credential.save(saved);
+                    }
+                    None => {
+                        let _ = credential.disconnect();
+                    }
+                }
+            }
+            return Err(error.to_string());
+        }
+        Ok(state
+            .database
+            .adopt_mail_account(&email, MailProviderKind::Imap)?)
+    })();
+    let account = match persisted {
+        Ok(account) => account,
+        Err(error) => {
+            if let Some(service) = &service {
+                service.resume();
+            }
             return Err(error);
         }
-    }
-    if servers_changed {
-        // Whether the server saves its own sent mail was learned from the
-        // old server; the next send re-detects for the new one.
-        imap::ImapStateStore::new(state.database.clone(), email.clone())
-            .clear_sent_copy_detection()?;
-    }
-
-    let account = state
-        .database
-        .adopt_mail_account(&email, MailProviderKind::Imap)?;
-    let auth = state.auth_config.mail_account(MailProviderKind::Imap, &email)?;
+    };
     register_finished_imap_account(&state.accounts, email, || {
         spawn_synced_account(state.database.clone(), auth, true, app)
     })

@@ -167,6 +167,47 @@ impl Database {
         })
     }
 
+    /// Commit a tested connection change. UIDs belong to one server/login;
+    /// matching UIDVALIDITY on a different endpoint cannot validate old UIDs.
+    /// The caller retires sync and holds the correspondence gate first.
+    pub fn save_imap_connection_settings(
+        &self,
+        email: &str,
+        settings: &crate::provider::imap::ImapAccountSettings,
+    ) -> DbResult<()> {
+        self.with_transaction(|tx| {
+            let previous = crate::provider::imap::read_settings_row(tx, email)?
+                .ok_or(DatabaseError::NotFound("IMAP settings"))?;
+            let mailbox_changed = previous.imap_host != settings.imap_host
+                || previous.imap_port != settings.imap_port
+                || previous.imap_username != settings.imap_username;
+            if mailbox_changed {
+                // Keep ThreeStrands-owned workflow records and drafts, but
+                // rebuild mail and cursors against the new mailbox namespace.
+                tx.execute("DELETE FROM message_metadata WHERE id IN
+                    (SELECT m.id FROM messages m JOIN threads t ON t.id=m.thread_id WHERE t.account_id=?1)", [email])?;
+                tx.execute("DELETE FROM thread_search WHERE thread_id IN
+                    (SELECT id FROM threads WHERE account_id=?1)", [email])?;
+                for table in ["threads", "sync_state", "sync_recovery_threads", "sync_recovery", "quarantined_messages"] {
+                    tx.execute(&format!("DELETE FROM {table} WHERE account_id=?1"), [email])?;
+                }
+                // Never replay an old server's pending changes on a new one.
+                tx.execute("UPDATE mutations SET state='failed',
+                    last_error='Mail server changed. Apply this change again after syncing.'
+                    WHERE account_id=?1 AND state IN ('pending','running')", [email])?;
+                purge_imap_cache(tx, email)?;
+                tx.execute("INSERT INTO sync_state(account_id) VALUES (?1)", [email])?;
+                tx.execute("UPDATE accounts SET last_synced_at=NULL WHERE email=?1", [email])?;
+            } else if previous.smtp_host != settings.smtp_host
+                || previous.smtp_port != settings.smtp_port
+                || previous.smtp_username != settings.smtp_username
+            {
+                tx.execute("DELETE FROM imap_sent_copy_detection WHERE account_id=?1", [email])?;
+            }
+            crate::provider::imap::write_settings_row(tx, email, settings)
+        })
+    }
+
     pub fn get_account(&self, email: &str) -> DbResult<Option<Account>> {
         self.with_connection(|connection| {
             let account = connection

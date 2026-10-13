@@ -1193,7 +1193,8 @@ pub fn check_search_target_mailboxes(count: usize) -> Result<usize, ProviderErro
 /// away), never silently dropped.
 pub const MAX_SEARCH_ACQUIRE: usize = 50;
 
-/// The total wall-clock budget for one `MailSync::search`: SEARCH + acquire
+/// The total wall-clock budget for one `MailSync::search`: connection, SEARCH,
+/// acquisition, and logout
 /// across every planned mailbox. On expiry the driver stops starting new
 /// mailboxes and returns what it has acquired as a PARTIAL result (not an
 /// error). A body-scanning server without a full-text index can take real

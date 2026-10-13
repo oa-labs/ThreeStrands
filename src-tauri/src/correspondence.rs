@@ -574,9 +574,14 @@ impl Database {
                 d.attachments = forward_attachments(&source, &normalized)?;
             } else {
                 let reply = header(part, "Reply-To");
+                let mut mine: HashSet<String> = identities
+                    .iter()
+                    .map(crate::provider::imap::identity_normalized)
+                    .collect();
+                mine.insert(account.trim().to_ascii_lowercase());
                 let own = addresses(from)?
                     .iter()
-                    .any(|(_, a)| a.eq_ignore_ascii_case(account));
+                    .any(|(_, a)| mine.contains(&a.to_ascii_lowercase()));
                 let target = if own {
                     header(part, "To")
                 } else if !reply.is_empty() {
@@ -584,7 +589,7 @@ impl Database {
                 } else {
                     from
                 };
-                let mut seen = HashSet::from([account.to_lowercase()]);
+                let mut seen = mine;
                 let mut collect = |value: &str| -> Result<String, String> {
                     Ok(addresses(value)?
                         .into_iter()
@@ -2022,12 +2027,50 @@ impl Correspondence {
     /// Drive every DUE Sent-copy job this tick (fact 4: NOT skipped by the
     /// no-sendable-items early return). A job is `pending`/`verify` with
     /// `sent_copy_next_at <= now`; it is processed oldest-first, at most
-    /// [`SENT_COPY_MAX_JOBS_PER_TICK`], grouped by account so one account's
+    /// [`SENT_COPY_MAX_JOBS_PER_TICK`], resolving each account once so its
     /// unavailable provider does not abort the tick or the others' jobs. An
     /// account whose provider is unavailable is skipped WITHOUT counting an
     /// attempt. Never touches the outbox `state`, `provider_id`, never resends.
     async fn process_sent_copy_jobs(&self, at: i64) -> Result<(), String> {
-        // Collect due jobs (oldest-first), bounded by the per-tick cap.
+        self.process_sent_copy_jobs_with(at, |account| async move {
+            self.provider_for(&account).await.ok()
+        })
+        .await
+    }
+
+    async fn process_sent_copy_jobs_with<F, Fut>(
+        &self,
+        at: i64,
+        mut resolve: F,
+    ) -> Result<(), String>
+    where
+        F: FnMut(String) -> Fut,
+        Fut: std::future::Future<Output = Option<Arc<dyn MailProvider>>>,
+    {
+        // Resolve availability before applying the work cap. Otherwise a full
+        // batch belonging to unavailable accounts can starve every later job.
+        let accounts: Vec<String> = {
+            let c = self.database.connection()?;
+            let mut q = c
+                .prepare(
+                    "SELECT DISTINCT account FROM outbox_messages
+                 WHERE sent_copy_state IN ('pending','verify') AND sent_copy_next_at <= ?1",
+                )
+                .map_err(error)?;
+            let rows = q.query_map([at], |r| r.get(0)).map_err(error)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(error)?
+        };
+        let mut providers = HashMap::new();
+        for account in accounts {
+            if let Some(provider) = resolve(account.clone()).await {
+                providers.insert(account, provider);
+            }
+        }
+        if providers.is_empty() {
+            return Ok(());
+        }
+        let available = json(&providers.keys().collect::<Vec<_>>())?;
+        // Only eligible jobs load raw MIME, still oldest-first and bounded.
         let due: Vec<(String, String, Vec<u8>, String, i64, i64)> = {
             let c = self.database.connection()?;
             let mut q = c
@@ -2035,12 +2078,17 @@ impl Correspondence {
                     "SELECT id, account, raw, sent_copy_state, sent_copy_attempts, \
                      sent_copy_append_attempted FROM outbox_messages \
                      WHERE sent_copy_state IN ('pending','verify') AND sent_copy_next_at <= ?1 \
+                     AND account IN (SELECT value FROM json_each(?3)) \
                      ORDER BY sent_copy_next_at ASC, rowid ASC LIMIT ?2",
                 )
                 .map_err(error)?;
             let rows = q
                 .query_map(
-                    params![at, crate::provider::imap::SENT_COPY_MAX_JOBS_PER_TICK as i64],
+                    params![
+                        at,
+                        crate::provider::imap::SENT_COPY_MAX_JOBS_PER_TICK as i64,
+                        available
+                    ],
                     |r| {
                         Ok((
                             r.get::<_, String>(0)?,
@@ -2055,27 +2103,8 @@ impl Correspondence {
                 .map_err(error)?;
             rows.collect::<Result<Vec<_>, _>>().map_err(error)?
         };
-        if due.is_empty() {
-            return Ok(());
-        }
-
-        // Group by account; resolve each account's provider once. A missing
-        // provider skips that account's jobs (no attempt counted).
-        let mut by_account: HashMap<String, Vec<(String, Vec<u8>, String, i64, i64)>> =
-            HashMap::new();
         for (id, account, raw, state, attempts, append_attempted) in due {
-            by_account
-                .entry(account)
-                .or_default()
-                .push((id, raw, state, attempts, append_attempted));
-        }
-        for (account, jobs) in by_account {
-            let Ok(provider) = self.provider_for(&account).await else {
-                // Provider unavailable: leave every job exactly as-is (no
-                // attempt, no error churn) and continue the tick.
-                continue;
-            };
-            for (id, raw, state, attempts, append_attempted) in jobs {
+            if let Some(provider) = providers.get(&account) {
                 self.run_sent_copy_job(
                     provider.as_ref(),
                     &id,
@@ -3807,27 +3836,61 @@ mod tests {
             use crate::provider::imap::SENT_COPY_MAX_JOBS_PER_TICK;
             let service = service();
             let at = now();
-            // Seed CAP+2 due jobs on an unregistered account; the processor's
-            // SELECT caps the batch at the per-tick limit.
+            // A full older batch on an unavailable account must not consume
+            // any work slots. The healthy jobs still run, oldest first.
+            for i in 0..SENT_COPY_MAX_JOBS_PER_TICK {
+                seed_job(
+                    &service,
+                    &format!("ghost{i}"),
+                    "ghost@example.com",
+                    "pending",
+                    0,
+                    at - 2,
+                    0,
+                );
+            }
             let total = SENT_COPY_MAX_JOBS_PER_TICK + 2;
             for i in 0..total {
-                seed_job(&service, &format!("j{i}"), "ghost@example.com", "pending", 0, at - 1, 0);
+                let account = if i % 2 == 0 {
+                    "a@example.com"
+                } else {
+                    "b@example.com"
+                };
+                seed_job(&service, &format!("j{i}"), account, "pending", 0, at - 1, 0);
             }
-            // Count how many rows the processor's due query would select.
-            let selected: i64 = service
-                .database
-                .connection()
-                .unwrap()
-                .query_row(
-                    "SELECT COUNT(*) FROM (SELECT id FROM outbox_messages
-                        WHERE sent_copy_state IN ('pending','verify') AND sent_copy_next_at <= ?1
-                        ORDER BY sent_copy_next_at ASC, rowid ASC LIMIT ?2)",
-                    params![at, SENT_COPY_MAX_JOBS_PER_TICK as i64],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(selected, SENT_COPY_MAX_JOBS_PER_TICK as i64);
-            assert!(total as i64 > selected, "more jobs exist than one tick drains");
+            let working = Arc::new(JobProvider::new(vec![JobAnswer::Done]));
+            for tick in 0..2 {
+                let resolved = working.clone();
+                service
+                    .process_sent_copy_jobs_with(at, move |account| {
+                        let provider = resolved.clone();
+                        async move {
+                            (account != "ghost@example.com")
+                                .then_some(provider as Arc<dyn MailProvider>)
+                        }
+                    })
+                    .await
+                    .unwrap();
+                let completed = if tick == 0 {
+                    SENT_COPY_MAX_JOBS_PER_TICK
+                } else {
+                    total
+                };
+                for i in 0..total {
+                    assert_eq!(
+                        job_row(&service, &format!("j{i}")).1.as_deref(),
+                        Some(if i < completed { "done" } else { "pending" })
+                    );
+                }
+                for i in 0..SENT_COPY_MAX_JOBS_PER_TICK {
+                    let row = job_row(&service, &format!("ghost{i}"));
+                    assert_eq!(row.1.as_deref(), Some("pending"));
+                    assert_eq!(row.2, 0, "unavailable jobs count no attempt");
+                    assert_eq!(row.4, 0, "unavailable jobs do not start an append");
+                }
+                assert_eq!(working.save_calls.load(Ordering::SeqCst), completed);
+                assert_eq!(working.send_calls.load(Ordering::SeqCst), 0);
+            }
         }
 
         #[tokio::test]
@@ -4152,6 +4215,53 @@ mod tests {
         assert!(forward.reply_id.is_none());
         assert!(forward.thread_id.is_none());
         assert_eq!(forward.subject, "Fwd: Topic");
+    }
+
+    #[test]
+    fn alias_replies_exclude_all_own_addresses_and_follow_sent_recipients() {
+        let db = imap_database();
+        let identities = db.account_sending_identities("me@proton.me").unwrap();
+        for (id, sender, to, expected_to) in [
+            (
+                "incoming",
+                "friend@example.com",
+                "WORK@proton.me, colleague@example.com",
+                "friend@example.com, colleague@example.com",
+            ),
+            (
+                "outgoing",
+                "WORK@proton.me",
+                "friend@example.com, colleague@example.com",
+                "friend@example.com, colleague@example.com",
+            ),
+        ] {
+            let source = serde_json::json!({"id":id,"threadId":"thread","payload":{
+                "mimeType":"text/plain","headers":[
+                    {"name":"From","value":sender}, {"name":"To","value":to},
+                    {"name":"Cc","value":"me@proton.me, work@proton.me, cc@example.com"},
+                    {"name":"Subject","value":"Topic"}, {"name":"Message-ID","value":format!("<{id}@example.com>")}
+                ],"body":{"data":URL_SAFE_NO_PAD.encode("Hello")}}});
+            db.put_message_metadata(id, &source.to_string()).unwrap();
+            let reply = db
+                .create_draft("replyAll", Some(id.into()), "me@proton.me", &identities)
+                .unwrap();
+            assert_eq!(reply.to, expected_to, "{id}");
+            assert_eq!(reply.cc, "cc@example.com", "{id}");
+            if id == "incoming" {
+                assert_eq!(reply.from.as_deref(), Some("work@proton.me"));
+            }
+            let reply = db
+                .create_draft("reply", Some(id.into()), "me@proton.me", &identities)
+                .unwrap();
+            assert_eq!(
+                reply.to,
+                if id == "incoming" {
+                    "friend@example.com"
+                } else {
+                    expected_to
+                }
+            );
+        }
     }
     #[test]
     fn html_forwards_preserve_source_in_mime_after_save_and_reopen() {

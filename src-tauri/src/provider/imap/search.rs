@@ -436,7 +436,10 @@ impl PlanBuilder {
     fn label_folder_mailbox(&self, name: &str, ctx: &ImapSearchContext<'_>) -> Option<String> {
         let container = ctx.label_container?;
         let delimiter = hierarchy_delimiter(ctx.delimiter);
-        let mailbox = format!("{container}{delimiter}{name}");
+        let mailbox = format!(
+            "{container}{delimiter}{}",
+            super::write::encode_modified_utf7(name)
+        );
         // The plan must carry this mailbox as a label folder; otherwise the
         // label does not exist for this account.
         let entry = ctx.plan.entry_for(&mailbox)?;
@@ -569,7 +572,13 @@ fn resolve_location(location: &str, plan: &SyncPlan) -> Option<Vec<String>> {
     // mailbox's wire name. Only a selectable, synced mailbox is a valid target.
     plan.entries
         .iter()
-        .find(|e| e.synced_now && !e.is_inbox && e.mailbox.eq_ignore_ascii_case(location))
+        .find(|e| {
+            e.synced_now
+                && !e.is_inbox
+                && super::write::decode_modified_utf7(&e.mailbox)
+                    .unwrap_or_else(|_| e.mailbox.clone())
+                    .eq_ignore_ascii_case(location)
+        })
         .map(|e| vec![e.mailbox.clone()])
 }
 
@@ -685,6 +694,28 @@ mod tests {
             label_storage: config.label_storage,
             label_container: config.label_container.as_deref(),
             delimiter: Some("/"),
+        }
+    }
+
+    #[test]
+    fn human_folder_names_resolve_to_the_original_wire_mailboxes() {
+        let config = settings(LabelStorage::Folders, Some("Labels"));
+        for display in ["R&D", "Décisions", "日本語"] {
+            let wire = super::super::write::encode_modified_utf7(display);
+            let label_mailbox = format!("Labels/{wire}");
+            let plan = build_plan(
+                &[mb(&wire, None), mb(&label_mailbox, None)],
+                Some("/"),
+                &config,
+            );
+            for (query, expected) in [
+                (format!("in:{display} from:alice"), wire.clone()),
+                (format!("label:{display} from:alice"), label_mailbox.clone()),
+            ] {
+                let outcome = render_imap(&SearchQuery::parse(&query), &ctx(&plan, &config));
+                assert_eq!(plan_of(&outcome).mailboxes, vec![expected], "{query}");
+                assert_eq!(criteria_of(&outcome), "CHARSET UTF-8 FROM \"alice\"");
+            }
         }
     }
 

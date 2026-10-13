@@ -286,12 +286,12 @@ pub fn smtp_username(settings: &ImapAccountSettings) -> &str {
 }
 
 /// Build SMTP credentials for an account. The username follows the user's
-/// decision ([`smtp_username`]); the password is the IMAP password passed in.
+/// decision ([`smtp_username`]); the password is the resolved SMTP password.
 /// The password is never formatted anywhere (SmtpCredentials redacts Debug).
-pub fn smtp_credentials(settings: &ImapAccountSettings, imap_password: &str) -> SmtpCredentials {
+pub fn smtp_credentials(settings: &ImapAccountSettings, password: &str) -> SmtpCredentials {
     SmtpCredentials {
         username: smtp_username(settings).to_string(),
-        password: imap_password.to_string(),
+        password: password.to_string(),
     }
 }
 
@@ -831,6 +831,16 @@ mod provider_level_tests {
         login: &str,
         identities: Vec<Identity>,
     ) -> ImapProvider {
+        provider_with_smtp_password(srv, account, login, identities, None)
+    }
+
+    fn provider_with_smtp_password(
+        srv: &FakeSmtp,
+        account: &str,
+        login: &str,
+        identities: Vec<Identity>,
+        smtp_password: Option<String>,
+    ) -> ImapProvider {
         let database = Arc::new(crate::db::Database::open_memory());
         database
             .adopt_mail_account(account, crate::models::MailProviderKind::Imap)
@@ -866,6 +876,7 @@ mod provider_level_tests {
             account_id: account.into(),
             username: login.into(),
             password: "imap-password".into(),
+            smtp_password,
             manager,
             store,
             cache,
@@ -915,6 +926,37 @@ mod provider_level_tests {
         assert!(text.contains("hidden@z.test") == false, "the blind address is not disclosed in the header block\n{text}");
         assert!(text.contains("hello"));
         assert!(body.ends_with(b"\r\n.\r\n"));
+    }
+
+    #[tokio::test]
+    async fn smtp_auth_uses_the_separate_password_or_falls_back_to_imap() {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        for separate in [None, Some("smtp-only-password".to_string())] {
+            let srv = start(Script::Accept).await;
+            let provider = provider_with_smtp_password(
+                &srv,
+                "me@example.com",
+                "login",
+                vec![],
+                separate.clone(),
+            );
+            permit(&provider)
+                .await
+                .send_once(
+                    b"From: me@example.com\r\nTo: friend@example.com\r\n\r\nhello",
+                    None,
+                )
+                .await
+                .unwrap();
+            let expected = separate.as_deref().unwrap_or("imap-password");
+            assert!(srv.saw(&format!(
+                "AUTH PLAIN {}",
+                STANDARD.encode(format!("\0login\0{expected}"))
+            )));
+            if separate.is_some() {
+                assert!(!srv.saw(&STANDARD.encode("\0login\0imap-password")));
+            }
+        }
     }
 
     #[tokio::test]
@@ -1050,6 +1092,7 @@ mod provider_level_tests {
             account_id: "me@proton.me".into(),
             username: "me@proton.me".into(),
             password: "imap-password".into(),
+            smtp_password: None,
             manager,
             store,
             cache,
@@ -1105,6 +1148,7 @@ mod provider_level_tests {
             account_id: "me@proton.me".into(),
             username: "me@proton.me".into(),
             password: "imap-password".into(),
+            smtp_password: None,
             manager,
             store,
             cache,
@@ -1204,6 +1248,7 @@ mod provider_level_tests {
             account_id: account.into(),
             username: account.into(),
             password: "testpassword".into(),
+            smtp_password: None,
             manager,
             store,
             cache,

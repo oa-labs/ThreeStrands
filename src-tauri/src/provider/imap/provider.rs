@@ -285,6 +285,8 @@ pub struct ImapProviderConfig {
     pub account_id: String,
     pub username: String,
     pub password: String,
+    /// A separate SMTP password, when configured; otherwise reuse IMAP's.
+    pub smtp_password: Option<String>,
     pub manager: ImapConnectionManager,
     pub store: ImapStateStore,
     pub cache: BodyCache,
@@ -471,7 +473,7 @@ impl ImapProvider {
             cache: config.cache,
             username: config.username,
             account_id: config.account_id,
-            smtp_password: config.password,
+            smtp_password: config.smtp_password.unwrap_or(config.password),
             label_model: config.label_model,
             settings: config.settings,
             source,
@@ -2280,7 +2282,17 @@ impl ImapProvider {
             .local_filters
             .contains(&LocalFilter::HasAttachment);
 
-        let mut session = self.open_session().await?;
+        let mut session = match tokio::time::timeout_at(deadline, self.open_session()).await {
+            Ok(result) => result?,
+            Err(_) => {
+                let mut result = empty_search_result(None, None);
+                result.partial = Some(PartialReason::DeadlineExpired {
+                    mailboxes_searched: 0,
+                    mailboxes_planned,
+                });
+                return Ok(result);
+            }
+        };
 
         // Ordered (thread_id, deciding-uid) pairs, newest-UID-first within a
         // mailbox and mailboxes in plan order, deduplicated globally.
@@ -2445,7 +2457,9 @@ impl ImapProvider {
         // for the attachment filter and the caller's later sync must not race a
         // held connection lease — run 3's deadlock).
         if !connection_poisoned {
-            let _ = session.logout().await;
+            // Cleanup shares the search budget. A stalled LOGOUT must not
+            // keep the account's sync gate held after results are ready.
+            let _ = tokio::time::timeout_at(deadline, session.logout()).await;
         }
         drop(session);
 
@@ -4798,8 +4812,8 @@ impl MailSend for ImapProvider {
 
     async fn prepare_delivery(&self) -> ProviderResult<Box<dyn Delivery>> {
         // Build the endpoint + credentials from the account's non-secret
-        // settings and the IMAP password (reused as the SMTP password per the
-        // user's decision). An empty host / zero port is InvalidOperation
+        // settings and its SMTP password (falling back to IMAP when no
+        // separate password was saved). An empty host / zero port is InvalidOperation
         // BEFORE any network. The password is never formatted — it goes only
         // into SmtpCredentials (which redacts Debug).
         let endpoint = super::send::smtp_endpoint_from_settings(&self.settings)?;
@@ -5008,6 +5022,7 @@ mod tests {
         /// Extra `\Noselect` container names the server reports in `LIST` (they
         /// must never be added to the catalog).
         noselect: Vec<String>,
+        logout_stalls: bool,
     }
 
     impl FakeMailbox {
@@ -5020,6 +5035,7 @@ mod tests {
                 command_counts: Arc::new(Mutex::new(Default::default())),
                 list_fails: false,
                 noselect: Vec::new(),
+                logout_stalls: false,
             }
         }
         /// Ensure a folder exists at `uidvalidity`, returning a mutable handle.
@@ -5063,6 +5079,7 @@ mod tests {
         let folders = mailbox.folders.clone();
         let list_fails = mailbox.list_fails;
         let noselect = mailbox.noselect.clone();
+        let logout_stalls = mailbox.logout_stalls;
         let task = tokio::spawn(async move {
             let mut server = BufReader::new(server);
             server.get_mut().write_all(b"* OK ready\r\n").await.unwrap();
@@ -5182,6 +5199,12 @@ mod tests {
                     out.push_str(&format!("{tag} OK done\r\n"));
                     reply(&mut server, &out).await;
                 } else if upper.starts_with("LOGOUT") {
+                    if logout_stalls {
+                        // Keep the connection open without answering cleanup.
+                        let mut byte = [0u8; 1];
+                        let _ = tokio::io::AsyncReadExt::read(&mut server, &mut byte).await;
+                        break;
+                    }
                     reply(&mut server, &format!("* BYE\r\n{tag} OK logout\r\n")).await;
                     break;
                 } else {
@@ -8823,6 +8846,7 @@ mod tests {
                 account_id: USER.into(),
                 username: USER.into(),
                 password: PASSWORD.into(),
+                smtp_password: None,
                 manager: ImapConnectionManager::new(config),
                 store,
                 cache,
@@ -10038,6 +10062,7 @@ mod tests {
                     account_id: USER.into(),
                     username: USER.into(),
                     password: PASSWORD.into(),
+                    smtp_password: None,
                     manager: ImapConnectionManager::new(config),
                     store: store.clone(),
                     cache,
@@ -10511,6 +10536,59 @@ mod tests {
             }
             assert_eq!(result.thread_ids.len(), 2, "INBOX's two hits are returned");
             assert_eq!(store.search_pin_count().unwrap(), 2, "and stay pinned");
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn a_stalled_connection_returns_partial_at_the_search_deadline() {
+            struct StalledSource;
+            #[async_trait]
+            impl ImapSessionSource for StalledSource {
+                async fn open(&self) -> ProviderResult<Box<dyn ImapSession>> {
+                    std::future::pending().await
+                }
+            }
+            let (mut provider, store, _) = counting_provider(Arc::new(Mutex::new(multi_mailbox())));
+            provider.source = Arc::new(StalledSource);
+            let started = tokio::time::Instant::now();
+            let result = tokio::time::timeout(
+                policy::SEARCH_DEADLINE + std::time::Duration::from_secs(1),
+                provider.search_detailed("from:someone", None),
+            )
+            .await
+            .expect("connection establishment must be bounded")
+            .unwrap();
+            assert!(matches!(
+                result.partial,
+                Some(PartialReason::DeadlineExpired {
+                    mailboxes_searched: 0,
+                    mailboxes_planned: 3,
+                })
+            ));
+            assert!(result.thread_ids.is_empty());
+            assert_eq!(store.search_pin_count().unwrap(), 0);
+            assert_eq!(started.elapsed(), policy::SEARCH_DEADLINE);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn a_stalled_logout_returns_acquired_results_within_the_deadline() {
+            let mut mb = multi_mailbox();
+            mb.logout_stalls = true;
+            let (provider, store, _) = counting_provider(Arc::new(Mutex::new(mb)));
+            let started = tokio::time::Instant::now();
+            let result = tokio::time::timeout(
+                policy::SEARCH_DEADLINE + std::time::Duration::from_secs(1),
+                provider.search_detailed("from:someone", None),
+            )
+            .await
+            .expect("cleanup must be bounded")
+            .unwrap();
+            assert_eq!(result.thread_ids.len(), 6);
+            assert_eq!(store.search_pin_count().unwrap(), 6);
+            assert_eq!(
+                result.partial, None,
+                "cleanup cannot discard completed search results"
+            );
+            assert!(started.elapsed() <= policy::SEARCH_DEADLINE);
         }
 
         // --- 5) Skipped and NoServerMatches make NO network call and return

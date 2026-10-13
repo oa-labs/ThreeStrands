@@ -1378,8 +1378,7 @@ fn build_imap_provider(
             ProviderError::TransientTransport(format!(
                 "{account_id} IMAP password is unavailable: {error}"
             ))
-        })?
-        .imap;
+        })?;
 
     let pinned = settings
         .pinned_fingerprints
@@ -1398,7 +1397,8 @@ fn build_imap_provider(
     Ok(ImapProvider::new(ImapProviderConfig {
         account_id: account_id.to_string(),
         username: settings.imap_username.clone(),
-        password,
+        password: password.imap,
+        smtp_password: password.smtp,
         manager,
         store,
         cache,
