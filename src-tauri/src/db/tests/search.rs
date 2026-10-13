@@ -396,6 +396,103 @@ fn cached_text_repair_keeps_the_senders_plain_text_alternative() {
 }
 
 #[test]
+fn inbox_previews_skip_a_stylesheet_leaked_into_the_plain_alternative() {
+    use crate::mime::{normalize, MimeBody, MimePart, RawMessage};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+
+    // Two converter shapes: an indented reset stylesheet with an at-rule and
+    // residue between rules, and a single-line class rule run straight into
+    // the message.
+    let fixtures = [
+        (
+            "reset",
+            "\n  #outlook a { padding:0; }\n  body { margin:0;padding:0; }>96\n  .group-fix { width:100% !important; }\n  @import url(https://fonts.example/css);\n\nYour order shipped.",
+            "<html><head><style>#outlook a { padding:0; }</style></head><body><table><tr><td>Your order shipped.</td></tr></table></body></html>",
+        ),
+        (
+            "class-rule",
+            ".hero-title { margin: 0 30px !important; margin-top: 12px; } @media (max-width: 480px) { .hero-title { font-size: 20px; } } Your meetup moved to Thursday.",
+            "<div><style type=text/css>.hero-title { margin: 0 30px; }</style><h1 class=hero-title>Your meetup moved to Thursday.</h1></div>",
+        ),
+    ];
+    let database = database();
+    for (id, plain, html) in fixtures {
+        let expected = if id == "reset" { "Your order shipped." } else { "Your meetup moved to Thursday." };
+        let raw = RawMessage {
+            id: id.into(),
+            thread_id: id.into(),
+            internal_date: "0".into(),
+            label_ids: vec!["INBOX".into()],
+            snippet: String::new(),
+            payload: MimePart {
+                mime_type: "multipart/alternative".into(),
+                parts: [("text/plain", plain), ("text/html", html)]
+                    .into_iter()
+                    .map(|(kind, body)| MimePart {
+                        mime_type: kind.into(),
+                        body: MimeBody {
+                            data: Some(URL_SAFE_NO_PAD.encode(body)),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    })
+                    .collect(),
+                ..Default::default()
+            },
+        };
+        database
+            .upsert_thread("you@example.com", &[normalize(&raw).unwrap()])
+            .unwrap();
+        let thread_id = local_thread_id("you@example.com", id);
+        assert_eq!(list_snippet(&database, &thread_id), expected, "{id}");
+        assert_eq!(
+            database.get_thread(&thread_id).unwrap().messages[0].body_text,
+            expected,
+            "{id}"
+        );
+
+        // A previous release cached the polluted plain text; the queued
+        // repair re-normalizes the stored MIME payload.
+        {
+            let connection = database.connection().unwrap();
+            connection
+                .execute(
+                    "UPDATE messages SET body_text = '', body_text_z = ?1 WHERE id = ?2",
+                    params![crate::db::messages::compress_body(plain), id],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "UPDATE threads SET snippet = ?1 WHERE id = ?2",
+                    params![plain, thread_id],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO pending_search_reindex(thread_id) VALUES (?1)",
+                    [&thread_id],
+                )
+                .unwrap();
+        }
+        assert_eq!(database.reindex_next_search_batch(1).unwrap(), 1);
+        assert_eq!(list_snippet(&database, &thread_id), expected, "{id}");
+    }
+    assert!(search_ids(&database, "important").is_empty());
+}
+
+#[test]
+fn provider_snippet_fallback_skips_a_leading_stylesheet() {
+    let database = database();
+    let mut blank = message("blank", "css-snippet", "2026-10-02T09:00:00Z", "");
+    blank.snippet = ".title { margin: 0 30px !important; } Event update".into();
+    database.upsert_thread("you@example.com", &[blank]).unwrap();
+    assert_eq!(
+        list_snippet(&database, &local_thread_id("you@example.com", "css-snippet")),
+        "Event update"
+    );
+}
+
+#[test]
 fn chat_search_matches_any_word_and_skips_the_open_and_trashed_conversations() {
     let database = database();
     let words = |list: &[&str]| list.iter().map(|word| word.to_string()).collect::<Vec<_>>();

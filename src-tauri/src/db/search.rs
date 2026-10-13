@@ -529,7 +529,10 @@ pub(super) fn list_preview(
     provider_snippet: &str,
 ) -> String {
     if text.latest_preview.is_empty() {
-        return provider_snippet.to_string();
+        // Provider snippets can carry the same leaked stylesheet text.
+        return crate::html_plain_text::after_leading_stylesheet(provider_snippet)
+            .unwrap_or(provider_snippet)
+            .to_string();
     }
     let decoded = decode_entity_references(&text.latest_preview);
     let mut encoded = String::with_capacity(decoded.len());

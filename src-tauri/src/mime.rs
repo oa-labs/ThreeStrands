@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use crate::html_plain_text::html_to_text;
+use crate::html_plain_text::{after_leading_stylesheet, html_to_text};
 use mail_parser::MessageParser;
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -151,7 +151,17 @@ pub fn normalize(message: &RawMessage) -> Result<NormalizedMessage, String> {
     }
     // Some messages (newsletters, marketing mail) omit the text/plain alternative
     // entirely, so fall back to deriving plain text from the HTML body.
+    // A text/plain alternative that opens with a stylesheet was produced by a
+    // converter that leaked the HTML's <style> contents (often with other
+    // residue mixed in), so the HTML alternative is the better text source.
+    let has_html = !body_html.trim().is_empty();
     let body_text = match text {
+        Some(text) if has_html && after_leading_stylesheet(&text).is_some() => {
+            match html_to_text(&body_html) {
+                derived if derived.is_empty() => readable_body_text(text),
+                derived => derived,
+            }
+        }
         Some(text) => readable_body_text(text),
         None => html_to_text(&body_html),
     };
@@ -472,12 +482,16 @@ fn is_html_markup(text: &str) -> bool {
 
 /// A message's plain-text body as text. Some senders put an HTML document in
 /// the text/plain part; that body is flattened like an HTML-only message so
-/// previews, search, quoting, and AI context never show raw markup.
+/// previews, search, quoting, and AI context never show raw markup. A
+/// stylesheet leaked ahead of the message text is dropped; text that is
+/// nothing but CSS stays as written.
 pub fn readable_body_text(text: String) -> String {
     if is_html_markup(&text) {
-        html_to_text(&text)
-    } else {
-        text
+        return html_to_text(&text);
+    }
+    match after_leading_stylesheet(&text) {
+        Some(rest) if !rest.is_empty() => rest.to_string(),
+        _ => text,
     }
 }
 
@@ -912,6 +926,10 @@ mod tests {
         ] {
             assert_eq!(readable_body_text(text.to_string()), text);
         }
+        assert_eq!(
+            readable_body_text(".title { margin: 0; }\n\nSee you Thursday.".to_string()),
+            "See you Thursday."
+        );
         assert!(is_html_markup("  <!DOCTYPE html><html><body>x</body></html>"));
         assert!(is_html_markup("<BR/>x"));
     }
