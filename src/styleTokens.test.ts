@@ -288,6 +288,12 @@ describe("component sizes", () => {
     expect(Number(match![1])).toBeGreaterThanOrEqual(280);
   });
 
+  it("sizes each message attachment chip to its content rather than its column", () => {
+    let justify = "";
+    css.walkRules(".message-attachment", (rule) => rule.walkDecls("justify-self", (declaration) => { justify = declaration.value; }));
+    expect(justify).toBe("start");
+  });
+
   it("gives count badges, dots, checks, and swatches one size each", () => {
     const families: [RegExp, string][] = [
       [/badge$|-view-count$/, "var(--badge-size)"],

@@ -1177,6 +1177,10 @@ kbd {
 }
 .message-attachment {
   display: inline-flex;
+  /* Hug the content instead of stretching to the column: none of the
+     badge's parts grow, so a stretched chip leaves dead space after the
+     download button. */
+  justify-self: start;
   align-items: stretch;
   overflow: hidden;
   border: 1px solid var(--border-strong);
