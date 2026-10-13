@@ -12,7 +12,7 @@ type Choice = { goal: Goal | null; label: string };
 /**
  * Links one task to a goal from the keyboard: type to find one of the
  * account's active goals, or a new name to create it as a goal for the
- * current quarter. "No goal" unlinks.
+ * current quarter. "No Goal" unlinks.
  */
 export function GoalLinkPicker({
   task,
@@ -32,7 +32,7 @@ export function GoalLinkPicker({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const choices: Choice[] = [
-    { goal: null, label: "No goal" },
+    { goal: null, label: "No Goal" },
     ...goalOptionsForTask(goals, task).map((goal) => ({ goal, label: goal.title })),
   ];
   const quarter = periodFor("quarter", now);

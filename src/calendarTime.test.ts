@@ -42,6 +42,16 @@ describe("calendar time helpers", () => {
     expect(occursOnDay(allDay, new Date(2026, 8, 23))).toBe(false);
   });
 
+  it("includes every local date of a multi-day all-day event, excluding its end date", () => {
+    const allDay: ScheduleEvent = {
+      id: "offsite", accountId: "a@example.com", title: "Offsite",
+      start: "2026-09-21", end: "2026-09-24", allDay: true,
+    };
+    expect(occursOnDay(allDay, new Date(2026, 8, 20))).toBe(false);
+    for (const date of [21, 22, 23]) expect(occursOnDay(allDay, new Date(2026, 8, date))).toBe(true);
+    expect(occursOnDay(allDay, new Date(2026, 8, 24))).toBe(false);
+  });
+
   it("gives overlapping events side-by-side lanes and sequential events the full width", () => {
     const day = new Date(2026, 8, 22);
     const overlapping = layOutDayEvents([

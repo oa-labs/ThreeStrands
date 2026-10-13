@@ -1,6 +1,7 @@
 import { WorkspaceContextRail } from "./WorkspaceContextRail";
 import { WorkspaceRelatedContext } from "./WorkspaceRelatedContext";
 import { ContextSectionHeader } from "./ContextSections";
+import { CalendarAgenda } from "./CalendarAgenda";
 import { calendarRange, CALENDAR_RANGES, CALENDAR_RANGE_KEY, readCalendarRange, rangeForEvent, type CalendarRangeMode } from "./calendarRange";
 import { CalendarDays, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
@@ -265,6 +266,7 @@ export function CalendarWeekView({
   const [mode, setMode] = useState<CalendarRangeMode>(() => session?.current?.initialEvent===initialEvent && session?.current ? session.current.mode : initialEvent ? rangeForEvent(initialEvent, readCalendarRange()) : readCalendarRange());
   const [navigationOpen, setNavigationOpen] = useState(session?.current?.navigationOpen ?? false);
   const eventTrigger = useRef<HTMLButtonElement | null>(null);
+  const focusAgendaDetails = useRef(false);
   const calendarColors = useCalendarColors();
   const [newEventRange, setNewEventRange] = useState<{ start: Date; end: Date } | null>(null);
   const [dragPreview, setDragPreview] = useState<{ dayIndex: number; startMinutes: number; endMinutes: number } | null>(null);
@@ -276,6 +278,7 @@ export function CalendarWeekView({
   const weekStart = range.start;
   const days = range.days;
   const today = startOfLocalDay(now);
+  const todayVisible = days.some((day) => isSameDay(day, today));
   const selectedAccountEmails = [...new Set(calendars.filter((calendar) => calendar.selected).map((calendar) => calendar.accountId))];
   // The week merges every connected calendar account, so name the scope like the mail "All accounts" view.
   const showsEveryAccount = accounts.length > 0 && accounts.every((account) => selectedAccountEmails.includes(account.email));
@@ -291,6 +294,30 @@ export function CalendarWeekView({
   const restoredInitial=useRef(session?.current?.initialEvent===initialEvent && !!session?.current);
   useEffect(() => { if (restoredInitial.current) { restoredInitial.current=false; return; } if (initialEvent) { setMode(rangeForEvent(initialEvent, readCalendarRange())); setSelectedEvent(initialEvent); } }, [initialEvent]);
   useEffect(() => { if (!loading) setSelectedEvent((current) => current ? events.find((event) => sameEvent(current, event)) ?? (initialEvent && sameEvent(current, initialEvent) ? current : null) : null); }, [events, loading, initialEvent]);
+
+  useEffect(() => {
+    if (selectedEvent && focusAgendaDetails.current) {
+      focusAgendaDetails.current = false;
+      document.getElementById("calendar-event-viewer")?.focus();
+    }
+  }, [selectedEvent]);
+
+  const openAgendaEvent = (event: ScheduleEvent) => {
+    focusAgendaDetails.current = true;
+    eventTrigger.current = null;
+    if (!todayVisible) {
+      // A weekend agenda remains available even when the preferred grid is Workweek.
+      if (mode === "workweek" && [0, 6].includes(today.getDay())) setMode("day");
+      onAnchorChange(today);
+      setMonth(today);
+    }
+    setSelectedEvent(event);
+    if (!event.allDay && gridRef.current) {
+      const start = new Date(event.start);
+      const minutes = isSameDay(start, today) ? start.getHours() * 60 + start.getMinutes() : 0;
+      gridRef.current.scrollTop = Math.max(0, minutes / 60 * HOUR_HEIGHT - gridRef.current.clientHeight / 2);
+    }
+  };
 
   useEffect(() => {
     if (gridRef.current) gridRef.current.scrollTop = readWeekScrollTop();
@@ -386,7 +413,7 @@ export function CalendarWeekView({
         <header className="calendar-week-header">
           <div className="calendar-week-heading"><span className="eyebrow">Calendar <span className="eyebrow-account" title={selectedAccountEmails.join(", ") || undefined}>· {accountScope}</span></span><h1>{monthTitle(weekStart)}</h1><p className="calendar-visible-range">{weekStart.toLocaleDateString(undefined, { month: "short", day: "numeric" })}{days.length > 1 ? ` – ${days.at(-1)!.toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</p></div>
           <div className="calendar-week-controls">
-            <label className="sr-only" htmlFor="calendar-range">Calendar range</label><select id="calendar-range" value={mode} onChange={(event) => { const next=event.target.value as CalendarRangeMode; setMode(next); try { localStorage.setItem(CALENDAR_RANGE_KEY,next); } catch { /* Session preference still applies. */ } }}>{CALENDAR_RANGES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select>
+            <div className="segmented" role="group" aria-label="Calendar Range">{CALENDAR_RANGES.map((item) => <button key={item.value} type="button" className="segment" aria-pressed={mode === item.value} onClick={() => { setMode(item.value); try { localStorage.setItem(CALENDAR_RANGE_KEY,item.value); } catch { /* Session preference still applies. */ } }}>{item.label}</button>)}</div>
             <button type="button" className="btn" aria-expanded={navigationOpen} onClick={() => setNavigationOpen((value) => !value)}><CalendarDays size={ICON_SIZE.sm} />Calendars</button>
             <button type="button" className="btn" onClick={goToToday}>Today</button>
             <div className="calendar-week-nav">
@@ -444,6 +471,7 @@ export function CalendarWeekView({
         <div className="calendar-week-timezone"><span className="calendar-week-gutter">{timeZoneLabel(anchor)}</span></div>
         <div
           className="calendar-week-scroll"
+          tabIndex={-1}
           ref={gridRef}
           onScroll={(event) => saveWeekScrollTop(event.currentTarget.scrollTop)}
         >
@@ -558,12 +586,15 @@ export function CalendarWeekView({
           onAdd={onAddCalendarAccount}
         />
       </aside> : null}
-      <WorkspaceContextRail label="Meeting context" onReturn={() => eventTrigger.current?.focus()}>
-        <ContextSectionHeader title="Event details" />
+      <WorkspaceContextRail label="Meeting context" onReturn={() => (eventTrigger.current?.isConnected ? eventTrigger.current : gridRef.current)?.focus()}>
         {selectedEvent ? <>
-          <EventViewer key={`${selectedEvent.accountId}:${selectedEvent.calendarId}:${selectedEvent.id}`} embedded event={selectedEvent} onDismiss={() => setSelectedEvent(null)} onUpdated={setSelectedEvent} />
+          <ContextSectionHeader title="Event details" />
+          <EventViewer key={`${selectedEvent.accountId}:${selectedEvent.calendarId}:${selectedEvent.id}`} embedded event={selectedEvent} onDismiss={() => {
+            setSelectedEvent(null);
+            if (!eventTrigger.current) document.getElementById("workspace-Meeting-context")?.focus();
+          }} onUpdated={setSelectedEvent} />
           <WorkspaceRelatedContext target={{ kind: "meeting", event: selectedEvent }} accountIds={mailAccountIds} onOpenThread={onOpenThread} />
-        </> : <p className="context-status">Select an event to see details and related information.</p>}
+        </> : <CalendarAgenda today={today} calendars={calendars} onOpenEvent={openAgendaEvent} schedule={todayVisible ? { events, loading, error, reload } : undefined} />}
       </WorkspaceContextRail>
     </section>
   );

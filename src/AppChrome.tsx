@@ -22,6 +22,7 @@ export function FiltersButton({
 }) {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -36,6 +37,7 @@ export function FiltersButton({
   return (
     <div className="filters-anchor" ref={anchorRef}>
       <button
+        ref={triggerRef}
         type="button"
         className={`btn filters-trigger ${activeFilters.size > 0 ? "active" : ""}`}
         aria-haspopup="menu"
@@ -46,7 +48,10 @@ export function FiltersButton({
         <span>Filters</span>
         {activeFilters.size > 0 ? <span className="filters-badge">{activeFilters.size}</span> : null}
       </button>
-      {open ? <FiltersMenu activeFilters={activeFilters} onToggleFilter={onToggleFilter} onClose={() => setOpen(false)} /> : null}
+      {open ? <FiltersMenu activeFilters={activeFilters} onToggleFilter={onToggleFilter} onClose={() => {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }} /> : null}
     </div>
   );
 }

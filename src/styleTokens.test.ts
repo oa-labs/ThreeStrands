@@ -112,6 +112,44 @@ describe("form controls", () => {
     });
     expect(raw).toEqual([]);
   });
+
+  /** Whether a selector targets the native select element, not a class such as `.file-list-select`. */
+  const targetsSelect = (selector: string) => /(^|[\s>+~(])select(?![\w-])/.test(selector);
+
+  it("draws every dropdown from one shared select rule with an explicit height and a single chevron", () => {
+    const base = new Map<string, string>();
+    css.walkRules((rule) => {
+      if (rule.selector === "select") rule.walkDecls((declaration) => { base.set(declaration.prop, declaration.value); });
+    });
+    expect(base.get("height")).toBe("var(--control-h)");
+    expect(base.get("box-sizing")).toBe("border-box");
+    expect(base.get("appearance")).toBe("none");
+    expect(base.get("background-color")).toBe("var(--input)");
+    expect(base.get("background-image")).toMatch(/^url\("data:image\/svg\+xml/);
+    expect(base.get("font-size")).toBe("var(--text-body)");
+
+    // A context may resize or recolor a select, but a second arrow, native
+    // appearance, or a background shorthand that erases the shared chevron
+    // makes dropdowns drift apart again.
+    const overrides: string[] = [];
+    css.walkDecls(/^(-webkit-)?appearance$|^background(-image|-position|-repeat)?$/, (declaration) => {
+      const rule = declaration.parent as Rule;
+      if (rule.selector === "select" || !rule.selectors?.some(targetsSelect)) return;
+      overrides.push(describeDeclaration(declaration));
+    });
+    expect(overrides).toEqual([]);
+  });
+
+  it("sets inline dropdowns in control text and form dropdowns in body text", () => {
+    const sizes = new Map<string, string>();
+    css.walkDecls("font-size", (declaration) => {
+      for (const selector of (declaration.parent as Rule).selectors ?? []) if (targetsSelect(selector)) sizes.set(selector, declaration.value);
+    });
+    for (const inline of [".compose-from select", ".contacts-bulk-bar select", ".contact-keep-in-touch > header select"]) {
+      expect(sizes.get(inline), inline).toBe("var(--text-control)");
+    }
+    for (const [selector, value] of sizes) expect(value, selector).toMatch(/^var\(--text-(body|control)\)$/);
+  });
 });
 
 /** Component declarations: everything outside the :root token definitions. */

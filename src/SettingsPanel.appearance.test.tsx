@@ -22,7 +22,7 @@ function Appearance() {
 describe("appearance settings", () => {
   it("saves, restores, and disables the minimum email font size independently of app scale", async () => {
     const { unmount } = render(<Appearance />);
-    const select = screen.getByRole("combobox", { name: "Minimum email font size" });
+    const select = screen.getByRole("combobox", { name: "Minimum Email Font Size" });
     expect(select).toHaveValue("0");
     fireEvent.change(select, { target: { value: "18" } });
     expect(select).toHaveValue("18");
@@ -32,7 +32,7 @@ describe("appearance settings", () => {
     await screen.findByRole("button", { name: "Default font: System Default" });
     unmount();
     render(<Appearance />);
-    const restored = screen.getByRole("combobox", { name: "Minimum email font size" });
+    const restored = screen.getByRole("combobox", { name: "Minimum Email Font Size" });
     expect(restored).toHaveValue("18");
     fireEvent.change(restored, { target: { value: "0" } });
     expect(localStorage.getItem("threestrands.settings.emailMinimumFontSize")).toBe("0");

@@ -2,6 +2,7 @@ import { Check, ChevronLeft, ChevronRight, Clock3, Columns3, List, Mail, Plus, R
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import type { Goal, ThreadTask, UpdateGoalRequest, UpdateTaskRequest, TaskStatus } from "./domain";
 import { mailClient } from "./data/client";
+import { Modal } from "./AppChrome";
 import { GoalDialog } from "./GoalDialog";
 import { GoalLinkPicker } from "./GoalLinkPicker";
 import { GoalReviewDialog } from "./GoalReviewDialog";
@@ -142,6 +143,8 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskAccountId, setNewTaskAccountId] = useState("");
   const [creatingTask, setCreatingTask] = useState(false);
+  const [newTaskError, setNewTaskError] = useState<string | null>(null);
+  const [lastAddedTitle, setLastAddedTitle] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const [completionToast, setCompletionToast] = useState<ThreadTask | null>(null);
   const completionToastTimeout = useRef<number | null>(null);
@@ -294,15 +297,16 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     setError(null);
     setNewTaskTitle("");
     setNewTaskAccountId("");
+    setNewTaskError(null);
+    setLastAddedTitle(null);
     setAddingTask(true);
-    newTaskInput.current?.focus();
   }, []);
 
   const createTask = async () => {
     const title = newTaskTitle.trim();
     if (!onCreateTask || !title || creatingTask || (!accountId && !filterGoal && accountOptions.length > 1 && !newTaskAccountId)) return;
     setCreatingTask(true);
-    setError(null);
+    setNewTaskError(null);
     try {
       // Adding while one goal is in view links the task to it, in the goal's account.
       const created = filterGoal ? await onCreateTask(title, filterGoal.accountId, filterGoal.id)
@@ -310,11 +314,14 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       setTasks((current) => [created, ...current]);
       setView("All");
       setSelectedTaskId(created.id);
+      // The dialog stays open, cleared, for batch entry.
       setNewTaskTitle("");
+      setLastAddedTitle(created.title);
       onTasksChanged?.();
       newTaskInput.current?.focus();
     } catch (reason) {
-      setError(errorMessage(reason));
+      // Keep the typed title so the user can retry from the dialog.
+      setNewTaskError(errorMessage(reason));
     } finally {
       setCreatingTask(false);
     }
@@ -569,7 +576,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
         </div>
       ) : null}
       {loading ? <p className="tasks-status">Loading tasks…</p> : null}
-      {!loading && tasks.length === 0 && !addingTask ? <p className="tasks-status">No tasks yet. Press d to add one.</p> : null}
+      {!loading && tasks.length === 0 ? <p className="tasks-status">No tasks yet. Press d to add one.</p> : null}
       <div className={`tasks-workspace-body${board ? " tasks-board-layout" : ""}`}>
         <div className={board ? "tasks-board-pane" : "tasks-list-pane"}>
           <nav className="task-view-nav" aria-label="Task views">
@@ -580,13 +587,6 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
               </button>;
             })}
           </nav>
-          {addingTask ? <form className="task-quick-add" data-shortcut-scope="modal" onSubmit={(event) => { event.preventDefault(); void createTask(); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (!creatingTask) setAddingTask(false); } }}>
-            <label htmlFor="quick-add-task-title">Task title</label>
-            <input id="quick-add-task-title" ref={newTaskInput} autoFocus value={newTaskTitle} onChange={(event) => setNewTaskTitle(event.target.value)} placeholder="What needs doing?" maxLength={240} />
-            {filterGoal ? <p className="task-quick-add-goal"><Target size={ICON_SIZE.xs} aria-hidden="true" /> Supports {filterGoal.title}</p> : null}
-            {!accountId && !filterGoal && accountOptions.length > 1 ? <><label htmlFor="quick-add-task-account">Account</label><select id="quick-add-task-account" value={newTaskAccountId} onChange={(event) => setNewTaskAccountId(event.target.value)} required><option value="">Choose an account</option>{accountOptions.map((email) => <option key={email} value={email}>{email}</option>)}</select></> : null}
-            <div><button type="button" className="btn" disabled={creatingTask} onClick={() => setAddingTask(false)}>Cancel</button><button type="submit" className="btn btn-primary" disabled={creatingTask || !newTaskTitle.trim() || (!accountId && !filterGoal && accountOptions.length > 1 && !newTaskAccountId)}>{creatingTask ? "Adding…" : "Add task"}</button></div>
-          </form> : null}
           {!board && !loading && tasks.length > 0 && displayedGroups.length === 0 ? <p className="tasks-status">{view === "All" ? "No open tasks. Add a task or view completed work." : `No tasks in ${view.toLowerCase()}.`}</p> : null}
           {taskList}
           {draggedTask && cardDrag ? <div className="task-drag-preview" aria-hidden="true" style={{ left: cardDrag.x - cardDrag.offsetX, top: cardDrag.y - cardDrag.offsetY, width: cardDrag.width }}>
@@ -624,6 +624,20 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
         onUpdate={updateGoal}
         onClose={() => setReviewingGoals(false)}
       /> : null}
+      {addingTask ? <Modal title="Add Task" className="task-quick-add-modal" dismissible={!creatingTask} initialFocusRef={newTaskInput} onClose={() => setAddingTask(false)}>
+        <form className="modal-form" onSubmit={(event) => { event.preventDefault(); void createTask(); }} onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+            event.preventDefault();
+            event.currentTarget.requestSubmit();
+          }
+        }}>
+          {filterGoal ? <p className="modal-form-context task-quick-add-goal"><Target size={ICON_SIZE.xs} aria-hidden="true" /> Supports {filterGoal.title}</p> : null}
+          <label><span>Task Title</span><input ref={newTaskInput} value={newTaskTitle} onChange={(event) => setNewTaskTitle(event.target.value)} placeholder="What needs doing?" maxLength={240} /></label>
+          {!accountId && !filterGoal && accountOptions.length > 1 ? <label><span>Account</span><select value={newTaskAccountId} onChange={(event) => setNewTaskAccountId(event.target.value)} required><option value="">Choose an account</option>{accountOptions.map((email) => <option key={email} value={email}>{email}</option>)}</select></label> : null}
+          {newTaskError ? <p className="form-error" role="alert">{newTaskError}</p> : lastAddedTitle ? <p className="modal-form-context" role="status">Added “{lastAddedTitle}”. Add another, or close when done.</p> : null}
+          <div className="modal-form-actions"><button type="button" className="btn" disabled={creatingTask} onClick={() => setAddingTask(false)}>{lastAddedTitle ? "Done" : "Cancel"}</button><button type="submit" className="btn btn-primary" disabled={creatingTask || !newTaskTitle.trim() || (!accountId && !filterGoal && accountOptions.length > 1 && !newTaskAccountId)}>{creatingTask ? "Adding…" : "Add Task"}</button></div>
+        </form>
+      </Modal> : null}
       {goalLinkTask ? <GoalLinkPicker
         task={goalLinkTask}
         goals={goals}

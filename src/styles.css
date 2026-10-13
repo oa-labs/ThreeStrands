@@ -344,6 +344,30 @@ body { margin: 0; min-width: 900px; min-height: 100vh; overflow: hidden; }
 button, input, select { font: inherit; }
 button { color: inherit; cursor: pointer; }
 button:disabled { cursor: default; }
+/* Every dropdown starts from this one control: the shared height and border
+   box, field colors, and a single chevron, so a select lines up with the
+   inputs and buttons beside it in every browser. Contexts may set width, a
+   compact height, the inline control text size, or a surface color, but
+   never their own arrow, appearance, or padding. */
+select {
+  box-sizing: border-box;
+  height: var(--control-h);
+  min-width: 0;
+  padding: 0 var(--space-8) 0 var(--space-2-5);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background-color: var(--input);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--space-3) center;
+  font-size: var(--text-body);
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+select:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+select:disabled { opacity: var(--opacity-disabled); cursor: default; }
 
 .app-shell {
   display: grid;
@@ -723,7 +747,6 @@ button:disabled { cursor: default; }
 }
 /* Field labels: the same label at regular weight, because they wrap inputs
    that inherit their weight. */
-.task-quick-add label,
 .contact-editor-grid label,
 .contact-editor-grid .contact-multi-value-field,
 .contact-kit-controls label,
@@ -1931,10 +1954,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .task-view-item:hover { background: var(--hover); color: var(--text); }
 .task-view-item[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 13%, var(--surface)); color: var(--text); font-weight: var(--weight-semibold); }
 .task-view-count { color: var(--muted); font-size: var(--text-meta); }
-.task-quick-add { display: grid; gap: var(--space-2); margin: var(--space-4); padding: var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--raised); }
-.task-quick-add label { color: var(--muted); }
-.task-quick-add input, .task-quick-add select { min-width: 0; width: 100%; padding: var(--space-2) var(--space-2-5); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--background); color: var(--text); font: inherit; }
-.task-quick-add > div { display: flex; justify-content: flex-end; gap: var(--space-2); }
 .tasks-workspace .tasks-list { padding: var(--space-5) var(--pane-inset) var(--space-10); }
 .tasks-workspace .tasks-list section + section { margin-top: var(--space-6); }
 .tasks-workspace .task-card { min-height: 66px; margin: var(--space-2) 0; border-radius: var(--radius-md); }
@@ -2062,18 +2081,18 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .contacts-list-toolbar { display:flex; align-items:baseline; justify-content:space-between; gap:var(--space-2); }
 .contacts-select-toggle { margin: 0 var(--space-2) 0 0; }
 .contacts-bulk-bar { display:flex; align-items:center; justify-content:space-between; gap:var(--space-2-5); margin:0 var(--list-row-inset) var(--space-3); padding:var(--space-2) var(--space-2-5); border:1px solid var(--border); border-radius:var(--radius-md); color:var(--muted); background:var(--surface); font-size:var(--text-meta); }
-.contacts-bulk-bar select { height:var(--control-h-sm); box-sizing:border-box; padding:0 var(--space-2); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); font:inherit; }
+.contacts-bulk-bar select { height:var(--control-h-sm); font-size:var(--text-control); }
 .contact-list-item.selectable input { flex:0 0 auto; margin:0; accent-color:var(--accent); }
 .contact-list-item.checked { background:color-mix(in srgb,var(--accent) 8%,var(--surface)); }
 .contact-list-item > svg.contact-kit-due { color:var(--error); }
 .contact-list-item > svg.contact-kit-due + svg { margin-left:var(--space-1); }
 .contact-list-group.kit-overdue h2 { color:var(--error); }
 .contact-keep-in-touch > header { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-2) var(--space-3); }
-.contact-keep-in-touch > header select { height:var(--control-h-sm); padding:0 var(--space-2); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); font:inherit; font-size:var(--text-control); }
+.contact-keep-in-touch > header select { height:var(--control-h-sm); font-size:var(--text-control); }
 .contact-kit-saved { display:inline-flex; align-items:center; gap:var(--space-1); color:var(--muted); font-size:var(--text-meta); }
 .contact-kit-controls { display:flex; flex-wrap:wrap; align-items:flex-end; gap:var(--space-3); margin-top:var(--space-3); }
 .contact-kit-controls label,.contact-kit-snooze-menu label { display:grid; gap:var(--space-1-5); color:var(--muted); }
-.contact-kit-controls select,.contact-kit-controls input,.contact-kit-snooze-menu input { height:var(--control-h); box-sizing:border-box; padding:0 var(--space-2-5); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); font:inherit; letter-spacing:normal; text-transform:none; }
+.contact-kit-controls input,.contact-kit-snooze-menu input { height:var(--control-h); box-sizing:border-box; padding:0 var(--space-2-5); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--background); font:inherit; letter-spacing:normal; text-transform:none; }
 .contact-kit-controls input { width:110px; }
 .contact-kit-status { margin:var(--space-3) 0 0; color:var(--secondary); font-size:var(--text-meta); }
 .contact-kit-hint { margin:var(--space-2-5) 0 0; color:var(--muted); font-size:var(--text-meta); }
@@ -2360,12 +2379,13 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .modal-form .calendar-event-all-day-field input { width: auto; }
 .calendar-event-time-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2-5); }
 @media (max-width: 560px) { .calendar-event-time-fields { grid-template-columns: 1fr; } }
-.availability-request-modal { width: min(var(--dialog-w-sm), calc(100vw - var(--dialog-edge))); }
+.availability-request-modal, .task-quick-add-modal { width: min(var(--dialog-w-sm), calc(100vw - var(--dialog-edge))); }
 .recovery-phrase-modal { overflow-y: auto; }
 .recovery-phrase-words { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: var(--space-1-5) var(--space-4); margin: 0; padding: var(--space-2-5) var(--space-3) var(--space-2-5) var(--space-8); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--input); color: var(--text); font-family: var(--font-mono); font-size: var(--text-body); user-select: text; }
 .modal-form { display: grid; gap: var(--space-3); padding: var(--space-2) var(--dialog-inset) var(--space-4); }
 .modal-form label { display: grid; gap: var(--space-1); color: var(--muted); font-size: var(--text-meta); }
-.modal-form input, .modal-form select, .modal-form textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: var(--space-2) var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background: var(--input); font: inherit; font-size: var(--text-body); }
+.modal-form input, .modal-form textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: var(--space-2) var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background: var(--input); font: inherit; font-size: var(--text-body); }
+.modal-form select { width: 100%; }
 .modal-form input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), .modal-form select { height: var(--control-h); }
 .modal-form textarea { resize: vertical; }
 .modal-form-context { margin: 0; overflow: hidden; color: var(--muted); font-size: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
@@ -2440,25 +2460,15 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 /* Name + account, then rule kind + value, then the submit on its own row: five
    controls in a two-column grid never leave a ragged last row. */
 .split-inbox-add > .btn { grid-column: 1 / -1; justify-self: start; }
-.split-inbox-add input, .split-inbox-add select {
-  width: 100%;
-  min-width: 0;
-  padding: var(--space-2) var(--space-2-5);
+.split-inbox-add input, .split-inbox-add select { width: 100%; min-width: 0; height: var(--control-h); }
+.split-inbox-add input {
+  padding: 0 var(--space-2-5);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   color: var(--text);
   background: var(--input);
   font-size: var(--text-body);
   font-family: inherit;
-  box-sizing: border-box;
-}
-form.split-inbox-add select {
-  appearance: none;
-  -webkit-appearance: none;
-  padding-right: var(--space-8);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 12px center;
 }
 .settings-add-account { flex-shrink: 0; }
 .account-provider-picker { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
@@ -2590,7 +2600,7 @@ form.split-inbox-add select {
    rhythm as headings within a section: the 8px flex gap plus h3's 14px. */
 .settings-section + .settings-section { margin-top: var(--space-6); }
 .settings-section p { margin: 0; color: var(--muted); font-size: var(--text-body); line-height: var(--leading-normal); }
-.settings-section select, .settings-field input {
+.settings-field input {
   padding: var(--space-2) var(--space-2-5);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
@@ -2598,14 +2608,7 @@ form.split-inbox-add select {
   background-color: var(--input);
   font-size: var(--text-body);
 }
-.settings-section select {
-  appearance: none;
-  -webkit-appearance: none;
-  padding-right: var(--space-8);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 12px center;
-}
+.settings-field input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) { height: var(--control-h); }
 .settings-field select { width: 100%; }
 .settings-hint { color: var(--muted); font-size: var(--text-secondary); }
 .settings-field { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); width: 100%; font-size: var(--text-body); }
@@ -2897,22 +2900,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .composer header span { display: block; margin-top: var(--space-1); color: var(--muted); font-size: var(--text-secondary); }
 .compose-from { display: flex; align-items: center; gap: var(--space-1-5); margin-top: var(--space-1); }
 .compose-from span { margin-top: 0; }
-.compose-from select {
-  box-sizing: border-box;
-  height: var(--control-h);
-  font: inherit;
-  font-size: var(--text-secondary);
-  color: var(--text);
-  background: var(--raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: var(--space-0-5) var(--space-5) var(--space-0-5) var(--space-2-5);
-  appearance: none;
-  -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M1 1l3 3 3-3' fill='none' stroke='%23888' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 6px center;
-}
+/* An inline picker in the composer header: control text on the raised surface. */
+.compose-from select { font-size: var(--text-control); background-color: var(--raised); border-color: var(--border); }
 .composer-content { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: auto; padding: 0 var(--pane-inset); }
 .compose-field { display: flex; align-items: center; gap: var(--space-3); min-height: 44px; border-bottom: 1px solid var(--border); font-size: var(--text-body); flex-shrink: 0; }
 .compose-field:focus-within { border-bottom-color: var(--accent); }
@@ -3050,7 +3039,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .toast, .send-notice, .compose-notice, .exit-notice { animation: motion-toast-in var(--duration-slow) var(--ease-emphasized) backwards; }
 .modal-backdrop { animation: motion-fade-in var(--duration-base) ease-out backwards; }
 .modal { animation: motion-modal-in var(--duration-entrance) var(--ease-emphasized) backwards; }
-.folder-menu, .filters-menu, .recipient-suggestions, .font-picker-popover { animation: motion-drop-in var(--duration-base) ease-out backwards; }
+.folder-menu, .filters-menu, .calendar-color-menu, .recipient-suggestions, .font-picker-popover { animation: motion-drop-in var(--duration-base) ease-out backwards; }
 
 /* Immediate press feedback, even while the work behind a click is still in
    flight. */
@@ -3082,7 +3071,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 
 .schedule-send-form { display: grid; gap: var(--space-3); padding: var(--space-4) var(--dialog-inset); overflow-y: auto; }
 .schedule-send-form label { display: grid; gap: var(--space-2); }
-.schedule-send-form input, .schedule-send-form select { width: 100%; min-width: 0; }
+.schedule-send-form input, .schedule-send-form select { width: 100%; min-width: 0; height: var(--control-h); }
+.schedule-send-form input { padding: 0 var(--space-2-5); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background: var(--input); font-size: var(--text-body); }
 .schedule-send-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
 .composer footer { flex-wrap: wrap; }
 
@@ -3124,7 +3114,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .files-filters { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); }
 .files-filters[hidden] { display: none; }
 .files-filters label { min-width: 0; display: grid; gap: var(--space-1); color: var(--muted); font-size: var(--text-meta); }
-.files-filters input { max-width: 180px; height: var(--control-h); box-sizing: border-box; }
+.files-filters input, .files-filters select { max-width: 180px; height: var(--control-h); box-sizing: border-box; }
 .file-date-control { position: relative; display: inline-flex; }
 .file-date-control input { width: 150px; font-size: var(--text-body); }
 .file-date-control input[data-empty="true"]:not(:focus) { color: transparent; }

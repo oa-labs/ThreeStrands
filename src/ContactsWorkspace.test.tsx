@@ -45,7 +45,7 @@ describe("ContactsWorkspace",()=>{
     fireEvent.click(screen.getByRole("checkbox",{name:"Select Newer Person"}));
     fireEvent.click(screen.getByRole("button",{name:"Merge…"}));
     const dialog=screen.getByRole("dialog",{name:"Merge contacts"});
-    fireEvent.change(within(dialog).getByLabelText("Profile to keep"),{target:{value:jane.id}});
+    fireEvent.change(within(dialog).getByLabelText("Profile to Keep"),{target:{value:jane.id}});
     fireEvent.click(within(dialog).getByRole("button",{name:"Merge 2 contacts"}));
     await waitFor(()=>expect(mailClient.mergeContacts).toHaveBeenCalledWith(jane.id,[newerContact.id]));
     await waitFor(()=>expect(mailClient.contactTimeline).toHaveBeenCalledTimes(2));

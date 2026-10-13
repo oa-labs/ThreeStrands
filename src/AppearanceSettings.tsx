@@ -157,12 +157,12 @@ export function AppearanceSettings({
       <p className="settings-hint" id="email-minimum-font-size-hint">Enlarges small text in received emails while keeping larger text at its original size. Try 18 px for easier reading. Text inside images is unchanged.</p>
       <div className="settings-row">
         <select
-          aria-label="Minimum email font size"
+          aria-label="Minimum Email Font Size"
           aria-describedby="email-minimum-font-size-hint"
           value={emailMinimumFontSize}
           onChange={(event) => onEmailMinimumFontSizeChange(Number(event.target.value))}
         >
-          <option value={EMAIL_MINIMUM_FONT_SIZE.disabled}>Off — use sender sizes</option>
+          <option value={EMAIL_MINIMUM_FONT_SIZE.disabled}>Off — Use Sender Sizes</option>
           {Array.from({ length: EMAIL_MINIMUM_FONT_SIZE.maxPx - EMAIL_MINIMUM_FONT_SIZE.minPx + 1 }, (_, index) => EMAIL_MINIMUM_FONT_SIZE.minPx + index)
             .map((size) => <option key={size} value={size}>{size} px</option>)}
         </select>

@@ -289,7 +289,7 @@ describe("settings section keyboard navigation", () => {
     search.focus();
     fireEvent.change(search, { target: { value: "minimum email font size" } });
     expect(within(dialog).getByRole("button", { name: "Appearance" })).toHaveAttribute("aria-current", "true");
-    expect(within(dialog).getByRole("combobox", { name: "Minimum email font size" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("combobox", { name: "Minimum Email Font Size" })).toBeInTheDocument();
     fireEvent.change(search, {
       target: { value: "remote images" },
     });

@@ -251,11 +251,11 @@ export function TaskDetailDialog({
             {statusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select></label>
           <label><span>Type</span><select value={drafts.kind} onChange={(event) => change("kind", event.target.value as TaskKind, true)}>
-            <option value="action">Action</option><option value="follow_up">Follow up</option><option value="waiting_for">Waiting for reply</option>
+            <option value="action">Action</option><option value="follow_up">Follow Up</option><option value="waiting_for">Waiting for Reply</option>
           </select></label>
         </div>
         <label><span>Goal</span><select value={drafts.goalId} onChange={(event) => change("goalId", event.target.value, true)}>
-          <option value="">No goal</option>
+          <option value="">No Goal</option>
           {GOAL_HORIZONS.map((horizon) => {
             const options = goalOptions.filter((goal) => goal.horizon === horizon);
             return options.length ? <optgroup key={horizon} label={GOAL_HORIZON_LABELS[horizon]}>
@@ -271,7 +271,7 @@ export function TaskDetailDialog({
             setDrafts(next);
             draftStore?.set(task.id, next);
             commit(next);
-          }}><option value="none">No due date</option><option value="date">Date</option><option value="datetime">Date and time</option></select></label>
+          }}><option value="none">No Due Date</option><option value="date">Date</option><option value="datetime">Date and Time</option></select></label>
           {drafts.dueKind !== "none" ? <label>
             <span>{drafts.dueKind === "date" ? "Due date" : "Due date and time"}</span>
             <input type={drafts.dueKind === "date" ? "date" : "datetime-local"} value={drafts.dueValue} onChange={(event) => change("dueValue", event.target.value)} onBlur={() => commit()} />

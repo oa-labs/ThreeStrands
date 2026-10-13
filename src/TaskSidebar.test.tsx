@@ -35,16 +35,52 @@ describe("TaskSidebar", () => {
     localStorage.clear();
   });
 
-  it("stays read-only until Add Task opens the quick-add form", async () => {
+  it("stays read-only until Add Task opens the quick-add dialog", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
-    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onCreateTask={vi.fn()} />);
+    const onCreateTask = vi.fn();
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
 
     await screen.findByText("0 tasks");
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Add Task" }));
-    const form = screen.getByRole("textbox", { name: "Task title" }).closest("form")!;
-    expectPrimaryActionLast(within(form).getByRole("button", { name: "Add task" }).parentElement!);
+    const workspace = screen.getByRole("region", { name: "Tasks" });
+    expect(within(workspace).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(within(workspace).queryByRole("combobox")).not.toBeInTheDocument();
+    const addTask = screen.getByRole("button", { name: "Add Task" });
+    addTask.focus();
+    fireEvent.click(addTask);
+
+    const dialog = screen.getByRole("dialog", { name: "Add Task" });
+    expect(dialog).toHaveAttribute("data-shortcut-scope", "modal");
+    expect(workspace.querySelector("input, select, textarea")).toBeNull();
+    expect(within(dialog).getByRole("textbox", { name: "Task Title" })).toHaveFocus();
+    expect(workspace.closest('[aria-hidden="true"]')).not.toBeNull();
+    expectPrimaryActionLast(within(dialog).getByRole("button", { name: "Add Task" }).parentElement!);
+
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Task Title" }), { target: { value: "Unsent" } });
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Add Task" })).not.toBeInTheDocument();
+    expect(addTask).toHaveFocus();
+    expect(onCreateTask).not.toHaveBeenCalled();
+  });
+
+  it("keeps the typed title and shows the error in the dialog when adding fails", async () => {
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
+    const onCreateTask = vi.fn()
+      .mockRejectedValueOnce(new Error("Database is locked"))
+      .mockResolvedValueOnce(workspaceTask("task-1", { title: "Retry me" }));
+    render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add Task" }));
+    const dialog = screen.getByRole("dialog", { name: "Add Task" });
+    const input = within(dialog).getByRole("textbox", { name: "Task Title" });
+    fireEvent.change(input, { target: { value: "Retry me" } });
+    fireEvent.keyDown(input, { key: "Enter", metaKey: true });
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Database is locked");
+    expect(input).toHaveValue("Retry me");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add Task" }));
+    await waitFor(() => expect(onCreateTask).toHaveBeenCalledTimes(2));
+    expect(await within(dialog).findByRole("status")).toHaveTextContent("Added “Retry me”");
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("renders tasks and lets the user complete them", async () => {
@@ -255,7 +291,7 @@ describe("TaskSidebar", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("keeps the quick-add row open after creating a task for batch entry", async () => {
+  it("keeps the quick-add dialog open after creating a task for batch entry", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
     const onCreateTask = vi.fn()
       .mockResolvedValueOnce(workspaceTask("task-1", { title: "First" }))
@@ -263,15 +299,19 @@ describe("TaskSidebar", () => {
     render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Add Task" }));
-    const input = screen.getByRole("textbox", { name: "Task title" });
+    const dialog = screen.getByRole("dialog", { name: "Add Task" });
+    const input = within(dialog).getByRole("textbox", { name: "Task Title" });
     fireEvent.change(input, { target: { value: "First" } });
-    fireEvent.click(within(input.closest("form")!).getByRole("button", { name: "Add task" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add Task" }));
     await waitFor(() => expect(onCreateTask).toHaveBeenCalledWith("First"));
 
-    expect(screen.getByRole("textbox", { name: "Task title" })).toHaveValue("");
-    fireEvent.change(screen.getByRole("textbox", { name: "Task title" }), { target: { value: "Second" } });
-    fireEvent.click(within(screen.getByRole("textbox", { name: "Task title" }).closest("form")!).getByRole("button", { name: "Add task" }));
+    await waitFor(() => expect(input).toHaveValue(""));
+    expect(input).toHaveFocus();
+    fireEvent.change(input, { target: { value: "Second" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add Task" }));
     await waitFor(() => expect(onCreateTask).toHaveBeenCalledWith("Second"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("dialog", { name: "Add Task" })).not.toBeInTheDocument();
   });
 
   it("requires an account for a task added from All accounts", async () => {
@@ -280,12 +320,12 @@ describe("TaskSidebar", () => {
     render(<TaskSidebar accountId={null} accountOptions={["you@example.com", "work@example.com"]} onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
     expect(screen.getByText("· All accounts")).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "Add Task" }));
-    const form = screen.getByRole("textbox", { name: "Task title" }).closest("form")!;
-    fireEvent.change(within(form).getByRole("textbox", { name: "Task title" }), { target: { value: "Review proposal" } });
-    expect(within(form).getByRole("button", { name: "Add task" })).toBeDisabled();
+    const form = screen.getByRole("dialog", { name: "Add Task" });
+    fireEvent.change(within(form).getByRole("textbox", { name: "Task Title" }), { target: { value: "Review proposal" } });
+    expect(within(form).getByRole("button", { name: "Add Task" })).toBeDisabled();
     expect(onCreateTask).not.toHaveBeenCalled();
     fireEvent.change(within(form).getByRole("combobox", { name: "Account" }), { target: { value: "work@example.com" } });
-    fireEvent.click(within(form).getByRole("button", { name: "Add task" }));
+    fireEvent.click(within(form).getByRole("button", { name: "Add Task" }));
     await waitFor(() => expect(onCreateTask).toHaveBeenCalledWith("Review proposal", "work@example.com"));
   });
 
@@ -336,22 +376,22 @@ describe("TaskSidebar", () => {
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 
-  it("creates a task from its title and selects it without opening the dialog, so batch entry continues", async () => {
+  it("creates a task from its title and selects it without opening the task details, so batch entry continues", async () => {
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
     const created = workspaceTask("new-task", { title: "Call the contractor" });
     const onCreateTask = vi.fn().mockResolvedValue(created);
     const { container } = render(<TaskSidebar accountId="you@example.com" onOpenThread={vi.fn()} onCreateTask={onCreateTask} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Add Task" }));
-    const form = screen.getByRole("textbox", { name: "Task title" }).closest("form");
-    expect(form).not.toBeNull();
-    fireEvent.change(screen.getByRole("textbox", { name: "Task title" }), { target: { value: "  Call the contractor  " } });
-    fireEvent.click(within(form!).getByRole("button", { name: "Add task" }));
+    const form = screen.getByRole("dialog", { name: "Add Task" });
+    fireEvent.change(within(form).getByRole("textbox", { name: "Task Title" }), { target: { value: "  Call the contractor  " } });
+    fireEvent.click(within(form).getByRole("button", { name: "Add Task" }));
 
     await waitFor(() => expect(onCreateTask).toHaveBeenCalledWith("Call the contractor"));
     await waitFor(() => expect(container.querySelector("#task-new-task")).toHaveAttribute("aria-current", "true"));
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "Task title" })).toHaveFocus();
+    // Only the quick-add dialog is open; the new task's details stay closed.
+    expect(screen.getAllByRole("dialog").map((dialog) => dialog.getAttribute("aria-label"))).toEqual(["Add Task"]);
+    expect(within(form).getByRole("textbox", { name: "Task Title" })).toHaveFocus();
   });
 
   it("filters the task list by date, waiting status, and completion without repeating email subjects", async () => {
@@ -1119,11 +1159,11 @@ describe("TaskSidebar goals", () => {
 
     fireEvent.click(within(screen.getByRole("complementary", { name: "Goals" })).getByRole("button", { name: /^Ship IMAP/ }));
     fireEvent.click(screen.getByRole("button", { name: "Add Task" }));
-    const form = container.querySelector(".task-quick-add") as HTMLElement;
+    const form = screen.getByRole("dialog", { name: "Add Task" });
     expect(form).toHaveTextContent("Supports Ship IMAP");
     expect(within(form).queryByRole("combobox", { name: "Account" })).not.toBeInTheDocument();
-    fireEvent.change(within(form).getByRole("textbox", { name: "Task title" }), { target: { value: "Write tests" } });
-    fireEvent.click(within(form).getByRole("button", { name: "Add task" }));
+    fireEvent.change(within(form).getByRole("textbox", { name: "Task Title" }), { target: { value: "Write tests" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Add Task" }));
     await waitFor(() => expect(onCreateTask).toHaveBeenCalledWith("Write tests", "work@example.com", "ship"));
   });
 
@@ -1139,7 +1179,7 @@ describe("TaskSidebar goals", () => {
     const dialog = await openTask("Plan launch");
     const select = dialog.getByRole("combobox", { name: "Goal" });
     expect(within(select).getAllByRole("option").map((option) => option.textContent)).toEqual([
-      "No goal", `Ship IMAP (${formatPeriod(quarter)})`, `Grow (${year})`,
+      "No Goal", `Ship IMAP (${formatPeriod(quarter)})`, `Grow (${year})`,
     ]);
     fireEvent.change(select, { target: { value: "ship" } });
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", goalId: "ship" }));
@@ -1346,7 +1386,7 @@ describe("TaskSidebar goals", () => {
 
     act(() => ref.current!.linkSelectedToGoal());
     let picker = within(screen.getByRole("dialog", { name: "Link “Plan launch” to a goal" }));
-    expect(picker.getAllByRole("option").map((option) => option.getAttribute("aria-label"))).toEqual(["No goal, current", "Ship IMAP"]);
+    expect(picker.getAllByRole("option").map((option) => option.getAttribute("aria-label"))).toEqual(["No Goal, current", "Ship IMAP"]);
     fireEvent.change(picker.getByRole("combobox", { name: "Find or create a goal" }), { target: { value: "ship" } });
     fireEvent.keyDown(picker.getByRole("combobox", { name: "Find or create a goal" }), { key: "Enter" });
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith({ id: "plan", goalId: "ship" }));
@@ -1361,7 +1401,7 @@ describe("TaskSidebar goals", () => {
 
     act(() => ref.current!.linkSelectedToGoal());
     picker = within(screen.getByRole("dialog", { name: "Link “Plan launch” to a goal" }));
-    fireEvent.click(picker.getByRole("option", { name: "No goal" }));
+    fireEvent.click(picker.getByRole("option", { name: "No Goal" }));
     await waitFor(() => expect(updateTask).toHaveBeenLastCalledWith({ id: "plan", goalId: null }));
   });
 });

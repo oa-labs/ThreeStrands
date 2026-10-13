@@ -46,7 +46,7 @@ describe("contact management", () => {
     expect(declaration(".contact-management-options .btn", "white-space")).toBe("normal");
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Export CSV or vCard…" }));
-    expect(screen.getByLabelText("File format").closest(".modal-form")?.parentElement).toBe(dialog);
+    expect(screen.getByLabelText("File Format").closest(".modal-form")?.parentElement).toBe(dialog);
   });
 
   it("reviews warnings and contacts before importing and reports duplicate and invalid skips", async () => {
@@ -85,7 +85,7 @@ describe("contact management", () => {
     render(<ContactManagement addresses={[]} onChanged={vi.fn()}/>); open();
     fireEvent.click(screen.getByRole("button", { name: "Export CSV or vCard…" }));
     expect(screen.getByText(/Contact files are unencrypted/)).toBeVisible();
-    fireEvent.change(screen.getByLabelText("File format"), { target: { value: "vcard" } });
+    fireEvent.change(screen.getByLabelText("File Format"), { target: { value: "vcard" } });
     fireEvent.click(screen.getByRole("button", { name: "Export contacts" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Export contacts" })).toBeEnabled());
     expect(mailClient.exportContacts).toHaveBeenCalledWith("vcard");
@@ -124,7 +124,7 @@ describe("contact management", () => {
     vi.mocked(mailClient.mergeContacts).mockRejectedValueOnce(new Error("Combined notes are too long")).mockResolvedValueOnce(other);
     const merged = vi.fn(); render(<MergeContactsDialog contacts={[profile, other]} onClose={vi.fn()} onMerged={merged}/>);
     expect(mailClient.mergeContacts).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByLabelText("Profile to keep"), { target: { value: "other" } });
+    fireEvent.change(screen.getByLabelText("Profile to Keep"), { target: { value: "other" } });
     fireEvent.click(screen.getByRole("button", { name: "Merge 2 contacts" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Combined notes are too long");
     expect(merged).not.toHaveBeenCalled();

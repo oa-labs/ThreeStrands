@@ -30,7 +30,7 @@ describe("App chrome", () => {
     expect(screen.getByTitle("Refresh mail")).toHaveClass("tooltip-anchor");
   });
 
-  it("opens filters, reports the selected filter, and closes on Escape", () => {
+  it("opens filters, reports the selected filter, and closes on Escape back to the trigger", () => {
     const onToggleFilter = vi.fn();
     render(<FiltersButton activeFilters={new Set(["starred"])} onToggleFilter={onToggleFilter} />);
 
@@ -42,8 +42,10 @@ describe("App chrome", () => {
     fireEvent.click(screen.getByRole("menuitemcheckbox", { name: /Unread/ }));
     expect(onToggleFilter).toHaveBeenCalledWith("unread");
 
+    screen.getByRole("menuitemcheckbox", { name: /Unread/ }).focus();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("menu", { name: "Filters" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Filters/ })).toHaveFocus();
   });
 
   it("filters the command palette and executes a command", () => {

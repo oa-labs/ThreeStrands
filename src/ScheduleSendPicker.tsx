@@ -48,7 +48,7 @@ export function ScheduleSendPicker({ onClose, onSchedule, initialAt, initialZone
       <p>Sends from this computer{info ? ` (${info.deviceName})` : ""}. Keep ThreeStrands running and this computer awake and connected.</p>
       <label>Date and time<input ref={input} type="datetime-local" aria-label="Scheduled date and time" value={localTime} disabled={busy} onChange={(e) => setLocalTime(e.target.value)} required /></label>
       <label>Timezone<input aria-label="Schedule timezone" value={timeZone} disabled={busy} onChange={(e) => setTimeZone(e.target.value)} required /></label>
-      {choices.length > 1 && <label>This time occurs twice. Choose an offset<select aria-label="UTC offset" value={offset} disabled={busy} onChange={(e) => setOffset(e.target.value)} required>
+      {choices.length > 1 && <label>This time occurs twice. Choose an offset<select aria-label="UTC Offset" value={offset} disabled={busy} onChange={(e) => setOffset(e.target.value)} required>
         <option value="">Choose an offset</option>{choices.map((v) => <option key={v.offsetSeconds} value={v.offsetSeconds}>{`UTC${v.offsetSeconds >= 0 ? "+" : "−"}${Math.floor(Math.abs(v.offsetSeconds) / 3600).toString().padStart(2, "0")}:${(Math.abs(v.offsetSeconds) % 3600 / 60).toString().padStart(2, "0")}`}</option>)}
       </select></label>}
       {selected && <p>{formatScheduledTime(selected.scheduledAt, timeZone)}</p>}

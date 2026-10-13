@@ -57,7 +57,7 @@ export function ContactManagement({ addresses, onChanged, hasUnsavedChanges = fa
         {mode === "export" ? <>
           <p>Export all saved contacts across accounts. Mail-derived suggestions, photos, groups, and keep-in-touch settings are excluded. Use encrypted settings export to transfer those saved details.</p>
           <p>Contact files are unencrypted. CSV exports make formula-looking values safe for spreadsheets by prefixing an apostrophe.</p>
-          <label>File format<select value={format} disabled={busy} onChange={event => setFormat(event.target.value as ContactFormat)}><option value="csv">CSV</option><option value="vcard">vCard (.vcf)</option></select></label>
+          <label>File Format<select value={format} disabled={busy} onChange={event => setFormat(event.target.value as ContactFormat)}><option value="csv">CSV</option><option value="vcard">vCard (.vcf)</option></select></label>
           <div className="modal-actions"><button type="button" className="btn" disabled={busy} onClick={() => setMode(null)}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy} onClick={() => void run(async () => { if (await mailClient.exportContacts(format)) { setNotice("Saved contacts exported."); setMode(null); } })}>Export contacts</button></div>
         </> : null}
         {mode === "suggestions" ? <>
@@ -87,7 +87,7 @@ export function MergeContactsDialog({ contacts, onClose, onMerged }: { contacts:
     <div className="modal-form">
       <p>Choose the profile to keep. The other selected profiles will be removed. Addresses, notes, links, favorites, and group memberships are combined.</p>
       <p>The retained profile keeps its primary address, photo, and configured reminder. Missing details are filled from the other profiles; conflicting text details are added to Notes. Additional photos and reminder configurations are not retained.</p>
-      <label>Profile to keep<select value={targetId} disabled={busy} onChange={event => setTargetId(event.target.value)}>{contacts.map(contact => <option key={contact.id} value={contact.id}>{name(contact)} — {contact.addresses[0]}</option>)}</select></label>
+      <label>Profile to Keep<select value={targetId} disabled={busy} onChange={event => setTargetId(event.target.value)}>{contacts.map(contact => <option key={contact.id} value={contact.id}>{name(contact)} — {contact.addresses[0]}</option>)}</select></label>
       {error ? <p className="contacts-error" role="alert">{error}</p> : null}
       <div className="modal-actions"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy || contacts.length < 2} onClick={() => void merge()}>Merge {contacts.length} contacts</button></div>
     </div>

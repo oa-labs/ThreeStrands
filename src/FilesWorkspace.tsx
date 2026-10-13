@@ -134,9 +134,9 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, sessions, 
           if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setFiltersOpen(false); filtersButton.current?.focus(); }
         }}>
           <label>Sender<input value={sender} onChange={(event) => setSender(event.target.value)} /></label>
-          <label>File type<select value={type} onChange={(event) => setType(event.target.value)}><option value="">All types</option>{["document","spreadsheet","presentation","image","audio","video","archive","calendar"].map((kind) => <option key={kind} value={kind}>{kind[0].toUpperCase()+kind.slice(1)}</option>)}</select></label>
-          <label>Direction<select value={direction} onChange={(event) => setDirection(event.target.value as typeof direction)}><option value="">Received and sent</option><option value="received">Received</option><option value="sent">Sent</option></select></label>
-          {!accountId ? <label>Account<select value={scope} onChange={(event) => setScope(event.target.value)}><option value="">All accounts</option>{accountIds.map((email) => <option key={email}>{email}</option>)}</select></label> : null}
+          <label>File Type<select value={type} onChange={(event) => setType(event.target.value)}><option value="">All Types</option>{["document","spreadsheet","presentation","image","audio","video","archive","calendar"].map((kind) => <option key={kind} value={kind}>{kind[0].toUpperCase()+kind.slice(1)}</option>)}</select></label>
+          <label>Direction<select value={direction} onChange={(event) => setDirection(event.target.value as typeof direction)}><option value="">Received and Sent</option><option value="received">Received</option><option value="sent">Sent</option></select></label>
+          {!accountId ? <label>Account<select value={scope} onChange={(event) => setScope(event.target.value)}><option value="">All Accounts</option>{accountIds.map((email) => <option key={email}>{email}</option>)}</select></label> : null}
           <FileDateFilter label="From date" value={after} onChange={setAfter} />
           <FileDateFilter label="Through date" value={before} onChange={setBefore} />
         </div>

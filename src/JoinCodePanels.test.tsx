@@ -214,9 +214,9 @@ describe("adding a device", () => {
   it("creates a code with the chosen lifetime, connectors, and credentials", async () => {
     vi.mocked(sync.replicatedSyncCreateJoinCode).mockResolvedValue("TSJOIN1-created");
     const panel = renderPanel();
-    expect(within(panel).getByLabelText("Expires after")).toHaveValue("24");
+    expect(within(panel).getByLabelText("Expires After")).toHaveValue("24");
     expect(within(panel).getByText("The other device will choose its own copy of this folder.")).toBeInTheDocument();
-    fireEvent.change(within(panel).getByLabelText("Expires after"), { target: { value: "168" } });
+    fireEvent.change(within(panel).getByLabelText("Expires After"), { target: { value: "168" } });
     fireEvent.click(within(panel).getByRole("checkbox", { name: "Include credentials" }));
     fireEvent.click(within(panel).getByRole("button", { name: "Create join code" }));
 

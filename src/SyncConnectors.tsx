@@ -65,7 +65,7 @@ export const S3_PRESETS: readonly S3Preset[] = [
     hint: "Use the endpoint and region shown on your bucket’s page.",
   },
   { id: "wasabi", label: "Wasabi", endpoint: "https://s3.us-east-1.wasabisys.com", region: "us-east-1", pathStyle: false },
-  { id: "minio", label: "MinIO on this computer", endpoint: "http://127.0.0.1:9000", region: "us-east-1", pathStyle: true },
+  { id: "minio", label: "MinIO on This Computer", endpoint: "http://127.0.0.1:9000", region: "us-east-1", pathStyle: true },
 ];
 
 export type S3FormState = {
@@ -299,7 +299,7 @@ function S3ConnectorForm({ operation, refresh, onAdded }: { operation: Operation
       <label className="settings-field">
         <span>Provider</span>
         <select value={form.preset} disabled={busy} onChange={(event) => { setForm((current) => applyS3Preset(current, event.target.value)); setTest(null); }}>
-          <option value="">Other S3-compatible storage</option>
+          <option value="">Other S3-Compatible Storage</option>
           {S3_PRESETS.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.label}</option>)}
         </select>
       </label>

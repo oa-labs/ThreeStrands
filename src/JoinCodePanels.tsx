@@ -180,7 +180,7 @@ export function JoinCodePanel({ operation, refresh, inputId }: { operation: Oper
 }
 
 function lifetimeLabel(hours: number): string {
-  return hours % 24 === 0 && hours >= 48 ? plural(hours / 24, "day") : plural(hours, "hour");
+  return hours % 24 === 0 && hours >= 48 ? plural(hours / 24, "Day") : plural(hours, "Hour");
 }
 
 /** Creates a join code for a new device. Closing the panel discards the code. */
@@ -243,7 +243,7 @@ export function AddDevicePanel({
       ) : (
         <>
           <label className="settings-field">
-            <span>Expires after</span>
+            <span>Expires After</span>
             <select value={hours} disabled={busy} onChange={(event) => setHours(Number(event.target.value))}>
               {JOIN_CODE_LIFETIME_HOURS.map((option) => <option key={option} value={option}>{lifetimeLabel(option)}</option>)}
             </select>

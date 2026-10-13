@@ -703,7 +703,7 @@ describe("calendar sidebar opened from a meeting", () => {
     fireEvent.click(screen.getByRole("button", { name: "Check Schedule" }));
     const duration = within(await screen.findByRole("dialog")).getByRole("combobox", { name: "Duration" });
     expect(duration).toHaveValue("50");
-    expect(within(duration).getAllByRole("option").map((option) => option.textContent)).toContain("50 minutes");
+    expect(within(duration).getAllByRole("option").map((option) => option.textContent)).toContain("50 Minutes");
   });
 });
 

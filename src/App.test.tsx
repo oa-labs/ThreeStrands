@@ -833,17 +833,24 @@ describe("keyboard-first task and action workspaces", () => {
     expect(workspace).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "d" });
-    const titleField = await within(workspace).findByRole("textbox", { name: "Task title" });
+    const quickAdd = await screen.findByRole("dialog", { name: "Add Task" });
+    const titleField = within(quickAdd).getByRole("textbox", { name: "Task Title" });
     expect(titleField).toHaveValue("");
+    expect(titleField).toHaveFocus();
     fireEvent.change(titleField, { target: { value: "Prepare launch notes" } });
-    const quickAdd = workspace.querySelector<HTMLElement>(".task-quick-add")!;
-    fireEvent.click(within(quickAdd).getByRole("button", { name: "Add task" }));
+    fireEvent.click(within(quickAdd).getByRole("button", { name: "Add Task" }));
     await waitFor(() => expect(createTask).toHaveBeenCalledWith({
       accountId: "demo@example.com", threadId: null, subjectSnapshot: null, title: "Prepare launch notes", kind: "action",
     }));
     await waitFor(() => expect(workspace.querySelector("#task-task-title-first")).toHaveAttribute("aria-current", "true"));
     expect(within(workspace).getByText("Prepare launch notes", { selector: "strong" })).toBeInTheDocument();
     expect(workspace.querySelector(".task-add-button")).not.toHaveAttribute("title");
+    // Workspace shortcuts stay suspended while the quick-add dialog is open for batch entry.
+    expect(titleField).toHaveFocus();
+    fireEvent.keyDown(titleField, { key: "1" });
+    expect(screen.getByRole("dialog", { name: "Add Task" })).toBeInTheDocument();
+    fireEvent.click(within(quickAdd).getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("dialog", { name: "Add Task" })).not.toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "0" });
     expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
@@ -1428,11 +1435,11 @@ describe("account selection persistence", () => {
     const workspace = screen.getByRole("region", { name: "Tasks" });
     expect(workspace.querySelector(".tasks-sidebar-header")).toHaveTextContent("All accounts");
     fireEvent.click(within(workspace).getByRole("button", { name: "Add Task" }));
-    const form = workspace.querySelector<HTMLElement>(".task-quick-add")!;
-    fireEvent.change(within(form).getByRole("textbox", { name: "Task title" }), { target: { value: "Review plan" } });
-    expect(within(form).getByRole("button", { name: "Add task" })).toBeDisabled();
+    const form = screen.getByRole("dialog", { name: "Add Task" });
+    fireEvent.change(within(form).getByRole("textbox", { name: "Task Title" }), { target: { value: "Review plan" } });
+    expect(within(form).getByRole("button", { name: "Add Task" })).toBeDisabled();
     fireEvent.change(within(form).getByRole("combobox", { name: "Account" }), { target: { value: "work@example.com" } });
-    fireEvent.click(within(form).getByRole("button", { name: "Add task" }));
+    fireEvent.click(within(form).getByRole("button", { name: "Add Task" }));
     await waitFor(() => expect(createTask).toHaveBeenCalledWith({ accountId: "work@example.com", threadId: null, subjectSnapshot: null, title: "Review plan", kind: "action" }));
   });
 

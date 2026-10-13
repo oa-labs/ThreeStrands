@@ -2,9 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 
 /** `null` means unlimited — mail is never pruned locally. */
 export const RETENTION_OPTIONS: { value: number | null; label: string }[] = [
-  { value: 30, label: "30 days" },
-  { value: 90, label: "90 days" },
-  { value: 365, label: "1 year" },
+  { value: 30, label: "30 Days" },
+  { value: 90, label: "90 Days" },
+  { value: 365, label: "1 Year" },
   { value: null, label: "Forever" },
 ];
 

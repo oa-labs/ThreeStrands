@@ -37,7 +37,7 @@ describe("Files workspace", () => {
     expect(screen.getByLabelText("From date")).toHaveValue("");
     expect(screen.getByLabelText("Through date")).toHaveValue("");
     fireEvent.change(screen.getByLabelText("Sender"),{target:{value:"alice"}});
-    fireEvent.change(screen.getByLabelText("File type"),{target:{value:"document"}});
+    fireEvent.change(screen.getByLabelText("File Type"),{target:{value:"document"}});
     fireEvent.change(screen.getByLabelText("Direction"),{target:{value:"received"}});
     fireEvent.change(screen.getByLabelText("Account"),{target:{value:report.accountId}});
     fireEvent.change(screen.getByLabelText("From date"),{target:{value:"2026-10-01"}});
@@ -127,7 +127,7 @@ describe("Files workspace", () => {
     fireEvent.click(screen.getByRole("button",{name:"Starred"}));
     fireEvent.click(screen.getByRole("button",{name:"Filters"}));
     fireEvent.change(screen.getByLabelText("Sender"),{target:{value:"alice"}});
-    fireEvent.change(screen.getByLabelText("File type"),{target:{value:"document"}});
+    fireEvent.change(screen.getByLabelText("File Type"),{target:{value:"document"}});
     fireEvent.keyDown(screen.getByLabelText("Sender"),{key:"Escape"});
     expect(screen.queryByRole("group",{name:"File filters"})).not.toBeInTheDocument();
     expect(screen.getByRole("button",{name:/^Filters/})).toHaveFocus();

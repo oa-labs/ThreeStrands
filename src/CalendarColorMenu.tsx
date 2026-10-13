@@ -30,6 +30,7 @@ export function CalendarColorRow({
   const colors = useCalendarColors();
   const [open, setOpen] = useState(false);
   const rowRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const selected = calendarColorId(colors, accountId, calendarId);
 
   useEffect(() => {
@@ -46,6 +47,7 @@ export function CalendarColorRow({
     <div className="calendar-color-row" ref={rowRef} style={calendarColorStyle(colors, accountId, calendarId)}>
       {children}
       <button
+        ref={triggerRef}
         type="button"
         className="btn-icon btn-icon-sm calendar-color-trigger"
         aria-label={`Options for ${calendarName}`}
@@ -63,8 +65,12 @@ export function CalendarColorRow({
             setCalendarColor(accountId, calendarId, colorId);
             queuePortablePreferences();
             setOpen(false);
+            triggerRef.current?.focus();
           }}
-          onClose={() => setOpen(false)}
+          onClose={() => {
+            setOpen(false);
+            triggerRef.current?.focus();
+          }}
         />
       ) : null}
     </div>

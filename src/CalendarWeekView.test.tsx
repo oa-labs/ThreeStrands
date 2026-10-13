@@ -7,6 +7,7 @@ import { mailClient } from "./data/client";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { CALENDAR_COLORS_KEY, resetCalendarColorsForTests } from "./calendarColors";
 import { expectSharedButtons } from "./test/sharedButtons";
+import { expectContextRows } from "./test/contextRows";
 import type { CalendarAccount, CalendarOption, ScheduleEvent } from "./domain";
 
 const accounts: CalendarAccount[] = [
@@ -38,6 +39,14 @@ function renderWeek(overrides: Partial<WeekViewOptions> = {}) {
   return { ...result, props };
 }
 
+function calendarGrid() {
+  return within(document.querySelector(".calendar-week-main") as HTMLElement);
+}
+
+function rangeButton(name: string) {
+  return within(screen.getByRole("group", { name: "Calendar Range" })).getByRole("button", { name });
+}
+
 function event(id: string, start: string, end: string, title = id): ScheduleEvent {
   return { id, accountId: "joel@example.com", title, start, end, allDay: false };
 }
@@ -56,6 +65,148 @@ describe("CalendarWeekView", () => {
     vi.restoreAllMocks();
     localStorage.clear();
     resetCalendarColorsForTests();
+  });
+
+  it("shows today's full agenda in shared context rows, with all-day events before chronological meetings", async () => {
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [
+      event("late", "2026-09-22T15:00:00", "2026-09-22T16:00:00", "Afternoon review"),
+      event("tomorrow", "2026-09-23T09:00:00", "2026-09-23T10:00:00", "Tomorrow"),
+      event("early", "2026-09-22T09:00:00", "2026-09-22T10:00:00", "Morning review"),
+      { ...event("all", "2026-09-21", "2026-09-23", "Company offsite"), allDay: true },
+      event("overnight", "2026-09-21T23:00:00", "2026-09-22T01:00:00", "Overnight maintenance"),
+      event("noon", "2026-09-22T12:00:00", "2026-09-22T13:00:00", "Lunch"),
+    ], errors: [] });
+    renderWeek();
+    const agenda = screen.getByRole("region", { name: "Today's agenda" });
+    await within(agenda).findByRole("button", { name: /Morning review/ });
+    expectContextRows(agenda);
+    expect(agenda).toHaveTextContent("Tuesday, September 22");
+    expect([...agenda.querySelectorAll(".context-row-title")].map((row) => row.textContent)).toEqual([
+      "Company offsite", "Overnight maintenance", "Morning review", "Lunch", "Afternoon review",
+    ]);
+    expect(within(agenda).getByRole("button", { name: /Company offsite/ })).toHaveTextContent("All day");
+    expect(within(agenda).getByRole("button", { name: /Morning review/ })).toHaveTextContent("9:00–10:00 am");
+    expect(within(agenda).queryByText("Tomorrow")).not.toBeInTheDocument();
+    expect(within(agenda).queryByRole("button", { name: /Show .* more/ })).not.toBeInTheDocument();
+    await waitFor(() => expect(mailClient.listScheduleEvents).toHaveBeenCalledTimes(3));
+  });
+
+  it("opens agenda items in meeting details and restores the agenda when details close", async () => {
+    const meeting = event("review", "2026-09-22T09:00:00", "2026-09-22T10:00:00", "Project review");
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [meeting], errors: [] });
+    const { container } = renderWeek();
+    const agenda = screen.getByRole("region", { name: "Today's agenda" });
+    fireEvent.click(await within(agenda).findByRole("button", { name: /Project review/ }));
+    const details = await screen.findByRole("region", { name: "Project review details" });
+    expect(details).toHaveFocus();
+    expect(screen.queryByRole("region", { name: "Today's agenda" })).not.toBeInTheDocument();
+    expect(container.querySelector(".calendar-week-scroll")?.scrollTop).toBeGreaterThan(0);
+    fireEvent.click(within(details).getByRole("button", { name: "Close Event Details" }));
+    expect(await screen.findByRole("region", { name: "Today's agenda" })).toHaveTextContent("Project review");
+    expect(screen.getByRole("complementary", { name: "Meeting context" })).toHaveFocus();
+  });
+
+  it("keeps today's agenda while browsing another week and returns the grid to today on selection", async () => {
+    const meeting = event("review", "2026-09-22T09:00:00", "2026-09-22T10:00:00", "Today's review");
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [meeting], errors: [] });
+    renderWeek();
+    await within(screen.getByRole("region", { name: "Today's agenda" })).findByRole("button", { name: /Today's review/ });
+    fireEvent.click(screen.getByRole("button", { name: "Next week (=)" }));
+    expect(screen.getByText("Sun 27")).toBeInTheDocument();
+    const agenda = screen.getByRole("region", { name: "Today's agenda" });
+    fireEvent.click(await within(agenda).findByRole("button", { name: /Today's review/ }));
+    expect(await screen.findByRole("region", { name: "Today's review details" })).toHaveFocus();
+    expect(screen.getByText("Tue 22")).toBeInTheDocument();
+    expect(rangeButton("Week")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("opens a weekend agenda item without overwriting the saved Workweek preference", async () => {
+    vi.setSystemTime(new Date(2026, 8, 26, 10));
+    localStorage.setItem("threestrands.calendar.range", "workweek");
+    const meeting = event("weekend", "2026-09-26T11:00:00", "2026-09-26T12:00:00", "Saturday review");
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [meeting], errors: [] });
+    renderWeek();
+    const agenda = screen.getByRole("region", { name: "Today's agenda" });
+    expect(screen.getByText("Mon 28")).toBeInTheDocument();
+    fireEvent.click(await within(agenda).findByRole("button", { name: /Saturday review/ }));
+    expect(await screen.findByRole("region", { name: "Saturday review details" })).toBeInTheDocument();
+    expect(screen.getByText("Sat 26")).toBeInTheDocument();
+    expect(rangeButton("Day")).toHaveAttribute("aria-pressed", "true");
+    expect(localStorage.getItem("threestrands.calendar.range")).toBe("workweek");
+  });
+
+  it("shows an empty agenda and explains when no calendars are selected", async () => {
+    const { unmount } = renderWeek();
+    expect(await within(screen.getByRole("region", { name: "Today's agenda" })).findByText("No events today.")).toBeInTheDocument();
+    unmount();
+    renderWeek({ calendars: calendars.map((calendar) => ({ ...calendar, selected: false })) });
+    expect(await screen.findByText("Select a calendar to see today's agenda.")).toBeInTheDocument();
+  });
+
+  it("respects selected calendars and distinguishes same-id events across accounts and calendars", async () => {
+    const meeting = { ...event("shared", "2026-09-22T09:00:00", "2026-09-22T10:00:00", "Work review"), calendarId: "primary", location: "Room A", responseStatus: "needsAction" as const };
+    localStorage.setItem(CALENDAR_COLORS_KEY, JSON.stringify({ "joel@example.com": { primary: "teal" } }));
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [
+      meeting,
+      { ...meeting, calendarId: "holidays", title: "Hidden calendar" },
+      { ...meeting, calendarId: "team", title: "Team review" },
+      { ...meeting, accountId: "other@example.com", title: "Other review" },
+    ], errors: [] });
+    renderWeek({ calendars: [
+      calendars[0], { ...calendars[1], selected: false },
+      { ...calendars[0], id: "team", name: "Team" },
+      { ...calendars[0], accountId: "other@example.com", name: "Other" },
+    ] });
+    const agenda = screen.getByRole("region", { name: "Today's agenda" });
+    const work = await within(agenda).findByRole("button", { name: /Work review/ });
+    expect(work).toHaveTextContent("Room A");
+    expect(work).toHaveTextContent("Awaiting response");
+    expect(work).toHaveTextContent("joel@example.com");
+    expect(work.querySelector("svg")?.style.getPropertyValue("--calendar-color")).toBe("#1f9a8f");
+    expect(within(agenda).getByRole("button", { name: /Team review/ })).toBeInTheDocument();
+    expect(within(agenda).getByRole("button", { name: /Other review/ })).toHaveTextContent("other@example.com");
+    expect(within(agenda).queryByText("Hidden calendar")).not.toBeInTheDocument();
+  });
+
+  it("loads and retries today's agenda independently when the displayed week doesn't include today", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const dayStart = new Date(2026, 8, 22).toISOString();
+    let retry = false;
+    vi.mocked(mailClient.listScheduleEvents).mockImplementation(async (start) => {
+      if (start === dayStart) {
+        if (!retry) throw new Error("offline");
+        return { events: [event("today", "2026-09-22T12:00:00", "2026-09-22T13:00:00", "Recovered meeting")], errors: [] };
+      }
+      return { events: [], errors: [] };
+    });
+    renderWeek();
+    fireEvent.click(screen.getByRole("button", { name: "Next week (=)" }));
+    const agenda = screen.getByRole("region", { name: "Today's agenda" });
+    const button = await within(agenda).findByRole("button", { name: "Retry agenda" });
+    expect(agenda).not.toHaveTextContent("No events today.");
+    retry = true;
+    fireEvent.click(button);
+    expect(await within(agenda).findByRole("button", { name: /Recovered meeting/ })).toBeInTheDocument();
+    expect(screen.getByText("Sun 27")).toBeInTheDocument();
+    expect(mailClient.listScheduleEvents).toHaveBeenCalledWith(dayStart, new Date(2026, 8, 23).toISOString(), expect.any(String));
+  });
+
+  it("rolls today's agenda forward at local midnight without navigating the grid", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 22, 23, 59, 30));
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [
+      event("today", "2026-09-22T12:00:00", "2026-09-22T13:00:00", "Tuesday meeting"),
+      event("tomorrow", "2026-09-23T12:00:00", "2026-09-23T13:00:00", "Wednesday meeting"),
+    ], errors: [] });
+    renderWeek();
+    await act(async () => {});
+    expect(screen.getByRole("region", { name: "Today's agenda" })).toHaveTextContent("Tuesday meeting");
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    const agenda = screen.getByRole("region", { name: "Today's agenda" });
+    expect(agenda).toHaveTextContent("Wednesday, September 23");
+    expect(agenda).toHaveTextContent("Wednesday meeting");
+    expect(agenda).not.toHaveTextContent("Tuesday meeting");
+    expect(screen.getByText("Sun 20")).toBeInTheDocument();
   });
 
   it("shows the seven Sunday-anchored days of the current week with the month title", async () => {
@@ -105,8 +256,9 @@ describe("CalendarWeekView", () => {
     expect(new Date(listScheduleEvents.mock.calls[0][1])).toEqual(new Date(2026, 8, 27));
 
     fireEvent.click(screen.getByRole("button", { name: "Next week (=)" }));
-    await waitFor(() => expect(listScheduleEvents).toHaveBeenCalledTimes(5));
-    expect(new Date(listScheduleEvents.mock.calls[3][0])).toEqual(new Date(2026, 8, 27));
+    await waitFor(() => expect(listScheduleEvents).toHaveBeenCalledTimes(6));
+    expect(listScheduleEvents).toHaveBeenCalledWith(new Date(2026, 8, 27).toISOString(), new Date(2026, 9, 4).toISOString(), expect.any(String));
+    expect(listScheduleEvents).toHaveBeenCalledWith(new Date(2026, 8, 22).toISOString(), new Date(2026, 8, 23).toISOString(), expect.any(String));
     await screen.findByText("Sun 27");
 
     fireEvent.click(screen.getByRole("button", { name: "Previous week (-)" }));
@@ -172,10 +324,10 @@ describe("CalendarWeekView", () => {
     // Let the speculative request finish before navigating.
     await act(async () => {});
     fireEvent.click(screen.getByRole("button", { name: "Next week (=)" }));
-    expect(screen.getByRole("button", { name: /Cached planning/ })).toBeInTheDocument();
+    expect(calendarGrid().getByRole("button", { name: /Cached planning/ })).toBeInTheDocument();
     expect(screen.queryByText("Loading schedule…")).not.toBeInTheDocument();
     await act(async () => { resolve({ events: [], errors: [] }); });
-    expect(screen.queryByRole("button", { name: /Cached planning/ })).not.toBeInTheDocument();
+    expect(calendarGrid().queryByRole("button", { name: /Cached planning/ })).not.toBeInTheDocument();
   });
 
   it("ignores week navigation keys while typing in a field", async () => {
@@ -200,8 +352,8 @@ describe("CalendarWeekView", () => {
     });
     const { container } = renderWeek();
 
-    const standup = await screen.findByRole("button", { name: /Standup/ });
-    const review = screen.getByRole("button", { name: /Design review/ });
+    const standup = await calendarGrid().findByRole("button", { name: /Standup/ });
+    const review = calendarGrid().getByRole("button", { name: /Design review/ });
     expect(standup.style.width).toBe("50%");
     expect(standup.style.left).toBe("0%");
     expect(review.style.left).toBe("50%");
@@ -279,7 +431,7 @@ describe("CalendarWeekView", () => {
       const invited = { ...owned({ canEdit: false, canRespond: true, responseStatus: "accepted" as const }) };
       vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [invited], errors: [] });
       renderWeek();
-      fireEvent.click(await screen.findByRole("button", { name: /^Planning/ }));
+      fireEvent.click(await calendarGrid().findByRole("button", { name: /^Planning/ }));
       const dialog = screen.getByRole("region", { name: "Planning details" });
       expect(within(dialog).queryByRole("button", { name: "Edit Event" })).not.toBeInTheDocument();
       expect(within(dialog).queryByRole("button", { name: "Delete Event" })).not.toBeInTheDocument();
@@ -290,7 +442,7 @@ describe("CalendarWeekView", () => {
       vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [planning], errors: [] });
       const remove = vi.spyOn(mailClient, "deleteCalendarEvent").mockResolvedValue();
       renderWeek();
-      fireEvent.click(await screen.findByRole("button", { name: /^Planning/ }));
+      fireEvent.click(await calendarGrid().findByRole("button", { name: /^Planning/ }));
       const dialog = screen.getByRole("region", { name: "Planning details" });
       fireEvent.click(within(dialog).getByRole("button", { name: "Delete Event" }));
       const confirm = within(dialog).getByRole("group", { name: "Delete event confirmation" });
@@ -305,20 +457,20 @@ describe("CalendarWeekView", () => {
       await waitFor(() => expect(remove).toHaveBeenCalledWith(planning));
       // The deleted event leaves the grid before the refetch finishes.
       await waitFor(() => expect(screen.queryByRole("region", { name: "Planning details" })).not.toBeInTheDocument());
-      expect(screen.queryByRole("button", { name: /^Planning/ })).not.toBeInTheDocument();
+      expect(calendarGrid().queryByRole("button", { name: /^Planning/ })).not.toBeInTheDocument();
     });
 
     it("keeps the event and reports a failed delete", async () => {
       vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [owned()], errors: [] });
       vi.spyOn(mailClient, "deleteCalendarEvent").mockRejectedValue(new Error("Only events you organize can be changed"));
       renderWeek();
-      fireEvent.click(await screen.findByRole("button", { name: /^Planning/ }));
+      fireEvent.click(await calendarGrid().findByRole("button", { name: /^Planning/ }));
       const dialog = screen.getByRole("region", { name: "Planning details" });
       fireEvent.click(within(dialog).getByRole("button", { name: "Delete Event" }));
       expect(within(dialog).getByRole("group", { name: "Delete event confirmation" })).not.toHaveTextContent("Guests will be notified");
       fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
       expect(await within(dialog).findByRole("alert")).toHaveTextContent("Only events you organize can be changed");
-      expect(screen.getByRole("button", { name: /^Planning/ })).toBeInTheDocument();
+      expect(calendarGrid().getByRole("button", { name: /^Planning/ })).toBeInTheDocument();
     });
 
     it("edits an owned timed event and shows the change in the grid and popup", async () => {
@@ -328,7 +480,7 @@ describe("CalendarWeekView", () => {
         ...planning, title: request.title, start: request.start, end: request.end, location: request.location, attendees: request.attendees,
       }));
       renderWeek();
-      fireEvent.click(await screen.findByRole("button", { name: /^Planning/ }));
+      fireEvent.click(await calendarGrid().findByRole("button", { name: /^Planning/ }));
       fireEvent.click(within(screen.getByRole("region", { name: "Planning details" })).getByRole("button", { name: "Edit Event" }));
       const form = screen.getByRole("dialog", { name: "Edit event" });
       expect(within(form).getByLabelText("Title")).toHaveValue("Planning");
@@ -356,7 +508,7 @@ describe("CalendarWeekView", () => {
       }));
       await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit event" })).not.toBeInTheDocument());
       expect(screen.getByRole("region", { name: "Quarterly planning details" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /^Quarterly planning/ })).toBeInTheDocument();
+      expect(calendarGrid().getByRole("button", { name: /^Quarterly planning/ })).toBeInTheDocument();
     });
 
     it("edits all-day dates inclusively and returns an untouched HTML description verbatim", async () => {
@@ -364,7 +516,9 @@ describe("CalendarWeekView", () => {
       vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [offsite], errors: [] });
       const update = vi.spyOn(mailClient, "updateCalendarEvent").mockResolvedValue(offsite);
       renderWeek();
-      fireEvent.click(await screen.findByRole("button", { name: "Offsite" }));
+      const offsiteDays = await calendarGrid().findAllByRole("button", { name: "Offsite" });
+      expect(offsiteDays).toHaveLength(2);
+      fireEvent.click(offsiteDays[0]);
       fireEvent.click(within(screen.getByRole("region", { name: "Offsite details" })).getByRole("button", { name: "Edit Event" }));
       const form = screen.getByRole("dialog", { name: "Edit event" });
       expect(within(form).getByLabelText("All day")).toBeChecked();
@@ -383,7 +537,7 @@ describe("CalendarWeekView", () => {
       vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [owned()], errors: [] });
       const update = vi.spyOn(mailClient, "updateCalendarEvent").mockImplementation(async () => owned());
       renderWeek();
-      fireEvent.click(await screen.findByRole("button", { name: /^Planning/ }));
+      fireEvent.click(await calendarGrid().findByRole("button", { name: /^Planning/ }));
       fireEvent.click(within(screen.getByRole("region", { name: "Planning details" })).getByRole("button", { name: "Edit Event" }));
       const form = screen.getByRole("dialog", { name: "Edit event" });
       fireEvent.change(within(form).getByLabelText("Ends"), { target: { value: "2026-09-22T08:00" } });
@@ -402,7 +556,7 @@ describe("CalendarWeekView", () => {
       vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [owned()], errors: [] });
       vi.spyOn(mailClient, "updateCalendarEvent").mockRejectedValue(new Error("Calendar write access was denied."));
       renderWeek();
-      fireEvent.click(await screen.findByRole("button", { name: /^Planning/ }));
+      fireEvent.click(await calendarGrid().findByRole("button", { name: /^Planning/ }));
       fireEvent.click(within(screen.getByRole("region", { name: "Planning details" })).getByRole("button", { name: "Edit Event" }));
       const form = screen.getByRole("dialog", { name: "Edit event" });
       fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
@@ -428,7 +582,7 @@ describe("CalendarWeekView", () => {
     renderWeek();
 
     const early = await screen.findByRole("button", { name: "Early review" });
-    const middle = screen.getByRole("button", { name: /Middle meeting/ });
+    const middle = calendarGrid().getByRole("button", { name: /Middle meeting/ });
     expect(parseFloat(early.style.left)).toBeCloseTo(100 / 3);
     expect(parseFloat(early.style.width)).toBeCloseTo(200 / 3);
     expect(parseFloat(middle.style.width)).toBeCloseTo(100 / 3);
@@ -444,7 +598,7 @@ describe("CalendarWeekView", () => {
     });
     const { container } = renderWeek();
 
-    fireEvent.click(await screen.findByRole("button", { name: /Standup/ }));
+    fireEvent.click(await calendarGrid().findByRole("button", { name: /Standup/ }));
     const viewer = await screen.findByRole("region", { name: "Standup details" });
 
     // Scoped to the grid column so it never overlaps the month/calendar rail,
@@ -645,7 +799,7 @@ describe("CalendarWeekView", () => {
     const allDay = { ...event("primary:offsite", "2026-09-24", "2026-09-25", "Offsite"), calendarId: "primary", allDay: true };
     vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [standup, parade, allDay], errors: [] });
     renderWeek();
-    const meeting = await screen.findByRole("button", { name: /^Standup/ });
+    const meeting = await calendarGrid().findByRole("button", { name: /^Standup/ });
     expect(meeting.style.getPropertyValue("--calendar-color")).toBe("");
 
     const list = screen.getByRole("region", { name: "Calendars" });
@@ -662,9 +816,9 @@ describe("CalendarWeekView", () => {
     fireEvent.click(within(palette).getByRole("menuitemradio", { name: "Teal" }));
 
     expect(within(list).queryByRole("menu")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Standup/ }).style.getPropertyValue("--calendar-color")).toBe("#1f9a8f");
+    expect(calendarGrid().getByRole("button", { name: /^Standup/ }).style.getPropertyValue("--calendar-color")).toBe("#1f9a8f");
     expect(screen.getByRole("button", { name: "Offsite" }).style.getPropertyValue("--calendar-color")).toBe("#1f9a8f");
-    expect(screen.getByRole("button", { name: /^Parade/ }).style.getPropertyValue("--calendar-color")).toBe("");
+    expect(calendarGrid().getByRole("button", { name: /^Parade/ }).style.getPropertyValue("--calendar-color")).toBe("");
     expect(JSON.parse(localStorage.getItem(CALENDAR_COLORS_KEY)!)).toEqual({ "joel@example.com": { primary: "teal" } });
 
     fireEvent.click(trigger);
@@ -673,7 +827,7 @@ describe("CalendarWeekView", () => {
     expect(within(list).getByRole("menuitemradio", { name: "Default" })).toHaveAttribute("aria-checked", "false");
 
     fireEvent.click(within(list).getByRole("menuitemradio", { name: "Default" }));
-    expect(screen.getByRole("button", { name: /^Standup/ }).style.getPropertyValue("--calendar-color")).toBe("");
+    expect(calendarGrid().getByRole("button", { name: /^Standup/ }).style.getPropertyValue("--calendar-color")).toBe("");
     expect(screen.getByRole("button", { name: "Offsite" }).style.getPropertyValue("--calendar-color")).toBe("");
     expect(localStorage.getItem(CALENDAR_COLORS_KEY)).toBeNull();
   });
@@ -727,14 +881,18 @@ describe("CalendarWeekView", () => {
   it("defaults to Workweek, persists range choices and keeps selected event details in the rail", async () => {
     localStorage.removeItem("threestrands.calendar.range");
     const {container}=renderWeek();
-    expect(screen.getByLabelText("Calendar range")).toHaveValue("workweek");
+    expect(rangeButton("Workweek")).toHaveAttribute("aria-pressed", "true");
+    // The range is a row of toggle buttons; the read-only workspace holds no select.
+    expect(container.querySelector("select")).toBeNull();
     expect(container.querySelectorAll(".calendar-week-day-label")).toHaveLength(5);
     expect(screen.getByText("Mon 21")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Calendar range"),{target:{value:"threeDays"}});
+    fireEvent.click(rangeButton("3-Day"));
+    expect(rangeButton("3-Day")).toHaveAttribute("aria-pressed", "true");
+    expect(rangeButton("Workweek")).toHaveAttribute("aria-pressed", "false");
     expect(container.querySelectorAll(".calendar-week-day-label")).toHaveLength(3);
     expect(screen.getByText("Tue 22")).toBeInTheDocument();
     expect(localStorage.getItem("threestrands.calendar.range")).toBe("threeDays");
-    fireEvent.change(screen.getByLabelText("Calendar range"),{target:{value:"day"}});
+    fireEvent.click(rangeButton("Day"));
     expect(container.querySelectorAll(".calendar-week-day-label")).toHaveLength(1);
     await waitFor(()=>expect(mailClient.listScheduleEvents).toHaveBeenCalledWith(new Date(2026,8,22).toISOString(),new Date(2026,8,23).toISOString(),expect.any(String)));
   });
@@ -743,7 +901,7 @@ describe("CalendarWeekView", () => {
     localStorage.setItem("threestrands.calendar.range","workweek");
     const weekend=event("weekend","2026-09-26T10:00:00","2026-09-26T11:00:00","Weekend review");
     render(<CalendarWeekView anchor={new Date(2026,8,26)} initialEvent={weekend} onAnchorChange={vi.fn()} accounts={accounts} calendars={calendars} onToggleCalendar={vi.fn()} onAddCalendarAccount={vi.fn()} onOpenSettings={vi.fn()} />);
-    expect(screen.getByLabelText("Calendar range")).toHaveValue("day");
+    expect(rangeButton("Day")).toHaveAttribute("aria-pressed", "true");
     expect(localStorage.getItem("threestrands.calendar.range")).toBe("workweek");
     expect(await screen.findByRole("region",{name:"Weekend review details"})).toBeInTheDocument();
   });

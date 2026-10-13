@@ -134,7 +134,10 @@ export function eventDayBounds(event: ScheduleEvent, day: Date): { start: number
 }
 
 export function occursOnDay(event: ScheduleEvent, day: Date): boolean {
-  if (event.allDay) return isSameDay(eventDate(event), day);
+  if (event.allDay) {
+    const date = dateInputValue(day);
+    return event.start <= date && date < event.end;
+  }
   const dayStart = startOfLocalDay(day);
   const dayEnd = addDays(dayStart, 1);
   return new Date(event.start) < dayEnd && new Date(event.end) > dayStart;

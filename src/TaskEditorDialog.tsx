@@ -120,12 +120,12 @@ export function TaskEditorDialog({
       }}>
         {sourceSubject ? <p className="modal-form-context">From: {sourceSubject}</p> : null}
         <label><span>Task</span><input ref={titleRef} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="What needs doing?" /></label>
-        <label><span>Type</span><select value={kind} onChange={(event) => setKind(event.target.value as TaskKind)}><option value="action">Action</option><option value="follow_up">Follow up</option><option value="waiting_for">Waiting for reply</option></select></label>
+        <label><span>Type</span><select value={kind} onChange={(event) => setKind(event.target.value as TaskKind)}><option value="action">Action</option><option value="follow_up">Follow Up</option><option value="waiting_for">Waiting for Reply</option></select></label>
         <label><span>Due</span><select value={dueKind} onChange={(event) => {
           const nextKind = event.target.value as TaskDueKind;
           setDueKind(nextKind);
           setDueValue((current) => nextKind === "none" ? "" : convertDueInputValue(current, nextKind));
-        }}><option value="none">No due date</option><option value="date">Date</option><option value="datetime">Date and time</option></select></label>
+        }}><option value="none">No Due Date</option><option value="date">Date</option><option value="datetime">Date and Time</option></select></label>
         {dueKind !== "none" ? <label><span>{dueKind === "date" ? "Due Date" : "Due Date and Time"}</span><input type={dueKind === "date" ? "date" : "datetime-local"} value={dueValue} onChange={(event) => setDueValue(event.target.value)} required /></label> : null}
         {dueKind !== "none" ? <label>
           <span>Timezone</span>
@@ -146,7 +146,7 @@ export function TaskEditorDialog({
         {goals && goalOptions.length ? <label>
           <span>Goal{goalSuggested && offeredGoalId && offeredGoalId === initial.goalId ? <small className="task-goal-suggested"> · Suggested</small> : null}</span>
           <select value={offeredGoalId} onChange={(event) => setGoalId(event.target.value)}>
-            <option value="">No goal</option>
+            <option value="">No Goal</option>
             {GOAL_HORIZONS.map((horizon) => {
               const options = goalOptions.filter((goal) => goal.horizon === horizon);
               return options.length ? <optgroup key={horizon} label={GOAL_HORIZON_LABELS[horizon]}>

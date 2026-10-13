@@ -195,7 +195,7 @@ export function GoalDialog({
         {drafts.horizon !== "year" ? <label>
           <span>Supports</span>
           <select value={drafts.parentGoalId} onChange={(event) => change({ parentGoalId: event.target.value }, true)}>
-            <option value="">No longer-term goal</option>
+            <option value="">No Longer-Term Goal</option>
             {candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.title} ({formatPeriod(candidate.period)})</option>)}
           </select>
         </label> : null}

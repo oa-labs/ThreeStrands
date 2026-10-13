@@ -82,6 +82,24 @@ describe("calendar account picker", () => {
     expect(teamRow.style.getPropertyValue("--calendar-color")).toBe("#8a55c9");
     const meRow = within(picker).getByRole("checkbox", { name: "Me (Primary)" }).closest(".calendar-color-row") as HTMLElement;
     expect(meRow.style.getPropertyValue("--calendar-color")).toBe("");
+    expect(within(picker).getByRole("button", { name: "Options for Team" })).toHaveFocus();
+  });
+
+  it("closes a calendar's color menu on Escape and returns focus to its options button", () => {
+    const picker = renderPicker({
+      calendarsLoaded: true,
+      calendars: [{ id: "team", accountId: account.email, name: "Team", primary: false, selected: true } as CalendarOption],
+    });
+    const trigger = within(picker).getByRole("button", { name: "Options for Team" });
+    fireEvent.click(trigger);
+    const palette = within(picker).getByRole("menu", { name: "Color for Team" });
+    within(palette).getByRole("menuitemradio", { name: "Default" }).focus();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(within(picker).queryByRole("menu", { name: "Color for Team" })).not.toBeInTheDocument();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveFocus();
+    expect(localStorage.getItem(CALENDAR_COLORS_KEY)).toBeNull();
   });
 
   it.each(["Disconnect this device", "Remove on all devices"])("confirms the calendar removal scope: %s", async (scope) => {

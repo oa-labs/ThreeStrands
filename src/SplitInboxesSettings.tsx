@@ -156,9 +156,9 @@ export function SplitInboxesSettings({
             setMatchValue("");
           }}
         >
-          <option value="domain">Sending domain</option>
+          <option value="domain">Sending Domain</option>
           <option value="label">Label</option>
-          <option value="pattern">Address contains</option>
+          <option value="pattern">Address Contains</option>
         </select>
         {matchKind === "label" ? (
           <select value={matchValue} aria-label="Label" onChange={(event) => setMatchValue(event.target.value)}>

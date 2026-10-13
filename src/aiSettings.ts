@@ -6,7 +6,7 @@ export const AI_PROVIDERS = [
   { id: "anthropic", label: "Anthropic", modelPlaceholder: "claude-sonnet-5", modelSuggestions: ["claude-sonnet-5", "claude-3-7-sonnet-latest", "claude-3-5-haiku-latest"] },
   { id: "openrouter", label: "OpenRouter", modelPlaceholder: "openai/gpt-4o", modelSuggestions: ["openai/gpt-4o", "anthropic/claude-3.5-sonnet", "google/gemini-2.0-flash-001"] },
   { id: "fireworks", label: "Fireworks", modelPlaceholder: "accounts/fireworks/models/llama-v3p1-70b-instructh", modelSuggestions: ["accounts/fireworks/models/glm-5p3-flash", "accounts/fireworks/models/deepseek-v4p1-flash"] },
-  { id: "custom", label: "Custom endpoint", modelPlaceholder: "model name", modelSuggestions: [] },
+  { id: "custom", label: "Custom Endpoint", modelPlaceholder: "model name", modelSuggestions: [] },
 ] as const;
 
 export type AiProvider = (typeof AI_PROVIDERS)[number]["id"];
