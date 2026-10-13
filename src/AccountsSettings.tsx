@@ -143,7 +143,7 @@ export function AccountsSettings({
         <div className="accounts-empty">
           <span className="accounts-empty-icon"><Mail size={ICON_SIZE.lg} /></span>
           <strong>No accounts connected</strong>
-          <p>Add a Gmail account to start syncing mail on this device.</p>
+          <p>Add a Gmail or IMAP account to start syncing mail on this device.</p>
         </div>
       ) : (
         <ul className="accounts-list">

@@ -51,6 +51,7 @@ type Options = {
     setUnsubscribeMessageId: Dispatch<SetStateAction<string | null>>;
     setPaletteOpen: Dispatch<SetStateAction<boolean>>;
     setShortcutHelpOpen: Dispatch<SetStateAction<boolean>>;
+    setGettingStartedOpen: Dispatch<SetStateAction<boolean>>;
     openSettingsAt: (section?: SettingsSection) => void;
     adjustFontScale: (direction: 1 | -1) => void;
     toggleContextPanelFocus: () => void;
@@ -82,7 +83,7 @@ export function useAppCommandContext({
   const { mailbox, setMailbox, setActiveSplitInboxId, activeAccountId, selectedId, setSelectedId, isTabbedMailbox } = view;
   const {
     interactionScope, canUnsubscribe, latestMessage, aiSummaryAvailable, labelTargetIds,
-    setLabelTargetIds, setUnsubscribeMessageId, setPaletteOpen, setShortcutHelpOpen,
+    setLabelTargetIds, setUnsubscribeMessageId, setPaletteOpen, setShortcutHelpOpen, setGettingStartedOpen,
     openSettingsAt, adjustFontScale, toggleContextPanelFocus, selectAdjacentMessage,
     getSuggestions, openThreadChat, refreshMail,
   } = ui;
@@ -241,6 +242,7 @@ export function useAppCommandContext({
     openLabels: () => setLabelTargetIds(selected ? [selected.id] : null),
     openPalette: () => setPaletteOpen(true),
     openShortcutHelp: () => setShortcutHelpOpen(true),
+    openGettingStarted: () => setGettingStartedOpen(true),
     openSettings: () => openSettingsAt(),
     openToday,
     openTasks,
@@ -274,7 +276,7 @@ export function useAppCommandContext({
     taskWorkspaceRef, setContactsView, latestMessage, setUnsubscribeMessageId, labelTargetIds,
     recordTriageEvent, includeArchived, toggleChecked, setMessageExpansionOverrides,
     messageStackRef, runBrief, isTabbedMailbox, setSearchOpen, setMailbox, activeAccountId,
-    setActiveSplitInboxId, setLabelTargetIds, setPaletteOpen, setShortcutHelpOpen, openSettingsAt,
+    setActiveSplitInboxId, setLabelTargetIds, setPaletteOpen, setShortcutHelpOpen, setGettingStartedOpen, openSettingsAt,
     adjustFontScale, undoLastAction,
   ]);
 

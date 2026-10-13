@@ -9,6 +9,7 @@ import {
   ContactRound,
   Files,
   Inbox,
+  ListChecks,
   Mail,
   MailOpen,
   Moon,
@@ -38,6 +39,9 @@ import {
 } from "react";
 import { AccountSwitcher } from "./AccountSwitcher";
 import { ActionButton, CommandPalette, FiltersButton, HoverTooltip, ShortcutHelp } from "./AppChrome";
+import { GettingStartedDialog, useGettingStarted } from "./GettingStarted";
+import { SERVER_SEARCH_FAILED_COPY, SERVER_SEARCHING_COPY } from "./searchStatusCopy";
+import type { GettingStartedStepId } from "./gettingStartedSteps";
 import { CalendarSidebar } from "./CalendarSidebar";
 import { eventDate, startOfLocalDay } from "./calendarTime";
 import { chatAttachmentOptions } from "./chatAttachments";
@@ -216,6 +220,7 @@ export function App() {
   } = reader;
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+  const [gettingStartedOpen, setGettingStartedOpen] = useState(false);
   const [unsubscribeMessageId, setUnsubscribeMessageId] = useState<string | null>(null);
   const fileSessions = useRef(new Map<string, FilesWorkspaceSnapshot>());
   const calendarSession = useRef<CalendarWorkspaceSnapshot | null>(null);
@@ -258,6 +263,15 @@ export function App() {
     labelsByAccount, createLabel, deleteLabel, renameLabel,
   } = useLabelCatalog(accounts, detail?.thread.accountId, labelTargetAccountId, () => loadThreads(query));
   const undo = useCommandUndo(setNotice);
+  const gettingStarted = useGettingStarted({
+    mailConnected: accounts.length > 0,
+    calendarConnected,
+    aiReady: aiSummaryAvailable || aiChatAvailable || aiDraftAvailable || aiActionAvailable,
+  });
+  const completeGettingStartedStep = gettingStarted.complete;
+  useEffect(() => { if (paletteOpen) completeGettingStartedStep("commandPalette"); }, [paletteOpen, completeGettingStartedStep]);
+  useEffect(() => { if (shortcutHelpOpen) completeGettingStartedStep("shortcuts"); }, [shortcutHelpOpen, completeGettingStartedStep]);
+  useEffect(() => { if (undo.canUndoArchive) completeGettingStartedStep("archive"); }, [undo.canUndoArchive, completeGettingStartedStep]);
   const { rememberUndo } = undo;
   const searchRef = useRef<HTMLInputElement>(null);
   useNativeMailLinks(correspondence.composeMailto, setRightWorkspace);
@@ -376,7 +390,7 @@ export function App() {
     ? "compose"
     : paletteOpen
       ? "palette"
-      : settingsOpen || shortcutHelpOpen || Boolean(unsubscribeMessage) || Boolean(labelTargetIds?.length) || Boolean(taskEditor) || Boolean(meetingEditor)
+      : settingsOpen || shortcutHelpOpen || gettingStartedOpen || Boolean(unsubscribeMessage) || Boolean(labelTargetIds?.length) || Boolean(taskEditor) || Boolean(meetingEditor)
         ? "modal"
         : "read";
 
@@ -396,12 +410,21 @@ export function App() {
     correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads,
     runBrief, recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, mutateIds,
     view: { mailbox, setMailbox, setActiveSplitInboxId, activeAccountId, selectedId, setSelectedId, isTabbedMailbox },
-    ui: { interactionScope, canUnsubscribe, latestMessage, aiSummaryAvailable, labelTargetIds, setLabelTargetIds, setUnsubscribeMessageId, setPaletteOpen, setShortcutHelpOpen, openSettingsAt, adjustFontScale, toggleContextPanelFocus, selectAdjacentMessage, getSuggestions, openThreadChat, refreshMail },
+    ui: { interactionScope, canUnsubscribe, latestMessage, aiSummaryAvailable, labelTargetIds, setLabelTargetIds, setUnsubscribeMessageId, setPaletteOpen, setShortcutHelpOpen, setGettingStartedOpen, openSettingsAt, adjustFontScale, toggleContextPanelFocus, selectAdjacentMessage, getSuggestions, openThreadChat, refreshMail },
   });
 
   const {
     executeCommand, executeById, paletteExtraCommands, runOnSelection,
   } = useCommandExecution({ context, accounts, accountSplitInboxes, checkedIds, mutateIds, rememberUndo, setNotice });
+  const runGettingStartedStep = useCallback((id: GettingStartedStepId) => {
+    setGettingStartedOpen(false);
+    if (id === "connectMail") openSettingsAt("accounts");
+    else if (id === "connectCalendar") openSettingsAt("calendarAccounts");
+    else if (id === "setUpAi") openSettingsAt("ai");
+    else if (id === "commandPalette") setPaletteOpen(true);
+    else if (id === "shortcuts") setShortcutHelpOpen(true);
+    else executeById("view.mail");
+  }, [executeById, openSettingsAt]);
 
   const reorderNavbarAccounts = useCallback((emails: string[]) => {
     void reorderAccounts(emails).catch(() => {
@@ -496,6 +519,14 @@ export function App() {
               <CommandIcon size={ICON_SIZE.lg} />
             </button>
           </HoverTooltip>
+          {gettingStarted.visible ? (
+            <HoverTooltip title={`Getting started · ${gettingStarted.remaining} left`}>
+              <button className="nav-button" aria-label={`Getting Started, ${gettingStarted.remaining} steps left`} onClick={() => setGettingStartedOpen(true)}>
+                <ListChecks size={ICON_SIZE.lg} />
+                <span className="nav-button-badge" aria-hidden="true">{gettingStarted.remaining}</span>
+              </button>
+            </HoverTooltip>
+          ) : null}
           <HoverTooltip title="Settings (⌘,)"><button className="nav-button" aria-label="Settings (⌘,)" onClick={() => executeById("settings.open")}>
             <SettingsIcon size={ICON_SIZE.lg} />
           </button></HoverTooltip>
@@ -676,10 +707,16 @@ export function App() {
             accounts.length === 0 ? (
               <div className="connect-account-cta">
                 <Mail size={ICON_SIZE.display} />
-                <p>Connect your Gmail account to start syncing mail.</p>
-                <button type="button" className="btn btn-primary" onClick={() => openSettingsAt("accounts")}>
-                  Add Account
-                </button>
+                <h2>Connect your first account</h2>
+                <p>Add a Gmail account or any IMAP mail server, such as Proton Mail Bridge, to start syncing mail.</p>
+                <div className="connect-account-cta-actions">
+                  <button type="button" className="btn btn-primary" onClick={() => openSettingsAt("accounts")}>
+                    Add Account
+                  </button>
+                  <button type="button" className="btn" onClick={() => setGettingStartedOpen(true)}>
+                    Getting Started
+                  </button>
+                </div>
               </div>
             ) : query.trim() && remoteSearchState === "searching" ? null : (
               <p className="empty">{query.trim() ? "No conversations match your search." : mailbox === "trash" ? "No trashed messages." : "Inbox zero."}</p>
@@ -1155,6 +1192,14 @@ export function App() {
       {shortcutHelpOpen ? (
         <ShortcutHelp extraCommands={paletteExtraCommands} onClose={() => setShortcutHelpOpen(false)} />
       ) : null}
+      {gettingStartedOpen ? (
+        <GettingStartedDialog
+          state={gettingStarted.state}
+          onAction={runGettingStartedStep}
+          onDismiss={() => { gettingStarted.dismiss(); setGettingStartedOpen(false); }}
+          onClose={() => setGettingStartedOpen(false)}
+        />
+      ) : null}
       {labelTargetIds && labelTargetIds.length > 0 ? (
         <LabelManager
           labels={labelTargetAccountId ? labelsByAccount[labelTargetAccountId] ?? [] : []}
@@ -1213,13 +1258,13 @@ export function App() {
       {isTabbedMailbox && searchOpen && query.trim() && includeArchived && remoteSearchState === "searching" ? (
         <div className="toast search-status-toast" role="status" aria-live="polite">
           <RefreshCw size={ICON_SIZE.sm} className="spin" />
-          Searching Gmail…
+          {SERVER_SEARCHING_COPY}
         </div>
       ) : null}
       {isTabbedMailbox && searchOpen && query.trim() && includeArchived && remoteSearchState === "error" ? (
         <div className="toast search-status-toast error" role="status" aria-live="polite">
           <CircleAlert size={ICON_SIZE.sm} />
-          Gmail search unavailable
+          {SERVER_SEARCH_FAILED_COPY}
         </div>
       ) : null}
       {isTabbedMailbox && searchOpen && query.trim() && includeArchived && remoteSearchState !== "searching" && searchStatus ? (

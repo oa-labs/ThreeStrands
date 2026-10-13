@@ -276,12 +276,12 @@ describe("split inbox search shortcuts", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Include archived or trashed mail in search" }));
 
     await waitFor(() => expect(backfillSearchThreads).toHaveBeenCalledWith("126", "demo@example.com"));
-    expect(await screen.findByText("Searching Gmail…")).toBeVisible();
+    expect(await screen.findByText("Searching mail on the server…")).toBeVisible();
     finishBackfill();
-    await waitFor(() => expect(screen.queryByText("Searching Gmail…")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Searching mail on the server…")).not.toBeInTheDocument());
   });
 
-  it("reports when Gmail search cannot be reached", async () => {
+  it("reports when server search cannot be reached", async () => {
     localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
     vi.spyOn(mailClient, "backfillSearchThreads").mockRejectedValue(new Error("offline"));
 
@@ -291,7 +291,7 @@ describe("split inbox search shortcuts", () => {
     fireEvent.change(search, { target: { value: "126" } });
     fireEvent.click(await screen.findByRole("button", { name: "Include archived or trashed mail in search" }));
 
-    expect(await screen.findByText("Gmail search unavailable")).toBeVisible();
+    expect(await screen.findByText("Server search unavailable. Showing mail on this device.")).toBeVisible();
   });
 });
 
@@ -336,7 +336,7 @@ describe("server-search status toast (Phase 5 run 5)", () => {
   it("shows nothing new for a complete search", async () => {
     await searchWithReport(complete);
     // The two existing toasts are gone (idle), and no status line appears.
-    await waitFor(() => expect(screen.queryByText("Searching Gmail…")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Searching mail on the server…")).not.toBeInTheDocument());
     expect(screen.queryByText(/only mail already on this device/)).not.toBeInTheDocument();
     expect(screen.queryByText(/took too long to search/)).not.toBeInTheDocument();
   });

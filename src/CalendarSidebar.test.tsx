@@ -483,7 +483,7 @@ describe("calendar sidebar", () => {
     );
   });
 
-  it("includes the T shortcut in keyboard help", async () => {
+  it("includes the t shortcut in keyboard help", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     expect(screen.queryByRole("button", { name: /Keyboard Shortcuts/ })).not.toBeInTheDocument();
@@ -491,7 +491,7 @@ describe("calendar sidebar", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "Keyboard Shortcuts" });
     const title = within(dialog).getByText("Toggle Today’s Schedule", { selector: "dt" });
-    expect(title.nextElementSibling?.querySelector("kbd")?.textContent).toBe("T");
+    expect(title.nextElementSibling?.querySelector("kbd")?.textContent).toBe("t");
   });
 
   it("checks availability and distinguishes verified candidate slots", async () => {

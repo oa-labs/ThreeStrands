@@ -91,6 +91,7 @@ const context = (overrides: Partial<CommandContext> = {}): CommandContext => ({
   openLabels: vi.fn(),
   openPalette: vi.fn(),
   openShortcutHelp: vi.fn(),
+  openGettingStarted: vi.fn(),
   openSettings: vi.fn(),
   openToday: vi.fn(),
   increaseFontSize: vi.fn(),

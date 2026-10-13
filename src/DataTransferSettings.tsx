@@ -4,6 +4,25 @@ import { exportSettings, importSettings, type SettingsImportResult } from "./use
 import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 
+/**
+ * What the encrypted settings file carries, keyed by the export payload's
+ * field in `src-tauri/src/transfer.rs`. A test keeps this list in step with
+ * that payload, so the hint never understates what leaves the computer.
+ */
+export const TRANSFERRED_DATA = [
+  { field: "preferences", label: "preferences", replacedOnImport: true },
+  { field: "accounts", label: "account list", replacedOnImport: false },
+  { field: "split_inboxes", label: "Split Inboxes", replacedOnImport: true },
+  { field: "snippets", label: "snippets", replacedOnImport: true },
+  { field: "contacts", label: "saved contacts", replacedOnImport: true },
+  { field: "contact_groups", label: "contact groups", replacedOnImport: true },
+  { field: "retention_days", label: "retention setting", replacedOnImport: true },
+] as const;
+
+function listPhrase(items: readonly string[]): string {
+  return items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
+}
+
 export function DataTransferSettings({
   onImported,
 }: {
@@ -25,9 +44,9 @@ export function DataTransferSettings({
     <section className="settings-section wide-label-settings" aria-label="Data transfer">
       <h3>Export Settings and Accounts</h3>
       <p className="settings-hint">
-        Creates a password-encrypted file containing your preferences, account
-        list, Split Inboxes, and retention setting. Mail, OAuth credentials,
-        API keys, and other keychain secrets are never exported.
+        Creates a password-encrypted file containing your {listPhrase(TRANSFERRED_DATA.map((item) => item.label))}.
+        Mail, tasks, OAuth credentials, passwords, API keys, and other keychain
+        secrets are never exported.
       </p>
       <label className="settings-field settings-field-row">
         <span>Export Password</span>
@@ -79,9 +98,10 @@ export function DataTransferSettings({
 
       <h3>Import Settings and Accounts</h3>
       <p className="settings-hint">
-        Importing replaces preferences and Split Inboxes from this installation.
-        Existing connected accounts stay connected. Other imported accounts
-        appear as “Connect on this device” and require Google authorization.
+        Importing replaces the {listPhrase(TRANSFERRED_DATA.filter((item) => item.replacedOnImport).map((item) => item.label))} on
+        this installation. Existing connected accounts stay connected. Other
+        imported accounts appear as “Connect on this device” until you sign in
+        to them again.
       </p>
       <label className="settings-field settings-field-row">
         <span>Backup File Password</span>

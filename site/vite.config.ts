@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
+import { docInputs, docsPages } from "./docs";
 
 const siteRoot = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(siteRoot, "..");
@@ -94,7 +95,7 @@ export default defineConfig({
   root: siteRoot,
   base: siteBase,
   publicDir: path.join(siteRoot, "public"),
-  plugins: [siteMarkup()],
+  plugins: [docsPages(), siteMarkup()],
   server: { port: 1423, strictPort: true },
   preview: { port: 1424, strictPort: true },
   build: {
@@ -107,6 +108,7 @@ export default defineConfig({
         index: path.join(siteRoot, "index.html"),
         privacy: path.join(siteRoot, "privacy.html"),
         terms: path.join(siteRoot, "terms.html"),
+        ...docInputs(),
       },
     },
   },

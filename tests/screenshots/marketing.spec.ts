@@ -85,7 +85,7 @@ const scenes: Scene[] = [
     name: "today-schedule",
     capture: async (page) => {
       await waitForMessage(page);
-      await page.keyboard.press("T");
+      await page.keyboard.press("t");
       await expect(page.getByText("Team standup").first()).toBeVisible();
     },
   },

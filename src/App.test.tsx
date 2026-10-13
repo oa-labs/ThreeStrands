@@ -977,7 +977,7 @@ describe("keyboard-first task and action workspaces", () => {
     const { container } = render(<App />);
     await screen.findByRole("region", { name: "Inbox" });
 
-    expect(screen.queryByRole("button", { name: "Today’s Schedule (T)" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Today’s Schedule (t)" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Calendar (2)" }));
     await screen.findByRole("region", { name: "Calendar week" });
     expect(container.querySelector("main")).toHaveClass("week-open");
@@ -1587,5 +1587,52 @@ describe("returning from a jump to another conversation", () => {
     await jumpFromRecentEmails();
     fireEvent.keyDown(window, { key: "j" });
     await waitFor(() => expect(screen.queryByRole("button", { name: /Back to/ })).not.toBeInTheDocument());
+  });
+});
+
+describe("getting started checklist", () => {
+  useConversationFixture();
+  beforeEach(() => localStorage.removeItem("threestrands.gettingStarted"));
+  afterEach(() => localStorage.removeItem("threestrands.gettingStarted"));
+
+  it("checks off the connected account, the palette, and an archive as they happen", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    expect(await screen.findByRole("button", { name: "Getting Started, 5 steps left" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Command Palette (⌘K)" }));
+    await screen.findByRole("textbox", { name: "Filter Commands" });
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(await screen.findByRole("button", { name: "Getting Started, 4 steps left" })).toBeInTheDocument();
+
+    await archiveSelected();
+    expect(await screen.findByRole("button", { name: "Getting Started, 3 steps left" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Getting Started, 3 steps left" }));
+    const dialog = await screen.findByRole("dialog", { name: "Getting Started" });
+    expect(within(dialog).getByRole("listitem", { name: "Connect a mail account, done" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("listitem", { name: "Archive a conversation, done" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("listitem", { name: "Open the command palette, done" })).toBeInTheDocument();
+  });
+
+  it("opens from a step into the matching place in the app", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Getting Started, \d+ steps left$/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Getting Started" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Show Shortcuts" }));
+    expect(await screen.findByRole("dialog", { name: "Keyboard Shortcuts" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Getting Started" })).toBeNull();
+  });
+
+  it("can be hidden from the sidebar and reopened from the command palette", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Getting Started, \d+ steps left$/ }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Getting Started" })).getByRole("button", { name: "Hide Getting Started" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^Getting Started, / })).toBeNull());
+
+    fireEvent.click(screen.getByRole("button", { name: "Command Palette (⌘K)" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "Filter Commands" }), { target: { value: "Getting Started" } });
+    fireEvent.click(screen.getByRole("button", { name: /Getting Started/ }));
+    expect(await screen.findByRole("dialog", { name: "Getting Started" })).toBeInTheDocument();
   });
 });

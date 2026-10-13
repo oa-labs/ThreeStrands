@@ -10,6 +10,16 @@ import type {
   SearchReport,
 } from "./domain";
 
+/**
+ * Shown while a search reaches past this device. Unified search can span Gmail
+ * and IMAP accounts at once, so the wording never names a provider.
+ */
+export const SERVER_SEARCHING_COPY = "Searching mail on the server\u2026";
+
+/** Shown when the server can't be searched; local matches stay on screen. */
+export const SERVER_SEARCH_FAILED_COPY =
+  "Server search unavailable. Showing mail on this device.";
+
 /** Appended when some planned folders were not searched because they are not synced. */
 const UNSYNCED_SUFFIX =
   "Some folders aren't synced, so they weren't searched.";

@@ -1830,6 +1830,247 @@ button.keycap:active {
   }
 }
 
+/* Docs ------------------------------------------------------------------ */
+
+.nav-links a[aria-current="page"] {
+  color: var(--on-dusk);
+}
+
+.docs-nav {
+  position: sticky;
+  top: 100px;
+  align-self: start;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  font-size: 0.92rem;
+}
+
+.docs-nav ol {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.docs-nav a {
+  display: block;
+  padding: 5px 12px;
+  border-left: 2px solid var(--paper-line);
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+
+.docs-nav a:hover {
+  color: var(--accent);
+}
+
+.docs-nav a[aria-current="page"] {
+  border-left-color: var(--accent);
+  color: var(--ink);
+  font-weight: 620;
+}
+
+.docs-nav .docs-nav-sections {
+  margin: 4px 0 8px 14px;
+  gap: 2px;
+  font-size: 0.86rem;
+}
+
+.docs-nav .docs-nav-sections a {
+  padding-block: 3px;
+}
+
+.docs-body {
+  min-width: 0;
+  color: var(--ink-soft);
+  font-size: 1.02rem;
+  line-height: 1.7;
+}
+
+.docs-body > * + * {
+  margin-top: 14px;
+}
+
+.docs-body h2 {
+  font-family: var(--font-display);
+  font-variation-settings: "opsz" 72, "SOFT" 100;
+  font-weight: 560;
+  font-size: clamp(1.5rem, 1.25rem + 1vw, 1.95rem);
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+  scroll-margin-top: 96px;
+}
+
+.docs-body > h2:not(:first-child) {
+  margin-top: clamp(44px, 5vw, 60px);
+}
+
+.docs-body h3 {
+  margin-top: 28px;
+  font-size: 1.08rem;
+  font-weight: 650;
+  color: var(--ink);
+  scroll-margin-top: 96px;
+}
+
+.docs-body ul,
+.docs-body ol {
+  padding-left: 1.25em;
+  display: grid;
+  gap: 8px;
+}
+
+.docs-body strong {
+  color: var(--ink);
+  font-weight: 620;
+}
+
+.docs-body a {
+  color: var(--accent);
+}
+
+.docs-body code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  padding: 0.08em 0.36em;
+  border-radius: 5px;
+  background: var(--paper-raised);
+  border: 1px solid var(--paper-line);
+  overflow-wrap: anywhere;
+}
+
+.docs-body blockquote {
+  padding: 16px 20px;
+  border-radius: 14px;
+  border: 1.5px dashed var(--paper-line);
+  background: var(--paper-raised);
+}
+
+.docs-body blockquote > * + * {
+  margin-top: 10px;
+}
+
+.docs-body picture {
+  display: block;
+  margin-block: 24px;
+}
+
+.docs-body picture img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-window);
+  border: 1px solid var(--paper-line);
+  box-shadow: 0 18px 40px -24px rgb(29 26 61 / 0.45);
+}
+
+.docs-body table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.docs-body th,
+.docs-body td {
+  padding: 10px 12px 10px 0;
+  border-bottom: 1px solid var(--paper-line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.docs-body thead th {
+  font-size: 0.78rem;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.docs-body tbody th {
+  font-weight: 560;
+  color: var(--ink);
+}
+
+.docs-body small {
+  color: var(--ink-faint);
+}
+
+.docs-keys {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.docs-pager {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: clamp(56px, 7vw, 80px);
+}
+
+.docs-pager a {
+  display: grid;
+  gap: 2px;
+  padding: 14px 18px;
+  border-radius: 14px;
+  border: 1px solid var(--paper-line);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.docs-pager a:hover {
+  border-color: var(--accent);
+}
+
+.docs-pager small {
+  font-weight: 500;
+}
+
+.docs-pager-next {
+  grid-column: 2;
+  text-align: right;
+}
+
+@media (max-width: 900px) {
+  .docs-nav {
+    position: static;
+    max-height: none;
+  }
+
+  .docs-nav .docs-nav-sections {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .docs-pager {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .docs-pager-next {
+    grid-column: 1;
+  }
+
+  .docs-body thead {
+    display: none;
+  }
+
+  .docs-body tbody th,
+  .docs-body tbody td {
+    display: block;
+    padding-right: 0;
+  }
+
+  .docs-body tbody th {
+    border-bottom: 0;
+    padding-bottom: 2px;
+  }
+}
+
 /* Finale & footer ------------------------------------------------------- */
 
 .finale {

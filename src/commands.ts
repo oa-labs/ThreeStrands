@@ -89,6 +89,7 @@ export type CommandContext = {
   openLabels(): void;
   openPalette(): void;
   openShortcutHelp(): void;
+  openGettingStarted(): void;
   openSettings(): void;
   openToday(): void;
   openTasks(): void;
@@ -525,9 +526,18 @@ export const commands: Command[] = [
     run: (context) => complete(context.openShortcutHelp),
   },
   {
+    id: "gettingStarted.open",
+    title: "Getting Started",
+    keywords: ["onboarding", "setup", "checklist", "help", "docs"],
+    keys: [],
+    group: "Application",
+    enabled: () => true,
+    run: (context) => complete(context.openGettingStarted),
+  },
+  {
     id: "calendar.today",
     title: "Toggle Today’s Schedule",
-    keys: ["T"],
+    keys: ["t"],
     group: "Application",
     enabled: (context) => !context.composerActive,
     run: (context) => complete(context.openToday),

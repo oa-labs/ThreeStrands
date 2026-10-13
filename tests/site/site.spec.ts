@@ -1,6 +1,8 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
+import { DOC_SLUGS, headingId, parseFrontMatter, renderDoc } from "../../site/docs";
+import { shortcutGroups } from "../../src/shortcutCatalog";
 
 const RELEASES = "https://github.com/oa-labs/dispatch/releases/latest";
 const LICENSE_URL = "https://github.com/oa-labs/dispatch/blob/master/LICENSE";
@@ -552,4 +554,137 @@ test.describe("legal pages", () => {
       expect(await page.locator("html").innerHTML()).not.toMatch(/open[- ]source/i);
     }
   });
+});
+
+test.describe("docs", () => {
+  test("every Markdown page is published, in sidebar order", () => {
+    const sources = readdirSync(path.resolve("site/docs")).filter((file) => file.endsWith(".md")).map((file) => file.slice(0, -3));
+    expect([...sources].sort()).toEqual([...DOC_SLUGS].sort());
+    expect(DOC_SLUGS[0]).toBe("index");
+  });
+
+  test("the renderer requires front matter and keeps the page title out of the body", () => {
+    expect(() => parseFrontMatter("## No front matter")).toThrow(/front matter/);
+    expect(parseFrontMatter("---\ntitle: A: B\nnav: A\n---\nBody")).toEqual({ meta: { title: "A: B", nav: "A" }, body: "Body" });
+    expect(() => renderDoc("triage", "---\ntitle: T\nnav: T\n---\nBody")).toThrow(/summary/);
+    expect(() => renderDoc("triage", "---\ntitle: T\nnav: T\nsummary: S\n---\n# Title")).toThrow(/start headings at ##/);
+    expect(() => renderDoc("triage", "---\ntitle: T\nnav: T\nsummary: S\n---\n## Same\n\n## Same")).toThrow(/two sections/);
+    expect(headingId("Send, Undo, and <em>Send Later</em>")).toBe("send-undo-and-send-later");
+  });
+
+  for (const from of ["./", "./privacy.html", "./terms.html"]) {
+    test(`${from} links to the docs from the nav and the footer`, async ({ page }) => {
+      await page.goto(from);
+      await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Docs" }).click();
+      await expect(page).toHaveURL(/docs\/index\.html$/);
+      await expect(page.getByRole("heading", { level: 1 })).toHaveText("ThreeStrands Docs");
+      await page.goto(from);
+      await page.locator("footer").getByRole("link", { name: "Docs" }).click();
+      await expect(page).toHaveURL(/docs\/index\.html$/);
+    });
+  }
+
+  for (const slug of DOC_SLUGS) {
+    test(`docs/${slug}: title, sidebar, section links, and every internal link resolve`, async ({ page, request }) => {
+      const doc = renderDoc(slug);
+      await page.goto(`./docs/${slug}.html`);
+      await expect(page.getByRole("heading", { level: 1 })).toHaveText(doc.title);
+      await expect(page.locator(".brand-mark")).toHaveCSS("width", "32px");
+      const sidebar = page.getByRole("navigation", { name: "Documentation" });
+      await expect(sidebar.locator('a[aria-current="page"]')).toHaveText(doc.nav);
+      const sections = await sidebar.locator(".docs-nav-sections a").evaluateAll((links) => links.map((link) => link.getAttribute("href")!));
+      const headings = await page.locator(".docs-body h2").evaluateAll((elements) => elements.map((element) => `#${element.id}`));
+      expect(sections).toEqual(headings);
+      expect(headings.length).toBeGreaterThan(0);
+
+      const internal = await page.locator("a[href]").evaluateAll((links) =>
+        links.map((link) => (link as HTMLAnchorElement).href).filter((href) => href.startsWith(location.origin)),
+      );
+      for (const href of new Set(internal.map((href) => href.split("#")[0]!))) {
+        expect((await request.get(href)).status(), href).toBe(200);
+      }
+      for (const href of internal.filter((href) => href.includes("#") && href.startsWith(page.url().split("#")[0]!))) {
+        const id = decodeURIComponent(href.split("#")[1]!);
+        if (id === "main") continue;
+        expect(await page.locator(`[id="${id}"]`).count(), href).toBe(1);
+      }
+      const unsafe = await page.locator('a[href^="http"]').evaluateAll((links) =>
+        links.filter((link) => !(link.getAttribute("rel") ?? "").split(/\s+/).includes("noopener")).map((link) => link.outerHTML),
+      );
+      expect(unsafe).toEqual([]);
+    });
+
+    test(`docs/${slug} loads every screenshot and makes no third-party requests`, async ({ page, baseURL }) => {
+      const origin = new URL(baseURL!).origin;
+      const foreign: string[] = [];
+      page.on("request", (request) => {
+        const url = new URL(request.url());
+        if (url.protocol.startsWith("http") && url.origin !== origin) foreign.push(request.url());
+      });
+      await page.goto(`./docs/${slug}.html`);
+      await scrollThrough(page);
+      await page.waitForLoadState("networkidle");
+      expect(foreign).toEqual([]);
+      await expect.poll(() => page.locator("img").evaluateAll((images) =>
+        images.filter((image) => image.getClientRects().length > 0 && (!image.complete || image.naturalWidth === 0)).length,
+      )).toBe(0);
+      const undescribed = await page.locator(".docs-body img").evaluateAll((images) => images.filter((image) => !image.getAttribute("alt")).length);
+      expect(undescribed).toBe(0);
+    });
+  }
+
+  test("the shortcut reference lists exactly what the app's Keyboard Shortcuts window lists", async ({ page }) => {
+    await page.goto("./docs/keyboard-shortcuts.html");
+    for (const { group, entries } of shortcutGroups()) {
+      const table = page.locator(`h2#${headingId(group)} + table`);
+      await expect(table.locator("tbody th")).toHaveText(entries.map((entry) => entry.title));
+    }
+    const palette = page.locator("tbody tr", { has: page.locator("th", { hasText: /^Command Palette$/ }) });
+    await expect(palette.locator("kbd")).toHaveText(["⌘/Ctrl + k"]);
+    const inbox = page.locator("tbody tr", { has: page.locator("th", { hasText: /^Go to Inbox$/ }) });
+    await expect(inbox.locator("kbd")).toHaveText(["g", "i"]);
+    await expect(inbox.locator("small")).toHaveText("then");
+  });
+
+  test("docs load their assets when hosted under a repository path", async ({ page, baseURL }) => {
+    const server = new URL(baseURL!);
+    const mount = "/ThreeStrands/";
+    await page.route(`${server.origin}/**`, async (route) => {
+      const requested = new URL(route.request().url());
+      if (!requested.pathname.startsWith(mount)) return route.abort();
+      const asset = new URL(requested.pathname.slice(mount.length) + requested.search, server);
+      await route.fulfill({ response: await route.fetch({ url: asset.href }) });
+    });
+    await page.goto(`${server.origin}${mount}docs/compose.html`);
+    await expect(page.locator(".brand-mark")).toHaveCSS("width", "32px");
+    await page.getByRole("link", { name: "ThreeStrands home" }).click();
+    await expect(page.getByRole("heading", { level: 1 })).toContainText("Email at the Speed of");
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+  });
+
+  for (const slug of ["index", "keyboard-shortcuts", "compose"] as const) {
+    for (const colorScheme of ["light", "dark"] as const) {
+      test(`docs/${slug} has no serious or critical axe violations in ${colorScheme} mode`, async ({ page }) => {
+        await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+        await page.goto(`./docs/${slug}.html`);
+        await page.addScriptTag({ path: path.resolve("node_modules/axe-core/axe.min.js") });
+        const violations = await page.evaluate(async () => {
+          const axe = (window as unknown as { axe: { run: (context: Document) => Promise<{ violations: { id: string; impact: string; nodes: { target: string[] }[] }[] }> } }).axe;
+          const result = await axe.run(document);
+          return result.violations
+            .filter((violation) => violation.impact === "serious" || violation.impact === "critical")
+            .map((violation) => ({ id: violation.id, targets: violation.nodes.map((node) => node.target.join(" ")).slice(0, 5) }));
+        });
+        expect(violations).toEqual([]);
+      });
+    }
+    for (const width of [360, 390, 768, 1440]) {
+      test(`docs/${slug} never scrolls horizontally at ${width}px`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto(`./docs/${slug}.html`);
+        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+        expect(overflow).toBeLessThanOrEqual(0);
+      });
+    }
+  }
 });

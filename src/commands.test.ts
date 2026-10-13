@@ -9,6 +9,7 @@ import {
   showAllAccountsCommand,
   type CommandContext,
 } from "./commands";
+import { formattingShortcuts } from "./richText";
 
 function noopContext(): CommandContext {
   return {
@@ -86,6 +87,7 @@ function noopContext(): CommandContext {
     openLabels: () => {},
     openPalette: () => {},
     openShortcutHelp: () => {},
+    openGettingStarted: () => {},
     openSettings: () => {},
     openToday: () => {},
     openTasks: () => {},
@@ -110,6 +112,24 @@ function noopContext(): CommandContext {
 }
 
 describe("command registry", () => {
+  it("writes every letter shortcut the way it is typed, so labels match the key that works", () => {
+    // matchesShortcut ignores letter case but rejects an unexpected Shift, so an
+    // uppercase letter without "Shift+" would be labelled with a key that never fires.
+    const keys = [...commands.flatMap((command) => command.keys), ...formattingShortcuts.map((shortcut) => shortcut.key)];
+    const mislabelled = keys.flatMap((key) => shortcutSteps(key)).filter((step) => {
+      const base = step.replace(/^Mod\+/, "");
+      return !base.startsWith("Shift+") && /^[A-Z]$/.test(base);
+    });
+    expect(mislabelled).toEqual([]);
+  });
+
+  it("toggles Today's Schedule with a plain t", () => {
+    const today = commands.find((command) => command.id === "calendar.today")!;
+    expect(today.keys).toEqual(["t"]);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "t" }), today.keys[0]!)).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "T", shiftKey: true }), today.keys[0]!)).toBe(false);
+  });
+
   it("opens Send later with Command or Control + Shift + L only while composing", () => {
     const schedule = commands.find((command) => command.id === "draft.schedule")!;
     const scheduleDraft = vi.fn();

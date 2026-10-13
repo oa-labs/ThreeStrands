@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { searchStatusMessage } from "./searchStatusCopy";
+import { SERVER_SEARCH_FAILED_COPY, SERVER_SEARCHING_COPY, searchStatusMessage } from "./searchStatusCopy";
 import type { SearchReport, SearchReportStatus } from "./domain";
 
 function report(status: SearchReportStatus, counts?: Partial<Pick<SearchReport, "unsyncedMailboxes" | "skippedOverCap" | "serverSearchedAccounts">>): SearchReport {
@@ -74,5 +74,15 @@ describe("searchStatusMessage", () => {
       false,
     );
     expect(message).toBe("One folder couldn't be searched. Showing the rest.");
+  });
+});
+
+describe("server search progress copy", () => {
+  it("never names a provider, since one search can cover Gmail and IMAP accounts", () => {
+    for (const copy of [SERVER_SEARCHING_COPY, SERVER_SEARCH_FAILED_COPY]) {
+      expect(copy).not.toMatch(/gmail|google|imap|proton/i);
+    }
+    expect(SERVER_SEARCHING_COPY).toBe("Searching mail on the server…");
+    expect(SERVER_SEARCH_FAILED_COPY).toBe("Server search unavailable. Showing mail on this device.");
   });
 });

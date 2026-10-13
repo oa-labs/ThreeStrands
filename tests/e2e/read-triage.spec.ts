@@ -511,7 +511,8 @@ test("prompts to connect a Gmail account when none are connected", async ({ page
   await page.keyboard.press("Escape");
   await expect(settings).not.toBeVisible();
 
-  await expect(page.getByText("Connect your Gmail account to start syncing mail.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Connect your first account" })).toBeVisible();
+  await expect(page.getByText("Add a Gmail account or any IMAP mail server, such as Proton Mail Bridge, to start syncing mail.")).toBeVisible();
   await page.getByRole("button", { name: "Add Account" }).click();
   await expect(settings).toBeVisible();
   await settings.getByRole("button", { name: "Add Account" }).click();

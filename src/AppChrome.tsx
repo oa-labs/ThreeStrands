@@ -4,12 +4,11 @@ import { createPortal } from "react-dom";
 import {
   commandMatchesFilter,
   commands,
-  shortcutSteps,
   type Command,
   type CommandContext,
 } from "./commands";
 import { MESSAGE_FILTER_OPTIONS, type MessageFilterKind } from "./messageFilters";
-import { formattingShortcuts } from "./richText";
+import { shortcutDisplaySteps, shortcutGroups } from "./shortcutCatalog";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { ICON_SIZE } from "./iconSizes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
@@ -163,39 +162,24 @@ export function CommandPalette({
   );
 }
 
-const shortcutGroupOrder = ["Navigation", "Triage", "Compose", "Application"] as const;
-
 export function ShortcutHelp({ extraCommands = [], onClose }: { extraCommands?: Command[]; onClose(): void }) {
-  const shortcutCommands = [
-    ...[...commands, ...extraCommands].filter((command) => command.keys.length > 0),
-    ...formattingShortcuts.map((shortcut) => ({ id: shortcut.id, title: shortcut.title, keys: [shortcut.key], group: "Compose" as const })),
-  ];
   return (
     <Modal title="Keyboard Shortcuts" className="shortcut-help-modal" onClose={onClose}>
       <p className="shortcut-help-intro">Use ThreeStrands without leaving the keyboard.</p>
       <div className="shortcut-help-groups">
-        {shortcutGroupOrder.map((group) => {
-          const groupCommands = shortcutCommands.filter((command) => command.group === group);
-          if (groupCommands.length === 0) return null;
-          return (
-            <section key={group} aria-labelledby={`shortcut-group-${group.toLowerCase()}`}>
-              <h3 id={`shortcut-group-${group.toLowerCase()}`}>{group}</h3>
-              <dl>{groupCommands.map((command) => <div key={command.id}><dt>{command.title}</dt><dd>{command.keys.map((key) => <ShortcutKeys key={key} shortcut={key} />)}</dd></div>)}</dl>
-            </section>
-          );
-        })}
+        {shortcutGroups(extraCommands).map(({ group, entries }) => (
+          <section key={group} aria-labelledby={`shortcut-group-${group.toLowerCase()}`}>
+            <h3 id={`shortcut-group-${group.toLowerCase()}`}>{group}</h3>
+            <dl>{entries.map((entry) => <div key={entry.id}><dt>{entry.title}</dt><dd>{entry.keys.map((key) => <ShortcutKeys key={key} shortcut={key} />)}</dd></div>)}</dl>
+          </section>
+        ))}
       </div>
     </Modal>
   );
 }
 
-/** Splits on "+" separators only, so a literal plus key ("Mod++") survives as its own part. */
-function formatShortcutStep(step: string): string {
-  return step.split(/\+(?=.)/).map((part) => (part === "Mod" ? "⌘/Ctrl" : part)).join(" + ");
-}
-
 function ShortcutKeys({ shortcut }: { shortcut: string }) {
-  return <span className="shortcut-keys">{shortcutSteps(shortcut).map((step, index) => <span key={index}>{index > 0 ? <small>then</small> : null}<kbd>{formatShortcutStep(step)}</kbd></span>)}</span>;
+  return <span className="shortcut-keys">{shortcutDisplaySteps(shortcut).map((step, index) => <span key={index}>{index > 0 ? <small>then</small> : null}<kbd>{step}</kbd></span>)}</span>;
 }
 
 export function Modal({
