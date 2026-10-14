@@ -2,13 +2,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FilesWorkspace, type FilesWorkspaceSnapshot } from "./FilesWorkspace";
 import { mailClient } from "./data/client";
+import { clearFilePreviewCache } from "./FilePreview";
 import type { WorkspaceFile } from "./domain";
 
 const report: WorkspaceFile = { accountId:"you@example.com", messageId:"files-report",threadId:"report-thread",subject:"Next quarter",sentAt:"2026-10-01T12:00:00Z",sender:"Alice <alice@example.com>",direction:"received",attachment:{id:"report",filename:"forecast.pdf",mimeType:"application/pdf",size:2048},starred:false,availability:"download" };
 const invite: WorkspaceFile = {...report,messageId:"files-invite",threadId:"invite-thread",subject:"Invitation: Weekly sync @ Tue Oct 14, 2026 10am - 11am (EDT)",attachment:{id:"invite",filename:"invite.ics",mimeType:"text/calendar",size:900}};
 const copy: WorkspaceFile = {...report,messageId:"files-copy",threadId:"copy-thread",attachment:{...report.attachment,id:"copy"}};
 describe("Files workspace", () => {
-  afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); clearFilePreviewCache(); });
   it("automatically lists distinct attachment occurrences and routes open, download and source actions", async () => {
     vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[report,copy],total:2});
     const open=vi.spyOn(mailClient,"openAttachment").mockResolvedValue();
@@ -230,6 +231,45 @@ describe("Files workspace", () => {
     expect(star).toHaveClass("btn");
     expect(star).toHaveTextContent("Star");
     expect(within(actions).getAllByRole("button").map((button) => button.textContent)).toEqual(["Open","Save as…","Star"]);
+  });
+  it("warns about a risky file and leaves confirmation to the native open", async () => {
+    const risky={...report,attachment:{...report.attachment,id:"risky",filename:"Secure Message.html",mimeType:"text/html"}};
+    vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[risky],total:1});
+    const open=vi.spyOn(mailClient,"openAttachment").mockResolvedValue();
+    const {container}=render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} />);
+    await waitFor(() => expect(container.querySelector(".file-detail-risk")).toHaveTextContent("imitate sign-in forms"));
+    expect(container.querySelector(".file-detail-risk")).toHaveAttribute("role","note");
+    fireEvent.click(screen.getByRole("button",{name:"Open"}));
+    expect(open).toHaveBeenCalledWith(risky.messageId,"risky");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+  it("shows no warning for an ordinary file", async () => {
+    vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[report],total:1});
+    const open=vi.spyOn(mailClient,"openAttachment").mockResolvedValue();
+    const {container}=render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button",{name:"Open"}));
+    expect(open).toHaveBeenCalledWith(report.messageId,"report");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(container.querySelector(".file-detail-risk")).toBeNull();
+  });
+  it("marks a received file's source conversation as spam, and offers no spam action for sent files", async () => {
+    vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[report],total:1});
+    const onReportSpam=vi.fn();
+    const view=render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} onReportSpam={onReportSpam} />);
+    fireEvent.click(await screen.findByRole("button",{name:"Mark Spam"}));
+    expect(onReportSpam).toHaveBeenCalledWith(report.threadId);
+    view.unmount();
+    vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[{...report,direction:"sent"}],total:1});
+    render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} onReportSpam={onReportSpam} />);
+    await screen.findByRole("button",{name:"Open"});
+    expect(screen.queryByRole("button",{name:"Mark Spam"})).not.toBeInTheDocument();
+  });
+  it("shows the selected file's preview at the top of its details", async () => {
+    vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[report],total:1});
+    vi.spyOn(mailClient,"filePreview").mockResolvedValue("data:image/png;base64,iVBORw0KGgo=");
+    const {container}=render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} />);
+    await waitFor(() => expect(container.querySelector(".file-detail > .file-detail-preview:first-child img")).not.toBeNull());
+    expect(mailClient.filePreview).toHaveBeenCalledWith(report.messageId,"report");
   });
   it("labels accounts in the merged view so otherwise identical files remain distinguishable", async () => {
     const other={...copy,accountId:"other@example.com"};

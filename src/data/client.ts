@@ -110,6 +110,8 @@ export interface MailClient extends CorrespondenceClient {
   fetchRemoteImage(url: string): Promise<string>;
   /** Resolves an embedded MIME image to a `data:` URI without contacting a remote sender host. */
   fetchAttachmentImage(messageId: string, attachmentId: string): Promise<string>;
+  /** A validated PNG `data:` URI picturing the attachment, or null when it has no preview (risky, too large, or not macOS). */
+  filePreview(messageId: string, attachmentId: string): Promise<string | null>;
   /** Parses an iCalendar attachment natively and returns display-safe event metadata. */
   previewCalendarAttachment(messageId: string, attachmentId: string): Promise<CalendarPreview>;
   summarizeThread(
@@ -353,6 +355,7 @@ const tauriClient: MailClient = {
   saveAttachment: (messageId, attachmentId) => complete("save_attachment", { messageId, attachmentId }),
   fetchRemoteImage: (url) => complete("fetch_remote_image", { url }),
   fetchAttachmentImage: (messageId, attachmentId) => complete("fetch_attachment_image", { messageId, attachmentId }),
+  filePreview: (messageId, attachmentId) => complete("file_preview", { messageId, attachmentId }),
   previewCalendarAttachment: (messageId, attachmentId) => complete("preview_calendar_attachment", { messageId, attachmentId }),
   summarizeThread: (threadId, provider, model, endpoint, reasoning = "default") =>
     complete("ai_summarize_thread", { threadId, provider, model, endpoint, reasoning }),

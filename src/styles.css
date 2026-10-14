@@ -1220,6 +1220,7 @@ kbd {
   border-bottom-right-radius: var(--radius-sm);
 }
 .attachment-badge > svg { flex-shrink: 0; }
+.attachment-badge .attachment-risk { color: var(--warning); }
 .attachment-thumbnail {
   flex-shrink: 0;
   width: var(--attachment-thumbnail-size);
@@ -3235,6 +3236,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .files-workspace .workspace-context-rail { font-size: var(--text-body); line-height: var(--leading-normal); }
 /* Details start at the section label's edge, like the rows under each section heading. */
 .file-detail { padding-left: calc(var(--context-row-inset) + var(--context-glyph-column)); }
+.file-detail-preview { display: flex; justify-content: center; margin: 0 0 var(--space-3); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; }
+.file-detail-preview img { display: block; max-width: 100%; max-height: 240px; object-fit: contain; }
 .file-detail-name { margin: 0 0 var(--space-1); font-size: var(--text-body); font-weight: var(--weight-medium); line-height: var(--leading-normal); overflow-wrap: anywhere; }
 .file-detail-meta { margin: 0 0 var(--space-3); color: var(--muted); font-size: var(--text-meta); }
 .file-detail-metadata { display: grid; gap: var(--space-2); margin: 0 0 var(--space-3); font-size: var(--text-secondary); }
@@ -3243,6 +3246,9 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .file-detail-metadata dt { color: var(--muted); font-size: var(--text-meta); }
 .file-detail-metadata dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .file-detail-metadata dd span { display: block; color: var(--muted); font-size: var(--text-meta); }
+.file-detail-risk { display: flex; align-items: flex-start; gap: var(--space-1-5); margin: 0 0 var(--space-3); color: var(--warning); font-size: var(--text-secondary); }
+.file-detail-risk svg { flex: 0 0 auto; margin-top: var(--space-0-5); }
+.file-source-actions { margin: var(--space-1) 0 0 calc(var(--context-row-inset) + var(--context-glyph-column)); }
 .file-detail-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); }
 @container files-browser (min-width: 800px) {
   .file-list-select, .file-list-heading-main { grid-template-columns: minmax(0, 1.4fr) minmax(0, .8fr) 5em 5em; }

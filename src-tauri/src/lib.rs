@@ -2,6 +2,7 @@ mod ai;
 mod app_update;
 mod availability;
 mod attachment_reader;
+mod file_preview;
 mod attachment_text;
 mod attachment_security;
 mod auth;
@@ -214,6 +215,8 @@ struct AppState {
     exiting: std::sync::atomic::AtomicBool,
     image_cache: image_proxy::ImageCache,
     attachment_reader: attachment_reader::ReaderCache,
+    /// Scratch space for Quick Look previews in Files.
+    file_previews: file_preview::PreviewRoot,
     /// Attachment text recently shared with Thread Chat.
     attachment_text: attachment_text::ExtractCache,
     /// `Some` only when the local database had to be recovered at startup
@@ -1249,6 +1252,21 @@ async fn fetch_attachment_image(
         "data:{mime_type};base64,{}",
         base64::engine::general_purpose::STANDARD.encode(bytes)
     ))
+}
+
+/// A picture of the attachment for Files, or `None` when it has none. A
+/// preview is optional, so a file Quick Look cannot draw is not an error.
+#[tauri::command]
+async fn file_preview(
+    message_id: String,
+    attachment_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    if !cfg!(target_os = "macos") {
+        return Ok(None);
+    }
+    let (filename, _, bytes) = load_attachment(&message_id, &attachment_id, &state).await?;
+    file_preview::preview_data_uri(&state.file_previews, &filename, &bytes).await
 }
 
 #[tauri::command]
@@ -5117,6 +5135,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&root)?;
     restrict_dir_to_owner(&root);
     let attachment_reader = attachment_reader::ReaderCache::new(root.join("reader"))?;
+    let file_previews = file_preview::PreviewRoot::new(root.join("previews"))?;
     // Built before `manage` so the registry is never observed empty by a
     // command racing startup.
     let registry = startup_account_registry(&database, &auth_config, app.handle());
@@ -5149,6 +5168,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         exiting: std::sync::atomic::AtomicBool::new(false),
         image_cache: image_proxy::ImageCache::new().map_err(std::io::Error::other)?,
         attachment_reader,
+        file_previews,
         attachment_text: attachment_text::ExtractCache::default(),
         recovery,
         staged_import: transfer::StagedImport::default(),
@@ -5445,6 +5465,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         // Images and attachments
         fetch_remote_image,
         fetch_attachment_image,
+        file_preview,
         preview_calendar_attachment,
         open_attachment,
         save_attachment,

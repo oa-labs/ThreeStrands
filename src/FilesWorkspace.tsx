@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { Download, ExternalLink, Info, MessageSquareText, SlidersHorizontal, X } from "lucide-react";
+import { Download, ExternalLink, Info, MessageSquareText, ShieldAlert, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { WorkspaceFile } from "./domain";
 import { WorkspaceContextRail } from "./WorkspaceContextRail";
@@ -17,6 +17,8 @@ import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 import { isCalendarAttachment } from "./CalendarAttachment";
 import { invitationTitle } from "./invitationTitle";
 import { AddressWithCard } from "./AddressWithCard";
+import { attachmentRisk } from "./attachmentRisk";
+import { FilePreview } from "./FilePreview";
 
 export type FilesWorkspaceSnapshot = { files: WorkspaceFile[]; total: number; hiddenCalendar?: number; selected: string | null; search: string; sender: string; type: string; direction: "" | "received" | "sent"; scope: string; after: string; before: string; starred: boolean; scroll: number };
 const PAGE_SIZE = 50;
@@ -60,7 +62,7 @@ function FileSender({ file, own, onOpenContact }: { file: WorkspaceFile; own: st
   return <AddressWithCard email={email} displayName={senderName(file)} hint="Opens in Contacts" onActivate={open} onOpenContact={onOpenContact} />;
 }
 
-export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenContact, sessions, refreshKey = "" }: { refreshKey?: string; sessions?: RefObject<Map<string, FilesWorkspaceSnapshot>>; accountId: string | null; accountIds: string[]; onOpenThread(id: string): void; onOpenContact?(id: string): void }) {
+export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenContact, onReportSpam, sessions, refreshKey = "" }: { refreshKey?: string; sessions?: RefObject<Map<string, FilesWorkspaceSnapshot>>; accountId: string | null; accountIds: string[]; onOpenThread(id: string): void; onOpenContact?(id: string): void; /** Marks the file's source conversation as spam, which removes its files from Files. */ onReportSpam?(threadId: string): void }) {
   const sessionKey=accountId ?? "all";
   const restored=useRef(sessions?.current.get(sessionKey));
   const main=useRef<HTMLDivElement>(null);
@@ -139,6 +141,7 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
   ];
   const showAccount = scoped.length > 1;
   const file = files.find((item) => keyFor(item)===selected);
+  const risk = file ? attachmentRisk(file.attachment.filename, file.attachment.mimeType) : null;
   const action = (operation: Promise<void>) => { void operation.catch((reason) => setError(errorMessage(reason))); };
   return <section className="files-workspace" aria-label="Files" onKeyDown={(event) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || isEditableTarget(event.target)) return;
@@ -207,6 +210,7 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
         <ContextSectionHeader title="File details" />
         {file ? <>
           <div className="file-detail">
+            <FilePreview file={file} online={online} onOpen={() => action(mailClient.openAttachment(file.messageId,file.attachment.id))} />
             <h2 className="file-detail-name">{meetingTitle(file) ?? file.attachment.filename}</h2>
             <p className="file-detail-meta">{fileTypeLabel(file.attachment.filename, file.attachment.mimeType)}{meetingTitle(file) ? ` · ${file.attachment.filename}` : ""} · {formatAttachmentSize(file.attachment.size)}</p>
             <dl className="file-detail-metadata">
@@ -214,10 +218,12 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
               <div><dt>{file.direction === "sent" ? "Sent" : "Received"}</dt><dd>{new Date(file.sentAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</dd></div>
               {showAccount ? <div><dt>Account</dt><dd>{file.accountId}</dd></div> : null}
             </dl>
+            {risk ? <p className="file-detail-risk" role="note"><TriangleAlert size={ICON_SIZE.sm} aria-hidden="true" />{risk.reason}</p> : null}
             {file.availability === "offline" ? <p className="file-detail-meta">Available offline</p> : !online ? <p className="file-detail-meta" role="status">{file.availability === "download" ? "Connect to the internet to open this file." : "This file may need an internet connection."}</p> : null}
             <div className="file-detail-actions"><button type="button" className="btn" onClick={() => action(mailClient.openAttachment(file.messageId,file.attachment.id))}><ExternalLink size={ICON_SIZE.sm} />Open</button><button type="button" className="btn" onClick={() => action(mailClient.saveAttachment(file.messageId,file.attachment.id))}><Download size={ICON_SIZE.sm} />Save as…</button><FileStarButton accountId={file.accountId} messageId={file.messageId} attachmentId={file.attachment.id} filename={file.attachment.filename} starred={file.starred} labeled /></div>
           </div>
-          <ContextSection id="file-source" title="Source conversation" rows={[<ContextRow key="source" icon={<MessageSquareText size={ICON_SIZE.sm} />} title={file.subject} wrapTitle detail={senderName(file)} date={formatHistoryDate(file.sentAt)} onActivate={() => onOpenThread(file.threadId)} />]} />
+          <ContextSection id="file-source" title="Source conversation" rows={[<ContextRow key="source" icon={<MessageSquareText size={ICON_SIZE.sm} />} title={file.subject} wrapTitle detail={senderName(file)} date={formatHistoryDate(file.sentAt)} onActivate={() => onOpenThread(file.threadId)} />]}
+            footer={onReportSpam && file.direction === "received" ? <div className="file-source-actions"><button type="button" className="btn btn-sm btn-danger" onClick={() => onReportSpam(file.threadId)}><ShieldAlert size={ICON_SIZE.sm} />Mark Spam</button></div> : null} />
         </> : <p className="context-status">Select a file to see its details and source email.</p>}
       </WorkspaceContextRail>
     </div>

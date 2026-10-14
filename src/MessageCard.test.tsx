@@ -131,6 +131,22 @@ describe("MessageCard", () => {
       expect(save).toHaveBeenCalledWith("m1", "a-report");
     });
 
+    it("marks a risky file type on its chip and leaves confirmation to the native open", async () => {
+      vi.spyOn(mailClient, "fileStars").mockResolvedValue([]);
+      const open = vi.spyOn(mailClient, "openAttachment").mockResolvedValue();
+      const risky = { id: "a-risky", filename: "invoice.pdf.exe", mimeType: "application/octet-stream", size: 9_000 };
+      render(<MessageCard message={withAttachments([report, risky])} isExpanded {...stableProps} />);
+      const badge = screen.getByRole("button", { name: "Open invoice.pdf.exe" });
+      expect(badge).toHaveAccessibleDescription(/hides its real type/);
+      expect(badge.querySelector(".attachment-risk")).not.toBeNull();
+      expect(screen.getByRole("button", { name: "Open report.pdf" }).querySelector(".attachment-risk")).toBeNull();
+      // The native open command reads the file and asks before opening it; a
+      // second prompt here would make people confirm twice.
+      fireEvent.click(badge);
+      expect(open).toHaveBeenCalledWith("m1", "a-risky");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
     it("shows a supported raster's picture and keeps the kind icon for other files", async () => {
       vi.spyOn(mailClient, "fileStars").mockResolvedValue([]);
       const fetch = vi.spyOn(mailClient, "fetchAttachmentImage").mockResolvedValue("data:image/png;base64,AAAA");

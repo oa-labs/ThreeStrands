@@ -829,6 +829,30 @@ describe("bulk sender decisions in the context panel", () => {
     ]));
   });
 
+  it("marks a file's source conversation as spam from Files, re-reads the list, and Undo restores it", async () => {
+    const file = { accountId: "you@example.com", messageId: "files-spam", threadId: "not-loaded", subject: "Invoice", sentAt: "2026-10-01T12:00:00Z", sender: "Mallory <mallory@example.net>", direction: "received" as const, attachment: { id: "bad", filename: "invoice.pdf.exe", mimeType: "application/octet-stream", size: 9000 }, starred: false, availability: "download" as const };
+    const listFiles = vi.spyOn(mailClient, "listFiles").mockResolvedValue({ files: [file], total: 1 });
+    const mutateThreads = vi.spyOn(mailClient, "mutateThreads").mockResolvedValue();
+    render(<App />);
+    await screen.findByRole("region", { name: "Inbox" });
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Mailboxes" })).getByRole("button", { name: "Files (5)" }));
+    const details = await screen.findByRole("complementary", { name: "File context" });
+    const markSpam = await within(details).findByRole("button", { name: "Mark Spam" });
+    const readsBefore = listFiles.mock.calls.length;
+    listFiles.mockResolvedValue({ files: [], total: 0 });
+
+    await act(async () => { markSpam.click(); });
+    await waitFor(() => expect(mutateThreads).toHaveBeenCalledWith([{ kind: "spam", threadId: "not-loaded", value: true }]));
+    expect(await screen.findByRole("status")).toHaveTextContent("Conversation marked as spam");
+    await waitFor(() => expect(listFiles.mock.calls.length).toBeGreaterThan(readsBefore));
+    await waitFor(() => expect(within(details).queryByRole("button", { name: "Mark Spam" })).not.toBeInTheDocument());
+
+    const readsAfterSpam = listFiles.mock.calls.length;
+    await act(async () => { screen.getByRole("button", { name: "Undo" }).click(); });
+    await waitFor(() => expect(mutateThreads).toHaveBeenLastCalledWith([{ kind: "spam", threadId: "not-loaded", value: false }]));
+    await waitFor(() => expect(listFiles.mock.calls.length).toBeGreaterThan(readsAfterSpam));
+  });
+
   it("mutes the sender from a dialog, archiving their Inbox mail, and Undo puts everything back", async () => {
     vi.spyOn(mailClient, "senderHistory").mockResolvedValue({
       receivedCount: 2, readCount: 0, firstAt: "2026-06-01T00:00:00Z", lastSentAt: null, recentReceivedAt: [],

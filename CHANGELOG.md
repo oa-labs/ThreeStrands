@@ -11,6 +11,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - New events can now be marked **All day** and given a location.
 - Newsletters and other bulk mail now show who sent them in the side panel: how many emails they've sent, how often, and how many you've read, with one-click **Unsubscribe**, **Archive** for everything still in your Inbox from them, and **New Split…** to give them their own tab. **Mute…** goes further: new mail from that sender is marked read and archived as it arrives, on all your devices, and you can review muted senders in **Settings → Muted Senders**. If you sync between devices, update ThreeStrands on each of them to share muted senders.
 - A new **Trust** section shows whether your mail server verified the sender, which sites the links open, and any tracking images. It also appears on any email where a link's text names a different site than it opens, or replies would go to another organization.
+- Attachments that could harm your computer, such as programs, Office files with macros, disk images, attached web pages, and files disguised as documents like invoice.pdf.exe, now show a warning and the reason in the message and in **Files**, before you open them.
+- **Files** can now mark a file's email as spam with **Mark Spam**, which removes its files from **Files**. **Undo** brings them back.
+- On macOS, **Files** now shows a preview of the selected file, such as the first page of a PDF or document, above its details. Click the preview to open the file. Files that could harm your computer are never previewed.
 
 ### Improved
 - Times you offer or confirm in a reply now end with a familiar time zone abbreviation such as EDT or PST, instead of a name like America/New_York.

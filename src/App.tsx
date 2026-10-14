@@ -46,6 +46,7 @@ import { CalendarSidebar } from "./CalendarSidebar";
 import { eventDate, startOfLocalDay } from "./calendarTime";
 import { chatAttachmentOptions } from "./chatAttachments";
 import { labelCommand, undoResult, type MailboxKind } from "./commands";
+import { FILES_CHANGED } from "./FileStarButton";
 import { draftRecipients } from "./composeChecks";
 import { ComposeContext, ReplyChecks } from "./ComposeContext";
 import { DraftReviewSection } from "./DraftReviewSection";
@@ -454,6 +455,22 @@ export function App() {
         .catch((reason: unknown) => setNotice({ message: `Unmute failed: ${errorMessage(reason)}` }));
     },
   }), [splitInboxCatalog.splitInboxes, senderRuleCatalog, canUnsubscribe, executeById, executeCommand, mutateIds, setNotice]);
+
+  // Files lists nothing from spam, so the list re-reads after the change and after Undo.
+  const markFileSourceSpam = useCallback((threadId: string) => executeCommand({
+    id: "files.markSpam",
+    title: "Mark Spam",
+    keys: [],
+    group: "Triage",
+    enabled: () => true,
+    run: async () => {
+      const result = await mutateIds([threadId], { kind: "spam", value: true }, { includeUnloaded: true });
+      window.dispatchEvent(new Event(FILES_CHANGED));
+      const undo = result.undoAction;
+      return undo ? { ...result, undoAction: async () => { await undo(); window.dispatchEvent(new Event(FILES_CHANGED)); } } : result;
+    },
+    undo: undoResult,
+  }), [executeCommand, mutateIds]);
 
   /**
    * Mutes a sender, archiving the chosen Inbox conversations in the same
@@ -1169,7 +1186,7 @@ export function App() {
           </> : null}
         />
       ) : null}
-      {rightWorkspace === "files" ? <Suspense fallback={null}><FilesWorkspace refreshKey={syncStatus?.lastSuccessfulSync ?? ""} key={activeAccountId ?? "all"} sessions={fileSessions} accountId={activeAccountId} accountIds={accounts.map((account) => account.email)} onOpenThread={jumpToThread} onOpenContact={contactCardActions.onOpenContact} /></Suspense> : null}
+      {rightWorkspace === "files" ? <Suspense fallback={null}><FilesWorkspace refreshKey={syncStatus?.lastSuccessfulSync ?? ""} key={activeAccountId ?? "all"} sessions={fileSessions} accountId={activeAccountId} accountIds={accounts.map((account) => account.email)} onOpenThread={jumpToThread} onOpenContact={contactCardActions.onOpenContact} onReportSpam={markFileSourceSpam} /></Suspense> : null}
       {rightWorkspace === "contacts" ? <Suspense fallback={null}><ContactsWorkspace key={`${activeAccountId ?? "all"}:${contactAddressBookTarget ?? ""}`} accountId={activeAccountId} onOpenThread={jumpToThread} onSaved={() => { setNotice({ message: "Contact saved" }); void refreshKeepInTouchCount(); }} initialContactId={contactAddressBookTarget} view={contactsView} onViewChange={setContactsView} onKeepInTouchChanged={() => void refreshKeepInTouchCount()} /></Suspense> : null}
       {rightWorkspace === "tasks" ? (
         <TaskSidebar

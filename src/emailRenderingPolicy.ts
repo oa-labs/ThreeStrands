@@ -67,6 +67,17 @@ export const EMAIL_IMAGE_LIMITS = {
 } as const;
 
 /**
+ * Quick Look previews in the Files details panel. The source cap mirrors the
+ * native `PREVIEW_MAX_SOURCE_BYTES`, so a larger file is never downloaded only
+ * to be refused; the cache bounds how many previews the panel holds while
+ * moving between files.
+ */
+export const FILE_PREVIEW_LIMITS = {
+  maxSourceBytes: 50 * 1024 * 1024,
+  maxCachedPreviews: 20,
+} as const;
+
+/**
  * Bounds for quoted-history folding. Folding is visual normalization only; it
  * never changes what the security stages sanitize or contain.
  */

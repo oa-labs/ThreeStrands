@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.123.0"
+version = "0.125.0"
 description = "A local-first, keyboard-driven email client"
 authors = ["OpenArc LLC"]
 license-file = "../LICENSE"
@@ -114,13 +114,15 @@ smtp-proto = "=0.2.5"
 xattr = "1"
 
 # Default-app registration (Settings → Default Apps) and relaunching after an
-# update, both through NSWorkspace.
+# update, both through NSWorkspace; Files previews through Quick Look.
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSRunningApplication", "block2", "objc2-uniform-type-identifiers"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSBundle", "NSError", "NSString", "NSURL"] }
 objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTType"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
+objc2-quick-look-thumbnailing = { version = "0.3", default-features = false, features = ["std", "block2", "QLThumbnailGenerator", "QLThumbnailGenerationRequest", "objc2-core-foundation", "objc2-uniform-type-identifiers"] }
 
 [dev-dependencies]
 # Count SQLite VM operations in the token-seeding scalability regression;

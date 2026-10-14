@@ -430,6 +430,9 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       if (image) return image;
       throw new Error("Embedded attachment images are unavailable in browser preview");
     },
+    async filePreview() {
+      return null;
+    },
     async previewCalendarAttachment(_messageId, _attachmentId) {
       throw new Error("Calendar previews are unavailable in browser preview");
     },
