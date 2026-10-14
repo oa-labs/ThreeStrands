@@ -5,6 +5,7 @@ import { mailClient } from "./data/client";
 import type { WorkspaceFile } from "./domain";
 
 const report: WorkspaceFile = { accountId:"you@example.com", messageId:"files-report",threadId:"report-thread",subject:"Next quarter",sentAt:"2026-10-01T12:00:00Z",sender:"Alice <alice@example.com>",direction:"received",attachment:{id:"report",filename:"forecast.pdf",mimeType:"application/pdf",size:2048},starred:false,availability:"download" };
+const invite: WorkspaceFile = {...report,messageId:"files-invite",threadId:"invite-thread",subject:"Invitation: Weekly sync @ Tue Oct 14, 2026 10am - 11am (EDT)",attachment:{id:"invite",filename:"invite.ics",mimeType:"text/calendar",size:900}};
 const copy: WorkspaceFile = {...report,messageId:"files-copy",threadId:"copy-thread",attachment:{...report.attachment,id:"copy"}};
 describe("Files workspace", () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); });
@@ -46,6 +47,48 @@ describe("Files workspace", () => {
     await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.objectContaining({accountIds:[report.accountId],search:"forecast",sender:"alice",type:"document",direction:"received",starred:true,after:new Date(2026,9,1).toISOString(),before:new Date(2026,9,3).toISOString(),offset:0})));
     fireEvent.click(screen.getByTitle("About Files"));
     expect(screen.getByRole("note",{name:"About Files"})).toHaveTextContent("Stars stay on this device");
+  });
+  it("hides calendar invitations by default, says how many, and remembers when they are shown", async () => {
+    const query=vi.spyOn(mailClient,"listFiles").mockImplementation(async ({excludeCalendar}) => excludeCalendar ? {files:[],total:0,hiddenCalendar:3} : {files:[invite],total:1,hiddenCalendar:0});
+    const props={accountId:report.accountId,accountIds:[report.accountId],onOpenThread:vi.fn()};
+    const view=render(<FilesWorkspace {...props} />);
+    expect(await screen.findByText(/3 calendar invitations hidden/)).toBeInTheDocument();
+    expect(screen.getByText("No files match these filters.")).toBeInTheDocument();
+    expect(query).toHaveBeenLastCalledWith(expect.objectContaining({excludeCalendar:true}));
+    fireEvent.click(screen.getByRole("button",{name:"Show invitations"}));
+    await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.not.objectContaining({excludeCalendar:true})));
+    expect(await screen.findByRole("button",{name:/^Weekly sync/})).toBeInTheDocument();
+    expect(screen.queryByText(/invitations? hidden/)).not.toBeInTheDocument();
+    view.unmount();
+    render(<FilesWorkspace {...props} />);
+    fireEvent.click(screen.getByRole("button",{name:"Filters"}));
+    expect(screen.getByRole("checkbox",{name:"Include Invitations"})).toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox",{name:"Include Invitations"}));
+    await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.objectContaining({excludeCalendar:true})));
+  });
+  it("includes invitations when the Calendar type or the Starred view asks for them", async () => {
+    const query=vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[],total:0});
+    render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button",{name:"Filters"}));
+    fireEvent.change(screen.getByLabelText("File Type"),{target:{value:"calendar"}});
+    await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.objectContaining({type:"calendar"})));
+    expect(query).toHaveBeenLastCalledWith(expect.not.objectContaining({excludeCalendar:true}));
+    fireEvent.change(screen.getByLabelText("File Type"),{target:{value:""}});
+    fireEvent.click(screen.getByRole("button",{name:"Starred"}));
+    await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.objectContaining({type:"",starred:true})));
+    expect(query).toHaveBeenLastCalledWith(expect.not.objectContaining({excludeCalendar:true}));
+  });
+  it("names an invitation by its meeting and keeps the filename beside it", async () => {
+    vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[invite,report],total:2});
+    render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} />);
+    const list=within(await screen.findByRole("list",{name:"Mail attachments"}));
+    const row=await list.findByRole("button",{name:/^Weekly sync/});
+    expect(row).toHaveTextContent("Weekly sync(invite.ics)");
+    expect(row).not.toHaveTextContent("Invitation:");
+    expect(list.getByRole("button",{name:/^forecast\.pdf/})).toBeInTheDocument();
+    const rail=within(screen.getByRole("complementary",{name:"File context"}));
+    expect(rail.getByRole("heading",{name:"Weekly sync"})).toBeInTheDocument();
+    expect(rail.getByText(/Calendar invitation · invite\.ics/)).toBeInTheDocument();
   });
   it("re-reads every loaded page when a sync or star change refreshes the list", async () => {
     const make=(index:number):WorkspaceFile=>({...report,messageId:`m${index}`,attachment:{...report.attachment,id:`a${index}`,filename:`file-${index}.pdf`}});

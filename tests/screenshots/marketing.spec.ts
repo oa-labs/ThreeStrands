@@ -177,6 +177,24 @@ const scenes: Scene[] = [
       await expect(page.getByText("priya.natarajan@harborlight.example", { exact: true })).toBeVisible();
     },
   },
+  {
+    name: "files",
+    capture: async (page) => {
+      await page.keyboard.press("5");
+      const files = page.getByRole("region", { name: "Files", exact: true });
+      await expect(files).toBeVisible();
+      const attachments = files.getByRole("list", { name: "Mail attachments" });
+      const plan = attachments.getByRole("listitem").filter({ hasText: "Q4-launch-plan-v7.pdf" });
+      await expect(plan).toBeVisible();
+      await expect(attachments.getByText("onboarding-v3-flows.png", { exact: true })).toBeVisible();
+      await plan.getByRole("button", { name: "Star Q4-launch-plan-v7.pdf", exact: true }).click();
+      await expect(plan.getByRole("button", { name: "Unstar Q4-launch-plan-v7.pdf", exact: true })).toBeVisible();
+      await plan.locator(".file-list-select").click();
+      const context = files.getByRole("complementary", { name: "File context" });
+      await expect(context.getByRole("heading", { name: "Q4-launch-plan-v7.pdf", exact: true })).toBeVisible();
+      await expect(context.getByRole("button", { name: /Q4 launch plan — final review/ })).toBeVisible();
+    },
+  },
 ];
 
 for (const theme of ["light", "dark"] as const) {

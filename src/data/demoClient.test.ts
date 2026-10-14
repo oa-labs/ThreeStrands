@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDemoClient, DEMO_ACCOUNT_ID, demoClient } from "./demoClient";
 import { defaultDemoDataset } from "./demoDataset";
 import { buildShowcaseDataset, SHOWCASE_WORK_ACCOUNT } from "./showcaseDataset";
@@ -101,6 +101,20 @@ describe("demoClient default dataset messages", () => {
 describe("showcase dataset", () => {
   const now = new Date("2026-09-22T17:24:00Z");
   const RESERVED_DOMAIN = /(^|\.)(example|test|invalid)$|^example\.(com|net|org)$/;
+
+  it("initializes the showcase client with reminder defaults on a fresh module import", async () => {
+    vi.stubEnv("VITE_DEMO_DATASET", "showcase");
+    vi.resetModules();
+    try {
+      const { demoClient: showcase } = await import("./demoClient");
+      const profile = await showcase.getContactProfile("contact:priya@harborlight.example");
+      expect(profile).toMatchObject({ keepInTouch: { intervalDays: null }, keepInTouchDueAt: null });
+      expect((await showcase.listAccounts()).map((account) => account.email)).toContain(SHOWCASE_WORK_ACCOUNT);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
 
   it("only contains addresses and links on reserved domains", () => {
     const serialized = JSON.stringify(buildShowcaseDataset(now));

@@ -6,7 +6,7 @@ import { shortcutGroups } from "../../src/shortcutCatalog";
 
 const RELEASES = "https://github.com/oa-labs/dispatch/releases/latest";
 const LICENSE_URL = "https://github.com/oa-labs/dispatch/blob/master/LICENSE";
-const TOUR_SCENES = ["inbox", "split-inbox", "reply", "tasks", "goals", "today-schedule", "calendar-week", "calendar-create", "contacts"];
+const TOUR_SCENES = ["inbox", "split-inbox", "reply", "tasks", "goals", "today-schedule", "calendar-week", "calendar-create", "contacts", "files"];
 const { version } = JSON.parse(readFileSync(path.resolve("package.json"), "utf8")) as { version: string };
 
 /** Walks the whole page so every lazy image and scroll-driven effect gets a chance to run. */
@@ -97,6 +97,19 @@ test.describe("feature claims", () => {
     await expect(page.locator(".flow")).toHaveAttribute("aria-label", /Gmail or your IMAP\/SMTP server/);
     await expect(page.locator(".finale .fine-print")).toContainText("Gmail and IMAP/SMTP");
     await expect(page.locator("main")).not.toContainText(/Gmail today|Gmail is the only|every Gmail account/i);
+  });
+
+  test("promotes finding mail attachments with their source context and local stars", async ({ page }) => {
+    await page.goto("./");
+    const files = page.locator('[data-tour-steps] [data-step="files"]');
+    await expect(files.getByRole("heading", { level: 3 })).toHaveText("Find the File Without Hunting Down the Email");
+    for (const claim of [
+      "attachments from your synced mail", "including archived conversations", "Search by filename",
+      "sender, file type, direction, account, and date", "Star the files you return to",
+      "jump straight to the source conversation", "Stars stay on this computer", "do not keep an offline copy",
+    ]) await expect(files).toContainText(claim);
+    await expect(files.locator("kbd")).toHaveText("5");
+    await expect(files.locator(".tour-inline img")).toHaveAttribute("alt", /Files view.*starred Q4 launch plan PDF.*source conversation/);
   });
 
   test("keeps scheduled delivery ownership and missed-time requirements beside the feature", async ({ page }) => {

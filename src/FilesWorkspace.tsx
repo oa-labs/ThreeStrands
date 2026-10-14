@@ -14,11 +14,23 @@ import { ICON_SIZE } from "./iconSizes";
 import { fileTypeLabel } from "./attachmentKind";
 import { formatDisplayName, parseAddress } from "./emailAddress";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
+import { isCalendarAttachment } from "./CalendarAttachment";
+import { invitationTitle } from "./invitationTitle";
 
-export type FilesWorkspaceSnapshot = { files: WorkspaceFile[]; total: number; selected: string | null; search: string; sender: string; type: string; direction: "" | "received" | "sent"; scope: string; after: string; before: string; starred: boolean; scroll: number };
+export type FilesWorkspaceSnapshot = { files: WorkspaceFile[]; total: number; hiddenCalendar?: number; selected: string | null; search: string; sender: string; type: string; direction: "" | "received" | "sent"; scope: string; after: string; before: string; starred: boolean; scroll: number };
 const PAGE_SIZE = 50;
 const keyFor = (file: WorkspaceFile) => JSON.stringify([file.accountId, file.messageId, file.attachment.id]);
 const senderName = (file: WorkspaceFile) => formatDisplayName(parseAddress(file.sender).name);
+/** Invitations are named by their meeting, since the filename (often "invite.ics") says nothing. */
+const meetingTitle = (file: WorkspaceFile) => isCalendarAttachment(file.attachment) ? invitationTitle(file.subject) : null;
+
+const SHOW_INVITATIONS_KEY = "threestrands.files.showInvitations";
+function readShowInvitations() {
+  try { return localStorage.getItem(SHOW_INVITATIONS_KEY) === "true"; } catch { return false; }
+}
+function writeShowInvitations(show: boolean) {
+  try { localStorage.setItem(SHOW_INVITATIONS_KEY, String(show)); } catch { /* The choice still applies for this session. */ }
+}
 
 /** Empty native date controls can display today's date on macOS. Label the
  * unrestricted state explicitly while retaining the native picker and local-day semantics. */
@@ -39,6 +51,9 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, sessions, 
   const main=useRef<HTMLDivElement>(null);
   const [files, setFiles] = useState<WorkspaceFile[]>(restored.current?.files ?? []);
   const [total, setTotal] = useState(restored.current?.total ?? 0);
+  const [hiddenCalendar, setHiddenCalendar] = useState(restored.current?.hiddenCalendar ?? 0);
+  const [showInvitations, setShowInvitationsState] = useState(readShowInvitations);
+  const setShowInvitations = (show: boolean) => { setShowInvitationsState(show); writeShowInvitations(show); };
   const [selected, setSelected] = useState<string | null>(restored.current?.selected ?? null);
   const [search, setSearch] = useState(restored.current?.search ?? "");
   const [sender, setSender] = useState(restored.current?.sender ?? "");
@@ -66,7 +81,9 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, sessions, 
   const rows = useRef(new Map<string, HTMLButtonElement>());
   const scoped = accountId ? [accountId] : scope && accountIds.includes(scope) ? [scope] : accountIds;
   // Date inputs name days in the user's time zone.
-  const queryKey = JSON.stringify({ accountIds: scoped, search, sender, type, direction: direction || undefined, starred, after: after ? localDayStart(after) : undefined, before: before ? localDayStart(before, 1) : undefined });
+  // Invitations stay hidden unless asked for: by the toggle, the Calendar type, or a star.
+  const excludeCalendar = !showInvitations && type !== "calendar" && !starred;
+  const queryKey = JSON.stringify({ accountIds: scoped, search, sender, type, direction: direction || undefined, starred, excludeCalendar: excludeCalendar || undefined, after: after ? localDayStart(after) : undefined, before: before ? localDayStart(before, 1) : undefined });
   const lastQuery = useRef(queryKey);
   if (lastQuery.current!==queryKey) { lastQuery.current=queryKey; setLoad((current) => ({ offset: 0, count: PAGE_SIZE, attempt: current.attempt+1 })); setFiles([]); setSelected(null); }
   const lastRefresh = useRef(refreshKey);
@@ -86,13 +103,14 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, sessions, 
         const page = results.flatMap((result) => result.files);
         setFiles((previous) => load.offset ? [...previous,...page.filter((file) => !previous.some((existing) => keyFor(existing)===keyFor(file)))] : page);
         setTotal(results[results.length-1].total);
+        setHiddenCalendar(results[results.length-1].hiddenCalendar ?? 0);
         if (!load.offset) setSelected((current) => page.some((file) => keyFor(file)===current) ? current : page[0] ? keyFor(page[0]) : null);
       }).catch((reason) => { if (active) setError(errorMessage(reason)); }).finally(() => { if (active) setLoading(false); });
     }, 150);
     return () => { active=false; window.clearTimeout(timer); };
   }, [queryKey, load]);
   const snapshot=useRef<FilesWorkspaceSnapshot | null>(null);
-  snapshot.current={files,total,selected,search,sender,type,direction,scope,after,before,starred,scroll:0};
+  snapshot.current={files,total,hiddenCalendar,selected,search,sender,type,direction,scope,after,before,starred,scroll:0};
   useLayoutEffect(() => () => { if (sessions && snapshot.current) sessions.current.set(sessionKey,{...snapshot.current,scroll:main.current?.scrollTop ?? 0}); }, [sessions,sessionKey]);
   const scrollRestored=useRef(false);
   useLayoutEffect(() => { if (!loading && !scrollRestored.current && main.current) { main.current.scrollTop=restored.current?.scroll ?? 0; scrollRestored.current=true; } }, [loading]);
@@ -140,6 +158,7 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, sessions, 
           {!accountId ? <label>Account<select value={scope} onChange={(event) => setScope(event.target.value)}><option value="">All Accounts</option>{accountIds.map((email) => <option key={email}>{email}</option>)}</select></label> : null}
           <FileDateFilter label="From Date" value={after} onChange={setAfter} />
           <FileDateFilter label="Through Date" value={before} onChange={setBefore} />
+          <label className="files-filter-toggle"><input type="checkbox" checked={showInvitations} onChange={(event) => setShowInvitations(event.target.checked)} />Include Invitations</label>
         </div>
         {filterChips.length ? <div className="files-active-filters" role="group" aria-label="Active file filters">
           {filterChips.map((filter) => <button type="button" key={filter.id} className="file-filter-chip" aria-label={`Remove ${filter.label} filter`} onClick={filter.clear}>{filter.label}<X size={ICON_SIZE.xs} /></button>)}
@@ -157,7 +176,7 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, sessions, 
                 if (event.key!=="Enter" || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
                 event.preventDefault(); setSelected(keyFor(item)); window.dispatchEvent(new CustomEvent("threestrands:focus-context", { detail: "File context" }));
               }} onDoubleClick={() => action(mailClient.openAttachment(item.messageId,item.attachment.id))}>
-              <span className="file-list-name"><AttachmentIcon filename={item.attachment.filename} mimeType={item.attachment.mimeType} size="sm" /><strong title={item.attachment.filename}>{item.attachment.filename}</strong></span>
+              <span className="file-list-name"><AttachmentIcon filename={item.attachment.filename} mimeType={item.attachment.mimeType} size="sm" />{meetingTitle(item) ? <><strong title={meetingTitle(item)!}>{meetingTitle(item)}</strong><span className="file-list-filename" title={item.attachment.filename}>({item.attachment.filename})</span></> : <strong title={item.attachment.filename}>{item.attachment.filename}</strong>}</span>
               <span className="file-list-sender" title={item.sender}>{senderName(item)}{showAccount ? <small className="file-list-account">{item.accountId}</small> : null}</span>
               <time className="file-list-date" dateTime={item.sentAt}>{formatHistoryDate(item.sentAt)}</time>
               <span className="file-list-size">{formatAttachmentSize(item.attachment.size)}</span>
@@ -166,13 +185,14 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, sessions, 
           </div>)}
         </div>
         {loading ? <p className="context-status" role="status">Loading files…</p> : !files.length ? <p className="context-status">{starred ? "No starred files yet." : "No files match these filters."}</p> : null}
+        {!loading && excludeCalendar && hiddenCalendar ? <p className="context-status">{hiddenCalendar} calendar {hiddenCalendar===1 ? "invitation" : "invitations"} hidden. <button type="button" className="btn-link" onClick={() => setShowInvitations(true)}>Show invitations</button></p> : null}
         {files.length<total ? <button type="button" className="btn" disabled={loading} onClick={() => setLoad((current) => ({ offset: files.length, count: PAGE_SIZE, attempt: current.attempt+1 }))}>Load more files</button> : null}
       </div>
       <WorkspaceContextRail label="File context" onReturn={() => rows.current.get(selected ?? "")?.focus()}>
         <ContextSectionHeader title="File details" />
         {file ? <>
-          <h2 className="file-detail-name">{file.attachment.filename}</h2>
-          <p className="file-detail-meta">{fileTypeLabel(file.attachment.filename, file.attachment.mimeType)} · {formatAttachmentSize(file.attachment.size)}</p>
+          <h2 className="file-detail-name">{meetingTitle(file) ?? file.attachment.filename}</h2>
+          <p className="file-detail-meta">{fileTypeLabel(file.attachment.filename, file.attachment.mimeType)}{meetingTitle(file) ? ` · ${file.attachment.filename}` : ""} · {formatAttachmentSize(file.attachment.size)}</p>
           <dl className="file-detail-metadata">
             <div><dt>From</dt><dd>{senderName(file)}{parseAddress(file.sender).email !== senderName(file) ? <span>{parseAddress(file.sender).email}</span> : null}</dd></div>
             <div><dt>{file.direction === "sent" ? "Sent" : "Received"}</dt><dd>{new Date(file.sentAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</dd></div>

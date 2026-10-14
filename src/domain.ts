@@ -437,10 +437,12 @@ export type FileQuery = {
   type?: string;
   direction?: "received" | "sent";
   starred?: boolean;
+  /** Leave calendar invitations out; the page reports how many in `hiddenCalendar`. */
+  excludeCalendar?: boolean;
   offset?: number;
   limit?: number;
 };
-export type FilePage = { files: WorkspaceFile[]; total: number };
+export type FilePage = { files: WorkspaceFile[]; total: number; hiddenCalendar?: number };
 export type WorkspaceContextTarget = { kind: "task"; task: ThreadTask } | { kind: "meeting"; event: ScheduleEvent };
 export type ContextQuery = { accountIds: string[]; threadId?: string; terms: string[]; attendees: string[]; after?: string; before?: string };
 export type WorkspaceConversation = { threadId: string; accountId: string; subject: string; sentAt: string; participants: string[]; reason?: string };

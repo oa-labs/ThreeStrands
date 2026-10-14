@@ -867,6 +867,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     },
     async listFiles(query) {
       const files: WorkspaceFile[]=[];
+      let hiddenCalendar=0;
       for (const thread of threads) {
         if (!query.accountIds.includes(thread.accountId) || thread.trashed || thread.labels.includes("SPAM") || (query.threadId && thread.id!==query.threadId) || (query.threadIds && !query.threadIds.includes(thread.id))) continue;
         for (const message of messagesFor(thread)) {
@@ -874,15 +875,17 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
           for (const attachment of message.attachments) {
             const starred=fileStars.has(JSON.stringify([message.id,attachment.id]));
             const kind=isCalendarAttachment(attachment) ? "calendar" : attachmentKind(attachment.filename,attachment.mimeType);
-            if (attachment.inline || (query.starred && !starred) || (query.search && !attachment.filename.toLocaleLowerCase().includes(query.search.toLocaleLowerCase()))
+            const searchable=kind==="calendar" ? `${attachment.filename}\n${thread.subject}` : attachment.filename;
+            if (attachment.inline || (query.starred && !starred) || (query.search && !searchable.toLocaleLowerCase().includes(query.search.toLocaleLowerCase()))
               || (query.sender && !message.sender.toLocaleLowerCase().includes(query.sender.toLocaleLowerCase())) || (query.type && kind!==query.type)
               || (query.direction && direction!==query.direction) || (query.after && message.sentAt<query.after) || (query.before && message.sentAt>=query.before)) continue;
+            if (query.excludeCalendar && kind==="calendar") { hiddenCalendar++; continue; }
             files.push({accountId:thread.accountId,messageId:message.id,threadId:thread.id,subject:thread.subject,sentAt:message.sentAt,sender:message.sender,direction,attachment,starred,availability:"unknown"});
           }
         }
       }
       files.sort((a,b) => Number(b.messageId===query.priorityMessageId)-Number(a.messageId===query.priorityMessageId) || (query.prioritizeStarred ? Number(b.starred)-Number(a.starred) : 0) || b.sentAt.localeCompare(a.sentAt) || a.messageId.localeCompare(b.messageId) || a.attachment.id.localeCompare(b.attachment.id));
-      return structuredClone({files:files.slice(query.offset ?? 0,(query.offset ?? 0)+(query.limit ?? 50)),total:files.length});
+      return structuredClone({files:files.slice(query.offset ?? 0,(query.offset ?? 0)+(query.limit ?? 50)),total:files.length,hiddenCalendar});
     },
     async fileStars(messageIds) { return [...fileStars].map((key) => JSON.parse(key) as [string,string]).filter(([messageId]) => messageIds.includes(messageId)); },
     async setFileStar(accountId,messageId,attachmentId,starred) {
@@ -1587,6 +1590,8 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
   return client;
 }
 
+const NO_KEEP_IN_TOUCH: KeepInTouch = { intervalDays: null, startedAt: null, snoozedUntil: null, snoozedAt: null, lastTouchAt: null };
+
 /**
  * `VITE_DEMO_DATASET=showcase` swaps in the marketing dataset. Vite inlines
  * the variable at build time, so a normal build drops the showcase module.
@@ -1594,8 +1599,6 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
 export const demoClient = /* @__PURE__ */ createDemoClient(
   import.meta.env.VITE_DEMO_DATASET === "showcase" ? buildShowcaseDataset() : defaultDemoDataset(),
 );
-
-const NO_KEEP_IN_TOUCH: KeepInTouch = { intervalDays: null, startedAt: null, snoozedUntil: null, snoozedAt: null, lastTouchAt: null };
 
 const validDemoBirthday = (value: string) => {
   const match = /^(?:(\d{4})-)?(\d{2})-(\d{2})$/.exec(value.trim());

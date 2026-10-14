@@ -1191,6 +1191,8 @@ pub struct FileQuery {
     pub r#type: Option<String>,
     pub direction: Option<String>,
     pub starred: Option<bool>,
+    /// Leave calendar invitations out and report how many matched in `FilePage::hidden_calendar`.
+    pub exclude_calendar: Option<bool>,
     pub offset: Option<usize>,
     pub limit: Option<usize>,
 }
@@ -1213,6 +1215,8 @@ pub struct WorkspaceFile {
 pub struct FilePage {
     pub files: Vec<WorkspaceFile>,
     pub total: usize,
+    /// Calendar invitations that matched but were left out by `FileQuery::exclude_calendar`.
+    pub hidden_calendar: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]

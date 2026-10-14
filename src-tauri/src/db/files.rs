@@ -10,6 +10,8 @@ use rusqlite::{functions::FunctionFlags, params, types::Value, Connection, Optio
 use std::collections::{BTreeSet, HashMap};
 
 const MAX_FILE_PAGE: usize = 100;
+/// Calendar invitations, matched the same way as the Files "calendar" type.
+const CALENDAR: &str = "(a.mime_type LIKE 'text/calendar%' OR lower(a.filename) LIKE '%.ics')";
 const DIRECTION: &str = "CASE WHEN EXISTS(SELECT 1 FROM contact_interactions ci WHERE ci.message_id=m.id AND ci.account_id=t.account_id AND ci.direction='sent') OR lower(trim(m.sender))=lower(t.account_id) OR lower(trim(m.sender)) LIKE '%<'||lower(t.account_id)||'>' THEN 'sent' ELSE 'received' END";
 
 /// SQLite's `LIKE` and `lower()` fold ASCII only, so `fold_case(column) LIKE
@@ -41,6 +43,7 @@ impl Database {
             return Ok(FilePage {
                 files: vec![],
                 total: 0,
+                hidden_calendar: 0,
             });
         }
         let mut filters = vec![
@@ -57,6 +60,7 @@ impl Database {
                 return Ok(FilePage {
                     files: vec![],
                     total: 0,
+                    hidden_calendar: 0,
                 });
             }
             if ids.len() > 20 {
@@ -65,9 +69,14 @@ impl Database {
             filters.push(format!("t.id IN ({})", vec!["?"; ids.len()].join(",")));
             values.extend(ids.iter().cloned().map(Value::Text));
         }
+        // Invitations are listed by meeting title, so search matches that title too.
+        if let Some(search) = query.search.as_ref().filter(|value| !value.is_empty()) {
+            filters.push(format!("(fold_case(a.filename) LIKE ? ESCAPE '\\' OR ({CALENDAR} AND fold_case(t.subject) LIKE ? ESCAPE '\\'))"));
+            values.push(Value::Text(folded_pattern(search)));
+            values.push(Value::Text(folded_pattern(search)));
+        }
         for (column, value, like) in [
             ("t.id", &query.thread_id, false),
-            ("a.filename", &query.search, true),
             ("m.sender", &query.sender, true),
         ] {
             if let Some(value) = value.as_ref().filter(|value| !value.is_empty()) {
@@ -107,7 +116,7 @@ impl Database {
                 "image" => "a.mime_type LIKE 'image/%'",
                 "audio" => "a.mime_type LIKE 'audio/%'",
                 "video" => "a.mime_type LIKE 'video/%'",
-                "calendar" => "a.mime_type LIKE 'text/calendar%' OR lower(a.filename) LIKE '%.ics'",
+                "calendar" => CALENDAR,
                 "spreadsheet" => "a.mime_type LIKE '%spreadsheet%' OR a.mime_type LIKE '%excel%' OR lower(a.filename) GLOB '*.xls*' OR lower(a.filename) LIKE '%.csv' OR lower(a.filename) LIKE '%.ods'",
                 "presentation" => "a.mime_type LIKE '%presentation%' OR a.mime_type LIKE '%powerpoint%' OR lower(a.filename) GLOB '*.ppt*' OR lower(a.filename) LIKE '%.odp'",
                 "document" => "a.mime_type='application/pdf' OR a.mime_type LIKE '%word%' OR a.mime_type='text/plain' OR lower(a.filename) LIKE '%.odt' OR lower(a.filename) LIKE '%.rtf'",
@@ -116,9 +125,13 @@ impl Database {
             };
             filters.push(format!("({condition})"));
         }
-        let from = format!("FROM file_attachments a JOIN messages m ON m.id=a.message_id JOIN threads t ON t.id=m.thread_id LEFT JOIN file_stars s ON s.message_id=a.message_id AND s.attachment_id=a.attachment_id WHERE {}", filters.join(" AND "));
+        let joins = "FROM file_attachments a JOIN messages m ON m.id=a.message_id JOIN threads t ON t.id=m.thread_id LEFT JOIN file_stars s ON s.message_id=a.message_id AND s.attachment_id=a.attachment_id";
+        let matched = filters.join(" AND ");
+        let exclude_calendar = query.exclude_calendar == Some(true);
+        let from = if exclude_calendar { format!("{joins} WHERE {matched} AND NOT {CALENDAR}") } else { format!("{joins} WHERE {matched}") };
         let (mut page, payloads) = self.with_connection(|connection| {
             let total = connection.query_row(&format!("SELECT COUNT(*) {from}"), rusqlite::params_from_iter(&values), |row| row.get::<_,i64>(0))? as usize;
+            let hidden_calendar = if exclude_calendar { connection.query_row(&format!("SELECT COUNT(*) {joins} WHERE {matched} AND {CALENDAR}"), rusqlite::params_from_iter(&values), |row| row.get::<_,i64>(0))? as usize } else { 0 };
             let priority = if let Some(id)=&query.priority_message_id { values.push(Value::Text(id.clone())); "CASE WHEN m.id=? THEN 0 ELSE 1 END," } else { "" };
             let importance = if query.prioritize_starred==Some(true) { "s.message_id IS NULL," } else { "" };
             let sql = format!("SELECT t.account_id,m.id,t.id,t.subject,m.sent_at,m.sender,({DIRECTION}),a.attachment_id,a.filename,a.mime_type,a.size,s.message_id IS NOT NULL {from} ORDER BY {priority}{importance}m.sent_at DESC,m.id,a.attachment_id LIMIT ? OFFSET ?");
@@ -137,7 +150,7 @@ impl Database {
                 let rows = statement.query_map(rusqlite::params_from_iter(&ids), |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<Vec<u8>>>(2)?)))?;
                 for row in rows { payloads.push(row?); }
             }
-            Ok((FilePage { files, total }, payloads))
+            Ok((FilePage { files, total, hidden_calendar }, payloads))
         })?;
         // Inspect locally cached MIME metadata only; never download/decode bytes.
         // Missing metadata stays unknown rather than promising availability.
@@ -341,6 +354,52 @@ mod tests {
             Ok(())
         })
         .unwrap();
+        assert_eq!(db.list_files(&q).unwrap().total, 0);
+    }
+    fn seed_invitation(db: &Database, account: &str, id: &str, subject: &str, filename: &str, mime_type: &str) {
+        let mut mail = message(id, id, "2026-10-02T10:00:00Z", "body");
+        mail.subject = subject.into();
+        mail.attachments = vec![MessageAttachment {
+            id: "part:0.2".into(),
+            filename: filename.into(),
+            mime_type: mime_type.into(),
+            size: 900,
+            content_id: None,
+            inline: false,
+        }];
+        db.upsert_thread(account, &[mail]).unwrap();
+    }
+    #[test]
+    fn files_can_hide_calendar_invitations_and_count_them() {
+        let db = database();
+        seed(&db, "you@example.com", "report");
+        seed_invitation(&db, "you@example.com", "invite", "Invitation: Weekly sync @ Tue Oct 14", "invite.ics", "application/octet-stream");
+        seed_invitation(&db, "you@example.com", "meeting", "Quarterly planning", "meeting", "text/calendar; method=REQUEST");
+        let mut q = query("you@example.com");
+        let all = db.list_files(&q).unwrap();
+        assert_eq!((all.total, all.hidden_calendar), (3, 0));
+        q.exclude_calendar = Some(true);
+        let page = db.list_files(&q).unwrap();
+        assert_eq!((page.total, page.hidden_calendar), (1, 2));
+        assert_eq!(page.files[0].attachment.filename, "budget.pdf");
+        // The hidden count follows the other filters.
+        q.search = Some("budget".into());
+        assert_eq!(db.list_files(&q).unwrap().hidden_calendar, 0);
+    }
+    #[test]
+    fn files_search_matches_invitation_titles_but_not_other_subjects() {
+        let db = database();
+        // A document's subject is not its title, so only its filename is searched.
+        seed_invitation(&db, "you@example.com", "notes", "Weekly sync notes", "notes.pdf", "application/pdf");
+        seed_invitation(&db, "you@example.com", "invite", "Invitation: Weekly SYNC @ Tue Oct 14", "invite.ics", "text/calendar");
+        let mut q = query("you@example.com");
+        q.search = Some("weekly sync".into());
+        let page = db.list_files(&q).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.files[0].message_id, "invite");
+        q.search = Some("notes.pdf".into());
+        assert_eq!(db.list_files(&q).unwrap().files[0].message_id, "notes");
+        q.search = Some("%".into());
         assert_eq!(db.list_files(&q).unwrap().total, 0);
     }
     #[test]
