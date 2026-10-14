@@ -2035,10 +2035,33 @@ button.keycap:active {
   text-align: right;
 }
 
+.docs-body > .changelog-date {
+  margin-top: 4px;
+  color: var(--ink-faint);
+  font-size: 0.92rem;
+}
+
+.roadmap-shipped {
+  margin-top: 28px;
+}
+
+.roadmap-shipped a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
 @media (max-width: 900px) {
   .docs-nav {
     position: static;
     max-height: none;
+  }
+
+  /* The release list only grows; on narrow screens it would bury the notes. */
+  .changelog-nav {
+    display: none;
   }
 
   .docs-nav .docs-nav-sections {

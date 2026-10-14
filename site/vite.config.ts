@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
+import { CHANGELOG_PAGE, changelogPage } from "./changelog";
 import { docInputs, docsPages } from "./docs";
 
 const siteRoot = path.dirname(fileURLToPath(import.meta.url));
@@ -95,7 +96,7 @@ export default defineConfig({
   root: siteRoot,
   base: siteBase,
   publicDir: path.join(siteRoot, "public"),
-  plugins: [docsPages(), siteMarkup()],
+  plugins: [docsPages(), changelogPage(), siteMarkup()],
   server: { port: 1423, strictPort: true },
   preview: { port: 1424, strictPort: true },
   build: {
@@ -108,6 +109,7 @@ export default defineConfig({
         index: path.join(siteRoot, "index.html"),
         privacy: path.join(siteRoot, "privacy.html"),
         terms: path.join(siteRoot, "terms.html"),
+        changelog: CHANGELOG_PAGE,
         ...docInputs(),
       },
     },

@@ -48,7 +48,9 @@ pnpm release
 
 This reads the version from `package.json`, checks that it matches the Tauri
 configuration, Cargo manifest, and application entry in `src-tauri/Cargo.lock`,
-then pushes `master`, creates a signed `v<version>` tag, and pushes that tag.
+then stamps the `## Unreleased` entries in `CHANGELOG.md` with the version and
+today's date and commits them (skipped when there are none), pushes `master`,
+creates a signed `v<version>` tag, and pushes that tag.
 It requires a clean working tree and your configured Git signing key, and stops
 if any Git command fails. For example, version `0.56.0` produces tag `v0.56.0`;
 version `0.57.0-beta.1` produces a beta prerelease tag.
@@ -56,6 +58,26 @@ version `0.57.0-beta.1` produces a beta prerelease tag.
 The release workflow builds installers and attaches them to a draft GitHub
 Release for installation checks before publishing. If the final tag push fails,
 retry `git push origin v<version>`; the signed tag already exists locally.
+
+### Release notes and the changelog
+
+`CHANGELOG.md` is the only source of release notes. The draft release's notes
+combine every changelog section newer than the last *published* release (drafts
+never shipped, so they don't count), grouped as New, Improved, and Fixed, with a
+link to the code changes. The marketing site's `changelog.html` shows the same
+released sections; `## Unreleased` entries stay off the site until a release
+stamps them.
+
+If a release build fails before its draft is published, fix it on `master`,
+then move the tag instead of bumping the version:
+
+```sh
+git tag -d v<version> && git push origin :refs/tags/v<version>
+pnpm release
+```
+
+Entries added since the first attempt merge into that version's section. Once a
+release is published, always ship fixes under a new version.
 
 ### Automatic updates
 

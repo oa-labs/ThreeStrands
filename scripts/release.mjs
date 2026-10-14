@@ -4,6 +4,7 @@ import { createReadStream } from "node:fs";
 import { appendFile, copyFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseChangelog, releaseNotes, stampRelease } from "./changelog.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const number = "(?:0|[1-9][0-9]*)";
@@ -167,6 +168,11 @@ async function readReleaseSources(directory) {
   return { packageJson, tauriConfig, cargoToml, cargoLock };
 }
 
+/** Today's date where the release is cut, as YYYY-MM-DD. */
+function localDate(now = new Date()) {
+  return [now.getFullYear(), now.getMonth() + 1, now.getDate()].map((part) => String(part).padStart(2, "0")).join("-");
+}
+
 export async function tagRelease(directory = root) {
   const sources = await readReleaseSources(directory);
   const tag = `v${JSON.parse(sources.packageJson).version}`;
@@ -192,7 +198,16 @@ export async function tagRelease(directory = root) {
     throw new Error("Commit or stash your changes before releasing; the release version must be committed");
   }
 
+  const changelogPath = resolve(directory, "CHANGELOG.md");
+  const changelog = await readFile(changelogPath, "utf8");
+  const stamped = stampRelease(changelog, tag.slice(1), localDate());
+
   console.log(`Releasing ThreeStrands ${tag}`);
+  if (stamped !== changelog) {
+    await writeFile(changelogPath, stamped);
+    git(["add", "CHANGELOG.md"]);
+    git(["commit", "-m", `Release notes for ${tag}`]);
+  }
   git(["push", "origin", "master"]);
   git(["tag", "-s", tag, "-m", `ThreeStrands ${tag}`]);
   git(["push", "origin", tag]);
@@ -203,6 +218,7 @@ async function main() {
   const [command, argument, outputDir, version] = process.argv.slice(2);
   if (command === "validate") {
     const metadata = releaseMetadata(argument, await readReleaseSources(root));
+    parseChangelog(await readFile(resolve(root, "CHANGELOG.md"), "utf8"));
     if (process.env.GITHUB_OUTPUT) {
       await appendFile(process.env.GITHUB_OUTPUT, Object.entries(metadata)
         .map(([name, value]) => `${name}=${value}\n`).join(""));
@@ -211,10 +227,16 @@ async function main() {
   } else if (command === "prepare-assets" && argument && outputDir && version) {
     const updaterKey = updaterPublicKey((await readReleaseSources(root)).tauriConfig);
     console.log((await prepareReleaseAssets(argument, outputDir, version, { updaterKey })).join("\n"));
+  } else if (command === "notes" && argument && outputDir) {
+    const publishedTagsFile = outputDir; // Published (non-draft) release tags, one per line.
+    const published = (await readFile(publishedTagsFile, "utf8")).split("\n").filter(Boolean);
+    process.stdout.write(releaseNotes(await readFile(resolve(root, "CHANGELOG.md"), "utf8"), argument, published, {
+      repository: process.env.GITHUB_REPOSITORY, siteUrl: process.env.RELEASE_SITE_URL || undefined,
+    }));
   } else if (command === "tag") {
     await tagRelease();
   } else {
-    throw new Error("Usage: node scripts/release.mjs validate TAG | prepare-assets INPUT_DIR OUTPUT_DIR VERSION | tag");
+    throw new Error("Usage: node scripts/release.mjs validate TAG | prepare-assets INPUT_DIR OUTPUT_DIR VERSION | notes TAG PUBLISHED_TAGS_FILE | tag");
   }
 }
 

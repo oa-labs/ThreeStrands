@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
+import { publishedSections, renderChangelogPage, sectionId } from "../../site/changelog";
 import { DOC_SLUGS, headingId, parseFrontMatter, renderDoc } from "../../site/docs";
 import { shortcutGroups } from "../../src/shortcutCatalog";
 
@@ -585,7 +586,7 @@ test.describe("docs", () => {
     expect(headingId("Send, Undo, and <em>Send Later</em>")).toBe("send-undo-and-send-later");
   });
 
-  for (const from of ["./", "./privacy.html", "./terms.html"]) {
+  for (const from of ["./", "./privacy.html", "./terms.html", "./changelog.html"]) {
     test(`${from} links to the docs from the nav and the footer`, async ({ page }) => {
       await page.goto(from);
       await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Docs" }).click();
@@ -699,5 +700,93 @@ test.describe("docs", () => {
         expect(overflow).toBeLessThanOrEqual(0);
       });
     }
+  }
+});
+
+test.describe("changelog", () => {
+  const fixture = [
+    "# Changelog", "", "Repository preamble.", "",
+    "## Unreleased", "", "### New", "- Not shipped yet.", "",
+    "## 1.2.0 — 2026-10-14", "", "### New", "- A **bold** feature with `code`.", "", "### Fixed", "- A fix.", "",
+    "## Highlights: Early Days", "", "How it started.", "", "### Improved", "- Summary entry.", "",
+  ].join("\n");
+
+  test("renders released and summary sections, never Unreleased entries or the preamble", () => {
+    const html = renderChangelogPage(fixture);
+    expect(html).not.toContain("Not shipped yet");
+    expect(html).not.toContain("Repository preamble");
+    expect(html).toContain('<h2 id="v1-2-0">1.2.0</h2>');
+    expect(html).toContain('<time datetime="2026-10-14">October 14, 2026</time>');
+    expect(html).toContain("<li>A <strong>bold</strong> feature with <code>code</code>.</li>");
+    expect(html).toContain('<h2 id="highlights-early-days">Highlights: Early Days</h2>');
+    expect(html).toContain("<p>How it started.</p>");
+    expect(() => renderChangelogPage(fixture.replace("### Fixed", "### Changes"))).toThrow(/groups are New, Improved, Fixed/);
+  });
+
+  test("lists every published section in the sidebar, each jumping to its heading", async ({ page }) => {
+    const sections = publishedSections();
+    expect(sections.length).toBeGreaterThan(0);
+    await page.goto("./changelog.html");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("What's New");
+    const targets = await page.getByRole("navigation", { name: "Releases" }).locator("a").evaluateAll((links) => links.map((link) => link.getAttribute("href")!));
+    expect(targets).toEqual(sections.map((section) => `#${sectionId(section)}`));
+    const headings = await page.locator(".changelog-body h2").evaluateAll((elements) => elements.map((element) => `#${element.id}`));
+    expect(headings).toEqual(targets);
+  });
+
+  for (const from of ["./", "./privacy.html", "./terms.html", "./docs/index.html", "./changelog.html"]) {
+    test(`${from} links to the changelog from its footer`, async ({ page }) => {
+      await page.goto(from);
+      await page.locator("footer").getByRole("link", { name: "Changelog" }).click();
+      await expect(page).toHaveURL(/\/changelog\.html$/);
+      await expect(page.locator("footer").getByRole("link", { name: "Changelog" })).toHaveAttribute("aria-current", "page");
+    });
+  }
+
+  test("the roadmap points to what has already shipped", async ({ page }) => {
+    await page.goto("./");
+    await page.locator("#roadmap").getByRole("link", { name: /already shipped/ }).click();
+    await expect(page).toHaveURL(/\/changelog\.html$/);
+  });
+
+  test("makes no third-party requests and keeps external links safe", async ({ page, baseURL }) => {
+    const origin = new URL(baseURL!).origin;
+    const foreign: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.protocol.startsWith("http") && url.origin !== origin) foreign.push(request.url());
+    });
+    await page.goto("./changelog.html");
+    await page.waitForLoadState("networkidle");
+    expect(foreign).toEqual([]);
+    const unsafe = await page.locator('a[href^="http"]').evaluateAll((links) =>
+      links.filter((link) => !(link.getAttribute("rel") ?? "").split(/\s+/).includes("noopener")).map((link) => link.outerHTML),
+    );
+    expect(unsafe).toEqual([]);
+  });
+
+  for (const colorScheme of ["light", "dark"] as const) {
+    test(`has no serious or critical axe violations in ${colorScheme} mode`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+      await page.goto("./changelog.html");
+      await page.addScriptTag({ path: path.resolve("node_modules/axe-core/axe.min.js") });
+      const violations = await page.evaluate(async () => {
+        const axe = (window as unknown as { axe: { run: (context: Document) => Promise<{ violations: { id: string; impact: string; nodes: { target: string[] }[] }[] }> } }).axe;
+        const result = await axe.run(document);
+        return result.violations
+          .filter((violation) => violation.impact === "serious" || violation.impact === "critical")
+          .map((violation) => ({ id: violation.id, targets: violation.nodes.map((node) => node.target.join(" ")).slice(0, 5) }));
+      });
+      expect(violations).toEqual([]);
+    });
+  }
+
+  for (const width of [360, 390, 768, 1440]) {
+    test(`never scrolls horizontally at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("./changelog.html");
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      expect(overflow).toBeLessThanOrEqual(0);
+    });
   }
 });

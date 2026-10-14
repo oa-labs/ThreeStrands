@@ -252,7 +252,9 @@ describe("release version validation", () => {
   });
 });
 
-async function releaseCommand(t, { version = "0.56.0", branch = "master", dirty = "", failAt = "" } = {}) {
+const EMPTY_CHANGELOG = "# Changelog\n\n## Unreleased\n\n## 0.55.0 — 2026-10-01\n\n### New\n- Earlier feature.\n";
+
+async function releaseCommand(t, { version = "0.56.0", branch = "master", dirty = "", failAt = "", changelog = EMPTY_CHANGELOG } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "threestrands release test "));
   t.after(() => rm(directory, { recursive: true, force: true }));
   for (const folder of ["scripts", "src-tauri", "bin"]) await mkdir(join(directory, folder));
@@ -260,8 +262,11 @@ async function releaseCommand(t, { version = "0.56.0", branch = "master", dirty 
   for (const [path, content] of [
     ["package.json", fixture.packageJson], ["src-tauri/tauri.conf.json", fixture.tauriConfig],
     ["src-tauri/Cargo.toml", fixture.cargoToml], ["src-tauri/Cargo.lock", fixture.cargoLock],
+    ["CHANGELOG.md", changelog],
   ]) await writeFile(join(directory, path), content);
-  await writeFile(join(directory, "scripts/release.mjs"), await readFile(new URL("./release.mjs", import.meta.url)));
+  for (const script of ["release.mjs", "changelog.mjs"]) {
+    await writeFile(join(directory, "scripts", script), await readFile(new URL(`./${script}`, import.meta.url)));
+  }
 
   const log = join(directory, "git-commands.jsonl");
   const fakeGit = join(directory, "bin/git");
@@ -271,7 +276,7 @@ const args = process.argv.slice(2);
 appendFileSync(process.env.RELEASE_TEST_LOG, JSON.stringify(args) + "\\n");
 if (args[0] === "branch") console.log(process.env.RELEASE_TEST_BRANCH);
 if (args[0] === "status") console.log(process.env.RELEASE_TEST_DIRTY);
-const action = args[0] === "tag" ? "sign-tag" : args[0] === "push" ? (args[2] === "master" ? "push-master" : "push-tag") : "read";
+const action = args[0] === "tag" ? "sign-tag" : args[0] === "commit" ? "commit" : args[0] === "push" ? (args[2] === "master" ? "push-master" : "push-tag") : "read";
 if (action === process.env.RELEASE_TEST_FAIL_AT) process.exit(7);
 `);
   await chmod(fakeGit, 0o755);
@@ -319,6 +324,20 @@ describe("marketing site refresh", () => {
   });
 });
 
+describe("release notes", () => {
+  it("builds GitHub release notes from CHANGELOG.md, counting from the last published release", async () => {
+    const workflow = await readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+    const jobBlock = workflow.split("\n  release:\n")[1]?.split(/\n  [\w-]+:\n/)[0];
+    assert.ok(jobBlock, "Missing release job");
+    assert.doesNotMatch(jobBlock, /--generate-notes/, "Commit-title notes replace the changelog");
+    assert.match(jobBlock, /gh release list --exclude-drafts .*> "\$RUNNER_TEMP\/published-tags"/);
+    assert.match(jobBlock, /node scripts\/release\.mjs notes "\$RELEASE_TAG" "\$RUNNER_TEMP\/published-tags" > "\$RUNNER_TEMP\/release-notes\.md"/);
+    const notesFile = /--notes-file "\$RUNNER_TEMP\/release-notes\.md"/g;
+    assert.equal(jobBlock.match(notesFile)?.length, 2, "Both new and re-cut draft releases get the notes");
+    assert.match(workflow, /node --test scripts\/release\.test\.mjs scripts\/changelog\.test\.mjs/);
+  });
+});
+
 describe("pnpm release command", () => {
   const commands = (version) => [
     ["branch", "--show-current"], ["status", "--porcelain"],
@@ -353,6 +372,37 @@ describe("pnpm release command", () => {
     const dirty = await releaseCommand(t, { dirty: " M package.json" });
     assert.match(dirty.run().stderr, /Commit or stash/);
     assert.deepEqual(await dirty.commands(), commands("0.56.0").slice(0, 2));
+  });
+
+  const pendingChangelog = EMPTY_CHANGELOG.replace("## Unreleased\n", "## Unreleased\n\n### Fixed\n- A clearer fix.\n");
+  const stampedCommands = [
+    ...commands("0.56.0").slice(0, 2),
+    ["add", "CHANGELOG.md"], ["commit", "-m", "Release notes for v0.56.0"],
+    ...commands("0.56.0").slice(2),
+  ];
+
+  it("stamps Unreleased changelog entries with the version and commits them before pushing", async (t) => {
+    const fixture = await releaseCommand(t, { changelog: pendingChangelog });
+    const result = fixture.run();
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(await fixture.commands(), stampedCommands);
+    const stamped = await readFile(join(fixture.directory, "CHANGELOG.md"), "utf8");
+    assert.match(stamped, /^## Unreleased\n\n## 0\.56\.0 — \d{4}-\d{2}-\d{2}\n\n### Fixed\n- A clearer fix\.\n\n## 0\.55\.0/m);
+  });
+
+  it("does not push when the release-notes commit fails", async (t) => {
+    const fixture = await releaseCommand(t, { changelog: pendingChangelog, failAt: "commit" });
+    const result = fixture.run();
+    assert.equal(result.status, 1);
+    assert.deepEqual(await fixture.commands(), stampedCommands.slice(0, 4));
+  });
+
+  it("refuses a malformed changelog before changing or pushing anything", async (t) => {
+    const fixture = await releaseCommand(t, { changelog: EMPTY_CHANGELOG.replace("### New", "### Changes") });
+    const result = fixture.run();
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /CHANGELOG\.md line \d+: groups are New, Improved, Fixed/);
+    assert.deepEqual(await fixture.commands(), commands("0.56.0").slice(0, 2));
   });
 
   it("rejects inconsistent application versions before invoking Git", async (t) => {

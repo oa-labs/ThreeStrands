@@ -53,7 +53,7 @@ export function headingId(text: string): string {
     .replace(/^-|-$/g, "");
 }
 
-function escapeHtml(text: string): string {
+export function escapeHtml(text: string): string {
   return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
@@ -102,7 +102,7 @@ export function renderDoc(slug: DocSlug, source = readFileSync(path.join(docsRoo
   return { slug, title: meta.title!, nav: meta.nav!, summary: meta.summary!, html, headings };
 }
 
-const BRAND_MARK = `<svg class="brand-mark" viewBox="80 80 864 864" aria-hidden="true" focusable="false">
+export const BRAND_MARK = `<svg class="brand-mark" viewBox="80 80 864 864" aria-hidden="true" focusable="false">
             <rect x="80" y="80" width="864" height="864" rx="196" fill="#333183" />
             <g fill="none" stroke-linecap="round" transform="translate(80 80) scale(.84375)">
               <circle cx="512" cy="512" r="372" stroke="#f3eae9" stroke-width="48" />
@@ -204,6 +204,7 @@ ${doc.html}
         <p class="footer-brand"><span class="brand-name">ThreeStrands</span> <span>v%APP_VERSION%</span></p>
         <nav aria-label="Project">
           <a href="index.html">Docs</a>
+          <a href="../changelog.html">Changelog</a>
           <a href="https://github.com/oa-labs/dispatch" rel="noopener">GitHub</a>
           <a href="https://github.com/oa-labs/dispatch/releases/latest" rel="noopener">Releases</a>
           <a href="https://github.com/oa-labs/dispatch#readme" rel="noopener">README</a>

@@ -59,3 +59,22 @@ Keep the application version identical in:
 - the `threestrands` package entry in `src-tauri/Cargo.lock`
 
 Mention the version change in the final summary.
+
+## Changelog
+
+`CHANGELOG.md` feeds GitHub release notes and the website's changelog page, so
+users read it. Whenever a version bump ships a change users can notice, add
+an entry under `## Unreleased` in the same task:
+
+- Use `### New`, `### Improved`, or `### Fixed`; create the group if it is
+  missing, in that order. Never write a version heading; `pnpm release` stamps
+  `## Unreleased` with the version and date.
+- Write one or two plain sentences for someone who uses the app, not someone
+  who reads the code: what they can now do, or what no longer goes wrong. Name
+  features as the UI does (**Settings → Mail Accounts**). No file names,
+  components, schema versions, phases, or ticket language.
+- Add to an existing entry about the same feature rather than adding a near
+  duplicate. Skip changes users cannot notice: refactors, tests, internal
+  hardening, and development tooling.
+- Run `node --test scripts/changelog.test.mjs` after editing; it rejects any
+  other structure.

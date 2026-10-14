@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "site/**"
+      - "CHANGELOG.md"
+      - "scripts/changelog.mjs"
       - "tests/site/**"
       - "playwright.site.config.ts"
       - ".github/workflows/site.yml"
