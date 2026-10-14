@@ -12,6 +12,7 @@ import {
   emailFrameHeight,
   EMAIL_IMAGE_LIMITS,
   sanitizeCssDeclaration,
+  sanitizeHtmlCellPadding,
   sanitizeHtmlDimension,
   parseEmailMinimumFontSize,
 } from "./emailRenderingPolicy";
@@ -364,7 +365,7 @@ export function sanitizeMessageHtml(html: string): string {
       for (const attr of ["cellpadding", "cellspacing"]) {
         const value = element.getAttribute(attr);
         if (value === null) continue;
-        const safeValue = sanitizeHtmlDimension(value, false);
+        const safeValue = attr === "cellpadding" ? sanitizeHtmlCellPadding(value) : sanitizeHtmlDimension(value, false);
         if (safeValue === null) element.removeAttribute(attr);
         else element.setAttribute(attr, safeValue);
       }

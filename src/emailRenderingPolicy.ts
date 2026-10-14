@@ -346,13 +346,58 @@ export function emailFrameHeight(contentHeight: number): number {
   return Math.min(contentHeight, EMAIL_CSS_LIMITS.maxFrameHeightPx);
 }
 
+// HTML's legacy presentational attributes are not CSS: they take no units,
+// and browsers read them with lenient parsers that keep a leading number and
+// ignore whatever follows it. The sanitizers below reproduce those parsers
+// (HTML "rules for parsing dimension values" and "non-negative integers", as
+// rendered by WebKit and Chromium) so that a sender's `width="20px"`,
+// `width="20pt"` or `height="24 px"` lays out exactly as it does in other
+// mail clients, rather than disappearing and changing table geometry. The
+// result is always re-serialized from the parsed number, so no sender text
+// survives past the leading digits, and the shared limits still apply:
+// out-of-policy values are removed, never clamped.
+const HTML_LEADING_WHITESPACE = "[\\t\\n\\f\\r ]*";
+const LEGACY_DIMENSION = new RegExp(`^${HTML_LEADING_WHITESPACE}(\\d+)(?:\\.(\\d*))?(%)?`);
+const LEGACY_INTEGER = new RegExp(`^${HTML_LEADING_WHITESPACE}([+-]?)(\\d*)`);
+
+function canonicalDecimal(integer: string, fraction = ""): string {
+  const whole = integer.replace(/^0+(?=\d)/, "");
+  const decimals = fraction.replace(/0+$/, "");
+  return decimals ? `${whole}.${decimals}` : whole;
+}
+
+/**
+ * Sanitizes a `width` or `height` attribute (and `cellspacing`, which uses
+ * the same parser with percentages ignored) the way browsers read it: a
+ * leading number, a percentage only when `%` follows it immediately, and
+ * anything after that ignored. Returns null — remove the attribute — for
+ * values browsers ignore too (no leading digit, a sign, `calc()`, `auto`)
+ * and for anything past the shared limits.
+ */
 export function sanitizeHtmlDimension(value: string, allowPercent: boolean): string | null {
-  const trimmed = value.trim();
-  if (!/^\d+(?:\.\d+)?%?$/.test(trimmed)) return null;
-  const amount = Number(trimmed.replace(/%$/, ""));
+  const match = LEGACY_DIMENSION.exec(value);
+  if (!match) return null;
+  const [, integer, fraction, percent] = match;
+  const number = canonicalDecimal(integer, fraction);
+  const amount = Number(number);
   if (!Number.isFinite(amount)) return null;
-  if (trimmed.endsWith("%")) return allowPercent && amount <= EMAIL_CSS_LIMITS.maxPercentage ? trimmed : null;
-  return amount <= EMAIL_CSS_LIMITS.maxAbsolutePx ? trimmed : null;
+  if (percent) return allowPercent && amount <= EMAIL_CSS_LIMITS.maxPercentage ? `${number}%` : null;
+  return amount <= EMAIL_CSS_LIMITS.maxAbsolutePx ? number : null;
+}
+
+/**
+ * Sanitizes a `cellpadding` attribute the way browsers read it: a whole
+ * number with an optional sign, fraction and trailing text ignored. A value
+ * that is negative or has no digits renders as zero padding, not as the
+ * default, so it is written back as "0"; only an empty attribute falls back
+ * to the default and is removed. Values past the absolute limit are removed.
+ */
+export function sanitizeHtmlCellPadding(value: string): string | null {
+  if (value === "") return null;
+  const [, sign, digits] = LEGACY_INTEGER.exec(value)!;
+  if (!digits || sign === "-") return "0";
+  const number = canonicalDecimal(digits);
+  return Number(number) <= EMAIL_CSS_LIMITS.maxAbsolutePx ? number : null;
 }
 
 /**

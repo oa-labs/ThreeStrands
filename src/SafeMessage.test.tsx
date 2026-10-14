@@ -340,6 +340,79 @@ describe("SafeMessage", () => {
     expect(container.querySelectorAll("img")[1].getAttribute("height")).toBe("183.207");
   });
 
+  it("keeps px-suffixed column widths so a fixed-layout header keeps its gutters", () => {
+    const sanitized = sanitizeMessageHtml(`
+      <table width="640" style="table-layout: fixed;"><tr>
+        <td width="20px">&nbsp;</td>
+        <td><table width="600"><tr>
+          <td><img src="https://example.com/logo.png" width="180" alt="Logo"></td>
+          <td width="100">&nbsp;</td>
+          <td align="right"><a href="https://example.com/view">View online</a></td>
+        </tr></table></td>
+        <td width="20px">&nbsp;</td>
+      </tr></table>
+    `);
+    const container = document.createElement("div");
+    container.innerHTML = sanitized;
+    const outerCells = container.querySelectorAll(":scope > table > tbody > tr > td");
+
+    expect(outerCells).toHaveLength(3);
+    expect(outerCells[0].getAttribute("width")).toBe("20");
+    expect(outerCells[1].hasAttribute("width")).toBe(false);
+    expect(outerCells[2].getAttribute("width")).toBe("20");
+  });
+
+  it("normalizes px-suffixed image, spacer, and table spacing attributes in a card layout", () => {
+    const sanitized = sanitizeMessageHtml(`
+      <div><table cellpadding="10px" cellspacing="0PX" width="100%">
+        <tr><td height="24px" style="font-size:1px;line-height:1px">&nbsp;</td></tr>
+        <tr><td><img src="https://example.com/thumb.png" width="48px" height="48px" alt=""><p>Card body</p></td></tr>
+      </table></div>
+    `);
+    const container = document.createElement("div");
+    container.innerHTML = sanitized;
+    const table = container.querySelector("table")!;
+    const image = container.querySelector("img")!;
+
+    expect(table.getAttribute("cellpadding")).toBe("10");
+    expect(table.getAttribute("cellspacing")).toBe("0");
+    expect(table.getAttribute("width")).toBe("100%");
+    expect(container.querySelector("td")?.getAttribute("height")).toBe("24");
+    expect(image.getAttribute("width")).toBe("48");
+    expect(image.getAttribute("height")).toBe("48");
+    expect(image.style.minWidth).toBe("48px");
+  });
+
+  it("re-serializes legacy dimension attributes from their leading number, as browsers read them", () => {
+    const sanitized = sanitizeMessageHtml(`
+      <table width="${EMAIL_CSS_LIMITS.maxAbsolutePx + 1}px" cellpadding="2em" cellspacing="10%"><tr>
+        <td width="20pt" height="-4px">A</td>
+        <td width="10vw" height="5px;color:red" style="color:blue">B</td>
+      </tr></table>
+      <table cellpadding="auto" cellspacing="3.5px"><tr><td width="calc(20px)" height="12 px">C</td></tr></table>
+    `);
+    const container = document.createElement("div");
+    container.innerHTML = sanitized;
+    const [first, second] = Array.from(container.querySelectorAll("table"));
+    const [a, b, c] = Array.from(container.querySelectorAll("td"));
+
+    // Past the limit or ignored by browsers: removed, never clamped.
+    expect(first.hasAttribute("width")).toBe(false);
+    expect(first.hasAttribute("cellspacing")).toBe(false);
+    expect(a.hasAttribute("height")).toBe(false);
+    expect(c.hasAttribute("width")).toBe(false);
+    // Trailing units and text are dropped; only the number is written back.
+    expect(first.getAttribute("cellpadding")).toBe("2");
+    expect(a.getAttribute("width")).toBe("20");
+    expect(b.getAttribute("width")).toBe("10");
+    expect(b.getAttribute("height")).toBe("5");
+    expect(c.getAttribute("height")).toBe("12");
+    expect(second.getAttribute("cellspacing")).toBe("3.5");
+    // Browsers render unparseable cellpadding as zero, not the default.
+    expect(second.getAttribute("cellpadding")).toBe("0");
+    expect(sanitized).not.toMatch(/color:\s*red|px|pt|vw|em|calc|auto/i);
+  });
+
   it("rejects unsafe or layout-breaking dimensions", () => {
     const sanitized = sanitizeMessageHtml(`
       <div width="500">Text</div>

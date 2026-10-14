@@ -37,7 +37,20 @@ const flowReportFooter = `
 
 const quotedReportReply = `<div>On Monday, A. Sender wrote:</div><blockquote><p>Earlier quoted message.</p></blockquote>`;
 
+// Every legacy dimension attribute spelling the sanitizer must read the way
+// the browser does. Cells are empty so geometry comes from the attributes.
+const legacyDimensionValues = [
+  "20", "20px", "20PX", "20pt", "20em", "20 px", " 20", "&#10;20", "20.", "20.5px", "007",
+  "20%", "20.%", "20 %", "20%px", "1e2", "0", "+20", "-20", ".5", "auto", "calc(20px)", "",
+];
+const legacyDimensionAttributes = "<p>Legacy dimension attributes</p>" + legacyDimensionValues.map((value) => `
+  <div style="width:200px"><table width="${value}" cellspacing="${value}" cellpadding="${value}"><tr><td></td></tr></table></div>
+  <table style="width:400px;table-layout:fixed" cellspacing="0" cellpadding="0"><tr>
+    <td width="${value}" height="${value}"></td><td></td>
+  </tr></table>`).join("");
+
 export const emailRenderingFixtures = {
+  legacyDimensionAttributes,
   earlierTableReport: `<p>Your first report is ready.</p>${tableReportFooter}`,
   repeatedTableFooter: `<p>Your latest report includes new results.</p>${tableReportFooter}`,
   earlierFlowReport: `<p>Your previous account update.</p>${flowReportFooter}`,
@@ -82,6 +95,30 @@ export const emailRenderingFixtures = {
     <table role="presentation" style="width:100%;max-width:640px;margin:0 auto;border-collapse:separate;border-spacing:8px">
       <tr><td style="padding:16px;background-color:#f4f4f4"><h2>Monthly update</h2><p>Three concise highlights from the team.</p></td></tr>
     </table>
+  `,
+  // Column widths written as `width="20px"`: browsers read the px suffix, and
+  // a fixed-layout table that loses them splits its width evenly instead.
+  // Keep both a nested header and a flat icon column covered.
+  pxGutterFixedHeader: `
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center">
+      <table role="presentation" width="640" cellspacing="0" cellpadding="0" style="table-layout:fixed"><tr>
+        <td width="20px">&nbsp;</td>
+        <td align="center"><table role="presentation" width="600" cellspacing="0" cellpadding="0"><tr>
+          <td align="left"><img src="https://example.com/logo.png" width="180" height="40" alt="logo"></td>
+          <td width="100">&nbsp;</td>
+          <td align="right" style="font:12px Arial"><a href="https://example.com/view">View online</a> | <a href="https://example.com/account">Account</a></td>
+        </tr></table></td>
+        <td width="20px">&nbsp;</td>
+      </tr></table>
+    </td></tr></table>
+  `,
+  pxIconColumnFixedTable: `
+    <div style="padding:8px">
+      <table role="presentation" cellspacing="0" cellpadding="0" style="width:100%;table-layout:fixed"><tr>
+        <td width="56px" valign="top"><img src="https://example.com/icon.png" width="40px" height="40px" alt="status"></td>
+        <td>Your weekly summary is ready. <a href="https://example.com/summary">Open summary</a></td>
+      </tr></table>
+    </div>
   `,
   table: `
     <table cellpadding="12" cellspacing="4" width="100%"><thead><tr><th align="left">Item</th><th align="right">Amount</th></tr></thead><tbody><tr><td>Service</td><td align="right">$24</td></tr></tbody></table>

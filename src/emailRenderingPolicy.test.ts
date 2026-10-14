@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EMAIL_MINIMUM_FONT_SIZE, parseEmailMinimumFontSize, EMAIL_CSS_LIMITS, EMAIL_IMAGE_LIMITS, preservedImageMinWidth, emailFrameHeight, sanitizeCssDeclaration, sanitizeHtmlDimension } from "./emailRenderingPolicy";
+import { EMAIL_MINIMUM_FONT_SIZE, parseEmailMinimumFontSize, EMAIL_CSS_LIMITS, EMAIL_IMAGE_LIMITS, preservedImageMinWidth, emailFrameHeight, sanitizeCssDeclaration, sanitizeHtmlCellPadding, sanitizeHtmlDimension } from "./emailRenderingPolicy";
 
 describe("email rendering numeric policy", () => {
   it("validates the reader font floor at both boundaries without silently clamping", () => {
@@ -50,6 +50,49 @@ describe("email rendering numeric policy", () => {
     expect(sanitizeCssDeclaration("width", `${EMAIL_CSS_LIMITS.maxAbsolutePx + 1}px`)).toBeNull();
     expect(sanitizeHtmlDimension(String(EMAIL_CSS_LIMITS.maxAbsolutePx), false)).toBe(String(EMAIL_CSS_LIMITS.maxAbsolutePx));
     expect(sanitizeHtmlDimension(String(EMAIL_CSS_LIMITS.maxAbsolutePx + 1), false)).toBeNull();
+    expect(sanitizeHtmlDimension(`${EMAIL_CSS_LIMITS.maxAbsolutePx - 1}px`, false)).toBe(String(EMAIL_CSS_LIMITS.maxAbsolutePx - 1));
+    expect(sanitizeHtmlDimension(`${EMAIL_CSS_LIMITS.maxAbsolutePx}PX`, false)).toBe(String(EMAIL_CSS_LIMITS.maxAbsolutePx));
+    expect(sanitizeHtmlDimension(`${EMAIL_CSS_LIMITS.maxAbsolutePx + 1}px`, false)).toBeNull();
+    expect(sanitizeHtmlDimension(`${EMAIL_CSS_LIMITS.maxPercentage}%`, true)).toBe(`${EMAIL_CSS_LIMITS.maxPercentage}%`);
+    expect(sanitizeHtmlDimension(`${EMAIL_CSS_LIMITS.maxPercentage + 1}%`, true)).toBeNull();
+    expect(sanitizeHtmlDimension("50%", false)).toBeNull();
+    expect(sanitizeHtmlCellPadding(String(EMAIL_CSS_LIMITS.maxAbsolutePx))).toBe(String(EMAIL_CSS_LIMITS.maxAbsolutePx));
+    expect(sanitizeHtmlCellPadding(`${EMAIL_CSS_LIMITS.maxAbsolutePx}px`)).toBe(String(EMAIL_CSS_LIMITS.maxAbsolutePx));
+    expect(sanitizeHtmlCellPadding(String(EMAIL_CSS_LIMITS.maxAbsolutePx + 1))).toBeNull();
+  });
+
+  // Expected values were measured from WebKit and Chromium computed styles:
+  // legacy attributes keep their leading number and ignore the rest.
+  it("reads width and height attributes the way browsers do", () => {
+    const cases: Array<[string, string | null]> = [
+      ["20", "20"], ["20px", "20"], ["20PX", "20"], ["20pt", "20"], ["20em", "20"], ["2vw", "2"],
+      ["20 px", "20"], [" 20", "20"], ["\t20", "20"], ["\n20", "20"], ["\f20", "20"], ["\r20", "20"], ["20\t", "20"],
+      ["20.", "20"], ["20.5", "20.5"], ["20.50px", "20.5"], ["183.207", "183.207"], ["020", "20"], ["0", "0"], ["0px", "0"],
+      ["1e2", "1"], ["20.5.3", "20.5"], ["20px;color:red", "20"],
+      ["20%", "20%"], ["20.%", "20%"], ["20.5%", "20.5%"], ["20%px", "20%"], ["20 %", "20"],
+      [" 20", null], ["+20", null], ["-20", null], ["-20px", null], [".5", null], ["px", null], ["", null],
+      ["auto", null], ["calc(20px)", null], ["２０", null],
+    ];
+    for (const [value, expected] of cases) {
+      expect([value, sanitizeHtmlDimension(value, true)]).toEqual([value, expected]);
+    }
+    expect(sanitizeHtmlDimension("20%", false)).toBeNull();
+    expect(sanitizeHtmlDimension("20.%", false)).toBeNull();
+    expect(sanitizeHtmlDimension("20 %", false)).toBe("20");
+  });
+
+  it("reads cellpadding the way browsers do, including their zero fallback", () => {
+    const cases: Array<[string, string | null]> = [
+      ["20", "20"], ["20px", "20"], ["+20", "20"], ["20.9", "20"], ["20.9%", "20"], ["20%", "20"], ["007", "7"],
+      ["\n20", "20"], ["20e1", "20"], ["0", "0"],
+      // Browsers render these as zero padding rather than the 1px default.
+      ["-20", "0"], ["-0", "0"], [" -5", "0"], ["+", "0"], ["-", "0"], ["+-1", "0"], ["auto", "0"], [" ", "0"], ["２０", "0"],
+      // Only an empty attribute falls back to the default.
+      ["", null],
+    ];
+    for (const [value, expected] of cases) {
+      expect([value, sanitizeHtmlCellPadding(value)]).toEqual([value, expected]);
+    }
     expect(sanitizeCssDeclaration("width", `${EMAIL_CSS_LIMITS.maxPercentage}%`)).toBe(`${EMAIL_CSS_LIMITS.maxPercentage}%`);
     expect(sanitizeCssDeclaration("width", `${EMAIL_CSS_LIMITS.maxPercentage + 1}%`)).toBeNull();
     expect(sanitizeCssDeclaration("height", "auto")).toBe("auto");

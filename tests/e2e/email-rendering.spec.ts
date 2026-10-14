@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { emailRenderingFixtures } from "../../src/test/emailRenderingFixtures";
 
 test.describe("email rendering fixtures", () => {
   for (const fixture of ["notification", "transactional"]) {
@@ -162,6 +163,49 @@ test.describe("email rendering fixtures", () => {
         expect((await icon.boundingBox())!.height).toBe(size);
       });
     }
+  }
+
+  test("legacy dimension attributes lay out exactly as the unsanitized HTML does", async ({ page, browser }) => {
+    const measure = (root: Document) => Array.from(root.querySelectorAll("table, td"), (element) => {
+      const style = root.defaultView!.getComputedStyle(element);
+      return `${element.tagName} ${style.width}x${style.height} pad ${style.paddingLeft} spacing ${style.borderSpacing}`;
+    });
+    const reference = await browser.newPage();
+    await reference.setContent(`<!doctype html><body style="margin:0">${emailRenderingFixtures.legacyDimensionAttributes}</body>`);
+    const expected = await reference.evaluate(`(${measure.toString()})(document)`) as string[];
+    await reference.close();
+
+    await page.goto("/tests/email-rendering.html?theme=light&fixture=legacyDimensionAttributes");
+    const frame = page.locator("iframe.message-body");
+    await expect(frame.contentFrame().locator("td").first()).toBeAttached();
+    const messageFrame = (await (await frame.elementHandle())!.contentFrame())!;
+    const actual = await messageFrame.evaluate(`(${measure.toString()})(document)`) as string[];
+
+    expect(actual).toHaveLength(expected.length);
+    expect(actual).toEqual(expected);
+  });
+
+  for (const { fixture, alt, columnWidth, link } of [
+    { fixture: "pxGutterFixedHeader", alt: "logo", columnWidth: 20, link: "Account" },
+    { fixture: "pxIconColumnFixedTable", alt: "status", columnWidth: 56, link: "Open summary" },
+  ]) {
+    test(`${fixture} keeps px-suffixed column widths in a fixed-layout table`, async ({ page }) => {
+      await page.setViewportSize({ width: 1200, height: 900 });
+      await page.goto(`/tests/email-rendering.html?theme=light&images&fixture=${fixture}`);
+      const frame = page.locator("iframe.message-body");
+      const content = frame.contentFrame();
+      await expect(content.getByAltText(alt)).toHaveAttribute("src", /^data:image\//);
+      const pxColumn = content.locator("td[width]").first();
+      await expect.poll(async () => (await pxColumn.boundingBox())?.width).toBe(columnWidth);
+      const frameBox = (await frame.boundingBox())!;
+      const linkBox = (await content.getByRole("link", { name: link }).boundingBox())!;
+      expect(linkBox.x + linkBox.width).toBeLessThanOrEqual(frameBox.x + frameBox.width);
+      const overflow = await frame.evaluate((element) => {
+        const root = (element as HTMLIFrameElement).contentDocument!.documentElement;
+        return root.scrollWidth - root.clientWidth;
+      });
+      expect(overflow).toBeLessThanOrEqual(0);
+    });
   }
 
   for (const { fixture, alt } of [
