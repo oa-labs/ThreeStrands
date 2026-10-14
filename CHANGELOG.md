@@ -6,9 +6,14 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ### New
 - You can now set more than one block of working hours on a day in **Settings → Availability**, for example 9:00–12:00 and 13:00–17:00 to keep your lunch hour free. Suggested meeting times leave the gaps alone.
+- Image attachments on a message now show a small preview of the picture, so you can tell them apart without opening each one.
 
 ### Improved
 - Times you offer or confirm in a reply now end with a familiar time zone abbreviation such as EDT or PST, instead of a name like America/New_York.
+- Attachments on a message now say what each part does: click the filename to open it, use the save button to save a copy, and the star at the end keeps it in **Files**. Attachments stacked in a column now line up.
+
+### Fixed
+- Hovering over a message no longer shows a stray "Message content" tooltip.
 
 ## 0.116.1 — 2026-10-14
 

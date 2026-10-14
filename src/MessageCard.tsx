@@ -1,5 +1,7 @@
-import { FileStarButton } from "./FileStarButton";
-import { Check, ChevronDown, ChevronUp, Copy, Download, ExternalLink, Forward, Paperclip, Reply, ReplyAll } from "lucide-react";
+import { AttachmentChip } from "./AttachmentChip";
+import { AttachmentThumbnail } from "./AttachmentThumbnail";
+import { thumbnailAttachmentIds } from "./attachmentThumbnails";
+import { Check, ChevronDown, ChevronUp, Copy, Forward, Paperclip, Reply, ReplyAll } from "lucide-react";
 import { memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { HoverTooltip } from "./AppChrome";
@@ -14,9 +16,8 @@ import { isInlineImageAttachment, normalizeContentId, referencedImageContentIds 
 import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
 import type { ThreadTextIndex } from "./quotedHistory";
 import type { FontFamily } from "./settings";
-import { formatAttachmentSize, formatMailTimestamp, splitAttachmentName } from "./threadPresentation";
+import { formatMailTimestamp } from "./threadPresentation";
 import { ICON_SIZE } from "./iconSizes";
-import { AttachmentIcon } from "./AttachmentIcon";
 import { selectedMessageQuote } from "./selectedMessageQuote";
 
 export type MessageResponseKind = "reply" | "replyAll" | "forward";
@@ -82,6 +83,7 @@ export const MessageCard = memo(function MessageCard({
     const referencedContentIds = referencedImageContentIds(message.bodyHtml);
     return message.attachments.filter((attachment) => !isInlineImageAttachment(attachment, referencedContentIds));
   }, [message.attachments, message.bodyHtml]);
+  const thumbnailIds = useMemo(() => thumbnailAttachmentIds(downloadableAttachments), [downloadableAttachments]);
   const cardBodyId = `message-body-${index}`;
   const messageId = message.id;
   const preserveSelectedQuote = (event: MouseEvent<HTMLButtonElement>) => {
@@ -253,44 +255,25 @@ export const MessageCard = memo(function MessageCard({
                 onError={onNotice}
               />
             ) : null}
-            {downloadableAttachments.filter((attachment) => !isCalendarAttachment(attachment)).map((attachment) => {
-                const attachmentName = splitAttachmentName(attachment.filename);
-                return (
-                <div className="message-attachment" key={attachment.id}>
-                  <FileStarButton messageId={message.id} attachmentId={attachment.id} filename={attachment.filename} />
-                  <HoverTooltip title={`Download ${attachment.filename}`} placement="bottom"><button
-                    type="button"
-                    className="attachment-badge"
-                    aria-label={`View ${attachment.filename}`}
-                    onClick={() => {
-                      void mailClient.openAttachment(message.id, attachment.id).catch((reason: unknown) => {
-                        onNotice(`Could not open attachment: ${errorMessage(reason)}`);
-                      });
-                    }}
-                  >
-                    <AttachmentIcon filename={attachment.filename} mimeType={attachment.mimeType} size="sm" />
-                    <span className="attachment-name">
-                      <span className="attachment-name-base">{attachmentName.base}</span>
-                      {attachmentName.extension ? <span className="attachment-name-ext">{attachmentName.extension}</span> : null}
-                    </span>
-                    <small>{formatAttachmentSize(attachment.size)}</small>
-                    <ExternalLink size={ICON_SIZE.xs} />
-                  </button></HoverTooltip>
-                  <button
-                    type="button"
-                    className="attachment-download"
-                    aria-label={`Download ${attachment.filename}`}
-                    onClick={() => {
-                      void mailClient.saveAttachment(message.id, attachment.id).catch((reason: unknown) => {
-                        onNotice(`Could not download attachment: ${errorMessage(reason)}`);
-                      });
-                    }}
-                  >
-                    <Download size={ICON_SIZE.sm} />
-                  </button>
-                </div>
-                );
-              })}
+            {downloadableAttachments.filter((attachment) => !isCalendarAttachment(attachment)).map((attachment) => (
+              <AttachmentChip
+                key={attachment.id}
+                messageId={message.id}
+                attachment={attachment}
+                icon={<AttachmentThumbnail messageId={message.id} attachment={attachment} enabled={!queuedItem && thumbnailIds.has(attachment.id)} />}
+                starrable
+                onOpen={() => {
+                  void mailClient.openAttachment(message.id, attachment.id).catch((reason: unknown) => {
+                    onNotice(`Could not open attachment: ${errorMessage(reason)}`);
+                  });
+                }}
+                onSave={() => {
+                  void mailClient.saveAttachment(message.id, attachment.id).catch((reason: unknown) => {
+                    onNotice(`Could not save attachment: ${errorMessage(reason)}`);
+                  });
+                }}
+              />
+            ))}
           </div>
         ) : null}
       </div>

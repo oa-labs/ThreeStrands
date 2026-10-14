@@ -56,6 +56,14 @@ export const EMAIL_IMAGE_LIMITS = {
    * keep their declared size, while wider images still scale to fit.
    */
   maxPreservedImageWidthPx: 64,
+  /**
+   * Attachment chip thumbnails. The per-file cap matches the native raster
+   * validator's byte limit, so a larger file is never requested only to be
+   * refused; the count and the shared per-message data-URI budget bound the
+   * copies a message with many photos holds in the reader.
+   */
+  maxAttachmentThumbnailBytes: 5 * 1024 * 1024,
+  maxAttachmentThumbnailsPerMessage: 8,
 } as const;
 
 /**

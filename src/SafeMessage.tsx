@@ -812,7 +812,9 @@ export function SafeMessage({
           ref={frameRef}
           data-testid="message-body"
           className="message-body"
-          title="Message content"
+          // An aria-label, not a title: WebKit shows a frame's title as a
+          // native tooltip wherever the pointer rests over the message body.
+          aria-label="Message content"
           // allow-scripts sounds dangerous for untrusted email HTML, but the
           // document's own CSP above (script-src 'none') independently blocks
           // every script in it from running — DOMPurify has also already

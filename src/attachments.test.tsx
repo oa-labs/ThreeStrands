@@ -30,19 +30,19 @@ describe("message attachments", () => {
     expect(within(roadmapRow as HTMLElement).queryByLabelText("Has attachments")).toBeNull();
   });
 
-  it("shows reader badges and routes view and download actions", async () => {
+  it("shows reader badges and routes open and save actions", async () => {
     const open = vi.spyOn(mailClient, "openAttachment").mockResolvedValue();
     const save = vi.spyOn(mailClient, "saveAttachment").mockResolvedValue();
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
-    const view = await screen.findByRole("button", { name: "View threestrands-shortcuts.txt" });
-    const download = screen.getByRole("button", { name: "Download threestrands-shortcuts.txt" });
-    expect(view).toBeVisible();
+    const openButton = await screen.findByRole("button", { name: "Open threestrands-shortcuts.txt" });
+    const saveButton = screen.getByRole("button", { name: "Save threestrands-shortcuts.txt as…" });
+    expect(openButton).toBeVisible();
 
     await act(async () => {
-      view.click();
-      download.click();
+      openButton.click();
+      saveButton.click();
     });
     expect(open).toHaveBeenCalledWith("welcome-message", "demo-guide");
     expect(save).toHaveBeenCalledWith("welcome-message", "demo-guide");
@@ -52,7 +52,7 @@ describe("message attachments", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
-    const badge = await screen.findByRole("button", { name: "View threestrands-shortcuts.txt" });
+    const badge = await screen.findByRole("button", { name: "Open threestrands-shortcuts.txt" });
     expect(within(badge).getByText("threestrands-shortcuts")).toHaveClass("attachment-name-base");
     expect(within(badge).getByText(".txt")).toHaveClass("attachment-name-ext");
   });
@@ -61,7 +61,7 @@ describe("message attachments", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
-    const badge = await screen.findByRole("button", { name: "View threestrands-shortcuts.txt" });
+    const badge = await screen.findByRole("button", { name: "Open threestrands-shortcuts.txt" });
     expect(badge.querySelector("[data-attachment-kind]")).toHaveAttribute("data-attachment-kind", "document");
   });
 });

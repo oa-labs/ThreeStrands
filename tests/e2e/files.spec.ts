@@ -48,3 +48,50 @@ test("Files keeps secondary filters optional and shows explicit empty dates", as
   await expect(files.getByRole("group", { name: "Active file filters" })).toHaveCount(0);
   await expect(files.getByRole("complementary", { name: "File context" }).getByRole("button", { name: "Save as…", exact: true })).toBeVisible();
 });
+
+test("reader attachment chips share a right edge per column and show each target's tooltip", async ({ page }) => {
+  await page.goto("/");
+  const open = page.getByRole("button", { name: "Open threestrands-shortcuts.txt" });
+  await expect(open).toBeVisible();
+  // The demo message has one attachment; clone its chip with shorter and
+  // longer names so the grid lays out a column of differently sized chips.
+  await page.evaluate(() => {
+    const chip = document.querySelector(".message-attachment")!;
+    for (const name of ["a", "a-much-longer-attachment-name", "mid-length"]) {
+      const copy = chip.cloneNode(true) as HTMLElement;
+      copy.querySelector(".attachment-name-base")!.textContent = name;
+      copy.dataset.clone = "true";
+      chip.parentElement!.append(copy);
+    }
+  });
+  const columns = new Map<number, number[]>();
+  for (const box of await page.locator(".message-attachment").evaluateAll((chips) => chips.map((chip) => chip.getBoundingClientRect().toJSON() as DOMRect))) {
+    const rights = columns.get(Math.round(box.left)) ?? [];
+    rights.push(box.right);
+    columns.set(Math.round(box.left), rights);
+  }
+  expect([...columns.values()].some((rights) => rights.length > 1)).toBe(true);
+  for (const rights of columns.values()) expect(Math.max(...rights) - Math.min(...rights)).toBeLessThan(1);
+
+  const chip = page.locator(".message-attachment:not([data-clone])");
+  const chipBox = (await chip.boundingBox())!;
+  const save = chip.getByRole("button", { name: "Save threestrands-shortcuts.txt as…" });
+  await save.hover();
+  const tooltip = chip.getByRole("tooltip").filter({ hasText: "Save threestrands-shortcuts.txt as…" });
+  await expect(tooltip).toBeVisible();
+  const tipBox = (await tooltip.boundingBox())!;
+  // The tooltip hangs below the chip; nothing clips it to the chip's box.
+  expect(tipBox.y).toBeGreaterThanOrEqual(chipBox.y + chipBox.height);
+  expect(await tooltip.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    const clipping: string[] = [];
+    for (let ancestor = element.parentElement; ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
+      const style = getComputedStyle(ancestor);
+      if (style.overflowX === "visible" && style.overflowY === "visible") continue;
+      if (/(auto|scroll)/.test(style.overflowY)) break;
+      const clip = ancestor.getBoundingClientRect();
+      if (box.left < clip.left || box.right > clip.right || box.top < clip.top || box.bottom > clip.bottom) clipping.push(ancestor.className);
+    }
+    return clipping;
+  })).toEqual([]);
+});

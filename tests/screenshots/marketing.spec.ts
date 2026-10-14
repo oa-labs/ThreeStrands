@@ -16,7 +16,7 @@ const frozenNow = new Date(process.env.SCREENSHOT_NOW ?? "2026-09-22T10:24:00-07
 type Scene = { name: string; capture: (page: Page) => Promise<void> };
 
 async function waitForMessage(page: Page) {
-  const frame = page.getByTitle("Message content");
+  const frame = page.getByLabel("Message content", { exact: true });
   await expect(frame).toBeVisible();
   await expect.poll(() => frame.evaluate((element) => (element as HTMLIFrameElement).contentDocument?.body?.textContent?.trim().length ?? 0)).toBeGreaterThan(0);
 }
@@ -66,7 +66,7 @@ const scenes: Scene[] = [
     name: "reply",
     capture: async (page) => {
       await openThread(page, /Q4 launch plan — final review/);
-      await page.getByTitle("Message content").contentFrame().locator("body").click();
+      await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
       await page.keyboard.press("r");
       const reply = page.getByRole("dialog", { name: "Reply Message" });
       await expect(reply).toBeVisible();

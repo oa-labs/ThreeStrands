@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Star } from "lucide-react";
+import { HoverTooltip } from "./AppChrome";
 import { mailClient } from "./data/client";
 import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
@@ -45,10 +46,12 @@ export function FileStarButton({ messageId, attachmentId, filename, accountId, s
     finally { setPending(false); }
   };
   return <span className="file-star-control">
-    <button type="button" className="btn-icon btn-icon-sm" aria-label={`${starred ? "Unstar" : "Star"} ${filename}`} aria-pressed={starred}
-      title="Important for later · stored on this device" disabled={pending} onClick={() => void toggle()}>
-      <Star size={ICON_SIZE.sm} fill={starred ? "currentColor" : "none"} />
-    </button>
+    <HoverTooltip label={starred ? "Unstar" : "Star for later · stored on this device"} placement="bottom">
+      <button type="button" className="btn-icon btn-icon-sm" aria-label={`${starred ? "Unstar" : "Star"} ${filename}`} aria-pressed={starred}
+        disabled={pending} onClick={() => void toggle()}>
+        <Star size={ICON_SIZE.sm} fill={starred ? "currentColor" : "none"} aria-hidden="true" />
+      </button>
+    </HoverTooltip>
     {error ? <span className="form-error" role="alert">{error}<button type="button" className="btn-link" onClick={() => { reads.delete(messageId); setError(null); void readStars(messageId).then((stars) => setStarred(stars.some(([m,a]) => m===messageId && a===attachmentId))).catch((reason) => setError(errorMessage(reason))); }}>Retry</button></span> : null}
   </span>;
 }

@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ContactCardContext, type ContactCardActions } from "./ContactCard";
+import type { OutboxItem } from "./correspondence";
 import { mailClient } from "./data/client";
 import type { Account, ContactProfile, Message } from "./domain";
 import * as inlineAttachments from "./inlineAttachments";
@@ -95,6 +96,78 @@ describe("MessageCard", () => {
     render(<MessageCard message={{ ...message, bodyText: "Hello&nbsp;there   friend" }} isExpanded={false} {...stableProps} />);
     expect(screen.queryByTestId("message-body")).not.toBeInTheDocument();
     expect(screen.getByText("Hello there friend")).toBeInTheDocument();
+  });
+
+  describe("attachment chips", () => {
+    const photo = { id: "a-photo", filename: "Joel.png", mimeType: "image/png", size: 135_000 };
+    const vector = { id: "a-vector", filename: "logo.svg", mimeType: "image/svg+xml", size: 4_000 };
+    const report = { id: "a-report", filename: "report.pdf", mimeType: "application/pdf", size: 90_000 };
+    const withAttachments = (attachments: Message["attachments"]): Message => ({ ...message, attachments });
+
+    it("names one verb per target, in a tooltip and an accessible name, with the star last", () => {
+      vi.spyOn(mailClient, "fileStars").mockResolvedValue([]);
+      render(<MessageCard message={withAttachments([report])} isExpanded {...stableProps} />);
+      const chip = screen.getByRole("button", { name: "Open report.pdf" }).closest(".message-attachment") as HTMLElement;
+      const buttons = within(chip).getAllByRole("button");
+      expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual(["Open report.pdf", "Save report.pdf as…", "Star report.pdf"]);
+      expect(within(chip).getAllByRole("tooltip", { hidden: true }).map((tip) => tip.textContent)).toEqual([
+        "Open report.pdf",
+        "Save report.pdf as…",
+        "Star for later · stored on this device",
+      ]);
+      // A native title would show a second, unstyled tooltip beside the custom one.
+      expect(chip.querySelector("[title]")).toBeNull();
+    });
+
+    it("opens from the filename and saves from the save segment", async () => {
+      vi.spyOn(mailClient, "fileStars").mockResolvedValue([]);
+      const open = vi.spyOn(mailClient, "openAttachment").mockResolvedValue();
+      const save = vi.spyOn(mailClient, "saveAttachment").mockResolvedValue();
+      render(<MessageCard message={withAttachments([report])} isExpanded {...stableProps} />);
+      fireEvent.click(screen.getByRole("button", { name: "Open report.pdf" }));
+      fireEvent.click(screen.getByRole("button", { name: "Save report.pdf as…" }));
+      expect(open).toHaveBeenCalledWith("m1", "a-report");
+      expect(save).toHaveBeenCalledWith("m1", "a-report");
+    });
+
+    it("shows a supported raster's picture and keeps the kind icon for other files", async () => {
+      vi.spyOn(mailClient, "fileStars").mockResolvedValue([]);
+      const fetch = vi.spyOn(mailClient, "fetchAttachmentImage").mockResolvedValue("data:image/png;base64,AAAA");
+      render(<MessageCard message={withAttachments([photo, vector, report])} isExpanded {...stableProps} />);
+      const photoButton = screen.getByRole("button", { name: "Open Joel.png" });
+      await waitFor(() => expect(photoButton.querySelector("img.attachment-thumbnail")).toHaveAttribute("src", "data:image/png;base64,AAAA"));
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(fetch).toHaveBeenCalledWith("m1", "a-photo");
+      // SVG can carry script and remote references, so it never becomes a thumbnail.
+      expect(screen.getByRole("button", { name: "Open logo.svg" }).querySelector("img")).toBeNull();
+      expect(screen.getByRole("button", { name: "Open logo.svg" }).querySelector("[data-attachment-kind]")).toHaveAttribute("data-attachment-kind", "image");
+      expect(screen.getByRole("button", { name: "Open report.pdf" }).querySelector("img")).toBeNull();
+    });
+
+    it("keeps the kind icon when the picture is refused or is not an image data URI", async () => {
+      vi.spyOn(mailClient, "fileStars").mockResolvedValue([]);
+      const second = { ...photo, id: "a-photo-2", filename: "Greg.jpg", mimeType: "image/jpeg" };
+      vi.spyOn(mailClient, "fetchAttachmentImage").mockImplementation(async (_message, attachment) => {
+        if (attachment === photo.id) throw new Error("Image exceeds the maximum allowed size");
+        return "https://tracker.example/pixel.png";
+      });
+      render(<MessageCard message={withAttachments([photo, second])} isExpanded {...stableProps} />);
+      await waitFor(() => expect(mailClient.fetchAttachmentImage).toHaveBeenCalledTimes(2));
+      await act(async () => {});
+      for (const name of ["Open Joel.png", "Open Greg.jpg"]) {
+        const button = screen.getByRole("button", { name });
+        expect(button.querySelector("img")).toBeNull();
+        expect(button.querySelector("[data-attachment-kind]")).toHaveAttribute("data-attachment-kind", "image");
+      }
+    });
+
+    it("requests no thumbnails for a reply still in the outbox", () => {
+      vi.spyOn(mailClient, "fileStars").mockResolvedValue([]);
+      const fetch = vi.spyOn(mailClient, "fetchAttachmentImage");
+      const queuedItem = { draft: { id: "d1" } } as unknown as OutboxItem;
+      render(<MessageCard message={withAttachments([photo])} isExpanded {...stableProps} queuedItem={queuedItem} />);
+      expect(fetch).not.toHaveBeenCalled();
+    });
   });
 
   describe("address contact cards", () => {

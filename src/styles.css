@@ -81,6 +81,8 @@
   --control-h: 34px;
   --control-h-sm: 28px;
   --control-h-xs: 26px;
+  /* An image attachment's picture in its reader chip, in place of the kind icon. */
+  --attachment-thumbnail-size: 20px;
   /* Spacing scale on a 4px grid, with half steps below 12px for tight
      controls. Components pick a step or a layout role below. */
   --space-0-5: 2px;
@@ -1168,43 +1170,63 @@ kbd {
   /* auto-fit, not auto-fill: auto-fill reserves tracks for additional
      attachments that do not exist, and that phantom width squeezes real badges
      below their content size, pushing the trailing icon under the container's
-     overflow clipping. The minimum covers the badge's fixed chrome (star,
-     kind icon, size, open icon, download button: about 200px) plus room for
-     a readable filename, so a long list wraps to more rows instead of
-     truncating every name to its extension. */
+     edge. The minimum covers the chip's fixed chrome (kind icon, size, open
+     icon, save and star segments: about 200px) plus room for a readable
+     filename, so a long list wraps to more rows instead of truncating every
+     name to its extension. Each track grows to its widest chip. */
   grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), max-content));
   justify-content: start;
   gap: var(--space-2);
   margin-top: var(--space-5);
 }
 .message-attachment {
-  display: inline-flex;
-  /* Hug the content instead of stretching to the column: none of the
-     badge's parts grow, so a stretched chip leaves dead space after the
-     download button. */
-  justify-self: start;
+  display: flex;
+  /* Fill the column so every chip in it shares a right edge; the open
+     target absorbs the extra width and keeps the size and open icon at its
+     trailing edge, beside the fixed-width segments. */
+  justify-self: stretch;
   align-items: stretch;
-  overflow: hidden;
+  min-width: 0;
+  /* No overflow clipping: the segments' hover tooltips hang below the chip.
+     Each end segment rounds its own outer corners instead. */
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--input);
 }
 .attachment-badge,
-.attachment-download {
+.attachment-download,
+.message-attachment .file-star-control .btn-icon {
   display: inline-flex;
   align-items: center;
   border: 0;
+  border-radius: 0;
   background: transparent;
   color: var(--secondary);
   cursor: pointer;
 }
 .attachment-badge { min-width: 0; flex: 1 1 auto; gap: var(--space-2); padding: var(--space-2) var(--space-2); }
-/* The tooltip anchor wraps the badge inside .message-attachment; without
-   min-width: 0 it cannot shrink below the nowrap filename's full width, and
-   the overflow is clipped at the container's right edge, truncating the
-   trailing icon. Only the filename may yield to a squeeze. */
+/* The tooltip anchors wrap the segments inside .message-attachment; without
+   min-width: 0 the open target cannot shrink below the nowrap filename's
+   full width. Only the filename may yield to a squeeze. */
 .message-attachment .tooltip-anchor { min-width: 0; }
+.message-attachment > .tooltip-anchor:first-child { flex: 1 1 auto; }
+.message-attachment .attachment-badge {
+  border-top-left-radius: var(--radius-sm);
+  border-bottom-left-radius: var(--radius-sm);
+}
+.message-attachment > .tooltip-anchor:last-child .attachment-download,
+.message-attachment .file-star-control .btn-icon {
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+}
 .attachment-badge > svg { flex-shrink: 0; }
+.attachment-thumbnail {
+  flex-shrink: 0;
+  width: var(--attachment-thumbnail-size);
+  height: var(--attachment-thumbnail-size);
+  border-radius: var(--radius-xs);
+  object-fit: cover;
+}
 .attachment-name {
   display: inline-flex;
   min-width: 0;
@@ -1217,12 +1239,16 @@ kbd {
 .attachment-name-base { overflow: hidden; text-overflow: ellipsis; }
 .attachment-name-ext { flex-shrink: 0; }
 .attachment-badge small { margin-left: auto; flex-shrink: 0; color: var(--muted); white-space: nowrap; }
-.attachment-download {
+.attachment-download,
+.message-attachment .file-star-control .btn-icon {
   justify-content: center;
   width: var(--control-h);
+  height: auto;
   flex-shrink: 0;
   border-left: 1px solid var(--border);
 }
+.message-attachment .file-star-control { align-items: stretch; }
+.message-attachment .file-star-control .tooltip-anchor { align-items: stretch; }
 .attachment-badge:hover, .attachment-download:hover { background: var(--hover); color: var(--text); }
 .attachment-badge:focus-visible, .attachment-download:focus-visible {
   outline: 2px solid var(--accent);
@@ -1311,7 +1337,7 @@ kbd {
   color: var(--muted);
   font-size: var(--text-meta);
 }
-.calendar-card-actions > span { display: flex; flex: 1; align-items: center; gap: var(--space-1-5); min-width: 0; }
+.calendar-card-actions > span:first-child { display: flex; flex: 1; align-items: center; gap: var(--space-1-5); min-width: 0; }
 /* An opened .ics file: the RSVP control takes the footer's status slot. */
 .calendar-invitation-modal .calendar-card-actions .calendar-event-response { flex: 1; padding: var(--space-1) 0; }
 .message-card {

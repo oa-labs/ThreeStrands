@@ -286,7 +286,7 @@ describe("component sizes", () => {
   });
 
   it("gives each message attachment column room for its filename beyond the badge chrome", () => {
-    // Star, kind icon, size, open icon, and download button take about 200px;
+    // Kind icon, size, open icon, and the save and star segments take about 200px;
     // a narrower column truncates every filename down to its extension.
     let minimum = "";
     css.walkRules(".message-attachments", (rule) => rule.walkDecls("grid-template-columns", (declaration) => { minimum = declaration.value; }));
@@ -295,10 +295,20 @@ describe("component sizes", () => {
     expect(Number(match![1])).toBeGreaterThanOrEqual(280);
   });
 
-  it("sizes each message attachment chip to its content rather than its column", () => {
+  it("stretches each message attachment chip to its column so a column's chips share a right edge", () => {
     let justify = "";
     css.walkRules(".message-attachment", (rule) => rule.walkDecls("justify-self", (declaration) => { justify = declaration.value; }));
-    expect(justify).toBe("start");
+    expect(justify).toBe("stretch");
+    // The open target, not the fixed segments, absorbs the stretched width.
+    let grow = "";
+    css.walkRules(".message-attachment > .tooltip-anchor:first-child", (rule) => rule.walkDecls("flex", (declaration) => { grow = declaration.value; }));
+    expect(grow).toBe("1 1 auto");
+  });
+
+  it("lets message attachment tooltips hang outside the chip instead of clipping them", () => {
+    const clipped: string[] = [];
+    css.walkRules(".message-attachment", (rule) => rule.walkDecls(/^overflow/, (declaration) => { clipped.push(declaration.toString()); }));
+    expect(clipped).toEqual([]);
   });
 
   it("gives count badges, dots, checks, and swatches one size each", () => {

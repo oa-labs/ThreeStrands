@@ -653,7 +653,7 @@ describe("Composer forwarded content and attachments", () => {
     const { unmount } = render(<Composer ref={ref} draft={forwarded} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     const editor = screen.getByRole("textbox", { name: "Message Body" });
     expect(editor).toBeEmptyDOMElement();
-    const frame = within(screen.getByRole("region", { name: "Forwarded message" })).getByTitle("Message content") as HTMLIFrameElement;
+    const frame = within(screen.getByRole("region", { name: "Forwarded message" })).getByLabelText("Message content") as HTMLIFrameElement;
     const preview = new DOMParser().parseFromString(frame.srcdoc, "text/html");
     expect(preview.querySelector("strong, em")?.textContent).toBe("Golf Monday");
     expect(preview.querySelector('a[href^="https:"]')?.getAttribute("href")).toBe("https://example.com/profile?one=1&two=2");
@@ -673,7 +673,7 @@ describe("Composer forwarded content and attachments", () => {
     unmount();
     render(<Composer draft={saved} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     expect(screen.getByRole("textbox", { name: "Message Body" })).toHaveTextContent("See below.");
-    expect(screen.getByTitle("Message content")).toHaveAttribute("srcdoc", frame.srcdoc);
+    expect(screen.getByLabelText("Message content")).toHaveAttribute("srcdoc", frame.srcdoc);
   });
 
   it("keeps sender capabilities out of the editor and loads remote images only through the proxy", async () => {
@@ -683,7 +683,7 @@ describe("Composer forwarded content and attachments", () => {
     render(<Composer draft={{ ...draft, mode: "forward", forwardedContent }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} messageAppearance={{ theme: "light" }} />);
     const editor = screen.getByRole("textbox", { name: "Message Body" });
     expect(editor).toBeEmptyDOMElement();
-    const frame = screen.getByTitle("Message content") as HTMLIFrameElement;
+    const frame = screen.getByLabelText("Message content") as HTMLIFrameElement;
     const preview = new DOMParser().parseFromString(frame.srcdoc, "text/html");
     expect(frame).toHaveAttribute("sandbox", "allow-same-origin allow-scripts");
     expect(frame).toHaveAttribute("referrerpolicy", "no-referrer");
@@ -714,7 +714,7 @@ describe("Composer forwarded content and attachments", () => {
       .mockResolvedValue("data:image/png;base64,cG5n");
     const proxy = vi.spyOn(mailClient, "fetchRemoteImage");
     render(<Composer draft={forwarded} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    const frame = screen.getByTitle("Message content") as HTMLIFrameElement;
+    const frame = screen.getByLabelText("Message content") as HTMLIFrameElement;
     frame.contentDocument!.body.innerHTML = new DOMParser().parseFromString(frame.srcdoc, "text/html").body.innerHTML;
     fireEvent.load(frame);
     await waitFor(() => expect(readImage).toHaveBeenCalledTimes(1));

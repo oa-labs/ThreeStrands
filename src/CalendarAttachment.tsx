@@ -1,3 +1,4 @@
+import { AttachmentChip } from "./AttachmentChip";
 import { FileStarButton } from "./FileStarButton";
 import { CalendarDays, Download, ExternalLink, MapPin, Repeat2, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -6,7 +7,6 @@ import { mailClient } from "./data/client";
 import type { CalendarEventPreview, CalendarPreview, MessageAttachment } from "./domain";
 import { errorMessage } from "./errors";
 import { HoverTooltip } from "./AppChrome";
-import { splitAttachmentName } from "./threadPresentation";
 import { ICON_SIZE } from "./iconSizes";
 
 export function isCalendarAttachment(attachment: MessageAttachment): boolean {
@@ -144,13 +144,13 @@ export function CalendarAttachment({ messageId, threadId, attachment, onError, l
       onError(`Could not open attachment: ${errorMessage(reason)}`);
     });
   };
-  const download = () => {
+  const save = () => {
     void mailClient.saveAttachment(messageId, attachment.id).catch((reason: unknown) => {
-      onError(`Could not download attachment: ${errorMessage(reason)}`);
+      onError(`Could not save attachment: ${errorMessage(reason)}`);
     });
   };
 
-  if (failed) return <><StandardCalendarAttachment attachment={attachment} onOpen={open} onDownload={download} />{threadId ? <FileStarButton messageId={messageId} attachmentId={attachment.id} filename={attachment.filename} /> : null}</>;
+  if (failed) return <AttachmentChip messageId={messageId} attachment={attachment} icon={<CalendarDays size={ICON_SIZE.sm} aria-hidden="true" />} starrable={Boolean(threadId)} onOpen={open} onSave={save} />;
   if (!preview) {
     return (
       <div className="calendar-card calendar-card-loading" role="status">
@@ -167,12 +167,12 @@ export function CalendarAttachment({ messageId, threadId, attachment, onError, l
       ))}
       {preview.truncated ? <p className="calendar-card-more">Additional events are included in this file.</p> : null}
       <footer className="calendar-card-actions">
-        {threadId ? <FileStarButton messageId={messageId} attachmentId={attachment.id} filename={attachment.filename} /> : null}
         <span><CalendarDays size={ICON_SIZE.sm} /> {attachment.filename}</span>
         <button type="button" className="btn btn-sm btn-ghost" onClick={open}><ExternalLink size={ICON_SIZE.sm} /> Open Invitation</button>
-        <HoverTooltip title={`Download ${attachment.filename}`} placement="bottom"><button type="button" className="btn-icon btn-icon-sm" aria-label={`Download ${attachment.filename}`} onClick={download}>
-          <Download size={ICON_SIZE.sm} />
+        <HoverTooltip label={`Save ${attachment.filename} as…`} placement="bottom"><button type="button" className="btn-icon btn-icon-sm" aria-label={`Save ${attachment.filename} as…`} onClick={save}>
+          <Download size={ICON_SIZE.sm} aria-hidden="true" />
         </button></HoverTooltip>
+        {threadId ? <FileStarButton messageId={messageId} attachmentId={attachment.id} filename={attachment.filename} /> : null}
       </footer>
     </section>
   );
@@ -200,33 +200,6 @@ export function CalendarEvent({ event }: { event: CalendarEventPreview }) {
         {event.description ? <p className="calendar-description">{calendarDescriptionText(event.description)}</p> : null}
       </div>
     </article>
-  );
-}
-
-function StandardCalendarAttachment({
-  attachment,
-  onOpen,
-  onDownload,
-}: {
-  attachment: MessageAttachment;
-  onOpen(): void;
-  onDownload(): void;
-}) {
-  const { base, extension } = splitAttachmentName(attachment.filename);
-  return (
-    <div className="message-attachment">
-      <button type="button" className="attachment-badge" aria-label={`View ${attachment.filename}`} onClick={onOpen}>
-        <CalendarDays size={ICON_SIZE.sm} />
-        <span className="attachment-name">
-          <span className="attachment-name-base">{base}</span>
-          {extension ? <span className="attachment-name-ext">{extension}</span> : null}
-        </span>
-        <ExternalLink size={ICON_SIZE.xs} />
-      </button>
-      <button type="button" className="attachment-download" aria-label={`Download ${attachment.filename}`} onClick={onDownload}>
-        <Download size={ICON_SIZE.sm} />
-      </button>
-    </div>
   );
 }
 

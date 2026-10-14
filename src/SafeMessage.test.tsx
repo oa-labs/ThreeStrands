@@ -37,6 +37,13 @@ function loadFrame(frame: HTMLIFrameElement) {
 }
 
 describe("SafeMessage", () => {
+  it("names its frame for assistive technology without a native hover tooltip", () => {
+    render(<SafeMessage html="<p>Hello</p>" tone="default" />);
+    const frame = screen.getByLabelText("Message content");
+    expect(frame).toBe(screen.getByTestId("message-body"));
+    expect(frame).not.toHaveAttribute("title");
+  });
+
   it.each(["notification", "transactional"] as const)("updates read-status styling in place for a %s layout", (fixture) => {
     const html = emailRenderingFixtures[fixture];
     const { rerender } = render(<SafeMessage html={html} tone="default" />);

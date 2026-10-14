@@ -198,7 +198,7 @@ for (const paste of [
 test("reply shortcuts keep inbox actions out of the composer and forwarding starts unaddressed", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
-  await page.getByTitle("Message content").contentFrame().locator("body").click();
+  await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
   await page.keyboard.press("r");
   const reply = page.getByRole("dialog", { name: "Reply Message" });
   await expect(reply).toBeVisible();
@@ -215,7 +215,7 @@ test("reply shortcuts keep inbox actions out of the composer and forwarding star
   await expect(reply).not.toBeVisible();
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
 
-  await page.getByTitle("Message content").contentFrame().locator("body").click();
+  await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
   await page.keyboard.press("a");
   const replyAll = page.getByRole("dialog", { name: "Reply Message" });
   await expect(replyAll.getByRole("heading", { name: "Reply All" })).toBeVisible();
@@ -233,7 +233,7 @@ test("HTML forwarding preserves formatting and blocked images after reopening, s
   await page.getByRole("button", { name: "Forward", exact: true }).click();
   const composer = page.getByRole("dialog", { name: "Forward Message" });
   const preview = composer.getByRole("region", { name: "Forwarded message" });
-  const frame = preview.getByTitle("Message content").contentFrame();
+  const frame = preview.getByLabel("Message content", { exact: true }).contentFrame();
   await expect(frame.locator("strong")).toHaveText("ThreeStrands");
   await expect(frame.locator("img")).not.toHaveAttribute("src");
   await expect(preview.getByRole("button", { name: "Load images" })).toBeVisible();
@@ -260,7 +260,7 @@ for (const [key, heading] of [["r", "Reply"], ["a", "Reply All"], ["f", "Forward
   test(`${key ?? `${heading} icon`} quotes only selected email text`, async ({ page }) => {
     await page.goto("/");
     await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
-    const body = page.getByTitle("Message content").contentFrame().locator("body");
+    const body = page.getByLabel("Message content", { exact: true }).contentFrame().locator("body");
     await body.click();
     const selected = await body.evaluate((element) => {
       const walker = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_TEXT);
@@ -283,7 +283,7 @@ for (const [key, heading] of [["r", "Reply"], ["a", "Reply All"], ["f", "Forward
     const editor = reply.getByRole("textbox", { name: "Message Body" });
     await expect(editor).toHaveText("");
     if (heading === "Forward") {
-      const forwarded = reply.getByRole("region", { name: "Forwarded message" }).getByTitle("Message content").contentFrame();
+      const forwarded = reply.getByRole("region", { name: "Forwarded message" }).getByLabel("Message content", { exact: true }).contentFrame();
       await expect(forwarded.locator("blockquote")).toHaveText(selected);
       await expect(forwarded.locator("body")).not.toContainText("A keyboard-first inbox that keeps your mail on this device.");
       await reply.getByRole("button", { name: "Save and Close Draft" }).click();
@@ -303,7 +303,7 @@ for (const [key, heading] of [["r", "Reply"], ["a", "Reply All"], ["f", "Forward
 test("switching conversations saves an edited reply all and shows the selected thread", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
-  await page.getByTitle("Message content").contentFrame().locator("body").click();
+  await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
   await page.keyboard.press("a");
 
   const reply = page.getByRole("dialog", { name: "Reply Message" });
@@ -326,7 +326,7 @@ test("Reply Assist opens in the viewport over a long reply and Escape returns to
     localStorage.setItem("threestrands.settings.ai.features", JSON.stringify({ draftAssist: true, summarize: false, actionExtraction: false }));
   });
   await page.evaluate('import("/src/aiSettings.ts").then(({ setAiApiKey }) => setAiApiKey("test-key"))');
-  await page.getByTitle("Message content").contentFrame().locator("body").click();
+  await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
   await page.keyboard.press("r");
   const reply = page.getByRole("dialog", { name: "Reply Message" });
   const editor = reply.getByRole("textbox", { name: "Message Body" });
@@ -349,7 +349,7 @@ test("Reply Assist opens in the viewport over a long reply and Escape returns to
 
 test("removing an added reply recipient keeps the original recipient", async ({ page }) => {
   await page.goto("/");
-  await page.getByTitle("Message content").contentFrame().locator("body").click();
+  await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
   await page.keyboard.press("r");
   const reply = page.getByRole("dialog", { name: "Reply Message" });
   const to = reply.getByRole("textbox", { name: "To", exact: true });
@@ -493,7 +493,7 @@ for (const theme of ["light", "dark"] as const) {
 test("a mailto link in a message starts a prefilled draft in ThreeStrands", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
-  const frame = page.getByTitle("Message content").contentFrame();
+  const frame = page.getByLabel("Message content", { exact: true }).contentFrame();
   await frame.locator("body").evaluate((body) => {
     const link = body.ownerDocument.createElement("a");
     link.href = "mailto:jane@example.com?cc=alex@example.com&subject=Quarterly%20plan&body=Hi%20Jane%2C%0D%0ASee%20below.&attach=%2Fetc%2Fpasswd";

@@ -56,7 +56,7 @@ describe("CalendarAttachment", () => {
 
     render(<CalendarAttachment messageId="message-1" attachment={attachment} onError={vi.fn()} />);
 
-    expect(await screen.findByRole("button", { name: "View invite.ics" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Open invite.ics" })).toBeVisible();
   });
 });
 
