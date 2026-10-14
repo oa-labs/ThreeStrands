@@ -3159,6 +3159,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .file-date-control input[data-empty="true"]:not(:focus)::-webkit-datetime-edit { color: transparent; }
 .file-date-placeholder { position: absolute; left: var(--space-2-5); top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--muted); font-size: var(--text-body); }
 .file-date-control:focus-within .file-date-placeholder { display: none; }
+/* Loading and empty states sit below the list heading; inset them like a row so they don't touch its border. */
+.files-main > .context-status { padding: var(--space-3); }
 .files-active-filters { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); }
 .file-filter-chip { display: inline-flex; align-items: center; min-width: 0; gap: var(--space-1); padding: var(--space-1) var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); color: var(--secondary); font: inherit; font-size: var(--text-meta); overflow-wrap: anywhere; cursor: pointer; }
 .file-list-heading { display: none; }

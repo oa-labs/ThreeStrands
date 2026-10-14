@@ -63,6 +63,13 @@ describe("spacing", () => {
     expect(spacePx("--list-gutter") + spacePx("--list-row-inset")).toBe(spacePx("--pane-inset"));
   });
 
+  it("insets the Files loading and empty states from the list above them", () => {
+    let padding: string | undefined;
+    css.walkRules(".files-main > .context-status", (rule) => rule.walkDecls("padding", (declaration) => { padding = declaration.value; }));
+    expect(padding).toBeDefined();
+    expect(spacePx(/^var\((--[\w-]+)\)/.exec(padding!)?.[1] ?? "")).toBeGreaterThanOrEqual(8);
+  });
+
   it("spaces every rule only with scale steps and layout roles", () => {
     const raw: string[] = [];
     css.walkRules((rule) => {
