@@ -5,6 +5,8 @@ import { ContactFilesSection, DomainSection, RecentEmailsSection, ThreadOutlineS
 import { RecipientChips, RecipientSummary } from "./RecipientSections";
 import { parseAddress, splitAddressList } from "./emailAddress";
 import { logBackgroundFailure } from "./errors";
+import { SenderSection, TrustSection, type SenderActions } from "./SenderSections";
+import { bulkMessage, latestInbound } from "./senderSignals";
 
 /** A reply in the open conversation, as the context panel shows it. */
 export type ReplyContext = {
@@ -41,8 +43,13 @@ export type ContextPerson = {
  * chips to choose among several), a card for the selected one, and open
  * times to offer come first, and the person sections follow that recipient.
  * The conversation sections stay below the card.
+ *
+ * Bulk mail (a List-Unsubscribe option, or the Updates or Promotions
+ * category) adds a Trust section to the conversation group and puts the
+ * sender's history and one-click decisions first in the person group. Other
+ * conversations show Trust only when something needs a look.
  */
-export function ContextPanel({ detail, accounts, selectedEmail = null, reply = null, onOpenThread, onShowMessage, assist, related, chat, onKeyDown }: {
+export function ContextPanel({ detail, accounts, selectedEmail = null, reply = null, onOpenThread, onShowMessage, assist, related, chat, sender, onKeyDown }: {
   detail: ThreadDetail | null;
   accounts: Account[];
   /** A participant the reader picked from a message header; ignored if not on the conversation. */
@@ -60,6 +67,8 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, reply = n
   related?(person: ContextPerson | null, meetingPeople: { email: string; name: string }[]): ReactNode;
   /** The question box, kept at the bottom of the panel. */
   chat?(person: ContextPerson | null): ReactNode;
+  /** Decisions about a bulk sender; without them the Sender section is left out. */
+  sender?: SenderActions;
   /** Keyboard handling for the panel while focus is inside it. */
   onKeyDown?(event: KeyboardEvent<HTMLElement>): void;
 }) {
@@ -191,6 +200,9 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, reply = n
       meetingPeople.set(address.toLocaleLowerCase(), { email: address, name: displayName });
     }
   }
+  const inbound = useMemo(() => detail ? latestInbound(detail, own) : null, [detail, own]);
+  const bulk = useMemo(() => detail ? bulkMessage(detail, own) : null, [detail, own]);
+  const bulkSender = bulk ? parseAddress(bulk.sender) : null;
   const otherEmails = timeline.filter((item) => item.threadId !== detail?.thread.id).slice(0, 5);
   const showMessage = onShowMessage ?? ((threadId: string) => onOpenThread(threadId));
   return (
@@ -210,7 +222,17 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, reply = n
       </> : null}
       {detail ? assist : null}
       {detail && related ? related(person, [...meetingPeople.values()]) : null}
+      {inbound ? <TrustSection key={inbound.id} message={inbound} bulk={Boolean(bulk)} /> : null}
       {detail ? <ThreadOutlineSection detail={detail} accounts={accounts} onShowMessage={showMessage} /> : null}
+      {detail && sender && bulkSender && bulkSender.email.toLocaleLowerCase() === email ? (
+        <SenderSection
+          target={{ accountId: detail.thread.accountId, email, name: bulkSender.name }}
+          threadId={detail.thread.id}
+          hideThreadIds={otherEmails.map((item) => item.threadId)}
+          actions={sender}
+          onOpenThread={onOpenThread}
+        />
+      ) : null}
       {person ? <ContactFilesSection key={person.contactId} contactId={person.contactId} onShowMessage={showMessage} /> : null}
       {person && otherEmails.length > 0 ? <RecentEmailsSection items={otherEmails} onOpenThread={onOpenThread} /> : null}
       {person ? (

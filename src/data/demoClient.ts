@@ -52,6 +52,8 @@ import type {
   ThreadMutation,
   TriageEvent,
   TriageSenderStats,
+  SenderHistory,
+  MessageTrust,
   UnsubscribeResult,
   UpdateTaskRequest,
   UpdateGoalRequest,
@@ -855,6 +857,48 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         firstAt: all[0] ?? null,
         lastSentAt: sent.sort().at(-1) ?? null,
         recentReceivedAt: received.sort().reverse().slice(0, 24),
+      };
+    },
+    /** Mirrors `Database::sender_history` over the in-memory mailbox. */
+    async senderHistory(accountId, email, limit = 50): Promise<SenderHistory> {
+      const target = email.trim().toLocaleLowerCase();
+      const received = threads.filter((thread) => thread.accountId === accountId)
+        .flatMap((thread) => messagesFor(thread)
+          .filter((message) => parseAddress(message.sender).email.toLocaleLowerCase() === target)
+          .map((message) => ({ thread, message })))
+        .sort((left, right) => right.message.sentAt.localeCompare(left.message.sentAt));
+      const listed: SenderHistory["threads"] = [];
+      const inbox: string[] = [];
+      for (const { thread, message } of received) {
+        if (!thread.archived && !thread.trashed && !inbox.includes(thread.id)) inbox.push(thread.id);
+        if (!thread.trashed && listed.length < limit && !listed.some((item) => item.threadId === thread.id)) {
+          listed.push({ threadId: thread.id, subject: thread.subject, snippet: thread.snippet, sentAt: message.sentAt });
+        }
+      }
+      const sent = threads.filter((thread) => thread.accountId === accountId).flatMap(messagesFor)
+        .filter((message) => parseAddress(message.sender).email.toLocaleLowerCase() === accountId.toLocaleLowerCase()
+          && message.recipients.flatMap(splitAddressList).some((raw) => parseAddress(raw).email.toLocaleLowerCase() === target))
+        .map((message) => message.sentAt).sort();
+      return {
+        receivedCount: received.length,
+        readCount: received.filter(({ message }) => !message.unread).length,
+        firstAt: received.at(-1)?.message.sentAt ?? null,
+        lastSentAt: sent.at(-1) ?? null,
+        recentReceivedAt: received.slice(0, 24).map(({ message }) => message.sentAt),
+        inboxThreadIds: inbox,
+        threads: listed,
+      };
+    },
+    /** The preview has no stored headers; every sample sender reads as verified. */
+    async messageTrust(messageId): Promise<MessageTrust | null> {
+      const message = findMessage(messageId);
+      if (!message) return null;
+      const domain = parseAddress(message.sender).email.split("@")[1]?.toLocaleLowerCase() ?? "";
+      if (!domain) return null;
+      return {
+        fromDomain: domain,
+        authentication: { spf: "pass", dkim: "pass", dmarc: "pass", dkimDomains: [domain] },
+        replyTo: null,
       };
     },
     async contextCandidates(query) {

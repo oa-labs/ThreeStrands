@@ -3,15 +3,16 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { ContextPanel } from "./ContextPanel";
 import { mailClient } from "./data/client";
 import { formatHistoryDate } from "./contactContext";
-import type { Account, ContactActivity, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
+import type { Account, ContactActivity, ContactProfile, ContactTimelineItem, MessageTrust, SenderHistory, ThreadDetail } from "./domain";
+import type { SenderActions } from "./SenderSections";
 import { expectContextRows } from "./test/contextRows";
 
-vi.mock("./data/client",()=>({mailClient:{getContactProfile:vi.fn(),resolveContactIds:vi.fn(),contactTimeline:vi.fn(),saveContactProfile:vi.fn(),contactActivity:vi.fn(),contactFiles:vi.fn(),domainContext:vi.fn(),fileStars:vi.fn().mockResolvedValue([]),setFileStar:vi.fn().mockResolvedValue(undefined),openAttachment:vi.fn()}}));
+vi.mock("./data/client",()=>({mailClient:{getContactProfile:vi.fn(),resolveContactIds:vi.fn(),contactTimeline:vi.fn(),saveContactProfile:vi.fn(),contactActivity:vi.fn(),contactFiles:vi.fn(),domainContext:vi.fn(),senderHistory:vi.fn(),messageTrust:vi.fn(),fileStars:vi.fn().mockResolvedValue([]),setFileStar:vi.fn().mockResolvedValue(undefined),openAttachment:vi.fn()}}));
 vi.mock("@tauri-apps/plugin-opener",()=>({openUrl:vi.fn()}));
 
 const jane:ContactProfile={id:"contact:jane@example.com",displayName:"Jane Doe",role:null,company:"Acme",location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:["jane@example.com"],sentCount:1,receivedCount:1,lastInteractedAt:null,birthday:null,keepInTouch:{intervalDays:null,startedAt:null,snoozedUntil:null,snoozedAt:null,lastTouchAt:null},keepInTouchDueAt:null};
 const bob:ContactProfile={...jane,id:"contact:bob@example.com",displayName:"Bob Lee",addresses:["bob@example.com"]};
-const detail={thread:{id:"thread-1"},messages:[{id:"1",sender:"Jane Doe <jane@example.com>",recipients:["You <you@example.com>","Bob Lee <bob@example.com>"],sentAt:"2026-09-24T00:00:00Z"},{id:"2",sender:"Bob Lee <bob@example.com>",recipients:["You <you@example.com>"],sentAt:"2026-09-25T00:00:00Z"}]} as unknown as ThreadDetail;
+const detail={thread:{id:"thread-1",accountId:"you@example.com",labels:["INBOX"]},messages:[{id:"1",sender:"Jane Doe <jane@example.com>",recipients:["You <you@example.com>","Bob Lee <bob@example.com>"],sentAt:"2026-09-24T00:00:00Z",bodyHtml:""},{id:"2",sender:"Bob Lee <bob@example.com>",recipients:["You <you@example.com>"],sentAt:"2026-09-25T00:00:00Z",bodyHtml:""}]} as unknown as ThreadDetail;
 const account={email:"you@example.com"} as Account;
 const noActivity:ContactActivity={sentCount:0,receivedCount:0,threadCount:0,firstAt:null,lastSentAt:null,recentReceivedAt:[]};
 const timelineItem=(threadId:string,subject:string):ContactTimelineItem=>({threadId,accountId:"you@example.com",contactEmail:"bob@example.com",subject,snippet:"",sentAt:"2026-09-20T00:00:00Z",labels:[]});
@@ -31,6 +32,7 @@ describe("ContextPanel",()=>{
     vi.mocked(mailClient.contactActivity).mockResolvedValue(noActivity);
     vi.mocked(mailClient.contactFiles).mockResolvedValue({files:[],total:0});
     vi.mocked(mailClient.domainContext).mockResolvedValue({people:[],threads:[]});
+    vi.mocked(mailClient.messageTrust).mockResolvedValue(null);
     vi.mocked(mailClient.resolveContactIds).mockImplementation(async emails=>Object.fromEntries(
       emails.filter(email=>email==="jane@example.com"||email==="bob@example.com")
         .map(email=>[email,`contact:${email}`])));
@@ -93,8 +95,8 @@ describe("ContextPanel",()=>{
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(null);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
     const related=vi.fn(()=>null);
-    renderPanel({related,detail:{thread:{id:"thread-1"},messages:[
-      {id:"1",sender:"You <you@example.com>",recipients:["Daniel O'Connor, CFA® <dan@wealth.example>","Smith, Pat, PhD <pat@lab.example>"],sentAt:"2026-09-24T00:00:00Z"},
+    renderPanel({related,detail:{thread:detail.thread,messages:[
+      {id:"1",sender:"You <you@example.com>",recipients:["Daniel O'Connor, CFA® <dan@wealth.example>","Smith, Pat, PhD <pat@lab.example>"],sentAt:"2026-09-24T00:00:00Z",bodyHtml:""},
     ]} as unknown as ThreadDetail});
     await personLoaded("derived:dan@wealth.example");
     expect(related).toHaveBeenLastCalledWith(expect.anything(),[
@@ -112,7 +114,7 @@ describe("ContextPanel",()=>{
     });
     const warn=vi.spyOn(console,"warn").mockImplementation(()=>undefined);
     const error=vi.spyOn(console,"error").mockImplementation(()=>undefined);
-    const twoAddresses={...detail,messages:[...detail.messages,{id:"3",sender:"Jane W. <jane@work.example.com>",recipients:["You <you@example.com>"],sentAt:"2026-09-26T00:00:00Z"}]} as unknown as ThreadDetail;
+    const twoAddresses={...detail,messages:[...detail.messages,{id:"3",sender:"Jane W. <jane@work.example.com>",recipients:["You <you@example.com>"],sentAt:"2026-09-26T00:00:00Z",bodyHtml:""}]} as unknown as ThreadDetail;
     const related=vi.fn(()=>null);
     renderPanel({detail:twoAddresses,related});
     await personLoaded(jane.id);
@@ -254,12 +256,13 @@ describe("ContextPanel",()=>{
   it("outlines all replies newest first without a filter or date range",async()=>{
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
-    const longDetail={thread:{id:"thread-1"},messages:Array.from({length:6},(_,index)=>({
+    const longDetail={thread:detail.thread,messages:Array.from({length:6},(_,index)=>({
       id:`m${index}`,
       sender:index%3===2?"You <you@example.com>":"Bob Lee <bob@example.com>",
       recipients:[index%3===2?"Bob Lee <bob@example.com>":"You <you@example.com>"],
       sentAt:`2026-0${index+1}-05T15:00:00Z`,
       bodyText:`Message number ${index}`,
+      bodyHtml:"",
     }))} as unknown as ThreadDetail;
     const onShowMessage=vi.fn();
     renderPanel({detail:longDetail,onShowMessage});
@@ -293,7 +296,7 @@ describe("ContextPanel",()=>{
 
   it("shows other people at an organization domain without repeating conversations",async()=>{
     const dana:ContactProfile={...jane,id:"contact:dana@acme.test",displayName:"Dana Ruiz",addresses:["dana@acme.test","dana@acme-mail.test"]};
-    const danaDetail={thread:{id:"thread-1"},messages:[{id:"1",sender:"Dana Ruiz <dana@acme.test>",recipients:["You <you@example.com>"],sentAt:"2026-09-24T00:00:00Z"}]} as unknown as ThreadDetail;
+    const danaDetail={thread:detail.thread,messages:[{id:"1",sender:"Dana Ruiz <dana@acme.test>",recipients:["You <you@example.com>"],sentAt:"2026-09-24T00:00:00Z",bodyHtml:""}]} as unknown as ThreadDetail;
     vi.mocked(mailClient.resolveContactIds).mockResolvedValue({"dana@acme.test":dana.id});
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(dana);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([{...timelineItem("thread-2","Shared with Dana"),contactEmail:"dana@acme.test"}]);
@@ -326,7 +329,7 @@ describe("ContextPanel",()=>{
     const friend={...jane,id:"contact:friend@gmail.com",displayName:"Friend",addresses:["friend@gmail.com"]};
     vi.mocked(mailClient.resolveContactIds).mockResolvedValue({"friend@gmail.com":friend.id});
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(friend);
-    renderPanel({detail:{thread:{id:"thread-1"},messages:[{id:"1",sender:"Friend <friend@gmail.com>",recipients:["you@example.com"],sentAt:"2026-09-24T00:00:00Z"}]} as unknown as ThreadDetail});
+    renderPanel({detail:{thread:detail.thread,messages:[{id:"1",sender:"Friend <friend@gmail.com>",recipients:["you@example.com"],sentAt:"2026-09-24T00:00:00Z",bodyHtml:""}]} as unknown as ThreadDetail});
     await personLoaded(friend.id);
     expect(mailClient.domainContext).not.toHaveBeenCalled();
   });
@@ -445,6 +448,83 @@ describe("ContextPanel",()=>{
       expect(screen.queryByRole("region",{name:/^About /})).not.toBeInTheDocument();
       expect(screen.queryByText("Add a recipient to see your history with them.")).not.toBeInTheDocument();
       expect(mailClient.contactActivity).not.toHaveBeenCalled();
+    });
+  });
+  describe("bulk mail",()=>{
+    const news="news@launch.example";
+    const newsDetail=(overrides:{labels?:string[];unsubscribe?:boolean}={})=>({
+      thread:{id:"news-3",accountId:"you@example.com",labels:overrides.labels??["INBOX"]},
+      messages:[{id:"n3",sender:`Launch News <${news}>`,recipients:["You <you@example.com>"],sentAt:"2026-10-07T09:00:00Z",
+        bodyHtml:'<a href="https://launch.example/post">Read</a>',
+        unsubscribe:overrides.unsubscribe===false?null:{methods:["oneClick"],listId:null}}],
+    }) as unknown as ThreadDetail;
+    const history:SenderHistory={receivedCount:4,readCount:1,firstAt:"2026-06-02T09:00:00Z",lastSentAt:null,
+      recentReceivedAt:[],inboxThreadIds:["news-3","news-2","news-1"],
+      threads:[{threadId:"news-3",subject:"This week",snippet:"",sentAt:"2026-10-07T09:00:00Z"},{threadId:"news-2",subject:"Last week",snippet:"Recap",sentAt:"2026-09-30T09:00:00Z"}]};
+    const verified:MessageTrust={fromDomain:"launch.example",authentication:{spf:"pass",dkim:"pass",dmarc:"pass",dkimDomains:["launch.example"]},replyTo:null};
+    const actions=(overrides:Partial<SenderActions>={}):SenderActions=>({splits:[],onUnsubscribe:vi.fn(),onArchiveThreads:vi.fn(),onNewSplit:vi.fn(),...overrides});
+    beforeEach(()=>{
+      vi.mocked(mailClient.getContactProfile).mockResolvedValue(null);
+      vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
+      vi.mocked(mailClient.senderHistory).mockResolvedValue(history);
+      vi.mocked(mailClient.messageTrust).mockResolvedValue(verified);
+    });
+
+    it("puts Trust with the conversation and the sender's history and decisions first about the person",async()=>{
+      const sender=actions();
+      renderPanel({detail:newsDetail(),sender,assist:<section aria-label="Brief">brief</section>,related:()=><section aria-label="Conversation tasks">tasks</section>});
+      const panel=screen.getByRole("complementary",{name:"Conversation context"});
+      const from=await within(panel).findByRole("region",{name:`From ${news}`});
+      await within(panel).findByRole("region",{name:"Trust"});
+      const regions=within(panel).getAllByRole("region").map((region)=>region.getAttribute("aria-label")??region.textContent?.split(/\d/)[0].trim());
+      expect(regions).toEqual(["Brief","Conversation tasks","Trust",`From ${news}`]);
+      expect(mailClient.senderHistory).toHaveBeenCalledWith("you@example.com",news,20);
+      expect(from).toHaveTextContent("4 emails since");
+      expect(from).toHaveTextContent("1 of 4 read");
+      // The open conversation is not listed again under its own sender.
+      expectContextRows(from);
+      expect([...from.querySelectorAll(".context-row-title")].map((title)=>title.textContent)).toEqual(["Last week"]);
+      fireEvent.click(within(from).getByRole("button",{name:"Unsubscribe"}));
+      expect(sender.onUnsubscribe).toHaveBeenCalled();
+      fireEvent.click(within(from).getByRole("button",{name:"New Split…"}));
+      expect(sender.onNewSplit).toHaveBeenCalledWith({accountId:"you@example.com",email:news,name:"Launch News"});
+      fireEvent.click(within(from).getByRole("button",{name:"Archive 3 in Inbox"}));
+      expect(sender.onArchiveThreads).toHaveBeenCalledWith(["news-3","news-2","news-1"]);
+      expect(within(from).queryByRole("button",{name:/^Archive/})).not.toBeInTheDocument();
+    });
+
+    it("treats the Updates or Promotions category as bulk mail without an unsubscribe option",async()=>{
+      for(const label of ["CATEGORY_UPDATES","CATEGORY_PROMOTIONS"]){
+        renderPanel({detail:newsDetail({labels:["INBOX",label],unsubscribe:false}),sender:actions({onUnsubscribe:undefined})});
+        const from=await screen.findByRole("region",{name:`From ${news}`});
+        expect(within(from).queryByRole("button",{name:"Unsubscribe"})).not.toBeInTheDocument();
+        cleanup();
+      }
+    });
+
+    it("names the split that already takes the sender's mail instead of offering a new one",async()=>{
+      const split={id:"s",name:"Launch",matchKind:"domain" as const,matchValue:"launch.example",sortOrder:0,createdAt:"",accountId:"you@example.com"};
+      renderPanel({detail:newsDetail(),sender:actions({splits:[split]})});
+      const from=await screen.findByRole("region",{name:`From ${news}`});
+      expect(from).toHaveTextContent("Sorted into Launch");
+      expect(within(from).queryByRole("button",{name:"New Split…"})).not.toBeInTheDocument();
+    });
+
+    it("leaves the sender section out of personal mail and shows Trust there only when something needs a look",async()=>{
+      vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
+      renderPanel({sender:actions()});
+      await personLoaded(bob.id);
+      await waitFor(()=>expect(mailClient.messageTrust).toHaveBeenCalledWith("2"));
+      expect(screen.queryByRole("region",{name:"Trust"})).not.toBeInTheDocument();
+      expect(screen.queryByRole("region",{name:/^From /})).not.toBeInTheDocument();
+      expect(mailClient.senderHistory).not.toHaveBeenCalled();
+      cleanup();
+
+      vi.mocked(mailClient.messageTrust).mockResolvedValue({...verified,fromDomain:"example.com",replyTo:"desk@elsewhere.example"});
+      renderPanel({sender:actions()});
+      const trust=await screen.findByRole("region",{name:"Trust"});
+      expect(trust).toHaveTextContent("Replies go elsewhere");
+      expect(trust).toHaveTextContent("Reply-To is desk@elsewhere.example");
     });
   });
 });

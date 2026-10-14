@@ -408,6 +408,48 @@ export type ContactActivity = {
   recentReceivedAt: string[];
 };
 
+/** Everything stored from one sender address in one account, including the automated mail contact history leaves out. */
+export type SenderHistory = {
+  receivedCount: number;
+  /** Received messages no longer marked unread. */
+  readCount: number;
+  firstAt: string | null;
+  /** The user's latest message to the address, from this account. */
+  lastSentAt: string | null;
+  /** Newest first, one entry per received message. */
+  recentReceivedAt: string[];
+  /** Conversations from the sender still in the Inbox, newest first. */
+  inboxThreadIds: string[];
+  /** Conversations from the sender outside Trash, newest first. */
+  threads: SenderThread[];
+};
+
+/** One conversation in a sender's history, dated by the sender's newest message in it. */
+export type SenderThread = { threadId: string; subject: string; snippet: string; sentAt: string };
+
+/**
+ * Verdicts the user's receiving server recorded in the topmost
+ * Authentication-Results header: "pass" when any result for a method passed,
+ * otherwise the first one reported ("fail", "softfail", "none", ...).
+ */
+export type AuthenticationVerdicts = {
+  spf: string | null;
+  dkim: string | null;
+  dmarc: string | null;
+  /** Signing domains of the DKIM signatures that passed. */
+  dkimDomains: string[];
+};
+
+/** Trust signals read from a message's stored headers. */
+export type MessageTrust = {
+  /** The From address's domain; empty when From has no address. */
+  fromDomain: string;
+  /** Null when the receiving server reported no authentication results. */
+  authentication: AuthenticationVerdicts | null;
+  /** The Reply-To address, only when it belongs to another organization than From. */
+  replyTo: string | null;
+};
+
 /** One attachment a person sent, with the message it arrived on. */
 export type ContactFile = {
   messageId: string;

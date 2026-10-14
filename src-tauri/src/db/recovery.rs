@@ -118,12 +118,12 @@ impl Database {
             path: Some(path.to_path_buf()),
             replicated_sync_projecting: Mutex::new(HashMap::new()),
         };
-        // v44 reindexes stored recipients that strict address parsing skipped.
-        if version_before_migration < 44 {
-            database
-                .rebuild_contact_interactions()
-                .map_err(|error| OpenError::Other(error.to_string()))?;
-        }
+        // The v44 contact-interactions reindex was an upgrade-only fixup for
+        // databases below v44. The historical migration chain is retired and
+        // migrate() refuses any database below the v74 baseline, so the only
+        // versions that reach here are a fresh database (nothing to rebuild)
+        // and one already at or above the baseline. The rebuild is gone with
+        // the chain.
         Ok(database)
     }
 

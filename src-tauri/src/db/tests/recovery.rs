@@ -111,9 +111,11 @@ fn opening_a_database_snapshots_at_its_pre_migration_version() {
         );
     }
 
-    // Existing older database (user_version below the baseline): snapshotted
-    // at its own version. Build such a file by stamping an older version onto
-    // a baseline database, then reopen it through the real open path.
+    // Existing older database (user_version below the baseline): the
+    // historical migration chain is retired, so opening it still takes the
+    // pre-migration snapshot at its own version (the snapshot precedes
+    // migrate()), but migrate() then REFUSES it rather than upgrading, and the
+    // open fails with guidance toward the converter.
     {
         let temp = TempDbPath::new();
         {
@@ -126,13 +128,19 @@ fn opening_a_database_snapshots_at_its_pre_migration_version() {
                 .pragma_update(None, "user_version", 60)
                 .unwrap();
         }
-        let database = Database::open(&temp.path).unwrap();
-        drop(database);
+        let result = Database::open(&temp.path);
+        let error = result
+            .err()
+            .expect("a pre-baseline database must be refused, not opened");
+        assert!(
+            format!("{error:?}").contains("threestrands-cli"),
+            "the refusal should point at the converter, got: {error:?}"
+        );
         assert!(
             temp.dir
                 .join("test.sqlite.pre-migration-v0060.bak")
                 .exists(),
-            "opening a v60 database should snapshot it at v0060 before migrating to the latest version"
+            "a v0060 snapshot should still be taken before migrate() refuses the database"
         );
     }
 }

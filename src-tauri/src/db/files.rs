@@ -435,25 +435,6 @@ mod tests {
         assert_eq!(db.list_files(&FileQuery::default()).unwrap().total, 0);
     }
     #[test]
-    fn migration_backfills_preceding_schema_without_refetch_and_is_idempotent() {
-        let db = database();
-        seed(&db, "you@example.com", "old");
-        {
-            let mut c = db.connection().unwrap();
-            c.execute_batch("DROP TRIGGER files_after_message_insert; DROP TRIGGER files_after_message_update; DROP TABLE file_attachments; DROP TABLE file_stars; PRAGMA user_version=71;").unwrap();
-            crate::schema::migrate(&mut c).unwrap();
-            crate::schema::migrate(&mut c).unwrap();
-        }
-        assert_eq!(db.list_files(&query("you@example.com")).unwrap().total, 1);
-        db.set_file_star("you@example.com", "old", "part:0.1", true)
-            .unwrap();
-        {
-            let mut c = db.connection().unwrap();
-            crate::schema::migrate(&mut c).unwrap();
-        }
-        assert_eq!(db.file_stars(&["old".into()]).unwrap().len(), 1);
-    }
-    #[test]
     fn stars_survive_reopening_and_removed_parts_and_threads_remove_annotations() {
         let path = crate::db::test_support::TempDbPath::new();
         {

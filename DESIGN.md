@@ -102,6 +102,25 @@ add a second always-on panel beside it; new conversation
 context belongs in this panel as a section, in the group that matches its
 subject.
 
+Bulk mail adds two sections. A conversation is bulk when its newest message
+from someone else carries a List-Unsubscribe option or the conversation is in
+the Updates or Promotions category; nothing about who the sender is decides
+it. Trust joins the conversation group, after tasks and meetings: the
+receiving server's verdict from the topmost Authentication-Results header, a
+Reply-To at another organization, links whose text names a different site
+than they open, the sites the links open, and tracking images. Other
+conversations show Trust only when one of its warnings applies. Sender ("From
+<address>") comes first in the person group while the selected participant is
+that sender. It reads the account's stored messages directly, because contact
+history leaves automated mail out. Its note gives the volume, any cadence, how
+much is read, and when the user last wrote, or names the split that already
+takes the sender's mail. Its rows are the sender's other conversations. Its
+decisions are buttons between the note and the rows: **Unsubscribe** opens the
+existing confirmation, **Archive N in Inbox** archives every Inbox conversation
+from the sender (including ones the list has not loaded) with Undo, and **New
+Split…** opens a dialog that matches the address, or an organization's whole
+domain.
+
 Every list row in the context panel is a `ContextRow`: a glyph column that
 lines up with the section headers' chevrons (a checkbox, a type icon, or empty),
 then the title with the row's date at the end of that line, then one detail

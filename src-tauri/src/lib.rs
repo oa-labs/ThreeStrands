@@ -34,6 +34,7 @@ mod replicated_sync;
 mod s3_transport;
 mod schema;
 mod search_query;
+mod sender_trust;
 mod sync;
 mod sync_connectors;
 mod sync_folder;
@@ -1694,6 +1695,18 @@ async fn contact_timeline(
 async fn contact_activity(id: String, state: State<'_, AppState>) -> Result<ContactActivity, String> {
     let database = state.database.clone();
     run_database_task(move || database.contact_activity(&id)).await
+}
+
+#[tauri::command]
+async fn sender_history(account_id: String, email: String, limit: Option<usize>, state: State<'_, AppState>) -> Result<models::SenderHistory, String> {
+    let database = state.database.clone();
+    run_database_task(move || database.sender_history(&account_id, &email, limit.unwrap_or(db::MAX_SENDER_THREADS))).await
+}
+
+#[tauri::command]
+async fn message_trust(message_id: String, state: State<'_, AppState>) -> Result<Option<sender_trust::MessageTrust>, String> {
+    let database = state.database.clone();
+    run_database_task(move || database.message_trust(&message_id)).await
 }
 
 #[tauri::command]
@@ -5435,6 +5448,8 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         mark_contacted,
         contact_timeline,
         contact_activity,
+        sender_history,
+        message_trust,
         contact_files,
         list_files,
         context_candidates,

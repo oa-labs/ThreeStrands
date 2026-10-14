@@ -28,6 +28,7 @@ mod messages;
 mod mutations;
 mod recovery;
 mod search;
+mod sender;
 mod settings_transfer;
 mod snippets;
 mod split_inboxes;
@@ -39,6 +40,7 @@ pub(crate) use labels::cache_label_listing;
 pub use mail_sync::SentBackfillProgress;
 pub use mutations::PendingMutation;
 pub use recovery::{open_with_recovery, OpenError, RecoveryOutcome};
+pub(crate) use sender::MAX_SENDER_THREADS;
 
 #[cfg(test)]
 pub(crate) mod test_support;

@@ -652,7 +652,7 @@ describe("message cards", () => {
       await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
       expect(container.querySelectorAll("button.message-card-toggle[aria-expanded='false']")).toHaveLength(0);
-      expect(container.querySelectorAll("[aria-expanded='true']")).toHaveLength(3);
+      expect(container.querySelectorAll("[aria-expanded='true']:not(.context-section-toggle)")).toHaveLength(3);
       expect(screen.getAllByTestId("message-body")).toHaveLength(3);
 
       const frameDocuments = screen.getAllByTestId("message-body").map((frame) => (frame as HTMLIFrameElement).srcdoc);
@@ -661,7 +661,7 @@ describe("message cards", () => {
       await screen.findByRole("button", { name: "Mark Unread (u)" });
 
       expect(container.querySelectorAll("button.message-card-toggle[aria-expanded='false']")).toHaveLength(0);
-      expect(container.querySelectorAll("[aria-expanded='true']")).toHaveLength(3);
+      expect(container.querySelectorAll("[aria-expanded='true']:not(.context-section-toggle)")).toHaveLength(3);
       expect(screen.getAllByTestId("message-body")).toHaveLength(3);
       expect(screen.getAllByTestId("message-body").map((frame) => (frame as HTMLIFrameElement).srcdoc)).toEqual(frameDocuments);
     } finally {
@@ -791,6 +791,62 @@ describe("conversation shortcuts", () => {
 
     expect(await screen.findByRole("status")).toHaveTextContent("Unsubscribe request sent");
     expect(screen.queryByRole("dialog", { name: "Unsubscribe" })).not.toBeInTheDocument();
+  });
+});
+
+describe("bulk sender decisions in the context panel", () => {
+  useConversationFixture();
+
+  it("archives every Inbox conversation from the sender, including ones the list has not loaded, with Undo", async () => {
+    vi.spyOn(mailClient, "senderHistory").mockResolvedValue({
+      receivedCount: 3, readCount: 1, firstAt: "2026-06-01T00:00:00Z", lastSentAt: null, recentReceivedAt: [],
+      inboxThreadIds: ["welcome", "roadmap", "not-loaded"], threads: [],
+    });
+    const mutateThreads = vi.spyOn(mailClient, "mutateThreads").mockResolvedValue();
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const panel = screen.getByRole("complementary", { name: "Conversation context" });
+    const sender = await within(panel).findByRole("region", { name: /^From / });
+    expect(within(panel).getByRole("region", { name: "Trust" })).toBeInTheDocument();
+
+    await act(async () => {
+      within(sender).getByRole("button", { name: "Archive 3 in Inbox" }).click();
+    });
+    await waitFor(() => expect(mutateThreads).toHaveBeenCalledWith([
+      { kind: "archive", threadId: "welcome", value: true },
+      { kind: "archive", threadId: "roadmap", value: true },
+      { kind: "archive", threadId: "not-loaded", value: true },
+    ]));
+    expect(await screen.findByRole("status")).toHaveTextContent("Archived 3 conversations");
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Undo" }).click();
+    });
+    await waitFor(() => expect(mutateThreads).toHaveBeenLastCalledWith([
+      { kind: "archive", threadId: "welcome", value: false },
+      { kind: "archive", threadId: "roadmap", value: false },
+      { kind: "archive", threadId: "not-loaded", value: false },
+    ]));
+  });
+
+  it("creates a split for the sender from a dialog and reports it", async () => {
+    const create = vi.spyOn(mailClient, "createSplitInbox");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const sender = await screen.findByRole("region", { name: /^From / });
+    await act(async () => {
+      within(sender).getByRole("button", { name: "New Split…" }).click();
+    });
+    const dialog = await screen.findByRole("dialog", { name: "New Split" });
+    expect(create).not.toHaveBeenCalled();
+    await act(async () => {
+      within(dialog).getByRole("button", { name: "Create Split" }).click();
+    });
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.any(String), "pattern", expect.stringContaining("@"), expect.any(String)));
+    expect(await screen.findByRole("status")).toHaveTextContent(/^Created the .+ split$/);
+    expect(screen.queryByRole("dialog", { name: "New Split" })).not.toBeInTheDocument();
+    const created = await create.mock.results[0].value;
+    await mailClient.deleteSplitInbox(created.id);
   });
 });
 

@@ -681,6 +681,35 @@ pub struct ContactTimelineItem {
     pub labels: Vec<String>,
 }
 
+/// Everything stored from one sender address in one account, including the
+/// automated mail the contact index leaves out.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SenderHistory {
+    pub received_count: i64,
+    /// Received messages no longer marked unread.
+    pub read_count: i64,
+    pub first_at: Option<String>,
+    /// The user's latest message to the address, from this account.
+    pub last_sent_at: Option<String>,
+    /// Newest first, one entry per received message.
+    pub recent_received_at: Vec<String>,
+    /// Conversations from the sender still in the Inbox, newest first.
+    pub inbox_thread_ids: Vec<String>,
+    /// Conversations from the sender outside Trash, newest first.
+    pub threads: Vec<SenderThread>,
+}
+
+/// One conversation in a sender's history, dated by the sender's newest message in it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SenderThread {
+    pub thread_id: String,
+    pub subject: String,
+    pub snippet: String,
+    pub sent_at: String,
+}
+
 /// Local correspondence history with one person, across every address they
 /// use. Automated mail is excluded, matching the rest of the contact index.
 #[derive(Debug, Clone, Serialize)]

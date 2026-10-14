@@ -62,6 +62,8 @@ import type {
   ThreadMutation,
   TriageEvent,
   TriageSenderStats,
+  SenderHistory,
+  MessageTrust,
   UnreadCounts,
   UnsubscribeResult,
   UpdateTaskRequest,
@@ -197,6 +199,10 @@ export interface MailClient extends CorrespondenceClient {
   contactTimeline(id: string, offset?: number, limit?: number, accountId?: string): Promise<ContactTimelineItem[]>;
   /** Counts and timing of local correspondence with a saved id or `derived:<email>`. */
   contactActivity(id: string): Promise<ContactActivity>;
+  /** Stored mail from one address in one account, including automated mail. */
+  senderHistory(accountId: string, email: string, limit?: number): Promise<SenderHistory>;
+  /** Trust signals from a message's stored headers; null when they are not cached. */
+  messageTrust(messageId: string): Promise<MessageTrust | null>;
   /** Non-inline attachments the person sent, newest first. */
   contextCandidates(query: ContextQuery): Promise<WorkspaceConversation[]>;
   listFiles(query: FileQuery): Promise<FilePage>;
@@ -387,6 +393,8 @@ const tauriClient: MailClient = {
   markContacted: (id) => complete("mark_contacted", { id }),
   contactTimeline: (id, offset = 0, limit = 30, accountId) => read("contact_timeline", { id, offset, limit, accountId }),
   contactActivity: (id) => read("contact_activity", { id }),
+  senderHistory: (accountId, email, limit) => read("sender_history", { accountId, email, limit }),
+  messageTrust: (messageId) => read("message_trust", { messageId }),
   contextCandidates: (query) => read("context_candidates", { query }),
   listFiles: (query) => read("list_files", { query }),
   fileStars: (messageIds) => read("file_stars", { messageIds }),

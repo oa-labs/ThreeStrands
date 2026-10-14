@@ -7,8 +7,8 @@ import { expect } from "vitest";
 export function expectContextRows(section: Element) {
   const body = section.querySelector(":scope > div");
   expect(body).not.toBeNull();
-  // Notes, Show more/Load older links, and errors are not rows.
-  const rows = [...body!.children].filter((child) => !child.matches(".context-section-note, .context-link-button, .form-error"));
+  // Notes, a section's decision buttons, Show more/Load older links, and errors are not rows.
+  const rows = [...body!.children].filter((child) => !child.matches(".context-section-note, .context-sender-actions, .context-link-button, .form-error"));
   expect(rows.length).toBeGreaterThan(0);
   for (const row of rows) {
     expect(row.matches(".context-row"), row.outerHTML).toBe(true);

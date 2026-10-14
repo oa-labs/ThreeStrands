@@ -45,7 +45,7 @@ import type { GettingStartedStepId } from "./gettingStartedSteps";
 import { CalendarSidebar } from "./CalendarSidebar";
 import { eventDate, startOfLocalDay } from "./calendarTime";
 import { chatAttachmentOptions } from "./chatAttachments";
-import { labelCommand, type MailboxKind } from "./commands";
+import { labelCommand, undoResult, type MailboxKind } from "./commands";
 import { draftRecipients } from "./composeChecks";
 import { ComposeContext, ReplyChecks } from "./ComposeContext";
 import { DraftReviewSection } from "./DraftReviewSection";
@@ -84,6 +84,8 @@ import { ThreadRow } from "./ThreadList";
 import { ThreadTasks } from "./ThreadTasks";
 import { threadTextIndex } from "./threadTextIndex";
 import { UnsubscribeConfirm } from "./UnsubscribeConfirm";
+import { SenderSplitDialog } from "./SenderSplitDialog";
+import type { SenderActions, SenderTarget } from "./SenderSections";
 import { UpdateNotice } from "./UpdateNotice";
 import { useAccounts } from "./useAccounts";
 import { useAiAvailability } from "./useAiAvailability";
@@ -230,6 +232,7 @@ export function App() {
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [gettingStartedOpen, setGettingStartedOpen] = useState(false);
   const [unsubscribeMessageId, setUnsubscribeMessageId] = useState<string | null>(null);
+  const [splitTarget, setSplitTarget] = useState<SenderTarget | null>(null);
   const fileSessions = useRef(new Map<string, FilesWorkspaceSnapshot>());
   const calendarSession = useRef<CalendarWorkspaceSnapshot | null>(null);
   const taskSessions = useRef(new Map<string, TaskWorkspaceSnapshot>());
@@ -398,7 +401,7 @@ export function App() {
     ? "compose"
     : paletteOpen
       ? "palette"
-      : settingsOpen || shortcutHelpOpen || gettingStartedOpen || Boolean(unsubscribeMessage) || Boolean(labelTargetIds?.length) || Boolean(taskEditor) || Boolean(meetingEditor)
+      : settingsOpen || shortcutHelpOpen || gettingStartedOpen || Boolean(unsubscribeMessage) || Boolean(splitTarget) || Boolean(labelTargetIds?.length) || Boolean(taskEditor) || Boolean(meetingEditor)
         ? "modal"
         : "read";
 
@@ -424,6 +427,21 @@ export function App() {
   const {
     executeCommand, executeById, paletteExtraCommands, runOnSelection,
   } = useCommandExecution({ context, accounts, accountSplitInboxes, checkedIds, mutateIds, rememberUndo, setNotice });
+  const senderActions = useMemo<SenderActions>(() => ({
+    splits: splitInboxCatalog.splitInboxes,
+    onUnsubscribe: canUnsubscribe ? () => executeById("thread.unsubscribe") : undefined,
+    // Reaches conversations the list has not paged in, and offers Undo like any archive.
+    onArchiveThreads: (ids) => executeCommand({
+      id: "sender.archiveInbox",
+      title: "Archive",
+      keys: [],
+      group: "Triage",
+      enabled: () => true,
+      run: () => mutateIds(ids, { kind: "archive", value: true }, { includeUnloaded: true }),
+      undo: undoResult,
+    }),
+    onNewSplit: setSplitTarget,
+  }), [splitInboxCatalog.splitInboxes, canUnsubscribe, executeById, executeCommand, mutateIds]);
   const runGettingStartedStep = useCallback((id: GettingStartedStepId) => {
     setGettingStartedOpen(false);
     if (id === "connectMail") openSettingsAt("accounts");
@@ -1024,6 +1042,7 @@ export function App() {
             ) : null,
           } : null}
           onKeyDown={contextPanelKeyDown}
+          sender={senderActions}
           onOpenThread={jumpToThread}
           onShowMessage={showMessage}
           assist={visibleDetail ? (<>
@@ -1196,6 +1215,19 @@ export function App() {
           message={unsubscribeMessage}
           onClose={() => setUnsubscribeMessageId(null)}
           onConfirm={confirmUnsubscribe}
+        />
+      ) : null}
+      {splitTarget ? (
+        <SenderSplitDialog
+          target={splitTarget}
+          onClose={() => setSplitTarget(null)}
+          onCreate={async (name, matchKind, matchValue, accountId) => {
+            await splitInboxCatalog.create(name, matchKind, matchValue, accountId);
+            setSplitTarget(null);
+            // The new rule takes its matches out of the Inbox now, not at the next sync.
+            void loadThreadsRef.current(queryRef.current);
+            setNotice({ message: `Created the ${name} split` });
+          }}
         />
       ) : null}
       {paletteOpen ? (

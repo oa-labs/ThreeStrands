@@ -48,8 +48,15 @@ export function useThreadMutations({
   const viewKeyRef = useRef(viewKey);
   viewKeyRef.current = viewKey;
 
-  const mutateIds = useCallback(async (ids: string[], template: MutationTemplate): Promise<CommandResult> => {
-    const targetIds = ids.filter((id) => threads.some((thread) => thread.id === id));
+  /**
+   * Applies `template` to the conversations. By default only conversations in
+   * the loaded list count; `includeUnloaded` also reaches ones the list has
+   * not paged in, such as every Inbox conversation from one sender.
+   */
+  const mutateIds = useCallback(async (ids: string[], template: MutationTemplate, options?: { includeUnloaded?: boolean }): Promise<CommandResult> => {
+    const targetIds = options?.includeUnloaded
+      ? [...new Set(ids)]
+      : ids.filter((id) => threads.some((thread) => thread.id === id));
     if (targetIds.length === 0) return {};
     if (template.kind === "read" && !template.value && selectedId && targetIds.includes(selectedId)) {
       autoReadSuppressedForId.current = selectedId;

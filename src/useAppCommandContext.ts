@@ -31,7 +31,7 @@ type Options = {
   recordTriageEvent: ReturnType<typeof useTriageSession>["recordTriageEvent"];
   displayedMessages: Message[];
   composerBelongsToVisibleThread: boolean;
-  mutateIds: (ids: string[], template: MutationTemplate) => Promise<CommandResult>;
+  mutateIds: (ids: string[], template: MutationTemplate, options?: { includeUnloaded?: boolean }) => Promise<CommandResult>;
   view: {
     mailbox: MailboxKind;
     setMailbox: Dispatch<SetStateAction<MailboxKind>>;

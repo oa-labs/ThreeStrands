@@ -96,6 +96,11 @@ fn index_contact_addresses(
 }
 
 impl Database {
+    // Only exercised by tests now that the v44 upgrade hook was removed with
+    // the historical migration chain (migrate() refuses pre-baseline
+    // databases). Kept because the open-path test helper and a contacts test
+    // still rebuild interactions from scratch.
+    #[cfg(test)]
     pub fn rebuild_contact_interactions(&self) -> DbResult<()> {
         self.with_transaction(|tx|{
             tx.execute("DELETE FROM contact_interactions",[])?;

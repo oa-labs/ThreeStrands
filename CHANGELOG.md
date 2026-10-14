@@ -9,6 +9,8 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Image attachments on a message now show a small preview of the picture, so you can tell them apart without opening each one.
 - When an email announces events, such as a school or club calendar, **Get Brief** and **Ask about this conversation** now offer each one as an event you can add to your calendar at its stated time. Events with a date but no time yet are added as all-day events.
 - New events can now be marked **All day** and given a location.
+- Newsletters and other bulk mail now show who sent them in the side panel: how many emails they've sent, how often, and how many you've read, with one-click **Unsubscribe**, **Archive** for everything still in your Inbox from them, and **New Split…** to give them their own tab.
+- A new **Trust** section shows whether your mail server verified the sender, which sites the links open, and any tracking images. It also appears on any email where a link's text names a different site than it opens, or replies would go to another organization.
 
 ### Improved
 - Times you offer or confirm in a reply now end with a familiar time zone abbreviation such as EDT or PST, instead of a name like America/New_York.

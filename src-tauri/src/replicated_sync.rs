@@ -3729,10 +3729,6 @@ mod config_tests {
 mod reconciliation_tests {
     use super::*;
 
-    fn count(database: &Database, sql: &str) -> i64 {
-        database.connection().unwrap().query_row(sql, [], |row| row.get(0)).unwrap()
-    }
-
     fn table_exists(database: &Database, table: &str) -> bool {
         database
             .connection()
@@ -3741,81 +3737,32 @@ mod reconciliation_tests {
             .unwrap()
     }
 
-    /// Puts back the tables a protocol-2 build kept (in the columns the
-    /// upgrade reads), fills them with a group, marks the schema as the
-    /// version before the upgrade, and runs the migration again.
-    fn upgrade_from_a_protocol_2_group(database: &Database, enrolled: bool) {
+    #[test]
+    fn the_protocol_reset_notice_and_keychain_cleanup_apis_round_trip() {
+        // The v35/v36 protocol-reset migrations that populated these tables
+        // were removed with the historical chain (migrate() now refuses a
+        // pre-baseline database). The RUNTIME surface that reads them is still
+        // wired into the app (see lib.rs replicated_sync_*_protocol_reset_*),
+        // so exercise it directly: a notice and a pending keychain-cleanup row
+        // are read, and the notice can be dismissed.
+        let database = Database::open_memory();
+        assert!(!database.protocol_reset_notice().unwrap());
+        assert_eq!(database.pending_keychain_cleanup().unwrap(), None);
+
         database
             .connection()
             .unwrap()
             .execute_batch(
-                "CREATE TABLE sync_events (event_id TEXT PRIMARY KEY, device_id TEXT, device_sequence INTEGER, state TEXT);
-                 CREATE TABLE sync_operations (operation_id TEXT PRIMARY KEY, event_id TEXT, entity_id TEXT, field TEXT, value TEXT);
-                 CREATE TABLE sync_field_frontier (entity_id TEXT, field TEXT, operation_id TEXT);
-                 CREATE TABLE sync_device_progress (device_id TEXT PRIMARY KEY);
-                 INSERT INTO sync_events VALUES ('e1','d1',1,'sealed');
-                 INSERT INTO sync_operations VALUES ('o1','e1','s1','name','\"n\"');
-                 INSERT INTO sync_devices(device_id,status,is_self) VALUES ('d1','active',1);
-                 INSERT INTO sync_device_labels VALUES ('d1','Laptop');",
+                "INSERT INTO sync_notices(kind, created_at) VALUES ('protocol_reset', '2026-09-01T00:00:00Z');
+                 INSERT INTO sync_pending_keychain_cleanup(id, highest_epoch) VALUES (1, 3);",
             )
             .unwrap();
-        if enrolled {
-            database
-                .connection()
-                .unwrap()
-                .execute_batch(
-                    "INSERT INTO sync_epoch_history VALUES (3,'2026-09-01T00:00:00Z','cid');
-                     UPDATE sync_spaces SET active_epoch=3;",
-                )
-                .unwrap();
-        }
-        let mut connection = database.connection().unwrap();
-        connection.pragma_update(None, "user_version", 35).unwrap();
-        crate::schema::migrate(&mut connection).unwrap();
-    }
 
-    #[test]
-    fn upgrading_leaves_a_protocol_2_group_but_keeps_local_data_connectors_and_the_beta() {
-        let database = Database::open_memory();
-        database.set_beta_features_enabled(true).unwrap();
-        let snippet = database.create_snippet("Signature", "Best, Alex").unwrap();
-        database.add_folder_transport("folder-1", &std::env::temp_dir()).unwrap();
-        upgrade_from_a_protocol_2_group(&database, true);
-
-        for table in ["sync_events", "sync_operations", "sync_field_frontier", "sync_device_progress"] {
-            assert!(!table_exists(&database, table), "{table} should be gone");
-        }
-        for table in ["sync_values", "sync_context", "sync_devices", "sync_device_labels", "sync_epoch_history"] {
-            assert_eq!(count(&database, &format!("SELECT COUNT(*) FROM {table}")), 0, "{table} should be empty");
-        }
-        assert_eq!(count(&database, "SELECT active_epoch FROM sync_spaces"), 0);
-        assert!(database.beta_features_enabled().unwrap());
-        assert_eq!(database.configured_transports().unwrap().len(), 1);
-        assert_eq!(count(&database, "SELECT COUNT(*) FROM snippets"), 1);
+        assert!(database.protocol_reset_notice().unwrap());
         assert_eq!(database.pending_keychain_cleanup().unwrap(), Some(3));
 
-        // The user is told once, and can dismiss it.
-        assert!(database.protocol_reset_notice().unwrap());
         database.dismiss_protocol_reset_notice().unwrap();
         assert!(!database.protocol_reset_notice().unwrap());
-
-        // The next sync re-records local data into the replica.
-        assert!(database.reconcile_replicated_sync_backlog().unwrap() >= 1);
-        let recorded: i64 = database
-            .connection()
-            .unwrap()
-            .query_row("SELECT COUNT(*) FROM sync_values WHERE entity_id=?1 AND field='_entity'", [&snippet.id], |row| row.get(0))
-            .unwrap();
-        assert_eq!(recorded, 1);
-    }
-
-    #[test]
-    fn upgrading_a_device_that_never_joined_a_group_says_nothing() {
-        let database = Database::open_memory();
-        upgrade_from_a_protocol_2_group(&database, false);
-        assert!(!database.protocol_reset_notice().unwrap());
-        assert_eq!(database.pending_keychain_cleanup().unwrap(), None);
-        assert!(!table_exists(&database, "sync_events"));
     }
 
     #[test]

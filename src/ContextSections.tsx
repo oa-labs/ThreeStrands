@@ -151,7 +151,7 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
  * and whose rows stop at a few with "Show more", so stacked sections stay
  * scannable instead of pushing everything else down.
  */
-export function ContextSection({ id, title, label, count, actions, note, rows, limit = CONTEXT_SECTION_ROWS, footer, className }: {
+export function ContextSection({ id, title, label, count, actions, note, lead, rows, limit = CONTEXT_SECTION_ROWS, footer, className }: {
   /** Stable key for the remembered collapse state. */
   id: string;
   title: ReactNode;
@@ -162,6 +162,8 @@ export function ContextSection({ id, title, label, count, actions, note, rows, l
   actions?: ReactNode;
   /** A line under the heading, such as a date range. */
   note?: ReactNode;
+  /** Controls between the note and the rows, such as a section's decisions. */
+  lead?: ReactNode;
   rows: ReactNode[];
   /** How many rows show before "Show more". */
   limit?: number;
@@ -183,6 +185,7 @@ export function ContextSection({ id, title, label, count, actions, note, rows, l
       <ContextSectionHeader title={title} titleId={headingId} count={count} actions={actions} toggle={{ collapsed, controls: bodyId, onToggle: toggle }} />
       <div id={bodyId} hidden={collapsed}>
         {note ? <p className="context-section-note">{note}</p> : null}
+        {lead}
         {expanded || hidden <= 0 ? rows : rows.slice(0, limit)}
         {hidden > 0 ? (
           <button type="button" className="btn-link context-link-button" onClick={() => setExpanded(!expanded)}>
