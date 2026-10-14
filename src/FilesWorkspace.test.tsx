@@ -192,6 +192,45 @@ describe("Files workspace", () => {
     expect(container.querySelector(".file-list-heading-main")).toHaveTextContent("FilenameSenderDateSize");
     expect(container.querySelector(".context-row-wrap")).toHaveTextContent(report.subject);
   });
+  it("opens another sender in Contacts from the details and keeps the user's own address plain", async () => {
+    vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[report],total:1});
+    vi.spyOn(mailClient,"resolveContactIds").mockResolvedValue({"alice@example.com":"contact:alice"});
+    const onOpenContact=vi.fn();
+    const view=render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} onOpenContact={onOpenContact} />);
+    const details=within(await screen.findByRole("complementary",{name:"File context"}));
+    const sender=await details.findByRole("button",{name:"Alice"});
+    expect(sender).toHaveAccessibleDescription("Opens in Contacts");
+    fireEvent.focus(sender);
+    expect(await screen.findByRole("group",{name:"Contact card for Alice"})).toBeInTheDocument();
+    fireEvent.click(sender);
+    await waitFor(() => expect(onOpenContact).toHaveBeenCalledWith("contact:alice"));
+    view.unmount();
+
+    const sent={...report,sender:"Me <you@example.com>",direction:"sent" as const};
+    vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[sent],total:1});
+    render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} onOpenContact={onOpenContact} />);
+    const own=within(await screen.findByRole("complementary",{name:"File context"}));
+    await waitFor(() => expect(own.getAllByText("Me").length).toBeGreaterThan(0));
+    expect(own.queryByRole("button",{name:"Me"})).not.toBeInTheDocument();
+  });
+  it("opens an unsaved sender as their mail-derived contact", async () => {
+    vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[report],total:1});
+    vi.spyOn(mailClient,"resolveContactIds").mockResolvedValue({});
+    const onOpenContact=vi.fn();
+    render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} onOpenContact={onOpenContact} />);
+    fireEvent.click(await within(await screen.findByRole("complementary",{name:"File context"})).findByRole("button",{name:"Alice"}));
+    await waitFor(() => expect(onOpenContact).toHaveBeenCalledWith("derived:alice@example.com"));
+  });
+  it("labels the details star as a button beside Open and Save as", async () => {
+    vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[report],total:1});
+    const {container}=render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} />);
+    await waitFor(() => expect(container.querySelector(".file-detail-actions")).not.toBeNull());
+    const actions=container.querySelector<HTMLElement>(".file-detail-actions")!;
+    const star=within(actions).getByRole("button",{name:"Star forecast.pdf"});
+    expect(star).toHaveClass("btn");
+    expect(star).toHaveTextContent("Star");
+    expect(within(actions).getAllByRole("button").map((button) => button.textContent)).toEqual(["Open","Save as…","Star"]);
+  });
   it("labels accounts in the merged view so otherwise identical files remain distinguishable", async () => {
     const other={...copy,accountId:"other@example.com"};
     vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[report,other],total:2});

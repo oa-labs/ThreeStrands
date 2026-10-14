@@ -16,6 +16,7 @@ import { formatDisplayName, parseAddress } from "./emailAddress";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 import { isCalendarAttachment } from "./CalendarAttachment";
 import { invitationTitle } from "./invitationTitle";
+import { AddressWithCard } from "./AddressWithCard";
 
 export type FilesWorkspaceSnapshot = { files: WorkspaceFile[]; total: number; hiddenCalendar?: number; selected: string | null; search: string; sender: string; type: string; direction: "" | "received" | "sent"; scope: string; after: string; before: string; starred: boolean; scroll: number };
 const PAGE_SIZE = 50;
@@ -45,7 +46,21 @@ const localDayStart = (day: string, days = 0) => { const [year, month, date] = d
 /** Rows to fetch: a refresh re-reads every loaded row, "Load more" appends one page. */
 type FileLoad = { offset: number; count: number; attempt: number };
 
-export function FilesWorkspace({ accountId, accountIds, onOpenThread, sessions, refreshKey = "" }: { refreshKey?: string; sessions?: RefObject<Map<string, FilesWorkspaceSnapshot>>; accountId: string | null; accountIds: string[]; onOpenThread(id: string): void }) {
+/**
+ * The selected file's sender. Other people get the reader's contact hover
+ * card, and clicking their name opens them in Contacts; the user's own
+ * addresses stay plain text.
+ */
+function FileSender({ file, own, onOpenContact }: { file: WorkspaceFile; own: string[]; onOpenContact?(id: string): void }) {
+  const email = parseAddress(file.sender).email.toLocaleLowerCase();
+  if (!onOpenContact || !email.includes("@") || own.some((address) => address.toLocaleLowerCase() === email)) return <>{senderName(file)}</>;
+  const open = () => void mailClient.resolveContactIds([email])
+    .then((owners) => owners[email], () => undefined)
+    .then((id) => onOpenContact(id ?? `derived:${email}`));
+  return <AddressWithCard email={email} displayName={senderName(file)} hint="Opens in Contacts" onActivate={open} onOpenContact={onOpenContact} />;
+}
+
+export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenContact, sessions, refreshKey = "" }: { refreshKey?: string; sessions?: RefObject<Map<string, FilesWorkspaceSnapshot>>; accountId: string | null; accountIds: string[]; onOpenThread(id: string): void; onOpenContact?(id: string): void }) {
   const sessionKey=accountId ?? "all";
   const restored=useRef(sessions?.current.get(sessionKey));
   const main=useRef<HTMLDivElement>(null);
@@ -191,15 +206,17 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, sessions, 
       <WorkspaceContextRail label="File context" onReturn={() => rows.current.get(selected ?? "")?.focus()}>
         <ContextSectionHeader title="File details" />
         {file ? <>
-          <h2 className="file-detail-name">{meetingTitle(file) ?? file.attachment.filename}</h2>
-          <p className="file-detail-meta">{fileTypeLabel(file.attachment.filename, file.attachment.mimeType)}{meetingTitle(file) ? ` · ${file.attachment.filename}` : ""} · {formatAttachmentSize(file.attachment.size)}</p>
-          <dl className="file-detail-metadata">
-            <div><dt>From</dt><dd>{senderName(file)}{parseAddress(file.sender).email !== senderName(file) ? <span>{parseAddress(file.sender).email}</span> : null}</dd></div>
-            <div><dt>{file.direction === "sent" ? "Sent" : "Received"}</dt><dd>{new Date(file.sentAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</dd></div>
-            {showAccount ? <div><dt>Account</dt><dd>{file.accountId}</dd></div> : null}
-          </dl>
-          {file.availability === "offline" ? <p className="file-detail-meta">Available offline</p> : !online ? <p className="file-detail-meta" role="status">{file.availability === "download" ? "Connect to the internet to open this file." : "This file may need an internet connection."}</p> : null}
-          <div className="file-detail-actions"><button type="button" className="btn" onClick={() => action(mailClient.openAttachment(file.messageId,file.attachment.id))}><ExternalLink size={ICON_SIZE.sm} />Open</button><button type="button" className="btn" onClick={() => action(mailClient.saveAttachment(file.messageId,file.attachment.id))}><Download size={ICON_SIZE.sm} />Save as…</button><FileStarButton accountId={file.accountId} messageId={file.messageId} attachmentId={file.attachment.id} filename={file.attachment.filename} starred={file.starred} /></div>
+          <div className="file-detail">
+            <h2 className="file-detail-name">{meetingTitle(file) ?? file.attachment.filename}</h2>
+            <p className="file-detail-meta">{fileTypeLabel(file.attachment.filename, file.attachment.mimeType)}{meetingTitle(file) ? ` · ${file.attachment.filename}` : ""} · {formatAttachmentSize(file.attachment.size)}</p>
+            <dl className="file-detail-metadata">
+              <div><dt>From</dt><dd><FileSender file={file} own={accountIds} onOpenContact={onOpenContact} />{parseAddress(file.sender).email !== senderName(file) ? <span>{parseAddress(file.sender).email}</span> : null}</dd></div>
+              <div><dt>{file.direction === "sent" ? "Sent" : "Received"}</dt><dd>{new Date(file.sentAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</dd></div>
+              {showAccount ? <div><dt>Account</dt><dd>{file.accountId}</dd></div> : null}
+            </dl>
+            {file.availability === "offline" ? <p className="file-detail-meta">Available offline</p> : !online ? <p className="file-detail-meta" role="status">{file.availability === "download" ? "Connect to the internet to open this file." : "This file may need an internet connection."}</p> : null}
+            <div className="file-detail-actions"><button type="button" className="btn" onClick={() => action(mailClient.openAttachment(file.messageId,file.attachment.id))}><ExternalLink size={ICON_SIZE.sm} />Open</button><button type="button" className="btn" onClick={() => action(mailClient.saveAttachment(file.messageId,file.attachment.id))}><Download size={ICON_SIZE.sm} />Save as…</button><FileStarButton accountId={file.accountId} messageId={file.messageId} attachmentId={file.attachment.id} filename={file.attachment.filename} starred={file.starred} labeled /></div>
+          </div>
           <ContextSection id="file-source" title="Source conversation" rows={[<ContextRow key="source" icon={<MessageSquareText size={ICON_SIZE.sm} />} title={file.subject} wrapTitle detail={senderName(file)} date={formatHistoryDate(file.sentAt)} onActivate={() => onOpenThread(file.threadId)} />]} />
         </> : <p className="context-status">Select a file to see its details and source email.</p>}
       </WorkspaceContextRail>

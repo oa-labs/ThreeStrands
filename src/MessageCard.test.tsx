@@ -6,7 +6,8 @@ import type { OutboxItem } from "./correspondence";
 import { mailClient } from "./data/client";
 import type { Account, ContactProfile, Message } from "./domain";
 import * as inlineAttachments from "./inlineAttachments";
-import { MessageCard, placeHoverCard } from "./MessageCard";
+import { placeHoverCard } from "./AddressWithCard";
+import { MessageCard } from "./MessageCard";
 import { threadTextIndex } from "./threadTextIndex";
 
 vi.mock("./inlineAttachments", async (importOriginal) => {

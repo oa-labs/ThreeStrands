@@ -118,6 +118,13 @@ describe("primary workspace headers", () => {
     expect(lastDeclaration(".message-header-actions", "align-self")).toBeUndefined();
   });
 
+  it("starts file details at the section label's edge and aligns each label with its value's baseline", () => {
+    // The header's label sits after the glyph column; details flush with the
+    // panel edge started left of it.
+    expect(lastDeclaration(".file-detail", "padding-left")).toBe("calc(var(--context-row-inset) + var(--context-glyph-column))");
+    expect(lastDeclaration(".file-detail-metadata > div", "align-items")).toBe("baseline");
+  });
+
   it("titles Settings with the same page title type as the four workspaces", () => {
     for (const property of ["font-size", "font-weight", "letter-spacing"]) {
       expect(lastDeclaration(".settings-page-header h2", property)).toBe(lastDeclaration(".contacts-header h1", property));

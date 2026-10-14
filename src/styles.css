@@ -3233,10 +3233,13 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .file-list-account { display: block; overflow: hidden; text-overflow: ellipsis; font-size: var(--text-meta); }
 .file-list-date, .file-list-size { text-align: right; font-variant-numeric: tabular-nums; }
 .files-workspace .workspace-context-rail { font-size: var(--text-body); line-height: var(--leading-normal); }
+/* Details start at the section label's edge, like the rows under each section heading. */
+.file-detail { padding-left: calc(var(--context-row-inset) + var(--context-glyph-column)); }
 .file-detail-name { margin: 0 0 var(--space-1); font-size: var(--text-body); font-weight: var(--weight-medium); line-height: var(--leading-normal); overflow-wrap: anywhere; }
 .file-detail-meta { margin: 0 0 var(--space-3); color: var(--muted); font-size: var(--text-meta); }
 .file-detail-metadata { display: grid; gap: var(--space-2); margin: 0 0 var(--space-3); font-size: var(--text-secondary); }
-.file-detail-metadata > div { display: grid; grid-template-columns: 5em minmax(0, 1fr); gap: var(--space-2); }
+.file-detail-metadata > div { display: grid; grid-template-columns: 5em minmax(0, 1fr); align-items: baseline; gap: var(--space-2); }
+.file-detail-metadata .address { position: relative; display: inline-flex; max-width: 100%; }
 .file-detail-metadata dt { color: var(--muted); font-size: var(--text-meta); }
 .file-detail-metadata dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .file-detail-metadata dd span { display: block; color: var(--muted); font-size: var(--text-meta); }
