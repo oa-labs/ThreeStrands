@@ -134,4 +134,56 @@ describe("MeetingScheduler", () => {
     expect(await screen.findByText("Free on the calendars that could be checked")).toBeInTheDocument();
     await waitFor(() => expect(check).toHaveBeenCalledTimes(2));
   });
+  it("adds an announced event as given, without offering other times or a reply", async () => {
+    vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "conflicting", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] } as never);
+    const handlers = renderScheduler({ ...specific, announced: true });
+
+    expect(await screen.findByText(/Conflicts with/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add to Calendar" }));
+    expect(handlers.onAddToCalendar).toHaveBeenCalledWith(specific.query);
+    expect(screen.queryByRole("button", { name: "Find Other Times" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reply “That Works”" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "More Times" })).not.toBeInTheDocument();
+  });
+
+  it("adds a date-only event as an all-day event without checking the calendar", () => {
+    const check = vi.spyOn(mailClient, "checkProposedTime");
+    const search = vi.spyOn(mailClient, "findAvailability");
+    const handlers = renderScheduler({ query: null, day: "2026-11-07", durationMinutes: 30, timeZoneAssumed: false, announced: true });
+
+    expect(screen.getByText("Sat, Nov 7 · Time not set")).toBeInTheDocument();
+    expect(screen.queryByText("Checking your calendar…")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add to Calendar" }));
+    expect(handlers.onAddToCalendar).toHaveBeenCalledWith({ start: "2026-11-07", end: "2026-11-07", allDay: true });
+    expect(check).not.toHaveBeenCalled();
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it("asks for a date for an announced event that has none, and never offers new times once it has passed", () => {
+    const search = vi.spyOn(mailClient, "findAvailability");
+    renderScheduler({ query: null, undated: true, durationMinutes: 30, timeZoneAssumed: false, announced: true });
+    expect(screen.getByText("No date yet. Use Edit to set one.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add to Calendar" })).not.toBeInTheDocument();
+    cleanup();
+    renderScheduler({ query: null, durationMinutes: 30, timeZoneAssumed: false, announced: true });
+    expect(screen.getByText("This event has already happened.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Find New Times" })).not.toBeInTheDocument();
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it("keeps its result when re-rendered with equal preferences", async () => {
+    const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    const handlers = { onAddToCalendar: vi.fn(), onReplyWithTimes: vi.fn(), onConfirmTime: vi.fn(), onMoreTimes: vi.fn(), onOpenCalendarSettings: vi.fn() };
+    const { rerender } = render(<MeetingScheduler plan={specific} preferences={preferences} calendarConnected {...handlers} />);
+    expect(await screen.findByText("You’re free")).toBeInTheDocument();
+    // A synced copy with the same values must not re-check (and flash) the card.
+    rerender(<MeetingScheduler plan={specific} preferences={{ ...preferences, workingWindows: preferences.workingWindows.map((window) => ({ ...window })) }} calendarConnected {...handlers} />);
+    expect(screen.getByText("You’re free")).toBeInTheDocument();
+    expect(screen.queryByText("Checking your calendar…")).not.toBeInTheDocument();
+    expect(check).toHaveBeenCalledTimes(1);
+    // A real change still re-checks.
+    rerender(<MeetingScheduler plan={specific} preferences={{ ...preferences, timeZone: "America/Chicago" }} calendarConnected {...handlers} />);
+    await waitFor(() => expect(check).toHaveBeenCalledTimes(2));
+  });
 });

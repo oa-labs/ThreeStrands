@@ -149,6 +149,7 @@ describe("ThreadChat", () => {
           replyDraft: "Thanks, Friday works.",
           addedSuggestions: 2,
           hiddenSuggestions: 1,
+          extraSuggestions: 4,
           sources: [{ threadId: "t2", accountId: "you@example.com", subject: "Pricing", lastMessageAt: "2026-09-01T00:00:00Z" }],
           searched: [
             { threadId: "t2", accountId: "you@example.com", subject: "Pricing", lastMessageAt: "2026-09-01T00:00:00Z" },
@@ -167,6 +168,7 @@ describe("ThreadChat", () => {
     fireEvent.click(within(log).getByRole("button", { name: "Added 2 suggestions to review" }));
     expect(onShowSuggestions).toHaveBeenCalled();
     expect(within(log).getByText(/1 suggestion couldn’t be matched/)).toBeInTheDocument();
+    expect(within(log).getByText("4 more suggestions weren’t shown. Ask about one by name to add it.")).toBeInTheDocument();
     fireEvent.click(within(within(log).getByRole("navigation", { name: "Sources" })).getByRole("button", { name: "Pricing" }));
     expect(onOpenThread).toHaveBeenCalledWith("t2");
     expect(within(log).getByText("Shared 2 other emails with AI")).toBeInTheDocument();

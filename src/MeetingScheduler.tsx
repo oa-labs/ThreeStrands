@@ -9,6 +9,8 @@ import { lookaheadRange, slotKey, SUGGESTED_SLOT_COUNT, type SchedulePlan, type 
 import { ICON_SIZE } from "./iconSizes";
 
 export type ScheduleSlot = Pick<AvailabilityCandidate, "start" | "end">;
+/** A time to add to the calendar; an all-day addition carries inclusive `YYYY-MM-DD` days. */
+export type CalendarAddition = ScheduleSlot & { allDay?: boolean };
 
 type CheckState =
   | { phase: "idle" | "loading" }
@@ -22,6 +24,11 @@ function formatSlot(slot: ScheduleSlot, timeZone: string): string {
   const day = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", timeZone }).format(start);
   const time = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone });
   return `${day} · ${time.format(start)}–${time.format(end)}`;
+}
+
+function formatDay(date: string): string {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(new Date(year, month - 1, day));
 }
 
 /** Titles of timed schedule events that overlap the slot, from the day's cached schedule. */
@@ -43,7 +50,7 @@ async function overlappingTitles(slot: ScheduleSlot): Promise<string[]> {
  */
 export function MeetingScheduler({
   plan: initialPlan,
-  preferences,
+  preferences: latestPreferences,
   calendarConnected,
   onAddToCalendar,
   onReplyWithTimes,
@@ -55,7 +62,7 @@ export function MeetingScheduler({
   plan: SchedulePlan;
   preferences: AvailabilityPreferences;
   calendarConnected: boolean;
-  onAddToCalendar(slot: ScheduleSlot): void;
+  onAddToCalendar(slot: CalendarAddition): void;
   onReplyWithTimes(slots: AvailabilityCandidate[]): void;
   onConfirmTime(slot: ScheduleSlot): void;
   onMoreTimes(day: Date, durationMinutes: number): void;
@@ -66,6 +73,12 @@ export function MeetingScheduler({
   // Plans computed from "now" differ on every render; keep the one this
   // scheduler mounted with. Callers key the scheduler by what it schedules.
   const [plan] = useState(initialPlan);
+  // Re-check only when preference values change, not when an equal object
+  // arrives: replacing the result with "Checking…" reads as a flash.
+  const [preferences, setPreferences] = useState(latestPreferences);
+  if (preferences !== latestPreferences && JSON.stringify(preferences) !== JSON.stringify(latestPreferences)) {
+    setPreferences(latestPreferences);
+  }
   // "Find Other Times" replaces a conflicting exact time with a search.
   const [override, setOverride] = useState<ScheduleQuery | null>(null);
   const query = override ?? plan.query;
@@ -73,6 +86,7 @@ export function MeetingScheduler({
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   const [attempt, setAttempt] = useState(0);
   const timeZone = preferences.timeZone;
+  const announced = plan.announced === true;
 
   const run = useCallback(async (target: ScheduleQuery, isCurrent: () => boolean) => {
     setState({ phase: "loading" });
@@ -118,12 +132,27 @@ export function MeetingScheduler({
       <button type="button" className="btn-link context-link-button" onClick={onOpenCalendarSettings}>Calendar Settings</button>
     </div>;
   }
+  // A bare day or an undated event has nothing to check against the calendar.
+  const day = plan.day;
+  if (!query && day) {
+    return <div className="meeting-scheduler" role="group" aria-label="Schedule">
+      <p className="meeting-slot">{formatDay(day)} · Time not set</p>
+      <div className="meeting-scheduler-actions">
+        <button type="button" className="btn btn-sm" onClick={() => onAddToCalendar({ start: day, end: day, allDay: true })}><CalendarPlus size={ICON_SIZE.sm} /> Add to Calendar</button>
+      </div>
+    </div>;
+  }
+  if (!query && plan.undated) {
+    return <div className="meeting-scheduler" role="group" aria-label="Schedule">
+      <p className="context-status">No date yet. Use Edit to set one.</p>
+    </div>;
+  }
   if (!query) {
     return <div className="meeting-scheduler" role="group" aria-label="Schedule">
-      <p className="context-status">That time has already passed.</p>
-      <div className="meeting-scheduler-actions">
+      <p className="context-status">{announced ? "This event has already happened." : "That time has already passed."}</p>
+      {announced ? null : <div className="meeting-scheduler-actions">
         <button type="button" className="btn btn-sm" onClick={() => setOverride(lookaheadRange(new Date()))}>Find New Times</button>
-      </div>
+      </div>}
     </div>;
   }
 
@@ -143,14 +172,14 @@ export function MeetingScheduler({
       </p>
       <div className="meeting-scheduler-actions">
         <button type="button" className="btn btn-sm" onClick={() => onAddToCalendar(query)}><CalendarPlus size={ICON_SIZE.sm} /> Add to Calendar</button>
-        {state.check.status === "conflicting"
+        {announced ? null : state.check.status === "conflicting"
           ? <button type="button" className="btn btn-sm" onClick={() => {
             const day = new Date(query.start);
             day.setHours(0, 0, 0, 0);
             setOverride(lookaheadRange(new Date(Math.max(day.getTime(), Date.now()))));
           }}>Find Other Times</button>
           : <button type="button" className="btn btn-sm" onClick={() => onConfirmTime(query)}>Reply &ldquo;That Works&rdquo;</button>}
-        {moreTimes}
+        {announced ? null : moreTimes}
       </div>
     </> : null}
     {state.phase === "range" ? <>

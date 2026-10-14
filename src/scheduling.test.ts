@@ -53,6 +53,36 @@ describe("meeting scheduling plans", () => {
     expect(length(span(MAX_SCHEDULE_RANGE_DAYS + 1))).toBe(MAX_SCHEDULE_RANGE_DAYS);
   });
 
+  it("checks a stated start with no end for its stated or default length", () => {
+    const plan = planMeeting(meeting({ normalizedStart: "2026-10-17T22:45:00Z", durationMinutes: 120 }), now, 30);
+    expect(plan.query).toEqual({ kind: "specific", start: "2026-10-17T22:45:00.000Z", end: "2026-10-18T00:45:00.000Z" });
+    expect(plan.durationMinutes).toBe(120);
+    const fallback = planMeeting(meeting({ normalizedStart: "2026-10-17T22:45:00Z" }), now, 30);
+    expect(fallback.query).toEqual({ kind: "specific", start: "2026-10-17T22:45:00.000Z", end: "2026-10-17T23:15:00.000Z" });
+    expect(planMeeting(meeting({ normalizedStart: "2026-09-28T22:45:00Z" }), now, 30).query).toBeNull();
+  });
+
+  it("plans a date-only event as its day, not as a search for open times", () => {
+    const plan = planMeeting(meeting({ intent: "attend", eventDate: "2026-11-07" }), now, 30);
+    expect(plan).toEqual({ query: null, day: "2026-11-07", durationMinutes: 30, timeZoneAssumed: false, announced: true });
+    // Today still counts; yesterday has passed.
+    expect(planMeeting(meeting({ eventDate: "2026-09-29" }), now, 30).day).toBe("2026-09-29");
+    const past = planMeeting(meeting({ eventDate: "2026-09-28" }), now, 30);
+    expect(past.query).toBeNull();
+    expect(past.day).toBeUndefined();
+    // A start time is more specific than a day.
+    expect(planMeeting(meeting({ normalizedStart: "2026-11-07T23:00:00Z", eventDate: "2026-11-07" }), now, 30).query?.kind).toBe("specific");
+  });
+
+  it("never searches the next week for an announced event with no date", () => {
+    const plan = planMeeting(meeting({ intent: "attend" }), now, 30);
+    expect(plan.query).toBeNull();
+    expect(plan.undated).toBe(true);
+    expect(plan.announced).toBe(true);
+    // A meeting still to be arranged keeps the next-week search.
+    expect(planMeeting(meeting(), now, 30).query?.kind).toBe("range");
+  });
+
   it("plans a chat availability request from the calendar rather than the model's words", () => {
     const plan = planChatAvailability({ rangeStart: "2026-10-05T13:00:00Z", rangeEnd: "2026-10-09T21:00:00Z", durationMinutes: null }, now, 30);
     expect(plan).toEqual({ query: { kind: "range", start: "2026-10-05T13:00:00.000Z", end: "2026-10-09T21:00:00.000Z" }, durationMinutes: 30, timeZoneAssumed: false });

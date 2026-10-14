@@ -1,4 +1,5 @@
 import type { AvailabilityCandidate, ChatAvailability, MeetingProposal } from "./domain";
+import { dateInputValue } from "./calendarTime";
 
 /** Days searched when a meeting names no usable time or range. */
 export const SCHEDULE_LOOKAHEAD_DAYS = 7;
@@ -13,7 +14,8 @@ const DAY_MS = 86_400_000;
 
 /**
  * What to check on the calendar: one exact time, or a range to search for
- * open times. `null` means the proposed time or range has already passed.
+ * open times. `null` means the proposed time or range has already passed,
+ * unless the plan names a `day` or is `undated`.
  */
 export type ScheduleQuery =
   | { kind: "specific"; start: string; end: string }
@@ -24,7 +26,18 @@ export type SchedulePlan = {
   durationMinutes: number;
   /** The meeting gave no timezone, so the user's own is assumed. */
   timeZoneAssumed: boolean;
+  /**
+   * An event the email announces at a set time, rather than one still to be
+   * agreed: it is added as given, never answered with other times.
+   */
+  announced?: boolean;
+  /** A `YYYY-MM-DD` day with no time, added as an all-day event. */
+  day?: string;
+  /** An announced event that names no date yet. */
+  undated?: boolean;
 };
+
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export function clampMeetingMinutes(value: number | null | undefined, fallback: number): number {
   const minutes = value ?? fallback;
@@ -46,24 +59,43 @@ export function lookaheadRange(now: Date): ScheduleQuery {
 
 /**
  * Plans the calendar check for a meeting suggestion: its exact time when it
- * has one, otherwise its search range, otherwise the next week.
+ * has a start (ending at its stated end, or after its duration), otherwise its
+ * day, otherwise its search range, otherwise the next week. An announced event
+ * without a date is never matched against the next week's open times.
  */
 export function planMeeting(proposal: MeetingProposal, now: Date, defaultDurationMinutes: number): SchedulePlan {
   const timeZoneAssumed = !proposal.timeZone;
+  const announced = proposal.intent === "attend";
+  const kind = announced ? { announced } : {};
   const start = proposal.normalizedStart ? new Date(proposal.normalizedStart) : null;
-  const end = proposal.normalizedEnd ? new Date(proposal.normalizedEnd) : null;
-  if (start && end && Number.isFinite(start.getTime()) && end > start) {
-    const durationMinutes = clampMeetingMinutes(Math.round((end.getTime() - start.getTime()) / 60_000), defaultDurationMinutes);
+  if (start && Number.isFinite(start.getTime())) {
+    const statedEnd = proposal.normalizedEnd ? new Date(proposal.normalizedEnd) : null;
+    const hasEnd = statedEnd !== null && Number.isFinite(statedEnd.getTime()) && statedEnd > start;
+    const durationMinutes = hasEnd
+      ? clampMeetingMinutes(Math.round((statedEnd.getTime() - start.getTime()) / 60_000), defaultDurationMinutes)
+      : clampMeetingMinutes(proposal.durationMinutes, defaultDurationMinutes);
+    const end = hasEnd ? statedEnd : new Date(start.getTime() + durationMinutes * 60_000);
     return {
       query: start > now ? { kind: "specific", start: start.toISOString(), end: end.toISOString() } : null,
       durationMinutes,
       timeZoneAssumed,
+      ...kind,
     };
   }
   const durationMinutes = clampMeetingMinutes(proposal.durationMinutes, defaultDurationMinutes);
-  if (proposal.searchRangeStart && proposal.searchRangeEnd) {
-    return { query: boundedRange(new Date(proposal.searchRangeStart), new Date(proposal.searchRangeEnd), now), durationMinutes, timeZoneAssumed };
+  if (proposal.eventDate && DATE_PATTERN.test(proposal.eventDate)) {
+    return {
+      query: null,
+      ...(proposal.eventDate >= dateInputValue(now) ? { day: proposal.eventDate } : {}),
+      durationMinutes,
+      timeZoneAssumed: false,
+      ...kind,
+    };
   }
+  if (proposal.searchRangeStart && proposal.searchRangeEnd) {
+    return { query: boundedRange(new Date(proposal.searchRangeStart), new Date(proposal.searchRangeEnd), now), durationMinutes, timeZoneAssumed, ...kind };
+  }
+  if (announced) return { query: null, undated: true, durationMinutes, timeZoneAssumed, announced };
   return { query: lookaheadRange(now), durationMinutes, timeZoneAssumed };
 }
 

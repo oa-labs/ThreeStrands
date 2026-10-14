@@ -25,7 +25,7 @@ function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
 // The action-analysis preview mirrors what the assistant is sent: the most
 // recent messages, each body truncated.
 const ACTION_ANALYSIS_MAX_MESSAGES = 15;
-const ACTION_ANALYSIS_MAX_BODY_CHARS = 6000;
+const ACTION_ANALYSIS_MAX_BODY_CHARS = 10_000;
 
 type Options = Pick<ReturnType<typeof useAiAvailability>, "aiProactive" | "aiSummaryAvailable" | "aiActionAvailable" | "aiActionFeatureEnabled"> & {
   accounts: Account[];
@@ -90,6 +90,8 @@ export function useThreadIntelligence({
 
   const [actionProposalSets, setActionProposalSets] = useState<Record<string, ActionProposal[]>>({});
   const [actionHiddenCounts, setActionHiddenCounts] = useState<Record<string, number>>({});
+  // Valid suggestions past the per-analysis limit, which weren't shown.
+  const [actionExtraCounts, setActionExtraCounts] = useState<Record<string, number>>({});
   // Revisions whose suggestions were fetched. Kept apart from the proposal
   // lists because chat can add proposals before suggestions ever ran.
   const [actionFetchedKeys, setActionFetchedKeys] = useState<ReadonlySet<string>>(() => new Set());
@@ -126,6 +128,7 @@ export function useThreadIntelligence({
     [actionProposalKey, actionProposalSets],
   );
   const actionHiddenCount = actionProposalKey ? actionHiddenCounts[actionProposalKey] ?? 0 : 0;
+  const actionExtraCount = actionProposalKey ? actionExtraCounts[actionProposalKey] ?? 0 : 0;
   const actionAnalysisRequested = Boolean(
     actionAnalysisLoading
       || actionAnalysisError
@@ -164,7 +167,7 @@ export function useThreadIntelligence({
     if (!beginActionAnalysis(proposalKey)) return;
     try {
       const { provider, model, endpoint } = readAiRequestConfig("getting suggestions", "actionExtraction");
-      const { proposals, hiddenCount } = await mailClient.analyzeThread(
+      const { proposals, hiddenCount, extraCount = 0 } = await mailClient.analyzeThread(
         visibleDetail.thread.id,
         availabilityPreferences.timeZone,
         provider,
@@ -174,6 +177,7 @@ export function useThreadIntelligence({
       setActionProposalSets((current) => ({ ...current, [proposalKey]: proposals }));
       markSuggestionsFetched(proposalKey);
       setActionHiddenCounts((current) => ({ ...current, [proposalKey]: hiddenCount }));
+      setActionExtraCounts((current) => ({ ...current, [proposalKey]: extraCount }));
     } catch (reason) {
       setActionAnalysisErrors((current) => ({ ...current, [proposalKey]: errorMessage(reason) }));
     } finally {
@@ -198,6 +202,7 @@ export function useThreadIntelligence({
       setActionProposalSets((current) => ({ ...current, [proposalKey]: analysis.proposals }));
       markSuggestionsFetched(proposalKey);
       setActionHiddenCounts((current) => ({ ...current, [proposalKey]: analysis.hiddenCount }));
+      setActionExtraCounts((current) => ({ ...current, [proposalKey]: analysis.extraCount ?? 0 }));
     } catch (error) {
       setSummaryErrors((current) => ({ ...current, [threadId]: errorMessage(error) }));
     } finally {
@@ -310,6 +315,7 @@ export function useThreadIntelligence({
         replyDraft: reply.replyDraft,
         addedSuggestions: reply.analysis.proposals.length,
         hiddenSuggestions: reply.analysis.hiddenCount,
+        extraSuggestions: reply.analysis.extraCount ?? 0,
         availability: reply.availability,
         sources: reply.sources,
         searched: reply.searched,
@@ -380,7 +386,7 @@ export function useThreadIntelligence({
   return {
     summaryPending, summaryError, runBrief, actionProposals,
     actionProposalSource, actionAnalysisLoading, actionAnalysisError, actionAnalysisRequested,
-    actionAnalysisPreview, actionHiddenCount, chatByThread, chatPendingThreads, chatFailures,
+    actionAnalysisPreview, actionHiddenCount, actionExtraCount, chatByThread, chatPendingThreads, chatFailures,
     chatFocusRequest, askThread, focusThreadChat, updateActionProposal, removeActionProposal,
     discardActionProposal, ownAddresses,
   };

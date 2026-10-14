@@ -380,6 +380,35 @@ describe("conversation brief", () => {
       await waitFor(() => expect(within(screen.getByRole("complementary", { name: "Conversation context" })).queryByText("Budget review")).not.toBeInTheDocument());
     });
 
+    it("adds an announced date-only event as the user's own all-day event, inviting no one", async () => {
+      const day = new Date(Date.now() + 5 * 86_400_000);
+      const date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+      const next = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
+      const nextDate = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
+      const event = {
+        ...meetingAt(5), intent: "attend", title: "Girls group bonfire", participants: [], location: "Glenn's house",
+        rawTimeLanguage: "time TBA", normalizedStart: null as unknown as string, normalizedEnd: null as unknown as string, eventDate: date,
+      };
+      const check = vi.spyOn(mailClient, "checkProposedTime");
+      const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue({ id: "created", accountId: "calendar@example.com", title: "Girls group bonfire", start: date, end: nextDate, allDay: true });
+      const { panel, schedule } = await openWithMeeting(event);
+
+      expect(within(panel).getByText("Event")).toBeInTheDocument();
+      expect(within(schedule).getByText(/· Time not set$/)).toBeInTheDocument();
+      fireEvent.click(within(schedule).getByRole("button", { name: "Add to Calendar" }));
+      const dialog = await screen.findByRole("dialog", { name: "New event" });
+      expect(within(dialog).getByLabelText("All day")).toBeChecked();
+      expect(within(dialog).getByLabelText("Location")).toHaveValue("Glenn's house");
+      // The sender is not invited to an event they announced.
+      expect(within(dialog).queryByRole("button", { name: /^Remove / })).not.toBeInTheDocument();
+      await waitFor(() => expect(within(dialog).getByLabelText("Calendar")).toHaveValue("calendar@example.com\nprimary"));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
+      await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        title: "Girls group bonfire", start: date, end: nextDate, allDay: true, location: "Glenn's house", attendees: [],
+      })));
+      expect(check).not.toHaveBeenCalled();
+    });
+
     it("replies that a free time works, and opens more times on the meeting's day", async () => {
       const meeting = meetingAt(2);
       vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });

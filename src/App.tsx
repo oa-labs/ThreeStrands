@@ -321,7 +321,7 @@ export function App() {
   const {
     summaryPending, summaryError, runBrief, actionProposals, actionProposalSource,
     actionAnalysisLoading, actionAnalysisError, actionAnalysisRequested, actionAnalysisPreview,
-    actionHiddenCount, chatByThread, chatPendingThreads, chatFailures, chatFocusRequest, askThread,
+    actionHiddenCount, actionExtraCount, chatByThread, chatPendingThreads, chatFailures, chatFocusRequest, askThread,
     focusThreadChat, updateActionProposal, removeActionProposal, discardActionProposal,
     ownAddresses,
   } = intelligence;
@@ -1036,6 +1036,7 @@ export function App() {
                 requested: actionAnalysisRequested,
                 proposals: actionProposals,
                 hiddenCount: actionHiddenCount,
+                extraCount: actionExtraCount,
                 onDiscard: discardActionProposal,
                 onReview: reviewActionProposal,
               }}
@@ -1043,7 +1044,13 @@ export function App() {
                 ...meetingScheduling,
                 onAddToCalendar: (_index, proposal, slot) => addMeetingToCalendar(
                   slot,
-                  { title: proposal.title, participants: proposal.participants, excerpt: proposal.evidence.excerpt },
+                  {
+                    title: proposal.title,
+                    participants: proposal.participants,
+                    excerpt: proposal.evidence.excerpt,
+                    location: proposal.location,
+                    announced: proposal.intent === "attend",
+                  },
                   actionProposalSource ? { from: actionProposalSource, proposal } : null,
                 ),
               }}
@@ -1137,6 +1144,8 @@ export function App() {
           initialTitle={meetingEventDraft.title}
           initialInvitees={meetingEventDraft.invitees}
           initialDescription={meetingEventDraft.description}
+          initialLocation={meetingEventDraft.location}
+          initialAllDay={meetingEventDraft.allDay}
           onClose={() => setMeetingEventDraft(null)}
           onCreated={(event) => {
             if (meetingEventDraft.fromOpenedFile) dismissOpenedCalendarFile();

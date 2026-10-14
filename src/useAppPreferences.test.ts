@@ -1,9 +1,19 @@
-import { act, renderHook } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
-import { SYSTEM_FONT_STACK } from "./settings";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { readAvailabilityPreferences, saveAvailabilityPreferences, SYSTEM_FONT_STACK } from "./settings";
 import { useAppPreferences } from "./useAppPreferences";
 
+const { listenMock, pullMock } = vi.hoisted(() => ({
+  listenMock: vi.fn(async () => () => {}),
+  pullMock: vi.fn(async () => true),
+}));
+vi.mock("@tauri-apps/api/event", () => ({ listen: listenMock }));
+vi.mock("./syncedPreferences", () => ({ pullSyncedPreferences: pullMock, queuePortablePreferences: vi.fn() }));
+
 afterEach(() => {
+  delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  listenMock.mockClear();
+  pullMock.mockClear();
   localStorage.clear();
   document.documentElement.removeAttribute("data-theme");
   document.documentElement.removeAttribute("data-accent");
@@ -38,6 +48,25 @@ describe("useAppPreferences", () => {
     expect(document.documentElement.style.getPropertyValue("--font-family")).toBe(`"Georgia", ${SYSTEM_FONT_STACK}`);
     expect(localStorage.getItem("threestrands.accent")).toBe("green");
     expect(localStorage.getItem("threestrands.settings.fontFamily")).toBe("Georgia");
+  });
+
+  it("keeps availability preferences stable across syncs that leave them unchanged", async () => {
+    (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const { result } = renderHook(() => useAppPreferences());
+    await waitFor(() => expect(listenMock).toHaveBeenCalled());
+    const onSyncStatus = (listenMock.mock.calls[0] as unknown as [string, () => void])[1];
+    await waitFor(() => expect(pullMock).toHaveBeenCalledTimes(1));
+    const before = result.current.availabilityPreferences;
+
+    // Another preference changed: meeting cards must not see a new object.
+    await act(async () => { onSyncStatus(); await Promise.resolve(); });
+    expect(pullMock).toHaveBeenCalledTimes(2);
+    expect(result.current.availabilityPreferences).toBe(before);
+
+    saveAvailabilityPreferences({ ...readAvailabilityPreferences(), defaultDurationMinutes: before.defaultDurationMinutes + 15 });
+    await act(async () => { onSyncStatus(); await Promise.resolve(); });
+    expect(result.current.availabilityPreferences).not.toBe(before);
+    expect(result.current.availabilityPreferences.defaultDurationMinutes).toBe(before.defaultDurationMinutes + 15);
   });
 
   it("adjusts font scale through the shared bounds", () => {

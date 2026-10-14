@@ -741,6 +741,7 @@ describe("CalendarWeekView", () => {
       accountId: "joel@example.com", calendarId: "primary", title: "Planning",
       start: new Date(2026, 8, 22, 9, 15).toISOString(),
       end: new Date(2026, 8, 22, 10, 15).toISOString(),
+      allDay: false, location: "",
       attendees: ["ada@example.com", "bob@example.com"], description: "Review the plan",
     }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "New event" })).not.toBeInTheDocument());

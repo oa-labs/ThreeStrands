@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Check, Copy, Pencil, RefreshCw, RotateCcw, Sparkles } from "lucide-react";
 import type { ActionProposal, AvailabilityCandidate, AvailabilityPreferences, MeetingProposal, ThreadDetail } from "./domain";
-import { MeetingScheduler, type ScheduleSlot } from "./MeetingScheduler";
+import { MeetingScheduler, type CalendarAddition, type ScheduleSlot } from "./MeetingScheduler";
 import { planMeeting } from "./scheduling";
 import { HoverTooltip } from "./AppChrome";
 import { parseAddress } from "./emailAddress";
@@ -9,6 +9,19 @@ import { isSummaryStale } from "./threadPresentation";
 import { ICON_SIZE } from "./iconSizes";
 
 export const THREAD_ASSIST_ID = "thread-assist";
+
+// Suggestions keep their object identity while listed, so a card keeps its
+// key — and its calendar check — when an earlier card is discarded.
+const proposalKeys = new WeakMap<ActionProposal, string>();
+let nextProposalKey = 0;
+function proposalKey(proposal: ActionProposal): string {
+  let key = proposalKeys.get(proposal);
+  if (!key) {
+    key = `proposal-${nextProposalKey++}`;
+    proposalKeys.set(proposal, key);
+  }
+  return key;
+}
 
 /**
  * AI brief and suggestions for the conversation. `enabled` reflects the
@@ -24,6 +37,8 @@ export type ThreadAssistProps = {
     requested: boolean;
     proposals: ActionProposal[];
     hiddenCount: number;
+    /** Valid suggestions past the per-analysis limit, which weren't shown. */
+    extraCount?: number;
     onDiscard(index: number): void;
     onReview(index: number, proposal: ActionProposal, intent: "edit" | "accept"): void;
   };
@@ -31,7 +46,7 @@ export type ThreadAssistProps = {
   scheduling: {
     calendarConnected: boolean;
     preferences: AvailabilityPreferences;
-    onAddToCalendar(index: number, proposal: MeetingProposal, slot: ScheduleSlot): void;
+    onAddToCalendar(index: number, proposal: MeetingProposal, slot: CalendarAddition): void;
     onReplyWithTimes(slots: AvailabilityCandidate[]): void;
     onConfirmTime(slot: ScheduleSlot): void;
     onMoreTimes(day: Date, durationMinutes: number): void;
@@ -45,6 +60,13 @@ export type ThreadAssistProps = {
   onRun(force: boolean): void;
   onOpenSettings(): void;
 };
+
+/** Explains suggestions left out because one email produced more than are shown at once. */
+export function extraSuggestionsText(count: number): string {
+  return count === 1
+    ? "1 more suggestion wasn\u2019t shown. Ask about it by name to add it."
+    : `${count} more suggestions weren\u2019t shown. Ask about one by name to add it.`;
+}
 
 export function describeAnalysisError(message: string): { summary: string; retryable: boolean } {
   if (/^(the )?ai provider returned/i.test(message) || /^the ai provider (cited|included)/i.test(message)) {
@@ -157,6 +179,7 @@ export function ThreadAssist({ detail, summary, suggestions, scheduling, loading
       {summary.available ? <h4>Suggested</h4> : null}
       {!busy && suggestions.requested && suggestions.proposals.length === 0 && suggestions.hiddenCount === 0 ? <p className="context-status">Nothing to schedule or follow up on.</p> : null}
       {!busy && suggestions.hiddenCount > 0 ? <p className="context-status">{suggestions.hiddenCount === 1 ? "1 suggestion" : `${suggestions.hiddenCount} suggestions`} couldn&rsquo;t be matched to the email, so {suggestions.hiddenCount === 1 ? "it was" : "they were"} hidden.</p> : null}
+      {!busy && suggestions.extraCount ? <p className="context-status">{extraSuggestionsText(suggestions.extraCount)}</p> : null}
       <div className="action-proposals">
         {suggestions.proposals.map((proposal, index) => {
           const source = messageSource(proposal.evidence.sourceMessageId);
@@ -164,12 +187,13 @@ export function ThreadAssist({ detail, summary, suggestions, scheduling, loading
           // a task with an unzoned time needs review before use.
           const needsReview = proposal.type === "task" && proposal.dueKind === "datetime" && !proposal.timeZone;
           const uncertain = proposal.confidence < 0.75;
-          return <article className="action-proposal-card" key={`${proposal.type}-${index}`}>
-            <div className="action-proposal-card-header"><span className="proposal-kind">{proposal.type === "meeting" ? "Meeting" : "Task"}</span>{uncertain || needsReview ? <span className="proposal-check">Check details</span> : null}</div>
+          const kind = proposal.type === "task" ? "Task" : proposal.intent === "attend" ? "Event" : "Meeting";
+          return <article className="action-proposal-card" key={proposalKey(proposal)}>
+            <div className="action-proposal-card-header"><span className="proposal-kind">{kind}</span>{uncertain || needsReview ? <span className="proposal-check">Check details</span> : null}</div>
             <strong>{proposal.title}</strong>
             {proposal.type === "meeting" ? <><p>{proposal.rawTimeLanguage || "Time not specified"}</p>{proposal.location ? <p>{proposal.location}</p> : null}{proposal.participants.length > 0 ? <p>{proposal.participants.join(", ")}</p> : null}</> : <p>{proposal.notes || proposal.kind.replace("_", " ")}{proposal.dueValue ? ` · Due ${proposal.dueValue}` : ""}</p>}
             {proposal.type === "meeting" ? <MeetingScheduler
-              key={[proposal.normalizedStart, proposal.normalizedEnd, proposal.searchRangeStart, proposal.searchRangeEnd, proposal.durationMinutes, proposal.timeZone].join("|")}
+              key={[proposal.intent, proposal.normalizedStart, proposal.normalizedEnd, proposal.eventDate, proposal.searchRangeStart, proposal.searchRangeEnd, proposal.durationMinutes, proposal.timeZone].join("|")}
               plan={planMeeting(proposal, new Date(), scheduling.preferences.defaultDurationMinutes)}
               preferences={scheduling.preferences}
               calendarConnected={scheduling.calendarConnected}

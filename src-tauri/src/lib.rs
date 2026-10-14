@@ -3474,7 +3474,10 @@ async fn list_calendar_options(
 }
 
 fn validate_calendar_event_request(request: &CreateCalendarEventRequest) -> Result<(), String> {
-    validate_calendar_event_fields(&request.title, &request.description, &request.start, &request.end, false, &request.attendees)
+    if request.location.len() > 4096 {
+        return Err("Event location is too long".into());
+    }
+    validate_calendar_event_fields(&request.title, &request.description, &request.start, &request.end, request.all_day, &request.attendees)
 }
 
 fn validate_calendar_event_update(request: &UpdateCalendarEventRequest) -> Result<(), String> {
@@ -3532,8 +3535,8 @@ mod calendar_event_request_tests {
         CreateCalendarEventRequest {
             account_id: "work@example.com".into(), calendar_id: "primary".into(),
             title: "Planning".into(), start: "2026-09-22T09:00:00Z".into(),
-            end: "2026-09-22T10:00:00Z".into(), description: "Agenda".into(),
-            attendees: vec!["guest@example.com".into()],
+            end: "2026-09-22T10:00:00Z".into(), all_day: false, location: String::new(),
+            description: "Agenda".into(), attendees: vec!["guest@example.com".into()],
         }
     }
 
@@ -3549,6 +3552,39 @@ mod calendar_event_request_tests {
         invalid = request();
         invalid.title = " ".into();
         assert!(validate_calendar_event_request(&invalid).is_err());
+    }
+
+    #[test]
+    fn validates_all_day_events_and_locations_on_create() {
+        let mut all_day = request();
+        all_day.all_day = true;
+        all_day.start = "2026-11-07".into();
+        all_day.end = "2026-11-08".into();
+        assert!(validate_calendar_event_request(&all_day).is_ok());
+        // An all-day event must not carry timed values, and needs an exclusive end.
+        let mut invalid = all_day.clone();
+        invalid.start = "2026-11-07T09:00:00Z".into();
+        assert!(validate_calendar_event_request(&invalid).is_err());
+        invalid = all_day.clone();
+        invalid.end = invalid.start.clone();
+        assert!(validate_calendar_event_request(&invalid).is_err());
+        let mut located = request();
+        located.location = "x".repeat(4096);
+        assert!(validate_calendar_event_request(&located).is_ok());
+        located.location = "x".repeat(4097);
+        assert!(validate_calendar_event_request(&located).is_err());
+    }
+
+    #[test]
+    fn create_requests_from_earlier_clients_default_to_timed_without_location() {
+        let request: CreateCalendarEventRequest = serde_json::from_value(serde_json::json!({
+            "accountId": "work@example.com", "calendarId": "primary", "title": "Planning",
+            "start": "2026-09-22T09:00:00Z", "end": "2026-09-22T10:00:00Z",
+            "description": "", "attendees": [],
+        })).unwrap();
+        assert!(!request.all_day);
+        assert!(request.location.is_empty());
+        assert!(validate_calendar_event_request(&request).is_ok());
     }
 
     fn update(all_day: bool) -> UpdateCalendarEventRequest {

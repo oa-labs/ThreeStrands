@@ -35,6 +35,11 @@ pub struct CreateCalendarEventRequest {
     pub title: String,
     pub start: String,
     pub end: String,
+    /// All-day events carry `YYYY-MM-DD` dates with an exclusive end.
+    #[serde(default)]
+    pub all_day: bool,
+    #[serde(default)]
+    pub location: String,
     pub description: String,
     pub attendees: Vec<String>,
 }
@@ -139,6 +144,10 @@ pub struct MeetingProposal {
     pub normalized_start: Option<String>,
     #[serde(default)]
     pub normalized_end: Option<String>,
+    /// A `YYYY-MM-DD` day for an event with a date but no time; absent from
+    /// suggestions saved before date-only events.
+    #[serde(default)]
+    pub event_date: Option<String>,
     #[serde(default)]
     pub search_range_start: Option<String>,
     #[serde(default)]
@@ -186,12 +195,15 @@ pub enum ActionProposal {
 
 /// The verified proposals from one thread analysis. `hidden_count` counts
 /// provider proposals that were withheld because they failed schema or
-/// evidence validation; they are never shown to the user.
+/// evidence validation; they are never shown to the user. `extra_count`
+/// counts valid proposals past the per-analysis limit.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionAnalysis {
     pub proposals: Vec<ActionProposal>,
     pub hidden_count: usize,
+    #[serde(default)]
+    pub extra_count: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

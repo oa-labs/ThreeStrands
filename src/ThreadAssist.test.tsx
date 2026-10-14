@@ -270,6 +270,36 @@ describe("ThreadAssist", () => {
     expect(screen.getByText("Nothing to schedule or follow up on.")).toBeInTheDocument();
   });
 
+  it("reports suggestions past the limit separately from withheld ones", () => {
+    const { rerender } = render(<ThreadAssist {...props({ preview: "{}", suggestions: { requested: true, proposals: [taskProposal], extraCount: 3 } })} />);
+    expect(screen.getByText("3 more suggestions weren’t shown. Ask about one by name to add it.")).toBeInTheDocument();
+    expect(screen.queryByText(/couldn’t be matched/)).not.toBeInTheDocument();
+    rerender(<ThreadAssist {...props({ preview: "{}", suggestions: { requested: true, proposals: [taskProposal], extraCount: 1 } })} />);
+    expect(screen.getByText("1 more suggestion wasn’t shown. Ask about it by name to add it.")).toBeInTheDocument();
+    rerender(<ThreadAssist {...props({ preview: "{}", suggestions: { requested: true, proposals: [taskProposal], extraCount: 0 } })} />);
+    expect(screen.queryByText(/more suggestion/)).not.toBeInTheDocument();
+  });
+
+  it("labels announced events and keeps each card's calendar check when an earlier card is discarded", async () => {
+    const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    const event: ActionProposal = {
+      type: "meeting", intent: "attend", title: "Bonfire", participants: [], location: "224 Fairoaks St",
+      rawTimeLanguage: "Saturday, starting around 6:45 PM", normalizedStart: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+      normalizedEnd: null, eventDate: null, searchRangeStart: null, searchRangeEnd: null, durationMinutes: 120,
+      timeZone: "America/New_York", confidence: 0.8, evidence: { sourceMessageId: "message-1", excerpt: "Please set up the website" },
+    };
+    const scheduling = { calendarConnected: true };
+    const { rerender } = render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [taskProposal, event] }, scheduling })} />);
+    expect(screen.getByText("Event")).toBeInTheDocument();
+    expect(await screen.findByText("You’re free")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reply “That Works”" })).not.toBeInTheDocument();
+
+    rerender(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [event] }, scheduling })} />);
+    expect(screen.getByText("You’re free")).toBeInTheDocument();
+    expect(screen.queryByText("Checking your calendar…")).not.toBeInTheDocument();
+    expect(check).toHaveBeenCalledTimes(1);
+  });
+
   it("explains unreadable provider output in plain language and keeps the details available", () => {
     const onRun = vi.fn();
     render(<ThreadAssist {...props({ onRun, error: "The AI provider returned malformed thread brief JSON" })} />);

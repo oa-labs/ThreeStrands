@@ -63,7 +63,10 @@ export function useAppPreferences() {
           setEmailMinimumFontSizeState(readEmailMinimumFontSize());
           setAutoReadDelayState(readAutoReadDelaySeconds());
           setLoadRemoteImagesState(readLoadRemoteImages());
-          setAvailabilityPreferencesState(readAvailabilityPreferences());
+          // Keep the same object when availability didn't change: meeting
+          // cards re-check the calendar whenever it is replaced.
+          const synced = readAvailabilityPreferences();
+          setAvailabilityPreferencesState((current) => JSON.stringify(current) === JSON.stringify(synced) ? current : synced);
         }
         // Publish the complete portable preference record before adding
         // per-device names to it, so older clients still materialize a

@@ -89,12 +89,16 @@ export type CalendarOption = {
   writable: boolean;
 };
 
+/** All-day events carry `YYYY-MM-DD` dates with an exclusive end; timed events carry ISO times. */
 export type CreateCalendarEventRequest = {
   accountId: string;
   calendarId: string;
   title: string;
   start: string;
   end: string;
+  /** Absent for a timed event. */
+  allDay?: boolean;
+  location?: string;
   description: string;
   attendees: string[];
 };
@@ -543,6 +547,8 @@ export type MeetingProposal = {
   rawTimeLanguage: string;
   normalizedStart: string | null;
   normalizedEnd: string | null;
+  /** A `YYYY-MM-DD` day for an event with a date but no time; absent from earlier suggestions. */
+  eventDate?: string | null;
   searchRangeStart: string | null;
   searchRangeEnd: string | null;
   durationMinutes: number | null;
@@ -568,10 +574,14 @@ export type TaskProposal = {
 
 export type ActionProposal = MeetingProposal | TaskProposal;
 
-/** Verified proposals plus how many the provider returned that failed validation. */
+/**
+ * Verified proposals plus how many the provider returned that failed
+ * validation, and how many valid ones fell past the per-analysis limit.
+ */
 export type ActionAnalysis = {
   proposals: ActionProposal[];
   hiddenCount: number;
+  extraCount?: number;
 };
 
 export type ReplyAssistMessage = {

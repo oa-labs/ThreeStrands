@@ -43,6 +43,55 @@ describe("CreateCalendarEventDialog", () => {
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(saved));
   });
 
+  it("creates an all-day event with a location from a date-only suggestion", async () => {
+    const saved: ScheduleEvent = { id: "saved", accountId: accounts[0].email, calendarId: "primary", title: "Girls group bonfire",
+      start: "2026-11-07", end: "2026-11-08", allDay: true };
+    const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(saved);
+    render(<CreateCalendarEventDialog
+      start={new Date(2026, 10, 7)}
+      end={new Date(2026, 10, 7)}
+      accounts={accounts}
+      calendars={calendars}
+      initialTitle="Girls group bonfire"
+      initialLocation="Glenn's house"
+      initialAllDay
+      onClose={vi.fn()}
+      onCreated={vi.fn()}
+    />);
+
+    const dialog = screen.getByRole("dialog", { name: "New event" });
+    expect(within(dialog).getByLabelText("All day")).toBeChecked();
+    expect(within(dialog).getByLabelText("Starts")).toHaveValue("2026-11-07");
+    expect(within(dialog).getByLabelText("Ends")).toHaveValue("2026-11-07");
+    expect(within(dialog).getByLabelText("Location")).toHaveValue("Glenn's house");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
+    // Google stores the day after the last day as the exclusive end.
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      start: "2026-11-07", end: "2026-11-08", allDay: true, location: "Glenn's house", attendees: [],
+    })));
+  });
+
+  it("switches between all-day and timed before creating", async () => {
+    const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue({ id: "saved", accountId: accounts[0].email, title: "Planning",
+      start: "2026-10-01", end: "2026-10-02", allDay: true });
+    render(<CreateCalendarEventDialog start={new Date(2026, 9, 1, 15, 0)} end={new Date(2026, 9, 1, 15, 30)} accounts={accounts}
+      calendars={calendars} initialTitle="Planning" onClose={vi.fn()} onCreated={vi.fn()} />);
+    const dialog = screen.getByRole("dialog", { name: "New event" });
+    expect(within(dialog).getByLabelText("All day")).not.toBeChecked();
+    fireEvent.click(within(dialog).getByLabelText("All day"));
+    expect(within(dialog).getByLabelText("Starts")).toHaveValue("2026-10-01");
+    fireEvent.change(within(dialog).getByLabelText("Ends"), { target: { value: "2026-09-30" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("The end date must be on or after the start date.");
+    expect(create).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByLabelText("All day"));
+    expect(within(dialog).getByLabelText("Starts")).toHaveValue("2026-10-01T09:00");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      allDay: false, location: "", start: new Date(2026, 9, 1, 9, 0).toISOString(), end: new Date(2026, 9, 1, 10, 0).toISOString(),
+    })));
+  });
+
   it("shows invitees as badges, commits an unfinished address on Cmd+Enter, and names invalid ones", async () => {
     const saved: ScheduleEvent = { id: "saved", accountId: accounts[0].email, calendarId: "primary", title: "Sync",
       start: new Date(2026, 9, 1, 15, 0).toISOString(), end: new Date(2026, 9, 1, 15, 30).toISOString(), allDay: false };

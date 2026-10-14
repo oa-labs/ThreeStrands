@@ -28,9 +28,12 @@ export function CreateCalendarEventDialog({
   initialTitle = "",
   initialInvitees = [],
   initialDescription = "",
+  initialLocation = "",
+  initialAllDay = false,
   onClose,
   onCreated,
 }: {
+  /** For an all-day event, `start` and `end` are the first and last local days. */
   start: Date;
   end: Date;
   accounts: CalendarAccount[];
@@ -39,6 +42,8 @@ export function CreateCalendarEventDialog({
   initialTitle?: string;
   initialInvitees?: string[];
   initialDescription?: string;
+  initialLocation?: string;
+  initialAllDay?: boolean;
   onClose(): void;
   onCreated(event: ScheduleEvent): void;
 }) {
@@ -52,24 +57,51 @@ export function CreateCalendarEventDialog({
   const selectedCalendarKey = writable.some((calendar) => `${calendar.accountId}\n${calendar.id}` === calendarKey)
     ? calendarKey : defaultCalendar ? `${defaultCalendar.accountId}\n${defaultCalendar.id}` : "";
   const [title, setTitle] = useState(initialTitle);
-  const [startValue, setStartValue] = useState(() => localDateTimeValue(start));
-  const [endValue, setEndValue] = useState(() => localDateTimeValue(end));
+  const [allDay, setAllDay] = useState(initialAllDay);
+  const [startValue, setStartValue] = useState(() => initialAllDay ? dateInputValue(start) : localDateTimeValue(start));
+  const [endValue, setEndValue] = useState(() => initialAllDay ? dateInputValue(end) : localDateTimeValue(end));
+  const [location, setLocation] = useState(initialLocation);
   const [invitees, setInvitees] = useState<string[]>(initialInvitees);
   const [description, setDescription] = useState(initialDescription);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  function changeAllDay(next: boolean) {
+    setAllDay(next);
+    if (next) {
+      setStartValue(startValue.slice(0, 10));
+      setEndValue(endValue.slice(0, 10) < startValue.slice(0, 10) ? startValue.slice(0, 10) : endValue.slice(0, 10));
+    } else {
+      setStartValue(`${startValue.slice(0, 10)}T09:00`);
+      setEndValue(`${startValue.slice(0, 10)}T10:00`);
+    }
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     const calendar = writable.find((option) => `${option.accountId}\n${option.id}` === selectedCalendarKey);
-    const startsAt = new Date(startValue);
-    const endsAt = new Date(endValue);
     const attendees = invitees;
     if (!calendar) { setError("Choose a calendar where you can create events."); return; }
     if (!title.trim()) { setError("Enter an event title."); return; }
-    if (!Number.isFinite(startsAt.getTime()) || !Number.isFinite(endsAt.getTime()) || endsAt <= startsAt) {
-      setError("The end time must be after the start time."); return;
+    let startAt: string;
+    let endAt: string;
+    if (allDay) {
+      const startDay = localDate(startValue);
+      const lastDay = localDate(endValue);
+      if (!Number.isFinite(startDay.getTime()) || !Number.isFinite(lastDay.getTime()) || lastDay < startDay) {
+        setError("The end date must be on or after the start date."); return;
+      }
+      startAt = dateInputValue(startDay);
+      endAt = dateInputValue(addDays(lastDay, 1));
+    } else {
+      const startsAt = new Date(startValue);
+      const endsAt = new Date(endValue);
+      if (!Number.isFinite(startsAt.getTime()) || !Number.isFinite(endsAt.getTime()) || endsAt <= startsAt) {
+        setError("The end time must be after the start time."); return;
+      }
+      startAt = startsAt.toISOString();
+      endAt = endsAt.toISOString();
     }
     const invalid = attendees.filter((email) => !EMAIL_PATTERN.test(email));
     if (invalid.length) {
@@ -79,8 +111,10 @@ export function CreateCalendarEventDialog({
       accountId: calendar.accountId,
       calendarId: calendar.id,
       title: title.trim(),
-      start: startsAt.toISOString(),
-      end: endsAt.toISOString(),
+      start: startAt,
+      end: endAt,
+      allDay,
+      location: location.trim(),
       description,
       attendees: [...new Set(attendees.map((email) => email.toLowerCase()))],
     };
@@ -111,10 +145,12 @@ export function CreateCalendarEventDialog({
         }
       }}>
         <label>Title<input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={1024} required placeholder="Add title" /></label>
+        <label className="calendar-event-all-day-field"><input type="checkbox" checked={allDay} onChange={(change) => changeAllDay(change.target.checked)} />All day</label>
         <div className="calendar-event-time-fields">
-          <label>Starts<input type="datetime-local" value={startValue} onChange={(event) => setStartValue(event.target.value)} required /></label>
-          <label>Ends<input type="datetime-local" value={endValue} onChange={(event) => setEndValue(event.target.value)} required /></label>
+          <label>Starts<input type={allDay ? "date" : "datetime-local"} value={startValue} onChange={(event) => setStartValue(event.target.value)} required /></label>
+          <label>Ends<input type={allDay ? "date" : "datetime-local"} value={endValue} onChange={(event) => setEndValue(event.target.value)} required /></label>
         </div>
+        <label>Location<input value={location} onChange={(event) => setLocation(event.target.value)} maxLength={4096} placeholder="Add location" /></label>
         <label>Calendar
           <select value={selectedCalendarKey} onChange={(event) => setCalendarKey(event.target.value)} required>
             {writable.length === 0 ? <option value="">No writable calendars</option> : null}

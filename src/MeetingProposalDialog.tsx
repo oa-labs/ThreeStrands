@@ -45,6 +45,8 @@ export function MeetingProposalDialog({
       location: location.trim() || null,
       normalizedStart: isoDateTime(start),
       normalizedEnd: isoDateTime(end),
+      // A chosen start replaces a date-only day.
+      ...(start ? { eventDate: null } : {}),
       searchRangeStart: null,
       searchRangeEnd: null,
       durationMinutes: duration ? Number(duration) : null,

@@ -76,14 +76,47 @@ struct GoogleCalendarListEntry {
 struct GoogleCreateEvent<'a> {
     summary: &'a str,
     description: &'a str,
+    #[serde(skip_serializing_if = "is_empty_str")]
+    location: &'a str,
     start: GoogleCreateEventTime<'a>,
     end: GoogleCreateEventTime<'a>,
     attendees: Vec<GoogleCreateAttendee<'a>>,
 }
 
+fn is_empty_str(value: &&str) -> bool {
+    value.is_empty()
+}
+
+/// All-day events set `date`; timed events set `dateTime`.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct GoogleCreateEventTime<'a> { date_time: &'a str }
+struct GoogleCreateEventTime<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    date: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    date_time: Option<&'a str>,
+}
+
+impl<'a> GoogleCreateEventTime<'a> {
+    fn new(value: &'a str, all_day: bool) -> Self {
+        if all_day {
+            Self { date: Some(value), date_time: None }
+        } else {
+            Self { date: None, date_time: Some(value) }
+        }
+    }
+}
+
+fn create_body(request: &CreateCalendarEventRequest) -> GoogleCreateEvent<'_> {
+    GoogleCreateEvent {
+        summary: request.title.trim(),
+        description: request.description.trim(),
+        location: request.location.trim(),
+        start: GoogleCreateEventTime::new(&request.start, request.all_day),
+        end: GoogleCreateEventTime::new(&request.end, request.all_day),
+        attendees: request.attendees.iter().map(|email| GoogleCreateAttendee { email }).collect(),
+    }
+}
 
 #[derive(Serialize)]
 struct GoogleCreateAttendee<'a> { email: &'a str }
@@ -299,13 +332,7 @@ pub async fn create_event(
         .post(url)
         .bearer_auth(&token)
         .query(&[("sendUpdates", "all")])
-        .json(&GoogleCreateEvent {
-            summary: request.title.trim(),
-            description: request.description.trim(),
-            start: GoogleCreateEventTime { date_time: &request.start },
-            end: GoogleCreateEventTime { date_time: &request.end },
-            attendees: request.attendees.iter().map(|email| GoogleCreateAttendee { email }).collect(),
-        })
+        .json(&create_body(request))
         .send()
         .await
         .map_err(|error| error.to_string())?;
@@ -1165,6 +1192,29 @@ mod tests {
         }
     }
 
+    fn create_request(all_day: bool, location: &str) -> CreateCalendarEventRequest {
+        CreateCalendarEventRequest {
+            account_id: "work@example.com".into(), calendar_id: "primary".into(),
+            title: " Bonfire ".into(),
+            start: if all_day { "2026-11-07".into() } else { "2026-10-17T18:45:00-04:00".into() },
+            end: if all_day { "2026-11-08".into() } else { "2026-10-17T20:45:00-04:00".into() },
+            all_day, location: location.into(), description: " From the email ".into(), attendees: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn create_body_sends_one_time_kind_and_an_optional_location() {
+        let timed = serde_json::to_value(create_body(&create_request(false, " 224 Fairoaks St "))).unwrap();
+        assert_eq!(timed["summary"], "Bonfire");
+        assert_eq!(timed["location"], "224 Fairoaks St");
+        assert_eq!(timed["start"], serde_json::json!({ "dateTime": "2026-10-17T18:45:00-04:00" }));
+        assert_eq!(timed["end"], serde_json::json!({ "dateTime": "2026-10-17T20:45:00-04:00" }));
+        let all_day = serde_json::to_value(create_body(&create_request(true, " "))).unwrap();
+        assert_eq!(all_day["start"], serde_json::json!({ "date": "2026-11-07" }));
+        assert_eq!(all_day["end"], serde_json::json!({ "date": "2026-11-08" }));
+        assert!(all_day.get("location").is_none());
+    }
+
     #[test]
     fn update_patch_sets_fields_and_clears_the_other_time_kind() {
         let current = serde_json::json!({ "attendees": [{ "email": "jane@example.com", "responseStatus": "accepted" }] });
@@ -1275,8 +1325,9 @@ mod tests {
         let payload = GoogleCreateEvent {
             summary: "Planning",
             description: "Agenda",
-            start: GoogleCreateEventTime { date_time: "2026-09-22T09:00:00Z" },
-            end: GoogleCreateEventTime { date_time: "2026-09-22T10:00:00Z" },
+            location: "",
+            start: GoogleCreateEventTime::new("2026-09-22T09:00:00Z", false),
+            end: GoogleCreateEventTime::new("2026-09-22T10:00:00Z", false),
             attendees: vec![GoogleCreateAttendee { email: "guest@example.com" }],
         };
         assert_eq!(serde_json::to_value(payload).unwrap(), serde_json::json!({

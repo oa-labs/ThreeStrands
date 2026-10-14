@@ -9,7 +9,7 @@ import type {
   ThreadDetail,
 } from "./domain";
 import { formatAvailabilityText, formatConfirmationText } from "./actionDrafting";
-import type { ScheduleSlot } from "./MeetingScheduler";
+import type { CalendarAddition, ScheduleSlot } from "./MeetingScheduler";
 import { proactiveBriefSender } from "./proactiveBrief";
 import { listenForOpenedCalendarFiles } from "./calendarFiles";
 import { calendarEventRange } from "./CalendarAttachment";
@@ -23,6 +23,12 @@ import type { useAppPreferences } from "./useAppPreferences";
 import type { ProposalSource, useThreadIntelligence } from "./useThreadIntelligence";
 import type { SettingsSection } from "./settingsPanelTypes";
 import type { Notice } from "./useNotice";
+
+/** Reads a `YYYY-MM-DD` value as a local calendar day, not UTC midnight. */
+function localDay(value: string): Date {
+  const [year, month, day] = value.slice(0, 10).split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
 
 type MeetingEditorState = { index: number; proposal: MeetingProposal };
 
@@ -56,8 +62,11 @@ export function useMeetingActions({
   // Add to Calendar from a meeting suggestion or a chat answer: the event
   // dialog opens prefilled and nothing is created until the user submits.
   const [meetingEventDraft, setMeetingEventDraft] = useState<{
+    /** For an all-day event, the first and last local days. */
     start: Date;
     end: Date;
+    allDay?: boolean;
+    location?: string;
     title: string;
     invitees: string[];
     description: string;
@@ -93,15 +102,23 @@ export function useMeetingActions({
       fromOpenedFile: true,
     });
   }, [refreshCalendarOptions]);
-  const addMeetingToCalendar = useCallback((slot: ScheduleSlot, meeting: { title: string; participants: string[]; excerpt: string | null }, source: { from: ProposalSource; proposal: ActionProposal } | null) => {
+  // An announced event is added for the user alone: its sender is never
+  // invited by default, since creating the event would email them.
+  const addMeetingToCalendar = useCallback((
+    slot: CalendarAddition,
+    meeting: { title: string; participants: string[]; excerpt: string | null; location?: string | null; announced?: boolean },
+    source: { from: ProposalSource; proposal: ActionProposal } | null,
+  ) => {
     if (!visibleDetail) return;
     const invitees = meeting.participants.filter((participant) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(participant.trim())).map((participant) => participant.trim());
-    const sender = proactiveBriefSender(visibleDetail, ownAddresses);
+    const sender = meeting.announced ? null : proactiveBriefSender(visibleDetail, ownAddresses);
     // The dialog lists writable calendars, which load lazily elsewhere.
     void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"));
     setMeetingEventDraft({
-      start: new Date(slot.start),
-      end: new Date(slot.end),
+      start: slot.allDay ? localDay(slot.start) : new Date(slot.start),
+      end: slot.allDay ? localDay(slot.end) : new Date(slot.end),
+      allDay: slot.allDay,
+      location: meeting.location ?? undefined,
       title: meeting.title,
       invitees: invitees.length > 0 ? invitees : sender ? [sender] : [],
       description: [`Scheduled from “${visibleDetail.thread.subject}”.`, meeting.excerpt ? `“${meeting.excerpt}”` : null].filter(Boolean).join("\n\n"),

@@ -12,6 +12,7 @@ import {
 import type { ChatAttachmentSource, ChatAvailability, ChatSource, ScheduleEvent } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
 import { AttachmentIcon } from "./AttachmentIcon";
+import { extraSuggestionsText } from "./ThreadAssist";
 
 export type ChatEntry =
   | {
@@ -32,6 +33,8 @@ export type ChatEntry =
     handledSuggestions?: number;
     calendarEvents?: ScheduleEvent[];
     hiddenSuggestions: number;
+    /** Valid suggestions past the per-answer limit, which weren't added. */
+    extraSuggestions?: number;
     sources: ChatSource[];
     searched: ChatSource[];
     /** Attachments whose text the answer could see. */
@@ -283,6 +286,7 @@ export function ThreadChat({
             </button>
           )) : null}
           {entry.hiddenSuggestions > 0 ? <small>{entry.hiddenSuggestions === 1 ? "1 suggestion" : `${entry.hiddenSuggestions} suggestions`} couldn&rsquo;t be matched to the email, so {entry.hiddenSuggestions === 1 ? "it was" : "they were"} hidden.</small> : null}
+          {entry.extraSuggestions ? <small>{extraSuggestionsText(entry.extraSuggestions)}</small> : null}
           {entry.sources.length > 0 ? <nav className="thread-chat-sources" aria-label="Sources">
             {entry.sources.map((source) => <button type="button" className="btn-link" key={source.threadId} onClick={() => onOpenThread(source.threadId)}>{source.subject || "(no subject)"}</button>)}
           </nav> : null}

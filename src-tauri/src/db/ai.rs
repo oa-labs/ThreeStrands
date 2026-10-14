@@ -211,6 +211,7 @@ impl Database {
 mod tests {
     use crate::db::Database;
     use crate::models::{ActionAnalysis, ActionProposal};
+    use rusqlite::params;
 
     fn database_with_thread() -> Database {
         let database = Database::open_memory();
@@ -242,6 +243,7 @@ mod tests {
         ActionAnalysis {
             proposals: vec![proposal],
             hidden_count,
+            extra_count: 0,
         }
     }
 
@@ -325,7 +327,7 @@ mod tests {
             .save_thread_analysis(
                 "account:thread",
                 revision,
-                &ActionAnalysis { proposals: vec![task("Send the deck"), task("Book the room")], hidden_count: 2 },
+                &ActionAnalysis { proposals: vec![task("Send the deck"), task("Book the room")], hidden_count: 2, extra_count: 0 },
                 "2026-09-19T11:00:00Z",
                 true,
             )
@@ -354,7 +356,7 @@ mod tests {
     fn a_cache_fill_keeps_the_saved_set_for_the_same_message_but_a_brief_replaces_it() {
         let database = database_with_thread();
         let revision = "2026-09-19T10:00:00Z";
-        let both = ActionAnalysis { proposals: vec![task("Send the deck"), task("Book the room")], hidden_count: 0 };
+        let both = ActionAnalysis { proposals: vec![task("Send the deck"), task("Book the room")], hidden_count: 0, extra_count: 0 };
         assert!(database.save_thread_analysis("account:thread", revision, &both, "2026-09-19T11:00:00Z", false).unwrap());
         // The user handles one suggestion; a concurrent analysis of the same
         // message then finishes and must not bring it back.
@@ -381,6 +383,43 @@ mod tests {
             .remove_thread_suggestion("account:thread", "2026-09-19T10:00:00Z", &task("Send the deck"))
             .unwrap());
         assert_eq!(saved_titles(&database, "2026-09-20T10:00:00Z"), Some(vec!["Send the deck".to_string()]));
+    }
+
+    #[test]
+    fn suggestions_saved_before_date_only_events_still_load_and_can_be_removed() {
+        let database = database_with_thread();
+        database
+            .save_thread_analysis("account:thread", "2026-09-19T10:00:00Z", &analysis(0), "2026-09-19T11:00:00Z", true)
+            .unwrap();
+        // The saved shape before `eventDate` and `extraCount` existed.
+        let earlier = serde_json::json!({
+            "proposals": [{
+                "type": "meeting", "intent": "schedule", "title": "Planning", "participants": [],
+                "location": null, "rawTimeLanguage": "next Friday", "normalizedStart": null,
+                "normalizedEnd": null, "searchRangeStart": null, "searchRangeEnd": null,
+                "durationMinutes": 30, "timeZone": null, "confidence": 0.5,
+                "evidence": {"sourceMessageId": "m1", "excerpt": "Can we meet next Friday?"},
+            }],
+            "hiddenCount": 1,
+        });
+        database
+            .connection()
+            .unwrap()
+            .execute("UPDATE ai_thread_analyses SET analysis_json = ?1", params![earlier.to_string()])
+            .unwrap();
+        let loaded = database
+            .thread_analysis("account:thread", "2026-09-19T10:00:00Z")
+            .unwrap()
+            .expect("an earlier saved analysis still loads");
+        assert_eq!(loaded.hidden_count, 1);
+        assert_eq!(loaded.extra_count, 0);
+        let ActionProposal::Meeting(meeting) = &loaded.proposals[0] else {
+            panic!("expected the saved meeting");
+        };
+        assert!(meeting.event_date.is_none());
+        assert!(database
+            .remove_thread_suggestion("account:thread", "2026-09-19T10:00:00Z", &loaded.proposals[0])
+            .unwrap());
     }
 
     #[test]
