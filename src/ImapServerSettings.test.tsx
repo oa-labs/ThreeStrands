@@ -21,6 +21,7 @@ const account: Account = {
   sortOrder: 0,
   connectedAt: "2026-10-08T12:00:00Z",
   lastSyncedAt: null,
+  onThisDevice: true,
 };
 
 beforeEach(() => {

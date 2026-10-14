@@ -57,6 +57,7 @@ import { CreateCalendarEventDialog } from "./CreateCalendarEventDialog";
 import { mailClient } from "./data/client";
 import type { ActionProposal } from "./domain";
 import { EnrollmentRequestNotice } from "./EnrollmentRequestNotice";
+import { AvailableAccountsNotice } from "./AvailableAccountsNotice";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { FolderSwitcher } from "./FolderSwitcher";
 import { ICON_SIZE } from "./iconSizes";
@@ -155,7 +156,14 @@ export function App() {
     mailboxUnreadCounts,
     refreshMailboxUnreadCounts,
     reorderAccounts,
+    newlyAvailableAccounts,
+    acknowledgeAvailableAccounts,
   } = mailAccounts;
+  const viewingAccountSettings = settingsOpen && settingsSection === "accounts";
+  // Seeing the account list counts as seeing the accounts offered there.
+  useEffect(() => {
+    if (viewingAccountSettings && newlyAvailableAccounts.length > 0) acknowledgeAvailableAccounts();
+  }, [viewingAccountSettings, newlyAvailableAccounts, acknowledgeAvailableAccounts]);
   const { unreadCounts, checkingMail, refreshUnreadCounts } = useUnreadCounts(syncStatus, setSyncStatus);
   const [activeSplitInboxId, setActiveSplitInboxId] = useState<string | null>(null);
   const [mailbox, setMailbox] = useState<MailboxKind>(() => readSelectedMailboxForAccount(readSelectedAccountId()) ?? "inbox");
@@ -1246,6 +1254,12 @@ export function App() {
       <EnrollmentRequestNotice
         suppressed={settingsOpen && settingsSection === "replicatedSync"}
         onReview={() => openSettingsAt("replicatedSync")}
+      />
+      <AvailableAccountsNotice
+        accounts={newlyAvailableAccounts}
+        suppressed={viewingAccountSettings}
+        onReview={() => openSettingsAt("accounts")}
+        onDismiss={acknowledgeAvailableAccounts}
       />
       <UpdateNotice />
       {notice ? (

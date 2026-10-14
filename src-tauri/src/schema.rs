@@ -12,7 +12,7 @@ use crate::mime::RawMessage;
 /// Bumped alongside the last `if version < N` block in [`migrate`]. Read
 /// before migrating so a pre-migration backup is only taken when a
 /// migration is actually about to run.
-pub(crate) const LATEST_VERSION: i64 = 73;
+pub(crate) const LATEST_VERSION: i64 = 74;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -2107,6 +2107,23 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 74 {
+        // Device-local "set up on this device" flag. Replicated sync and
+        // settings import used to land every account as `needs_reauth`, so a
+        // row that has never synced mail here is one this device received
+        // but never set up: it becomes "available" instead of an error. Only
+        // the run that adds the column classifies rows; a rerun keeps choices.
+        if !has_column(&tx, "accounts", "on_this_device")? {
+            tx.execute_batch(
+                "ALTER TABLE accounts ADD COLUMN on_this_device INTEGER NOT NULL DEFAULT 1;
+                 UPDATE accounts SET on_this_device=0
+                  WHERE status='needs_reauth' AND last_synced_at IS NULL
+                    AND NOT EXISTS (SELECT 1 FROM threads WHERE threads.account_id=accounts.email);",
+            )
+            .map_err(error)?;
+        }
+        tx.execute_batch("PRAGMA user_version=74;").map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     connection.execute("UPDATE outbox_messages SET state='uncertain', error='Application stopped during delivery. Check sent mail before sending again.' WHERE state='sending'", []).map_err(error)?;
@@ -2166,6 +2183,32 @@ mod tests {
             })
             .unwrap();
         assert_eq!(count, 0, "completed repairs are not requeued on restart");
+    }
+
+    #[test]
+    fn v74_marks_only_never_set_up_accounts_as_available_from_other_devices() {
+        let mut connection = unmigrated_database_with_one_account();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE accounts DROP COLUMN on_this_device;
+             INSERT INTO accounts(email, color, status, sort_order, connected_at, last_synced_at)
+             VALUES ('synced-in@example.com', '#123456', 'needs_reauth', 1, '2026-01-01T00:00:00Z', NULL),
+                    ('expired@example.com', '#123456', 'needs_reauth', 2, '2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z');
+             PRAGMA user_version=73;",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        fn here(connection: &Connection, email: &str) -> bool {
+            connection
+                .query_row("SELECT on_this_device FROM accounts WHERE email=?1", [email], |row| row.get(0))
+                .unwrap()
+        }
+        assert!(here(&connection, "you@gmail.com"), "a connected account stays set up here");
+        assert!(here(&connection, "expired@example.com"), "an account that synced here and later expired still needs reconnecting");
+        assert!(!here(&connection, "synced-in@example.com"), "an account never set up here becomes available instead of an error");
+        super::migrate(&mut connection).unwrap();
+        assert!(!here(&connection, "synced-in@example.com"));
     }
 
     #[test]

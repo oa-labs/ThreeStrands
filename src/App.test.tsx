@@ -1454,6 +1454,7 @@ describe("account selection persistence", () => {
       sortOrder: 0,
       connectedAt: "2026-03-04T00:00:00Z",
       lastSyncedAt: null,
+      onThisDevice: true,
     };
     render(
       <AccountSwitcher

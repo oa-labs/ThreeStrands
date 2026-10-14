@@ -495,8 +495,8 @@ export function buildShowcaseDataset(now: Date = new Date()): DemoDataset {
   const connectedAt = daysAgo(120);
   return {
     accounts: [
-      { email: SHOWCASE_WORK_ACCOUNT, displayName: "Maya Chen", color: "#4285F4", status: "connected", provider: "gmail", labelModel: "gmailLabels", sortOrder: 0, connectedAt, lastSyncedAt: daysAgo(0.002) },
-      { email: SHOWCASE_PERSONAL_ACCOUNT, displayName: "Maya Chen", color: "#34A853", status: "connected", provider: "gmail", labelModel: "gmailLabels", sortOrder: 1, connectedAt, lastSyncedAt: daysAgo(0.002) },
+      { email: SHOWCASE_WORK_ACCOUNT, displayName: "Maya Chen", color: "#4285F4", status: "connected", provider: "gmail", labelModel: "gmailLabels", sortOrder: 0, connectedAt, lastSyncedAt: daysAgo(0.002), onThisDevice: true },
+      { email: SHOWCASE_PERSONAL_ACCOUNT, displayName: "Maya Chen", color: "#34A853", status: "connected", provider: "gmail", labelModel: "gmailLabels", sortOrder: 1, connectedAt, lastSyncedAt: daysAgo(0.002), onThisDevice: true },
     ],
     threads,
     messages,

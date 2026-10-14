@@ -220,6 +220,8 @@ struct AppState {
     /// `Some` only when the local database had to be recovered at startup
     /// (restored from a backup, or recreated fresh) — see `open_with_recovery`.
     recovery: Option<db::RecoveryOutcome>,
+    /// A decrypted settings import awaiting the user's account choices.
+    staged_import: transfer::StagedImport,
 }
 
 /// SQLite and the mutex guarding its connection are synchronous. Run database
@@ -264,7 +266,7 @@ mod database_task_tests {
     fn only_allowlisted_commands_run_on_the_main_thread() {
         const MAIN_THREAD_COMMANDS: &[&str] = &[
             "export_settings",
-            "import_settings",
+            "preview_settings_import",
             "ai_api_key_configured",
             "set_ai_api_key",
             "recovery_status",
@@ -623,6 +625,20 @@ mod account_startup_tests {
             catalogued_mail_provider(&database, "imap@example.com").unwrap(),
             MailProviderKind::Imap
         );
+    }
+
+    #[test]
+    fn an_account_not_set_up_on_this_device_stays_out_of_the_startup_registry() {
+        let database = Database::open_memory();
+        database.adopt_mail_account("work@example.com", MailProviderKind::Gmail).unwrap();
+        database.adopt_mail_account("personal@example.com", MailProviderKind::Imap).unwrap();
+        database.disconnect_account_locally("personal@example.com").unwrap();
+
+        let credentials = startup_account_credentials(&database, &AuthConfig::google_for_test());
+        let keys = credentials.iter().map(|(key, _)| key.as_str()).collect::<Vec<_>>();
+        assert_eq!(keys, ["work@example.com"]);
+        assert_eq!(database.list_accounts().unwrap().len(), 2, "it stays in the catalog");
+        assert_eq!(database.primary_account_id(), "work@example.com");
     }
 
     // The companion to the above: an IMAP PRIMARY account no longer keeps
@@ -993,6 +1009,8 @@ fn combined_sync_status(database: &Database) -> Result<SyncStatus, String> {
     if accounts.is_empty() {
         return database_result(database.sync_status(auth::LEGACY_KEY));
     }
+    // Accounts not set up on this device have nothing to sync here.
+    let accounts = accounts.into_iter().filter(|account| account.on_this_device);
     let mut statuses = Vec::new();
     let mut errors = Vec::new();
     for account in accounts {
@@ -3928,11 +3946,24 @@ fn export_settings(
 }
 
 #[tauri::command]
-fn import_settings(
+fn preview_settings_import(
     password: String,
     state: State<'_, AppState>,
-) -> Result<Option<transfer::ImportResult>, String> {
-    transfer::import(&state.database, &password)
+) -> Result<Option<transfer::ImportPreview>, String> {
+    transfer::preview_import(&state.database, &state.staged_import, &password)
+}
+
+#[tauri::command(async)]
+fn apply_settings_import(
+    not_here: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<transfer::ImportResult, String> {
+    transfer::apply_staged_import(&state.database, &state.staged_import, &not_here)
+}
+
+#[tauri::command(async)]
+fn cancel_settings_import(state: State<'_, AppState>) -> Result<(), String> {
+    transfer::cancel_staged_import(&state.staged_import)
 }
 
 #[tauri::command]
@@ -5041,6 +5072,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         attachment_reader,
         attachment_text: attachment_text::ExtractCache::default(),
         recovery,
+        staged_import: transfer::StagedImport::default(),
     });
     Ok(())
 }
@@ -5226,6 +5258,9 @@ fn startup_account_credentials(
     }
     catalog
         .into_iter()
+        // An account only available from another device has no credential
+        // here; it enters the registry when the user sets it up.
+        .filter(|account| account.on_this_device)
         .filter_map(|account| {
             let provider = MailProviderKind::parse(&account.provider).or_else(|| {
                 log::warn!(
@@ -5424,7 +5459,9 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         check_proposed_time,
         // Settings transfer and retention
         export_settings,
-        import_settings,
+        preview_settings_import,
+        apply_settings_import,
+        cancel_settings_import,
         get_retention_days,
         set_retention_days,
         // Split inboxes, snippets, and labels

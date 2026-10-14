@@ -31,7 +31,7 @@ import {
   saveSelectedAccountId,
 } from "./settings";
 import { readTheme, saveTheme, type Theme } from "./theme";
-import type { AvailabilityPreferences } from "./domain";
+import type { AvailabilityPreferences, MailProvider } from "./domain";
 
 /**
  * The complete allowlist of webview-owned preferences that may cross devices.
@@ -113,8 +113,32 @@ export async function exportSettings(password: string): Promise<string | null> {
   });
 }
 
-export async function importSettings(password: string): Promise<SettingsImportResult | null> {
-  const result = await invoke<SettingsImportResult | null>("import_settings", { password });
-  if (result) applyExportablePreferences(result.preferences);
+/** One account in a settings file, before the user picks where to set it up. */
+export type SettingsImportAccount = {
+  email: string;
+  displayName: string | null;
+  nickname: string | null;
+  provider: MailProvider;
+  /** Already connected on this device; importing never changes that. */
+  setUpHere: boolean;
+};
+
+export type SettingsImportPreview = { accounts: SettingsImportAccount[] };
+
+/** Chooses and decrypts a settings file without applying it. Resolves with
+ * null when the file dialog is cancelled. */
+export async function previewSettingsImport(password: string): Promise<SettingsImportPreview | null> {
+  return invoke<SettingsImportPreview | null>("preview_settings_import", { password });
+}
+
+/** Applies the previewed file. Accounts in `notHere` are listed as set up on
+ * other devices instead of waiting to be reconnected on this one. */
+export async function applySettingsImport(notHere: string[]): Promise<SettingsImportResult> {
+  const result = await invoke<SettingsImportResult>("apply_settings_import", { notHere });
+  applyExportablePreferences(result.preferences);
   return result;
+}
+
+export async function cancelSettingsImport(): Promise<void> {
+  await invoke("cancel_settings_import");
 }

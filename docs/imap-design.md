@@ -701,6 +701,15 @@ keep working.
   requires.
 - **Replicated sync:** the mail-account entity carries the same non-secret
   settings.
+- **Per-device accounts (0.116.0):** whether an account is set up on a device
+  is device-local (`accounts.on_this_device`) and never synced or exported.
+  An account another device syncs in arrives as "available" instead of
+  `needs_reauth`. Settings lists it under "On Your Other Devices" with
+  **Set Up Here**, and it stays out of the switcher, mail views and startup
+  registry until then. A local disconnect on a sync-enrolled device moves the
+  account back to "available". Settings import lets the user untick accounts,
+  and unticked ones import as "available". Import never disconnects an account
+  that is already set up.
 
 ## Gmail assumptions to remove first
 

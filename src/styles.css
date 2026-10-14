@@ -2511,6 +2511,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .accounts-empty { display: grid; justify-items: center; gap: var(--space-1); width: 100%; padding: var(--space-6) var(--space-4); border: 1px dashed var(--border-strong); border-radius: var(--radius-md); text-align: center; }
 .accounts-empty-icon { display: grid; place-items: center; width: var(--control-h); height: var(--control-h); margin-bottom: var(--space-1); border-radius: var(--radius-circle); color: var(--muted); background: var(--hover); }
 .accounts-empty p { margin: 0; }
+.available-accounts { display: flex; flex-direction: column; gap: var(--space-2); width: 100%; margin-top: var(--space-4); }
+.available-accounts h4, .available-accounts p { margin: 0; }
 .accounts-list { display: flex; flex-direction: column; gap: var(--space-2-5); width: 100%; margin: var(--space-0-5) 0 0; padding: 0; list-style: none; }
 .account-card { display: flex; flex-direction: column; gap: var(--space-2-5); width: 100%; padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); transition: border-color var(--duration-base) ease; }
 .account-card:hover { border-color: var(--border-strong); }
@@ -2663,6 +2665,10 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .settings-field.settings-field-inline input { width: 76px; }
 .settings-row { display: flex; align-items: center; gap: var(--space-2-5); }
 .settings-radio-row { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); font-size: var(--text-body); }
+.import-account-choices { display: flex; flex-direction: column; gap: var(--space-2); width: 100%; margin: 0; padding: var(--space-2) var(--space-2-5); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.import-account-choices legend { padding: 0 var(--space-1); color: var(--muted); font-size: var(--text-secondary); }
+.import-account-choices > p { margin: 0; }
+.import-account-actions { display: flex; gap: var(--space-2); }
 .settings-radio-row label, .settings-checkbox { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-body); }
 /* Swatches preview each accent choice in its own color, independent of the
    accent currently applied to the document. */
@@ -2730,7 +2736,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .sync-join-connectors legend { padding: 0 var(--space-1); color: var(--muted); font-size: var(--text-secondary); }
 .sync-join-connector { display: flex; flex-direction: column; gap: var(--space-0-5); }
 .sync-join-credentials { padding-left: var(--space-6); }
-.enrollment-request-toast {
+.enrollment-request-toast, .available-accounts-toast {
   top: 24px;
   right: 24px;
   bottom: auto;

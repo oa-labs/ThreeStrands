@@ -1,6 +1,13 @@
 import { CircleCheck, Download, Upload } from "lucide-react";
 import { useState } from "react";
-import { exportSettings, importSettings, type SettingsImportResult } from "./userPreferences";
+import {
+  applySettingsImport,
+  cancelSettingsImport,
+  exportSettings,
+  previewSettingsImport,
+  type SettingsImportPreview,
+  type SettingsImportResult,
+} from "./userPreferences";
 import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 
@@ -32,12 +39,24 @@ export function DataTransferSettings({
   const [exportConfirmation, setExportConfirmation] = useState("");
   const [importPassword, setImportPassword] = useState("");
   const [busy, setBusy] = useState<"export" | "import" | null>(null);
+  // A decrypted file waiting for the user to pick which accounts to set up here.
+  const [preview, setPreview] = useState<SettingsImportPreview | null>(null);
+  const [notHere, setNotHere] = useState<ReadonlySet<string>>(new Set());
   const [message, setMessage] = useState<{ text: string; tone: "success" | "error" } | null>(null);
   const isDesktop = "__TAURI_INTERNALS__" in window;
   const passwordsMatch = exportPassword.length >= 8 && exportPassword === exportConfirmation;
 
   const showError = (error: unknown) => {
     setMessage({ text: errorMessage(error), tone: "error" });
+  };
+
+  // The native side consumes the staged file either way, so a failure means
+  // choosing the file again rather than retrying the same choices.
+  const applyImport = async (skipped: string[]) => {
+    setPreview(null);
+    const result = await applySettingsImport(skipped);
+    setImportPassword("");
+    await onImported(result);
   };
 
   return (
@@ -99,9 +118,9 @@ export function DataTransferSettings({
       <h3>Import Settings and Accounts</h3>
       <p className="settings-hint">
         Importing replaces the {listPhrase(TRANSFERRED_DATA.filter((item) => item.replacedOnImport).map((item) => item.label))} on
-        this installation. Existing connected accounts stay connected. Other
-        imported accounts appear as “Connect on this device” until you sign in
-        to them again.
+        this installation. Existing connected accounts stay connected. You
+        choose which other imported accounts to set up on this device; they
+        appear as “Connect on this device” until you sign in to them again.
       </p>
       <label className="settings-field settings-field-row">
         <span>Backup File Password</span>
@@ -121,10 +140,16 @@ export function DataTransferSettings({
         onClick={() => {
           setBusy("import");
           setMessage(null);
-          void importSettings(importPassword)
-            .then(async (result) => {
-              if (!result) return;
-              await onImported(result);
+          void previewSettingsImport(importPassword)
+            .then(async (next) => {
+              if (!next) return;
+              // Nothing to choose when every account is already set up here.
+              if (next.accounts.every((account) => account.setUpHere)) {
+                await applyImport([]);
+                return;
+              }
+              setNotHere(new Set());
+              setPreview(next);
             })
             .catch(showError)
             .finally(() => setBusy(null));
@@ -133,6 +158,62 @@ export function DataTransferSettings({
         <Upload size={ICON_SIZE.sm} aria-hidden="true" />
         {busy === "import" ? "Importing…" : "Choose Encrypted Settings File"}
       </button>
+      {preview ? (
+        <fieldset className="import-account-choices" disabled={busy !== null}>
+          <legend>Accounts to Set Up on This Device</legend>
+          <p className="settings-hint">
+            Unchecked accounts are listed under “On Your Other Devices” in Mail Accounts, where you can set them up later.
+          </p>
+          {preview.accounts.map((account) => {
+            const name = account.nickname?.trim() || account.displayName || account.email;
+            return (
+              <label key={account.email} className="settings-checkbox">
+                <input
+                  type="checkbox"
+                  checked={account.setUpHere || !notHere.has(account.email)}
+                  disabled={account.setUpHere}
+                  onChange={(event) => {
+                    const skip = !event.target.checked;
+                    setNotHere((current) => {
+                      const next = new Set(current);
+                      if (skip) next.add(account.email);
+                      else next.delete(account.email);
+                      return next;
+                    });
+                  }}
+                />
+                <span>
+                  {name}{name !== account.email ? ` (${account.email})` : ""} · {account.provider === "imap" ? "IMAP" : "Gmail"}
+                  {account.setUpHere ? " · Already set up here" : ""}
+                </span>
+              </label>
+            );
+          })}
+          <div className="import-account-actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                setBusy("import");
+                setMessage(null);
+                void applyImport([...notHere]).catch(showError).finally(() => setBusy(null));
+              }}
+            >
+              Import
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                setPreview(null);
+                void cancelSettingsImport().catch(showError);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </fieldset>
+      ) : null}
       {!isDesktop ? (
         <p className="settings-hint" role="status">
           Settings transfer is available in the ThreeStrands desktop app.

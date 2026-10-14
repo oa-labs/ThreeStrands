@@ -48,6 +48,8 @@ export type SettingsPreferences = {
 export type MailAccountSettings = {
   authStatus: AuthStatus | null;
   accounts: Account[];
+  /** Accounts set up on other devices but not this one. */
+  availableAccounts?: Account[];
   activeAccountId: string | null;
   refresh?(): Promise<void>;
   add(): Promise<void>;

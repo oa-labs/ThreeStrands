@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { removeSyncedMailAccount } from "./replicatedSync";
 import { mailClient } from "./data/client";
 import type {
@@ -7,7 +7,7 @@ import type {
   MailboxUnreadCounts,
   SyncStatus,
 } from "./domain";
-import { readSelectedAccountId, saveSelectedAccountId } from "./settings";
+import { readSeenAvailableAccounts, readSelectedAccountId, saveSeenAvailableAccounts, saveSelectedAccountId } from "./settings";
 import { logBackgroundFailure } from "./errors";
 
 export const ACCOUNT_STATUS_REFRESH_MS = 15_000;
@@ -18,7 +18,15 @@ export const ACCOUNT_STATUS_REFRESH_MS = 15_000;
  * account metadata cannot implicitly navigate or replace the current list.
  */
 export function useAccounts(settingsOpen: boolean) {
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  // Every catalogued account, including ones only set up on other devices.
+  const [catalog, setCatalog] = useState<Account[]>([]);
+  const accounts = useMemo(() => catalog.filter((account) => account.onThisDevice), [catalog]);
+  const availableAccounts = useMemo(() => catalog.filter((account) => !account.onThisDevice), [catalog]);
+  const [seenAvailable, setSeenAvailable] = useState<string[]>(readSeenAvailableAccounts);
+  const newlyAvailableAccounts = useMemo(
+    () => availableAccounts.filter((account) => !seenAvailable.includes(account.email)),
+    [availableAccounts, seenAvailable],
+  );
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [activeAccountId, setActiveAccountId] = useState<string | null>(readSelectedAccountId);
@@ -35,9 +43,9 @@ export function useAccounts(settingsOpen: boolean) {
       .listAccounts()
       .then((next) => {
         if (requestId !== accountsRequest.current) return;
-        setAccounts(next);
+        setCatalog(next);
         setActiveAccountId((current) =>
-          current === null || next.some((account) => account.email === current)
+          current === null || next.some((account) => account.email === current && account.onThisDevice)
             ? current
             : null,
         );
@@ -51,6 +59,8 @@ export function useAccounts(settingsOpen: boolean) {
     void mailClient.mailboxUnreadCounts(accountId).then(setMailboxUnreadCounts).catch(logBackgroundFailure("Mailbox unread count refresh"));
   }, [activeAccountId]);
 
+  /** Reorders the accounts set up here; accounts only available from other
+   * devices keep their place after them. */
   const reorderAccounts = useCallback(async (emails: string[]) => {
     const accountsByEmail = new Map(accounts.map((account) => [account.email, account]));
     const reordered = emails
@@ -58,15 +68,26 @@ export function useAccounts(settingsOpen: boolean) {
       .filter((account): account is Account => account !== undefined);
     if (reordered.length !== accounts.length) return;
 
-    setAccounts(reordered);
+    const previous = catalog;
+    setCatalog([...reordered, ...availableAccounts]);
     try {
-      await mailClient.reorderAccounts(emails);
+      await mailClient.reorderAccounts([...emails, ...availableAccounts.map((account) => account.email)]);
       await refreshAccounts();
     } catch (error) {
-      setAccounts(accounts);
+      setCatalog(previous);
       throw error;
     }
-  }, [accounts, refreshAccounts]);
+  }, [accounts, availableAccounts, catalog, refreshAccounts]);
+
+  /** Records that the user has seen every account currently available from
+   * other devices, so the arrival notice does not repeat. */
+  const acknowledgeAvailableAccounts = useCallback(() => {
+    setSeenAvailable((current) => {
+      const next = [...new Set([...current, ...availableAccounts.map((account) => account.email)])];
+      saveSeenAvailableAccounts(next);
+      return next;
+    });
+  }, [availableAccounts]);
 
   const addAccount = useCallback(async () => {
     // Gmail is the only provider the account UI offers so far.
@@ -146,6 +167,9 @@ export function useAccounts(settingsOpen: boolean) {
 
   return {
     accounts,
+    availableAccounts,
+    newlyAvailableAccounts,
+    acknowledgeAvailableAccounts,
     authStatus,
     setAuthStatus,
     syncStatus,

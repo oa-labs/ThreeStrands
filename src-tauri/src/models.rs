@@ -1111,6 +1111,16 @@ pub struct Account {
     pub sort_order: i64,
     pub connected_at: String,
     pub last_synced_at: Option<String>,
+    /// Whether the user set this account up on THIS device. Device-local: it
+    /// is never in a replicated-sync payload or the settings export. An
+    /// account another device synchronized in arrives `false` ("available,
+    /// not set up here") and becomes `true` only when it connects here.
+    #[serde(default = "default_on_this_device")]
+    pub on_this_device: bool,
+}
+
+fn default_on_this_device() -> bool {
+    true
 }
 
 /// The mail providers this build can connect, i.e. the `accounts.provider`

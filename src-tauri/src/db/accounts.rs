@@ -16,17 +16,21 @@ impl Database {
     /// catalog — this is the same rule startup used when it built a distinct
     /// "primary" credential from `list_accounts().next()`.
     pub fn primary_account_id(&self) -> String {
+        // An account only available from another device cannot send here,
+        // so it is the default only when nothing is set up on this device.
         self.list_accounts()
             .ok()
-            .and_then(|accounts| accounts.into_iter().next())
-            .map(|account| account.email)
+            .and_then(|accounts| {
+                let fallback = accounts.first().map(|account| account.email.clone());
+                accounts.into_iter().find(|account| account.on_this_device).map(|account| account.email).or(fallback)
+            })
             .unwrap_or_else(|| crate::auth::LEGACY_KEY.to_string())
     }
 
     pub fn list_accounts(&self) -> DbResult<Vec<Account>> {
         self.with_connection(|connection| {
             let mut statement = connection.prepare(
-                "SELECT email, display_name, color, status, provider, sort_order, connected_at, last_synced_at, nickname
+                "SELECT email, display_name, color, status, provider, sort_order, connected_at, last_synced_at, nickname, on_this_device
                  FROM accounts ORDER BY sort_order",
             )?;
             let rows = statement.query_map([], account_from_row)?;
@@ -55,7 +59,7 @@ impl Database {
             )?;
             if exists {
                 transaction.execute(
-                    "UPDATE accounts SET status = 'connected', provider = ?2 WHERE email = ?1",
+                    "UPDATE accounts SET status = 'connected', provider = ?2, on_this_device = 1 WHERE email = ?1",
                     params![email, provider.as_str()],
                 )?;
             } else {
@@ -212,7 +216,7 @@ impl Database {
         self.with_connection(|connection| {
             let account = connection
                 .query_row(
-                    "SELECT email, display_name, color, status, provider, sort_order, connected_at, last_synced_at, nickname
+                    "SELECT email, display_name, color, status, provider, sort_order, connected_at, last_synced_at, nickname, on_this_device
                      FROM accounts WHERE email = ?1",
                     [email],
                     account_from_row,
@@ -317,8 +321,10 @@ impl Database {
             }
             // Keep non-secret connection settings for reconnecting, but no mail.
             purge_imap_cache(transaction, email)?;
+            // A local disconnect is "don't use this account here": the
+            // synchronized catalog row stays, listed as available to set up.
             transaction.execute(
-                "UPDATE accounts SET status='needs_reauth',last_synced_at=NULL WHERE email=?1",
+                "UPDATE accounts SET status='needs_reauth',last_synced_at=NULL,on_this_device=0 WHERE email=?1",
                 [email],
             )?;
             transaction.execute("INSERT OR IGNORE INTO sync_state(account_id) VALUES(?1)", [email])?;
@@ -449,6 +455,7 @@ fn account_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
         sort_order: row.get(5)?,
         connected_at: row.get(6)?,
         last_synced_at: row.get(7)?,
+        on_this_device: row.get(9)?,
     })
 }
 

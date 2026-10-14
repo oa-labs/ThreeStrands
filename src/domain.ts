@@ -899,6 +899,10 @@ export type Account = {
   sortOrder: number;
   connectedAt: string;
   lastSyncedAt: string | null;
+  /** Whether the account is set up on THIS device. False for an account
+   * another device synchronized in (or one disconnected here): it is listed
+   * as available to set up, and stays out of the switcher and mail views. */
+  onThisDevice: boolean;
 };
 
 /** Inbox unread thread totals keyed by account email. Accounts with no unread mail may be omitted. */

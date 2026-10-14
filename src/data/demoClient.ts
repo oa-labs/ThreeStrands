@@ -1017,6 +1017,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         sortOrder: accounts.length,
         connectedAt: new Date().toISOString(),
         lastSyncedAt: null,
+        onThisDevice: true,
       };
       accounts = [...accounts, account];
       return structuredClone(account);
@@ -1075,6 +1076,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         sortOrder: accounts.length,
         connectedAt: new Date().toISOString(),
         lastSyncedAt: null,
+        onThisDevice: true,
       };
       accounts = [...accounts, account];
       return structuredClone(account);

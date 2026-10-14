@@ -21,7 +21,7 @@ export function useSettingsIntegration({
   setSettingsSection,
 }: Options) {
   const {
-    accounts, activeAccountId, authStatus, addAccount, removeAccount, removeAccountEverywhere,
+    accounts, availableAccounts, activeAccountId, authStatus, addAccount, removeAccount, removeAccountEverywhere,
     reconnectAccount, setAccountDisplayName, setAccountNickname, setAccountColor, reorderAccounts, setActiveAccountId,
     refreshAccounts, setAuthStatus,
   } = mailAccounts;
@@ -35,6 +35,7 @@ export function useSettingsIntegration({
   const mailAccountSettings = useMemo((): MailAccountSettings => ({
     authStatus,
     accounts,
+    availableAccounts,
     activeAccountId,
     add: addAccount,
     refresh: refreshAccounts,
@@ -55,7 +56,7 @@ export function useSettingsIntegration({
     setColor: setAccountColor,
     reorder: reorderAccounts,
   }), [
-    accounts, activeAccountId, addAccount, authStatus, loadThreads, query, reconnectAccount,
+    accounts, availableAccounts, activeAccountId, addAccount, authStatus, loadThreads, query, reconnectAccount,
     removeAccount, removeAccountEverywhere, reorderAccounts, setAccountColor,
     setAccountDisplayName, setAccountNickname, refreshAccounts,
   ]);

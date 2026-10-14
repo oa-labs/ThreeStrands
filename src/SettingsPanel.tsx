@@ -242,6 +242,7 @@ export function Settings({
             <AccountsSettings
               authStatus={mailAccounts.authStatus}
               accounts={mailAccounts.accounts}
+              availableAccounts={mailAccounts.availableAccounts}
               onAdd={mailAccounts.add}
               onImapConnected={mailAccounts.refresh}
               onRemove={mailAccounts.remove}

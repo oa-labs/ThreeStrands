@@ -32,6 +32,7 @@ fn import_transfer_preserves_local_credentials_and_marks_new_accounts_for_connec
                     imap: None,
                 },
             ],
+            &Default::default(),
             &[TransferSplitInbox {
                 id: "imported-split".to_string(),
                 name: "Imported rule".to_string(),
@@ -78,6 +79,52 @@ fn import_transfer_preserves_local_credentials_and_marks_new_accounts_for_connec
     assert_eq!(snippets.len(), 1);
     assert_eq!(snippets[0].name, "Imported snippet");
     assert_eq!(database.retention_days().unwrap(), Some(90));
+}
+
+#[test]
+fn import_sets_up_only_the_chosen_accounts_and_never_disconnects_one() {
+    let database = database();
+    database.adopt_account("connected@example.com").unwrap();
+    database.adopt_account("available@example.com").unwrap();
+    database.disconnect_account_locally("available@example.com").unwrap();
+    let account = |email: &str| TransferAccount {
+        email: email.to_string(),
+        nickname: None,
+        display_name: None,
+        color: "#123456".to_string(),
+        provider: "imap".to_string(),
+        sort_order: 0,
+        imap: None,
+    };
+    let not_here = ["skipped@example.com", "connected@example.com"]
+        .map(str::to_string)
+        .into_iter()
+        .collect();
+
+    database
+        .import_transfer_data(
+            &[
+                account("chosen@example.com"),
+                account("Skipped@example.com"),
+                account("connected@example.com"),
+                account("available@example.com"),
+            ],
+            &not_here,
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+        )
+        .unwrap();
+
+    let here = |email: &str| database.get_account(email).unwrap().unwrap().on_this_device;
+    assert!(here("chosen@example.com"));
+    assert!(!here("Skipped@example.com"), "an unchosen account is listed as available");
+    assert!(here("connected@example.com"), "leaving out a set-up account does not disconnect it");
+    assert_eq!(database.get_account("connected@example.com").unwrap().unwrap().status, "connected");
+    assert!(here("available@example.com"), "choosing an available account sets it up here");
+    assert_eq!(database.list_accounts().unwrap().len(), 4, "every account stays in the catalog");
 }
 
 #[test]
@@ -181,6 +228,7 @@ fn a_late_settings_failure_rolls_back_every_imported_feature() {
         let import = || {
             database.import_transfer_data(
                 &accounts,
+                &Default::default(),
                 &splits,
                 &snippets,
                 &contacts,

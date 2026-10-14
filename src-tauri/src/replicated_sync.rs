@@ -2396,6 +2396,29 @@ mod tests {
     }
 
     #[test]
+    fn a_synced_in_account_arrives_available_and_never_publishes_its_device_state() {
+        let destination = Database::open_memory();
+        let payload = json!({"email":"personal@example.com","color":"#123456","provider":"imap","sortOrder":0});
+        destination.materialize_entity(EntityType::MailAccount, "personal@example.com", Some(&payload), false).unwrap();
+        let account = destination.get_account("personal@example.com").unwrap().unwrap();
+        assert!(!account.on_this_device, "a new account from another device is offered, not set up");
+        assert_eq!(account.status, "needs_reauth");
+
+        // Connecting here sets it up; a later catalog update keeps that.
+        destination.adopt_mail_account("personal@example.com", crate::models::MailProviderKind::Imap).unwrap();
+        destination.materialize_entity(EntityType::MailAccount, "personal@example.com", Some(&payload), false).unwrap();
+        assert!(destination.get_account("personal@example.com").unwrap().unwrap().on_this_device);
+
+        // Disconnecting locally puts it back to "available" without removing it.
+        destination.disconnect_account_locally("personal@example.com").unwrap();
+        assert!(!destination.get_account("personal@example.com").unwrap().unwrap().on_this_device);
+        destination.reconcile_replicated_sync_backlog().unwrap();
+        for field in ["onThisDevice", "on_this_device", "status"] {
+            assert_eq!(destination.resolve_field_winner(EntityType::MailAccount, "personal@example.com", field).unwrap(), None);
+        }
+    }
+
+    #[test]
     fn projection_readiness_rejects_an_incomplete_entity() {
         let db = Database::open_memory();
         let result = db.check_projection_readiness(EntityType::Snippet, &json!({"name": "n"}));

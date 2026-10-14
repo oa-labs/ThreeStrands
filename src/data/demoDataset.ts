@@ -75,6 +75,7 @@ export function defaultDemoDataset(): DemoDataset {
         sortOrder: 0,
         connectedAt: "2026-03-04T00:00:00Z",
         lastSyncedAt: null,
+        onThisDevice: true,
       },
     ],
     threads: [

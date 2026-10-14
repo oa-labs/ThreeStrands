@@ -16,6 +16,7 @@ import { ImapAccountSetup } from "./ImapAccountSetup";
 import { ImapSendingSettings } from "./ImapSendingSettings";
 import { ImapServerSettings } from "./ImapServerSettings";
 import { AccountStatusBadge, AccountDisconnectConfirm } from "./accountSettingsParts";
+import { mailClient } from "./data/client";
 
 /** How long a field's "Saved" confirmation stays visible after autosave. */
 const SAVED_STATUS_MS = 2000;
@@ -23,6 +24,7 @@ const SAVED_STATUS_MS = 2000;
 export function AccountsSettings({
   authStatus,
   accounts,
+  availableAccounts = [],
   onAdd,
   onRemove,
   onRemoveEverywhere,
@@ -35,6 +37,8 @@ export function AccountsSettings({
 }: {
   authStatus: AuthStatus | null;
   accounts: Account[];
+  /** Accounts set up on another device but not this one. */
+  availableAccounts?: Account[];
   onAdd(): Promise<void>;
   onRemove(email: string): Promise<void>;
   onRemoveEverywhere(email: string): Promise<void>;
@@ -55,6 +59,7 @@ export function AccountsSettings({
   // IMAP reconnects happen in the account's Server editor (a password, not a
   // browser sign-in); the header button bumps this to open and focus it.
   const [imapReconnect, setImapReconnect] = useState<{ email: string; request: number } | null>(null);
+  const [settingUpImap, setSettingUpImap] = useState<string | null>(null);
 
   useEffect(() => {
     if (restoreAddFocus.current && busyEmail === null) {
@@ -288,9 +293,86 @@ export function AccountsSettings({
           })}
         </ul>
       )}
+      {availableAccounts.length > 0 ? (
+        <section className="available-accounts" aria-labelledby={`${accountSetupId}-available`}>
+          <h4 id={`${accountSetupId}-available`}>On Your Other Devices</h4>
+          <p className="settings-hint">
+            These accounts are set up on another device. Set one up here to sync its mail on this device too.
+          </p>
+          <ul className="accounts-list">
+            {availableAccounts.map((account) => {
+              const name = account.nickname?.trim() || account.displayName || account.email;
+              return (
+                <li className="account-card available-account" key={account.email}>
+                  <div className="account-card-row">
+                    <span className="account-card-avatar" style={{ background: account.color }} aria-hidden="true">
+                      {name.charAt(0).toUpperCase()}
+                    </span>
+                    <div className="account-card-identity">
+                      <strong title={name}>{name}</strong>
+                      {name !== account.email ? <span className="account-card-email" title={account.email}>{account.email}</span> : null}
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-sm account-set-up-here"
+                      disabled={busyEmail !== null}
+                      aria-expanded={account.provider === "imap" ? settingUpImap === account.email : undefined}
+                      aria-label={`Set up ${account.email} on this device`}
+                      onClick={() => account.provider === "imap"
+                        ? setSettingUpImap((current) => current === account.email ? null : account.email)
+                        : runFor(`reconnect:${account.email}`, () => onReconnect(account.email))}
+                    >
+                      {busyEmail === `reconnect:${account.email}` ? "Waiting for Google…" : "Set Up Here"}
+                    </button>
+                    <span className="account-provider-badge">
+                      {account.provider === "imap" ? "IMAP" : "Gmail"}
+                    </span>
+                  </div>
+                  {settingUpImap === account.email ? (
+                    <ImapSetUpHere
+                      email={account.email}
+                      onCancel={() => setSettingUpImap(null)}
+                      onConnected={async () => {
+                        setSettingUpImap(null);
+                        await onImapConnected?.();
+                      }}
+                    />
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
       {error ? <p className="form-error" role="alert">{error}</p> : null}
     </section>
   );
+}
+
+/**
+ * Sets up an IMAP account listed from another device. An account whose
+ * server settings arrived with a settings import only needs this device's
+ * password (and any per-install username or certificate); one that arrived
+ * by replicated sync has no server settings here yet, so it gets full setup.
+ */
+function ImapSetUpHere({ email, onConnected, onCancel }: {
+  email: string;
+  onConnected(): Promise<void>;
+  onCancel(): void;
+}) {
+  const [hasSettings, setHasSettings] = useState<boolean | null>(null);
+  useEffect(() => {
+    let current = true;
+    mailClient.getImapConnectionSettings(email).then(
+      () => { if (current) setHasSettings(true); },
+      () => { if (current) setHasSettings(false); },
+    );
+    return () => { current = false; };
+  }, [email]);
+  if (hasSettings === null) return <p role="status">Loading…</p>;
+  return hasSettings
+    ? <ImapServerSettings account={email} needsReconnect onConnected={onConnected} />
+    : <ImapAccountSetup initialEmail={email} onCancel={onCancel} onConnected={onConnected} />;
 }
 
 /**

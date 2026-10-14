@@ -44,6 +44,7 @@ const accounts: Account[] = ["first@example.com", "second@example.com"].map((ema
   sortOrder,
   connectedAt: "2026-01-01T00:00:00Z",
   lastSyncedAt: null,
+  onThisDevice: true,
 }));
 
 const snippetProps = {
@@ -1508,6 +1509,7 @@ describe("Composer sending-address picker", () => {
     sortOrder: 0,
     connectedAt: "2026-01-01T00:00:00Z",
     lastSyncedAt: null,
+    onThisDevice: true,
   }));
   const imapDraft: Draft = { ...draft, account: "me@proton.me" };
   const twoIdentities = [

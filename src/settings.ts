@@ -43,6 +43,8 @@ const AUTO_READ_DELAY_SECONDS_KEY = "threestrands.settings.autoReadDelaySeconds"
 
 const LOAD_REMOTE_IMAGES_KEY = "threestrands.settings.loadRemoteImages";
 const SELECTED_ACCOUNT_ID_KEY = "threestrands.settings.selectedAccountId";
+const SEEN_AVAILABLE_ACCOUNTS_KEY = "threestrands.settings.seenAvailableAccounts";
+const MAX_SEEN_AVAILABLE_ACCOUNTS = 200;
 const ALL_ACCOUNTS_VALUE = "all";
 const MAX_ACCOUNT_ID_LENGTH = 320;
 
@@ -175,6 +177,28 @@ export function readSelectedAccountId(): string | null {
     // A blocked storage backend should not prevent the app from opening.
   }
   return null;
+}
+
+/** Accounts from other devices this device already announced, so the
+ * "available to set up" notice shows once per account, not on every launch. */
+export function readSeenAvailableAccounts(): string[] {
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(SEEN_AVAILABLE_ACCOUNTS_KEY) ?? "[]");
+    return Array.isArray(saved)
+      ? saved.filter((value): value is string => typeof value === "string" && validAccountId(value)).slice(-MAX_SEEN_AVAILABLE_ACCOUNTS)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveSeenAvailableAccounts(emails: readonly string[]): void {
+  try {
+    const valid = [...new Set(emails.filter(validAccountId))].slice(-MAX_SEEN_AVAILABLE_ACCOUNTS);
+    localStorage.setItem(SEEN_AVAILABLE_ACCOUNTS_KEY, JSON.stringify(valid));
+  } catch {
+    // The notice can show again next launch when storage is unavailable.
+  }
 }
 
 export function saveSelectedAccountId(value: string | null): string | null {

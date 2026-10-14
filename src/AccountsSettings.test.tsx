@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountsSettings } from "./AccountsSettings";
+import { mailClient } from "./data/client";
 import type { Account } from "./domain";
 import type { ComponentProps } from "react";
 import { readFileSync } from "node:fs";
@@ -17,6 +18,7 @@ const account: Account = {
   sortOrder: 0,
   connectedAt: "2026-10-08T12:00:00Z",
   lastSyncedAt: null,
+  onThisDevice: true,
 };
 
 function renderAccounts(
@@ -276,5 +278,63 @@ describe("mail account settings", () => {
 
     await act(async () => { vi.advanceTimersByTime(200); });
     expect(onSetColor).not.toHaveBeenCalled();
+  });
+});
+
+describe("accounts on other devices", () => {
+  const personal: Account = { ...account, email: "personal@example.com", nickname: "Personal", provider: "imap", labelModel: "imapLabelFolders", status: "needs_reauth", onThisDevice: false };
+  const side: Account = { ...account, email: "side@example.com", status: "needs_reauth", onThisDevice: false };
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("lists accounts set up elsewhere apart from this device's accounts, without reconnect warnings", () => {
+    renderAccounts(vi.fn(), { availableAccounts: [personal, side] });
+    const section = screen.getByRole("region", { name: "On Your Other Devices" });
+    expect(within(section).getByText("Personal")).toBeInTheDocument();
+    expect(within(section).getByText("personal@example.com")).toBeInTheDocument();
+    expect(within(section).queryByText("Needs reconnect")).not.toBeInTheDocument();
+    expect(within(section).queryByRole("button", { name: /Disconnect/ })).not.toBeInTheDocument();
+    expect(within(section).getByRole("button", { name: "Set up side@example.com on this device" })).toBeInTheDocument();
+  });
+
+  it("omits the section when every account is set up here", () => {
+    renderAccounts(vi.fn());
+    expect(screen.queryByRole("region", { name: "On Your Other Devices" })).not.toBeInTheDocument();
+  });
+
+  it("sets up a Gmail account here through the normal sign-in", async () => {
+    const onReconnect = vi.fn().mockResolvedValue(undefined);
+    renderAccounts(vi.fn(), { availableAccounts: [side], onReconnect });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Set up side@example.com on this device" }));
+    });
+    expect(onReconnect).toHaveBeenCalledWith("side@example.com");
+  });
+
+  it("asks for this device's password when an IMAP account's server settings came with an import", async () => {
+    vi.spyOn(mailClient, "getImapConnectionSettings").mockResolvedValue({
+      imapHost: "127.0.0.1", imapPort: 1143, imapSecurity: "start_tls", imapUsername: "personal@example.com",
+      smtpHost: "127.0.0.1", smtpPort: 1025, smtpSecurity: "start_tls", smtpUsername: "personal@example.com",
+      imapCertificatePinned: true, smtpCertificatePinned: true,
+    });
+    renderAccounts(vi.fn(), { availableAccounts: [personal] });
+    const setUp = screen.getByRole("button", { name: "Set up personal@example.com on this device" });
+    fireEvent.click(setUp);
+    expect(setUp).toHaveAttribute("aria-expanded", "true");
+    expect(await screen.findByLabelText("Password")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Test and Save" })).toBeInTheDocument();
+  });
+
+  it("runs full IMAP setup for the same address when this device has no server settings for it", async () => {
+    vi.spyOn(mailClient, "getImapConnectionSettings").mockRejectedValue(new Error("IMAP settings not found"));
+    renderAccounts(vi.fn(), { availableAccounts: [personal] });
+    fireEvent.click(screen.getByRole("button", { name: "Set up personal@example.com on this device" }));
+    expect(await screen.findByRole("heading", { name: "Set Up on This Device" })).toBeInTheDocument();
+    const email = screen.getByLabelText("Email Address");
+    expect(email).toHaveValue("personal@example.com");
+    expect(email).toHaveAttribute("readonly");
   });
 });

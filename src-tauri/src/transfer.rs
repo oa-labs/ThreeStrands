@@ -576,7 +576,38 @@ fn validate_export_size(size:u64)->Result<(),String>{
     if size>MAX_FILE_BYTES {Err("The settings export exceeds the maximum supported file size".to_string())} else {Ok(())}
 }
 
-pub fn import(database: &Database, password: &str) -> Result<Option<ImportResult>, String> {
+/// A decrypted, validated import waiting for the user to choose which of its
+/// accounts to set up on this device. Held in memory only, never on disk, and
+/// replaced by the next preview.
+#[derive(Default)]
+pub struct StagedImport(std::sync::Mutex<Option<TransferPayload>>);
+
+/// One account in a staged import, as the import dialog lists it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportPreviewAccount {
+    pub email: String,
+    pub display_name: Option<String>,
+    pub nickname: Option<String>,
+    pub provider: String,
+    /// True when the account is already set up on this device; the import
+    /// leaves its connection alone whatever the user picks.
+    pub set_up_here: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportPreview {
+    pub accounts: Vec<ImportPreviewAccount>,
+}
+
+/// Chooses, decrypts and validates an export, and stages it without writing
+/// anything, so the user can pick which accounts to set up on this device.
+pub fn preview_import(
+    database: &Database,
+    staged: &StagedImport,
+    password: &str,
+) -> Result<Option<ImportPreview>, String> {
     validate_password(password)?;
     let Some(path) = rfd::FileDialog::new()
         .set_title("Import ThreeStrands settings")
@@ -586,13 +617,71 @@ pub fn import(database: &Database, password: &str) -> Result<Option<ImportResult
         return Ok(None);
     };
     let payload = read_and_decrypt(&path, password)?;
-    apply_import(database, payload).map(Some)
+    stage_import(database, staged, payload).map(Some)
 }
 
+fn stage_import(
+    database: &Database,
+    staged: &StagedImport,
+    payload: TransferPayload,
+) -> Result<ImportPreview, String> {
+    payload.validate()?;
+    let accounts = payload
+        .accounts
+        .iter()
+        .map(|account| {
+            let set_up_here = database
+                .get_account(&account.email)?
+                .is_some_and(|existing| existing.on_this_device && existing.status == "connected");
+            Ok::<_, String>(ImportPreviewAccount {
+                email: account.email.clone(),
+                display_name: account.display_name.clone(),
+                nickname: account.nickname.clone(),
+                provider: account.provider.clone(),
+                set_up_here,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    *staged.0.lock().map_err(display)? = Some(payload);
+    Ok(ImportPreview { accounts })
+}
+
+/// Applies the staged import. Accounts named in `not_here` are imported as
+/// available from another device instead of waiting to be reconnected here.
+pub fn apply_staged_import(
+    database: &Database,
+    staged: &StagedImport,
+    not_here: &[String],
+) -> Result<ImportResult, String> {
+    let payload = staged
+        .0
+        .lock()
+        .map_err(display)?
+        .take()
+        .ok_or_else(|| "Choose a settings file to import first".to_string())?;
+    let not_here = not_here.iter().map(|email| email.to_ascii_lowercase()).collect::<HashSet<_>>();
+    apply_import_choosing(database, payload, &not_here)
+}
+
+pub fn cancel_staged_import(staged: &StagedImport) -> Result<(), String> {
+    staged.0.lock().map_err(display)?.take();
+    Ok(())
+}
+
+#[cfg(test)]
 fn apply_import(database: &Database, payload: TransferPayload) -> Result<ImportResult, String> {
+    apply_import_choosing(database, payload, &HashSet::new())
+}
+
+fn apply_import_choosing(
+    database: &Database,
+    payload: TransferPayload,
+    not_here: &HashSet<String>,
+) -> Result<ImportResult, String> {
     payload.validate()?;
     database.import_transfer_data(
         &payload.accounts,
+        not_here,
         &payload.split_inboxes,
         &payload.snippets,
         &payload.contacts,
@@ -783,6 +872,52 @@ mod tests {
             retention_days: Some(90),
             contact_groups: None,
         }
+    }
+
+    #[test]
+    fn a_staged_import_lists_accounts_without_writing_and_applies_the_choice() {
+        let database = Database::open_memory();
+        database.adopt_account("work@example.com").unwrap();
+        let mut candidate = payload();
+        candidate.accounts.push(TransferAccount {
+            email: "work@example.com".to_string(),
+            nickname: Some("Work".to_string()),
+            display_name: None,
+            color: "#123456".to_string(),
+            provider: "gmail".to_string(),
+            sort_order: 1,
+            imap: None,
+        });
+        candidate.accounts[0].provider = "imap".to_string();
+        let staged = StagedImport::default();
+
+        let preview = stage_import(&database, &staged, candidate).unwrap();
+        let listed: Vec<_> = preview.accounts.iter().map(|account| (account.email.as_str(), account.set_up_here)).collect();
+        assert_eq!(listed, [("person@example.com", false), ("work@example.com", true)]);
+        assert!(database.get_account("person@example.com").unwrap().is_none(), "previewing writes nothing");
+
+        apply_staged_import(&database, &staged, &["Person@Example.com".to_string()]).unwrap();
+        let person = database.get_account("person@example.com").unwrap().unwrap();
+        assert!(!person.on_this_device, "an unchosen account is available, not waiting to reconnect");
+        assert_eq!(database.get_account("work@example.com").unwrap().unwrap().nickname.as_deref(), Some("Work"));
+
+        let error = apply_staged_import(&database, &staged, &[]).unwrap_err();
+        assert!(error.contains("Choose a settings file"), "a staged import applies once");
+    }
+
+    #[test]
+    fn staging_rejects_an_invalid_import_and_cancel_discards_it() {
+        let database = Database::open_memory();
+        let staged = StagedImport::default();
+        let mut invalid = payload();
+        invalid.accounts[0].provider = "carrier-pigeon".to_string();
+        assert!(stage_import(&database, &staged, invalid).is_err());
+        assert!(apply_staged_import(&database, &staged, &[]).is_err());
+
+        stage_import(&database, &staged, payload()).unwrap();
+        cancel_staged_import(&staged).unwrap();
+        assert!(apply_staged_import(&database, &staged, &[]).is_err());
+        assert!(database.list_accounts().unwrap().is_empty());
     }
 
     #[test]

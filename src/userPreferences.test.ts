@@ -6,7 +6,9 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   applyExportablePreferences,
   exportSettings,
-  importSettings,
+  applySettingsImport,
+  cancelSettingsImport,
+  previewSettingsImport,
   readExportablePreferences,
   type ExportablePreferences,
   type SettingsImportResult,
@@ -155,7 +157,20 @@ describe("settings transfer commands", () => {
     await expect(exportSettings("correct horse battery staple")).resolves.toBeNull();
   });
 
-  it("applies imported preferences locally and returns the native summary", async () => {
+  it("previews a settings file without applying its preferences", async () => {
+    const before = readExportablePreferences();
+    const preview = {
+      accounts: [{ email: "personal@example.com", displayName: null, nickname: "Personal", provider: "imap", setUpHere: false }],
+    };
+    vi.mocked(invoke).mockResolvedValueOnce(preview);
+
+    await expect(previewSettingsImport("correct horse battery staple")).resolves.toEqual(preview);
+
+    expect(invoke).toHaveBeenCalledWith("preview_settings_import", { password: "correct horse battery staple" });
+    expect(readExportablePreferences()).toEqual(before);
+  });
+
+  it("applies imported preferences locally with the accounts left off this device", async () => {
     const result: SettingsImportResult = {
       preferences: nativeContractFixture,
       accountCount: 2,
@@ -165,28 +180,36 @@ describe("settings transfer commands", () => {
     };
     vi.mocked(invoke).mockResolvedValueOnce(result);
 
-    await expect(importSettings("correct horse battery staple")).resolves.toEqual(result);
+    await expect(applySettingsImport(["personal@example.com"])).resolves.toEqual(result);
 
-    expect(invoke).toHaveBeenCalledWith("import_settings", { password: "correct horse battery staple" });
+    expect(invoke).toHaveBeenCalledWith("apply_settings_import", { notHere: ["personal@example.com"] });
     expect(readExportablePreferences()).toEqual(nativeContractFixture);
   });
 
-  it("leaves local preferences untouched when the import is cancelled", async () => {
+  it("leaves local preferences untouched when the file dialog is cancelled", async () => {
     const before = readExportablePreferences();
     vi.mocked(invoke).mockResolvedValueOnce(null);
 
-    await expect(importSettings("correct horse battery staple")).resolves.toBeNull();
+    await expect(previewSettingsImport("correct horse battery staple")).resolves.toBeNull();
 
     expect(readExportablePreferences()).toEqual(before);
+  });
+
+  it("discards a previewed file on cancel", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+    await cancelSettingsImport();
+    expect(invoke).toHaveBeenCalledWith("cancel_settings_import");
   });
 
   it("propagates a native import failure without applying anything", async () => {
     const before = readExportablePreferences();
     vi.mocked(invoke).mockRejectedValueOnce("The password is incorrect or the settings export is damaged");
 
-    await expect(importSettings("wrong password!")).rejects.toBe(
+    await expect(previewSettingsImport("wrong password!")).rejects.toBe(
       "The password is incorrect or the settings export is damaged",
     );
+    vi.mocked(invoke).mockRejectedValueOnce("Choose a settings file to import first");
+    await expect(applySettingsImport([])).rejects.toBe("Choose a settings file to import first");
 
     expect(readExportablePreferences()).toEqual(before);
   });

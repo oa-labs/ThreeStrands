@@ -35,14 +35,17 @@ export type CertificateState = { endpoint: string; probe: ImapCertificateProbe; 
 export const endpointKey = (host: string, port: number, security: ImapSecurityMode) =>
   JSON.stringify([host.trim(), port, security]);
 
-export function ImapAccountSetup({ onConnected, onCancel }: {
+export function ImapAccountSetup({ onConnected, onCancel, initialEmail }: {
   onConnected: (account: Account) => void | Promise<void>;
   onCancel?(): void;
+  /** Sets up an account already listed from another device: the address is
+   * fixed, and the server settings are entered for this device. */
+  initialEmail?: string;
 }) {
   const hintId = useId();
   const emailInput = useRef<HTMLInputElement>(null);
   useEffect(() => { emailInput.current?.focus(); }, []);
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(initialEmail ?? "");
   const [password, setPassword] = useState("");
   const [imapHost, setImapHost] = useState("");
   const [imapPort, setImapPort] = useState(143);
@@ -213,7 +216,7 @@ export function ImapAccountSetup({ onConnected, onCancel }: {
         void testAndSave();
       }}
     >
-      <h2>Add an IMAP Account</h2>
+      <h2>{initialEmail ? "Set Up on This Device" : "Add an IMAP Account"}</h2>
       <p>Connect your server and choose which mailboxes to sync.</p>
       <fieldset className="imap-setup-fields" disabled={busy}>
         <label className="settings-field settings-field-row">
@@ -223,6 +226,7 @@ export function ImapAccountSetup({ onConnected, onCancel }: {
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            readOnly={initialEmail !== undefined}
             autoComplete="email"
             required
           />

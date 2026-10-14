@@ -17,6 +17,8 @@ impl Database {
     pub(crate) fn import_transfer_data(
         &self,
         accounts: &[TransferAccount],
+        // Lowercased emails the user chose not to set up on this device.
+        not_here: &std::collections::HashSet<String>,
         split_inboxes: &[TransferSplitInbox],
         snippets: &[TransferSnippet],
         contacts: &[TransferContact],
@@ -34,13 +36,16 @@ impl Database {
                 transaction
                     .execute(
                         "INSERT INTO accounts(
-                             email, display_name, color, status, provider, sort_order, connected_at, last_synced_at, nickname
-                         ) VALUES (?1, ?2, ?3, 'needs_reauth', ?4, ?5, ?6, NULL, ?7)
+                             email, display_name, color, status, provider, sort_order, connected_at, last_synced_at, nickname, on_this_device
+                         ) VALUES (?1, ?2, ?3, 'needs_reauth', ?4, ?5, ?6, NULL, ?7, ?8)
                          ON CONFLICT(email) DO UPDATE SET
                              display_name = excluded.display_name,
                              nickname = excluded.nickname,
                              color = excluded.color,
-                             sort_order = excluded.sort_order",
+                             sort_order = excluded.sort_order,
+                             -- Choosing an account adds it here; leaving it
+                             -- out never disconnects one already set up.
+                             on_this_device = MAX(on_this_device, excluded.on_this_device)",
                         params![
                             account.email,
                             account.display_name,
@@ -49,6 +54,7 @@ impl Database {
                             account.sort_order,
                             connected_at,
                             account.nickname,
+                            !not_here.contains(&account.email.to_ascii_lowercase()),
                         ],
                     )?;
                 // An IMAP account carries its non-secret server settings

@@ -5,12 +5,13 @@ vi.mock("./userPreferences", async (importOriginal) => {
   const original = await importOriginal<typeof import("./userPreferences")>();
   return {
     ...original,
-    importSettings: vi.fn(),
+    previewSettingsImport: vi.fn(),
+    applySettingsImport: vi.fn(),
   };
 });
 
 import { App } from "./App";
-import { importSettings } from "./userPreferences";
+import { applySettingsImport, previewSettingsImport } from "./userPreferences";
 import { holdRecoveryPhrase, pendingRecoveryPhrase } from "./RecoveryPhraseDialog";
 
 describe("settings import navigation", () => {
@@ -37,7 +38,9 @@ describe("settings import navigation", () => {
   });
 
   it("keeps Settings open and switches to Accounts after an import", async () => {
-    vi.mocked(importSettings).mockResolvedValue({
+    // A file whose accounts are all already set up here applies straight away.
+    vi.mocked(previewSettingsImport).mockResolvedValue({ accounts: [] });
+    vi.mocked(applySettingsImport).mockResolvedValue({
       preferences: {
         theme: "dark",
         accent: "rose",
@@ -95,7 +98,8 @@ describe("settings import navigation", () => {
       "aria-current",
       "true",
     );
-    expect(importSettings).toHaveBeenCalledWith("password123");
+    expect(previewSettingsImport).toHaveBeenCalledWith("password123");
+    expect(applySettingsImport).toHaveBeenCalledWith([]);
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
     expect(document.documentElement).toHaveAttribute("data-accent", "rose");
   });

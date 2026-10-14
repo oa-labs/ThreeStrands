@@ -123,3 +123,47 @@ it("refreshes account, auth, and sync state even when reconnecting fails", async
   expect(result.current.accounts[0]?.status).toBe("needs_reauth");
   expect(result.current.authStatus).toEqual({ configured: true, connected: false });
 });
+
+it("keeps accounts set up on other devices out of this device's accounts and the selection", async () => {
+  const [account] = await mailClient.listAccounts();
+  const elsewhere = { ...account!, email: "personal@example.com", status: "needs_reauth" as const, onThisDevice: false };
+  vi.spyOn(mailClient, "listAccounts").mockResolvedValue([{ ...account!, onThisDevice: true }, elsewhere]);
+  localStorage.setItem("threestrands.settings.selectedAccountId", "personal@example.com");
+
+  const { result } = renderHook(() => useAccounts(false));
+
+  await waitFor(() => expect(result.current.availableAccounts.map((item) => item.email)).toEqual(["personal@example.com"]));
+  expect(result.current.accounts.map((item) => item.email)).toEqual([account!.email]);
+  expect(result.current.activeAccountId).toBeNull();
+});
+
+it("keeps accounts on other devices after this device's accounts when reordering", async () => {
+  const [account] = await mailClient.listAccounts();
+  const second = { ...account!, email: "second@example.com", onThisDevice: true };
+  const elsewhere = { ...account!, email: "personal@example.com", onThisDevice: false };
+  vi.spyOn(mailClient, "listAccounts").mockResolvedValue([{ ...account!, onThisDevice: true }, elsewhere, second]);
+  const reorder = vi.spyOn(mailClient, "reorderAccounts").mockResolvedValue();
+  const { result } = renderHook(() => useAccounts(false));
+  await waitFor(() => expect(result.current.accounts).toHaveLength(2));
+
+  await act(async () => result.current.reorderAccounts(["second@example.com", account!.email]));
+
+  expect(reorder).toHaveBeenCalledWith(["second@example.com", account!.email, "personal@example.com"]);
+});
+
+it("announces an account from another device once, across launches", async () => {
+  localStorage.clear();
+  const [account] = await mailClient.listAccounts();
+  const elsewhere = { ...account!, email: "personal@example.com", onThisDevice: false };
+  vi.spyOn(mailClient, "listAccounts").mockResolvedValue([{ ...account!, onThisDevice: true }, elsewhere]);
+
+  const first = renderHook(() => useAccounts(false));
+  await waitFor(() => expect(first.result.current.newlyAvailableAccounts.map((item) => item.email)).toEqual(["personal@example.com"]));
+  act(() => first.result.current.acknowledgeAvailableAccounts());
+  expect(first.result.current.newlyAvailableAccounts).toEqual([]);
+  first.unmount();
+
+  const next = renderHook(() => useAccounts(false));
+  await waitFor(() => expect(next.result.current.availableAccounts).toHaveLength(1));
+  expect(next.result.current.newlyAvailableAccounts).toEqual([]);
+});

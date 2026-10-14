@@ -3,9 +3,20 @@ import path from "node:path";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("./userPreferences", () => ({ exportSettings: vi.fn(), importSettings: vi.fn() }));
+vi.mock("./userPreferences", () => ({
+  exportSettings: vi.fn(),
+  previewSettingsImport: vi.fn(),
+  applySettingsImport: vi.fn(),
+  cancelSettingsImport: vi.fn(),
+}));
 
-import { exportSettings, importSettings } from "./userPreferences";
+import {
+  applySettingsImport,
+  cancelSettingsImport,
+  exportSettings,
+  previewSettingsImport,
+  type SettingsImportResult,
+} from "./userPreferences";
 import { DataTransferSettings, TRANSFERRED_DATA } from "./DataTransferSettings";
 
 describe("data transfer settings", () => {
@@ -46,7 +57,7 @@ describe("data transfer settings", () => {
   });
 
   it("reports an import failure as an error, not a hint", async () => {
-    vi.mocked(importSettings).mockRejectedValue(new Error("Wrong password or damaged file"));
+    vi.mocked(previewSettingsImport).mockRejectedValue(new Error("Wrong password or damaged file"));
     render(<DataTransferSettings onImported={vi.fn()} />);
 
     fireEvent.change(screen.getByLabelText("Backup File Password"), { target: { value: "correct horse" } });
@@ -55,6 +66,74 @@ describe("data transfer settings", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Wrong password or damaged file");
     expect(alert).toHaveClass("form-error");
+  });
+
+  function chooseImportFile() {
+    fireEvent.change(screen.getByLabelText("Backup File Password"), { target: { value: "correct horse" } });
+    fireEvent.click(screen.getByRole("button", { name: "Choose Encrypted Settings File" }));
+  }
+
+  const importResult = { accountCount: 3 } as SettingsImportResult;
+
+  it("lets the user leave imported accounts off this device", async () => {
+    vi.mocked(previewSettingsImport).mockResolvedValue({
+      accounts: [
+        { email: "work@example.com", displayName: null, nickname: "Work", provider: "gmail", setUpHere: true },
+        { email: "personal@example.com", displayName: null, nickname: "Personal", provider: "imap", setUpHere: false },
+        { email: "side@example.com", displayName: null, nickname: null, provider: "gmail", setUpHere: false },
+      ],
+    });
+    vi.mocked(applySettingsImport).mockResolvedValue(importResult);
+    const onImported = vi.fn();
+    render(<DataTransferSettings onImported={onImported} />);
+
+    chooseImportFile();
+    const choices = await screen.findByRole("group", { name: "Accounts to Set Up on This Device" });
+    expect(applySettingsImport).not.toHaveBeenCalled();
+    const work = screen.getByRole("checkbox", { name: /Work \(work@example.com\)/ });
+    expect(work).toBeChecked();
+    expect(work).toBeDisabled();
+    expect(choices).toHaveTextContent("Already set up here");
+    const personal = screen.getByRole("checkbox", { name: /Personal \(personal@example.com\) · IMAP/ });
+    expect(personal).toBeChecked();
+
+    fireEvent.click(personal);
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+
+    await vi.waitFor(() => expect(onImported).toHaveBeenCalledWith(importResult));
+    expect(applySettingsImport).toHaveBeenCalledWith(["personal@example.com"]);
+    expect(screen.queryByRole("group", { name: "Accounts to Set Up on This Device" })).not.toBeInTheDocument();
+  });
+
+  it("imports without asking when every account is already set up here", async () => {
+    vi.mocked(previewSettingsImport).mockResolvedValue({
+      accounts: [{ email: "work@example.com", displayName: null, nickname: null, provider: "gmail", setUpHere: true }],
+    });
+    vi.mocked(applySettingsImport).mockResolvedValue(importResult);
+    const onImported = vi.fn();
+    render(<DataTransferSettings onImported={onImported} />);
+
+    chooseImportFile();
+
+    await vi.waitFor(() => expect(onImported).toHaveBeenCalledWith(importResult));
+    expect(applySettingsImport).toHaveBeenCalledWith([]);
+    expect(screen.queryByRole("group")).not.toBeInTheDocument();
+  });
+
+  it("discards the chosen file when the account choice is cancelled", async () => {
+    vi.mocked(previewSettingsImport).mockResolvedValue({
+      accounts: [{ email: "personal@example.com", displayName: null, nickname: null, provider: "imap", setUpHere: false }],
+    });
+    vi.mocked(cancelSettingsImport).mockResolvedValue();
+    render(<DataTransferSettings onImported={vi.fn()} />);
+
+    chooseImportFile();
+    await screen.findByRole("group", { name: "Accounts to Set Up on This Device" });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(cancelSettingsImport).toHaveBeenCalled();
+    expect(applySettingsImport).not.toHaveBeenCalled();
+    expect(screen.queryByRole("group", { name: "Accounts to Set Up on This Device" })).not.toBeInTheDocument();
   });
 
   it("reports a successful export as a status", async () => {
