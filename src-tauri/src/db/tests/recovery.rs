@@ -90,17 +90,51 @@ fn quick_check_flags_a_corrupted_committed_page() {
 }
 
 #[test]
-fn opening_a_brand_new_database_takes_a_pre_migration_snapshot() {
-    let temp = TempDbPath::new();
-    let database = Database::open(&temp.path).unwrap();
-    drop(database);
+fn opening_a_database_snapshots_at_its_pre_migration_version() {
+    // The open path reads user_version BEFORE migrate() runs, so it snapshots
+    // at whatever version the file is at on disk. The schema squash does not
+    // change this: INITIAL_SCHEMA deliberately does not self-stamp, so a
+    // brand-new database is still seen at v0 and takes a v0000 snapshot, and
+    // an existing older database is snapshotted at its own version before being
+    // migrated up to the baseline.
 
-    assert!(
-        temp.dir
-            .join("test.sqlite.pre-migration-v0000.bak")
-            .exists(),
-        "opening a schema at version 0 should snapshot it before migrating to the latest version"
-    );
+    // Brand-new database: seen at v0, snapshotted as v0000.
+    {
+        let temp = TempDbPath::new();
+        let database = Database::open(&temp.path).unwrap();
+        drop(database);
+        assert!(
+            temp.dir
+                .join("test.sqlite.pre-migration-v0000.bak")
+                .exists(),
+            "a brand-new database should snapshot at v0000 before migrating"
+        );
+    }
+
+    // Existing older database (user_version below the baseline): snapshotted
+    // at its own version. Build such a file by stamping an older version onto
+    // a baseline database, then reopen it through the real open path.
+    {
+        let temp = TempDbPath::new();
+        {
+            let connection = Connection::open(&temp.path).unwrap();
+            connection
+                .execute_batch(crate::schema::INITIAL_SCHEMA)
+                .unwrap();
+            // Pose as a v60 database from before the squash.
+            connection
+                .pragma_update(None, "user_version", 60)
+                .unwrap();
+        }
+        let database = Database::open(&temp.path).unwrap();
+        drop(database);
+        assert!(
+            temp.dir
+                .join("test.sqlite.pre-migration-v0060.bak")
+                .exists(),
+            "opening a v60 database should snapshot it at v0060 before migrating to the latest version"
+        );
+    }
 }
 
 #[test]
