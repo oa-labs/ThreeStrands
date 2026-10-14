@@ -26,6 +26,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Adding an announced event to your calendar no longer invites the person who sent the email.
 - The notice that an account is set up on another device is now a small message in the bottom-left corner, alongside app update notices, instead of a panel filling the window.
 - In the side panel's **Files** list, the star no longer covers the date. It now sits after the show-email button, under the date.
+- The reply, reply all, and forward buttons beside a sender's name now line up with the name instead of sitting slightly below it.
 
 ## 0.116.1 — 2026-10-14
 

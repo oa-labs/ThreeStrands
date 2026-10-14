@@ -1085,13 +1085,13 @@ kbd {
 .message { width: 100%; max-width: 840px; margin: 0 auto; }
 .message > header { display: flex; align-items: flex-start; width: 100%; gap: var(--space-2-5); padding-bottom: var(--space-6); }
 .message-header-details { display: flex; min-width: 0; flex: 1; flex-direction: column; font-size: var(--text-body); }
-.message-sender-row { display: flex; align-items: baseline; gap: var(--space-3); min-width: 0; margin-bottom: var(--space-1); }
+.message-sender-row { display: flex; align-items: center; gap: var(--space-3); min-width: 0; margin-bottom: var(--space-1); }
 .message-sender-row strong { min-width: 0; white-space: nowrap; }
 .message-sender-row strong .address { max-width: 100%; }
 .message-sender-row strong .address-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .message-sender-row time, .message-recipients { color: var(--muted); font-size: var(--text-meta); }
 .message-sender-row time { flex: 0 0 auto; margin-left: auto; white-space: nowrap; }
-.message-header-actions { display: flex; align-items: center; gap: var(--space-0-5); flex: 0 0 auto; align-self: center; }
+.message-header-actions { display: flex; align-items: center; gap: var(--space-0-5); flex: 0 0 auto; }
 .message-recipients { line-height: var(--leading-normal); }
 .message > header .address { position: relative; display: inline-flex; align-items: center; color: inherit; font-size: inherit; }
 .address-name { cursor: help; }

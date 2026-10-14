@@ -111,6 +111,13 @@ describe("primary workspace headers", () => {
     expect(lastDeclaration(".reader-actions", "margin-top")).toBe("var(--space-0-5)");
   });
 
+  it("centers the message reply and forward icons on the sender's name", () => {
+    // Baseline alignment pinned the name to the top of the row while the taller
+    // icon buttons centered in it, leaving the icons visibly below the name.
+    expect(lastDeclaration(".message-sender-row", "align-items")).toBe("center");
+    expect(lastDeclaration(".message-header-actions", "align-self")).toBeUndefined();
+  });
+
   it("titles Settings with the same page title type as the four workspaces", () => {
     for (const property of ["font-size", "font-weight", "letter-spacing"]) {
       expect(lastDeclaration(".settings-page-header h2", property)).toBe(lastDeclaration(".contacts-header h1", property));
