@@ -185,6 +185,27 @@ test.describe("email rendering fixtures", () => {
     expect(actual).toEqual(expected);
   });
 
+  for (const fixture of ["backgroundIconLinks", "backgroundPanelLonghands"] as const) {
+    test(`${fixture} places and scales its background image as the unsanitized HTML does`, async ({ page, browser }) => {
+      const measure = (root: Document) => Array.from(root.body.querySelectorAll("*"), (element) => {
+        const style = root.defaultView!.getComputedStyle(element);
+        if (style.backgroundImage === "none") return null;
+        return `${element.tagName} ${style.width}x${style.height} size ${style.backgroundSize} position ${style.backgroundPosition} repeat ${style.backgroundRepeat} origin ${style.backgroundOrigin} clip ${style.backgroundClip}`;
+      }).filter(Boolean);
+      const reference = await browser.newPage();
+      await reference.setContent(`<!doctype html><body style="margin:0">${emailRenderingFixtures[fixture]}</body>`);
+      const expected = await reference.evaluate(`(${measure.toString()})(document)`) as string[];
+      await reference.close();
+      expect(expected.length).toBeGreaterThan(0);
+
+      await page.goto(`/tests/email-rendering.html?theme=light&images&fixture=${fixture}`);
+      const frame = page.locator("iframe.message-body");
+      const messageFrame = (await (await frame.elementHandle())!.contentFrame())!;
+      await expect.poll(() => messageFrame.evaluate(() => document.querySelectorAll("[data-blocked-src]").length)).toBe(0);
+      await expect.poll(() => messageFrame.evaluate(`(${measure.toString()})(document)`)).toEqual(expected);
+    });
+  }
+
   for (const { fixture, alt, columnWidth, link } of [
     { fixture: "pxGutterFixedHeader", alt: "logo", columnWidth: 20, link: "Account" },
     { fixture: "pxIconColumnFixedTable", alt: "status", columnWidth: 56, link: "Open summary" },

@@ -161,6 +161,54 @@ describe("email rendering numeric policy", () => {
     expect(sanitizeCssDeclaration("list-style", "square inside circle")).toBeNull();
   });
 
+  it("keeps the background-layout family so a background image is placed and scaled inside its box", () => {
+    expect(sanitizeCssDeclaration("background-size", "48px 48px")).toBe("48px 48px");
+    expect(sanitizeCssDeclaration("background-size", "cover")).toBe("cover");
+    expect(sanitizeCssDeclaration("background-size", "contain")).toBe("contain");
+    expect(sanitizeCssDeclaration("background-size", "auto 50%")).toBe("auto 50%");
+    expect(sanitizeCssDeclaration("background-position", "center center")).toBe("center center");
+    expect(sanitizeCssDeclaration("background-position", "50% 50%")).toBe("50% 50%");
+    expect(sanitizeCssDeclaration("background-position", "right 8px bottom -4px")).toBe("right 8px bottom -4px");
+    expect(sanitizeCssDeclaration("background-repeat", "no-repeat")).toBe("no-repeat");
+    expect(sanitizeCssDeclaration("background-repeat", "repeat no-repeat")).toBe("repeat no-repeat");
+    expect(sanitizeCssDeclaration("background-origin", "content-box")).toBe("content-box");
+    expect(sanitizeCssDeclaration("background-clip", "padding-box")).toBe("padding-box");
+    // Malformed / out-of-family values are rejected rather than clamped.
+    expect(sanitizeCssDeclaration("background-size", "cover contain")).toBeNull();
+    expect(sanitizeCssDeclaration("background-size", "-48px")).toBeNull();
+    expect(sanitizeCssDeclaration("background-size", "48px 48px 48px")).toBeNull();
+    expect(sanitizeCssDeclaration("background-size", "48px, 24px")).toBeNull();
+    expect(sanitizeCssDeclaration("background-position", "center center, left top")).toBeNull();
+    expect(sanitizeCssDeclaration("background-position", "left top left top left")).toBeNull();
+    expect(sanitizeCssDeclaration("background-position", "calc(50% - 4px)")).toBeNull();
+    expect(sanitizeCssDeclaration("background-repeat", "repeat-x repeat")).toBeNull();
+    expect(sanitizeCssDeclaration("background-clip", "text")).toBeNull();
+    expect(sanitizeCssDeclaration("background-attachment", "fixed")).toBeNull();
+  });
+
+  it("bounds background sizes and offsets by the shared absolute and percentage limits", () => {
+    const { maxAbsolutePx, maxPercentage, maxRelativeLength } = EMAIL_CSS_LIMITS;
+    for (const property of ["background-size", "background-position"]) {
+      expect(sanitizeCssDeclaration(property, `${maxAbsolutePx - 1}px`)).toBe(`${maxAbsolutePx - 1}px`);
+      expect(sanitizeCssDeclaration(property, `${maxAbsolutePx}px`)).toBe(`${maxAbsolutePx}px`);
+      expect(sanitizeCssDeclaration(property, `${maxAbsolutePx + 1}px`)).toBeNull();
+      expect(sanitizeCssDeclaration(property, `${maxPercentage - 1}%`)).toBe(`${maxPercentage - 1}%`);
+      expect(sanitizeCssDeclaration(property, `${maxPercentage}%`)).toBe(`${maxPercentage}%`);
+      expect(sanitizeCssDeclaration(property, `${maxPercentage + 1}%`)).toBeNull();
+      expect(sanitizeCssDeclaration(property, `${maxRelativeLength}em`)).toBe(`${maxRelativeLength}em`);
+      expect(sanitizeCssDeclaration(property, `${maxRelativeLength + 1}em`)).toBeNull();
+    }
+    expect(sanitizeCssDeclaration("background-position", `-${maxAbsolutePx}px`)).toBe(`-${maxAbsolutePx}px`);
+    expect(sanitizeCssDeclaration("background-position", `-${maxAbsolutePx + 1}px`)).toBeNull();
+  });
+
+  it("never admits a remote image through the background-layout family", () => {
+    for (const property of ["background-size", "background-position", "background-repeat", "background-origin", "background-clip"]) {
+      expect(sanitizeCssDeclaration(property, "url(https://tracker.invalid/pixel.gif)")).toBeNull();
+    }
+    expect(sanitizeCssDeclaration("background", "url(https://tracker.invalid/pixel.gif) center/48px no-repeat")).toBeNull();
+  });
+
   it("never admits a remote marker image through the list-style family", () => {
     // The shared url() ban must hold here too: no list property may fetch.
     expect(sanitizeCssDeclaration("list-style-image", "url(https://tracker.invalid/dot.gif)")).toBeNull();

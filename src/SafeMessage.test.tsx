@@ -982,6 +982,28 @@ it("preserves safe formatting and the class attribute while removing CSS request
   expect(sanitized).not.toMatch(/style="[^"]*url\(|position/);
 });
 
+it("keeps a background shorthand's size, position and repeat while parking its image behind the proxy", () => {
+  for (const html of [
+    // Shorthand on an inline-block link inside a zero-font table cell.
+    `<table><tr><td style="font-size:0px;line-height:0"><a href="https://example.com/v" style="display:inline-block;width:48px;height:48px;background:url('https://example.com/icon_2x.png') center center/48px 48px no-repeat">&nbsp;</a></td></tr></table>`,
+    // Explicit longhands on a block element in flow.
+    `<div style="background-image:url(https://example.com/icon_2x.png);background-size:48px 48px;background-position:center center;background-repeat:no-repeat">Hi</div>`,
+  ]) {
+    const sanitized = sanitizeMessageHtml(html);
+    expect(sanitized).toContain("background-size: 48px 48px");
+    expect(sanitized).toContain("background-position: center center");
+    expect(sanitized).toContain("background-repeat: no-repeat");
+    expect(sanitized).toContain('data-blocked-src="https://example.com/icon_2x.png"');
+    expect(sanitized).not.toMatch(/style="[^"]*url\(/);
+  }
+});
+
+it("drops a shorthand background image whose URL fails scheme validation", () => {
+  const sanitized = sanitizeMessageHtml(`<div style="background:url(javascript:alert(1)) center/48px no-repeat">Hi</div>`);
+  expect(sanitized).not.toContain("data-blocked-src");
+  expect(sanitized).not.toMatch(/url\(|javascript:/);
+});
+
 it("extracts every distinct blocked-src URL, deduplicated", () => {
   const sanitized = sanitizeMessageHtml(`
     <img src="https://example.com/a.png">

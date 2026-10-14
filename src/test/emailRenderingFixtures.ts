@@ -233,6 +233,23 @@ export const emailRenderingFixtures = {
     </tr></table>
   `,
   heroInFlow: `<div style="padding:0 16px"><img src="https://example.com/banner.png" alt="banner" width="600"></div>`,
+  // Background images placed and scaled inside their own box. A @2x sprite
+  // without its size/position/repeat paints at natural size from the corner
+  // and is cropped by the element.
+  backgroundIconLinks: `
+    <p style="text-align:center;font-size:14px">Follow along for new sessions.</p>
+    <table width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td align="center" style="padding:16px 0;font-size:0px;line-height:0">
+        <a href="https://example.com/video" style="display:inline-block;width:48px;height:48px;margin:0 12px;background:url('https://example.com/video_2x.png') center center/48px 48px no-repeat">&nbsp;</a>
+        <a href="https://example.com/chat" style="display:inline-block;width:48px;height:48px;margin:0 12px;background:url('https://example.com/chat_2x.png') center center/48px 48px no-repeat">&nbsp;</a>
+      </td>
+    </tr></table>
+  `,
+  backgroundPanelLonghands: `
+    <div style="width:320px;padding:24px;min-height:120px;background-color:#eef3ff;background-image:url(https://example.com/panel.png);background-size:cover;background-position:right 8px bottom 4px;background-repeat:no-repeat;background-origin:content-box;background-clip:padding-box">
+      <p style="margin:0;font-size:16px">Your workspace is ready.</p>
+    </div>
+  `,
   malformed: `
     <div style="position:fixed;top:0;left:0;z-index:99;animation:spin 1s;cursor:pointer">No overlay</div>
     <img src="javascript:alert(1)"><form action="https://example.com"><input value="bad"></form>

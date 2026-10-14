@@ -225,6 +225,41 @@ function listStyle(value: string): string | null {
   return trimmed;
 }
 
+// Background-layout capability family. These place and scale an element's
+// background image inside that element's own box — the sprite-style social
+// icons and hero panels senders build from `background: url(...) center/48px
+// no-repeat`. Without them a @2x image paints at its natural size from the
+// top-left corner and is cropped by the element. They cannot fetch a resource
+// (the shared url() ban in sanitizeCssDeclaration rejects any value carrying
+// url(); the image itself is admitted only through the blocked-src proxy
+// flow), execute code, or escape the iframe: background painting is always
+// clipped to the element's border box. `background-clip: text` and
+// `background-attachment` are deliberately excluded. Only one image layer is
+// admitted, so comma-separated layer lists are rejected.
+const backgroundBoxes = ["border-box", "padding-box", "content-box"];
+const backgroundRepeatKeyword = namedValue(["repeat", "no-repeat", "repeat-x", "repeat-y", "space", "round"]);
+const backgroundPositionKeyword = namedValue(["left", "right", "top", "bottom", "center"]);
+function backgroundRepeat(value: string): string | null {
+  const parts = value.trim().toLowerCase().split(/\s+/);
+  if (parts.length > 2 || !parts.every((part) => backgroundRepeatKeyword.test(part))) return null;
+  if (parts.length === 2 && parts.some((part) => /^repeat-[xy]$/.test(part))) return null;
+  return parts.join(" ");
+}
+function backgroundPosition(value: string): string | null {
+  const parts = value.trim().toLowerCase().split(/\s+/);
+  if (parts.length > 4) return null;
+  const valid = parts.every((part) => backgroundPositionKeyword.test(part)
+    || boundedLength(part, { allowNegative: true, allowPercentage: true }) !== null);
+  return valid ? parts.join(" ") : null;
+}
+function backgroundSize(value: string): string | null {
+  const parts = value.trim().toLowerCase().split(/\s+/);
+  if (parts.length === 1 && /^(?:cover|contain)$/.test(parts[0])) return parts[0];
+  if (parts.length > 2) return null;
+  const valid = parts.every((part) => part === "auto" || boundedLength(part, { allowPercentage: true }) !== null);
+  return valid ? parts.join(" ") : null;
+}
+
 type Validator = (value: string) => string | null;
 const regex = (pattern: RegExp): Validator => (value) => pattern.test(value.trim().toLowerCase()) ? value.trim().toLowerCase() : null;
 const keyword = (values: string[]) => regex(namedValue(values));
@@ -252,6 +287,11 @@ const validators: Record<string, Validator> = {
   background: (value) => safeColor.test(value.trim()) || /^(none|transparent)$/.test(value.trim().toLowerCase()) ? value.trim().toLowerCase() : null,
   color: regex(safeColor),
   "background-color": regex(safeColor),
+  "background-position": backgroundPosition,
+  "background-size": backgroundSize,
+  "background-repeat": backgroundRepeat,
+  "background-origin": keyword(backgroundBoxes),
+  "background-clip": keyword(backgroundBoxes),
   opacity,
   "font-size": fontSize,
   "line-height": lineHeight,
