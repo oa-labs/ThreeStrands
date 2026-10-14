@@ -1306,12 +1306,14 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       const now = Date.now();
       for (let cursor = new Date(start); cursor < end && candidates.length < 20; cursor.setMinutes(cursor.getMinutes() + request.preferences.slotIncrementMinutes)) {
         const weekday = cursor.getDay();
-        const window = request.preferences.workingWindows.find((candidate) => candidate.weekday === weekday);
-        if (!window) continue;
-        const [startHour, startMinute] = window.start.split(":").map(Number);
-        const [endHour, endMinute] = window.end.split(":").map(Number);
         const minutes = cursor.getHours() * 60 + cursor.getMinutes();
-        if (minutes < startHour * 60 + startMinute || minutes + request.preferences.defaultDurationMinutes > endHour * 60 + endMinute || cursor.getTime() <= now) continue;
+        const clock = (value: string) => {
+          const [hour, minute] = value.split(":").map(Number);
+          return hour * 60 + minute;
+        };
+        const fits = request.preferences.workingWindows.some((window) => window.weekday === weekday
+          && minutes >= clock(window.start) && minutes + request.preferences.defaultDurationMinutes <= clock(window.end));
+        if (!fits || cursor.getTime() <= now) continue;
         const slotEnd = new Date(cursor.getTime() + request.preferences.defaultDurationMinutes * 60_000);
         if (busy.some(([busyStart, busyEnd]) => busyStart < slotEnd.getTime() && busyEnd > cursor.getTime())) continue;
         const day = cursor.toDateString();

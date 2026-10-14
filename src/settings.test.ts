@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyFontFamily,
   DEFAULT_AVAILABILITY_PREFERENCES,
+  MAX_WORKING_WINDOWS,
   DEFAULT_AUTO_READ_DELAY_SECONDS,
   DEFAULT_FONT_FAMILY,
   DEFAULT_LOAD_REMOTE_IMAGES,
@@ -37,6 +38,21 @@ describe("availability preferences", () => {
     const next = { ...DEFAULT_AVAILABILITY_PREFERENCES, timeZone: "America/New_York", defaultDurationMinutes: 45 };
     saveAvailabilityPreferences(next);
     expect(readAvailabilityPreferences()).toEqual(next);
+  });
+
+  it("persists several slots per day up to the weekly limit", () => {
+    const full = {
+      ...DEFAULT_AVAILABILITY_PREFERENCES,
+      workingWindows: Array.from({ length: MAX_WORKING_WINDOWS }, (_, index) => ({
+        weekday: index % 7,
+        start: `${String(8 + Math.floor(index / 7) * 2).padStart(2, "0")}:00`,
+        end: `${String(9 + Math.floor(index / 7) * 2).padStart(2, "0")}:00`,
+      })),
+    };
+    saveAvailabilityPreferences(full);
+    expect(readAvailabilityPreferences()).toEqual(full);
+    const tooMany = { ...full, workingWindows: [...full.workingWindows, { weekday: 0, start: "20:00", end: "21:00" }] };
+    expect(saveAvailabilityPreferences(tooMany)).toEqual(full);
   });
 
   it("rejects malformed stored preferences", () => {

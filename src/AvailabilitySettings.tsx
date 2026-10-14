@@ -1,5 +1,33 @@
 import { useEffect, useMemo, useState } from "react";
-import type { AvailabilityPreferences } from "./domain";
+import { Plus, X } from "lucide-react";
+import type { AvailabilityPreferences, AvailabilityWindow } from "./domain";
+import { ICON_SIZE } from "./iconSizes";
+import { MAX_WORKING_WINDOWS_PER_DAY } from "./settings";
+
+const LAST_MINUTE = 23 * 60 + 59;
+
+function clockMinutes(value: string): number {
+  const [hour, minute] = value.split(":").map(Number);
+  return hour * 60 + minute;
+}
+
+function clockValue(minutes: number): string {
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
+/** An hour-long slot starting an hour after the day's latest slot ends, or
+ * null when that would run past midnight. */
+export function nextWorkingWindow(weekday: number, dayWindows: AvailabilityWindow[]): AvailabilityWindow | null {
+  if (dayWindows.length === 0) return { weekday, start: "09:00", end: "17:00" };
+  const start = Math.max(...dayWindows.map((window) => clockMinutes(window.end))) + 60;
+  const end = start + 60;
+  return end > LAST_MINUTE ? null : { weekday, start: clockValue(start), end: clockValue(end) };
+}
+
+export function windowsOverlap(dayWindows: AvailabilityWindow[]): boolean {
+  const sorted = [...dayWindows].sort((a, b) => a.start.localeCompare(b.start));
+  return sorted.some((window, index) => index > 0 && window.start < sorted[index - 1].end);
+}
 
 export function AvailabilitySettings({
   preferences,
@@ -33,13 +61,17 @@ export function AvailabilitySettings({
       setTimeZoneError("Choose a valid timezone, such as America/New_York.");
     }
   };
-  const updateWindow = (weekday: number, patch: Partial<{ start: string; end: string }>) => {
-    const current = preferences.workingWindows.find((window) => window.weekday === weekday);
-    const next = current
-      ? preferences.workingWindows.map((window) => window.weekday === weekday ? { ...window, ...patch } : window)
-      : [...preferences.workingWindows, { weekday, start: patch.start ?? "09:00", end: patch.end ?? "17:00" }];
-    onChange({ ...preferences, workingWindows: next });
+  const updateWindow = (target: AvailabilityWindow, patch: Partial<Pick<AvailabilityWindow, "start" | "end">>) => {
+    onChange({
+      ...preferences,
+      workingWindows: preferences.workingWindows.map((window) => window === target ? { ...window, ...patch } : window),
+    });
   };
+  const addWindow = (window: AvailabilityWindow) => onChange({ ...preferences, workingWindows: [...preferences.workingWindows, window] });
+  const removeWindows = (shouldRemove: (window: AvailabilityWindow) => boolean) => onChange({
+    ...preferences,
+    workingWindows: preferences.workingWindows.filter((window) => !shouldRemove(window)),
+  });
   return (
     <section className="settings-section" aria-label="Availability">
       <h3>Timezone</h3>
@@ -77,14 +109,14 @@ export function AvailabilitySettings({
           <button className="btn btn-sm"
             type="button"
             onClick={() => {
-              const monday = preferences.workingWindows.find((window) => window.weekday === 1)
-                ?? { weekday: 1, start: "09:00", end: "17:00" };
+              const mondayWindows = preferences.workingWindows.filter((window) => window.weekday === 1);
+              const monday = mondayWindows.length > 0 ? mondayWindows : [{ weekday: 1, start: "09:00", end: "17:00" }];
               const weekends = preferences.workingWindows.filter((window) => window.weekday === 0 || window.weekday === 6);
               onChange({
                 ...preferences,
                 workingWindows: [
                   ...weekends,
-                  ...[1, 2, 3, 4, 5].map((weekday) => ({ weekday, start: monday.start, end: monday.end })),
+                  ...[1, 2, 3, 4, 5].flatMap((weekday) => monday.map(({ start, end }) => ({ weekday, start, end }))),
                 ].sort((a, b) => a.weekday - b.weekday),
               });
             }}
@@ -96,18 +128,39 @@ export function AvailabilitySettings({
       </div>
       <div className="availability-windows">
         {weekdayLabels.map((label, weekday) => {
-          const window = preferences.workingWindows.find((candidate) => candidate.weekday === weekday);
+          const dayWindows = preferences.workingWindows.filter((candidate) => candidate.weekday === weekday);
+          const next = dayWindows.length < MAX_WORKING_WINDOWS_PER_DAY ? nextWorkingWindow(weekday, dayWindows) : null;
           return (
             <div className="availability-window" key={label}>
-              <label><input type="checkbox" checked={Boolean(window)} onChange={(event) => {
-                if (event.target.checked) updateWindow(weekday, {});
-                else onChange({ ...preferences, workingWindows: preferences.workingWindows.filter((candidate) => candidate.weekday !== weekday) });
+              <label><input type="checkbox" checked={dayWindows.length > 0} onChange={(event) => {
+                if (event.target.checked) addWindow({ weekday, start: "09:00", end: "17:00" });
+                else removeWindows((candidate) => candidate.weekday === weekday);
               }} /> {label}</label>
-              {window ? <>
-                <input type="time" aria-label={`${label} Start`} value={window.start} onChange={(event) => updateWindow(weekday, { start: event.target.value })} />
-                <span>to</span>
-                <input type="time" aria-label={`${label} End`} value={window.end} onChange={(event) => updateWindow(weekday, { end: event.target.value })} />
-              </> : <span className="settings-hint">Unavailable</span>}
+              {dayWindows.length > 0 ? (
+                <div className="availability-slots" role="group" aria-label={`${label} Hours`}>
+                  {dayWindows.map((window, index) => {
+                    const suffix = index === 0 ? "" : ` ${index + 1}`;
+                    return (
+                      <div className="availability-slot" key={index}>
+                        <input type="time" aria-label={`${label} Start${suffix}`} value={window.start} onChange={(event) => updateWindow(window, { start: event.target.value })} />
+                        <span>to</span>
+                        <input type="time" aria-label={`${label} End${suffix}`} value={window.end} onChange={(event) => updateWindow(window, { end: event.target.value })} />
+                        {dayWindows.length > 1 ? (
+                          <button className="btn-icon btn-icon-sm" type="button" title="Remove slot" aria-label={`Remove ${label} slot ${index + 1}`} onClick={() => removeWindows((candidate) => candidate === window)}>
+                            <X size={ICON_SIZE.sm} />
+                          </button>
+                        ) : <span />}
+                        {index === dayWindows.length - 1 ? (
+                          <button className="btn-icon btn-icon-sm" type="button" title="Add slot" aria-label={`Add ${label} slot`} disabled={!next} onClick={() => next && addWindow(next)}>
+                            <Plus size={ICON_SIZE.sm} />
+                          </button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                  {windowsOverlap(dayWindows) ? <span className="settings-hint">Overlapping slots count as one.</span> : null}
+                </div>
+              ) : <span className="settings-hint">Unavailable</span>}
             </div>
           );
         })}

@@ -14,6 +14,9 @@ fn parse_clock(value: &str) -> Result<NaiveTime, String> {
         .map_err(|_| format!("Invalid working-hours time: {value}"))
 }
 
+/// Most working-hour windows across the week: four per day.
+pub(crate) const MAX_WORKING_WINDOWS: usize = 28;
+
 pub(crate) fn validate_preferences(preferences: &AvailabilityPreferences) -> Result<Tz, String> {
     let zone = preferences
         .time_zone
@@ -25,7 +28,7 @@ pub(crate) fn validate_preferences(preferences: &AvailabilityPreferences) -> Res
     if !(5..=120).contains(&preferences.slot_increment_minutes) {
         return Err("Slot increment must be between 5 and 120 minutes".to_string());
     }
-    if preferences.working_windows.len() > 14 {
+    if preferences.working_windows.len() > MAX_WORKING_WINDOWS {
         return Err("Too many working-hour windows".to_string());
     }
     for window in &preferences.working_windows {
@@ -39,6 +42,26 @@ pub(crate) fn validate_preferences(preferences: &AvailabilityPreferences) -> Res
         }
     }
     Ok(zone)
+}
+
+/// One weekday's windows sorted by start, with overlapping or touching
+/// windows merged so a slot is never offered twice.
+fn merged_windows(preferences: &AvailabilityPreferences, weekday: u8) -> Result<Vec<(NaiveTime, NaiveTime)>, String> {
+    let mut windows = preferences
+        .working_windows
+        .iter()
+        .filter(|window| window.weekday == weekday)
+        .map(|window| Ok((parse_clock(&window.start)?, parse_clock(&window.end)?)))
+        .collect::<Result<Vec<_>, String>>()?;
+    windows.sort();
+    let mut merged: Vec<(NaiveTime, NaiveTime)> = Vec::with_capacity(windows.len());
+    for (start, end) in windows {
+        match merged.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            _ => merged.push((start, end)),
+        }
+    }
+    Ok(merged)
 }
 
 fn busy_overlaps(start: DateTime<Utc>, end: DateTime<Utc>, busy: &[BusyInterval]) -> bool {
@@ -95,9 +118,7 @@ pub fn find_candidates(
     while date <= last_date && candidates.len() < MAX_CANDIDATES {
         let weekday = date.weekday().num_days_from_sunday() as u8;
         let day_start = candidates.len();
-        for window in preferences.working_windows.iter().filter(|window| window.weekday == weekday) {
-            let start = parse_clock(&window.start)?;
-            let end = parse_clock(&window.end)?;
+        for (start, end) in merged_windows(preferences, weekday)? {
             let mut cursor = start;
             while cursor + duration <= end && candidates.len() < MAX_CANDIDATES && candidates.len() - day_start < per_day {
                 let Some(slot_start) = local_datetime(zone, date, cursor) else {
@@ -242,6 +263,55 @@ mod tests {
         assert_eq!(find_candidates(range.0, range.1, &preferences, &busy, 1, 1, Some(MAX_CANDIDATES)).unwrap().len(), MAX_CANDIDATES);
         assert!(find_candidates(range.0, range.1, &preferences, &busy, 1, 1, Some(0)).is_err());
         assert!(find_candidates(range.0, range.1, &preferences, &busy, 1, 1, Some(MAX_CANDIDATES + 1)).is_err());
+    }
+
+    fn window(weekday: u8, start: &str, end: &str) -> AvailabilityWindow {
+        AvailabilityWindow { weekday, start: start.to_string(), end: end.to_string() }
+    }
+
+    fn slot_starts(preferences: &AvailabilityPreferences) -> Vec<String> {
+        // Monday 2099-09-21, New York time (UTC-4).
+        find_candidates("2099-09-21T04:00:00Z", "2099-09-22T04:00:00Z", preferences, &[], 1, 1, None)
+            .unwrap()
+            .into_iter()
+            .map(|candidate| candidate.start)
+            .collect()
+    }
+
+    #[test]
+    fn several_windows_on_one_day_leave_the_gaps_unavailable() {
+        let mut preferences = preferences();
+        preferences.slot_increment_minutes = 60;
+        preferences.working_windows = vec![window(1, "13:00", "15:00"), window(1, "09:00", "12:00")];
+        assert_eq!(slot_starts(&preferences), vec![
+            "2099-09-21T13:00:00+00:00",
+            "2099-09-21T14:00:00+00:00",
+            "2099-09-21T15:00:00+00:00",
+            "2099-09-21T17:00:00+00:00",
+            "2099-09-21T18:00:00+00:00",
+        ]);
+    }
+
+    #[test]
+    fn overlapping_or_touching_windows_merge_without_duplicate_slots() {
+        let mut preferences = preferences();
+        preferences.slot_increment_minutes = 60;
+        preferences.working_windows = vec![window(1, "09:00", "11:00"), window(1, "10:00", "12:00"), window(1, "12:00", "13:00")];
+        let starts = slot_starts(&preferences);
+        assert_eq!(starts.len(), 4);
+        assert_eq!(starts.first().unwrap(), "2099-09-21T13:00:00+00:00");
+        assert_eq!(starts.last().unwrap(), "2099-09-21T16:00:00+00:00");
+    }
+
+    #[test]
+    fn working_window_count_is_limited() {
+        let mut preferences = preferences();
+        preferences.working_windows = (0..MAX_WORKING_WINDOWS)
+            .map(|index| window((index % 7) as u8, &format!("{:02}:00", index / 7 * 2 + 8), &format!("{:02}:00", index / 7 * 2 + 9)))
+            .collect();
+        assert!(validate_preferences(&preferences).is_ok());
+        preferences.working_windows.push(window(0, "20:00", "21:00"));
+        assert!(validate_preferences(&preferences).is_err());
     }
 
     #[test]

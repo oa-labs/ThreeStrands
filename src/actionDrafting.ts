@@ -3,7 +3,9 @@ import type { AvailabilityCandidate } from "./domain";
 /**
  * Builds the availability portion of a reply without involving an AI
  * provider. The ISO instants remain the source of truth; display formatting
- * is always performed in the user's selected IANA timezone.
+ * is always performed in the user's selected IANA timezone, labeled with the
+ * familiar abbreviation in effect at each slot (EDT, PST) rather than the
+ * IANA identifier.
  */
 export function formatAvailabilityText(
   candidates: AvailabilityCandidate[],
@@ -20,15 +22,24 @@ export function formatAvailabilityText(
     hour: "numeric",
     minute: "2-digit",
     timeZone,
-    timeZoneName: "short",
   });
+  // en-US carries the widely recognized North American abbreviations; zones
+  // without one fall back to a GMT offset such as "GMT+2".
+  const zoneFormatter = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "short" });
+  const zoneName = (date: Date) =>
+    zoneFormatter.formatToParts(date).find((part) => part.type === "timeZoneName")?.value ?? timeZone;
   const format = (value: string) => new Date(value);
   const lines = candidates.map((candidate) => {
     const start = format(candidate.start);
     const end = format(candidate.end);
+    const startZone = zoneName(start);
+    const endZone = zoneName(end);
     const startTime = timeFormatter.format(start);
     const endTime = timeFormatter.format(end);
-    return `- ${dateFormatter.format(start)} · ${startTime}–${endTime} (${timeZone})`;
+    const range = startZone === endZone
+      ? `${startTime}–${endTime} ${endZone}`
+      : `${startTime} ${startZone}–${endTime} ${endZone}`;
+    return `- ${dateFormatter.format(start)} · ${range}`;
   });
   return `Here are some times that work for me:\n\n${lines.join("\n")}`;
 }

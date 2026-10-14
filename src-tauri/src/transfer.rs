@@ -1013,6 +1013,37 @@ mod tests {
     }
 
     #[test]
+    fn several_working_windows_per_day_round_trip_through_an_encrypted_export() {
+        let mut current = payload();
+        let window = |weekday, start: &str, end: &str| crate::models::AvailabilityWindow {
+            weekday,
+            start: start.to_string(),
+            end: end.to_string(),
+        };
+        // Every weekday split around lunch, plus a short Saturday: more
+        // windows than the previous limit of fourteen allowed.
+        current.preferences.availability_preferences.working_windows = (1..=5)
+            .flat_map(|weekday| [window(weekday, "09:00", "12:00"), window(weekday, "13:00", "17:00"), window(weekday, "19:00", "20:00")])
+            .chain([window(6, "10:00", "11:00")])
+            .collect();
+        let decoded = decrypt(&encrypt(&current, "correct horse").unwrap(), "correct horse").unwrap();
+        decoded.validate().unwrap();
+        let windows: Vec<(u8, String, String)> = decoded
+            .preferences
+            .availability_preferences
+            .working_windows
+            .into_iter()
+            .map(|w| (w.weekday, w.start, w.end))
+            .collect();
+        assert_eq!(windows.len(), 16);
+        assert_eq!(&windows[..3], &[
+            (1, "09:00".to_string(), "12:00".to_string()),
+            (1, "13:00".to_string(), "17:00".to_string()),
+            (1, "19:00".to_string(), "20:00".to_string()),
+        ]);
+    }
+
+    #[test]
     fn an_export_from_before_the_accent_field_existed_defaults_to_purple() {
         let mut serialized = serde_json::to_value(payload()).unwrap();
         serialized["preferences"]

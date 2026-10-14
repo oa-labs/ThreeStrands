@@ -862,7 +862,7 @@ describe("Composer Reply Assist", () => {
         accounts={accounts} {...snippetProps}
         onClose={() => {}}
         onQueued={() => {}}
-        availabilityText={'Here are some times that work for me:\n\n- Tuesday, September 22, 2026 · 9:00–9:30 AM EDT (America/New_York)'}
+        availabilityText={'Here are some times that work for me:\n\n- Tuesday, September 22, 2026 · 9:00 AM–9:30 AM EDT'}
       />,
     );
 
