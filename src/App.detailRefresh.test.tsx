@@ -6,7 +6,7 @@ import { proactiveDwellMs } from "./proactiveBrief";
 import { App, formatMailTimestamp, messagesWithQueuedReplies } from "./App";
 import { mailClient } from "./data/client";
 import type { OutboxItem } from "./correspondence";
-import type { ContactProfile, ContactTimelineItem } from "./domain";
+import type { ContactProfile, ContactTimelineItem, MeetingProposal } from "./domain";
 
 afterEach(() => {
   cleanup();
@@ -336,7 +336,7 @@ describe("conversation brief", () => {
       evidence: { sourceMessageId: "welcome-message", excerpt: "command palette" },
     });
 
-    async function openWithMeeting(meeting: ReturnType<typeof meetingAt>) {
+    async function openWithMeeting(meeting: MeetingProposal) {
       clearScheduleCache();
       await enableAi({ actionExtraction: true, threadChat: true });
       vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([{ email: "calendar@example.com", connectedAt: "2026-09-01T00:00:00Z", status: "connected" }]);
@@ -385,9 +385,9 @@ describe("conversation brief", () => {
       const date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
       const next = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
       const nextDate = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
-      const event = {
+      const event: MeetingProposal = {
         ...meetingAt(5), intent: "attend", title: "Girls group bonfire", participants: [], location: "Glenn's house",
-        rawTimeLanguage: "time TBA", normalizedStart: null as unknown as string, normalizedEnd: null as unknown as string, eventDate: date,
+        rawTimeLanguage: "time TBA", normalizedStart: null, normalizedEnd: null, eventDate: date,
       };
       const check = vi.spyOn(mailClient, "checkProposedTime");
       const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue({ id: "created", accountId: "calendar@example.com", title: "Girls group bonfire", start: date, end: nextDate, allDay: true });

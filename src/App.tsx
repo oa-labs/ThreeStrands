@@ -1264,13 +1264,15 @@ export function App() {
         suppressed={settingsOpen && settingsSection === "replicatedSync"}
         onReview={() => openSettingsAt("replicatedSync")}
       />
-      <AvailableAccountsNotice
-        accounts={newlyAvailableAccounts}
-        suppressed={viewingAccountSettings}
-        onReview={() => openSettingsAt("accounts")}
-        onDismiss={acknowledgeAvailableAccounts}
-      />
-      <UpdateNotice />
+      <div className="toast-stack-bottom-left">
+        <AvailableAccountsNotice
+          accounts={newlyAvailableAccounts}
+          suppressed={viewingAccountSettings}
+          onReview={() => openSettingsAt("accounts")}
+          onDismiss={acknowledgeAvailableAccounts}
+        />
+        <UpdateNotice />
+      </div>
       {notice ? (
         <div className="toast" role="status">
           {notice.message}

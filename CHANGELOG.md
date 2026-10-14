@@ -20,6 +20,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - An email that lists more than 10 events or to-dos no longer makes suggestions fail. The first 10 are shown, along with a note saying how many more there were.
 - Suggested meeting cards no longer flash "Checking your calendar…" from time to time while you read.
 - Adding an announced event to your calendar no longer invites the person who sent the email.
+- The notice that an account is set up on another device is now a small message in the bottom-left corner, alongside app update notices, instead of a panel filling the window.
 
 ## 0.116.1 — 2026-10-14
 

@@ -2765,7 +2765,9 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .sync-join-connectors legend { padding: 0 var(--space-1); color: var(--muted); font-size: var(--text-secondary); }
 .sync-join-connector { display: flex; flex-direction: column; gap: var(--space-0-5); }
 .sync-join-credentials { padding-left: var(--space-6); }
-.enrollment-request-toast, .available-accounts-toast {
+/* Doubled class outranks the later base .toast rule, which would otherwise
+   pin bottom: 24px and stretch the toast to the full window height. */
+.toast.enrollment-request-toast {
   top: 24px;
   right: 24px;
   bottom: auto;
@@ -2920,13 +2922,26 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 }
 .search-status-toast { left: 24px; right: auto; color: var(--muted); }
 .search-status-toast.error { color: var(--error); }
-/* Bottom-left keeps it clear of the undo toast (bottom-right) and device
-   join requests (top-right), which can appear at the same time. */
-.update-toast {
+/* Bottom-left keeps app updates and accounts from other devices clear of the
+   undo toast (bottom-right) and device join requests (top-right), which can
+   appear at the same time. The stack lays them out so they never overlap. */
+.toast-stack-bottom-left {
+  position: fixed;
+  z-index: var(--z-toast);
+  bottom: 24px;
   left: 24px;
-  right: auto;
-  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
   max-width: min(560px, calc(100vw - 48px));
+  pointer-events: none;
+}
+.toast-stack-bottom-left > .toast {
+  position: static;
+  box-sizing: border-box;
+  max-width: 100%;
+  pointer-events: auto;
 }
 .update-toast-icon { flex: 0 0 auto; color: var(--link); }
 .update-toast-message { min-width: 0; }
