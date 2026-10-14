@@ -4,15 +4,15 @@ use mail_parser::MessageParser;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::limits::MAX_ATTACHMENT_BYTES;
+use crate::MAX_ATTACHMENT_BYTES;
 
-pub(crate) const MAX_THREAD_MESSAGES: usize = 100;
-pub(crate) const MAX_MIME_DEPTH: usize = 32;
-pub(crate) const MAX_MIME_PARTS: usize = 1_000;
-pub(crate) const MAX_MESSAGE_HEADERS: usize = 2_000;
-pub(crate) const MAX_MESSAGE_HEADER_BYTES: usize = 256 * 1024;
-pub(crate) const MAX_DECODED_BODY_BYTES: usize = 8 * 1024 * 1024;
-pub(crate) const MAX_NORMALIZED_THREAD_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_THREAD_MESSAGES: usize = 100;
+pub const MAX_MIME_DEPTH: usize = 32;
+pub const MAX_MIME_PARTS: usize = 1_000;
+pub const MAX_MESSAGE_HEADERS: usize = 2_000;
+pub const MAX_MESSAGE_HEADER_BYTES: usize = 256 * 1024;
+pub const MAX_DECODED_BODY_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_NORMALIZED_THREAD_BYTES: usize = 16 * 1024 * 1024;
 
 /// A raw message as the provider handed it over: the MIME tree plus the
 /// provider-assigned ids and labels that came with it.
@@ -78,18 +78,18 @@ pub struct UnsubscribeMetadata {
 }
 
 impl UnsubscribeMetadata {
-    pub fn info(&self) -> crate::models::UnsubscribeInfo {
+    pub fn info(&self) -> crate::types::UnsubscribeInfo {
         let mut methods = Vec::new();
         if self.one_click_url.is_some() {
-            methods.push(crate::models::UnsubscribeMethod::OneClick);
+            methods.push(crate::types::UnsubscribeMethod::OneClick);
         }
         if self.mailto_url.is_some() {
-            methods.push(crate::models::UnsubscribeMethod::Mailto);
+            methods.push(crate::types::UnsubscribeMethod::Mailto);
         }
         if self.web_url.is_some() {
-            methods.push(crate::models::UnsubscribeMethod::Web);
+            methods.push(crate::types::UnsubscribeMethod::Web);
         }
-        crate::models::UnsubscribeInfo {
+        crate::types::UnsubscribeInfo {
             methods,
             list_id: self.list_id.clone(),
         }
@@ -110,7 +110,7 @@ pub struct NormalizedMessage {
     pub labels: Vec<String>,
     pub metadata_json: String,
     pub unsubscribe: Option<UnsubscribeMetadata>,
-    pub attachments: Vec<crate::models::MessageAttachment>,
+    pub attachments: Vec<crate::types::MessageAttachment>,
 }
 
 pub fn normalize(message: &RawMessage) -> Result<NormalizedMessage, String> {
@@ -188,7 +188,7 @@ pub fn normalize(message: &RawMessage) -> Result<NormalizedMessage, String> {
     })
 }
 
-pub(crate) fn normalized_size(message: &NormalizedMessage) -> Option<usize> {
+pub fn normalized_size(message: &NormalizedMessage) -> Option<usize> {
     let fixed_lengths = [
         message.id.len(),
         message.thread_id.len(),
@@ -263,7 +263,7 @@ fn collect_attachments(
     part: &MimePart,
     path: &str,
     body_html: &str,
-    attachments: &mut Vec<crate::models::MessageAttachment>,
+    attachments: &mut Vec<crate::types::MessageAttachment>,
 ) {
     let content_id = header(part, "Content-ID")
         .map(str::trim)
@@ -292,12 +292,12 @@ fn collect_attachments(
             });
     let inline = referenced_by_html || declared_inline_image;
     if !part.filename.is_empty() || inline {
-        attachments.push(crate::models::MessageAttachment {
+        attachments.push(crate::types::MessageAttachment {
             id: part_reference(path),
             filename: if part.filename.is_empty() {
                 "inline-image".into()
             } else {
-                crate::attachment_security::normalize_filename(&part.filename)
+                crate::filename::normalize_filename(&part.filename)
             },
             mime_type: if part.mime_type.is_empty() {
                 "application/octet-stream".into()
@@ -380,7 +380,7 @@ fn decoded_base64_len(encoded_len: usize) -> Option<usize> {
         .and_then(|length| length.checked_add(trailing_bytes))
 }
 
-pub(crate) fn decode_attachment_data(data: &str) -> Result<Vec<u8>, String> {
+pub fn decode_attachment_data(data: &str) -> Result<Vec<u8>, String> {
     let encoded = data.trim_end_matches('=');
     let decoded_len = decoded_base64_len(encoded.len())
         .ok_or_else(|| "Gmail returned invalid attachment data".to_string())?;

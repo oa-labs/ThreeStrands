@@ -16,7 +16,8 @@ When a test fails:
    one-off assertion in an unrelated file.
 
 Run `pnpm test` for frontend changes. Run `cargo test` in `src-tauri` for Rust
-changes. Run `pnpm test:e2e` when the change touches compose, triage, or email
+changes, and `cargo test --workspace` at the repository root when a change
+touches `crates/` (mail parsing lives in `crates/mail-mime`). Run `pnpm test:e2e` when the change touches compose, triage, or email
 rendering.
 
 Do not start the dev server, click through the UI, take screenshots, or use a

@@ -1,5 +1,6 @@
-/// Maximum aggregate decoded attachment payload accepted locally.
-pub(crate) const MAX_ATTACHMENT_BYTES: usize = 18 * 1024 * 1024;
+/// Maximum aggregate decoded attachment payload accepted locally; owned by the
+/// mail parser, which enforces it while decoding.
+pub(crate) use threestrands_mail_mime::MAX_ATTACHMENT_BYTES;
 
 /// Longest `mailto:` link accepted from macOS or the webview. Generous for a
 /// prefilled body while keeping a hostile link from flooding the composer.

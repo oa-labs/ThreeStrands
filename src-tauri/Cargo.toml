@@ -25,8 +25,6 @@ cid = { version = "0.11", default-features = false, features = ["std"] }
 fontdb = "0.24"
 imagesize = "0.15"
 gethostname = "1.1"
-# Inert HTML tokenization for email text extraction (also a transitive dependency).
-html5ever = "0.39"
 iroh-car = "0.5"
 jiff = "0.2"
 # The default `v1` feature keeps keyring 3's entry naming (macOS login
@@ -67,12 +65,11 @@ tauri-plugin-window-state = "2"
 thiserror = "2"
 tokio = { version = "1", features = ["fs", "net", "sync", "time", "io-util", "macros", "rt-multi-thread"] }
 tokio-util = { version = "0.7", default-features = false }
-unicode-general-category = "1"
-unicode-normalization = "0.1"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 zstd = "0.13"
+threestrands-mail-mime = { path = "../crates/mail-mime" }
 threestrands-sync-core = { path = "../crates/sync-core" }
 threestrands-sync-envelope = { path = "../crates/sync-envelope" }
 threestrands-sync-protocol = { path = "../crates/sync-protocol" }

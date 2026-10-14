@@ -425,33 +425,8 @@ pub struct Message {
     pub attachments: Vec<MessageAttachment>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MessageAttachment {
-    pub id: String,
-    pub filename: String,
-    pub mime_type: String,
-    pub size: u64,
-    #[serde(default)]
-    pub content_id: Option<String>,
-    #[serde(default)]
-    pub inline: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UnsubscribeInfo {
-    pub methods: Vec<UnsubscribeMethod>,
-    pub list_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum UnsubscribeMethod {
-    OneClick,
-    Mailto,
-    Web,
-}
+// Produced by the mail parser and stored and served unchanged.
+pub use threestrands_mail_mime::types::{MessageAttachment, UnsubscribeInfo, UnsubscribeMethod};
 
 #[derive(Debug, Clone)]
 pub struct UnsubscribeTarget {

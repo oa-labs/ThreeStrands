@@ -5983,7 +5983,6 @@ dependencies = [
  "fontdb",
  "futures",
  "gethostname",
- "html5ever",
  "imagesize",
  "iroh-car",
  "jiff",
@@ -6023,6 +6022,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
  "thiserror 2.0.21",
+ "threestrands-mail-mime",
  "threestrands-sync-core",
  "threestrands-sync-envelope",
  "threestrands-sync-protocol",
@@ -6030,13 +6030,26 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-util",
- "unicode-general-category",
- "unicode-normalization",
  "url",
  "uuid",
  "xattr",
  "zip 8.6.0",
  "zstd",
+]
+
+[[package]]
+name = "threestrands-mail-mime"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "html5ever",
+ "mail-parser",
+ "serde",
+ "serde_json",
+ "unicode-general-category",
+ "unicode-normalization",
+ "url",
 ]
 
 [[package]]

@@ -1,0 +1,18 @@
+[package]
+name = "threestrands-mail-mime"
+version = "0.1.0"
+edition = "2021"
+
+# Pure mail parsing: no database, network, file system, or Tauri. Kept apart
+# from the app crate so it compiles once, in parallel, and stays testable on
+# its own.
+[dependencies]
+base64 = "0.22"
+chrono = "0.4"
+html5ever = "0.39"
+mail-parser = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+unicode-general-category = "1"
+unicode-normalization = "0.1"
+url = "2"

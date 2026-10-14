@@ -80,6 +80,7 @@ report_build_resources
 pnpm install --frozen-lockfile
 pnpm test
 cargo test --locked --manifest-path src-tauri/Cargo.toml
+cargo test --locked --workspace
 
 build_marker="$(mktemp)"
 cleanup_paths=("$build_marker")

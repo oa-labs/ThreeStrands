@@ -122,7 +122,7 @@ impl TokenSink for TextSink {
     }
 }
 
-pub(crate) fn html_to_text(html: &str) -> String {
+pub fn html_to_text(html: &str) -> String {
     let tokenizer = Tokenizer::new(TextSink::default(), Default::default());
     let input = BufferQueue::default();
     input.push_back(html.into());
@@ -138,7 +138,7 @@ pub(crate) fn html_to_text(html: &str) -> String {
 /// returns what follows them; otherwise `None`. Prose never matches: a brace
 /// block only counts when every entry in it is a `property: value`
 /// declaration (or, for an at-rule, nested rules of that shape).
-pub(crate) fn after_leading_stylesheet(text: &str) -> Option<&str> {
+pub fn after_leading_stylesheet(text: &str) -> Option<&str> {
     let mut rest = text;
     let mut found = false;
     while let Some(end) = css_rule_end(rest.trim_start()) {

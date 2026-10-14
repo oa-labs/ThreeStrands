@@ -18,14 +18,15 @@ mod endpoint_origin;
 mod enrollment;
 mod error_text;
 mod http_client;
-mod html_plain_text;
 mod image_format;
 mod image_proxy;
 mod ipfs_transport;
 mod limits;
 mod mail_links;
-mod mime;
 mod models;
+// Mail parsing lives in its own crate; these keep `crate::mime::…` and the
+// other module paths the app already uses.
+use threestrands_mail_mime::{html_plain_text, mime, sender_trust};
 mod net_safety;
 mod provider;
 mod preview_text;
@@ -34,7 +35,6 @@ mod replicated_sync;
 mod s3_transport;
 mod schema;
 mod search_query;
-mod sender_trust;
 mod sync;
 mod sync_connectors;
 mod sync_folder;

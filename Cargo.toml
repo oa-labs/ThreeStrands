@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/mail-mime",
     "crates/sync-protocol",
     "crates/sync-envelope",
     "crates/sync-core",
