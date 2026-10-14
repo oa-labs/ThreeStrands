@@ -320,13 +320,18 @@ describe("conversation brief", () => {
 
   describe("scheduling meetings from the panel", () => {
     const hour = 3_600_000;
-    // Whole minutes, as the event dialog's date-time fields hold them.
-    const minute = 60_000;
-    const inHours = (hours: number) => new Date(Math.floor((Date.now() + hours * hour) / minute) * minute).toISOString();
-    const meetingAt = (hoursFromNow: number) => ({
+    // A fixed local time of day keeps the 30-minute meeting inside one day column
+    // regardless of when the suite runs; a start near midnight would render it twice.
+    const daysAheadAt10 = (days: number, minutes = 0) => {
+      const date = new Date();
+      date.setDate(date.getDate() + days);
+      date.setHours(10, minutes, 0, 0);
+      return date.toISOString();
+    };
+    const meetingAt = (daysAhead: number) => ({
       type: "meeting" as const, intent: "schedule", title: "Budget review", participants: ["jane@example.com"], location: null,
-      rawTimeLanguage: "Thursday at 3", normalizedStart: inHours(hoursFromNow),
-      normalizedEnd: inHours(hoursFromNow + 0.5), searchRangeStart: null, searchRangeEnd: null,
+      rawTimeLanguage: "Thursday at 3", normalizedStart: daysAheadAt10(daysAhead),
+      normalizedEnd: daysAheadAt10(daysAhead, 30), searchRangeStart: null, searchRangeEnd: null,
       durationMinutes: 30, timeZone: "America/New_York", confidence: 0.9,
       evidence: { sourceMessageId: "welcome-message", excerpt: "command palette" },
     });
@@ -347,7 +352,7 @@ describe("conversation brief", () => {
     }
 
     it("checks the proposed time, then adds it to the calendar through the prefilled event dialog", async () => {
-      const meeting = meetingAt(26);
+      const meeting = meetingAt(1);
       const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
       const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue({ id: "created", accountId: "calendar@example.com", title: "Budget review", start: meeting.normalizedStart, end: meeting.normalizedEnd, allDay: false });
       const { schedule } = await openWithMeeting(meeting);
@@ -376,7 +381,7 @@ describe("conversation brief", () => {
     });
 
     it("replies that a free time works, and opens more times on the meeting's day", async () => {
-      const meeting = meetingAt(50);
+      const meeting = meetingAt(2);
       vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
       const { schedule } = await openWithMeeting(meeting);
 
@@ -392,7 +397,7 @@ describe("conversation brief", () => {
     });
 
     it("keeps a failed chat suggestion reviewable, then opens the saved event and replaces the review link", async () => {
-      const meeting = meetingAt(26);
+      const meeting = meetingAt(1);
       const unrelated = { ...meeting, title: "Another meeting" };
       vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
       const { panel } = await openWithMeeting(unrelated);
