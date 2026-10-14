@@ -52,7 +52,7 @@ unsupported addresses remain visible and do not get silently rewritten.
 
 | Area | Current code | Planned change |
 | --- | --- | --- |
-| Shared incoming MIME | `src-tauri/src/mime.rs`, `provider/imap/rfc822.rs` | Extract requests and reports before ordinary body normalization; retain raw metadata |
+| Shared incoming MIME | `crates/mail-mime/src/mime.rs`, `provider/imap/rfc822.rs` | Extract requests and reports before ordinary body normalization; retain raw metadata |
 | Message ingestion | `src-tauri/src/db/ingestion.rs` | Store parsed metadata and receipt associations transactionally |
 | Compose and durable sends | `src-tauri/src/correspondence.rs`, `src/Composer.tsx`, `src/correspondence.ts` | Freeze an explicit receipt-request choice and record sent recipient identities |
 | Provider contracts | `src-tauri/src/provider.rs` | Separate request-header support, report parsing, response transport, and coordination capabilities |

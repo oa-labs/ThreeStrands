@@ -226,6 +226,24 @@ export const emailRenderingFixtures = {
       <td style="padding:12px 12px 12px 0;font-size:14px;line-height:20px">Your scheduled maintenance window starts tonight. Services may be briefly unavailable while the update completes, and no action is required.</td>
     </tr></table>
   `,
+  // A height-only image relies on its natural aspect ratio for width, including
+  // when a high-density source is larger than the intended display size.
+  heightOnlyIconTable: `
+    <table width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td valign="top"><img height="20" src="https://example.com/height-only.png" alt="mail"></td>
+      <td width="13"></td>
+      <td style="font-size:16px">This is a copy of an account notification. Your recovery address received this message so you can review the activity and update your account if necessary.</td>
+    </tr></table>
+  `,
+  heightOnlyIconFlex: `
+    <div style="display:flex;align-items:flex-start;gap:12px">
+      <img height="20" src="https://example.com/height-only-wide.png" alt="notice" style="display:block">
+      <p style="margin:0;font-size:18px">A scheduled service update is coming soon. Please review the details before the maintenance window begins and contact support with any questions.</p>
+    </div>
+    <style>.limited-icon { max-width:12px; }</style>
+    <img height="20" src="https://example.com/height-only.png" alt="inline cap" style="max-width:10px">
+    <img height="20" src="https://example.com/height-only.png" alt="stylesheet cap" class="limited-icon">
+  `,
   // Images wider than a narrow reading pane must still scale to fit.
   heroInTable: `
     <table width="100%" cellpadding="0" cellspacing="0"><tr>

@@ -149,19 +149,29 @@ test.describe("email rendering fixtures", () => {
     }
   }
 
-  for (const { fixture, alt, size } of [
-    { fixture: "iconCalloutFlexTable", alt: "info", size: 18 },
-    { fixture: "iconCalloutTable", alt: "note", size: 24 },
+  for (const { fixture, alt, imageWidth, imageHeight } of [
+    { fixture: "iconCalloutFlexTable", alt: "info", imageWidth: 18, imageHeight: 18 },
+    { fixture: "iconCalloutTable", alt: "note", imageWidth: 24, imageHeight: 24 },
+    { fixture: "heightOnlyIconTable", alt: "mail", imageWidth: 20, imageHeight: 20 },
+    { fixture: "heightOnlyIconFlex", alt: "notice", imageWidth: 40, imageHeight: 20 },
   ]) {
-    for (const width of [390, 1200]) {
-      test(`${fixture} keeps its declared icon size beside wrapping text at ${width}px`, async ({ page }) => {
-        await page.setViewportSize({ width, height: 900 });
-        await page.goto(`/tests/email-rendering.html?theme=light&images&fixture=${fixture}`);
-        const icon = page.locator("iframe.message-body").contentFrame().getByAltText(alt);
-        await expect(icon).toHaveAttribute("src", /^data:image\//);
-        await expect.poll(async () => (await icon.boundingBox())?.width).toBe(size);
-        expect((await icon.boundingBox())!.height).toBe(size);
-      });
+    for (const theme of ["light", "dark"]) {
+      for (const width of [390, 1200]) {
+        test(`${fixture} keeps its declared icon size beside wrapping text in ${theme} at ${width}px`, async ({ page }) => {
+          await page.setViewportSize({ width, height: 900 });
+          await page.goto(`/tests/email-rendering.html?theme=${theme}&images&fixture=${fixture}`);
+          const content = page.locator("iframe.message-body").contentFrame();
+          const icon = content.getByAltText(alt);
+          await expect(icon).toHaveAttribute("src", /^data:image\//);
+          await expect.poll(async () => (await icon.boundingBox())?.width).toBe(imageWidth);
+          expect((await icon.boundingBox())!.height).toBe(imageHeight);
+          if (fixture === "heightOnlyIconFlex") {
+            for (const { name, cap } of [{ name: "inline cap", cap: 10 }, { name: "stylesheet cap", cap: 12 }]) {
+              await expect.poll(async () => (await content.getByAltText(name).boundingBox())?.width).toBe(cap);
+            }
+          }
+        });
+      }
     }
   }
 

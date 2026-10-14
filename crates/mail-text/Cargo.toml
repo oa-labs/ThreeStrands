@@ -1,0 +1,9 @@
+[package]
+name = "threestrands-mail-text"
+version = "0.1.0"
+edition = "2021"
+
+# Pure text handling for mail: search query parsing, quoted-history
+# detection, and preview text. No database, network, file system, or Tauri.
+[dependencies]
+chrono = "0.4"

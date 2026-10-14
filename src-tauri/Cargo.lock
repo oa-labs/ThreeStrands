@@ -5966,7 +5966,7 @@ dependencies = [
 
 [[package]]
 name = "threestrands"
-version = "0.122.0"
+version = "0.122.1"
 dependencies = [
  "argon2",
  "async-imap",
@@ -6023,6 +6023,7 @@ dependencies = [
  "tauri-plugin-window-state",
  "thiserror 2.0.21",
  "threestrands-mail-mime",
+ "threestrands-mail-text",
  "threestrands-sync-core",
  "threestrands-sync-envelope",
  "threestrands-sync-protocol",
@@ -6050,6 +6051,13 @@ dependencies = [
  "unicode-general-category",
  "unicode-normalization",
  "url",
+]
+
+[[package]]
+name = "threestrands-mail-text"
+version = "0.1.0"
+dependencies = [
+ "chrono",
 ]
 
 [[package]]

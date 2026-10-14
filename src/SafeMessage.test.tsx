@@ -475,6 +475,32 @@ describe("SafeMessage", () => {
     expect(sanitized).not.toMatch(/expression|javascript|calc/i);
   });
 
+  it.each(["heightOnlyIconTable", "heightOnlyIconFlex"] as const)(
+    "keeps %s height-only sizing behind the image proxy with unsafe capabilities removed",
+    (fixture) => {
+      const html = `${emailRenderingFixtures[fixture]}
+        <img height="20" src="https://tracker.invalid/icon.png" onerror="parent.compromised=true" srcset="https://tracker.invalid/large.png 2x">
+        <img height="20" src="javascript:alert(1)">
+        <img height="${EMAIL_CSS_LIMITS.maxAbsolutePx + 1}" src="https://tracker.invalid/oversized.png">
+        <img height="20; background:url(https://tracker.invalid)" src="https://tracker.invalid/injection.png">`;
+      render(<SafeMessage html={html} />);
+      const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+      const doc = new DOMParser().parseFromString(frame.srcdoc, "text/html");
+      const images = Array.from(doc.querySelectorAll("img"));
+
+      expect(images.every((image) => !image.hasAttribute("src"))).toBe(true);
+      expect(doc.querySelector('[data-blocked-src="https://tracker.invalid/icon.png"]')?.getAttribute("height")).toBe("20");
+      expect(doc.querySelector('[data-blocked-src="https://tracker.invalid/oversized.png"]')?.hasAttribute("height")).toBe(false);
+      const injection = doc.querySelector('[data-blocked-src="https://tracker.invalid/injection.png"]');
+      expect(injection?.getAttribute("height")).toBe("20");
+      expect(injection?.hasAttribute("style")).toBe(false);
+      expect(doc.querySelector("[onerror], [srcset]")).toBeNull();
+      expect(frame.srcdoc).not.toContain("javascript:");
+      expect(frame.srcdoc).toContain("img-src data:");
+      expect(frame.srcdoc).toContain("script-src 'none'");
+    },
+  );
+
   it("renders safe message formatting inside a sandboxed, CSP-scoped iframe that only allows data: images", () => {
     render(<SafeMessage html="<p>Hello <strong>friend</strong></p>" />);
     const frame = screen.getByTestId("message-body") as HTMLIFrameElement;

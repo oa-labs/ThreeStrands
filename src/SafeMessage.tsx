@@ -129,6 +129,11 @@ body[data-tone="current"] { color: var(--text); }
 body[data-tone="muted"] { color: var(--muted); }
 :where([hidden]) { display: none; }
 :where(img) { max-width: 100%; }
+/* A height-only image derives its width from its natural aspect ratio.
+   A percentage max-width makes that width depend on a shrinking table cell,
+   distorting the image while its declared height stays fixed. Let this case
+   size intrinsically; sender CSS, including max-width, still takes priority. */
+:where(img[height]:not([width])) { max-width: none; }
 :where(img[src]) { cursor: zoom-in; }
 :where(img:not([src])) { display: inline-block; min-width: 24px; min-height: 24px; border: 1px dashed var(--border); background: var(--hover); vertical-align: middle; }
 /* Cosmetic text-decoration geometry only; it cannot fetch resources, execute

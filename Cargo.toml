@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/mail-mime",
+    "crates/mail-text",
     "crates/sync-protocol",
     "crates/sync-envelope",
     "crates/sync-core",

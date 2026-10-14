@@ -24,17 +24,15 @@ mod ipfs_transport;
 mod limits;
 mod mail_links;
 mod models;
-// Mail parsing lives in its own crate; these keep `crate::mime::…` and the
+// Mail parsing and text handling live in their own crates; these keep `crate::mime::…` and the
 // other module paths the app already uses.
 use threestrands_mail_mime::{html_plain_text, mime, sender_trust};
+use threestrands_mail_text::{quoted_history, search_query};
 mod net_safety;
 mod provider;
-mod preview_text;
-mod quoted_history;
 mod replicated_sync;
 mod s3_transport;
 mod schema;
-mod search_query;
 mod sync;
 mod sync_connectors;
 mod sync_folder;

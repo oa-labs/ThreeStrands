@@ -376,7 +376,7 @@ mod tests {
 
     #[test]
     fn limits_match_the_reader_policy() {
-        let policy = include_str!("../../src/emailRenderingPolicy.ts");
+        let policy = include_str!("../../../src/emailRenderingPolicy.ts");
         let start = policy.find("EMAIL_QUOTE_FOLDING_LIMITS = {").expect("quote folding limits");
         let block = &policy[start..start + policy[start..].find("} as const").unwrap()];
         let value = |name: &str| -> f64 {

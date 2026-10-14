@@ -18,6 +18,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Suggestions now read up to 10,000 characters of each message, so events further down a long newsletter aren't missed.
 
 ### Fixed
+- Small icons in emails that specify only an image height now keep their proportions instead of appearing squeezed beside text.
 - Hovering over a message no longer shows a stray "Message content" tooltip.
 - An email that lists more than 10 events or to-dos no longer makes suggestions fail. The first 10 are shown, along with a note saying how many more there were.
 - Suggested meeting cards no longer flash "Checking your calendar…" from time to time while you read.

@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.122.0"
+version = "0.122.1"
 description = "A local-first, keyboard-driven email client"
 authors = ["OpenArc LLC"]
 license-file = "../LICENSE"
@@ -70,6 +70,7 @@ uuid = { version = "1", features = ["v4"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 zstd = "0.13"
 threestrands-mail-mime = { path = "../crates/mail-mime" }
+threestrands-mail-text = { path = "../crates/mail-text" }
 threestrands-sync-core = { path = "../crates/sync-core" }
 threestrands-sync-envelope = { path = "../crates/sync-envelope" }
 threestrands-sync-protocol = { path = "../crates/sync-protocol" }

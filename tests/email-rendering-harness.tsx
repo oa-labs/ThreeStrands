@@ -32,7 +32,15 @@ document.body.style.color = theme === "light" ? "#24242c" : "#e8e8eb";
 // A tiny opaque PNG stands in for the native image proxy, so rendered images
 // size from their declared attributes rather than placeholder styling.
 const FIXTURE_IMAGE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
-const resolveFixtureImage = async () => FIXTURE_IMAGE;
+// Height-only fixtures need real intrinsic ratios: 40×40 and 80×40 source
+// images displayed at 20px high, rather than widths inferred from attributes.
+const HIGH_DENSITY_ICON = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAYAAACM/rhtAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAYUlEQVRYhe2UoREAQRDCaBZPCXR+38B7VkTgmUxATt/laF3AFAwEO/fMjCQQ7Nw1c9SBYE9G6wKmYCDYuWdmJIFg566Zow4EezJaFzAFA8HOPTMjCQQ7d80cdSDYuW9/+QCA/o3TkqJslQAAAABJRU5ErkJggg==";
+const HIGH_DENSITY_WIDE_ICON = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFAAAAAoCAYAAABpYH0BAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAlUlEQVRoge2WsQkDQRDEvlnnKuE6l3vwg4cDBduAkNh5Phy78zODJ3jnlUABJIAuK8pAAmgGcu8SKGECaAayT7GECaBrm3oiBNC1Uc0YAuhN15AmgGYg+xRLmAC6tqknQgBdG9WMIYDedA1pAmgGsk+xhAmga5t6IgTQtVHNGALoTdeQJoBmIPsUS5gAurapJ8L/AX4BU6kbtJ6s/gIAAAAASUVORK5CYII=";
+const resolveFixtureImage = async (url: string) => {
+  if (url === "https://example.com/height-only.png") return HIGH_DENSITY_ICON;
+  if (url === "https://example.com/height-only-wide.png") return HIGH_DENSITY_WIDE_ICON;
+  return FIXTURE_IMAGE;
+};
 
 function RenderingHarness() {
   const [minimum, setMinimum] = useState(Number(params.get("minimumFontSize") ?? 0));
