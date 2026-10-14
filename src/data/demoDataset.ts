@@ -55,6 +55,8 @@ export type DemoDataset = {
   scheduleEvents: ScheduleEvent[];
   /** Optional fictional AI outputs for marketing; absent from the default test dataset. */
   aiFixtures?: Record<string, { summary?: string; analysis?: ActionAnalysis; chat?: Omit<ThreadChatReply, "attachments"> }>;
+  /** Optional fictional raster data URIs by attachment id, for reader thumbnails; absent from the default test dataset. */
+  attachmentImages?: Record<string, string>;
 };
 
 /**

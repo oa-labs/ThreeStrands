@@ -1,6 +1,10 @@
 import type { DemoDataset, DemoMessageSeed } from "./demoDataset";
 import type { Goal, ScheduleEvent, Thread, ThreadTask } from "../domain";
 import { periodFor } from "../goals";
+import onboardingFlows from "./showcaseImages/onboarding-v3-flows.png?inline";
+import regionalRollout from "./showcaseImages/regional-rollout.png?inline";
+import ridgeLine from "./showcaseImages/ridge-line.jpg?inline";
+import summit from "./showcaseImages/summit.jpg?inline";
 
 /**
  * Marketing-screenshot data: a believable two-account mailbox for a fictional
@@ -137,8 +141,8 @@ function threadSeeds(): ThreadSeed[] {
         )),
         message(people.priya, [me.work, people.theo, people.jordan], 24, paragraphs(
           "Good call, Maya. Let's stage it: North America on day one, then EU and APAC 48 hours later.",
-          "I'll update the plan and put 30 minutes on the calendar for Thursday to confirm.",
-        )),
+          "I'll update the plan and put 30 minutes on the calendar for Thursday to confirm. The staged timeline is attached.",
+        ), { attachments: [{ id: "regional-rollout", filename: "regional-rollout.png", mimeType: "image/png", size: 184_306 }] }),
       ],
     },
     {
@@ -500,6 +504,13 @@ export function buildShowcaseDataset(now: Date = new Date()): DemoDataset {
     ],
     threads,
     messages,
+    // Small invented pictures, so image attachments show thumbnails in the reader.
+    attachmentImages: {
+      "regional-rollout": regionalRollout,
+      "onboarding-v3": onboardingFlows,
+      "trail-1": summit,
+      "trail-2": ridgeLine,
+    },
     aiFixtures: {
       renewal: {
         summary: "- Brightwater is renewing its annual plan and needs pricing for 35 seats.\n- Marcus wants to finalize the renewal before budget season.",

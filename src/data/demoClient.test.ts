@@ -116,6 +116,21 @@ describe("showcase dataset", () => {
     }
   });
 
+  it("returns bundled raster pictures for showcase image attachments and refuses everything else", async () => {
+    const dataset = buildShowcaseDataset(now);
+    const client = createDemoClient(dataset);
+    const imageAttachments = Object.values(dataset.messages).flat()
+      .flatMap((message) => message.attachments ?? [])
+      .filter((attachment) => attachment.mimeType.startsWith("image/"));
+    expect(imageAttachments.map((attachment) => attachment.id).sort()).toEqual(Object.keys(dataset.attachmentImages ?? {}).sort());
+    for (const attachment of imageAttachments) {
+      const image = await client.fetchAttachmentImage("any-message", attachment.id);
+      expect(image).toMatch(new RegExp(`^data:${attachment.mimeType};base64,`));
+    }
+    await expect(client.fetchAttachmentImage("any-message", "launch-plan-pdf")).rejects.toThrow("unavailable in browser preview");
+    await expect(createDemoClient(defaultDemoDataset()).fetchAttachmentImage("welcome-message", "regional-rollout")).rejects.toThrow("unavailable in browser preview");
+  });
+
   it("only contains addresses and links on reserved domains", () => {
     const serialized = JSON.stringify(buildShowcaseDataset(now));
     const domains = [

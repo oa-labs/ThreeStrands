@@ -420,7 +420,9 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         reader.readAsDataURL(blob);
       });
     },
-    async fetchAttachmentImage(_messageId, _attachmentId) {
+    async fetchAttachmentImage(_messageId, attachmentId) {
+      const image = seed.attachmentImages?.[attachmentId];
+      if (image) return image;
       throw new Error("Embedded attachment images are unavailable in browser preview");
     },
     async previewCalendarAttachment(_messageId, _attachmentId) {

@@ -27,6 +27,11 @@ async function openThread(page: Page, subject: RegExp) {
   await waitForMessage(page);
 }
 
+/** Thumbnails load after the message renders; the capture must not race them. */
+async function waitForThumbnail(page: Page, filename: string) {
+  await expect(page.getByRole("button", { name: `Open ${filename}`, exact: true }).locator("img.attachment-thumbnail")).toBeVisible();
+}
+
 /** Browser-only demo key: no credentials or provider requests are involved. */
 async function configureDemoAi(page: Page, features: string[]) {
   await page.getByRole("button", { name: /^Settings/ }).click();
@@ -46,6 +51,7 @@ const scenes: Scene[] = [
     name: "inbox",
     capture: async (page) => {
       await openThread(page, /Q4 launch plan — final review/);
+      await waitForThumbnail(page, "regional-rollout.png");
     },
   },
   {
@@ -66,6 +72,7 @@ const scenes: Scene[] = [
     name: "reply",
     capture: async (page) => {
       await openThread(page, /Q4 launch plan — final review/);
+      await waitForThumbnail(page, "regional-rollout.png");
       await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
       await page.keyboard.press("r");
       const reply = page.getByRole("dialog", { name: "Reply Message" });
@@ -103,7 +110,7 @@ const scenes: Scene[] = [
       await page.getByRole("button", { name: "New Event", exact: true }).click();
       const event = page.getByRole("dialog", { name: "New event", exact: true });
       await event.getByLabel("Title", { exact: true }).fill("Q4 launch rollout review");
-      await event.getByLabel("Invite people", { exact: true }).fill("priya@harborlight.example");
+      await event.getByLabel("Invite People", { exact: true }).fill("priya@harborlight.example");
       await event.getByLabel("Description", { exact: true }).fill("Confirm North America first, then EU and APAC 48 hours later.");
       await expect(event.getByRole("button", { name: "Create event", exact: true })).toBeEnabled();
       await expect(event.getByRole("combobox", { name: "Calendar", exact: true })).not.toHaveValue("");
@@ -130,9 +137,10 @@ const scenes: Scene[] = [
     capture: async (page) => {
       await configureDemoAi(page, ["Thread Chat"]);
       await openThread(page, /Q4 launch plan — final review/);
+      await waitForThumbnail(page, "regional-rollout.png");
       await page.keyboard.press("q");
       const chat = page.getByRole("region", { name: "Ask about this conversation", exact: true });
-      const question = chat.getByRole("textbox", { name: "Ask about this conversation", exact: true });
+      const question = chat.getByRole("textbox", { name: "Ask About This Conversation", exact: true });
       await question.fill("@Q4");
       await chat.getByRole("option", { name: /Q4-launch-plan-v7.pdf/ }).click();
       await question.press("End");
@@ -163,6 +171,8 @@ const scenes: Scene[] = [
     capture: async (page) => {
       await page.keyboard.press("3");
       const goals = page.getByRole("complementary", { name: "Goals" });
+      // The Goals panel opens from the Tasks header.
+      if (!(await goals.isVisible())) await page.getByRole("button", { name: "Goals", exact: true }).click();
       await goals.getByRole("button", { name: /^Ship onboarding v3 with the Q4 launch/ }).click();
       await expect(page.getByText("Sign off on the Q4 launch plan").first()).toBeVisible();
       await expect(page.getByText("Send Marcus pricing for 35 seats", { exact: true })).toBeHidden();
