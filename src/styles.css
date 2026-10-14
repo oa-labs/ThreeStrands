@@ -2254,7 +2254,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-row-action { grid-row:1; grid-column:2; align-self:end; justify-self:end; display:flex; align-items:center; gap:var(--space-1); }
 /* Both stay in row one; auto-placement would otherwise move the main button below the action. */
 .context-row-has-action .context-row-main { grid-row:1; }
-.context-row-has-action .context-row-detail { padding-right:calc(var(--context-row-action-count, 1) * (var(--control-h-xs) + var(--space-1))); }
+.context-row-has-action .context-row-detail { --context-row-action-inset:calc(var(--context-row-action-count, 1) * (var(--control-h-xs) + var(--space-1))); padding-right:var(--context-row-action-inset); }
 .context-row-trailing { grid-column:3; display:flex; align-self:center; align-items:center; gap:var(--space-1); margin-left:var(--space-1); }
 .context-task-checkbox { width:var(--check-size); height:var(--check-size); margin:0; accent-color:var(--accent); cursor:pointer; }
 .context-task-done .context-row-title { color:var(--muted); text-decoration:line-through; }

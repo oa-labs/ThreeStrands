@@ -548,6 +548,17 @@ describe("SafeMessage", () => {
     expect(body.querySelectorAll('a[href="https://example.com/paging"]')).toHaveLength(1);
   });
 
+  it("wraps preformatted text with a zero-specificity fallback that author CSS can override", () => {
+    const html = '<style>pre.listing { white-space: pre; }</style><pre class="listing" onclick="alert(1)">long line</pre><pre><script>alert(1)</script>plain</pre>';
+    render(<SafeMessage html={html} />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+
+    expect(frame.srcdoc).toContain(":where(pre) { max-width: 100%; overflow-x: auto; white-space: pre-wrap; }");
+    expect(frame.srcdoc).toContain("pre.listing");
+    expect(frame.srcdoc).toContain("script-src 'none'");
+    expect(frame.srcdoc).not.toMatch(/<script|onclick/);
+  });
+
   it("safely embeds an installed font family name in the message document", () => {
     render(<SafeMessage html="<p>Hello</p>" fontFamily={'Font"; color: red; "'} />);
     const frame = screen.getByTestId("message-body") as HTMLIFrameElement;

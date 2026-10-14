@@ -251,6 +251,23 @@ export const emailRenderingFixtures = {
     </tr></table>
   `,
   heroInFlow: `<div style="padding:0 16px"><img src="https://example.com/banner.png" alt="banner" width="600"></div>`,
+  // A whole message sent as preformatted text: long lines must wrap at the
+  // pane edge rather than run past it.
+  preformattedInFixedTable: `
+    <table width="100%" cellpadding="0" cellspacing="0" style="table-layout:fixed;max-width:600px"><tr>
+      <td valign="top"><pre><div style="font-family:inherit">Hello,
+
+The scheduled maintenance for every workspace in your organization begins on Saturday morning and should finish within two hours of starting.
+Please save any open work before then, because sessions that remain active during the maintenance window will be signed out automatically.
+
+Thanks,
+-Operations</div></pre></td>
+    </tr></table>
+  `,
+  preformattedInFlow: `<pre style="font-family:monospace">Report summary: every scheduled export completed successfully overnight, and the next run is queued for the same time tomorrow evening.
+Second line: no further action is required from you unless an export fails, in which case a separate alert will follow.</pre>`,
+  // Author CSS that asks for unwrapped preformatted text still wins.
+  preformattedAuthorNoWrap: `<style>pre.listing { white-space: pre; }</style><pre class="listing">column_one    column_two    column_three    column_four    column_five    column_six    column_seven</pre>`,
   // Background images placed and scaled inside their own box. A @2x sprite
   // without its size/position/repeat paints at natural size from the corner
   // and is cropped by the element.

@@ -140,7 +140,11 @@ body[data-tone="muted"] { color: var(--muted); }
    code, escape the iframe, or create an interactive surface. */
 :where(a) { color: var(--link); text-underline-offset: 3px; text-decoration-skip-ink: none; }
 :where(a:focus-visible) { outline: 2px solid var(--link); outline-offset: 3px; }
-:where(pre) { max-width: 100%; overflow-x: auto; }
+/* Senders wrap whole messages in <pre> to keep their line breaks. Wrap those
+   lines at the pane edge, as other mail clients do, instead of leaving each one
+   in a horizontal scroller with a hidden scrollbar. Typography only; author
+   white-space rules still win. */
+:where(pre) { max-width: 100%; overflow-x: auto; white-space: pre-wrap; }
 :where(code) { font: .9em ui-monospace, SFMono-Regular, Menlo, monospace; }
 :where(hr) { border: 0; border-top: 1px solid var(--border); }
 :where(table) { max-width: 100%; }

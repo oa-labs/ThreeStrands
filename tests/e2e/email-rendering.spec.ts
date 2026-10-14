@@ -261,6 +261,41 @@ test.describe("email rendering fixtures", () => {
     });
   }
 
+  for (const fixture of ["preformattedInFixedTable", "preformattedInFlow"]) {
+    for (const width of [390, 1200]) {
+      test(`${fixture} wraps long preformatted lines inside the pane at ${width}px`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto(`/tests/email-rendering.html?theme=light&fixture=${fixture}`);
+        const frame = page.locator("iframe.message-body");
+        const pre = frame.contentFrame().locator("pre");
+        await expect(pre).toHaveCSS("white-space", "pre-wrap");
+        const metrics = await pre.evaluate((element) => {
+          const root = element.ownerDocument.documentElement;
+          const lineHeight = parseFloat(getComputedStyle(element).lineHeight);
+          return {
+            preOverflow: element.scrollWidth - element.clientWidth,
+            rootOverflow: root.scrollWidth - root.clientWidth,
+            lines: Math.round(element.getBoundingClientRect().height / lineHeight),
+            text: element.textContent ?? "",
+          };
+        });
+        expect(metrics.preOverflow).toBeLessThanOrEqual(0);
+        expect(metrics.rootOverflow).toBeLessThanOrEqual(0);
+        // Every authored line break survives, and long lines add wrapped rows.
+        const authoredLines = metrics.text.replace(/^\n/, "").replace(/\n\s*$/, "").split("\n").length;
+        expect(metrics.lines).toBeGreaterThan(authoredLines);
+      });
+    }
+  }
+
+  test("author CSS keeps preformatted text unwrapped when it asks to", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 900 });
+    await page.goto("/tests/email-rendering.html?theme=light&fixture=preformattedAuthorNoWrap");
+    const pre = page.locator("iframe.message-body").contentFrame().locator("pre");
+    await expect(pre).toHaveCSS("white-space", "pre");
+    expect(await pre.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  });
+
   for (const { fixture, current } of [
     { fixture: "replyAttributionWithLinkedAddress", current: "Thanks, that works." },
     { fixture: "replyAttributionInsideCitation", current: "Sounds good." },

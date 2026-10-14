@@ -530,9 +530,10 @@ test.describe("legal pages", () => {
     await expect(sync).toContainText("A stale summary does not establish whether delivery succeeded or failed");
     await expect(sync).toContainText("CSV and vCard exports are unencrypted");
     await expect(sync).toContainText("Recipient-suggestion suppression preferences stay on this computer");
-    for (const scope of ["gmail.modify", "gmail.labels", "calendar.readonly", "calendar.events"]) {
+    for (const scope of ["gmail.modify", "calendar.readonly", "calendar.events"]) {
       await expect(body.locator("code", { hasText: scope })).toHaveCount(1);
     }
+    await expect(body).not.toContainText("gmail.labels");
   });
 
   test("the terms license the app under Perimeter, reserve ownership, and retain liability protections", async ({ page }) => {

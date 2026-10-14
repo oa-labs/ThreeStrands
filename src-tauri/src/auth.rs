@@ -27,7 +27,8 @@ const GOOGLE_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const GMAIL_PROFILE_URL: &str = "https://gmail.googleapis.com/gmail/v1/users/me/profile";
 const GOOGLE_USERINFO_URL: &str = "https://openidconnect.googleapis.com/v1/userinfo";
-const GMAIL_SCOPES: &str = "openid email https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.labels";
+// gmail.modify also authorizes label management; no separate labels scope is needed.
+const GMAIL_SCOPES: &str = "openid email https://www.googleapis.com/auth/gmail.modify";
 const GOOGLE_CALENDAR_SCOPES: &str = "openid email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events";
 const OAUTH_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const OAUTH_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
@@ -897,7 +898,10 @@ mod tests {
             Some("offline")
         );
         assert_eq!(query.get("prompt").map(|v| v.as_ref()), Some("consent"));
-        assert_eq!(query.get("scope").map(|v| v.as_ref()), Some(GMAIL_SCOPES));
+        assert_eq!(
+            query.get("scope").map(|v| v.as_ref()),
+            Some("openid email https://www.googleapis.com/auth/gmail.modify")
+        );
         assert!(verifier.secret().len() >= 43);
     }
 
