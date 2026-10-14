@@ -298,6 +298,8 @@ impl Database {
             )?;
             transaction.execute("DELETE FROM triage_events WHERE account_id = ?1", [email])?;
             transaction.execute("DELETE FROM split_inboxes WHERE account_id = ?1", [email])?;
+            transaction.execute("DELETE FROM sender_rules WHERE lower(account_id) = lower(?1)", [email])?;
+            transaction.execute("DELETE FROM sender_rule_actions WHERE lower(account_id) = lower(?1)", [email])?;
             purge_imap_cache(transaction, email)?;
             transaction.execute(
                 "DELETE FROM imap_account_settings WHERE account_id = ?1",

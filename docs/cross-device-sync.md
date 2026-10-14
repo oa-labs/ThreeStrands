@@ -174,7 +174,7 @@ plus the group's key changes and join records.
 ## Data boundary
 
 Replicated entities are tasks (including the goal each one supports), goals,
-saved contacts, contact groups, snippets, Split Inboxes, mail-account display metadata, calendar-account
+saved contacts, contact groups, snippets, Split Inboxes, muted senders, mail-account display metadata, calendar-account
 metadata and selections, scheduled-send summaries, retention, and the portable
 preference allowlist.
 
@@ -183,8 +183,16 @@ A device reads only the entity types its version knows. Goals arrived in
 so it stops receiving changes from updated devices until it is updated too.
 Contact groups arrived in 0.79.0 and behave the same way on earlier versions.
 Scheduled-send summaries arrived in 0.98.1; update every device to that version
-or later before sharing them. Nothing is lost meanwhile, because a snapshot
+or later before sharing them. Muted senders arrived in 0.122.0 and behave the
+same way: an earlier device stops receiving changes once a muted sender is in a
+snapshot, until it is updated. Nothing is lost meanwhile, because a snapshot
 it can't open is never merged.
+
+A mute is applied by whichever device syncs the mail first. It acts only on
+new mail that arrives unread, and marks it read as it archives it, so other
+devices see read mail and leave it alone, and a conversation the user moves
+back to the Inbox stays there. Each device also keeps its own record of the
+messages it acted on; that record is not synchronized.
 A group's membership merges per member, so adding and removing different
 people on two devices at once keeps both changes. Device roster names are also synchronized so
 each device has the same name in every roster; the hostname is used as the

@@ -82,6 +82,7 @@ impl Database {
                 EntityType::Task => self.delete_synced_row("DELETE FROM tasks WHERE id=?1", entity_id)?,
                 EntityType::Snippet => self.delete_synced_row("DELETE FROM snippets WHERE id=?1", entity_id)?,
                 EntityType::SplitInbox => self.delete_synced_row("DELETE FROM split_inboxes WHERE id=?1", entity_id)?,
+                EntityType::SenderRule => self.delete_synced_row("DELETE FROM sender_rules WHERE id=?1", entity_id)?,
                 EntityType::Contact => self.delete_contact_profile(entity_id)?,
                 // Unlinks local tasks and goals the same way the deleting device did.
                 EntityType::Goal => {
@@ -121,6 +122,12 @@ impl Database {
                 }
                 EntityType::SplitInbox => {
                     self.upsert_synced_split(serde_json::from_value(payload.clone()).map_err(serialization_error)?)?
+                }
+                EntityType::SenderRule => {
+                    entity_type.validate_payload(payload).map_err(DatabaseError::invalid)?;
+                    let rule: crate::models::SenderRule = serde_json::from_value(payload.clone()).map_err(serialization_error)?;
+                    if rule.id != entity_id { return Err(DatabaseError::invalid("Mute rule identity mismatch")); }
+                    self.upsert_synced_sender_rule(&rule)?
                 }
                 EntityType::Contact => self.upsert_synced_contact(payload)?,
                 EntityType::Goal => {
@@ -626,6 +633,41 @@ mod tests {
         assert!(peer.list_goals(None).unwrap().is_empty());
         assert_eq!(peer.list_tasks(None, None).unwrap().iter().find(|candidate| candidate.id == task.id).unwrap().goal_id, None);
         assert!(peer.list_frontier_conflicts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_muted_sender_syncs_to_peers_and_an_unmute_removes_it_there() {
+        let db = Database::open_memory();
+        db.adopt_account("you@example.com").unwrap();
+        let rule = db.mute_sender("you@example.com", "domain", "launch.example", &[]).unwrap().rule;
+        record_full(&db, EntityType::SenderRule, &rule.id, serde_json::to_value(&rule).unwrap());
+
+        let peer = Database::open_memory();
+        sync_into(&peer, &db);
+        assert_eq!(peer.list_sender_rules().unwrap(), vec![rule.clone()]);
+
+        db.delete_sender_rule(&rule.id).unwrap();
+        db.record_replicated_deletion(EntityType::SenderRule, &rule.id).unwrap();
+        sync_into(&peer, &db);
+        assert!(peer.list_sender_rules().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_synced_mute_rule_must_match_its_entity_and_contract() {
+        let db = Database::open_memory();
+        let payload = json!({
+            "id": "rule-1", "accountId": "you@example.com", "matchKind": "address",
+            "matchValue": "news@launch.example", "action": "mute", "createdAt": "2026-10-14T00:00:00Z",
+        });
+        assert!(db.materialize_entity(EntityType::SenderRule, "other-id", Some(&payload), false).is_err());
+        let mut pattern = payload.clone();
+        pattern["matchKind"] = json!("pattern");
+        assert!(db.materialize_entity(EntityType::SenderRule, "rule-1", Some(&pattern), false).is_err());
+        assert!(db.list_sender_rules().unwrap().is_empty());
+        db.materialize_entity(EntityType::SenderRule, "rule-1", Some(&payload), false).unwrap();
+        assert_eq!(db.list_sender_rules().unwrap()[0].match_value, "news@launch.example");
+        db.materialize_entity(EntityType::SenderRule, "rule-1", None, true).unwrap();
+        assert!(db.list_sender_rules().unwrap().is_empty());
     }
 
     #[test]

@@ -23,6 +23,7 @@ export const TRANSFERRED_DATA = [
   { field: "snippets", label: "snippets", replacedOnImport: true },
   { field: "contacts", label: "saved contacts", replacedOnImport: true },
   { field: "contact_groups", label: "contact groups", replacedOnImport: true },
+  { field: "sender_rules", label: "muted senders", replacedOnImport: true },
   { field: "retention_days", label: "retention setting", replacedOnImport: true },
 ] as const;
 

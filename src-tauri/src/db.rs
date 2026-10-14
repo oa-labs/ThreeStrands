@@ -29,6 +29,7 @@ mod mutations;
 mod recovery;
 mod search;
 mod sender;
+pub(crate) mod sender_rules;
 mod settings_transfer;
 mod snippets;
 mod split_inboxes;

@@ -65,6 +65,7 @@ export type SettingsImportResult = {
   splitInboxCount: number;
   contactCount: number;
   contactGroupCount: number;
+  senderRuleCount: number;
 };
 
 export function readExportablePreferences(): ExportablePreferences {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Message, MessageTrust, SenderHistory, SplitInbox, ThreadDetail } from "./domain";
-import { analyzeLinks, bulkMessage, describeSender, latestInbound, matchingSplit, siteOf, trustFindings, TRUST_MISMATCH_LIMIT, type LinkAnalysis } from "./senderSignals";
+import type { Message, MessageTrust, SenderHistory, SenderRule, SplitInbox, ThreadDetail } from "./domain";
+import { analyzeLinks, bulkMessage, describeSender, latestInbound, matchingRule, matchingSplit, siteOf, trustFindings, TRUST_MISMATCH_LIMIT, type LinkAnalysis } from "./senderSignals";
 
 const own = new Set(["you@example.com"]);
 
@@ -66,6 +66,19 @@ describe("matching split", () => {
     expect(matchingSplit([split("domain", "launch.example", "work@example.org")], "you@example.com", "news@launch.example")).toBeNull();
     expect(matchingSplit([split("domain", "example")], "you@example.com", "news@launch.example")).toBeNull();
     expect(matchingSplit([split("label", "CATEGORY_UPDATES")], "you@example.com", "news@launch.example")).toBeNull();
+  });
+});
+
+describe("matching mute rule", () => {
+  const rule = (matchKind: SenderRule["matchKind"], matchValue: string, accountId = "you@example.com"): SenderRule =>
+    ({ id: `${matchKind}:${matchValue}:${accountId}`, accountId, matchKind, matchValue, action: "mute", createdAt: "2026-10-14T00:00:00Z" });
+
+  it("matches the exact address or exact domain in the same account only", () => {
+    expect(matchingRule([rule("address", "news@launch.example")], "You@Example.com", "News@Launch.example")?.matchKind).toBe("address");
+    expect(matchingRule([rule("domain", "launch.example")], "you@example.com", "billing@launch.example")?.matchKind).toBe("domain");
+    expect(matchingRule([rule("domain", "launch.example")], "you@example.com", "news@mail.launch.example")).toBeNull();
+    expect(matchingRule([rule("address", "news@launch.example")], "you@example.com", "breaking-news@launch.example")).toBeNull();
+    expect(matchingRule([rule("address", "news@launch.example", "work@example.org")], "you@example.com", "news@launch.example")).toBeNull();
   });
 });
 

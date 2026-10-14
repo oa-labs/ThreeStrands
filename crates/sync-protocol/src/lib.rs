@@ -25,6 +25,9 @@ pub enum EntityType {
     Goal,
     ContactGroup,
     ScheduledSendSummary,
+    /// A muted sender. Added in 0.122.0; an earlier build cannot open a
+    /// snapshot that holds one.
+    SenderRule,
 }
 
 /// Most members one synchronized contact group may list.
@@ -48,6 +51,7 @@ impl EntityType {
             Self::Goal => "goal",
             Self::ContactGroup => "contact_group",
             Self::ScheduledSendSummary => "scheduled_send_summary",
+            Self::SenderRule => "sender_rule",
         }
     }
 
@@ -76,6 +80,14 @@ impl EntityType {
             Self::Snippet => {
                 required_string(object, "name", 200)?;
                 required_string(object, "body", 32_000)?;
+            }
+            Self::SenderRule => {
+                required_string(object, "id", 128)?;
+                required_string(object, "accountId", 320)?;
+                enum_string(object, "matchKind", &["address", "domain"])?;
+                required_string(object, "matchValue", 320)?;
+                enum_string(object, "action", &["mute"])?;
+                required_string(object, "createdAt", 64)?;
             }
             Self::SplitInbox => {
                 required_string(object, "name", 200)?;
@@ -186,6 +198,7 @@ impl std::str::FromStr for EntityType {
             "goal" => Ok(Self::Goal),
             "contact_group" => Ok(Self::ContactGroup),
             "scheduled_send_summary" => Ok(Self::ScheduledSendSummary),
+            "sender_rule" => Ok(Self::SenderRule),
             _ => Err("Unknown synchronized entity type".to_string()),
         }
     }
@@ -290,7 +303,8 @@ mod tests {
             | EntityType::Contact
             | EntityType::Goal
             | EntityType::ContactGroup
-            | EntityType::ScheduledSendSummary => entity_type,
+            | EntityType::ScheduledSendSummary
+            | EntityType::SenderRule => entity_type,
         };
         for entity_type in [
             EntityType::Task,
@@ -305,6 +319,7 @@ mod tests {
             EntityType::Goal,
             EntityType::ContactGroup,
             EntityType::ScheduledSendSummary,
+            EntityType::SenderRule,
         ] {
             let entity_type = listed(entity_type);
             assert_eq!(entity_type.as_str().parse::<EntityType>(), Ok(entity_type));
@@ -428,6 +443,35 @@ mod tests {
         invalid["photoData"]=json!("x".repeat(90_001));
         assert!(EntityType::Contact.validate_payload(&invalid).is_err());
     }
+    #[test]
+    fn sender_rule_contract_allows_only_address_or_domain_mutes() {
+        let valid = json!({
+            "id": "rule-1",
+            "accountId": "you@example.com",
+            "matchKind": "address",
+            "matchValue": "news@launch.example",
+            "action": "mute",
+            "createdAt": "2026-10-14T00:00:00Z",
+        });
+        assert!(EntityType::SenderRule.validate_payload(&valid).is_ok());
+        for (field, value) in [
+            ("matchKind", json!("pattern")),
+            ("action", json!("delete")),
+            ("matchValue", json!("")),
+            ("accountId", json!(null)),
+            ("createdAt", json!(7)),
+        ] {
+            let mut bad = valid.clone();
+            bad[field] = value;
+            assert!(EntityType::SenderRule.validate_payload(&bad).is_err(), "{field}");
+        }
+        // A build from before mute rules cannot decode the new type, so it
+        // never merges a snapshot partially (see docs/cross-device-sync.md).
+        #[derive(Deserialize, Debug)] #[serde(rename_all="snake_case")] #[allow(dead_code)] enum PreviousType {Task,Snippet,SplitInbox,MailAccount,CalendarAccount,CalendarSelection,Preferences,Retention,Contact,Goal,ContactGroup,ScheduledSendSummary}
+        assert!(serde_json::from_str::<PreviousType>("\"sender_rule\"").is_err());
+        assert!(serde_json::from_str::<PreviousType>("\"scheduled_send_summary\"").is_ok());
+    }
+
     #[test]
     fn scheduled_summary_allowlist_rejects_content_credentials_and_invalid_reports() {
         let report=ScheduledSendReport {operation_id:"00000000-0000-4000-8000-000000000001".into(),owner_installation_id:"00000000-0000-4000-8000-000000000002".into(),owner_sync_device_id:None,owner_name_at_creation:"MacBook".into(),account:"me@example.com".into(),subject:"Hello".into(),scheduled_at:1_800_000_000_000,time_zone:"America/New_York".into(),state:"scheduled".into(),blocked_reason:None,report_revision:1,status_changed_at:1_700_000_000_000};

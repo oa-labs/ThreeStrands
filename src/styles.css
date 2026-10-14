@@ -2249,12 +2249,12 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-row-date { flex:0 0 auto; color:var(--muted); font-size:var(--text-meta); line-height:var(--leading-normal); font-variant-numeric:tabular-nums; white-space:nowrap; }
 .context-row-date.task-due-overdue { color:var(--error); font-weight:var(--weight-semibold); }
 .context-row-detail { min-width:0; overflow:hidden; color:var(--muted); font-size:var(--text-meta); text-overflow:ellipsis; white-space:nowrap; }
-/* A small action shares the text column's cell, ending the detail line under the date. It
-   follows the row button in the DOM, so it paints on top; the detail line leaves it room. */
-.context-row-action { grid-row:1; grid-column:2; align-self:end; justify-self:end; }
+/* Small actions share the text column's cell, in a row ending the detail line under the date. They
+   follow the row button in the DOM, so they paint on top; the detail line leaves them room. */
+.context-row-action { grid-row:1; grid-column:2; align-self:end; justify-self:end; display:flex; align-items:center; gap:var(--space-1); }
 /* Both stay in row one; auto-placement would otherwise move the main button below the action. */
 .context-row-has-action .context-row-main { grid-row:1; }
-.context-row-has-action .context-row-detail { padding-right:calc(var(--control-h-xs) + var(--space-1)); }
+.context-row-has-action .context-row-detail { padding-right:calc(var(--context-row-action-count, 1) * (var(--control-h-xs) + var(--space-1))); }
 .context-row-trailing { grid-column:3; display:flex; align-self:center; align-items:center; gap:var(--space-1); margin-left:var(--space-1); }
 .context-task-checkbox { width:var(--check-size); height:var(--check-size); margin:0; accent-color:var(--accent); cursor:pointer; }
 .context-task-done .context-row-title { color:var(--muted); text-decoration:line-through; }
@@ -2441,6 +2441,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .modal-form-evidence { display: grid; gap: var(--space-1); color: var(--muted); font-size: var(--text-meta); }
 .modal-form-evidence blockquote { max-height: 120px; margin: 0; padding: var(--space-2) var(--space-2-5); overflow: auto; border-left: 2px solid var(--border-strong); background: var(--input); color: var(--text); white-space: pre-wrap; }
 .modal-form .form-error { margin: 0; }
+.modal-form .modal-form-check { display: flex; align-items: center; gap: var(--space-2); color: var(--text); font-size: var(--text-body); }
+.modal-form .modal-form-check input[type="checkbox"] { width: auto; flex: 0 0 auto; margin: 0; padding: 0; }
 .modal-form-hint { margin: 0; color: var(--muted); font-size: var(--text-secondary); line-height: var(--leading-normal); }
 .modal-form-actions { display: flex; justify-content: flex-end; gap: var(--space-2); padding-top: var(--space-1); }
 .palette-search { display: flex; align-items: center; gap: var(--space-2-5); margin: var(--space-2) var(--space-3); padding: var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-md); }

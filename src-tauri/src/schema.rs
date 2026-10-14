@@ -7,12 +7,14 @@
 use chrono::Utc;
 use rusqlite::Connection;
 
-/// The current schema version. `INITIAL_SCHEMA` builds exactly this version
-/// (the fully-migrated v74 baseline), so a fresh database is stamped here and
-/// skips any migration. A new schema change adds an `if version < N { ... }`
-/// block in [`migrate`] above the baseline and bumps this constant to N.
-/// A database older than this baseline is refused (see [`migrate`]).
-pub(crate) const LATEST_VERSION: i64 = 74;
+/// The version `INITIAL_SCHEMA` builds: the fully-migrated v74 baseline. A
+/// database older than this is refused (see [`migrate`]); a fresh one starts
+/// here and runs every migration above it.
+pub(crate) const BASELINE_VERSION: i64 = 74;
+
+/// The current schema version. A new schema change adds an
+/// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
+pub(crate) const LATEST_VERSION: i64 = 75;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -755,7 +757,7 @@ fn error(error: impl std::fmt::Display) -> String {
 
 pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
     let tx = connection.transaction().map_err(error)?;
-    let version: i64 = tx
+    let stored: i64 = tx
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(error)?;
     // INITIAL_SCHEMA builds the fully-migrated v74 baseline but does NOT stamp
@@ -765,28 +767,55 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
     // migrations ABOVE it. A database older than the baseline must be
     // converted out of band.
     //
-    //   version == 0            -> a brand-new baseline database; stamp it to
-    //                              LATEST_VERSION (its tables already match).
-    //   version == LATEST       -> already current; nothing to do.
-    //   0 < version < LATEST    -> created by a build predating the squash;
-    //                              refuse, pointing at the converter.
-    //   version >  LATEST       -> created by a newer build; refuse rather
-    //                              than silently run against unknown schema.
-    if version == 0 {
-        tx.pragma_update(None, "user_version", LATEST_VERSION)
-            .map_err(error)?;
-    } else if version < LATEST_VERSION {
+    //   version == 0              -> a brand-new baseline database; its tables
+    //                                match the baseline, so migrate from there.
+    //   0 < version < BASELINE    -> created by a build predating the squash;
+    //                                refuse, pointing at the converter.
+    //   BASELINE <= version       -> apply each migration above it.
+    //   version >  LATEST         -> created by a newer build; refuse rather
+    //                                than silently run against unknown schema.
+    let version = if stored == 0 { BASELINE_VERSION } else { stored };
+    if version < BASELINE_VERSION {
         return Err(format!(
-            "database schema v{version} predates the v{LATEST_VERSION} baseline and can \
+            "database schema v{version} predates the v{BASELINE_VERSION} baseline and can \
              no longer be upgraded in-app; convert it with threestrands-cli before opening"
         ));
-    } else if version > LATEST_VERSION {
+    }
+    if version > LATEST_VERSION {
         return Err(format!(
             "database schema v{version} is newer than this build's v{LATEST_VERSION} \
-             baseline; update the application"
+             schema; update the application"
         ));
     }
-    // Future migrations resume here as `if version < 75 { ... }` blocks.
+    if version < 75 {
+        // Muted senders: a per-account rule whose new mail sync marks read
+        // and archives, and a device-local log of the messages each rule has
+        // acted on, so a conversation the user moves back is left alone.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS sender_rules (
+                 id TEXT PRIMARY KEY,
+                 account_id TEXT NOT NULL,
+                 match_kind TEXT NOT NULL CHECK(match_kind IN ('address', 'domain')),
+                 match_value TEXT NOT NULL,
+                 action TEXT NOT NULL CHECK(action IN ('mute')),
+                 created_at TEXT NOT NULL,
+                 updated_at TEXT
+             );
+             CREATE INDEX IF NOT EXISTS sender_rules_by_account ON sender_rules(account_id);
+             CREATE TABLE IF NOT EXISTS sender_rule_actions (
+                 account_id TEXT NOT NULL,
+                 message_id TEXT NOT NULL,
+                 rule_id TEXT NOT NULL REFERENCES sender_rules(id) ON DELETE CASCADE,
+                 acted_at TEXT NOT NULL,
+                 PRIMARY KEY(account_id, message_id)
+             );",
+        )
+        .map_err(error)?;
+    }
+    if version < LATEST_VERSION || stored == 0 {
+        tx.pragma_update(None, "user_version", LATEST_VERSION)
+            .map_err(error)?;
+    }
     tx.commit().map_err(error)?;
 
     post_open_outbox_fixups(connection)
@@ -996,20 +1025,30 @@ mod tests {
         );
     }
 
+    /// Objects each migration above the v74 baseline adds, in `schema_objects` form.
+    const ABOVE_BASELINE_OBJECTS: &[&str] = &[
+        "index:sender_rules_by_account",
+        "table:sender_rule_actions",
+        "table:sender_rules",
+    ];
+
     #[test]
-    fn migrate_is_a_no_op_on_a_fresh_baseline_database() {
-        // Opening a baseline database runs migrate(); it must short-circuit at
-        // the baseline, leave the schema untouched, and still be idempotent on
-        // a second open.
+    fn migrate_adds_only_the_versions_above_the_baseline_and_is_idempotent() {
+        // A fresh database is born at the baseline and runs every migration
+        // above it; opening it again changes nothing.
         let mut connection = Connection::open_in_memory().unwrap();
         connection
             .execute_batch(crate::schema::INITIAL_SCHEMA)
             .unwrap();
         let before = schema_objects(&connection);
         super::migrate(&mut connection).unwrap();
-        super::migrate(&mut connection).unwrap();
         let after = schema_objects(&connection);
-        assert_eq!(before, after, "migrate() must not alter a baseline schema");
+        let mut expected = before.clone();
+        expected.extend(ABOVE_BASELINE_OBJECTS.iter().map(|object| object.to_string()));
+        expected.sort();
+        assert_eq!(after, expected, "migrate() must add exactly the post-baseline objects");
+        super::migrate(&mut connection).unwrap();
+        assert_eq!(schema_objects(&connection), after, "a second migrate() must not alter the schema");
         assert_eq!(
             connection
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
@@ -1018,6 +1057,50 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_v74_database_upgrades_to_v75_and_keeps_its_data() {
+        // A database a 0.121 build left at v74 gains the sender rule tables
+        // without losing what it already holds.
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(crate::schema::INITIAL_SCHEMA)
+            .unwrap();
+        connection.pragma_update(None, "user_version", 74).unwrap();
+        connection
+            .execute(
+                "INSERT INTO split_inboxes(id, name, match_kind, match_value, sort_order, created_at, account_id)
+                 VALUES ('split', 'News', 'domain', 'news.example', 0, '2026-10-01T00:00:00Z', 'you@example.com')",
+                [],
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        assert_eq!(
+            connection
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            75
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT name FROM split_inboxes WHERE id = 'split'", [], |row| row.get::<_, String>(0))
+                .unwrap(),
+            "News"
+        );
+        connection
+            .execute(
+                "INSERT INTO sender_rules(id, account_id, match_kind, match_value, action, created_at)
+                 VALUES ('rule', 'you@example.com', 'address', 'news@launch.example', 'mute', '2026-10-14T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        assert!(connection
+            .execute(
+                "INSERT INTO sender_rules(id, account_id, match_kind, match_value, action, created_at)
+                 VALUES ('bad', 'you@example.com', 'pattern', 'news', 'mute', '2026-10-14T00:00:00Z')",
+                [],
+            )
+            .is_err(), "only address and domain rules are stored");
+    }
 
     #[test]
     fn migrate_refuses_a_database_older_than_the_baseline() {

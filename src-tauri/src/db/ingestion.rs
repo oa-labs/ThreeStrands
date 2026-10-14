@@ -194,7 +194,10 @@ impl Database {
             "DELETE FROM pending_search_reindex WHERE thread_id = ?1",
             [&thread_id],
         )?;
-        Self::reapply_undelivered_mutations(transaction, &thread_id)
+        Self::reapply_undelivered_mutations(transaction, &thread_id)?;
+        // After the user's own pending changes, so a conversation they just
+        // moved is judged where they left it.
+        Self::apply_sender_rules(transaction, account_id, &thread_id, latest, &mine)
     }
 
     pub fn upsert_thread(&self, account_id: &str, messages: &[NormalizedMessage]) -> DbResult<()> {

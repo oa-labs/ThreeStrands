@@ -50,6 +50,7 @@ fn import_transfer_preserves_local_credentials_and_marks_new_accounts_for_connec
             }],
             &[],
             None,
+            None,
             Some(90),
         )
         .unwrap();
@@ -113,6 +114,7 @@ fn import_sets_up_only_the_chosen_accounts_and_never_disconnects_one() {
             &[],
             &[],
             &[],
+            None,
             None,
             None,
         )
@@ -233,6 +235,7 @@ fn a_late_settings_failure_rolls_back_every_imported_feature() {
                 &snippets,
                 &contacts,
                 Some(&groups),
+                None,
                 retention,
             )
         };

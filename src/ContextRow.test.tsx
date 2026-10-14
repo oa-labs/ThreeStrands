@@ -49,7 +49,7 @@ describe("ContextRow", () => {
   });
   it("puts a small action under the date, outside the row's button, and leaves the detail line room for it", () => {
     const { container } = render(<ContextRow title="scan.pdf" date="Oct 2025" detail="538 KB" onActivate={() => {}}
-      action={<button type="button" className="btn-icon btn-icon-sm" aria-label="Show email" />} />);
+      actions={[<button key="show" type="button" className="btn-icon btn-icon-sm" aria-label="Show email" />]} />);
     const row = container.querySelector(".context-row")!;
     expect(row).toHaveClass("context-row-has-action");
     const action = row.querySelector(".context-row-action")!;
@@ -57,5 +57,20 @@ describe("ContextRow", () => {
     expect(row.querySelector(".context-row-main")!.contains(action)).toBe(false);
     expect(row.querySelector(".context-row-trailing")).toBeNull();
     expect(row.querySelector(".context-row-date")!.parentElement).toHaveClass("context-row-line");
+    expect((row as HTMLElement).style.getPropertyValue("--context-row-action-count")).toBe("1");
+  });
+
+  it("keeps two small actions together under the date, in order, and leaves the detail line room for both", () => {
+    const { container } = render(<ContextRow title="Joel.png" date="Oct 13" detail="135 KB" onActivate={() => {}}
+      actions={[
+        <button key="show" type="button" className="btn-icon btn-icon-sm" aria-label="Show email" />,
+        <button key="star" type="button" className="btn-icon btn-icon-sm" aria-label="Star" />,
+      ]} />);
+    const row = container.querySelector<HTMLElement>(".context-row")!;
+    const action = row.querySelector(".context-row-action")!;
+    // Both share one action cell, so neither can rise onto the title line beside the date.
+    expect([...action.querySelectorAll("button")].map((button) => button.getAttribute("aria-label"))).toEqual(["Show email", "Star"]);
+    expect(row.querySelector(".context-row-line")!.querySelector("button")).toBeNull();
+    expect(row.style.getPropertyValue("--context-row-action-count")).toBe("2");
   });
 });

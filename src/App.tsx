@@ -55,7 +55,7 @@ import { ContextPanel } from "./ContextPanel";
 import { focusContextPanel, handleContextPanelKeyDown } from "./contextPanelFocus";
 import { CreateCalendarEventDialog } from "./CreateCalendarEventDialog";
 import { mailClient } from "./data/client";
-import type { ActionProposal } from "./domain";
+import type { ActionProposal, SenderRule } from "./domain";
 import { EnrollmentRequestNotice } from "./EnrollmentRequestNotice";
 import { AvailableAccountsNotice } from "./AvailableAccountsNotice";
 import { errorMessage, logBackgroundFailure } from "./errors";
@@ -85,6 +85,9 @@ import { ThreadTasks } from "./ThreadTasks";
 import { threadTextIndex } from "./threadTextIndex";
 import { UnsubscribeConfirm } from "./UnsubscribeConfirm";
 import { SenderSplitDialog } from "./SenderSplitDialog";
+import { MuteSenderDialog } from "./MuteSenderDialog";
+import { useSenderRules } from "./useSenderRules";
+import { describeSenderRule } from "./MutedSendersSettings";
 import type { SenderActions, SenderTarget } from "./SenderSections";
 import { UpdateNotice } from "./UpdateNotice";
 import { useAccounts } from "./useAccounts";
@@ -233,6 +236,7 @@ export function App() {
   const [gettingStartedOpen, setGettingStartedOpen] = useState(false);
   const [unsubscribeMessageId, setUnsubscribeMessageId] = useState<string | null>(null);
   const [splitTarget, setSplitTarget] = useState<SenderTarget | null>(null);
+  const [muteTarget, setMuteTarget] = useState<{ target: SenderTarget; inboxThreadIds: string[] } | null>(null);
   const fileSessions = useRef(new Map<string, FilesWorkspaceSnapshot>());
   const calendarSession = useRef<CalendarWorkspaceSnapshot | null>(null);
   const taskSessions = useRef(new Map<string, TaskWorkspaceSnapshot>());
@@ -246,6 +250,7 @@ export function App() {
   } = workspaces;
   const { openTaskThreadIds, taskRevision, setTaskRevision, refreshTaskIndicators } = useTaskIndicators(activeAccountId);
   const splitInboxCatalog = useSplitInboxes();
+  const senderRuleCatalog = useSenderRules();
   const { refresh: refreshSplitInboxes } = splitInboxCatalog;
   const isThreadMailbox = mailbox === "inbox" || mailbox === "allMail" || mailbox === "trash" || mailbox === "split";
   const isTabbedMailbox = mailbox === "inbox" || mailbox === "split";
@@ -401,7 +406,7 @@ export function App() {
     ? "compose"
     : paletteOpen
       ? "palette"
-      : settingsOpen || shortcutHelpOpen || gettingStartedOpen || Boolean(unsubscribeMessage) || Boolean(splitTarget) || Boolean(labelTargetIds?.length) || Boolean(taskEditor) || Boolean(meetingEditor)
+      : settingsOpen || shortcutHelpOpen || gettingStartedOpen || Boolean(unsubscribeMessage) || Boolean(splitTarget) || Boolean(muteTarget) || Boolean(labelTargetIds?.length) || Boolean(taskEditor) || Boolean(meetingEditor)
         ? "modal"
         : "read";
 
@@ -441,7 +446,40 @@ export function App() {
       undo: undoResult,
     }),
     onNewSplit: setSplitTarget,
-  }), [splitInboxCatalog.splitInboxes, canUnsubscribe, executeById, executeCommand, mutateIds]);
+    rules: senderRuleCatalog.senderRules,
+    onMute: (target, inboxThreadIds) => setMuteTarget({ target, inboxThreadIds }),
+    onUnmute: (rule) => {
+      senderRuleCatalog.unmute(rule.id)
+        .then(() => setNotice({ message: `Unmuted ${describeSenderRule(rule)}` }))
+        .catch((reason: unknown) => setNotice({ message: `Unmute failed: ${errorMessage(reason)}` }));
+    },
+  }), [splitInboxCatalog.splitInboxes, senderRuleCatalog, canUnsubscribe, executeById, executeCommand, mutateIds, setNotice]);
+
+  /**
+   * Mutes a sender, archiving the chosen Inbox conversations in the same
+   * step. Undo removes the rule and puts those conversations back as they
+   * were, unread ones unread.
+   */
+  const muteSender = useCallback(async (target: SenderTarget, matchKind: SenderRule["matchKind"], matchValue: string, archiveThreadIds: string[]) => {
+    const result = await senderRuleCatalog.mute(target.accountId, matchKind, matchValue, archiveThreadIds);
+    setMuteTarget(null);
+    if (result.archivedThreadIds.length > 0) void loadThreadsRef.current(queryRef.current);
+    const archived = result.archivedThreadIds.length;
+    setNotice({
+      message: `Muted ${describeSenderRule(result.rule)}${archived === 0 ? "" : archived === 1 ? " and archived 1 conversation" : ` and archived ${archived} conversations`}`,
+      undo: () => {
+        setNotice(null);
+        void (async () => {
+          await senderRuleCatalog.unmute(result.rule.id);
+          await mailClient.mutateThreads([
+            ...result.archivedThreadIds.map((threadId) => ({ kind: "archive" as const, threadId, value: false })),
+            ...result.unreadThreadIds.map((threadId) => ({ kind: "read" as const, threadId, value: false })),
+          ]);
+          await loadThreadsRef.current(queryRef.current);
+        })().catch((reason: unknown) => setNotice({ message: `Undo failed: ${errorMessage(reason)}` }));
+      },
+    });
+  }, [senderRuleCatalog, loadThreadsRef, queryRef, setNotice]);
   const runGettingStartedStep = useCallback((id: GettingStartedStepId) => {
     setGettingStartedOpen(false);
     if (id === "connectMail") openSettingsAt("accounts");
@@ -1217,6 +1255,14 @@ export function App() {
           onConfirm={confirmUnsubscribe}
         />
       ) : null}
+      {muteTarget ? (
+        <MuteSenderDialog
+          target={muteTarget.target}
+          inboxThreadIds={muteTarget.inboxThreadIds}
+          onClose={() => setMuteTarget(null)}
+          onMute={(matchKind, matchValue, archiveThreadIds) => muteSender(muteTarget.target, matchKind, matchValue, archiveThreadIds)}
+        />
+      ) : null}
       {splitTarget ? (
         <SenderSplitDialog
           target={splitTarget}
@@ -1282,6 +1328,7 @@ export function App() {
             mailAccounts={mailAccountSettings}
             calendarAccounts={calendar}
             splitInboxes={splitInboxCatalog}
+            mutedSenders={senderRuleCatalog}
             labelsByAccount={labelsByAccount}
             snippets={snippetLibrary}
             syncStatus={syncStatus}

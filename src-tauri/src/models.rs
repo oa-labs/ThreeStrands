@@ -681,6 +681,31 @@ pub struct ContactTimelineItem {
     pub labels: Vec<String>,
 }
 
+/// A muted sender in one account: sync marks their new mail read and archives
+/// it. `match_kind` is `address` (the exact address) or `domain` (anyone at it).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SenderRule {
+    pub id: String,
+    pub account_id: String,
+    pub match_kind: String,
+    pub match_value: String,
+    pub action: String,
+    pub created_at: String,
+}
+
+/// A new mute, and what it did to conversations already in the Inbox, so the
+/// app can offer Undo.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MuteResult {
+    pub rule: SenderRule,
+    /// Conversations archived (and marked read) along with the mute.
+    pub archived_thread_ids: Vec<String>,
+    /// Those of them that were unread before.
+    pub unread_thread_ids: Vec<String>,
+}
+
 /// Everything stored from one sender address in one account, including the
 /// automated mail the contact index leaves out.
 #[derive(Debug, Clone, Serialize)]

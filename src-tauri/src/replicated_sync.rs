@@ -216,6 +216,11 @@ impl Database {
                 repaired += 1;
             }
         }
+        for rule in self.list_sender_rules()? {
+            if self.reconcile_one_entity(EntityType::SenderRule, &rule.id, serde_json::to_value(&rule).map_err(display)?)? {
+                repaired += 1;
+            }
+        }
         for account in self.list_accounts()? {
             let payload = json!({
                 "email": account.email,
@@ -3882,10 +3887,12 @@ mod reconciliation_tests {
             })
             .unwrap();
 
+        database.mute_sender("you@example.com", "address", "news@launch.example", &[]).unwrap();
+
         let repaired = database.reconcile_replicated_sync_backlog().unwrap();
-        // Task, goal, snippet, contact, split inbox, mail account, and the
-        // explicitly chosen retention setting.
-        assert_eq!(repaired, 7);
+        // Task, goal, snippet, contact, split inbox, muted sender, mail
+        // account, and the explicitly chosen retention setting.
+        assert_eq!(repaired, 8);
         // A contact in the sweep must not break the snapshot that follows.
         database.load_replica_state().unwrap();
 

@@ -16,12 +16,15 @@ Current exports contain:
 - local Split Inbox definitions and reusable snippets;
 - saved contact profiles, ordered linked addresses, photos, favorites, birthdays,
   and Keep in Touch settings;
-- named contact groups and their membership; and
+- named contact groups and their membership;
+- muted senders (an address, or everyone at a domain, per account); and
 - the local mail-retention preference.
 
 The import replaces preferences, Split Inboxes, snippets, and saved contacts.
-It replaces groups when the bundle includes them; an earlier bundle without
-that field preserves the destination's groups. Account metadata merges by
+It replaces groups and muted senders when the bundle includes them; an earlier
+bundle without those fields preserves the destination's groups (before 0.79.0)
+or muted senders (before 0.122.0). The device-local record of which messages a
+mute already archived is never exported. Account metadata merges by
 email address. An already connected account keeps its connection status; an
 account present only in the export is created with `needs_reauth` and shown
 as “Connect on this device.”

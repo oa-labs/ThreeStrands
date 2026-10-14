@@ -117,9 +117,16 @@ much is read, and when the user last wrote, or names the split that already
 takes the sender's mail. Its rows are the sender's other conversations. Its
 decisions are buttons between the note and the rows: **Unsubscribe** opens the
 existing confirmation, **Archive N in Inbox** archives every Inbox conversation
-from the sender (including ones the list has not loaded) with Undo, and **New
-Split…** opens a dialog that matches the address, or an organization's whole
-domain.
+from the sender (including ones the list has not loaded) with Undo, **Mute…**
+opens a dialog that mutes the address, or an organization's whole domain, in
+the conversation's account, with "also archive the N already in your Inbox"
+checked by default, and **New Split…** opens a dialog that matches the address
+or domain. A mute is a server change that keeps happening, so it always passes
+through that dialog; its notice offers Undo, and a muted sender's section says
+so and offers **Unmute**. **Settings → Muted Senders** lists every mute. Sync
+applies a mute only to new mail that arrives unread, marking it read and
+archiving it through the ordinary mutation queue, and never to mail the user
+has read or moved back to the Inbox.
 
 Every list row in the context panel is a `ContextRow`: a glyph column that
 lines up with the section headers' chevrons (a checkbox, a type icon, or empty),

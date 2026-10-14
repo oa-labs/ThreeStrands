@@ -146,9 +146,15 @@ impl Database {
     }
 
     /// Deletes raw payloads whose message is gone. Replacing or deleting a
-    /// thread cascades to `messages` but not to `message_metadata`.
+    /// thread cascades to `messages` but not to `message_metadata`, nor to
+    /// the log of messages a mute rule acted on, which is pruned alongside.
     pub fn prune_orphaned_message_metadata(&self) -> DbResult<usize> {
         self.with_connection(|connection| {
+            connection.execute(
+                "DELETE FROM sender_rule_actions
+                 WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.id = sender_rule_actions.message_id)",
+                [],
+            )?;
             Ok(connection.execute(
                 "DELETE FROM message_metadata
                  WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.id = message_metadata.id)",

@@ -74,6 +74,7 @@ describe("settings import navigation", () => {
       splitInboxCount: 1,
       contactCount: 0,
       contactGroupCount: 0,
+      senderRuleCount: 0,
     });
 
     render(<App />);
@@ -259,7 +260,7 @@ describe("settings section keyboard navigation", () => {
     const dialog = await screen.findByRole("dialog", { name: "Settings" });
     const nav = within(dialog).getByRole("navigation", { name: "Settings sections" });
     const sectionButtons = Array.from(nav.querySelectorAll<HTMLButtonElement>("button[data-section-id]"));
-    expect(sectionButtons).toHaveLength(12);
+    expect(sectionButtons).toHaveLength(13);
     for (const button of sectionButtons) {
       const icon = button.querySelector("svg");
       expect(icon).not.toBeNull();

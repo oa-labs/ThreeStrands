@@ -235,6 +235,9 @@ describe("ContextPanel",()=>{
 
     const files=await screen.findByRole("region",{name:"Files"});
     expectContextRows(files);
+    // Show email, then the star at the end, both in the one action cell under the date, as on a message's attachments.
+    const reportActions=within(files).getByRole("button",{name:"Star Report 4.pdf"}).closest(".context-row-action")!;
+    expect([...reportActions.querySelectorAll("button")].map((button)=>button.getAttribute("aria-label"))).toEqual(["Show the email with Report 4.pdf","Star Report 4.pdf"]);
     // Contact files carry no account; the star names none and the backend uses the message's own.
     vi.mocked(mailClient.fileStars).mockResolvedValueOnce([["m4","a4"]]);
     fireEvent.click(within(files).getByRole("button",{name:"Star Report 4.pdf"}));
@@ -462,7 +465,7 @@ describe("ContextPanel",()=>{
       recentReceivedAt:[],inboxThreadIds:["news-3","news-2","news-1"],
       threads:[{threadId:"news-3",subject:"This week",snippet:"",sentAt:"2026-10-07T09:00:00Z"},{threadId:"news-2",subject:"Last week",snippet:"Recap",sentAt:"2026-09-30T09:00:00Z"}]};
     const verified:MessageTrust={fromDomain:"launch.example",authentication:{spf:"pass",dkim:"pass",dmarc:"pass",dkimDomains:["launch.example"]},replyTo:null};
-    const actions=(overrides:Partial<SenderActions>={}):SenderActions=>({splits:[],onUnsubscribe:vi.fn(),onArchiveThreads:vi.fn(),onNewSplit:vi.fn(),...overrides});
+    const actions=(overrides:Partial<SenderActions>={}):SenderActions=>({splits:[],rules:[],onUnsubscribe:vi.fn(),onArchiveThreads:vi.fn(),onNewSplit:vi.fn(),onMute:vi.fn(),onUnmute:vi.fn(),...overrides});
     beforeEach(()=>{
       vi.mocked(mailClient.getContactProfile).mockResolvedValue(null);
       vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
@@ -508,6 +511,24 @@ describe("ContextPanel",()=>{
       const from=await screen.findByRole("region",{name:`From ${news}`});
       expect(from).toHaveTextContent("Sorted into Launch");
       expect(within(from).queryByRole("button",{name:"New Split…"})).not.toBeInTheDocument();
+    });
+
+    it("offers Mute with the Inbox conversations to archive, and Unmute once muted",async()=>{
+      const sender=actions();
+      renderPanel({detail:newsDetail(),sender});
+      const from=await screen.findByRole("region",{name:`From ${news}`});
+      fireEvent.click(within(from).getByRole("button",{name:"Mute…"}));
+      expect(sender.onMute).toHaveBeenCalledWith({accountId:"you@example.com",email:news,name:"Launch News"},["news-3","news-2","news-1"]);
+      cleanup();
+
+      const rule={id:"r",accountId:"you@example.com",matchKind:"domain" as const,matchValue:"launch.example",action:"mute" as const,createdAt:"2026-10-01T00:00:00Z"};
+      const muted=actions({rules:[rule]});
+      renderPanel({detail:newsDetail(),sender:muted});
+      const mutedSection=await screen.findByRole("region",{name:`From ${news}`});
+      expect(mutedSection).toHaveTextContent("Muted, with everyone at launch.example");
+      expect(within(mutedSection).queryByRole("button",{name:"Mute…"})).not.toBeInTheDocument();
+      fireEvent.click(within(mutedSection).getByRole("button",{name:"Unmute"}));
+      expect(muted.onUnmute).toHaveBeenCalledWith(rule);
     });
 
     it("leaves the sender section out of personal mail and shows Trust there only when something needs a look",async()=>{

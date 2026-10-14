@@ -64,6 +64,8 @@ import type {
   TriageSenderStats,
   SenderHistory,
   MessageTrust,
+  SenderRule,
+  MuteResult,
   UnreadCounts,
   UnsubscribeResult,
   UpdateTaskRequest,
@@ -203,6 +205,10 @@ export interface MailClient extends CorrespondenceClient {
   senderHistory(accountId: string, email: string, limit?: number): Promise<SenderHistory>;
   /** Trust signals from a message's stored headers; null when they are not cached. */
   messageTrust(messageId: string): Promise<MessageTrust | null>;
+  listSenderRules(): Promise<SenderRule[]>;
+  /** Mutes a sender in one account, marking read and archiving the listed Inbox conversations from them. */
+  muteSender(accountId: string, matchKind: SenderRule["matchKind"], matchValue: string, archiveThreadIds: string[]): Promise<MuteResult>;
+  deleteSenderRule(id: string): Promise<void>;
   /** Non-inline attachments the person sent, newest first. */
   contextCandidates(query: ContextQuery): Promise<WorkspaceConversation[]>;
   listFiles(query: FileQuery): Promise<FilePage>;
@@ -395,6 +401,9 @@ const tauriClient: MailClient = {
   contactActivity: (id) => read("contact_activity", { id }),
   senderHistory: (accountId, email, limit) => read("sender_history", { accountId, email, limit }),
   messageTrust: (messageId) => read("message_trust", { messageId }),
+  listSenderRules: () => read("list_sender_rules"),
+  muteSender: (accountId, matchKind, matchValue, archiveThreadIds) => complete("mute_sender", { accountId, matchKind, matchValue, archiveThreadIds }),
+  deleteSenderRule: (id) => complete("delete_sender_rule", { id }),
   contextCandidates: (query) => read("context_candidates", { query }),
   listFiles: (query) => read("list_files", { query }),
   fileStars: (messageIds) => read("file_stars", { messageIds }),

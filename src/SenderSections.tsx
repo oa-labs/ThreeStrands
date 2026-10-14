@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { Eye, Link2, Mail, Reply, Shield, ShieldCheck, TriangleAlert } from "lucide-react";
-import type { Message, MessageTrust, SenderHistory, SplitInbox } from "./domain";
+import type { Message, MessageTrust, SenderHistory, SenderRule, SplitInbox } from "./domain";
 import { mailClient } from "./data/client";
 import { ContextRow, ContextSection } from "./ContextSections";
 import { formatHistoryDate } from "./contactContext";
 import { decodeHtmlEntities } from "./SafeMessage";
 import { ICON_SIZE } from "./iconSizes";
 import { logBackgroundFailure } from "./errors";
-import { analyzeLinks, describeSender, matchingSplit, SENDER_HISTORY_LIMIT, trustFindings, type TrustFinding } from "./senderSignals";
+import { analyzeLinks, describeSender, matchingRule, matchingSplit, SENDER_HISTORY_LIMIT, trustFindings, type TrustFinding } from "./senderSignals";
 
 /** The bulk sender a Sender section is about. */
 export type SenderTarget = { accountId: string; email: string; name: string };
@@ -22,12 +22,17 @@ export type SenderActions = {
   onArchiveThreads(ids: string[]): void;
   /** Opens the New Split dialog for the sender. */
   onNewSplit(target: SenderTarget): void;
+  /** Muted senders across accounts; one that covers the sender replaces Mute with Unmute. */
+  rules: SenderRule[];
+  /** Opens the Mute dialog, offering to archive the conversations still in the Inbox. */
+  onMute(target: SenderTarget, inboxThreadIds: string[]): void;
+  onUnmute(rule: SenderRule): void;
 };
 
 /**
  * What the user has received from a bulk sender in this account, and what to
- * do about it: unsubscribe, archive what is still in the Inbox, or give the
- * sender a split. Earlier conversations from the sender follow, since the
+ * do about it: unsubscribe, archive what is still in the Inbox, mute the
+ * sender so sync archives their new mail, or give the sender a split. Earlier conversations from the sender follow, since the
  * contact index (and so Recent emails) leaves automated mail out.
  */
 export function SenderSection({ target, threadId, hideThreadIds, actions, onOpenThread }: {
@@ -59,6 +64,8 @@ export function SenderSection({ target, threadId, hideThreadIds, actions, onOpen
   if (!history || history.receivedCount === 0) return null;
   const facts = describeSender(history);
   const split = matchingSplit(actions.splits, accountId, email);
+  const rule = matchingRule(actions.rules, accountId, email);
+  if (rule) facts.push(rule.matchKind === "domain" ? `Muted, with everyone at ${rule.matchValue}` : "Muted");
   if (split) facts.push(`Sorted into ${split.name}`);
   const inbox = archived ? [] : history.inboxThreadIds;
   const hidden = new Set([threadId, ...hideThreadIds]);
@@ -77,7 +84,7 @@ export function SenderSection({ target, threadId, hideThreadIds, actions, onOpen
   });
   // Archiving one conversation is the reader's own Archive; this is for the rest.
   const canArchive = inbox.length > 1;
-  const decisions = actions.onUnsubscribe || canArchive || !split ? (
+  const decisions = (
     <div className="context-sender-actions">
       {actions.onUnsubscribe ? <button type="button" className="btn btn-sm" onClick={actions.onUnsubscribe}>Unsubscribe</button> : null}
       {canArchive ? (
@@ -85,9 +92,12 @@ export function SenderSection({ target, threadId, hideThreadIds, actions, onOpen
           Archive {inbox.length} in Inbox
         </button>
       ) : null}
+      {rule
+        ? <button type="button" className="btn btn-sm" onClick={() => actions.onUnmute(rule)}>Unmute</button>
+        : <button type="button" className="btn btn-sm" onClick={() => actions.onMute(target, inbox)}>Mute…</button>}
       {split ? null : <button type="button" className="btn btn-sm" onClick={() => actions.onNewSplit(target)}>New Split…</button>}
     </div>
-  ) : null;
+  );
   return (
     <ContextSection
       id="sender"

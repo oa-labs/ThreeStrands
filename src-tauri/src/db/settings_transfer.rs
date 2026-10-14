@@ -4,7 +4,8 @@
 
 use super::{serialization_error, Database, DbResult};
 use crate::transfer::{
-    TransferAccount, TransferContact, TransferContactGroup, TransferSnippet, TransferSplitInbox,
+    TransferAccount, TransferContact, TransferContactGroup, TransferSenderRule, TransferSnippet,
+    TransferSplitInbox,
 };
 use chrono::Utc;
 use rusqlite::params;
@@ -23,6 +24,7 @@ impl Database {
         snippets: &[TransferSnippet],
         contacts: &[TransferContact],
         contact_groups: Option<&[TransferContactGroup]>,
+        sender_rules: Option<&[TransferSenderRule]>,
         retention_days: Option<i64>,
     ) -> DbResult<()> {
         self.with_transaction(|transaction| {
@@ -121,6 +123,21 @@ impl Database {
                             params![group.id, member],
                         )?;
                     }
+                }
+            }
+
+            // An export from before muted senders has none to offer, so the
+            // ones already here stay. Removing a rule drops its action log.
+            if let Some(rules) = sender_rules {
+                transaction.execute("DELETE FROM sender_rules", [])?;
+                let now = Utc::now().to_rfc3339();
+                for rule in rules {
+                    let value = super::sender_rules::normalize_rule_match(&rule.match_kind, &rule.match_value)?;
+                    transaction.execute(
+                        "INSERT INTO sender_rules(id, account_id, match_kind, match_value, action, created_at, updated_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                        params![rule.id, rule.account_id, rule.match_kind, value, rule.action, rule.created_at, now],
+                    )?;
                 }
             }
 

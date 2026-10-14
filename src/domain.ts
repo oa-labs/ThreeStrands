@@ -408,6 +408,27 @@ export type ContactActivity = {
   recentReceivedAt: string[];
 };
 
+/**
+ * A muted sender in one account: sync marks their new mail read and archives
+ * it. `address` matches one address exactly; `domain` matches anyone at it.
+ */
+export type SenderRule = {
+  id: string;
+  accountId: string;
+  matchKind: "address" | "domain";
+  matchValue: string;
+  action: "mute";
+  createdAt: string;
+};
+
+/** A new mute, and the Inbox conversations it archived, for Undo. */
+export type MuteResult = {
+  rule: SenderRule;
+  archivedThreadIds: string[];
+  /** Those of them that were unread before. */
+  unreadThreadIds: string[];
+};
+
 /** Everything stored from one sender address in one account, including the automated mail contact history leaves out. */
 export type SenderHistory = {
   receivedCount: number;

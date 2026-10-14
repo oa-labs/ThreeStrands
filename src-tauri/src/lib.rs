@@ -3266,6 +3266,9 @@ async fn remove_synced_mail_account(
     for split in state.database.list_split_inboxes()?.into_iter().filter(|split| split.account_id == email) {
         state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::SplitInbox, &split.id)?;
     }
+    for rule in state.database.list_sender_rules()?.into_iter().filter(|rule| rule.account_id.eq_ignore_ascii_case(&email)) {
+        state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::SenderRule, &rule.id)?;
+    }
     state.replicated_sync.sync_once().await?;
     remove_account_internal(email, state, app, true).await
 }
@@ -4062,6 +4065,35 @@ fn reorder_split_inboxes(ids: Vec<String>, state: State<'_, AppState>) -> Result
         record_synced_value(&state, threestrands_sync_protocol::EntityType::SplitInbox, &item.id, &item,
             Some(std::collections::BTreeSet::from(["sortOrder".to_string()])))?;
     }
+    Ok(())
+}
+
+#[tauri::command]
+async fn list_sender_rules(state: State<'_, AppState>) -> Result<Vec<models::SenderRule>, String> {
+    let database = state.database.clone();
+    run_database_task(move || database.list_sender_rules()).await
+}
+
+/// Mutes a sender in one account and archives the listed Inbox
+/// conversations from them; sync delivers both to the provider.
+#[tauri::command(async)]
+fn mute_sender(
+    account_id: String,
+    match_kind: String,
+    match_value: String,
+    archive_thread_ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<models::MuteResult, String> {
+    let result = state.database.mute_sender(&account_id, &match_kind, &match_value, &archive_thread_ids)?;
+    record_synced_value(&state, threestrands_sync_protocol::EntityType::SenderRule, &result.rule.id, &result.rule, None)?;
+    Ok(result)
+}
+
+#[tauri::command(async)]
+fn delete_sender_rule(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.database.delete_sender_rule(&id)?;
+    state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::SenderRule, &id)?;
+    kick_replicated_sync(&state);
     Ok(())
 }
 
@@ -5450,6 +5482,9 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         contact_activity,
         sender_history,
         message_trust,
+        list_sender_rules,
+        mute_sender,
+        delete_sender_rule,
         contact_files,
         list_files,
         context_candidates,

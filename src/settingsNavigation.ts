@@ -8,6 +8,7 @@ const sections: Record<SettingsSection, true> = {
   calendarAccounts: true,
   availability: true,
   splitInboxes: true,
+  mutedSenders: true,
   snippets: true,
   ai: true,
   replicatedSync: true,

@@ -54,6 +54,8 @@ import type {
   TriageSenderStats,
   SenderHistory,
   MessageTrust,
+  SenderRule,
+  MuteResult,
   UnsubscribeResult,
   UpdateTaskRequest,
   UpdateGoalRequest,
@@ -68,6 +70,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
   let calendarAccounts = seed.calendarAccounts;
   let calendarOptions = seed.calendarOptions;
   let threads = seed.threads;
+  let senderRules: SenderRule[] = [];
   let labels = seed.labels;
   let splitInboxes = seed.splitInboxes;
   let tasks = seed.tasks;
@@ -888,6 +891,34 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         inboxThreadIds: inbox,
         threads: listed,
       };
+    },
+    async listSenderRules(): Promise<SenderRule[]> {
+      return structuredClone(senderRules);
+    },
+    /** Mirrors `Database::mute_sender`; the preview has no sync to apply rules to new mail. */
+    async muteSender(accountId, matchKind, matchValue, archiveThreadIds): Promise<MuteResult> {
+      const value = matchValue.trim().toLocaleLowerCase().replace(/^@/, "");
+      if (matchKind === "address" ? !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value) : !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(value)) {
+        throw new Error(matchKind === "address" ? "Mute needs a complete email address" : "Mute needs a domain such as example.com");
+      }
+      let rule = senderRules.find((item) => item.accountId === accountId && item.matchKind === matchKind && item.matchValue === value);
+      if (!rule) {
+        rule = { id: crypto.randomUUID(), accountId, matchKind, matchValue: value, action: "mute", createdAt: new Date().toISOString() };
+        senderRules.push(rule);
+      }
+      const archivedThreadIds: string[] = [];
+      const unreadThreadIds: string[] = [];
+      for (const id of new Set(archiveThreadIds)) {
+        const thread = threads.find((item) => item.id === id && item.accountId === accountId && !item.archived && !item.trashed);
+        if (!thread) continue;
+        if (thread.unread) unreadThreadIds.push(id);
+        await client.mutateThreads([{ kind: "read", threadId: id, value: true }, { kind: "archive", threadId: id, value: true }]);
+        archivedThreadIds.push(id);
+      }
+      return { rule: structuredClone(rule), archivedThreadIds, unreadThreadIds };
+    },
+    async deleteSenderRule(id) {
+      senderRules = senderRules.filter((rule) => rule.id !== id);
     },
     /** The preview has no stored headers; every sample sender reads as verified. */
     async messageTrust(messageId): Promise<MessageTrust | null> {

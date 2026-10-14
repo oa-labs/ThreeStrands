@@ -42,7 +42,7 @@ impl Database {
         serde_json::to_string(&labels).map_err(serialization_error)
     }
 
-    fn apply_mutation(transaction: &Transaction<'_>, mutation: &ThreadMutation) -> DbResult<()> {
+    pub(super) fn apply_mutation(transaction: &Transaction<'_>, mutation: &ThreadMutation) -> DbResult<()> {
         let kind = match mutation {
             ThreadMutation::Archive { .. } => "archive",
             ThreadMutation::Trash { .. } => "trash",

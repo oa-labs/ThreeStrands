@@ -4,6 +4,7 @@ import type {
   AvailabilityPreferences,
   CalendarAccount,
   CalendarOption,
+  SenderRule,
   Snippet,
   SplitInbox,
   SplitInboxMatchKind,
@@ -12,7 +13,7 @@ import type { Accent } from "./accent";
 import type { Theme } from "./theme";
 import type { FontFamily } from "./settings";
 
-export type SettingsSection = "replicatedSync" | "appearance" | "defaultApps" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "snippets" | "ai" | "privacy" | "diagnostics" | "data";
+export type SettingsSection = "replicatedSync" | "appearance" | "defaultApps" | "accounts" | "calendarAccounts" | "availability" | "splitInboxes" | "mutedSenders" | "snippets" | "ai" | "privacy" | "diagnostics" | "data";
 
 export type SyncDiagnosticsActions = {
   retryFailed(): Promise<void>;
@@ -81,6 +82,11 @@ export type SplitInboxSettingsState = {
   rename(id: string, name: string): Promise<void>;
   remove(id: string): Promise<void>;
   reorder(ids: string[]): Promise<void>;
+};
+
+export type MutedSenderSettingsState = {
+  senderRules: SenderRule[];
+  unmute(id: string): Promise<void>;
 };
 
 export type SnippetSettingsState = {

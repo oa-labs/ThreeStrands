@@ -332,6 +332,30 @@ impl From<ContactGroup> for TransferContactGroup {
     }
 }
 
+/// A muted sender. Added in 0.122.0.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TransferSenderRule {
+    pub id: String,
+    pub account_id: String,
+    pub match_kind: String,
+    pub match_value: String,
+    pub action: String,
+    pub created_at: String,
+}
+impl From<crate::models::SenderRule> for TransferSenderRule {
+    fn from(rule: crate::models::SenderRule) -> Self {
+        Self {
+            id: rule.id,
+            account_id: rule.account_id,
+            match_kind: rule.match_kind,
+            match_value: rule.match_value,
+            action: rule.action,
+            created_at: rule.created_at,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TransferPayload {
@@ -349,6 +373,10 @@ struct TransferPayload {
     /// this device's groups instead of clearing them.
     #[serde(default)]
     contact_groups: Option<Vec<TransferContactGroup>>,
+    /// Added in 0.122.0. An earlier export has none, and importing it keeps
+    /// this device's muted senders instead of clearing them.
+    #[serde(default)]
+    sender_rules: Option<Vec<TransferSenderRule>>,
 }
 
 impl TransferPayload {
@@ -451,6 +479,26 @@ impl TransferPayload {
             crate::db::contacts::validate_keep_in_touch(&KeepInTouch::from(&contact.keep_in_touch)).map_err(|_|"The transfer contains invalid keep-in-touch settings")?;
             if let Some(photo)=&contact.photo_data {use base64::{engine::general_purpose::STANDARD,Engine};let bytes=STANDARD.decode(photo).map_err(|_|"The transfer contains an invalid contact photo")?;crate::image_format::validate_contact_photo(&bytes)?;}
         }
+        let rules = self.sender_rules.as_deref().unwrap_or_default();
+        if rules.len() > crate::db::sender_rules::MAX_SENDER_RULES {
+            return Err("The transfer contains too many muted senders".to_string());
+        }
+        let mut rule_ids = HashSet::new();
+        for rule in rules {
+            validate_required_text("muted sender id", &rule.id, 128)?;
+            if !rule_ids.insert(&rule.id) {
+                return Err("The transfer contains a duplicate muted sender".to_string());
+            }
+            if !account_emails.contains(&rule.account_id.to_ascii_lowercase()) {
+                return Err("The transfer contains a muted sender for an unknown account".to_string());
+            }
+            if rule.action != "mute"
+                || crate::db::sender_rules::normalize_rule_match(&rule.match_kind, &rule.match_value).is_err()
+                || chrono::DateTime::parse_from_rfc3339(&rule.created_at).is_err()
+            {
+                return Err("The transfer contains an invalid muted sender".to_string());
+            }
+        }
         let groups = self.contact_groups.as_deref().unwrap_or_default();
         if groups.len() > crate::db::contact_groups::MAX_CONTACT_GROUPS {
             return Err("The transfer contains too many contact groups".into());
@@ -497,12 +545,14 @@ pub struct ImportResult {
     pub snippet_count: usize,
     pub contact_count: usize,
     pub contact_group_count: usize,
+    pub sender_rule_count: usize,
 }
 
 /// Builds the transfer payload from the database — every field the encrypted
 /// settings export carries, and ONLY those fields. This is an explicit
 /// allowlist (accounts with their non-secret IMAP settings, split inboxes,
-/// snippets, contacts, contact groups, retention, preferences): a new local
+/// snippets, contacts, contact groups, muted senders, retention,
+/// preferences): a new local
 /// table such as the run 2b-1 label-catalog cache is never read here, so it
 /// cannot leak into an export. Factored out of [`export`] so a test can build
 /// the payload without the file dialog.
@@ -535,6 +585,7 @@ fn build_export_payload(
         .collect();
     let contacts=database.list_saved_contact_profiles()?.into_iter().map(TransferContact::from).collect();
     let contact_groups = database.list_contact_groups()?.into_iter().map(TransferContactGroup::from).collect();
+    let sender_rules = database.list_sender_rules()?.into_iter().map(TransferSenderRule::from).collect();
     Ok(TransferPayload {
         version: VERSION,
         exported_at: Utc::now().to_rfc3339(),
@@ -545,6 +596,7 @@ fn build_export_payload(
         contacts,
         retention_days: database.retention_days()?,
         contact_groups: Some(contact_groups),
+        sender_rules: Some(sender_rules),
     })
 }
 
@@ -686,6 +738,7 @@ fn apply_import_choosing(
         &payload.snippets,
         &payload.contacts,
         payload.contact_groups.as_deref(),
+        payload.sender_rules.as_deref(),
         payload.retention_days,
     )?;
     Ok(ImportResult {
@@ -695,6 +748,7 @@ fn apply_import_choosing(
         snippet_count: payload.snippets.len(),
         contact_count: payload.contacts.len(),
         contact_group_count: payload.contact_groups.as_ref().map_or(0, Vec::len),
+        sender_rule_count: payload.sender_rules.as_ref().map_or(0, Vec::len),
     })
 }
 
@@ -871,6 +925,7 @@ mod tests {
             contacts: vec![],
             retention_days: Some(90),
             contact_groups: None,
+            sender_rules: None,
         }
     }
 
@@ -1294,6 +1349,7 @@ mod tests {
     ///   import regression coverage under version 5, as AGENTS.md requires.
     /// - `v4-current`: the version-4 current fixture, now frozen (kept so the
     ///   version-4 import path stays exercised with its original bytes).
+    /// - `v5-0.121`: last export before muted senders (0.121.0).
     /// - `v5-current`: what this build exports. The only fixture with a
     ///   regenerate helper (`regenerate_current_settings_transfer_fixture`).
     ///
@@ -1729,6 +1785,14 @@ mod tests {
                 member_ids: vec!["contact-current".to_string()],
                 created_at: "2026-09-26T08:00:00+00:00".to_string(),
             }]),
+            sender_rules: Some(vec![TransferSenderRule {
+                id: "rule-current".to_string(),
+                account_id: "current@example.com".to_string(),
+                match_kind: "address".to_string(),
+                match_value: "news@launch.example".to_string(),
+                action: "mute".to_string(),
+                created_at: "2026-09-27T08:00:00+00:00".to_string(),
+            }]),
         }
     }
 
@@ -1825,6 +1889,9 @@ mod tests {
         assert_eq!(kit.snoozed_at.as_deref(), Some("2026-09-28T09:00:00+00:00"));
         assert_eq!(kit.last_touch_at.as_deref(), Some("2026-09-15T09:00:00+00:00"));
         assert_eq!(database.retention_days().unwrap(), Some(365));
+        assert_eq!(result.sender_rule_count, 1);
+        let rules = database.list_sender_rules().unwrap();
+        assert_eq!((rules[0].account_id.as_str(), rules[0].match_value.as_str()), ("current@example.com", "news@launch.example"));
     }
 
     // ---- Phase 4 run 2 (F): identity-list transfer regression coverage.
@@ -2201,6 +2268,60 @@ mod tests {
         assert_eq!(preferences.availability_preferences.time_zone, "Asia/Tokyo");
         assert_eq!((result.account_count, result.split_inbox_count, result.snippet_count, result.contact_count), (2, 1, 1, 1));
         assert_eq!(database.retention_days().unwrap(), Some(365));
+    }
+
+    #[test]
+    fn frozen_v5_0_121_export_imports_without_sender_rules_and_keeps_local_ones() {
+        let bytes = include_bytes!("../tests/fixtures/settings-transfer/v5-0.121.dispatch-settings");
+        assert_eq!(envelope_version(bytes), VERSION);
+        let database = Database::open_memory();
+        database.adopt_account("current@example.com").unwrap();
+        let local = database.mute_sender("current@example.com", "domain", "local.example", &[]).unwrap().rule;
+        let payload = decrypt(bytes, fixtures::PASSWORD).unwrap();
+        assert!(payload.sender_rules.is_none());
+        let result = apply_import(&database, payload).unwrap();
+        assert_eq!(result.sender_rule_count, 0);
+        assert_eq!(result.contact_group_count, 1, "every earlier field still imports");
+        assert_eq!(database.list_sender_rules().unwrap(), vec![local]);
+    }
+
+    #[test]
+    fn importing_sender_rules_replaces_the_local_ones() {
+        let database = Database::open_memory();
+        database.adopt_account("current@example.com").unwrap();
+        database.mute_sender("current@example.com", "domain", "local.example", &[]).unwrap();
+        apply_import(&database, current_fixture_payload()).unwrap();
+        let values = database.list_sender_rules().unwrap().into_iter().map(|rule| rule.match_value).collect::<Vec<_>>();
+        assert_eq!(values, vec!["news@launch.example"]);
+        let mut empty = current_fixture_payload();
+        empty.sender_rules = Some(Vec::new());
+        apply_import(&database, empty).unwrap();
+        assert!(database.list_sender_rules().unwrap().is_empty());
+    }
+
+    #[test]
+    fn transfer_rejects_invalid_sender_rules() {
+        let mutations: [fn(&mut TransferPayload); 7] = [
+            |p| p.sender_rules.as_mut().unwrap()[0].id = String::new(),
+            |p| p.sender_rules.as_mut().unwrap()[0].account_id = "stranger@example.net".into(),
+            |p| p.sender_rules.as_mut().unwrap()[0].match_kind = "pattern".into(),
+            |p| p.sender_rules.as_mut().unwrap()[0].match_value = "not an address".into(),
+            |p| p.sender_rules.as_mut().unwrap()[0].action = "delete".into(),
+            |p| p.sender_rules.as_mut().unwrap()[0].created_at = "yesterday".into(),
+            |p| { let copy = p.sender_rules.as_ref().unwrap()[0].clone(); p.sender_rules.as_mut().unwrap().push(copy); },
+        ];
+        for (index, mutate) in mutations.iter().enumerate() {
+            let mut payload = current_fixture_payload();
+            mutate(&mut payload);
+            assert!(payload.validate().is_err(), "mutation {index} should be rejected");
+        }
+        let mut domain = current_fixture_payload();
+        let rule = &mut domain.sender_rules.as_mut().unwrap()[0];
+        (rule.match_kind, rule.match_value) = ("domain".into(), "launch.example".into());
+        domain.validate().unwrap();
+        let mut unknown = serde_json::to_value(current_fixture_payload()).unwrap();
+        unknown["senderRules"][0]["color"] = serde_json::json!("red");
+        assert!(serde_json::from_value::<TransferPayload>(unknown).is_err());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import type { Message, MessageTrust, SenderHistory, SplitInbox, ThreadDetail } from "./domain";
+import type { Message, MessageTrust, SenderHistory, SenderRule, SplitInbox, ThreadDetail } from "./domain";
 import { estimateCadence, formatHistoryDate } from "./contactContext";
 import { parseAddress } from "./emailAddress";
 
@@ -64,6 +64,17 @@ export function matchingSplit(splits: SplitInbox[], accountId: string, email: st
   return splits.find((split) => split.accountId === accountId && (
     (split.matchKind === "pattern" && address.includes(split.matchValue))
     || (split.matchKind === "domain" && domain === split.matchValue)
+  )) ?? null;
+}
+
+/** The account's mute rule for this sender: their exact address, or their exact domain. */
+export function matchingRule(rules: SenderRule[], accountId: string, email: string): SenderRule | null {
+  const address = email.toLocaleLowerCase();
+  const domain = address.split("@")[1] ?? "";
+  const account = accountId.toLocaleLowerCase();
+  return rules.find((rule) => rule.accountId.toLocaleLowerCase() === account && (
+    (rule.matchKind === "address" && rule.matchValue === address)
+    || (rule.matchKind === "domain" && rule.matchValue === domain)
   )) ?? null;
 }
 

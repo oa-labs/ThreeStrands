@@ -1,5 +1,5 @@
 import { FileStarButton } from "./FileStarButton";
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, Mail, MessageSquareText } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { Account, ContactFiles, ContactTimelineItem, DomainContext, Message, ThreadDetail } from "./domain";
@@ -97,7 +97,7 @@ function revealIfTruncated(line: HTMLElement | null) {
  * off shows its full text on hover. A small icon `action` sits at the end of
  * the detail line, under the date, so dates keep the panel's right edge.
  */
-export function ContextRow({ as: Element = "div", icon, control, title, date, dateClassName, detail, onActivate, action, trailing, wrapTitle, className }: {
+export function ContextRow({ as: Element = "div", icon, control, title, date, dateClassName, detail, onActivate, actions, trailing, wrapTitle, className }: {
   as?: "div" | "article";
   /** A decorative glyph, drawn inside the row's button. */
   icon?: ReactNode;
@@ -112,8 +112,8 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
   detail?: ReactNode;
   /** Makes the glyph and text one button. */
   onActivate?(): void;
-  /** One small icon button (.btn-icon-sm) under the date, outside the row's own button. */
-  action?: ReactNode;
+  /** Up to two small icon buttons (.btn-icon-sm) in a row under the date, outside the row's own button. */
+  actions?: ReactNode[];
   /** Wider controls after the text, such as a labelled button; these do push the date in. */
   trailing?: ReactNode;
   /** Lets a long title wrap, for titles the user wrote, such as tasks. */
@@ -123,7 +123,7 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
   const titleRef = useRef<HTMLElement>(null);
   const detailRef = useRef<HTMLElement>(null);
   const revealTruncated = () => { revealIfTruncated(titleRef.current); revealIfTruncated(detailRef.current); };
-  const classes = ["context-row", onActivate ? "context-row-interactive" : "", control ? "context-row-has-control" : "", wrapTitle ? "context-row-wrap" : "", action ? "context-row-has-action" : "", className ?? ""].filter(Boolean).join(" ");
+  const classes = ["context-row", onActivate ? "context-row-interactive" : "", control ? "context-row-has-control" : "", wrapTitle ? "context-row-wrap" : "", actions?.length ? "context-row-has-action" : "", className ?? ""].filter(Boolean).join(" ");
   const body = <>
     {control ? null : <span className="context-row-glyph context-row-icon" aria-hidden="true">{icon}</span>}
     <span className="context-row-text">
@@ -135,12 +135,12 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
     </span>
   </>;
   return (
-    <Element className={classes} onMouseEnter={revealTruncated}>
+    <Element className={classes} style={actions?.length ? { "--context-row-action-count": actions.length } as CSSProperties : undefined} onMouseEnter={revealTruncated}>
       {control ? <span className="context-row-glyph context-row-control">{control}</span> : null}
       {onActivate
         ? <button type="button" className="context-row-main" onClick={onActivate}>{body}</button>
         : <div className="context-row-main">{body}</div>}
-      {action ? <span className="context-row-action">{action}</span> : null}
+      {actions?.length ? <span className="context-row-action">{actions}</span> : null}
       {trailing ? <span className="context-row-trailing">{trailing}</span> : null}
     </Element>
   );
@@ -232,9 +232,12 @@ export function ContactFilesSection({ contactId, onShowMessage }: {
         date={formatHistoryDate(file.sentAt)}
         detail={formatAttachmentSize(file.attachment.size)}
         onActivate={() => open(file.messageId, file.attachment.id)}
-        action={<><FileStarButton messageId={file.messageId} attachmentId={file.attachment.id} filename={file.attachment.filename} /><button type="button" className="btn-icon btn-icon-sm" aria-label={`Show the email with ${file.attachment.filename}`} title="Show email" onClick={() => onShowMessage(file.threadId, file.messageId)}>
-          <MessageSquareText size={ICON_SIZE.sm} />
-        </button></>}
+        actions={[
+          <button key="show" type="button" className="btn-icon btn-icon-sm" aria-label={`Show the email with ${file.attachment.filename}`} title="Show email" onClick={() => onShowMessage(file.threadId, file.messageId)}>
+            <MessageSquareText size={ICON_SIZE.sm} />
+          </button>,
+          <FileStarButton key="star" messageId={file.messageId} attachmentId={file.attachment.id} filename={file.attachment.filename} />,
+        ]}
       />
     );
   });

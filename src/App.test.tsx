@@ -829,6 +829,68 @@ describe("bulk sender decisions in the context panel", () => {
     ]));
   });
 
+  it("mutes the sender from a dialog, archiving their Inbox mail, and Undo puts everything back", async () => {
+    vi.spyOn(mailClient, "senderHistory").mockResolvedValue({
+      receivedCount: 2, readCount: 0, firstAt: "2026-06-01T00:00:00Z", lastSentAt: null, recentReceivedAt: [],
+      inboxThreadIds: ["welcome", "roadmap"], threads: [],
+    });
+    const mute = vi.spyOn(mailClient, "muteSender");
+    const remove = vi.spyOn(mailClient, "deleteSenderRule");
+    const mutateThreads = vi.spyOn(mailClient, "mutateThreads");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const sender = await screen.findByRole("region", { name: /^From / });
+    const email = sender.querySelector(".context-domain")!.textContent!;
+    await act(async () => {
+      within(sender).getByRole("button", { name: "Mute…" }).click();
+    });
+    const dialog = await screen.findByRole("dialog", { name: "Mute Sender" });
+    expect(mute).not.toHaveBeenCalled();
+    await act(async () => {
+      within(dialog).getByRole("button", { name: "Mute Sender" }).click();
+    });
+    await waitFor(() => expect(mute).toHaveBeenCalledWith(expect.any(String), "address", email, ["welcome", "roadmap"]));
+    const result = await mute.mock.results[0].value;
+    expect(result.archivedThreadIds).toEqual(["welcome", "roadmap"]);
+    expect(await screen.findByRole("status")).toHaveTextContent(`Muted ${email} and archived 2 conversations`);
+    expect(screen.queryByRole("dialog", { name: "Mute Sender" })).not.toBeInTheDocument();
+
+    mutateThreads.mockClear();
+    await act(async () => {
+      screen.getByRole("button", { name: "Undo" }).click();
+    });
+    await waitFor(() => expect(remove).toHaveBeenCalledWith(result.rule.id));
+    await waitFor(() => expect(mutateThreads).toHaveBeenCalledWith(expect.arrayContaining([
+      { kind: "archive", threadId: "welcome", value: false },
+      { kind: "archive", threadId: "roadmap", value: false },
+      ...result.unreadThreadIds.map((threadId: string) => ({ kind: "read", threadId, value: false })),
+    ])));
+    expect(await mailClient.listSenderRules()).toEqual([]);
+  });
+
+  it("unmutes a muted sender from the panel", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const sender = await screen.findByRole("region", { name: /^From / });
+    await act(async () => {
+      within(sender).getByRole("button", { name: "Mute…" }).click();
+    });
+    const dialog = await screen.findByRole("dialog", { name: "Mute Sender" });
+    // Keep this conversation open by leaving the Inbox as it is.
+    const archive = within(dialog).queryByRole("checkbox");
+    if (archive) fireEvent.click(archive);
+    await act(async () => {
+      within(dialog).getByRole("button", { name: "Mute Sender" }).click();
+    });
+    const muted = await screen.findByRole("region", { name: /^From / });
+    await waitFor(() => expect(muted).toHaveTextContent("Muted"));
+    await act(async () => {
+      within(muted).getByRole("button", { name: "Unmute" }).click();
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent(/^Unmuted /);
+    expect(await mailClient.listSenderRules()).toEqual([]);
+  });
+
   it("creates a split for the sender from a dialog and reports it", async () => {
     const create = vi.spyOn(mailClient, "createSplitInbox");
     render(<App />);

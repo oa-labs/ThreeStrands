@@ -17,7 +17,10 @@ export function WorkspaceFileRow({ file, onOpenThread }: { file: WorkspaceFile; 
     <ContextRow icon={<AttachmentIcon filename={file.attachment.filename} mimeType={file.attachment.mimeType} size="sm" />}
       title={file.attachment.filename} date={formatHistoryDate(file.sentAt)} detail={`${file.reason ? `${file.reason} · ` : ""}${formatAttachmentSize(file.attachment.size)} · ${file.accountId}`}
       onActivate={() => { void mailClient.openAttachment(file.messageId, file.attachment.id).catch((reason) => setError(errorMessage(reason))); }}
-      action={<><FileStarButton accountId={file.accountId} messageId={file.messageId} attachmentId={file.attachment.id} filename={file.attachment.filename} starred={file.starred} /><button type="button" className="btn-icon btn-icon-sm" aria-label={`Show the email with ${file.attachment.filename}`} onClick={() => onOpenThread(file.threadId)}><MessageSquareText size={ICON_SIZE.sm} /></button></>} />
+      actions={[
+        <button key="show" type="button" className="btn-icon btn-icon-sm" aria-label={`Show the email with ${file.attachment.filename}`} onClick={() => onOpenThread(file.threadId)}><MessageSquareText size={ICON_SIZE.sm} /></button>,
+        <FileStarButton key="star" accountId={file.accountId} messageId={file.messageId} attachmentId={file.attachment.id} filename={file.attachment.filename} starred={file.starred} />,
+      ]} />
     {error ? <p className="form-error" role="alert">{error}</p> : null}
   </>;
 }
