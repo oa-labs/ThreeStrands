@@ -6,7 +6,7 @@ summary: Install ThreeStrands, connect Gmail or an IMAP account, and set up the 
 
 ## Install the App
 
-Download the latest release from [GitHub Releases](https://github.com/oa-labs/dispatch/releases/latest):
+Download the latest release from [GitHub Releases](https://github.com/oa-labs/ThreeStrands/releases/latest):
 
 - **macOS** — a signed and notarized `.dmg` for Apple Silicon and Intel Macs.
 - **Linux** — `.deb`, `.rpm`, and `.AppImage` packages for x86-64.

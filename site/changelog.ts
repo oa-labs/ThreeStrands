@@ -97,7 +97,7 @@ export function renderChangelogPage(source?: string): string {
           <a href="./#roadmap">Roadmap</a>
           <a href="docs/index.html">Docs</a>
         </nav>
-        <a class="button button-small button-glow" href="https://github.com/oa-labs/dispatch/releases/latest" rel="noopener" data-download>
+        <a class="button button-small button-glow" href="https://github.com/oa-labs/ThreeStrands/releases/latest" rel="noopener" data-download>
           <ts-icon name="download"></ts-icon>Download
         </a>
       </div>
@@ -128,10 +128,10 @@ ${sections.map(renderSection).join("\n")}
         <nav aria-label="Project">
           <a href="docs/index.html">Docs</a>
           <a href="changelog.html" aria-current="page">Changelog</a>
-          <a href="https://github.com/oa-labs/dispatch" rel="noopener">GitHub</a>
-          <a href="https://github.com/oa-labs/dispatch/releases/latest" rel="noopener">Releases</a>
-          <a href="https://github.com/oa-labs/dispatch#readme" rel="noopener">README</a>
-          <a href="https://github.com/oa-labs/dispatch/blob/master/LICENSE" rel="noopener">License</a>
+          <a href="https://github.com/oa-labs/ThreeStrands" rel="noopener">GitHub</a>
+          <a href="https://github.com/oa-labs/ThreeStrands/releases/latest" rel="noopener">Releases</a>
+          <a href="https://github.com/oa-labs/ThreeStrands#readme" rel="noopener">README</a>
+          <a href="https://github.com/oa-labs/ThreeStrands/blob/master/LICENSE" rel="noopener">License</a>
           <a href="privacy.html">Privacy Policy</a>
           <a href="terms.html">Terms of Service</a>
         </nav>

@@ -5,8 +5,8 @@ import { publishedSections, renderChangelogPage, sectionId } from "../../site/ch
 import { DOC_SLUGS, headingId, parseFrontMatter, renderDoc } from "../../site/docs";
 import { shortcutGroups } from "../../src/shortcutCatalog";
 
-const RELEASES = "https://github.com/oa-labs/dispatch/releases/latest";
-const LICENSE_URL = "https://github.com/oa-labs/dispatch/blob/master/LICENSE";
+const RELEASES = "https://github.com/oa-labs/ThreeStrands/releases/latest";
+const LICENSE_URL = "https://github.com/oa-labs/ThreeStrands/blob/master/LICENSE";
 const TOUR_SCENES = ["inbox", "split-inbox", "reply", "tasks", "goals", "today-schedule", "calendar-week", "calendar-create", "contacts", "files"];
 const { version } = JSON.parse(readFileSync(path.resolve("package.json"), "utf8")) as { version: string };
 
@@ -54,7 +54,7 @@ test.describe("feature claims", () => {
     await expect(page.locator('meta[name="description"]')).toHaveAttribute("content", /source-available/);
     await expect(page.locator('meta[property="og:description"]')).toHaveAttribute("content", /source-available/);
     const privacy = page.locator("#privacy");
-    await expect(privacy.getByRole("link", { name: "Inspect the source" })).toHaveAttribute("href", "https://github.com/oa-labs/dispatch");
+    await expect(privacy.getByRole("link", { name: "Inspect the source" })).toHaveAttribute("href", "https://github.com/oa-labs/ThreeStrands");
     await expect(privacy.getByRole("link", { name: "PolyForm Perimeter License 1.0.1" })).toHaveAttribute("href", LICENSE_URL);
     await expect(privacy).toContainText("personal or internal business use");
     await expect(privacy).toContainText("prohibits providing others with a competing product built from this software, even for free");

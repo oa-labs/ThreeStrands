@@ -30,4 +30,4 @@ The app also has a **Getting Started** checklist in the sidebar that checks itse
 
 ## Getting Help
 
-Found a bug or have a question? [Open an issue on GitHub](https://github.com/oa-labs/dispatch/issues). For how the app handles your data, read the [Privacy Policy](../privacy.html).
+Found a bug or have a question? [Open an issue on GitHub](https://github.com/oa-labs/ThreeStrands/issues). For how the app handles your data, read the [Privacy Policy](../privacy.html).

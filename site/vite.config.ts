@@ -69,7 +69,7 @@ function icon(name: string) {
 
 /**
  * Social cards need absolute URLs, so `SITE_URL` (the deployed origin and
- * path, e.g. https://oa-labs.github.io/dispatch/) is used when it is known.
+ * path, e.g. https://www.threestrands.app/) is used when it is known.
  */
 function socialUrl(file: string) {
   const siteUrl = process.env.SITE_URL;
