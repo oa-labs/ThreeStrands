@@ -10,6 +10,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ### Fixed
 - Background images in messages, such as social icons and banner panels, now keep the size and position the sender gave them instead of appearing cropped.
+- After installing an update on macOS, ThreeStrands now reopens in front of your other windows instead of behind them.
 
 ## Highlights: September to October 2026
 

@@ -120,7 +120,81 @@ pub async fn install_app_update(
         .download_and_install(|_, _| {}, || {})
         .await
         .map_err(|error| format!("Unable to install the update: {error}"))?;
+    relaunch(&app).await
+}
+
+/// Starts the copy just installed and exits this one.
+///
+/// On macOS, `AppHandle::restart` runs the new binary directly, which bypasses
+/// LaunchServices, so the relaunched app opens behind whatever was in front.
+/// Asking NSWorkspace to launch it while this copy is still the active app
+/// hands the foreground over to it.
+async fn relaunch(app: &AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    match macos::open_new_instance().await {
+        Ok(()) => {
+            use tauri::Manager;
+            if let Some(state) = app.try_state::<crate::AppState>() {
+                state.exiting.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            app.exit(0);
+            // The frontend treats a resolved install as a failure, and the
+            // process is about to exit anyway.
+            return std::future::pending().await;
+        }
+        Err(error) => {
+            log::warn!(target: "threestrands", "relaunching through LaunchServices failed: {error}");
+        }
+    }
     app.restart();
+}
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use std::sync::Mutex;
+
+    use block2::RcBlock;
+    use objc2_app_kit::{NSRunningApplication, NSWorkspace, NSWorkspaceOpenConfiguration};
+    use objc2_foundation::{NSBundle, NSError};
+
+    /// Launches a second, activated instance of this bundle. The bundle's
+    /// path is unchanged by the update, so this opens the new version.
+    pub async fn open_new_instance() -> Result<(), String> {
+        let (sender, receiver) = tokio::sync::oneshot::channel::<Result<(), String>>();
+        // The Objective-C objects are not Send, so they live only in this
+        // block and are released before awaiting the launch.
+        {
+            let bundle = NSBundle::mainBundle().bundleURL();
+            if !bundle.path().is_some_and(|path| path.to_string().ends_with(".app")) {
+                return Err("not running from an app bundle".into());
+            }
+            let configuration = NSWorkspaceOpenConfiguration::configuration();
+            // Without a new instance, LaunchServices would just activate
+            // this copy, which is still running.
+            configuration.setCreatesNewApplicationInstance(true);
+            configuration.setActivates(true);
+            let sender = Mutex::new(Some(sender));
+            let completion = RcBlock::new(move |_: *mut NSRunningApplication, error: *mut NSError| {
+                // SAFETY: AppKit passes either null or a valid NSError that
+                // lives for the duration of the completion handler.
+                let result = match unsafe { error.as_ref() } {
+                    None => Ok(()),
+                    Some(error) => Err(error.localizedDescription().to_string()),
+                };
+                if let Some(sender) = sender.lock().ok().and_then(|mut sender| sender.take()) {
+                    let _ = sender.send(result);
+                }
+            });
+            NSWorkspace::sharedWorkspace().openApplicationAtURL_configuration_completionHandler(
+                &bundle,
+                &configuration,
+                Some(&completion),
+            );
+        }
+        receiver
+            .await
+            .map_err(|_| "macOS did not finish launching the update".to_string())?
+    }
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.116.0"
+version = "0.116.1"
 description = "A local-first, keyboard-driven email client"
 authors = ["OpenArc LLC"]
 license-file = "../LICENSE"
@@ -115,11 +115,12 @@ smtp-proto = "=0.2.5"
 [target.'cfg(unix)'.dependencies]
 xattr = "1"
 
-# Default-app registration (Settings → Default Apps) through NSWorkspace.
+# Default-app registration (Settings → Default Apps) and relaunching after an
+# update, both through NSWorkspace.
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "block2", "objc2-uniform-type-identifiers"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSRunningApplication", "block2", "objc2-uniform-type-identifiers"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSBundle", "NSError", "NSString", "NSURL"] }
 objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTType"] }
 
