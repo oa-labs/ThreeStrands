@@ -561,9 +561,13 @@ test.describe("legal pages", () => {
   });
 
   test("every page credits OpenArc, links to the license, and makes no open-source claim", async ({ page }) => {
-    for (const file of ["", ...LEGAL_PAGES.map((legal) => legal.file)]) {
+    for (const file of ["", ...LEGAL_PAGES.map((legal) => legal.file), "docs/index.html", "changelog.html"]) {
       await page.goto(`./${file}`);
-      await expect(page.locator(".footer-note")).toContainText("© 2026 OpenArc LLC. All rights reserved.");
+      await expect(page.locator(".footer-note")).toContainText("Made with love by OpenArc. © 2026 OpenArc LLC. All rights reserved.");
+      await expect(page.locator(".footer-note").getByRole("link", { name: "OpenArc", exact: true })).toHaveAttribute(
+        "href",
+        "https://www.openarc.net/custom-software/create-my-product",
+      );
       await expect(page.locator("footer").getByRole("link", { name: "License", exact: true })).toHaveAttribute("href", LICENSE_URL);
       expect(await page.locator("html").innerHTML()).not.toMatch(/open[- ]source/i);
     }

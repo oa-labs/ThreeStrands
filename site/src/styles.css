@@ -2171,6 +2171,12 @@ button.keycap:active {
   font-size: 0.82rem;
 }
 
+/* Inline in a sentence, so the link needs an underline to stand apart from the text. */
+.footer-note a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 /* Scroll-linked motion -------------------------------------------------- */
 
 /* Strokes are fully drawn by default, so the art survives without JS or
