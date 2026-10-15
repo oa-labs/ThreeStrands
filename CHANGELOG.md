@@ -4,6 +4,8 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+## 0.125.4 — 2026-10-15
+
 ### Improved
 - Removing a Gmail account or Google Calendar now also signs ThreeStrands out at Google, so the access it had stops working instead of staying active until you revoke it yourself. If ThreeStrands can't reach Google, the account stays put so you can try again. Removing only the mail or only the calendar keeps you signed in while the other is still connected on this computer, and if you sync between devices, **Disconnect this device** leaves your other devices signed in.
 
