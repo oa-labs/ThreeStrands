@@ -4,6 +4,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### Improved
+- Removing a Gmail account or Google Calendar now also signs ThreeStrands out at Google, so the access it had stops working instead of staying active until you revoke it yourself. If ThreeStrands can't reach Google, the account stays put so you can try again. Removing only the mail or only the calendar keeps you signed in while the other is still connected on this computer, and if you sync between devices, **Disconnect this device** leaves your other devices signed in.
+
 ### Fixed
 - Buttons in some emails, such as security alerts, no longer lose their padding and show their label squeezed against the top edge.
 - Some emails no longer show small stray gaps between images, buttons, or blocks the sender placed tightly together.

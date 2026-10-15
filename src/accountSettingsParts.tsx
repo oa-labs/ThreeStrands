@@ -42,7 +42,7 @@ export function AccountDisconnectConfirm({
       ]}
     >
       <strong>Disconnect {email}?</strong><br />
-      This device forgets the account{kind === "mail" ? " and its local cache" : ""}; removing it on all devices also disconnects your other devices. {service} itself is not changed.
+      This device forgets the account{kind === "mail" ? " and its local cache" : ""}; removing it on all devices also disconnects your other devices. Nothing is deleted from {service}.
     </InlineConfirm>
   );
 }

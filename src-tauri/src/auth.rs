@@ -25,6 +25,7 @@ const MAIL_SERVICE: &str = "app.threestrands.mail";
 const CALENDAR_SERVICE: &str = "app.threestrands.calendar";
 const GOOGLE_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+const GOOGLE_REVOKE_URL: &str = "https://oauth2.googleapis.com/revoke";
 const GMAIL_PROFILE_URL: &str = "https://gmail.googleapis.com/gmail/v1/users/me/profile";
 const GOOGLE_USERINFO_URL: &str = "https://openidconnect.googleapis.com/v1/userinfo";
 // gmail.modify also authorizes label management; no separate labels scope is needed.
@@ -77,6 +78,9 @@ struct Profile {
 pub struct OAuthEndpoints {
     pub auth_url: String,
     pub token_url: String,
+    /// RFC 7009 token revocation endpoint, called when a connection is
+    /// removed so its refresh token stops working at the service too.
+    pub revoke_url: String,
     pub scopes: String,
     pub profile_url: String,
 }
@@ -114,6 +118,7 @@ impl OAuthProvider {
             Self::Google => OAuthEndpoints {
                 auth_url: GOOGLE_AUTH_URL.to_string(),
                 token_url: GOOGLE_TOKEN_URL.to_string(),
+                revoke_url: GOOGLE_REVOKE_URL.to_string(),
                 scopes: GMAIL_SCOPES.to_string(),
                 profile_url: GMAIL_PROFILE_URL.to_string(),
             },
@@ -125,6 +130,7 @@ impl OAuthProvider {
             Self::Google => OAuthEndpoints {
                 auth_url: GOOGLE_AUTH_URL.to_string(),
                 token_url: GOOGLE_TOKEN_URL.to_string(),
+                revoke_url: GOOGLE_REVOKE_URL.to_string(),
                 scopes: GOOGLE_CALENDAR_SCOPES.to_string(),
                 profile_url: GOOGLE_USERINFO_URL.to_string(),
             },
@@ -239,6 +245,24 @@ impl OAuthApp {
 
 /// Every OAuth app this build is configured with. A service whose app isn't
 /// configured simply can't be connected; the others are unaffected.
+/// Which of an address's two separately stored Google connections a
+/// removal is for. See [`AuthConfig::revoke_google_grant`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GoogleConnection {
+    Mail,
+    Calendar,
+}
+
+async fn revoke_unless_sibling_in_use(
+    removing: &OAuthCredential,
+    sibling: &OAuthCredential,
+) -> Result<(), String> {
+    if sibling.available() {
+        return Ok(());
+    }
+    removing.revoke().await
+}
+
 #[derive(Clone, Default)]
 pub struct AuthConfig {
     google: Option<OAuthApp>,
@@ -270,6 +294,28 @@ impl AuthConfig {
         self.google
             .as_ref()
             .ok_or_else(|| OAuthProvider::Google.not_configured())
+    }
+
+    /// Revokes `email`'s Google grant as `removing` is fully removed, unless
+    /// this device still holds the other Google connection for that address.
+    ///
+    /// Google revokes per project, not per token: one revocation drops every
+    /// scope ThreeStrands holds for the account — mail and calendar alike, on
+    /// every device. Revoking while the sibling connection is still in use
+    /// would silently break it, so that removal stays local and the grant is
+    /// revoked when the last connection here goes.
+    pub async fn revoke_google_grant(
+        &self,
+        email: &str,
+        removing: GoogleConnection,
+    ) -> Result<(), String> {
+        let app = self.google()?;
+        let mail = app.mail_credential(email);
+        let calendar = app.calendar_account(email);
+        match removing {
+            GoogleConnection::Mail => revoke_unless_sibling_in_use(&mail, &calendar).await,
+            GoogleConnection::Calendar => revoke_unless_sibling_in_use(&calendar, &mail).await,
+        }
     }
 
     /// The identity service a mail provider signs in through. Only OAuth
@@ -536,6 +582,78 @@ impl OAuthCredential {
         .keyed_for("test@example.com", MAIL_SERVICE, endpoints);
         *auth.token_cache.lock().unwrap() = Some(tokens);
         auth
+    }
+
+    /// Invalidates this credential's grant at the identity service (RFC
+    /// 7009) without touching the local copy; [`Self::disconnect`] deletes
+    /// that. The refresh token is revoked when there is one, since that also
+    /// revokes every access token minted from it. A token the service
+    /// already considers invalid counts as revoked, and with nothing stored
+    /// there is nothing to revoke. Any other failure is returned so removal
+    /// can stop with the grant still live and the account still retryable,
+    /// rather than discarding a refresh token that keeps working.
+    pub async fn revoke(&self) -> Result<(), String> {
+        let Some(tokens) = self.load_if_present()? else {
+            return Ok(());
+        };
+        let token = tokens.refresh_token.unwrap_or(tokens.access_token);
+        let body = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("token", &token)
+            .finish();
+        let response = self
+            .client
+            .post(&self.endpoints.revoke_url)
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            )
+            .body(body)
+            .send()
+            .await
+            .map_err(|error| {
+                format!(
+                    "Couldn't reach {} to sign out: {}",
+                    self.provider.label(),
+                    display(error)
+                )
+            })?;
+        let status = response.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        #[derive(Deserialize)]
+        struct RevokeError {
+            error: String,
+        }
+        let code = response
+            .json::<RevokeError>()
+            .await
+            .map(|body| body.error)
+            .unwrap_or_default();
+        if status == reqwest::StatusCode::BAD_REQUEST
+            && matches!(code.as_str(), "invalid_token" | "invalid_grant")
+        {
+            return Ok(());
+        }
+        Err(format!(
+            "{} sign-out failed ({status}{}{code}); try again",
+            self.provider.label(),
+            if code.is_empty() { "" } else { ": " },
+        ))
+    }
+
+    /// Like [`Self::load`], but a missing keychain entry is `None` rather
+    /// than an error. Other keychain failures still error, so a locked
+    /// keychain can't pass for "nothing to revoke".
+    fn load_if_present(&self) -> Result<Option<Tokens>, String> {
+        if let Some(tokens) = self.token_cache.lock().unwrap().clone() {
+            return Ok(Some(tokens));
+        }
+        match self.entry()?.get_password() {
+            Ok(_) => self.load().map(Some),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(display(error)),
+        }
     }
 
     pub fn disconnect(&self) -> Result<(), String> {
@@ -1192,6 +1310,159 @@ mod tests {
             OAuthProvider::Google.unwrap(decoded).unwrap().access_token,
             "at"
         );
+    }
+
+    type RevokeRequests = Arc<Mutex<Vec<HashMap<String, String>>>>;
+
+    async fn revoke_response(
+        State((requests, status, code)): State<(RevokeRequests, axum::http::StatusCode, String)>,
+        Form(form): Form<HashMap<String, String>>,
+    ) -> (axum::http::StatusCode, Json<Value>) {
+        requests.lock().unwrap().push(form);
+        let body = if code.is_empty() { json!({}) } else { json!({ "error": code }) };
+        (status, Json(body))
+    }
+
+    /// A revoke endpoint answering `status`/`code`, plus the form bodies it
+    /// received.
+    async fn start_revoke_server(
+        status: axum::http::StatusCode,
+        code: &str,
+    ) -> (String, RevokeRequests, tokio::task::JoinHandle<()>) {
+        let requests = RevokeRequests::default();
+        let app = Router::new()
+            .route("/revoke", post(revoke_response))
+            .with_state((requests.clone(), status, code.to_string()));
+        let (token_url, server) = start_token_server(app).await;
+        (token_url.replace("/token", "/revoke"), requests, server)
+    }
+
+    /// A credential whose tokens live only in memory, revoking at
+    /// `revoke_url`, so tests never reach the OS keychain.
+    fn revocable(service: &str, revoke_url: &str, refresh_token: Option<&str>) -> OAuthCredential {
+        let mut endpoints = OAuthProvider::Google.mail_endpoints();
+        endpoints.revoke_url = revoke_url.to_string();
+        let auth = google_app().keyed_for("test@example.com", service, endpoints);
+        *auth.token_cache.lock().unwrap() = Some(Tokens {
+            access_token: "access-secret".into(),
+            refresh_token: refresh_token.map(str::to_owned),
+            expires_at: now() + 3600,
+        });
+        auth
+    }
+
+    /// Stands in for the keychain lookup `available()` would otherwise make.
+    fn with_availability(credential: OAuthCredential, available: bool) -> OAuthCredential {
+        *credential.available_cache.lock().unwrap() = Some(available);
+        credential
+    }
+
+    #[test]
+    fn mail_and_calendar_revoke_at_googles_revocation_endpoint() {
+        let app = google_app();
+        assert_eq!(app.mail_credential("work@example.com").endpoints.revoke_url, GOOGLE_REVOKE_URL);
+        assert_eq!(app.calendar_account("work@example.com").endpoints.revoke_url, GOOGLE_REVOKE_URL);
+    }
+
+    #[tokio::test]
+    async fn revoke_sends_the_refresh_token_so_its_access_tokens_die_with_it() {
+        let (url, requests, server) = start_revoke_server(axum::http::StatusCode::OK, "").await;
+
+        revocable(MAIL_SERVICE, &url, Some("refresh-secret")).revoke().await.unwrap();
+
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].get("token").map(String::as_str), Some("refresh-secret"));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn revoke_falls_back_to_the_access_token_without_a_refresh_token() {
+        let (url, requests, server) = start_revoke_server(axum::http::StatusCode::OK, "").await;
+
+        revocable(MAIL_SERVICE, &url, None).revoke().await.unwrap();
+
+        assert_eq!(
+            requests.lock().unwrap()[0].get("token").map(String::as_str),
+            Some("access-secret")
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn revoke_treats_an_already_invalid_token_as_revoked() {
+        for code in ["invalid_token", "invalid_grant"] {
+            let (url, _, server) =
+                start_revoke_server(axum::http::StatusCode::BAD_REQUEST, code).await;
+            assert!(revocable(MAIL_SERVICE, &url, Some("refresh-secret")).revoke().await.is_ok(), "{code}");
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn revoke_fails_without_leaking_the_token_when_the_service_cannot_confirm() {
+        for (status, code) in [
+            (axum::http::StatusCode::SERVICE_UNAVAILABLE, ""),
+            (axum::http::StatusCode::BAD_REQUEST, "invalid_request"),
+            (axum::http::StatusCode::UNAUTHORIZED, "unauthorized_client"),
+        ] {
+            let (url, _, server) = start_revoke_server(status, code).await;
+            let error = revocable(MAIL_SERVICE, &url, Some("refresh-secret"))
+                .revoke()
+                .await
+                .unwrap_err();
+            assert!(error.contains("sign-out failed"), "{error}");
+            assert!(!error.contains("refresh-secret"), "{error}");
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn revoke_fails_when_the_service_is_unreachable() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let url = format!("http://{}/revoke", listener.local_addr().unwrap());
+        drop(listener);
+
+        let error = revocable(MAIL_SERVICE, &url, Some("refresh-secret"))
+            .revoke()
+            .await
+            .unwrap_err();
+        assert!(error.contains("Couldn't reach Google"), "{error}");
+        assert!(!error.contains("refresh-secret"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn the_grant_is_kept_while_the_sibling_connection_is_still_in_use() {
+        let (url, requests, server) = start_revoke_server(axum::http::StatusCode::OK, "").await;
+        let mail = revocable(MAIL_SERVICE, &url, Some("mail-refresh"));
+        let calendar = revocable(CALENDAR_SERVICE, &url, Some("calendar-refresh"));
+
+        revoke_unless_sibling_in_use(&mail, &with_availability(calendar.clone(), true))
+            .await
+            .unwrap();
+        revoke_unless_sibling_in_use(&calendar, &with_availability(mail.clone(), true))
+            .await
+            .unwrap();
+
+        assert!(requests.lock().unwrap().is_empty());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn the_grant_is_revoked_when_the_last_connection_here_is_removed() {
+        let (url, requests, server) = start_revoke_server(axum::http::StatusCode::OK, "").await;
+        let mail = revocable(MAIL_SERVICE, &url, Some("mail-refresh"));
+        let calendar = revocable(CALENDAR_SERVICE, &url, Some("calendar-refresh"));
+
+        revoke_unless_sibling_in_use(&calendar, &with_availability(mail, false))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            requests.lock().unwrap()[0].get("token").map(String::as_str),
+            Some("calendar-refresh")
+        );
+        server.abort();
     }
 
     #[tokio::test]

@@ -50,7 +50,7 @@ mod unsubscribe_service;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use auth::{AccountAuth, AuthConfig, OAuthProvider};
+use auth::{AccountAuth, AuthConfig, GoogleConnection, OAuthProvider};
 use chrono::Utc;
 use db::Database;
 use models::{
@@ -3214,9 +3214,19 @@ async fn remove_account_internal(
     let _guard = state.correspondence.gate.lock().await;
     // Resolved before any local data is purged, so an unconfigured provider
     // fails the removal while the account is still intact.
-    let fallback = state
-        .auth_config
-        .mail_account(catalogued_mail_provider(&state.database, &email)?, &email)?;
+    let provider = catalogued_mail_provider(&state.database, &email)?;
+    let fallback = state.auth_config.mail_account(provider, &email)?;
+    let removes_everywhere = remove_catalog || !state.database.cross_device_sync_enrolled()?;
+    // Sign out at Google before anything else changes, so a failed
+    // revocation leaves the account intact and retryable instead of
+    // discarding a refresh token that still works. Removing it from this
+    // device only keeps the grant other devices rely on.
+    if removes_everywhere && provider == MailProviderKind::Gmail {
+        state
+            .auth_config
+            .revoke_google_grant(&email, GoogleConnection::Mail)
+            .await?;
+    }
     state.correspondence.pause_account_schedules(&email)?;
     // Stop every sync run for the account before purging, including ones
     // started outside the polling loop (foreground, backfill, manual
@@ -3751,11 +3761,20 @@ async fn set_calendar_selection(
     Ok(available)
 }
 
-#[tauri::command(async)]
-fn remove_calendar_account(email: String, state: State<'_, AppState>) -> Result<(), String> {
+#[tauri::command]
+async fn remove_calendar_account(email: String, state: State<'_, AppState>) -> Result<(), String> {
     let config = state.auth_config.google()?;
+    let enrolled = state.database.cross_device_sync_enrolled()?;
+    // Removing it from this device only keeps the grant other devices rely
+    // on; see remove_account_internal.
+    if !enrolled {
+        state
+            .auth_config
+            .revoke_google_grant(&email, GoogleConnection::Calendar)
+            .await?;
+    }
     config.calendar_account(&email).disconnect()?;
-    if state.database.cross_device_sync_enrolled()? {
+    if enrolled {
         database_result(state.database.disconnect_calendar_account_locally(&email))
     } else {
         database_result(state.database.remove_calendar_account(&email))
@@ -3767,6 +3786,10 @@ async fn remove_synced_calendar_account(email: String, state: State<'_, AppState
     if !state.database.cross_device_sync_enrolled()? {
         return Err(NOT_SYNC_ENROLLED.into());
     }
+    state
+        .auth_config
+        .revoke_google_grant(&email, GoogleConnection::Calendar)
+        .await?;
     state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::CalendarAccount, &email.to_ascii_lowercase())?;
     state.replicated_sync.sync_once().await?;
     let config = state.auth_config.google()?;
