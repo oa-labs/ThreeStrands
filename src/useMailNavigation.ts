@@ -262,7 +262,7 @@ export function useMailNavigation({
   // Folders outside the Inbox/split tab bar. Each starts with a cleared
   // search; Drafts and Outbox list local items rather than threads, so they
   // also drop the open conversation.
-  const openFolder = useCallback((folder: "allMail" | "trash" | "drafts" | "outbox") => {
+  const openFolder = useCallback((folder: "allMail" | "sent" | "trash" | "drafts" | "outbox") => {
     contextOpenedThreadRef.current = null;
     setRightWorkspace(null);
     if (folder === "drafts") correspondence.context.openDrafts();

@@ -340,7 +340,7 @@ describe("outboxStateLabel", () => {
   );
 });
 
-const localEntry = (item: OutboxItem): OutboxEntry => outboxEntries([item], [])[0];
+const localEntry = (item: OutboxItem): OutboxEntry => ({ key: `local:${item.id}`, kind: "local", item });
 const renderDetail = (item: OutboxItem, props: Partial<Parameters<typeof OutboxDetail>[0]> = {}) =>
   render(<OutboxDetail entry={localEntry(item)} clock={0} onUndo={vi.fn()} onRestore={vi.fn()} onReconcile={vi.fn()} {...props} />);
 
@@ -391,18 +391,21 @@ describe("Outbox list and reader", () => {
   const failed: OutboxItem = { ...outbox, id: "failed", state: "failed", draft: { ...draft, subject: "Report" } };
   const canceled: OutboxItem = { ...outbox, id: "canceled", state: "canceled", draft: { ...draft, subject: "Never mind" } };
 
-  it("lists sends as selectable rows with recipients, subject, and status, hiding canceled ones", () => {
+  it("lists outgoing sends as selectable rows with recipients, subject, and status", () => {
     const onSelect = vi.fn();
-    const entries = outboxEntries([sent, failed, canceled], []);
+    const queued: OutboxItem = { ...sent, id: "queued", state: "undo_pending", deadline: 5_000, providerId: null };
+    const entries = outboxEntries([queued, failed, canceled, sent], []);
     render(<OutboxList entries={entries} selectedKey={null} clock={0} onSelect={onSelect} />);
     const rows = screen.getAllByRole("option");
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveAttribute("aria-selected", "true");
     expect(rows[0]).toHaveTextContent("To Ana Lima, bo@example.com");
     expect(rows[0]).toHaveTextContent("Dinner");
+    expect(rows[0]).toHaveTextContent("Undo available · 5s");
     expect(rows[1]).toHaveAttribute("aria-selected", "false");
     expect(rows[1].querySelector(".outbox-row-status.problem")).toHaveTextContent("Not sent");
     expect(screen.queryByText("Never mind")).not.toBeInTheDocument();
+    expect(screen.queryByText("sent")).not.toBeInTheDocument();
     fireEvent.click(rows[1]);
     expect(onSelect).toHaveBeenCalledWith(entries[1].key);
   });

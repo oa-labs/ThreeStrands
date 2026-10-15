@@ -100,6 +100,8 @@ export interface MailClient extends CorrespondenceClient {
   listThreadsPage(accountId: string | undefined, offset: number, limit: number): Promise<ThreadPage>;
   listAllMailPage(accountId: string | undefined, offset: number, limit: number): Promise<ThreadPage>;
   listTrashPage(accountId: string | undefined, offset: number, limit: number): Promise<ThreadPage>;
+  /** Conversations holding a message one of the account's addresses sent, newest activity first. */
+  listSentPage(accountId: string | undefined, offset: number, limit: number): Promise<ThreadPage>;
   listUnreadCounts(): Promise<UnreadCounts>;
   /** Unread totals for the Inbox and each split inbox tab, scoped to `accountId` (merged across all when omitted). */
   mailboxUnreadCounts(accountId?: string): Promise<MailboxUnreadCounts>;
@@ -348,6 +350,7 @@ const tauriClient: MailClient = {
   listThreadsPage: (accountId, offset, limit) => read("list_threads_page", { accountId, offset, limit }),
   listAllMailPage: (accountId, offset, limit) => read("list_all_mail_page", { accountId, offset, limit }),
   listTrashPage: (accountId, offset, limit) => read("list_trash_page", { accountId, offset, limit }),
+  listSentPage: (accountId, offset, limit) => read("list_sent_page", { accountId, offset, limit }),
   listUnreadCounts: () => read("list_unread_counts"),
   mailboxUnreadCounts: (accountId) => read("mailbox_unread_counts", { accountId }),
   getThread: (id) => read("get_thread", { id }),

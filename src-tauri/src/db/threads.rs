@@ -10,6 +10,15 @@ use chrono::Utc;
 use rusqlite::{params, OptionalExtension};
 use std::collections::HashMap;
 
+/// Conversations holding a message one of the account's addresses sent.
+/// Gmail labels those messages `SENT`, and IMAP gives its Sent-role copies
+/// the same label, so one filter covers both providers.
+const SENT_FILTER: &str =
+    "trashed = 0 AND EXISTS (SELECT 1 FROM json_each(t.labels_json) WHERE value = 'SENT')";
+/// The Inbox orders by what others sent; the other folders by latest activity.
+const RECEIVED_ORDER: &str = "last_received_at DESC";
+const LATEST_ORDER: &str = "last_message_at DESC";
+
 pub(super) const THREAD_COLUMNS: &str = "t.id, t.provider_thread_id, t.subject, t.snippet,
     t.participants_json, t.last_message_at, t.unread, t.starred, t.archived,
     t.labels_json, t.trashed, t.account_id, t.summary, t.summary_generated_at,
@@ -108,6 +117,17 @@ impl Database {
         self.list_threads_page_where(account_id, "trashed = 1", offset, limit)
     }
 
+    /// The Sent folder: conversations you sent in, newest activity first, so
+    /// a reply to something you sent brings it back to the top.
+    pub fn list_sent_page(
+        &self,
+        account_id: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> DbResult<ThreadPage> {
+        self.list_threads_page_ordered(account_id, SENT_FILTER, LATEST_ORDER, offset, limit)
+    }
+
     fn list_threads_where(&self, account_id: Option<&str>, filter: &str) -> DbResult<Vec<Thread>> {
         self.with_connection(|connection| {
             let sql = format!(
@@ -137,6 +157,17 @@ impl Database {
         offset: usize,
         limit: usize,
     ) -> DbResult<ThreadPage> {
+        self.list_threads_page_ordered(account_id, filter, RECEIVED_ORDER, offset, limit)
+    }
+
+    fn list_threads_page_ordered(
+        &self,
+        account_id: Option<&str>,
+        filter: &str,
+        order: &str,
+        offset: usize,
+        limit: usize,
+    ) -> DbResult<ThreadPage> {
         self.with_connection(|connection| {
             let page_limit = limit.min(200);
             let fetch_limit = page_limit.saturating_add(1) as i64;
@@ -144,7 +175,7 @@ impl Database {
                 "SELECT {THREAD_COLUMNS}
                  FROM threads AS t
                  WHERE {filter} {}
-                 ORDER BY last_received_at DESC
+                 ORDER BY {order}
                  LIMIT ?{} OFFSET ?{}",
                 if account_id.is_some() {
                     "AND account_id = ?1"

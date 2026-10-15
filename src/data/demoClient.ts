@@ -170,6 +170,12 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     return visibleWhere(accountId, (thread) => thread.trashed);
   }
 
+  /** Mirrors `list_sent_page`: conversations with a SENT message, newest activity first. */
+  function visibleSent(accountId?: string): Thread[] {
+    return visibleWhere(accountId, (thread) => !thread.trashed && thread.labels.includes("SENT"))
+      .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
+  }
+
   /** Mirrors `split_inbox_matches` in `src-tauri/src/db.rs` for the browser-preview build. */
   function matchesSplitInbox(rule: SplitInbox, thread: Thread): boolean {
     switch (rule.matchKind) {
@@ -386,6 +392,10 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     },
     async listTrashPage(accountId, offset, limit): Promise<ThreadPage> {
       const items = visibleTrash(accountId);
+      return { threads: structuredClone(items.slice(offset, offset + limit)), hasMore: offset + limit < items.length };
+    },
+    async listSentPage(accountId, offset, limit): Promise<ThreadPage> {
+      const items = visibleSent(accountId);
       return { threads: structuredClone(items.slice(offset, offset + limit)), hasMore: offset + limit < items.length };
     },
     async listUnreadCounts() {

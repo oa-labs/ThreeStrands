@@ -122,6 +122,7 @@ export function useAppCommandContext({
     goToNextSplitTab,
     goToPreviousSplitTab,
     openAllMail: () => openFolder("allMail"),
+    openSent: () => openFolder("sent"),
     openTrash: () => openFolder("trash"),
     openSplitInbox: goToSplitTab,
     openDrafts: () => openFolder("drafts"),

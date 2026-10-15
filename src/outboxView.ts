@@ -8,14 +8,25 @@ export type OutboxEntry =
   | { key: string; kind: "local"; item: OutboxItem }
   | { key: string; kind: "peer"; report: ScheduledSendReport };
 
-/** Outbox rows in display order: this computer's sends, then peer schedules. Canceled sends are hidden. */
+/**
+ * Whether a send still belongs in the Outbox: it has not gone out, its
+ * outcome is unknown, or its copy for the Sent folder is still being saved or
+ * could not be. A finished send lives in Sent; a canceled one went back to Drafts.
+ */
+export function isOutgoing(item: OutboxItem): boolean {
+  if (item.state === "canceled") return false;
+  if (item.state !== "sent") return true;
+  return item.sentCopy?.state === "pending" || item.sentCopy?.state === "verify" || item.sentCopy?.state === "abandoned";
+}
+
+/** Outbox rows in display order: this computer's outgoing sends, then peer schedules. */
 export function outboxEntries(outbox: OutboxItem[], summaries: ScheduledSendReport[]): OutboxEntry[] {
   return [
     ...outbox
-      .filter((item) => item.state !== "canceled")
+      .filter(isOutgoing)
       .map<OutboxEntry>((item) => ({ key: `local:${item.id}`, kind: "local", item })),
     ...summaries
-      .filter((report) => report.state !== "canceled")
+      .filter((report) => report.state !== "canceled" && report.state !== "sent")
       .map<OutboxEntry>((report) => ({ key: `peer:${report.ownerInstallationId}:${report.operationId}`, kind: "peer", report })),
   ];
 }

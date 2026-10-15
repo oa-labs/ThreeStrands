@@ -1171,6 +1171,17 @@ async fn list_trash_page(
 }
 
 #[tauri::command]
+async fn list_sent_page(
+    account_id: Option<String>,
+    offset: usize,
+    limit: usize,
+    state: State<'_, AppState>,
+) -> Result<ThreadPage, String> {
+    let database = state.database.clone();
+    run_database_task(move || database.list_sent_page(account_id.as_deref(), offset, limit)).await
+}
+
+#[tauri::command]
 async fn get_thread(id: String, state: State<'_, AppState>) -> Result<ThreadDetail, String> {
     let database = state.database.clone();
     run_database_task(move || database.get_thread(&id)).await
@@ -5482,6 +5493,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         mailbox_unread_counts,
         list_all_mail_page,
         list_trash_page,
+        list_sent_page,
         get_thread,
         search_threads,
         backfill_search_threads,

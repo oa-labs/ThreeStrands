@@ -2,7 +2,7 @@ import type { MessageFilterKind } from "./messageFilters";
 import type { SplitInbox, TaskStatus } from "./domain";
 import { adjacentTaskStatus, isActiveTaskStatus } from "./taskViews";
 
-export type MailboxKind = "inbox" | "allMail" | "trash" | "drafts" | "outbox" | "split";
+export type MailboxKind = "inbox" | "allMail" | "sent" | "trash" | "drafts" | "outbox" | "split";
 export type InteractionScope = "read" | "compose" | "search" | "modal" | "palette";
 export type FocusedPane = "mail" | "tasks" | "contacts" | "files" | "calendar";
 
@@ -31,6 +31,7 @@ export type CommandContext = {
   editAsNew(): void;
   openInbox(): void;
   openAllMail(): void;
+  openSent(): void;
   openTrash(): void;
   openDrafts(): void;
   openOutbox(): void;
@@ -172,6 +173,7 @@ export const commands: Command[] = [
   { id: "navigation.back", title: "Go Back", keys: ["Escape"], group: "Navigation", enabled: (c) => c.canGoBack && !c.composerActive, run: (c) => complete(c.goBack) },
   { id: "mailbox.inbox", title: "Go to Inbox", keys: ["g then i"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openInbox) },
   { id: "mailbox.allMail", title: "Go to All Mail", keys: ["g then a"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openAllMail) },
+  { id: "mailbox.sent", title: "Go to Sent", keys: ["g then s"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openSent) },
   { id: "mailbox.trash", title: "Go to Trash", keys: ["g then t"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openTrash) },
   { id: "drafts.open", title: "Go to Drafts", keys: ["g then d"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openDrafts) },
   { id: "outbox.open", title: "Open Outbox", keys: ["g then o"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openOutbox) },

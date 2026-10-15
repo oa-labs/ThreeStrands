@@ -264,7 +264,7 @@ export function App() {
   const splitInboxCatalog = useSplitInboxes();
   const senderRuleCatalog = useSenderRules();
   const { refresh: refreshSplitInboxes } = splitInboxCatalog;
-  const isThreadMailbox = mailbox === "inbox" || mailbox === "allMail" || mailbox === "trash" || mailbox === "split";
+  const isThreadMailbox = mailbox === "inbox" || mailbox === "allMail" || mailbox === "sent" || mailbox === "trash" || mailbox === "split";
   const isTabbedMailbox = mailbox === "inbox" || mailbox === "split";
   const navigation = useMailNavigation({
     mailboxThreads, threadDetail, reader, workspaces, correspondence, splitInboxCatalog, mailbox,
@@ -720,6 +720,7 @@ export function App() {
                         // while a draft is open; the composer saves on the way out.
                         if (folder === "inbox") context.openInbox();
                         else if (folder === "allMail") context.openAllMail();
+                        else if (folder === "sent") context.openSent();
                         else if (folder === "drafts") context.openDrafts();
                         else if (folder === "outbox") context.openOutbox();
                         else context.openTrash();
@@ -731,7 +732,7 @@ export function App() {
                     {mailbox === "drafts"
                       ? `${correspondence.drafts.length} drafts`
                       : mailbox === "outbox"
-                        ? `${correspondence.outbox.filter((item) => item.state !== "canceled").length + correspondence.summaries.filter((item) => item.state !== "canceled").length} outgoing`
+                        ? `${outboxSelection.entries.length} outgoing`
                         : `${visibleThreads.length} conversations`}
                   </h1>
                   {isTabbedMailbox ? (
@@ -817,7 +818,7 @@ export function App() {
                 </div>
               </div>
             ) : query.trim() && remoteSearchState === "searching" ? null : (
-              <p className="empty">{query.trim() ? "No conversations match your search." : mailbox === "trash" ? "No trashed messages." : "Inbox zero."}</p>
+              <p className="empty">{query.trim() ? "No conversations match your search." : mailbox === "trash" ? "No trashed messages." : mailbox === "sent" ? "No sent messages." : "Inbox zero."}</p>
             )
           ) : null}
           {!loading && threads.length > 0 && visibleThreads.length === 0 ? (

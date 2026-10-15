@@ -264,7 +264,7 @@ export function saveSelectedTabForAccount(accountId: string | null, splitInboxId
 }
 
 const SELECTED_MAILBOX_BY_ACCOUNT_KEY = "threestrands.settings.selectedMailboxByAccount";
-const MAILBOXES = ["inbox", "allMail", "trash", "drafts", "outbox"] as const;
+const MAILBOXES = ["inbox", "allMail", "sent", "trash", "drafts", "outbox"] as const;
 export type SavedMailbox = typeof MAILBOXES[number];
 type SelectedMailboxByAccount = Record<string, SavedMailbox>;
 

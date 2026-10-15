@@ -52,6 +52,7 @@ export function useMailboxThreads({
   const remoteSearchInFlightRef = useRef(false);
   const fetchMailboxPage = useCallback((box: MailboxKind, accountId: string | undefined, offset: number) => {
     if (box === "allMail") return mailClient.listAllMailPage(accountId, offset, SEARCH_PAGE_SIZE);
+    if (box === "sent") return mailClient.listSentPage(accountId, offset, SEARCH_PAGE_SIZE);
     if (box === "trash") return mailClient.listTrashPage(accountId, offset, SEARCH_PAGE_SIZE);
     if (box === "split" && activeSplitInboxId) {
       return mailClient.listSplitInboxPage(activeSplitInboxId, offset, SEARCH_PAGE_SIZE);

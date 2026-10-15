@@ -34,6 +34,7 @@ function noopContext(): CommandContext {
     editAsNew: () => {},
     openInbox: () => {},
     openAllMail: () => {},
+    openSent: () => {},
     openTrash: () => {},
     openSplitInbox: () => {},
     splitInboxCount: 0,
@@ -430,6 +431,16 @@ describe("command registry", () => {
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "C", shiftKey: true }), "Shift+c")).toBe(true);
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "c" }), "Shift+c")).toBe(false);
     expect(commandMatchesFilter(command!, "send again")).toBe(true);
+  });
+
+  it("goes to Sent with g then s, like the other folders", () => {
+    const command = commands.find((candidate) => candidate.id === "mailbox.sent");
+    expect(command?.keys).toEqual(["g then s"]);
+    expect(command?.enabled(noopContext())).toBe(true);
+    expect(command?.enabled({ ...noopContext(), composerActive: true })).toBe(false);
+    const openSent = vi.fn();
+    void command?.run({ ...noopContext(), openSent });
+    expect(openSent).toHaveBeenCalledTimes(1);
   });
 
   it("offers Edit as New in the Outbox for a delivered send without a conversation selection", () => {

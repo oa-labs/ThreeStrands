@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Draft, OutboxItem, ScheduledSendReport } from "./correspondence";
-import { adjacentOutboxKey, outboxEditAsNewSource, outboxEntries, outboxEntryTime, selectedOutboxEntry } from "./outboxView";
+import { adjacentOutboxKey, isOutgoing, outboxEditAsNewSource, outboxEntries, outboxEntryTime, selectedOutboxEntry, type OutboxEntry } from "./outboxView";
 
 const draft: Draft = {
   id: "draft", revision: 1, account: "me@example.com", mode: "new", sourceId: null, threadId: null,
@@ -8,6 +8,7 @@ const draft: Draft = {
 };
 const item = (id: string, state: OutboxItem["state"], extra: Partial<OutboxItem> = {}): OutboxItem =>
   ({ id, draft, state, deadline: 0, error: null, ...extra });
+const local = (value: OutboxItem): OutboxEntry => ({ key: `local:${value.id}`, kind: "local", item: value });
 const report: ScheduledSendReport = {
   operationId: "remote", ownerInstallationId: "peer", ownerSyncDeviceId: null, ownerNameAtCreation: "MacBook",
   account: "me@example.com", subject: "Remote", scheduledAt: 900, timeZone: "UTC", state: "scheduled",
@@ -15,17 +16,37 @@ const report: ScheduledSendReport = {
 };
 
 describe("outboxEntries", () => {
-  it("lists this computer's sends before peer schedules and hides canceled ones", () => {
+  it("lists this computer's outgoing sends before peer schedules, leaving finished and canceled ones out", () => {
     const entries = outboxEntries(
-      [item("a", "sent"), item("b", "canceled"), item("c", "failed")],
-      [report, { ...report, operationId: "gone", state: "canceled" }],
+      [item("a", "undo_pending"), item("b", "canceled"), item("c", "failed"), item("d", "sent")],
+      [report, { ...report, operationId: "gone", state: "canceled" }, { ...report, operationId: "done", state: "sent" }],
     );
     expect(entries.map((entry) => entry.key)).toEqual(["local:a", "local:c", "peer:peer:remote"]);
   });
 });
 
+describe("isOutgoing", () => {
+  it.each(["scheduled", "overdue", "undo_pending", "ready", "sending", "failed", "uncertain", "unverifiable"] as const)(
+    "keeps a %s send in the Outbox",
+    (state) => expect(isOutgoing(item("a", state))).toBe(true),
+  );
+
+  it("moves a delivered send to Sent once its Sent copy is saved, or when the server keeps its own", () => {
+    expect(isOutgoing(item("a", "sent"))).toBe(false);
+    expect(isOutgoing(item("a", "sent", { sentCopy: null }))).toBe(false);
+    expect(isOutgoing(item("a", "sent", { sentCopy: { state: "done" } }))).toBe(false);
+    expect(isOutgoing(item("a", "canceled"))).toBe(false);
+  });
+
+  it("keeps a delivered send while its Sent copy is saving or could not be saved", () => {
+    expect(isOutgoing(item("a", "sent", { sentCopy: { state: "pending" } }))).toBe(true);
+    expect(isOutgoing(item("a", "sent", { sentCopy: { state: "verify" } }))).toBe(true);
+    expect(isOutgoing(item("a", "sent", { sentCopy: { state: "abandoned", error: "No Sent folder" } }))).toBe(true);
+  });
+});
+
 describe("Outbox selection", () => {
-  const entries = outboxEntries([item("a", "sent"), item("b", "sent"), item("c", "sent")], []);
+  const entries = outboxEntries([item("a", "failed"), item("b", "failed"), item("c", "failed")], []);
 
   it("shows the first row until another is chosen, and again once the chosen row leaves", () => {
     expect(selectedOutboxEntry(entries, null)?.key).toBe("local:a");
@@ -46,12 +67,12 @@ describe("Outbox selection", () => {
 
 describe("outboxEditAsNewSource", () => {
   it("copies only a delivered send whose provider message is known", () => {
-    const [sent] = outboxEntries([item("a", "sent", { providerId: "provider-a" })], []);
+    const sent = local(item("a", "sent", { providerId: "provider-a", sentCopy: { state: "abandoned" } }));
     expect(outboxEditAsNewSource(sent)).toEqual({ messageId: "provider-a", account: "me@example.com" });
     for (const state of ["undo_pending", "failed", "uncertain", "scheduled"] as const) {
-      expect(outboxEditAsNewSource(outboxEntries([item("a", state, { providerId: "provider-a" })], [])[0])).toBeNull();
+      expect(outboxEditAsNewSource(local(item("a", state, { providerId: "provider-a" })))).toBeNull();
     }
-    expect(outboxEditAsNewSource(outboxEntries([item("a", "sent")], [])[0])).toBeNull();
+    expect(outboxEditAsNewSource(local(item("a", "sent")))).toBeNull();
     expect(outboxEditAsNewSource(outboxEntries([], [report])[0])).toBeNull();
     expect(outboxEditAsNewSource(null)).toBeNull();
   });
@@ -59,7 +80,7 @@ describe("outboxEditAsNewSource", () => {
 
 describe("outboxEntryTime", () => {
   it("uses the scheduled time when there is one, otherwise the last save", () => {
-    expect(outboxEntryTime(outboxEntries([item("a", "sent")], [])[0])).toBe(500);
+    expect(outboxEntryTime(local(item("a", "failed")))).toBe(500);
     expect(outboxEntryTime(outboxEntries([item("a", "scheduled", { schedule: { report, canManage: true, visibility: "local" } })], [])[0])).toBe(900);
     expect(outboxEntryTime(outboxEntries([], [report])[0])).toBe(900);
   });

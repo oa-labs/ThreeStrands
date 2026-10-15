@@ -449,13 +449,31 @@ test("the command palette can send from a composer and the outbox records simula
   await page.getByRole("textbox", { name: "Filter Commands" }).fill("Send draft");
   await page.getByRole("button", { name: /Send Draft/ }).click();
   await expect(page.getByRole("dialog", { name: "New Message" })).not.toBeVisible();
-  await page.clock.fastForward(11000);
   await (await openFolders(page)).getByRole("button", { name: "Outbox" }).click();
-  await expect(page.getByRole("listbox", { name: "Outbox" })).toContainText("sent");
+  await expect(page.getByRole("listbox", { name: "Outbox" })).toContainText("Undo available");
   // The Outbox reads like any folder: the selected send opens in the reader.
   const reader = page.getByRole("region", { name: "Outgoing message" });
   await expect(reader.getByRole("heading", { name: "Palette send" })).toBeVisible();
   await expect(reader).toContainText("From demo@example.com");
+  await expect(reader.getByRole("button", { name: "Undo Send", exact: true })).toBeVisible();
+  // Once delivered, the message leaves the Outbox; Sent is where it lives.
+  await page.clock.fastForward(11000);
+  await (await openFolders(page)).getByRole("button", { name: "Outbox" }).click();
+  await expect(page.getByRole("listbox", { name: "Outbox" })).toContainText("No outgoing messages.");
+  await expect(page.getByRole("region", { name: "Outgoing message" })).toHaveCount(0);
+});
+
+test("Sent is a folder in the folder menu and on g then s", async ({ page }) => {
+  await page.goto("/");
+  await (await openFolders(page)).getByRole("button", { name: /Sent/ }).click();
+  await expect(page.getByRole("button", { name: "Choose folder, current folder Sent" })).toBeVisible();
+  await expect(page.getByRole("listbox", { name: "Sent" })).toBeVisible();
+  await page.keyboard.press("g");
+  await page.keyboard.press("i");
+  await expect(page.getByRole("button", { name: "Choose folder, current folder Inbox" })).toBeVisible();
+  await page.keyboard.press("g");
+  await page.keyboard.press("s");
+  await expect(page.getByRole("listbox", { name: "Sent" })).toBeVisible();
 });
 
 test("a recipient badge can be dragged from To into Cc", async ({ page }) => {

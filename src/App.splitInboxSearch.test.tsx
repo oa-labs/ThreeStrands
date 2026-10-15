@@ -21,6 +21,7 @@ describe("split inbox search shortcuts", () => {
   it.each([
     ["Inbox", "listThreadsPage"],
     ["All Mail", "listAllMailPage"],
+    ["Sent", "listSentPage"],
     ["Trash", "listTrashPage"],
     ["Work", "listSplitInboxPage"],
   ] as const)("uses the same page source for initial and subsequent %s results", async (folder, method) => {

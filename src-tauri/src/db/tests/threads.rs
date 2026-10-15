@@ -418,3 +418,95 @@ fn list_trash_only_returns_trashed_threads() {
     let scoped = database.list_trash(Some("personal@example.com")).unwrap();
     assert!(scoped.is_empty());
 }
+
+#[test]
+fn list_sent_page_returns_conversations_with_a_sent_message_newest_activity_first() {
+    let database = database();
+    clear_seed_threads(&database);
+    let sent = |id: &str, thread: &str, date: &str| {
+        let mut message = message(id, thread, date, "body");
+        message.from = "work@example.com".into();
+        message.labels = vec!["SENT".into()];
+        message
+    };
+    // Only received mail: never in Sent.
+    database
+        .upsert_thread(
+            "work@example.com",
+            &[message("m1", "received", "2026-01-05T00:00:00Z", "body")],
+        )
+        .unwrap();
+    // Sent alone, and archived out of the Inbox: still in Sent.
+    database
+        .upsert_thread(
+            "work@example.com",
+            &[sent("m2", "sent-only", "2026-01-02T00:00:00Z")],
+        )
+        .unwrap();
+    // Sent, then a reply arrived later: ordered by that latest activity.
+    database
+        .upsert_thread(
+            "work@example.com",
+            &[
+                sent("m3", "replied", "2026-01-01T00:00:00Z"),
+                message("m4", "replied", "2026-01-03T00:00:00Z", "reply"),
+            ],
+        )
+        .unwrap();
+    // Sent, then trashed: belongs to Trash, not Sent.
+    database
+        .upsert_thread(
+            "work@example.com",
+            &[sent("m5", "trashed", "2026-01-04T00:00:00Z")],
+        )
+        .unwrap();
+    database
+        .mutate_thread(&ThreadMutation::Trash {
+            thread_id: "work@example.com:trashed".into(),
+            value: true,
+        })
+        .unwrap();
+    // Another account's sent mail is scoped out by the account filter.
+    database
+        .upsert_thread(
+            "personal@example.com",
+            &[sent("m6", "elsewhere", "2026-01-06T00:00:00Z")],
+        )
+        .unwrap();
+
+    let page = database
+        .list_sent_page(Some("work@example.com"), 0, 10)
+        .unwrap();
+    let ids: Vec<_> = page.threads.iter().map(|t| t.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["work@example.com:replied", "work@example.com:sent-only"]
+    );
+    assert!(!page.has_more);
+
+    let merged = database.list_sent_page(None, 0, 10).unwrap();
+    assert_eq!(merged.threads[0].id, "personal@example.com:elsewhere");
+    assert_eq!(merged.threads.len(), 3);
+
+    let first = database
+        .list_sent_page(Some("work@example.com"), 0, 1)
+        .unwrap();
+    assert_eq!(first.threads.len(), 1);
+    assert!(first.has_more);
+}
+
+#[test]
+fn a_label_merely_containing_sent_does_not_put_a_conversation_in_sent() {
+    let database = database();
+    clear_seed_threads(&database);
+    let mut lookalike = message("m1", "lookalike", "2026-01-01T00:00:00Z", "body");
+    lookalike.labels = vec!["INBOX".into(), "Label_SENT_ITEMS".into(), "UNSENT".into()];
+    database
+        .upsert_thread("work@example.com", &[lookalike])
+        .unwrap();
+    assert!(database
+        .list_sent_page(None, 0, 10)
+        .unwrap()
+        .threads
+        .is_empty());
+}

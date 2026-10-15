@@ -99,7 +99,7 @@ export function useThreadMutations({
     // it would from the plain Inbox.
     const removesFromView = mailbox === "trash"
       ? template.kind === "trash" && !template.value
-      : mailbox === "allMail"
+      : mailbox === "allMail" || mailbox === "sent"
         ? template.kind === "trash" && template.value
         : (template.kind === "archive" || template.kind === "trash" || template.kind === "spam")
             && template.value
