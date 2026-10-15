@@ -578,6 +578,17 @@ impl Database {
                     });
                 }
                 d.attachments = forward_attachments(&source, &normalized)?;
+                // A forward joins the source conversation, as in Gmail, so the
+                // sent copy and replies to it read alongside the original.
+                // It stays a forward: no recipients are filled in, and a source
+                // without a Message-ID still forwards, as a new conversation.
+                let id = header(part, "Message-ID").trim().trim_matches(['<', '>']);
+                if !id.is_empty() {
+                    d.reply_id = Some(id.into());
+                    d.thread_id = Some(source.thread_id);
+                    d.references = reference_ids(header(part, "References"));
+                    d.references.push(id.into());
+                }
             } else {
                 let reply = header(part, "Reply-To");
                 let mut mine: HashSet<String> = identities
@@ -4280,7 +4291,7 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn reply_all_excludes_self_preserves_cc_and_forward_is_not_a_reply() {
+    fn reply_all_excludes_self_preserves_cc_and_forward_joins_the_thread() {
         let db = database();
         let source = serde_json::json!({"id":"source","threadId":"thread","payload":{"mimeType":"text/plain","headers":[{"name":"From","value":"Other <other@example.com>"},{"name":"Reply-To","value":"reply@example.com"},{"name":"To","value":"you@example.com, colleague@example.com"},{"name":"Cc","value":"cc@example.com, colleague@example.com"},{"name":"Subject","value":"Topic"},{"name":"Message-ID","value":"<source@example.com>"}],"body":{"data":URL_SAFE_NO_PAD.encode("Hello")}}});
         db.connection()
@@ -4299,10 +4310,65 @@ mod tests {
         let forward = db
             .create_draft("forward", Some("source".into()), "you@example.com", &[])
             .unwrap();
+        // A forward joins the source conversation but is still not a reply:
+        // nobody is addressed for the user.
         assert!(forward.to.is_empty());
-        assert!(forward.reply_id.is_none());
-        assert!(forward.thread_id.is_none());
+        assert!(forward.cc.is_empty());
+        assert_eq!(forward.reply_id, Some("source@example.com".into()));
+        assert_eq!(forward.references, vec!["source@example.com".to_string()]);
+        assert_eq!(forward.thread_id, Some("thread".into()));
         assert_eq!(forward.subject, "Fwd: Topic");
+        let root = std::env::temp_dir().join(Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&root).unwrap();
+        let mut addressed = forward.clone();
+        addressed.to = "colleague@example.com".into();
+        let raw = build_mime(&addressed, &[], None, None, "forward-id", &root).unwrap();
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        assert_eq!(parsed.in_reply_to().as_text(), Some("source@example.com"));
+        assert_eq!(parsed.references().as_text(), Some("source@example.com"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn forward_extends_the_reference_chain_and_survives_a_missing_message_id() {
+        let db = database();
+        for (id, headers, thread) in [
+            (
+                "chained",
+                serde_json::json!([{"name":"From","value":"other@example.com"},{"name":"Subject","value":"Topic"},{"name":"Message-ID","value":"<second@example.com>"},{"name":"References","value":"<first@example.com>"}]),
+                Some("thread"),
+            ),
+            (
+                "anonymous",
+                serde_json::json!([{"name":"From","value":"other@example.com"},{"name":"Subject","value":"Topic"}]),
+                None,
+            ),
+        ] {
+            let source = serde_json::json!({"id":id,"threadId":"thread","payload":{"mimeType":"text/plain","headers":headers,"body":{"data":URL_SAFE_NO_PAD.encode("Hello")}}});
+            db.connection()
+                .unwrap()
+                .execute(
+                    "INSERT INTO message_metadata(id, payload) VALUES (?1,?2)",
+                    params![id, source.to_string()],
+                )
+                .unwrap();
+            let forward = db
+                .create_draft("forward", Some(id.into()), "you@example.com", &[])
+                .unwrap();
+            assert_eq!(forward.thread_id.as_deref(), thread, "{id}");
+            if thread.is_some() {
+                assert_eq!(forward.reply_id, Some("second@example.com".into()));
+                assert_eq!(
+                    forward.references,
+                    vec!["first@example.com".to_string(), "second@example.com".to_string()]
+                );
+            } else {
+                // No Message-ID to point at: it still forwards, as a new conversation.
+                assert!(forward.reply_id.is_none());
+                assert!(forward.references.is_empty());
+                assert!(forward.body.contains("Forwarded message"));
+            }
+        }
     }
 
     #[test]

@@ -145,7 +145,8 @@ describe("useCorrespondence", () => {
     expect(createDraft).toHaveBeenCalledWith("new");
 
     act(() => result.current.context.openInbox());
-    expect(result.current.activeDraft).toBeNull();
+    // Leaving the composer saves pending edits first, so it closes once that save settles.
+    await waitFor(() => expect(result.current.activeDraft).toBeNull());
     act(() => result.current.context.reply());
     await waitFor(() => expect(createDraft).toHaveBeenLastCalledWith("reply", "message-1", "account@example.com"));
   });

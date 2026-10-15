@@ -1437,6 +1437,30 @@ describe("Drafts folder", () => {
     selectFolder("Inbox");
     expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
   });
+
+  it("switches folders from the menu while a draft is open and keeps unsaved edits", async () => {
+    await mailClient.createDraft("new");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    selectFolder("Drafts");
+    fireEvent.click(await screen.findByRole("button", { name: /\(no subject\)/ }));
+    const subject = await screen.findByRole("textbox", { name: "Subject" });
+    fireEvent.click(subject);
+    fireEvent.change(subject, { target: { value: "Unsaved plans" } });
+
+    selectFolder("Outbox");
+    expect(await screen.findByRole("heading", { name: /outgoing$/ })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Subject" })).not.toBeInTheDocument();
+
+    selectFolder("Drafts");
+    expect(await screen.findByRole("button", { name: /Unsaved plans/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Unsaved plans/ }));
+    await screen.findByRole("textbox", { name: "Subject" });
+
+    selectFolder("Inbox");
+    expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Subject" })).not.toBeInTheDocument());
+  });
 });
 
 describe("foreground mail refresh", () => {

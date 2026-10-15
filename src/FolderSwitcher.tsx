@@ -6,12 +6,14 @@ import { useEscapeDismiss } from "./useEscapeDismiss";
 import { ICON_SIZE } from "./iconSizes";
 
 const FOLDER_OPTIONS = [
-  { id: "inbox", label: "Inbox", commandId: "mailbox.inbox", shortcut: "G I" },
-  { id: "allMail", label: "All Mail", commandId: "mailbox.allMail", shortcut: "G A" },
-  { id: "drafts", label: "Drafts", commandId: "drafts.open", shortcut: "G D" },
-  { id: "outbox", label: "Outbox", commandId: "outbox.open", shortcut: "G O" },
-  { id: "trash", label: "Trash", commandId: "mailbox.trash", shortcut: "G T" },
+  { id: "inbox", label: "Inbox", shortcut: "G I" },
+  { id: "allMail", label: "All Mail", shortcut: "G A" },
+  { id: "drafts", label: "Drafts", shortcut: "G D" },
+  { id: "outbox", label: "Outbox", shortcut: "G O" },
+  { id: "trash", label: "Trash", shortcut: "G T" },
 ] as const;
+
+export type FolderId = (typeof FOLDER_OPTIONS)[number]["id"];
 
 export function FolderSwitcher({
   selected,
@@ -24,7 +26,7 @@ export function FolderSwitcher({
   inboxUnreadCount: number;
   draftCount: number;
   outboxCount: number;
-  onSelect(commandId: string): void;
+  onSelect(folder: FolderId): void;
 }) {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLDivElement>(null);
@@ -44,7 +46,7 @@ export function FolderSwitcher({
     return () => document.removeEventListener("mousedown", closeOnOutsideClick);
   }, [open]);
 
-  const countFor = (id: (typeof FOLDER_OPTIONS)[number]["id"]) => {
+  const countFor = (id: FolderId) => {
     if (id === "inbox") return inboxUnreadCount;
     if (id === "drafts") return draftCount;
     if (id === "outbox") return outboxCount;
@@ -76,7 +78,7 @@ export function FolderSwitcher({
                 aria-current={selected === option.id ? "page" : undefined}
                 onClick={() => {
                   setOpen(false);
-                  onSelect(option.commandId);
+                  onSelect(option.id);
                 }}
               >
                 <span className="folder-menu-label">

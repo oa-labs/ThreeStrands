@@ -12,10 +12,12 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - For newsletters and other bulk mail, the side panel now lists the sender's earlier emails in **Recent emails** instead of a separate card, with **Unsubscribe**, **Mute…**, and **New Split…** as small links at the bottom so they don't compete with the email you're reading.
 - Buttons that sit side by side, such as **Add Members** and the delete button on a contact group, now line up with each other.
 - When adding members to a group, the people you've chosen now appear inside the search field, the search clears after each pick, and Backspace removes the last person.
+- A message you **Forward** now stays in the conversation it came from, so you can see what you sent on and read your coworkers' replies alongside the original thread.
 
 ### Fixed
 - Tables pasted from a spreadsheet, such as a price list, no longer show up as a tall blank box with nothing inside.
 - Adding members to a group no longer offers to create a new contact for an address that already belongs to someone in your address book; it picks that person instead. Typing the address of someone already in the group now says so rather than adding them again.
+- The folder menu (Inbox, Drafts, Outbox, and the rest) works again while a draft is open, and switching folders saves what you've typed first.
 
 ## 0.125.4 — 2026-10-15
 

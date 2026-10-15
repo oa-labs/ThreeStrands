@@ -111,10 +111,11 @@ export function demoCorrespondence(getSourceThread: (messageId: string) => Promi
           }
         } else {
           d.to = message.sender;
-          d.threadId = detail.thread.providerThreadId;
-          d.replyId = `${sourceId}@threestrands.local`;
-          d.references = [d.replyId];
         }
+        // Replies and forwards both join the source conversation; a forward just addresses nobody.
+        d.threadId = detail.thread.providerThreadId;
+        d.replyId = `${sourceId}@threestrands.local`;
+        d.references = [d.replyId];
       }
       store.drafts.push(d); write(store); return d;
     },

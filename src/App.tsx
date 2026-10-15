@@ -704,7 +704,15 @@ export function App() {
                       inboxUnreadCount={mailboxUnreadCounts.inbox}
                       draftCount={correspondence.draftCount}
                       outboxCount={correspondence.outboxCount}
-                      onSelect={(commandId) => executeById(commandId)}
+                      onSelect={(folder) => {
+                        // A pointer choice in the menu is explicit, so it works
+                        // while a draft is open; the composer saves on the way out.
+                        if (folder === "inbox") context.openInbox();
+                        else if (folder === "allMail") context.openAllMail();
+                        else if (folder === "drafts") context.openDrafts();
+                        else if (folder === "outbox") context.openOutbox();
+                        else context.openTrash();
+                      }}
                     />
                     <span className="eyebrow-account">· {activeAccountId ?? "All accounts"}</span>
                   </div>

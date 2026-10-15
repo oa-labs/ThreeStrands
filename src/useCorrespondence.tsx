@@ -182,12 +182,18 @@ export function useCorrespondence(
   useEffect(() => {
     if (active && activeThreadId && selectedThreadId !== activeThreadId) editor.current?.close();
   }, [active, activeThreadId, selectedThreadId]);
+  // Saves pending edits before the composer unmounts, so leaving a draft for
+  // another folder never drops what was typed since the last autosave.
+  const closeComposer = useCallback(async () => {
+    await editor.current?.flush();
+    setActive(null); setActiveThreadId(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null);
+  }, []);
   // Called when navigating to the inline Drafts/Outbox view: makes sure
   // whatever was being edited is saved and the lists are current.
   const openList = useCallback(async () => {
-    try { await editor.current?.flush(); setActive(null); setActiveThreadId(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null); await refresh(); }
+    try { await closeComposer(); await refresh(); }
     catch (e) { setError(String(e)); }
-  }, [refresh]);
+  }, [closeComposer, refresh]);
   const undo = useCallback(async (id?: string) => {
     const target = id ?? outbox.find((o) => ["undo_pending", "ready"].includes(o.state))?.id;
     if (!target) return;
@@ -267,12 +273,8 @@ export function useCorrespondence(
   const forward = useCallback((messageId?: string, selectedQuote?: string) => { void start("forward", messageId, { selectedQuote }); }, [start]);
   const editAsNew = useCallback((messageId: string) => { void start("editAsNew", messageId); }, [start]);
   const openInbox = useCallback(() => {
-    setActive(null);
-    setActiveThreadId(null);
-    setActiveAvailabilityText(null);
-    setActiveReplyAssistInstruction(null);
-    setActiveFollowUpTaskId(null);
-  }, []);
+    void closeComposer().catch((e: unknown) => setError(String(e)));
+  }, [closeComposer]);
   const openDrafts = useCallback(() => { void openList(); }, [openList]);
   const openOutbox = useCallback(() => { void openList(); }, [openList]);
   const scheduleDraft = useCallback(() => editor.current?.schedule(), []);

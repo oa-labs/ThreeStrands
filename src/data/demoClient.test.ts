@@ -260,6 +260,8 @@ describe("showcase dataset", () => {
     expect(forwarded.forwardedContent?.html).toContain(source.bodyHtml);
     expect(forwarded.forwardedContent?.text).toContain(source.bodyText);
     expect(forwarded.to).toBe("");
+    expect(forwarded.threadId).toBeTruthy();
+    expect(forwarded.replyId).toBe(`${source.id}@threestrands.local`);
     const saved = await client.saveDraft({ ...forwarded, body: "See below", bodyHtml: "<b>See below</b>" });
     expect(await client.createDraft("forward", source.id)).toEqual(saved);
     await client.discardDraft(saved.id);
