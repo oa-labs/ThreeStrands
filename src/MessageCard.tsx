@@ -1,7 +1,7 @@
 import { AttachmentChip } from "./AttachmentChip";
 import { AttachmentThumbnail } from "./AttachmentThumbnail";
 import { thumbnailAttachmentIds } from "./attachmentThumbnails";
-import { Check, ChevronDown, ChevronUp, Copy, Forward, Paperclip, Reply, ReplyAll } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Copy, CopyPlus, Forward, Paperclip, Reply, ReplyAll } from "lucide-react";
 import { memo, useCallback, useContext, useMemo, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { HoverTooltip } from "./AppChrome";
 import { CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachment";
@@ -19,6 +19,7 @@ import type { FontFamily } from "./settings";
 import { formatMailTimestamp } from "./threadPresentation";
 import { ICON_SIZE } from "./iconSizes";
 import { selectedMessageQuote } from "./selectedMessageQuote";
+import { formatShortcutStep } from "./shortcutCatalog";
 
 export type MessageResponseKind = "reply" | "replyAll" | "forward";
 
@@ -41,6 +42,8 @@ type MessageCardProps = {
   onActivate: (messageId: string) => void;
   onToggle: (messageId: string, isExpanded: boolean) => void;
   onRespond: (kind: MessageResponseKind, messageId: string) => void;
+  /** Starts an unaddressed new message from this one; offered only on messages an account sent. */
+  onEditAsNew?: (messageId: string) => void;
   onRegisterNode: (messageId: string, isLatest: boolean, node: HTMLElement | null) => void;
   onImageClick: (src: string) => void;
   onNotice: (message: string) => void;
@@ -68,6 +71,7 @@ export const MessageCard = memo(function MessageCard({
   onActivate,
   onToggle,
   onRespond,
+  onEditAsNew,
   onRegisterNode,
   onImageClick,
   onNotice,
@@ -186,6 +190,18 @@ export const MessageCard = memo(function MessageCard({
                 <Forward size={ICON_SIZE.sm} />
               </button>
             </HoverTooltip>
+            {senderAccount && onEditAsNew ? (
+              <HoverTooltip label="Edit as new" shortcut={formatShortcutStep("Shift+c")} placement="bottom">
+                <button
+                  type="button"
+                  className="btn-icon btn-icon-sm"
+                  aria-label="Edit as New"
+                  onClick={() => onEditAsNew(message.id)}
+                >
+                  <CopyPlus size={ICON_SIZE.sm} />
+                </button>
+              </HoverTooltip>
+            ) : null}
           </div>
         )}
         <time>{formatMailTimestamp(message.sentAt)}</time>

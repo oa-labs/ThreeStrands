@@ -26,6 +26,8 @@ const context = (overrides: Partial<CommandContext> = {}): CommandContext => ({
   reply: vi.fn(),
   replyAll: vi.fn(),
   forward: vi.fn(),
+  canEditAsNew: false,
+  editAsNew: vi.fn(),
   openInbox: vi.fn(),
   openAllMail: vi.fn(),
   openTrash: vi.fn(),

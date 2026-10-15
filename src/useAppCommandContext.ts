@@ -4,6 +4,7 @@ import type { Message } from "./domain";
 import type { MutationTemplate } from "./threadMutations";
 import { adjacentContactsView } from "./contactsView";
 import { selectedMessageQuote } from "./selectedMessageQuote";
+import { editAsNewSource } from "./editAsNew";
 import { saveSelectedMailboxForAccount } from "./settings";
 import { scrollBehavior } from "./useReaderActions";
 import type { SettingsSection } from "./settingsPanelTypes";
@@ -67,7 +68,7 @@ export function useAppCommandContext({
   correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads, runBrief,
   recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, mutateIds, view, ui,
 }: Options) {
-  const { messageStackRef, setMessageExpansionOverrides } = reader;
+  const { messageStackRef, setMessageExpansionOverrides, activeMessageIdRef } = reader;
   const {
     rightWorkspace, setRightWorkspace, setContactsView, openToday, openTasks, openTasksView,
     openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView,
@@ -203,6 +204,11 @@ export function useAppCommandContext({
       const quote = selectedMessageQuote();
       correspondence.context.forward(quote?.messageId, quote?.text);
     },
+    canEditAsNew: editAsNewSource(displayedMessages, selected?.accountId) !== null,
+    editAsNew: () => {
+      const source = editAsNewSource(displayedMessages, selected?.accountId, activeMessageIdRef.current);
+      if (source) correspondence.context.editAsNew(source.id);
+    },
     toggleCheckedSelected: () => {
       if (selected) toggleChecked(selected.id);
     },
@@ -275,7 +281,7 @@ export function useAppCommandContext({
     mutateIds, openFolder, selectedIndex, visibleThreads, setSelectedId, selectAdjacentMessage,
     taskWorkspaceRef, setContactsView, latestMessage, setUnsubscribeMessageId, labelTargetIds,
     recordTriageEvent, includeArchived, toggleChecked, setMessageExpansionOverrides,
-    messageStackRef, runBrief, isTabbedMailbox, setSearchOpen, setMailbox, activeAccountId,
+    messageStackRef, activeMessageIdRef, runBrief, isTabbedMailbox, setSearchOpen, setMailbox, activeAccountId,
     setActiveSplitInboxId, setLabelTargetIds, setPaletteOpen, setShortcutHelpOpen, setGettingStartedOpen, openSettingsAt,
     adjustFontScale, undoLastAction,
   ]);

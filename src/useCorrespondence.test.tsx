@@ -181,6 +181,53 @@ describe("useCorrespondence", () => {
     expect(saveDraft.mock.calls[0][0].forwardedContent?.text).toBe(header + "> One line\n> Another line");
   });
 
+  it("edits a sent message as new: saves only sanitized HTML and fetches its inline images first", async () => {
+    vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);
+    const inline = { id: "map", name: "map.png", size: 3, mime: "image/png", ready: false, messageId: "sent", providerId: null, inline: true, contentId: "map@example.com" };
+    const file = { ...inline, id: "menu", name: "menu.pdf", mime: "application/pdf", inline: false, contentId: null };
+    const createDraftFromSent = vi.spyOn(mailClient, "createDraftFromSent").mockResolvedValue({
+      ...draft, revision: 0, subject: "Dinner on Saturday", body: "Join us Saturday",
+      bodyHtml: "<p onclick=\"steal()\">Join us <strong>Saturday</strong></p><script>steal()</script><img src=\"https://tracker.example/pixel.gif\"><img src=\"cid:map@example.com\"><a href=\"javascript:steal()\">RSVP</a>",
+      attachments: [inline, file],
+    });
+    const saveDraft = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    const fetchAttachment = vi.spyOn(mailClient, "fetchAttachment").mockImplementation(async (_id, attachmentId) => ({
+      ...draft, revision: 2, attachments: [{ ...inline, ready: attachmentId === "map" }, file],
+    }));
+    const createDraft = vi.spyOn(mailClient, "createDraft");
+    const { result } = renderHook(() => useCorrespondence([], "latest", "account@example.com", ...snippetArgs, "thread-1"));
+
+    act(() => result.current.context.editAsNew("sent"));
+    await waitFor(() => expect(result.current.activeDraft?.revision).toBe(2));
+    expect(createDraftFromSent).toHaveBeenCalledWith("sent", "account@example.com");
+    expect(createDraft).not.toHaveBeenCalled();
+    const saved = saveDraft.mock.calls[0][0].bodyHtml ?? "";
+    expect(saved).toContain("Join us <strong>Saturday</strong>");
+    expect(saved).toContain('src="cid:map@example.com"');
+    expect(saved).not.toMatch(/script|onclick|tracker\.example|javascript:/);
+    // Only the inline image the body shows downloads before opening; the
+    // composer downloads ordinary attachments once it is open.
+    expect(fetchAttachment.mock.calls.map(([, attachmentId]) => attachmentId)).toEqual(["map"]);
+    expect(result.current.activeDraft?.to).toBe("");
+  });
+
+  it("still opens an Edit as New copy when its inline image cannot download", async () => {
+    vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const inline = { id: "map", name: "map.png", size: 3, mime: "image/png", ready: false, messageId: "sent", providerId: null, inline: true, contentId: "map@example.com" };
+    vi.spyOn(mailClient, "createDraftFromSent").mockResolvedValue({ ...draft, revision: 0, subject: "Picnic", body: "Hi", bodyHtml: "", attachments: [inline] });
+    const saveDraft = vi.spyOn(mailClient, "saveDraft");
+    vi.spyOn(mailClient, "fetchAttachment").mockRejectedValue(new Error("offline"));
+    const { result } = renderHook(() => useCorrespondence([], "latest", "account@example.com", ...snippetArgs, "thread-1"));
+
+    act(() => result.current.context.editAsNew("sent"));
+    await waitFor(() => expect(result.current.activeDraft?.subject).toBe("Picnic"));
+    // A plain-text copy has no HTML to sanitize, so nothing extra is saved.
+    expect(saveDraft).not.toHaveBeenCalled();
+  });
+
   it("cancels the pending outbox send and refreshes the lists", async () => {
     // Fake timers keep the one-second outbox poll from firing on its own, so
     // every listOutbox call below comes from a load or an explicit refresh.

@@ -228,6 +228,12 @@ pub enum Request {
         /// back to the most-recently-used account.
         account: Option<String>,
     },
+    /// "Edit as New": a new, unaddressed draft copied from a message the
+    /// account sent.
+    CreateFromSent {
+        source_id: String,
+        account: String,
+    },
     SetAccount {
         id: String,
         account: String,
@@ -627,6 +633,76 @@ impl Database {
                 // Gmail requires matching subjects for an existing thread.
             }
         }
+        self.connection()?
+            .execute(
+                "INSERT INTO drafts VALUES (?1,?2,?3)",
+                params![d.id, d.revision, json(&d)?],
+            )
+            .map_err(error)?;
+        Ok(d)
+    }
+    /// "Edit as New": an unaddressed new message that starts from the
+    /// subject, body, and attachments of a message this account sent. Only
+    /// the account's own messages qualify, so another sender's HTML never
+    /// becomes editable authored content. Recipients are left empty because
+    /// the copy goes to new people, and every call makes a separate draft so
+    /// the same message can be sent on to several people one at a time.
+    pub fn create_draft_from_sent(
+        &self,
+        source_id: &str,
+        account: &str,
+        identities: &[crate::provider::SendingIdentity],
+    ) -> Result<Draft, String> {
+        let raw = self
+            .message_metadata(source_id)
+            .ok()
+            .flatten()
+            .ok_or_else(|| {
+                "This message is unavailable offline. Refresh mail while connected first."
+                    .to_string()
+            })?;
+        let source: RawMessage = serde_json::from_str(&raw).map_err(error)?;
+        let normalized = crate::mime::normalize(&source)?;
+        let mut own: Vec<String> = identities
+            .iter()
+            .map(crate::provider::imap::identity_normalized)
+            .collect();
+        own.insert(0, account.trim().to_ascii_lowercase());
+        let sender = addresses(header(&source.payload, "From"))?
+            .into_iter()
+            .map(|(_, address)| address.to_ascii_lowercase())
+            .find(|address| own.contains(address))
+            .ok_or("Edit as New works only on messages you sent")?;
+        // Keep the identity the original went out from; the primary address
+        // stays canonical as `from = None`, as everywhere else.
+        let from = identities
+            .iter()
+            .position(|identity| crate::provider::imap::identity_normalized(identity) == sender)
+            .filter(|&index| index != 0)
+            .map(|index| identities[index].address.clone());
+        let d = Draft {
+            id: Uuid::new_v4().to_string(),
+            revision: 0,
+            account: account.to_string(),
+            from,
+            mode: "new".into(),
+            source_id: None,
+            thread_id: None,
+            reply_id: None,
+            references: vec![],
+            to: String::new(),
+            cc: String::new(),
+            bcc: String::new(),
+            subject: normalized.subject.clone(),
+            body: normalized.body_text.clone(),
+            // The composer sanitizes this before it becomes editable and
+            // saves the sanitized copy, so what sends is what was shown.
+            body_html: normalized.body_html.clone(),
+            forwarded_content: None,
+            follow_up_task_id: None,
+            attachments: forward_attachments(&source, &normalized)?,
+            updated_at: now(),
+        };
         self.connection()?
             .execute(
                 "INSERT INTO drafts VALUES (?1,?2,?3)",
@@ -1228,6 +1304,41 @@ impl Correspondence {
         })?;
         auth.provider(&self.database).map_err(error)
     }
+    /// Caches a draft's source message so drafting from it works offline later.
+    async fn ensure_source_metadata(&self, id: &str, account: &str) -> Result<(), String> {
+        let missing = self
+            .database
+            .connection()?
+            .query_row(
+                "SELECT count(*) FROM message_metadata WHERE id=?1",
+                [id],
+                |r| r.get::<_, i64>(0),
+            )
+            .map_err(error)?
+            == 0;
+        if missing {
+            let source = self
+                .provider_for(account)
+                .await?
+                .fetch_message(id)
+                .await
+                .map_err(error)?;
+            self.database.put_message_metadata(id, &json(&source)?)?;
+        }
+        Ok(())
+    }
+    /// The account's sending identities for drafting from an existing message.
+    /// An unavailable provider (disconnected account, locked keychain) must
+    /// not stop a draft from an already-cached message from opening. Fall
+    /// back to the primary identity (`from = None`); `queue` re-resolves the
+    /// identity list from the provider and rejects a `from` that is not on
+    /// it, so nothing can send as the wrong address.
+    async fn source_identities(&self, account: &str) -> Vec<crate::provider::SendingIdentity> {
+        match self.provider_for(account).await {
+            Ok(provider) => provider.identities(account).await.unwrap_or_default(),
+            Err(_) => Vec::new(),
+        }
+    }
     /// The account the compose identity bootstrap runs against. Not the only
     /// account drafts can send from — see `auth_for`.
     async fn primary_auth(&self) -> Option<AccountAuth> {
@@ -1364,25 +1475,7 @@ impl Correspondence {
                     None => return Err("Reopen the thread before replying".into()),
                 };
                 if let Some(id) = &source_id {
-                    let missing = self
-                        .database
-                        .connection()?
-                        .query_row(
-                            "SELECT count(*) FROM message_metadata WHERE id=?1",
-                            [id],
-                            |r| r.get::<_, i64>(0),
-                        )
-                        .map_err(error)?
-                        == 0;
-                    if missing {
-                        let source = self
-                            .provider_for(&resolved_account)
-                            .await?
-                            .fetch_message(id)
-                            .await
-                            .map_err(error)?;
-                        self.database.put_message_metadata(id, &json(&source)?)?;
-                    }
+                    self.ensure_source_metadata(id, &resolved_account).await?;
                 }
                 // The account's sending identities, so a reply/forward from a
                 // multi-identity account starts on the identity the original
@@ -1394,20 +1487,7 @@ impl Correspondence {
                 let identities = if mode == "new" {
                     Vec::new()
                 } else {
-                    // An unavailable provider (disconnected account, locked
-                    // keychain) must not stop a reply to an already-cached
-                    // message from opening, as it never did. Fall back to the
-                    // primary identity (`from = None`); `queue` re-resolves
-                    // the identity list from the provider and rejects a
-                    // `from` that is not on it, so nothing can send as the
-                    // wrong address.
-                    match self.provider_for(&resolved_account).await {
-                        Ok(provider) => provider
-                            .identities(&resolved_account)
-                            .await
-                            .unwrap_or_default(),
-                        Err(_) => Vec::new(),
-                    }
+                    self.source_identities(&resolved_account).await
                 };
                 let draft = self
                     .database
@@ -1415,6 +1495,14 @@ impl Correspondence {
                 if mode == "new" {
                     let _ = self.database.set_compose_identity(&resolved_account);
                 }
+                Ok(serde_json::to_value(draft).map_err(error)?)
+            }
+            CreateFromSent { source_id, account } => {
+                self.ensure_source_metadata(&source_id, &account).await?;
+                let identities = self.source_identities(&account).await;
+                let draft = self
+                    .database
+                    .create_draft_from_sent(&source_id, &account, &identities)?;
                 Ok(serde_json::to_value(draft).map_err(error)?)
             }
             SetAccount { id, account } => Ok(serde_json::to_value(
@@ -4308,6 +4396,97 @@ mod tests {
         let raw = build_mime(&old, &[], None, None, "legacy", Path::new(".")).unwrap();
         let parsed = MessageParser::default().parse(&raw).unwrap();
         assert_eq!(parsed.body_text(0).unwrap(), draft.body);
+    }
+
+    #[test]
+    fn edit_as_new_copies_a_sent_message_into_an_unaddressed_new_thread() {
+        // Two structurally different sent messages: HTML with inline and
+        // regular attachments, and plain text only.
+        let db = database();
+        let html = "<p>Join us <strong>Saturday</strong></p><img src=\"cid:map@example.com\">";
+        let rich = serde_json::json!({"id":"sent-rich","threadId":"thread","payload":{"mimeType":"multipart/mixed","headers":[{"name":"From","value":"You <YOU@example.com>"},{"name":"To","value":"guest@example.com"},{"name":"Cc","value":"cohost@example.com"},{"name":"Subject","value":"Dinner on Saturday"},{"name":"Message-ID","value":"<sent-rich@example.com>"}],"parts":[{"mimeType":"multipart/related","parts":[{"mimeType":"text/html","body":{"data":URL_SAFE_NO_PAD.encode(html)}},{"mimeType":"image/png","headers":[{"name":"Content-ID","value":"<map@example.com>"},{"name":"Content-Disposition","value":"inline"}],"body":{"data":URL_SAFE_NO_PAD.encode("png"),"size":3}}]},{"mimeType":"application/pdf","filename":"menu.pdf","body":{"attachmentId":"menu-part","size":4}}]}});
+        let plain = serde_json::json!({"id":"sent-plain","threadId":"thread-2","payload":{"mimeType":"text/plain","headers":[{"name":"From","value":"you@example.com"},{"name":"To","value":"guest@example.com"},{"name":"Subject","value":"Book club"},{"name":"Message-ID","value":"<sent-plain@example.com>"}],"body":{"data":URL_SAFE_NO_PAD.encode("Bring the book.")}}});
+        db.put_message_metadata("sent-rich", &rich.to_string()).unwrap();
+        db.put_message_metadata("sent-plain", &plain.to_string()).unwrap();
+
+        let draft = db.create_draft_from_sent("sent-rich", "you@example.com", &[]).unwrap();
+        assert_eq!(draft.mode, "new");
+        assert_eq!(draft.subject, "Dinner on Saturday");
+        assert!(draft.body_html.contains("Join us <strong>Saturday</strong>"));
+        assert_eq!((draft.to.as_str(), draft.cc.as_str(), draft.bcc.as_str()), ("", "", ""));
+        assert_eq!(draft.source_id, None);
+        assert_eq!(draft.thread_id, None);
+        assert_eq!(draft.reply_id, None);
+        assert!(draft.references.is_empty());
+        assert!(draft.forwarded_content.is_none());
+        assert_eq!(draft.from, None);
+        assert_eq!(draft.attachments.len(), 2);
+        assert!(draft.attachments.iter().all(|a| !a.ready && a.message_id.as_deref() == Some("sent-rich")));
+        let inline = draft.attachments.iter().find(|a| a.inline).unwrap();
+        assert_eq!(inline.content_id.as_deref(), Some("map@example.com"));
+        let menu = draft.attachments.iter().find(|a| !a.inline).unwrap();
+        assert_eq!((menu.name.as_str(), menu.provider_id.as_deref()), ("menu.pdf", Some("menu-part")));
+
+        // Each use is its own draft, so a copy can go to several people separately.
+        let again = db.create_draft_from_sent("sent-rich", "you@example.com", &[]).unwrap();
+        assert_ne!(again.id, draft.id);
+        assert_ne!(again.attachments[0].id, draft.attachments[0].id);
+
+        let text = db.create_draft_from_sent("sent-plain", "you@example.com", &[]).unwrap();
+        assert_eq!(text.subject, "Book club");
+        assert_eq!(text.body.trim_end(), "Bring the book.");
+        assert!(text.body_html.trim().is_empty());
+        assert!(text.attachments.is_empty());
+
+        // The copy sends as a fresh message, not a reply.
+        let mut ready = text;
+        ready.to = "newguest@example.com".into();
+        let raw = build_mime(&ready, &[], None, None, "edit-as-new", Path::new(".")).unwrap();
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        assert_eq!(parsed.subject(), Some("Book club"));
+        assert!(parsed.in_reply_to().as_text().is_none());
+        assert!(parsed.references().as_text().is_none());
+    }
+
+    #[test]
+    fn edit_as_new_refuses_messages_from_other_senders() {
+        let db = database();
+        for (id, from) in [("incoming", "Other <other@example.com>"), ("lookalike", "you@example.com.evil.test")] {
+            let source = serde_json::json!({"id":id,"threadId":"thread","payload":{"mimeType":"text/html","headers":[{"name":"From","value":from},{"name":"To","value":"you@example.com"},{"name":"Subject","value":"Invoice"}],"body":{"data":URL_SAFE_NO_PAD.encode("<p>Pay here</p>")}}});
+            db.put_message_metadata(id, &source.to_string()).unwrap();
+            let refused = db.create_draft_from_sent(id, "you@example.com", &[]).unwrap_err();
+            assert_eq!(refused, "Edit as New works only on messages you sent", "{id}");
+        }
+        assert!(db.drafts().unwrap().is_empty(), "a refusal must not leave a draft behind");
+    }
+
+    #[test]
+    fn edit_as_new_keeps_the_identity_the_original_was_sent_from() {
+        let db = imap_database();
+        let identities = db.account_sending_identities("me@proton.me").unwrap();
+        for (id, sender, expected) in [
+            ("from-alias", "Work <WORK@proton.me>", Some("work@proton.me")),
+            ("from-primary", "me@proton.me", None),
+        ] {
+            let source = serde_json::json!({"id":id,"threadId":"thread","payload":{"mimeType":"text/plain","headers":[{"name":"From","value":sender},{"name":"To","value":"friend@example.com"},{"name":"Subject","value":"Topic"}],"body":{"data":URL_SAFE_NO_PAD.encode("Hello")}}});
+            db.put_message_metadata(id, &source.to_string()).unwrap();
+            let draft = db.create_draft_from_sent(id, "me@proton.me", &identities).unwrap();
+            assert_eq!(draft.from.as_deref(), expected, "{id}");
+            assert!(draft.to.is_empty(), "{id}");
+        }
+    }
+
+    #[tokio::test]
+    async fn edit_as_new_opens_from_a_cached_message_while_its_account_is_not_connected() {
+        let service = service();
+        let source = serde_json::json!({"id":"cached-sent","threadId":"t","payload":{"mimeType":"text/plain","headers":[{"name":"From","value":"you@example.com"},{"name":"To","value":"friend@example.com"},{"name":"Subject","value":"Picnic"}],"body":{"data":URL_SAFE_NO_PAD.encode("Hello")}}});
+        service.database.put_message_metadata("cached-sent", &source.to_string()).unwrap();
+        let value = service
+            .request(Request::CreateFromSent { source_id: "cached-sent".into(), account: "you@example.com".into() })
+            .await
+            .expect("a cached sent message must open as a new draft without a connected provider");
+        let draft: Draft = serde_json::from_value(value).unwrap();
+        assert_eq!((draft.mode.as_str(), draft.subject.as_str(), draft.to.as_str()), ("new", "Picnic", ""));
     }
 
     #[test]

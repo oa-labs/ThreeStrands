@@ -260,7 +260,8 @@ export const Composer = forwardRef<ComposerHandle, {
     mounted.current = true;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     panel.current?.querySelector<HTMLElement>(initial.mode === "new" || initial.mode === "forward" ? '[name="to"]' : '[contenteditable="true"]')?.focus();
-    if (initial.mode === "forward" && initial.attachments.some((attachment) => !attachment.ready)) {
+    // Forwards and Edit as New copies carry the source message's files.
+    if (initial.attachments.some((attachment) => !attachment.ready)) {
       void run(async () => {
         let next = await flush();
         for (const attachment of next.attachments.filter((candidate) => !candidate.ready)) {

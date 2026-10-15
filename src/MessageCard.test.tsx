@@ -80,6 +80,19 @@ describe("MessageCard", () => {
     expect(stableProps.onToggle).toHaveBeenCalledWith("m1", true);
   });
 
+  it("offers Edit as New only on a message one of the accounts sent", () => {
+    const onEditAsNew = vi.fn();
+    const accounts = [{ email: "me@example.com" }] as Account[];
+    const { unmount } = render(<MessageCard message={message} isExpanded {...stableProps} accounts={accounts} onEditAsNew={onEditAsNew} />);
+    expect(screen.queryByRole("button", { name: "Edit as New" })).toBeNull();
+    unmount();
+
+    render(<MessageCard message={{ ...message, sender: "Me <ME@example.com>" }} isExpanded {...stableProps} accounts={accounts} onEditAsNew={onEditAsNew} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit as New" }));
+    expect(onEditAsNew).toHaveBeenCalledWith("m1");
+    expect(stableProps.onRespond).not.toHaveBeenCalled();
+  });
+
   it("folds a signature repeated from an earlier message in the conversation", () => {
     const earlier: Message = { ...message, id: "m0", bodyHtml: "", bodyText: "First question?\n\nAda Lovelace\nAnalytical Engine Society\nLondon office" };
     const latest: Message = {

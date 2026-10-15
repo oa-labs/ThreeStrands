@@ -265,6 +265,20 @@ describe("showcase dataset", () => {
     await client.discardDraft(saved.id);
   });
 
+  it("edits a sent message as a new, unaddressed message and refuses anyone else's", async () => {
+    const client = createDemoClient(buildShowcaseDataset(now));
+    const [received, sent] = (await client.getThread("launch-plan")).messages;
+    const copy = await client.createDraftFromSent(sent.id, SHOWCASE_WORK_ACCOUNT);
+    expect(copy).toMatchObject({ mode: "new", to: "", cc: "", bcc: "", sourceId: null, threadId: null, replyId: null, account: SHOWCASE_WORK_ACCOUNT });
+    expect(copy.subject).toBe("Q4 launch plan — final review");
+    expect(copy.bodyHtml).toBe(sent.bodyHtml);
+    const second = await client.createDraftFromSent(sent.id, SHOWCASE_WORK_ACCOUNT);
+    expect(second.id).not.toBe(copy.id);
+    await expect(client.createDraftFromSent(received.id, SHOWCASE_WORK_ACCOUNT)).rejects.toThrow("Edit as New works only on messages you sent");
+    await client.discardDraft(copy.id);
+    await client.discardDraft(second.id);
+  });
+
   it("claims notification mail for its split inbox and keeps it out of the Inbox tab", async () => {
     const client = createDemoClient(buildShowcaseDataset(now));
     const inbox = await client.listThreads(SHOWCASE_WORK_ACCOUNT);

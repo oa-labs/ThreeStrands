@@ -94,5 +94,9 @@ export function useReaderActions({
   const respondToMessage = useCallback((kind: MessageResponseKind, messageId: string) => {
     respondToMessageRef.current(kind, messageId);
   }, []);
-  return { selectAdjacentMessage, activateMessage, toggleMessage, showMessage, registerMessageNode, respondToMessage };
+  // Starts a new message rather than answering this one, so it is not a triage response.
+  const editAsNewRef = useRef(correspondence.context.editAsNew);
+  editAsNewRef.current = correspondence.context.editAsNew;
+  const editMessageAsNew = useCallback((messageId: string) => { editAsNewRef.current(messageId); }, []);
+  return { selectAdjacentMessage, activateMessage, toggleMessage, showMessage, registerMessageNode, respondToMessage, editMessageAsNew };
 }

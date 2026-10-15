@@ -401,6 +401,7 @@ export function App() {
   const {
     selectAdjacentMessage, activateMessage, toggleMessage, showMessage, registerMessageNode,
     respondToMessage,
+    editMessageAsNew,
   } = useReaderActions({ reader, displayedMessages, visibleDetail, selected, correspondence, jumpToThread, mailbox, includeArchived, recordTriageEvent });
 
   const interactionScope = correspondence.activeDraft
@@ -962,6 +963,7 @@ export function App() {
                     onActivate={activateMessage}
                     onToggle={toggleMessage}
                     onRespond={respondToMessage}
+                    onEditAsNew={editMessageAsNew}
                     onRegisterNode={registerMessageNode}
                     onImageClick={setLightboxImageSrc}
                     onNotice={showNoticeMessage}

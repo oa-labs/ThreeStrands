@@ -25,6 +25,10 @@ export type CommandContext = {
   reply(): void;
   replyAll(): void;
   forward(): void;
+  /** The selected thread holds a message its account sent. */
+  canEditAsNew: boolean;
+  /** Starts an unaddressed new message from a message the account sent. */
+  editAsNew(): void;
   openInbox(): void;
   openAllMail(): void;
   openTrash(): void;
@@ -164,6 +168,7 @@ export const commands: Command[] = [
   { id: "draft.reply", title: "Reply", keys: ["r"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive, run: (c) => complete(c.reply) },
   { id: "draft.replyAll", title: "Reply All", keys: ["a"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive, run: (c) => complete(c.replyAll) },
   { id: "draft.forward", title: "Forward", keys: ["f"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive, run: (c) => complete(c.forward) },
+  { id: "draft.editAsNew", title: "Edit as New", keys: ["Shift+c"], keywords: ["send again", "resend", "copy", "duplicate", "use as draft"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive && c.canEditAsNew, run: (c) => complete(c.editAsNew) },
   { id: "navigation.back", title: "Go Back", keys: ["Escape"], group: "Navigation", enabled: (c) => c.canGoBack && !c.composerActive, run: (c) => complete(c.goBack) },
   { id: "mailbox.inbox", title: "Go to Inbox", keys: ["g then i"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openInbox) },
   { id: "mailbox.allMail", title: "Go to All Mail", keys: ["g then a"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openAllMail) },

@@ -2,6 +2,7 @@ import { previewScheduleChoices } from "../scheduleTimes";
 import type { CorrespondenceClient, Draft, OutboxItem, ScheduledSendReport, ScheduleSelection } from "../correspondence";
 import { plainTextToHtml } from "../richText";
 import type { ThreadDetail } from "../domain";
+import { parseAddress } from "../emailAddress";
 
 const key = "threestrands.demoCorrespondence";
 const inlineImages = new Map<string, string>();
@@ -115,6 +116,16 @@ export function demoCorrespondence(getSourceThread: (messageId: string) => Promi
           d.references = [d.replyId];
         }
       }
+      store.drafts.push(d); write(store); return d;
+    },
+    async createDraftFromSent(sourceId, account) {
+      const detail = await getSourceThread(sourceId);
+      const message = detail.messages.find((m) => m.id === sourceId);
+      if (!message || parseAddress(message.sender).email.toLowerCase() !== account.toLowerCase()) {
+        throw new Error("Edit as New works only on messages you sent");
+      }
+      const store = read();
+      const d: Draft = { id: crypto.randomUUID(), revision: 0, account, mode: "new", sourceId: null, threadId: null, replyId: null, references: [], to: "", cc: "", bcc: "", subject: detail.thread.subject, body: message.bodyText, bodyHtml: message.bodyHtml, followUpTaskId: null, attachments: [], updatedAt: Date.now() };
       store.drafts.push(d); write(store); return d;
     },
     async setDraftAccount(id, account) {

@@ -725,7 +725,8 @@ describe("Composer forwarded content and attachments", () => {
     expect(proxy).not.toHaveBeenCalled();
   });
 
-  it("downloads unresolved forwarded images automatically before sending", async () => {
+  // A forward and an Edit as New copy both carry the source message's files.
+  it.each(["forward", "new"] as const)("downloads unresolved source attachments automatically before sending a %s draft", async (mode) => {
     const image = {
       id: "forwarded-image",
       name: "image003.jpg",
@@ -739,7 +740,7 @@ describe("Composer forwarded content and attachments", () => {
     };
     const forwarded = {
       ...draft,
-      mode: "forward" as const,
+      mode,
       to: "friend@example.com",
       attachments: [image],
     };

@@ -43,6 +43,8 @@ export interface CorrespondenceClient {
   listScheduledSummaries(): Promise<ScheduledSendReport[]>;
   /** `account` is required for reply/replyAll/forward (the source thread's owning account) and optional for "new" (defaults to the most-recently-used account). */
   createDraft(mode: ComposeMode, sourceId?: string, account?: string): Promise<Draft>;
+  /** "Edit as New": an unaddressed new message copied from one `account` sent. Refuses anyone else's message. */
+  createDraftFromSent(sourceId: string, account: string): Promise<Draft>;
   /** Changes a "new" message's sending account; reply/replyAll/forward stay locked to their source thread's account. */
   setDraftAccount(id: string, account: string): Promise<Draft>;
   /** The account's ordered sending identities (login first), with display names. Offline-safe. */
@@ -66,7 +68,7 @@ export interface CorrespondenceClient {
 
 type CorrespondenceOperation =
   | "schedulingInfo" | "scheduleChoices" | "schedule" | "reschedule" | "sendScheduledNow" | "listScheduledSummaries"
-  | "identity" | "create" | "setAccount" | "identities" | "setFrom" | "save" | "listDrafts"
+  | "identity" | "create" | "createFromSent" | "setAccount" | "identities" | "setFrom" | "save" | "listDrafts"
   | "discard" | "queue" | "listOutbox" | "cancel" | "recover"
   | "reconcile" | "attach" | "attachInline" | "readInline"
   | "removeAttachment" | "fetchAttachment";
@@ -80,6 +82,7 @@ const OPERATION_POLICY: Record<CorrespondenceOperation, InvokePolicy> = {
   listScheduledSummaries: BOUNDED_LOCAL_READ,
   identity: BOUNDED_LOCAL_READ,
   create: WAIT_FOR_NATIVE_COMPLETION,
+  createFromSent: WAIT_FOR_NATIVE_COMPLETION,
   setAccount: WAIT_FOR_NATIVE_COMPLETION,
   identities: BOUNDED_LOCAL_READ,
   setFrom: WAIT_FOR_NATIVE_COMPLETION,
@@ -113,6 +116,7 @@ export const nativeCorrespondence: CorrespondenceClient = {
   sendScheduledNow: (id,revision) => request("sendScheduledNow",{id,revision}),
   listScheduledSummaries: () => request("listScheduledSummaries"),
   createDraft: (mode, sourceId, account) => request("create", { mode, sourceId, account }),
+  createDraftFromSent: (sourceId, account) => request("createFromSent", { sourceId, account }),
   setDraftAccount: (id, account) => request("setAccount", { id, account }),
   listIdentities: (account) => request("identities", { account }),
   setDraftFrom: (id, from) => request("setFrom", { id, from }),

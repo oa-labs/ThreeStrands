@@ -9,6 +9,7 @@ import type { Account, Snippet } from "./domain";
 import { matchesShortcut } from "./commands";
 import { logBackgroundFailure } from "./errors";
 import { draftWithSelectedQuote } from "./selectedMessageQuote";
+import { sanitizeComposeHtml } from "./richText";
 import { ICON_SIZE } from "./iconSizes";
 import type { MessageAppearance } from "./SafeMessage";
 import type { MailtoRequest } from "./mailtoLink";
@@ -38,6 +39,25 @@ type ComposeOptions = {
   followUpTaskId?: string;
   prefill?: MailtoRequest;
 };
+
+/**
+ * "Edit as New" copies a message the user sent. The composer only edits
+ * sanitized HTML, so the copy saves exactly what it shows, and the inline
+ * images its body displays are fetched before it opens.
+ */
+async function draftFromSent(messageId: string | undefined, account: string | undefined): Promise<Draft> {
+  if (!messageId || !account) throw new Error("Select a message you sent");
+  let draft = await mailClient.createDraftFromSent(messageId, account);
+  if (draft.bodyHtml?.trim()) {
+    draft = await mailClient.saveDraft({ ...draft, bodyHtml: sanitizeComposeHtml(draft.bodyHtml) });
+  }
+  for (const attachment of draft.attachments.filter((candidate) => candidate.inline && !candidate.ready)) {
+    // The copy still opens offline; the composer retries the download.
+    try { draft = await mailClient.fetchAttachment(draft.id, attachment.id); }
+    catch (reason) { logBackgroundFailure("Edit as New image download")(reason); }
+  }
+  return draft;
+}
 
 function sameDraft(left: Draft, right: Draft): boolean {
   // Persisted revisions cover body, headers, attachments, and account changes.
@@ -133,14 +153,16 @@ export function useCorrespondence(
     });
     return () => { void listener.then((unlisten) => unlisten()); };
   }, []);
-  const start = useCallback(async (mode: ComposeMode, messageId?: string, options?: ComposeOptions) => {
+  const start = useCallback(async (mode: ComposeMode | "editAsNew", messageId?: string, options?: ComposeOptions) => {
     if (opening.current) return;
     opening.current = true;
     try {
       await editor.current?.flush();
       const created = mode === "new"
         ? await mailClient.createDraft(mode)
-        : await mailClient.createDraft(mode, messageId ?? sourceId, sourceAccountId);
+        : mode === "editAsNew"
+          ? await draftFromSent(messageId ?? sourceId, sourceAccountId)
+          : await mailClient.createDraft(mode, messageId ?? sourceId, sourceAccountId);
       const quoted = options?.selectedQuote ? draftWithSelectedQuote(created, options.selectedQuote) : null;
       const filled = quoted ?? (options?.prefill ? { ...created, ...options.prefill } : null);
       const prepared = filled ? await mailClient.saveDraft(filled) : created;
@@ -151,7 +173,7 @@ export function useCorrespondence(
       setActiveAvailabilityText(options?.availabilityText ?? null);
       setActiveReplyAssistInstruction(options?.replyAssistInstruction ?? null);
       setActiveFollowUpTaskId(options?.followUpTaskId ?? null);
-      setActiveThreadId(mode === "new" ? null : selectedThreadId);
+      setActiveThreadId(mode === "new" || mode === "editAsNew" ? null : selectedThreadId);
       setActive(d); setError("");
     }
     catch (e) { setError(String(e)); }
@@ -243,6 +265,7 @@ export function useCorrespondence(
     });
   }, [start]);
   const forward = useCallback((messageId?: string, selectedQuote?: string) => { void start("forward", messageId, { selectedQuote }); }, [start]);
+  const editAsNew = useCallback((messageId: string) => { void start("editAsNew", messageId); }, [start]);
   const openInbox = useCallback(() => {
     setActive(null);
     setActiveThreadId(null);
@@ -280,9 +303,9 @@ export function useCorrespondence(
   const context = useMemo(() => ({
     closing,
     composerActive,
-    compose, reply, replyAll, forward, openInbox, openDrafts, openOutbox,
+    compose, reply, replyAll, forward, editAsNew, openInbox, openDrafts, openOutbox,
     scheduleDraft, sendDraft, sendDraftAndThen, attachFiles, discardDraft, draftReplyWithAI, undoSend, canUndoSend: pendingId !== null,
-  }), [scheduleDraft, attachFiles, closing, compose, composerActive, discardDraft, draftReplyWithAI, forward, openDrafts, openInbox, openOutbox, reply, replyAll, sendDraft, sendDraftAndThen, undoSend, pendingId]);
+  }), [scheduleDraft, attachFiles, closing, compose, composerActive, discardDraft, draftReplyWithAI, editAsNew, forward, openDrafts, openInbox, openOutbox, reply, replyAll, sendDraft, sendDraftAndThen, undoSend, pendingId]);
   const openDraft = useCallback((draft: Draft) => {
     setSelectedQuoteDraftId(null);
     setActiveFollowUpTaskId(draft.followUpTaskId ?? null);

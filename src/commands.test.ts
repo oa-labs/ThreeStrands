@@ -30,6 +30,8 @@ function noopContext(): CommandContext {
     reply: () => {},
     replyAll: () => {},
     forward: () => {},
+    canEditAsNew: false,
+    editAsNew: () => {},
     openInbox: () => {},
     openAllMail: () => {},
     openTrash: () => {},
@@ -413,6 +415,21 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "draft.reply")?.enabled(context)).toBe(false);
     context.mailbox = "inbox";
     expect(commands.find((command) => command.id === "thread.archive")?.enabled(context)).toBe(true);
+  });
+
+  it("offers Edit as New on Shift+C only for a thread holding a message the account sent", () => {
+    const command = commands.find((candidate) => candidate.id === "draft.editAsNew");
+    expect(command?.keys).toEqual(["Shift+c"]);
+    const context = { ...noopContext(), selectedId: "thread-1" };
+    expect(command?.enabled(context)).toBe(false);
+    context.canEditAsNew = true;
+    expect(command?.enabled(context)).toBe(true);
+    expect(command?.enabled({ ...context, composerActive: true })).toBe(false);
+    expect(command?.enabled({ ...context, mailbox: "drafts" })).toBe(false);
+    expect(command?.enabled({ ...context, selectedId: null })).toBe(false);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "C", shiftKey: true }), "Shift+c")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "c" }), "Shift+c")).toBe(false);
+    expect(commandMatchesFilter(command!, "send again")).toBe(true);
   });
 
   it("gates AI summarize on a thread selection, thread mailbox, and AI availability", () => {
