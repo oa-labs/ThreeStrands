@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { Download, ExternalLink, Info, MessageSquareText, ShieldAlert, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
+import { Download, ExternalLink, File as FileIcon, Info, MessageSquareText, ShieldAlert, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { WorkspaceFile } from "./domain";
 import { WorkspaceContextRail } from "./WorkspaceContextRail";
@@ -213,7 +213,7 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
         {files.length<total ? <button type="button" className="btn" disabled={loading} onClick={() => setLoad((current) => ({ offset: files.length, count: PAGE_SIZE, attempt: current.attempt+1 }))}>Load more files</button> : null}
       </div>
       <WorkspaceContextRail label="File context" onReturn={() => rows.current.get(selected ?? "")?.focus()}>
-        <ContextSectionHeader title="File details" />
+        <ContextSectionHeader title="File details" icon={<FileIcon size={ICON_SIZE.xs} />} />
         {file ? <>
           <div className="file-detail">
             <FilePreview file={file} online={online} onOpen={() => action(mailClient.openAttachment(file.messageId,file.attachment.id))} />

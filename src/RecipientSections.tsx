@@ -1,7 +1,7 @@
 // Sections about the people a draft is going to, shared by a new message's panel and a reply's.
 
 import { useRef, useState } from "react";
-import { CalendarDays, UserRound } from "lucide-react";
+import { CalendarDays, Sparkles, UserRound } from "lucide-react";
 import type { Draft } from "./correspondence";
 import type { AvailabilityCandidate, AvailabilityPreferences, ContactProfile } from "./domain";
 import { ContextSectionHeader } from "./ContextSections";
@@ -106,7 +106,8 @@ export function AvailabilitySection({ preferences, ai, draft, suggest, onInsertT
         title="Availability"
         icon={<CalendarDays size={ICON_SIZE.xs} />}
         actions={<button type="button" className="btn btn-sm" disabled={reading} onClick={() => void findTimes()}>
-          {search ? "Search Again" : "Find Times"}
+          {/* Marked only when the press reads the conversation with AI, not when it reuses a suggestion. */}
+          {ai && (search !== null || !suggest?.()) ? <Sparkles size={ICON_SIZE.sm} /> : null}{search ? "Search Again" : "Find Times"}
         </button>}
       />
       {reading ? <p className="context-status" role="status">Reading the conversation…</p> : null}

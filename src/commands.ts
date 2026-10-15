@@ -88,6 +88,11 @@ export type CommandContext = {
   pageMessageDown(): void;
   pageMessageUp(): void;
   aiSummaryAvailable: boolean;
+  /** AI commands are offered only for features switched on with a provider chosen. */
+  aiBriefEnabled: boolean;
+  aiChatEnabled: boolean;
+  /** Draft Assist is on and the open draft is a reply. */
+  aiReplyAssistEnabled: boolean;
   summarizeSelected(): Promise<CommandResult>;
   focusSearch(): void;
   refresh(): void;
@@ -200,7 +205,7 @@ export const commands: Command[] = [
   // the composer's trash button. Typing "#" in a composer field still types.
   { id: "draft.discard", title: "Discard Draft", keys: ["#"], group: "Compose", enabled: (c) => c.composerActive && c.focusedPane === "mail" && c.mailbox === "drafts", run: (c) => complete(c.discardDraft) },
   { id: "draft.attach", title: "Attach Files", keys: [], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.attachFiles) },
-  { id: "draft.replyAssist", title: "Draft Reply With AI", keys: ["Mod+j"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.draftReplyWithAI) },
+  { id: "draft.replyAssist", title: "Draft Reply With AI", keys: ["Mod+j"], group: "Compose", enabled: (c) => c.composerActive && c.aiReplyAssistEnabled, run: (c) => complete(c.draftReplyWithAI) },
   { id: "draft.contextPanel", title: "Switch Between Draft and Context Panel", keys: ["F6", "Mod+Shift+p"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.toggleContextPanelFocus) },
   { id: "send.undo", title: "Undo Send", keys: [], group: "Compose", enabled: (c) => c.canUndoSend, run: (c) => complete(c.undoSend) },
   {
@@ -493,7 +498,7 @@ export const commands: Command[] = [
   },
   {
     id: "thread.summarize",
-    title: "Summarize With AI",
+    title: "Get Brief",
     keys: ["i"],
     group: "Triage",
     enabled: (context) =>
@@ -624,7 +629,7 @@ export const commands: Command[] = [
     title: "Get Suggestions",
     keys: ["Shift+a", "Mod+Shift+j"],
     group: "Application",
-    enabled: (context) => context.selectedId !== null && !context.composerActive,
+    enabled: (context) => context.selectedId !== null && !context.composerActive && context.aiBriefEnabled,
     run: (context) => complete(context.getSuggestions),
   },
   {
@@ -632,7 +637,7 @@ export const commands: Command[] = [
     title: "Ask About This Conversation",
     keys: ["q", "Mod+j"],
     group: "Application",
-    enabled: (context) => context.selectedId !== null && !context.composerActive && context.focusedPane === "mail" && isThreadMailbox(context),
+    enabled: (context) => context.selectedId !== null && !context.composerActive && context.focusedPane === "mail" && isThreadMailbox(context) && context.aiChatEnabled,
     run: (context) => complete(context.openThreadChat),
   },
   {

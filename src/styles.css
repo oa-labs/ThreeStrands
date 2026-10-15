@@ -3214,7 +3214,10 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .workspace-context-container.collapsed { width: 36px; border-left: 1px solid var(--border); background: var(--surface); }
 .workspace-context-rail.context-panel { grid-column: auto; grid-row: auto; width: 100%; padding-top: var(--space-3); }
 .workspace-context-toggle { position: absolute; top: var(--space-2); right: var(--space-2); z-index: var(--z-local-front); }
-.workspace-context-rail > .context-section-header:first-child { padding-right: var(--space-6); margin-bottom: var(--space-4); }
+.workspace-context-rail > .context-section-header:first-child { margin-bottom: var(--space-4); }
+/* The rail's first heading, direct or inside its first section, clears the absolutely placed collapse toggle. */
+.workspace-context-rail > .context-section-header:first-child,
+.workspace-context-rail > :first-child > .context-section-header:first-child { padding-right: var(--space-8); }
 .workspace-context-rail .task-detail-form { padding: 0 0 var(--space-4); }
 .workspace-context-rail .task-detail-row { grid-template-columns: minmax(0, 1fr); }
 .workspace-context-rail .task-detail-hints { flex-direction: column; align-items: flex-start; }

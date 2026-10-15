@@ -65,6 +65,7 @@ function props(overrides: Partial<Omit<ThreadAssistProps, "summary" | "suggestio
   const { summary, suggestions, scheduling, ...rest } = overrides;
   return {
     detail,
+    providerChosen: true,
     loading: false,
     error: null,
     preview: null,
@@ -179,15 +180,28 @@ describe("ThreadAssist", () => {
 
   it("explains missing provider credentials separately from the feature flags", () => {
     const onOpenSettings = vi.fn();
-    const { rerender } = render(<ThreadAssist {...props({ onOpenSettings, summary: { available: false }, suggestions: { available: false } })} />);
+    render(<ThreadAssist {...props({ onOpenSettings, summary: { available: false }, suggestions: { available: false } })} />);
     expect(screen.getByText("Set up an AI provider and API key in AI settings to get a brief of this conversation.")).toBeInTheDocument();
     expect(screen.queryByText("AI briefs and suggestions are off.")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "AI Settings" }));
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
 
-    rerender(<ThreadAssist {...props({ onOpenSettings, summary: { enabled: false, available: false }, suggestions: { enabled: false, available: false } })} />);
-    expect(screen.getByText("AI briefs and suggestions are off.")).toBeInTheDocument();
+    // Switched off on purpose with a provider chosen: the section disappears instead of reminding.
+    const { container } = render(<ThreadAssist {...props({ onOpenSettings, summary: { enabled: false, available: false }, suggestions: { enabled: false, available: false } })} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("is the single place that suggests setting up AI when no provider is chosen", () => {
+    const onOpenSettings = vi.fn();
+    render(<ThreadAssist {...props({ providerChosen: false, onOpenSettings, summary: { enabled: false, available: false }, suggestions: { enabled: false, available: false } })} />);
+    const section = screen.getByRole("region", { name: "Brief" });
+    expect(section).toHaveTextContent("Set up AI to get a brief of each conversation, suggested next steps, and answers to your questions about it.");
     expect(screen.queryByRole("button", { name: "Get Brief" })).not.toBeInTheDocument();
+    // Opening settings sends nothing to a provider, so it carries no AI mark.
+    const setUp = within(section).getByRole("button", { name: "Set Up AI" });
+    expect(setUp.querySelector("svg")).toBeNull();
+    fireEvent.click(setUp);
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });
 
   it("previews typed proposals with evidence and review actions", () => {

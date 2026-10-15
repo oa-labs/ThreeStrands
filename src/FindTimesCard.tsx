@@ -2,10 +2,12 @@
 // suggestions, and Thread Chat's availability answers all show it.
 
 import { useRef, useState } from "react";
+import { Sparkles } from "lucide-react";
 import type { AvailabilityCandidate, AvailabilityPreferences, TimeSearch } from "./domain";
 import { readAiRequestConfig } from "./aiSettings";
 import { mailClient } from "./data/client";
 import { errorMessage } from "./errors";
+import { ICON_SIZE } from "./iconSizes";
 import { MeetingScheduler, type CalendarAddition, type EffectiveSearch, type ScheduleSlot } from "./MeetingScheduler";
 import { FIND_TIMES_INSTRUCTION_MAX_CHARS, planTimeSearch, type SchedulePlan } from "./scheduling";
 
@@ -98,7 +100,7 @@ export function FindTimesCard({
         disabled={reading}
         onChange={(event) => setInstruction(event.target.value)}
       />
-      <button type="submit" className="btn btn-sm" disabled={reading || !instruction.trim()}>Adjust</button>
+      <button type="submit" className="btn btn-sm" disabled={reading || !instruction.trim()}><Sparkles size={ICON_SIZE.sm} />Adjust</button>
     </form>
     {reading ? <p className="context-status" role="status">Reading the conversation…</p> : null}
     {error ? <p className="context-status" role="alert">{error}</p> : null}

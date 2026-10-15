@@ -259,6 +259,8 @@ export function ThreadChat({
     }
   };
 
+  // Switched off, or no AI provider chosen: Thread Chat isn't offered at all.
+  if (!enabled) return null;
   return <section className="context-section thread-chat" aria-label="Ask about this conversation">
     {entries.length > 0 ? <div className="thread-chat-log" role="log" aria-label="Conversation with AI" ref={log}>
       {entries.map((entry) => entry.role === "user" ? (
@@ -305,8 +307,8 @@ export function ThreadChat({
       <p>{error}</p>
       <div className="action-analysis-error-actions"><button type="button" className="btn btn-sm" onClick={onRetry}><RotateCcw size={ICON_SIZE.sm} /> Try Again</button></div>
     </div> : null}
-    {!enabled || !available ? <>
-      <p className="context-status">{!enabled ? "Turn on Thread Chat in AI settings to ask questions about this conversation." : "Set up an AI provider and API key in AI settings to ask questions."}</p>
+    {!available ? <>
+      <p className="context-status">Set up an AI provider and API key in AI settings to ask questions.</p>
       <button type="button" className="btn-link context-link-button" onClick={onOpenSettings}>AI Settings</button>
     </> : open ? (
       <form

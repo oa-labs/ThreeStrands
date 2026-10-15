@@ -325,6 +325,8 @@ test("Reply Assist opens in the viewport over a long reply and Escape returns to
     localStorage.setItem("threestrands.settings.ai.provider", "openai");
     localStorage.setItem("threestrands.settings.ai.features", JSON.stringify({ draftAssist: true, summarize: false, actionExtraction: false }));
   });
+  // The app reads AI settings at startup (and again when Settings closes), as Draft Reply With AI is offered only when it's on.
+  await page.reload();
   await page.evaluate('import("/src/aiSettings.ts").then(({ setAiApiKey }) => setAiApiKey("test-key"))');
   await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
   await page.keyboard.press("r");

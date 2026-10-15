@@ -32,7 +32,7 @@ function setup(initial = draft, available = true) {
   const view = render(<>
     <Composer ref={ref} draft={initial} accounts={[{ email: initial.account }] as Account[]} snippets={[]}
       onCreateSnippet={vi.fn()} onUpdateSnippet={vi.fn()} onDeleteSnippet={vi.fn()} onClose={vi.fn()} onQueued={vi.fn()} />
-    <DraftReviewSection actions={actions} available={available} onOpenSettings={onOpenSettings} />
+    <DraftReviewSection actions={actions} enabled available={available} onOpenSettings={onOpenSettings} />
   </>);
   return { ...view, ref, actions, onOpenSettings, body: screen.getByRole("textbox", { name: "Message Body" }) };
 }
@@ -195,6 +195,19 @@ describe("Draft review", () => {
     expect(body.querySelector("strong")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Get Feedback" }));
     await screen.findByText(result.assessment);
+  });
+
+  it("is absent when Draft Assist is off, and marks only the button that sends the draft", async () => {
+    const actions: DraftReviewActions = { readDraft: vi.fn(), replaceDraft: vi.fn() };
+    const { container } = render(<DraftReviewSection actions={actions} enabled={false} available={false} onOpenSettings={vi.fn()} />);
+    expect(container).toBeEmptyDOMElement();
+    cleanup();
+
+    setup();
+    // Review Draft only builds a local preview; Get Feedback is what reaches the provider.
+    expect(screen.getByRole("button", { name: "Review Draft" }).querySelector("svg")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Review Draft" }));
+    expect(screen.getByRole("button", { name: "Get Feedback" }).querySelector("svg.lucide-sparkles")).not.toBeNull();
   });
 
   it("guides setup when unavailable and rejects empty written text", async () => {

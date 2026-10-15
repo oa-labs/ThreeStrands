@@ -312,17 +312,18 @@ describe("ThreadChat", () => {
     });
   });
 
-  it("explains a disabled or unconfigured chat instead of offering the box", () => {
+  it("is absent when switched off, and explains an unconfigured chat instead of offering the box", () => {
     const onOpenSettings = vi.fn();
-    const { rerender } = render(<ThreadChat {...props({ enabled: false, available: false, onOpenSettings, focusRequest: 0 })} />);
-    expect(screen.getByText(/Turn on Thread Chat in AI settings/)).toBeInTheDocument();
+    const { container, rerender } = render(<ThreadChat {...props({ enabled: false, available: false, onOpenSettings, focusRequest: 0 })} />);
+    expect(container).toBeEmptyDOMElement();
+    rerender(<ThreadChat {...props({ enabled: false, available: false, onOpenSettings, focusRequest: 1 })} />);
+    expect(container).toBeEmptyDOMElement();
+
+    rerender(<ThreadChat {...props({ enabled: true, available: false, onOpenSettings, focusRequest: 1 })} />);
+    expect(screen.getByText("Set up an AI provider and API key in AI settings to ask questions.")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "AI Settings" }));
     expect(onOpenSettings).toHaveBeenCalled();
-    rerender(<ThreadChat {...props({ enabled: false, available: false, onOpenSettings, focusRequest: 1 })} />);
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-
-    rerender(<ThreadChat {...props({ enabled: true, available: false })} />);
-    expect(screen.getByText(/Set up an AI provider and API key/)).toBeInTheDocument();
   });
 
   it("shows progress and a retryable failure", () => {

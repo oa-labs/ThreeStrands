@@ -84,6 +84,9 @@ function noopContext(): CommandContext {
     pageMessageDown: () => {},
     pageMessageUp: () => {},
     aiSummaryAvailable: false,
+    aiBriefEnabled: true,
+    aiChatEnabled: true,
+    aiReplyAssistEnabled: true,
     summarizeSelected: async () => ({}),
     focusSearch: () => {},
     refresh: () => {},
@@ -451,6 +454,25 @@ describe("command registry", () => {
     expect(command?.enabled(context)).toBe(true);
     expect(command?.enabled({ ...context, composerActive: true })).toBe(false);
     expect(command?.enabled({ ...context, focusedPane: "tasks" })).toBe(false);
+  });
+
+  it("offers AI commands only for features switched on, named as their buttons are", () => {
+    const find = (id: string) => commands.find((command) => command.id === id)!;
+    expect(find("thread.summarize").title).toBe("Get Brief");
+    const context = noopContext();
+    context.selectedId = "thread-1";
+    expect(find("actions.open").enabled(context)).toBe(true);
+    expect(find("chat.open").enabled(context)).toBe(true);
+    context.aiBriefEnabled = false;
+    context.aiChatEnabled = false;
+    expect(find("actions.open").enabled(context)).toBe(false);
+    expect(find("chat.open").enabled(context)).toBe(false);
+
+    // Draft Reply With AI never runs silently: only for a reply with Draft Assist on.
+    context.composerActive = true;
+    expect(find("draft.replyAssist").enabled(context)).toBe(true);
+    context.aiReplyAssistEnabled = false;
+    expect(find("draft.replyAssist").enabled(context)).toBe(false);
   });
 
   it("gates AI summarize on a thread selection, thread mailbox, and AI availability", () => {

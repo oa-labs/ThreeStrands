@@ -17,11 +17,15 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - When adding members to a group, the people you've chosen now appear inside the search field, the search clears after each pick, and Backspace removes the last person.
 - A message you **Forward** now stays in the conversation it came from, so you can see what you sent on and read your coworkers' replies alongside the original thread.
 - Finding times to meet now happens right in the side panel. With **Draft Assist** turned on in **Settings → AI Provider**, **Find Times** reads the conversation and your draft, so when someone asks to connect next week you get times next week, with a line saying why. Type a change such as "Thursday or Friday afternoon" and click **Adjust**, or narrow times to **Mornings** or **Afternoons**, move to **Later** dates, or click **Show More**, all without a second calendar column squeezing the email you're reading. If a brief already suggested a meeting, Find Times starts from the dates it found. Asking "When am I free Thursday afternoon?" in **Ask About This Conversation** now shows only Thursday afternoons. The **Find a time** section of the day calendar has been retired in favor of this.
+- In **Files**, the **File details** heading now has a file icon that lines up with the other icons in the side panel.
+- Buttons that send something to your AI provider now all carry the sparkle icon, so you can tell at a glance when AI is involved. AI features you switch off no longer leave reminders in the side panels or the command palette; until you choose an AI provider, the **Brief** section offers a single **Set Up AI** link. The command palette now calls the brief **Get Brief**, as the button does.
 
 ### Fixed
 - Tables pasted from a spreadsheet, such as a price list, no longer show up as a tall blank box with nothing inside.
 - Adding members to a group no longer offers to create a new contact for an address that already belongs to someone in your address book; it picks that person instead. Typing the address of someone already in the group now says so rather than adding them again.
 - The folder menu (Inbox, Drafts, Outbox, and the rest) works again while a draft is open, and switching folders saves what you've typed first.
+- In **Calendar**, the button that hides the side panel no longer covers the event count next to **Today's agenda**.
+- **Draft Reply With AI** and **Enhance With AI** now say what setup is missing when no API key is configured, instead of doing nothing or failing after you click.
 
 ## 0.125.4 — 2026-10-15
 

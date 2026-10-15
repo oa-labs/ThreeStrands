@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import type { ContactGroup, ContactProfile } from "./domain";
 import { ContactsWorkspace } from "./ContactsWorkspace";
 import { mailClient } from "./data/client";
+import { clearAiApiKey, setAiApiKey } from "./aiSettings";
 import { expectPrimaryActionLast, expectSharedButtons } from "./test/sharedButtons";
 
 vi.mock("./data/client",()=>({mailClient:{listContactProfiles:vi.fn(),getContactProfile:vi.fn(),saveContactProfile:vi.fn(),deleteContactProfile:vi.fn(),contactTimeline:vi.fn(),enrichContact:vi.fn(),listKeepInTouch:vi.fn(),setKeepInTouch:vi.fn(),snoozeKeepInTouch:vi.fn(),markContacted:vi.fn(),contactFiles:vi.fn(),fileStars:vi.fn().mockResolvedValue([]),setFileStar:vi.fn().mockResolvedValue(undefined),openAttachment:vi.fn(),resolveContactIds:vi.fn(),listContactGroups:vi.fn(),createContactGroup:vi.fn(),renameContactGroup:vi.fn(),addContactGroupMembers:vi.fn(),removeContactGroupMembers:vi.fn(),deleteContactGroup:vi.fn(),mergeContacts:vi.fn()}}));
@@ -26,7 +27,9 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.contactFiles).mockResolvedValue({files:[],total:0});
     vi.mocked(mailClient.listContactGroups).mockResolvedValue([]);
   });
-  afterEach(()=>{cleanup();vi.clearAllMocks();localStorage.clear();});
+  // Enhance With AI needs a key as well as the switch; tests that turn the switch on get one.
+  beforeEach(async()=>{await setAiApiKey("test-key");});
+  afterEach(async()=>{cleanup();vi.clearAllMocks();localStorage.clear();await clearAiApiKey();});
 
   it("merges selected saved contacts and refreshes groups, reminders, and the surviving profile",async()=>{
     vi.mocked(mailClient.listContactProfiles).mockResolvedValue([jane,newerContact]);
@@ -305,7 +308,7 @@ describe("ContactsWorkspace",()=>{
     expect(screen.getByText(/^3 sent · 2 received/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button",{name:/Project/}));
     expect(onOpenThread).toHaveBeenCalledWith("work-thread");
-    fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
+    fireEvent.click(await screen.findByRole("button",{name:/Enhance With AI/}));
     await waitFor(()=>expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,["company","location","bio","link"],false,"work@example.com","default"));
   });
 
@@ -412,6 +415,27 @@ describe("ContactsWorkspace",()=>{
     expect(screen.queryByLabelText("About")).not.toBeInTheDocument();
   });
 
+  it("shows Profile Suggestions only with a provider chosen, and explains a missing key instead of failing on click",async()=>{
+    localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({contactEnrichment:true}));
+    const {unmount}=render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    // The switch alone is not enough: with no provider chosen, the card isn't offered.
+    expect(screen.queryByRole("region",{name:"Profile Suggestions"})).not.toBeInTheDocument();
+    unmount();
+
+    localStorage.setItem("threestrands.settings.ai.provider","openai");
+    await clearAiApiKey();
+    const onOpenAiSettings=vi.fn();
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()} onOpenAiSettings={onOpenAiSettings}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    const card=screen.getByRole("region",{name:"Profile Suggestions"});
+    expect(await within(card).findByText("Set up an AI provider and API key in AI settings to fill empty fields from your emails.")).toBeInTheDocument();
+    expect(within(card).queryByRole("button",{name:/Enhance With AI/})).not.toBeInTheDocument();
+    fireEvent.click(within(card).getByRole("button",{name:"AI Settings"}));
+    expect(onOpenAiSettings).toHaveBeenCalledTimes(1);
+    expect(mailClient.enrichContact).not.toHaveBeenCalled();
+  });
+
   it("puts profile suggestions and recent emails in the context rail",async()=>{
     localStorage.setItem("threestrands.settings.ai.provider","openai");
     localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({contactEnrichment:true}));
@@ -426,7 +450,7 @@ describe("ContactsWorkspace",()=>{
     expect(profileGlyph).toHaveAttribute("aria-hidden","true");
     expect(profileGlyph?.querySelector("svg.lucide-user-round")).toBeInTheDocument();
     expect(within(suggestions).queryByRole("button",{name:"Profile Suggestions"})).not.toBeInTheDocument();
-    expect(within(rail).getByRole("button",{name:/Enhance with AI/})).toBeInTheDocument();
+    expect(await within(rail).findByRole("button",{name:/Enhance With AI/})).toBeInTheDocument();
     const recent=await within(rail).findByRole("region",{name:"Recent emails"});
     const caret=within(recent).getByRole("button",{name:"Recent emails"}).querySelector(".context-row-glyph svg");
     expect(profileGlyph?.querySelector("svg")).toHaveAttribute("width",caret?.getAttribute("width"));
@@ -547,7 +571,7 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.enrichContact).mockResolvedValue({suggestions:[{field:"company",value:"Acme",sourceMessageId:"m1",sourceThreadId:"thread-1",excerpt:"I work at Acme."}],messagesReviewed:3,hasMore:false});
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
-    fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
+    fireEvent.click(await screen.findByRole("button",{name:/Enhance With AI/}));
     const evidence=(await screen.findByText("I work at Acme.")).closest("article") as HTMLElement;
     expect(within(evidence).getByText("Company")).toBeInTheDocument();
     expect(within(evidence).getByText("From the email")).toBeInTheDocument();
@@ -563,7 +587,7 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.enrichContact).mockResolvedValue({suggestions:[{field:"link",value:"https://www.linkedin.com/in/janedoe",sourceMessageId:"m1",sourceThreadId:"thread-1",excerpt:"https://www.linkedin.com/in/janedoe"}],messagesReviewed:3,hasMore:false});
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
-    fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
+    fireEvent.click(await screen.findByRole("button",{name:/Enhance With AI/}));
     await screen.findByText("Link");
     expect(screen.getByText("https://www.linkedin.com/in/janedoe")).toBeInTheDocument();
     expect(screen.queryByText("From the email")).not.toBeInTheDocument();
@@ -576,7 +600,7 @@ describe("ContactsWorkspace",()=>{
     localStorage.setItem("threestrands.settings.ai.features",JSON.stringify({contactEnrichment:true}));
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
-    fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
+    fireEvent.click(await screen.findByRole("button",{name:/Enhance With AI/}));
     await waitFor(()=>expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o-mini",null,["company","location","bio","link"],false,undefined,"off"));
   });
 
@@ -589,7 +613,7 @@ describe("ContactsWorkspace",()=>{
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
 
-    fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
+    fireEvent.click(await screen.findByRole("button",{name:/Enhance With AI/}));
     await screen.findByText("I work at Acme.");
     expect(screen.getByText("3 emails reviewed")).toBeInTheDocument();
     expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,["company","location","bio","link"],false,undefined,"default");
@@ -612,7 +636,7 @@ describe("ContactsWorkspace",()=>{
     ],messagesReviewed:3,hasMore:false});
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
-    fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
+    fireEvent.click(await screen.findByRole("button",{name:/Enhance With AI/}));
     const evidence=(await screen.findByText("I work at Acme.")).closest("article") as HTMLElement;
     // Name and Role already hold values, so they are never asked about, and
     // even a stray answer for them never surfaces.
@@ -629,7 +653,7 @@ describe("ContactsWorkspace",()=>{
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
     fireEvent.change(field("Company"),{target:{value:"Typed Co"}});
-    fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
+    fireEvent.click(await screen.findByRole("button",{name:/Enhance With AI/}));
     await screen.findByText("3 emails reviewed");
     expect(mailClient.enrichContact).toHaveBeenCalledWith(jane.id,"openai","gpt-4o",null,["location","bio","link"],false,undefined,"default");
     // Even a stray suggestion for the typed field never surfaces.
@@ -644,7 +668,7 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.enrichContact).mockResolvedValue({suggestions:[{field:"company",value:"Acme",sourceMessageId:"m1",sourceThreadId:"thread-1",excerpt:"I work at Acme."}],messagesReviewed:3,hasMore:false});
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
-    fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
+    fireEvent.click(await screen.findByRole("button",{name:/Enhance With AI/}));
     await screen.findByText("I work at Acme.");
 
     fireEvent.change(field("Company"),{target:{value:"Typed Co"}});
@@ -667,7 +691,7 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(filled);
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
-    const enhance=screen.getByRole("button",{name:/Enhance with AI/});
+    const enhance=await screen.findByRole("button",{name:/Enhance With AI/});
     fireEvent.click(enhance);
     expect(await within(enhance.closest("section")!).findByRole("alert")).toHaveTextContent("Every contact field already has a value.");
     expect(mailClient.enrichContact).not.toHaveBeenCalled();
@@ -679,7 +703,7 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.enrichContact).mockRejectedValueOnce("The AI provider returned invalid contact suggestions");
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
     await screen.findByDisplayValue("Jane Doe");
-    const enhance=screen.getByRole("button",{name:/Enhance with AI/});
+    const enhance=await screen.findByRole("button",{name:/Enhance With AI/});
     const section=within(enhance.closest("section")!);
     fireEvent.click(enhance);
     expect(await section.findByRole("alert")).toHaveTextContent("The AI provider returned invalid contact suggestions");
@@ -705,7 +729,7 @@ describe("ContactsWorkspace",()=>{
     ],messagesReviewed:3,hasMore:false});
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()} initialContactId={derived.id}/>);
     await screen.findByDisplayValue("Jane Doe");
-    fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
+    fireEvent.click(await screen.findByRole("button",{name:/Enhance With AI/}));
     await screen.findByText("I live in Boston.");
 
     fireEvent.click(screen.getAllByRole("button",{name:"Use suggestion"})[0]);
@@ -737,7 +761,7 @@ describe("ContactsWorkspace",()=>{
     // Only a cleared field can be enhanced; accepting the suggestion then
     // changes the term they were searched by.
     fireEvent.change(screen.getByLabelText("Role"),{target:{value:""}});
-    fireEvent.click(screen.getByRole("button",{name:/Enhance with AI/}));
+    fireEvent.click(await screen.findByRole("button",{name:/Enhance With AI/}));
     await screen.findByText("I am the CEO.");
 
     fireEvent.click(screen.getByRole("button",{name:"Use suggestion"}));

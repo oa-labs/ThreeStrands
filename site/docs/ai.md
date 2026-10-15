@@ -28,9 +28,11 @@ ThreeStrands keeps one API key at a time, so enter a new key when you switch pro
 - **Proactive Suggestions** — prepares briefs as you read. You can limit them to people you've emailed.
 - **Thread Chat** — press <kbd>q</kbd> to ask about the open conversation. Questions only look beyond it when you tick **Search all mail** for that question. **Use as Reply** turns an answer into a draft. Ask "When am I free Thursday afternoon?" and the answer shows open times from your calendar, already limited to the days and hours you asked for.
 - **Draft Assist** — in the composer, press <kbd>⌘/Ctrl + j</kbd> for **Draft Reply With AI**, and use **Draft Review** for feedback against your goal. Suggestions are never sent automatically. **Find Times** in the side panel reads the conversation and your draft for when to meet, such as "next week" or "Thursday afternoon", and the app then finds open times on your calendar. Your calendar is never sent to the AI provider.
-- **Contact Enrichment** — **Enhance with AI** on a contact suggests profile details from your email for you to accept.
+- **Contact Enrichment** — **Enhance With AI** on a contact suggests profile details from your email for you to accept.
 
-Each feature shows what will be shared before anything is sent.
+Each feature shows what will be shared before anything is sent. Buttons marked with the sparkle icon, such as **Get Brief** and **Get Feedback**, are the ones that send something to your AI provider.
+
+Features you switch off disappear from the app, along with their commands. Until you choose an AI provider, the **Brief** section beside a conversation is the one place that offers **Set Up AI**.
 
 ## Usage and Cost
 

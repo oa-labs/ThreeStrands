@@ -284,8 +284,8 @@ export function App() {
     : undefined;
   const [lightboxImageSrc, setLightboxImageSrc] = useState<string | null>(null);
   const {
-    aiSummaryAvailable, aiSummaryFeatureEnabled, aiProactive, aiActionFeatureEnabled,
-    aiActionAvailable, aiChatFeatureEnabled, aiChatAvailable, aiDraftAvailable, refreshAiAvailability,
+    aiProviderChosen, aiSummaryAvailable, aiSummaryFeatureEnabled, aiProactive, aiActionFeatureEnabled,
+    aiActionAvailable, aiChatFeatureEnabled, aiChatAvailable, aiDraftFeatureEnabled, aiDraftAvailable, refreshAiAvailability,
   } = useAiAvailability(settingsOpen);
   const {
     mailAccountSettings, applyImportedSettings,
@@ -442,7 +442,9 @@ export function App() {
     correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads,
     runBrief, recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, mutateIds,
     view: { mailbox, setMailbox, setActiveSplitInboxId, activeAccountId, selectedId, setSelectedId, isTabbedMailbox },
-    ui: { interactionScope, canUnsubscribe, latestMessage, aiSummaryAvailable, labelTargetIds, setLabelTargetIds, setUnsubscribeMessageId, setPaletteOpen, setShortcutHelpOpen, setGettingStartedOpen, openSettingsAt, adjustFontScale, toggleContextPanelFocus, selectAdjacentMessage, getSuggestions, openThreadChat, refreshMail },
+    ui: { interactionScope, canUnsubscribe, latestMessage, aiSummaryAvailable,
+      aiBriefEnabled: aiSummaryFeatureEnabled || aiActionFeatureEnabled, aiChatEnabled: aiChatFeatureEnabled, aiDraftEnabled: aiDraftFeatureEnabled,
+      labelTargetIds, setLabelTargetIds, setUnsubscribeMessageId, setPaletteOpen, setShortcutHelpOpen, setGettingStartedOpen, openSettingsAt, adjustFontScale, toggleContextPanelFocus, selectAdjacentMessage, getSuggestions, openThreadChat, refreshMail },
   });
 
   const {
@@ -1101,7 +1103,7 @@ export function App() {
           draft={correspondence.liveDraft}
           review={correspondence.liveDraft.mode !== "forward" ? (
             <DraftReviewSection key={correspondence.liveDraft.id} actions={correspondence.draftReview}
-              available={aiDraftAvailable} onOpenSettings={() => openSettingsAt("ai")} />
+              enabled={aiDraftFeatureEnabled} available={aiDraftAvailable} onOpenSettings={() => openSettingsAt("ai")} />
           ) : null}
           accounts={accounts}
           onKeyDown={contextPanelKeyDown}
@@ -1130,7 +1132,7 @@ export function App() {
           selectedEmail={contextPersonEmail}
           reply={composerBelongsToVisibleThread && correspondence.liveDraft ? {
             review: <DraftReviewSection key={correspondence.liveDraft.id} actions={correspondence.draftReview}
-              available={aiDraftAvailable} onOpenSettings={() => openSettingsAt("ai")} />,
+              enabled={aiDraftFeatureEnabled} available={aiDraftAvailable} onOpenSettings={() => openSettingsAt("ai")} />,
             recipients: replyRecipients,
             checks: (
               <ReplyChecks
@@ -1160,6 +1162,7 @@ export function App() {
           assist={visibleDetail ? (<>
             <ThreadAssist
               detail={visibleDetail}
+              providerChosen={aiProviderChosen}
               summary={{ enabled: aiSummaryFeatureEnabled, available: aiSummaryAvailable, pending: summaryPending }}
               suggestions={{
                 enabled: aiActionFeatureEnabled,
@@ -1246,7 +1249,7 @@ export function App() {
         />
       ) : null}
       {rightWorkspace === "files" ? <Suspense fallback={null}><FilesWorkspace refreshKey={syncStatus?.lastSuccessfulSync ?? ""} key={activeAccountId ?? "all"} sessions={fileSessions} accountId={activeAccountId} accountIds={accounts.map((account) => account.email)} onOpenThread={jumpToThread} onOpenContact={contactCardActions.onOpenContact} onReportSpam={markFileSourceSpam} /></Suspense> : null}
-      {rightWorkspace === "contacts" ? <Suspense fallback={null}><ContactsWorkspace key={`${activeAccountId ?? "all"}:${contactAddressBookTarget ?? ""}`} accountId={activeAccountId} onOpenThread={jumpToThread} onCompose={(to) => { setRightWorkspace(null); correspondence.composeMailto({ to, cc: "", bcc: "", subject: "", body: "" }); }} onSaved={() => { setNotice({ message: "Contact saved" }); void refreshKeepInTouchCount(); }} initialContactId={contactAddressBookTarget} view={contactsView} onViewChange={setContactsView} onKeepInTouchChanged={() => void refreshKeepInTouchCount()} /></Suspense> : null}
+      {rightWorkspace === "contacts" ? <Suspense fallback={null}><ContactsWorkspace key={`${activeAccountId ?? "all"}:${contactAddressBookTarget ?? ""}`} accountId={activeAccountId} onOpenThread={jumpToThread} onCompose={(to) => { setRightWorkspace(null); correspondence.composeMailto({ to, cc: "", bcc: "", subject: "", body: "" }); }} onSaved={() => { setNotice({ message: "Contact saved" }); void refreshKeepInTouchCount(); }} initialContactId={contactAddressBookTarget} view={contactsView} onViewChange={setContactsView} onKeepInTouchChanged={() => void refreshKeepInTouchCount()} onOpenAiSettings={() => { setRightWorkspace(null); openSettingsAt("ai"); }} /></Suspense> : null}
       {rightWorkspace === "tasks" ? (
         <TaskSidebar
           key={activeAccountId ?? "all"}

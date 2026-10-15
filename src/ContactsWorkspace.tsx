@@ -4,7 +4,7 @@ import { ContactManagement, MergeContactsDialog } from "./ContactManagement";
 import { ContactAddressField, ContactLinksField } from "./ContactAddressField";
 import { mailClient } from "./data/client";
 import type { ContactFieldSuggestion, ContactGroup, ContactProfile, ContactTimelineItem, SaveContactRequest } from "./domain";
-import { readAiFeatures, readAiRequestConfig } from "./aiSettings";
+import { isAiApiKeyConfigured, readAiFeatures, readAiProvider, readAiRequestConfig } from "./aiSettings";
 import { errorMessage } from "./errors";
 import { PanelResizeHandle, useContactListWidth } from "./PanelResizeHandle";
 import { KeepInTouchSection } from "./KeepInTouchSection";
@@ -55,7 +55,7 @@ async function encodePhoto(file:File):Promise<string>{
   if(data.length>87_000)throw new Error("Photo is too large to save after resizing"); return data;
 }
 
-export function ContactsWorkspace({onOpenThread,onCompose,onSaved,initialContactId=null,accountId=null,initialView="all",view:controlledView,onViewChange,onKeepInTouchChanged}:{onOpenThread(id:string):void;onCompose?(to:string):void;onSaved():void;initialContactId?:string|null;accountId?:string|null;initialView?:ContactsView;view?:ContactsView;onViewChange?(view:ContactsView):void;onKeepInTouchChanged?():void}){
+export function ContactsWorkspace({onOpenThread,onCompose,onSaved,onOpenAiSettings,initialContactId=null,accountId=null,initialView="all",view:controlledView,onViewChange,onKeepInTouchChanged}:{onOpenThread(id:string):void;onCompose?(to:string):void;onOpenAiSettings?():void;onSaved():void;initialContactId?:string|null;accountId?:string|null;initialView?:ContactsView;view?:ContactsView;onViewChange?(view:ContactsView):void;onKeepInTouchChanged?():void}){
   // The view is controlled when the app owns it (so Tab can switch it and it
   // is remembered); standalone renders fall back to local state.
   const [localView,setLocalView]=useState<ContactsView>(initialView);const view=controlledView??localView;const changeView=(next:ContactsView)=>{setLocalView(next);onViewChange?.(next);};const [kitProfiles,setKitProfiles]=useState<ContactProfile[]>([]);const [selecting,setSelecting]=useState(false);const [checkedIds,setCheckedIds]=useState<string[]>([]);const [bulkNotice,setBulkNotice]=useState<string|null>(null);
@@ -70,7 +70,10 @@ export function ContactsWorkspace({onOpenThread,onCompose,onSaved,initialContact
   const requestedContactId=useRef(initialContactId);
   const preserveSuggestionsForId=useRef<string|null>(null);
   const preserveDraftForId=useRef<string|null>(null);
-  const aiEnabled=readAiFeatures().contactEnrichment;
+  // Profile Suggestions show only with a provider chosen and Contact Enrichment on; without a key they explain the setup left.
+  const aiEnabled=readAiProvider()!=="none"&&readAiFeatures().contactEnrichment;
+  const [aiReady,setAiReady]=useState(false);
+  useEffect(()=>{if(!aiEnabled)return;let current=true;void isAiApiKeyConfigured().then(configured=>{if(current)setAiReady(configured);}).catch(()=>{if(current)setAiReady(false);});return()=>{current=false;};},[aiEnabled]);
   const addingRef=useRef(adding);
   useEffect(()=>{addingRef.current=adding;},[adding]);
   const load=useCallback(async(keepProfile?:ContactProfile)=>{setLoading(true);setError(null);try{let result=await mailClient.listContactProfiles(query,500,accountId??undefined);const requestedId=requestedContactId.current;if(requestedId&&!query.trim()){requestedContactId.current=null;if(!result.some(item=>item.id===requestedId)){const requestedProfile=await mailClient.getContactProfile(requestedId);if(requestedProfile)result=[requestedProfile,...result];}}if(keepProfile&&!result.some(item=>item.id===keepProfile.id)&&!query.trim())result=[keepProfile,...result];setProfiles(result);setSelectedId(current=>keepProfile?.id??(current&&result.some(item=>item.id===current)?current:requestedId&&result.some(item=>item.id===requestedId)?requestedId:addingRef.current?null:result[0]?.id??null));}catch(reason){setError(errorMessage(reason));}finally{setLoading(false);}},[query,accountId]);
@@ -216,7 +219,7 @@ export function ContactsWorkspace({onOpenThread,onCompose,onSaved,initialContact
           {unsaved?<div className="contact-save-bar" role="region" aria-label="Save changes"><span>{adding?"New contact":"Unsaved changes"}</span><div><button type="button" className="btn" disabled={busy} onClick={discard}>Discard</button><button type="button" className="btn btn-primary" disabled={busy} onClick={()=>void save()}><Check size={ICON_SIZE.md}/>Save contact</button></div></div>:null}
           </div></div>
           {showRail?<aside className="contact-context-rail" aria-label="Contact context">
-            {aiEnabled?<ContactEnrichmentCard suggestions={visibleSuggestions} notice={enrichNotice} enriching={enriching} emailsReviewed={emailsReviewed} moreAvailable={moreEmailsAvailable} onEnrich={searchMore=>void enrich(searchMore)} onApply={item=>void applySuggestion(item)} onOpenThread={onOpenThread}/>:null}
+            {aiEnabled?<ContactEnrichmentCard ready={aiReady} onOpenSettings={onOpenAiSettings} suggestions={visibleSuggestions} notice={enrichNotice} enriching={enriching} emailsReviewed={emailsReviewed} moreAvailable={moreEmailsAvailable} onEnrich={searchMore=>void enrich(searchMore)} onApply={item=>void applySuggestion(item)} onOpenThread={onOpenThread}/>:null}
             {profile?<ContactFilesSection key={`${profile.id}:${profileRevision}`} contactId={profile.id} onShowMessage={threadId=>onOpenThread(threadId)}/>:null}
             {timeline.length?<RecentEmailsSection items={timeline} limit={CONTACT_RECENT_EMAIL_ROWS} onOpenThread={onOpenThread} onLoadOlder={timelineHasMore?()=>void loadOlder():undefined}/>:null}
           </aside>:null}
@@ -249,11 +252,11 @@ function GrowingTextarea(props:TextareaHTMLAttributes<HTMLTextAreaElement>){
  * AI profile suggestions, laid out like the Brief card in the email context
  * panel. Nothing is written until the user picks "Use suggestion".
  */
-function ContactEnrichmentCard({suggestions,notice,enriching,emailsReviewed,moreAvailable,onEnrich,onApply,onOpenThread}:{suggestions:ContactFieldSuggestion[];notice:{text:string;failed:boolean}|null;enriching:boolean;emailsReviewed:number;moreAvailable:boolean;onEnrich(searchMore:boolean):void;onApply(item:ContactFieldSuggestion):void;onOpenThread(id:string):void}){
+function ContactEnrichmentCard({ready,onOpenSettings,suggestions,notice,enriching,emailsReviewed,moreAvailable,onEnrich,onApply,onOpenThread}:{ready:boolean;onOpenSettings?():void;suggestions:ContactFieldSuggestion[];notice:{text:string;failed:boolean}|null;enriching:boolean;emailsReviewed:number;moreAvailable:boolean;onEnrich(searchMore:boolean):void;onApply(item:ContactFieldSuggestion):void;onOpenThread(id:string):void}){
   const headingId=useId();
   return <section className="context-section contact-enrichment" aria-labelledby={headingId}>
-    <ContextSectionHeader title="Profile Suggestions" titleId={headingId} icon={<UserRound size={ICON_SIZE.xs}/>} actions={<button type="button" className="btn btn-sm thread-assist-run" disabled={enriching} onClick={()=>onEnrich(false)}>{enriching?<LoaderCircle className="spin" size={ICON_SIZE.xs}/>:<Sparkles size={ICON_SIZE.xs}/>}Enhance with AI</button>}/>
-    {enriching?<p className="context-status">Reading emails…</p>:!notice&&!suggestions.length&&emailsReviewed===0?<p className="context-status">Fill empty fields from your emails with this person. Nothing changes until you use a suggestion.</p>:null}
+    <ContextSectionHeader title="Profile Suggestions" titleId={headingId} icon={<UserRound size={ICON_SIZE.xs}/>} actions={ready?<button type="button" className="btn btn-sm thread-assist-run" disabled={enriching} onClick={()=>onEnrich(false)}>{enriching?<LoaderCircle className="spin" size={ICON_SIZE.xs}/>:<Sparkles size={ICON_SIZE.xs}/>}Enhance With AI</button>:null}/>
+    {!ready?<><p className="context-status">Set up an AI provider and API key in AI settings to fill empty fields from your emails.</p>{onOpenSettings?<button type="button" className="btn-link context-link-button" onClick={onOpenSettings}>AI Settings</button>:null}</>:enriching?<p className="context-status">Reading emails…</p>:!notice&&!suggestions.length&&emailsReviewed===0?<p className="context-status">Fill empty fields from your emails with this person. Nothing changes until you use a suggestion.</p>:null}
     {notice?<p className={notice.failed?"context-status contacts-error":"context-status"} role={notice.failed?"alert":"status"}>{notice.text}</p>:null}
     {suggestions.map((item,index)=><article key={`${item.field}-${index}`} className="contact-suggestion">
       <span className="contact-suggestion-field">{CONTACT_SUGGESTION_FIELD_LABELS[item.field]}</span>

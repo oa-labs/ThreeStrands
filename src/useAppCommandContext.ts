@@ -50,6 +50,12 @@ type Options = {
     canUnsubscribe: boolean;
     latestMessage: Message | null;
     aiSummaryAvailable: boolean;
+    /** Briefs or suggestions are on with a provider chosen. */
+    aiBriefEnabled: boolean;
+    /** Thread Chat is on with a provider chosen. */
+    aiChatEnabled: boolean;
+    /** Draft Assist is on with a provider chosen. */
+    aiDraftEnabled: boolean;
     labelTargetIds: string[] | null;
     setLabelTargetIds: Dispatch<SetStateAction<string[] | null>>;
     setUnsubscribeMessageId: Dispatch<SetStateAction<string | null>>;
@@ -87,7 +93,7 @@ export function useAppCommandContext({
   const { includeArchived, setSearchOpen } = mailboxThreads;
   const { mailbox, setMailbox, setActiveSplitInboxId, activeAccountId, selectedId, setSelectedId, isTabbedMailbox } = view;
   const {
-    interactionScope, canUnsubscribe, latestMessage, aiSummaryAvailable, labelTargetIds,
+    interactionScope, canUnsubscribe, latestMessage, aiSummaryAvailable, aiBriefEnabled, aiChatEnabled, aiDraftEnabled, labelTargetIds,
     setLabelTargetIds, setUnsubscribeMessageId, setPaletteOpen, setShortcutHelpOpen, setGettingStartedOpen,
     openSettingsAt, adjustFontScale, toggleContextPanelFocus, selectAdjacentMessage,
     getSuggestions, openThreadChat, refreshMail,
@@ -241,6 +247,9 @@ export function useAppCommandContext({
       node.scrollBy({ top: -node.clientHeight * 0.9, behavior: scrollBehavior() });
     },
     aiSummaryAvailable,
+    aiBriefEnabled,
+    aiChatEnabled,
+    aiReplyAssistEnabled: aiDraftEnabled && (correspondence.activeDraft?.mode === "reply" || correspondence.activeDraft?.mode === "replyAll"),
     summarizeSelected: async () => {
       if (!selected) return {};
       setRightWorkspace((current) => current === "calendar" ? current : null);
@@ -288,7 +297,7 @@ export function useAppCommandContext({
     selectedId, selected, canUnsubscribe, returnStep, goBack, displayedMessages,
     composerBelongsToVisibleThread, outboxSelection, outboxEditSource, goToInboxTab, accountSplitInboxes.length, goToNextSplitTab,
     goToPreviousSplitTab, goToSplitTab, taskLayout, selectedTaskStatus, selectedTaskHasThread,
-    aiSummaryAvailable, refreshMail, openToday, openTasks, openMailView, openTasksView,
+    aiSummaryAvailable, aiBriefEnabled, aiChatEnabled, aiDraftEnabled, correspondence.activeDraft?.mode, refreshMail, openToday, openTasks, openMailView, openTasksView,
     openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView, getSuggestions,
     openThreadChat, newTask, canUndoAction, canUndoArchive, switchAccount, toggleMessageFilter, setRightWorkspace,
     mutateIds, openFolder, selectedIndex, visibleThreads, setSelectedId, selectAdjacentMessage,

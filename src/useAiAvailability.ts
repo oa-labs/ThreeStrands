@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { isAiApiKeyConfigured, readAiFeatures, readAiProvider } from "./aiSettings";
 
+/**
+ * Which AI features to show. A feature is *enabled* when an AI provider is
+ * chosen and its switch is on, and hidden otherwise. It is *available* when
+ * an API key is also configured; enabled but unavailable features show how
+ * to finish setting up instead of their actions.
+ */
 export function useAiAvailability(settingsOpen: boolean) {
+  const [aiProviderChosen, setAiProviderChosen] = useState(false);
   const [aiSummaryAvailable, setAiSummaryAvailable] = useState(false);
   const [aiSummaryFeatureEnabled, setAiSummaryFeatureEnabled] = useState(false);
   const [aiProactive, setAiProactive] = useState<{ enabled: boolean; knownSendersOnly: boolean }>({ enabled: false, knownSendersOnly: false });
@@ -9,6 +16,7 @@ export function useAiAvailability(settingsOpen: boolean) {
   const [aiActionAvailable, setAiActionAvailable] = useState(false);
   const [aiChatFeatureEnabled, setAiChatFeatureEnabled] = useState(false);
   const [aiChatAvailable, setAiChatAvailable] = useState(false);
+  const [aiDraftFeatureEnabled, setAiDraftFeatureEnabled] = useState(false);
   const [aiDraftAvailable, setAiDraftAvailable] = useState(false);
   const refreshAiAvailability = useCallback(() => {
     const provider = readAiProvider();
@@ -17,10 +25,12 @@ export function useAiAvailability(settingsOpen: boolean) {
     const actionEnabled = provider !== "none" && features.actionExtraction;
     const chatEnabled = provider !== "none" && features.threadChat;
     const draftEnabled = provider !== "none" && features.draftAssist;
-    setAiChatFeatureEnabled(features.threadChat);
-    setAiSummaryFeatureEnabled(features.summarize);
+    setAiProviderChosen(provider !== "none");
+    setAiChatFeatureEnabled(chatEnabled);
+    setAiSummaryFeatureEnabled(summaryEnabled);
     setAiProactive({ enabled: features.proactiveBriefs, knownSendersOnly: features.proactiveKnownSendersOnly });
-    setAiActionFeatureEnabled(features.actionExtraction);
+    setAiActionFeatureEnabled(actionEnabled);
+    setAiDraftFeatureEnabled(draftEnabled);
     if (!summaryEnabled && !actionEnabled && !chatEnabled && !draftEnabled) {
       setAiSummaryAvailable(false);
       setAiActionAvailable(false);
@@ -47,7 +57,7 @@ export function useAiAvailability(settingsOpen: boolean) {
     if (!settingsOpen) refreshAiAvailability();
   }, [settingsOpen, refreshAiAvailability]);
   return {
-    aiSummaryAvailable, aiSummaryFeatureEnabled, aiProactive, aiActionFeatureEnabled,
-    aiActionAvailable, aiChatFeatureEnabled, aiChatAvailable, aiDraftAvailable, refreshAiAvailability,
+    aiProviderChosen, aiSummaryAvailable, aiSummaryFeatureEnabled, aiProactive, aiActionFeatureEnabled,
+    aiActionAvailable, aiChatFeatureEnabled, aiChatAvailable, aiDraftFeatureEnabled, aiDraftAvailable, refreshAiAvailability,
   };
 }

@@ -14,7 +14,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("keeps one read-only context panel beside the conversation; Shift+A reveals suggestions there and workspace shortcuts still switch views", async () => {
+it("keeps one read-only context panel beside the conversation, with a single Set Up AI hint until AI is chosen, and workspace shortcuts still switch views", async () => {
   render(<App />);
 
   await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
@@ -25,7 +25,12 @@ it("keeps one read-only context panel beside the conversation; Shift+A reveals s
   fireEvent.keyDown(window, { key: "A", shiftKey: true });
   expect(screen.getByRole("complementary", { name: "Conversation context" })).toBe(panel);
   expect(screen.queryByRole("complementary", { name: "Actions" })).not.toBeInTheDocument();
-  expect(within(panel).getByRole("region", { name: "Brief" })).toHaveTextContent("AI briefs and suggestions are off.");
+  // Without a provider, the brief section is the one place AI is mentioned; Ask isn't offered at all.
+  const brief = within(panel).getByRole("region", { name: "Brief" });
+  expect(brief).toHaveTextContent("Set up AI to get a brief of each conversation, suggested next steps, and answers to your questions about it.");
+  expect(within(brief).getByRole("button", { name: "Set Up AI" })).toBeInTheDocument();
+  expect(within(panel).queryByRole("region", { name: "Ask about this conversation" })).not.toBeInTheDocument();
+  expect(within(panel).queryByText(/AI settings/i)).not.toBeInTheDocument();
   expect(within(panel).queryByRole("textbox")).not.toBeInTheDocument();
   expect(within(panel).queryByRole("combobox")).not.toBeInTheDocument();
 

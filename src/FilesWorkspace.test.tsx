@@ -20,6 +20,8 @@ describe("Files workspace", () => {
     await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(2));
     const rail=within(screen.getByRole("complementary",{name:"File context"}));
     expect(screen.getByRole("complementary",{name:"File context"})).toHaveClass("context-panel");
+    // The details heading marks its section with a file glyph in the panel's shared glyph column.
+    expect(rail.getByRole("heading",{name:"File details"}).querySelector(".context-row-glyph svg")).not.toBeNull();
     expect(screen.queryByText("Download required")).not.toBeInTheDocument();
     expect(rail.getByText(/^PDF document/)).toBeInTheDocument();
     expect(rail.queryByText(/application\/pdf/)).not.toBeInTheDocument();

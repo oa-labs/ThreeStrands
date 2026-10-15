@@ -204,6 +204,7 @@ describe("ComposeContext", () => {
     expect(within(section).queryByRole("button", { name: "Add to Calendar" })).not.toBeInTheDocument();
     // Without Draft Assist the coming week is searched, and nothing is sent to an AI provider.
     expect(mailClient.findTimes).not.toHaveBeenCalled();
+    expect(within(section).getByRole("button", { name: "Search Again" }).querySelector("svg.lucide-sparkles")).toBeNull();
     expect(within(section).queryByRole("textbox", { name: "Adjust times" })).not.toBeInTheDocument();
     const searchAgain = within(section).getByRole("button", { name: "Search Again" });
     expect(searchAgain).toHaveClass("btn", "btn-sm");
@@ -250,6 +251,7 @@ describe("Find Times with AI", () => {
     // Nothing is sent until asked.
     expect(mailClient.findTimes).not.toHaveBeenCalled();
 
+    expect(within(section()).getByRole("button", { name: "Find Times" }).querySelector("svg.lucide-sparkles")).not.toBeNull();
     fireEvent.click(within(section()).getByRole("button", { name: "Find Times" }));
     expect(await within(section()).findByRole("status")).toHaveTextContent("Reading the conversation…");
     expect(within(section()).getByRole("button", { name: "Find Times" })).toBeDisabled();
@@ -284,6 +286,7 @@ describe("Find Times with AI", () => {
     await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalledTimes(2));
     const input = await within(section()).findByRole("textbox", { name: "Adjust times" });
     expect(input).toHaveAttribute("maxLength", "300");
+    expect(within(section()).getByRole("button", { name: "Adjust" }).querySelector("svg.lucide-sparkles")).not.toBeNull();
     expect(within(section()).getByRole("button", { name: "Adjust" })).toBeDisabled();
     fireEvent.change(input, { target: { value: "only Thursday" } });
     fireEvent.click(within(section()).getByRole("button", { name: "Adjust" }));
@@ -330,6 +333,8 @@ describe("Find Times with AI", () => {
     const suggest = vi.fn(() => suggested);
     render(<AvailabilitySection preferences={preferences} ai draft={reply} suggest={suggest} onInsertTimes={vi.fn()} onOpenCalendarSettings={vi.fn()} />);
 
+    // Reusing the suggestion sends nothing to the provider, so the first press carries no AI mark.
+    expect(within(section()).getByRole("button", { name: "Find Times" }).querySelector("svg.lucide-sparkles")).toBeNull();
     fireEvent.click(within(section()).getByRole("button", { name: "Find Times" }));
     expect(await within(section()).findByText("From the suggested meeting: “next week”.")).toBeInTheDocument();
     await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalledWith(expect.objectContaining({
@@ -339,10 +344,11 @@ describe("Find Times with AI", () => {
     expect(mailClient.findTimes).not.toHaveBeenCalled();
     expect(await within(section()).findByRole("textbox", { name: "Adjust times" })).toBeInTheDocument();
 
-    fireEvent.click(within(section()).getByRole("button", { name: "Search Again" }));
+    const again = within(section()).getByRole("button", { name: "Search Again" });
+    expect(again.querySelector("svg.lucide-sparkles")).not.toBeNull();
+    fireEvent.click(again);
     expect(await within(section()).findByText("A fresh read.")).toBeInTheDocument();
     expect(mailClient.findTimes).toHaveBeenCalledTimes(1);
-    expect(suggest).toHaveBeenCalledTimes(1);
   });
 
   it("uses a meeting suggestion's range even without AI", async () => {

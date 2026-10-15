@@ -18,6 +18,9 @@ const context = {
   canUndoSend: false,
   splitInboxCount: 0,
   aiSummaryAvailable: false,
+  aiBriefEnabled: true,
+  aiChatEnabled: true,
+  aiReplyAssistEnabled: true,
   canUndoAction: false,
 } as unknown as CommandContext;
 

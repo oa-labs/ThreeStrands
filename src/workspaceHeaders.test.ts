@@ -335,6 +335,13 @@ describe("conversation participant layout", () => {
     expect(lastDeclaration(".context-row-wrap .context-row-title", "white-space")).toBe("normal");
   });
 
+  it("keeps the workspace rail's first heading clear of the collapse toggle", () => {
+    // The toggle is absolutely placed, so a section's count badge slid under it when only direct headings reserved space.
+    expect(lastDeclaration(".workspace-context-toggle", "position")).toBe("absolute");
+    expect(lastDeclaration(".workspace-context-rail > .context-section-header:first-child", "padding-right")).toBe("var(--space-8)");
+    expect(lastDeclaration(".workspace-context-rail > :first-child > .context-section-header:first-child", "padding-right")).toBe("var(--space-8)");
+  });
+
   it("draws section counts as badges", () => {
     expect(lastDeclaration(".context-count", "border")).toBe("1px solid var(--border)");
     expect(lastDeclaration(".context-count", "border-radius")).toBe("var(--radius-xs)");

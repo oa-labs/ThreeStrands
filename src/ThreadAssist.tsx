@@ -25,11 +25,17 @@ function proposalKey(proposal: ActionProposal): string {
 }
 
 /**
- * AI brief and suggestions for the conversation. `enabled` reflects the
- * feature flag; `available` additionally requires a configured provider key.
+ * AI brief and suggestions for the conversation. `enabled` means a provider
+ * is chosen and the feature is switched on; `available` additionally
+ * requires a configured provider key.
  */
 export type ThreadAssistProps = {
   detail: ThreadDetail;
+  /**
+   * An AI provider is chosen. Without one, this section is the app's single
+   * hint that AI features exist; with one, switched-off features are hidden.
+   */
+  providerChosen: boolean;
   summary: { enabled: boolean; available: boolean; pending: boolean };
   suggestions: {
     enabled: boolean;
@@ -94,16 +100,18 @@ export function summaryClipboardText(summary: string): string {
     .join("\n");
 }
 
-export function ThreadAssist({ detail, summary, suggestions, scheduling, loading, error, preview, onRun, onOpenSettings }: ThreadAssistProps) {
+export function ThreadAssist({ detail, providerChosen, summary, suggestions, scheduling, loading, error, preview, onRun, onOpenSettings }: ThreadAssistProps) {
   const { thread } = detail;
   const [copiedSummary, setCopiedSummary] = useState<string | null>(null);
   const [copyFailed, setCopyFailed] = useState(false);
-  if (!summary.enabled && !suggestions.enabled) {
+  if (!providerChosen) {
     return <section id={THREAD_ASSIST_ID} className="context-section thread-assist" aria-label="Brief">
-      <p className="context-status">AI briefs and suggestions are off.</p>
-      <button type="button" className="btn-link context-link-button" onClick={onOpenSettings}>AI Settings</button>
+      <p className="context-status">Set up AI to get a brief of each conversation, suggested next steps, and answers to your questions about it.</p>
+      <button type="button" className="btn-link context-link-button" onClick={onOpenSettings}>Set Up AI</button>
     </section>;
   }
+  // Switched off on purpose: nothing to show, and no reminder.
+  if (!summary.enabled && !suggestions.enabled) return null;
   if (!summary.available && !suggestions.available) {
     return <section id={THREAD_ASSIST_ID} className="context-section thread-assist" aria-label="Brief">
       <p className="context-status">Set up an AI provider and API key in AI settings to get a brief of this conversation.</p>

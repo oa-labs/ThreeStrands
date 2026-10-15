@@ -72,6 +72,9 @@ export const Composer = forwardRef<ComposerHandle, {
   const [identities, setIdentities] = useState<SendingIdentity[]>([]);
   const identityCache = useRef(new Map<string, SendingIdentity[]>());
   const [showBlankCopies, setShowBlankCopies] = useState(false);
+  // Reply Assist shows for replies once Draft Assist is on with a provider
+  // chosen; it can generate once an API key is configured too.
+  const [replyAssistEnabled, setReplyAssistEnabled] = useState(false);
   const [replyAssistAvailable, setReplyAssistAvailable] = useState(false);
   const [replyAssistOpen, setReplyAssistOpen] = useState(false);
   const [replyAssistContext, setReplyAssistContext] = useState<ReplyAssistContext | null>(null);
@@ -169,7 +172,14 @@ export const Composer = forwardRef<ComposerHandle, {
     }
   }
   function draftReplyWithAI() {
-    if (!replyAssistAvailable || replyAssistOpen) return;
+    if (!replyAssistEnabled || replyAssistOpen) return;
+    if (!replyAssistAvailable) {
+      setReplyAssistContext(null);
+      setReplyAssistBusy(false);
+      setReplyAssistError("Set up an AI provider and API key in AI settings to draft replies with AI.");
+      setReplyAssistOpen(true);
+      return;
+    }
     void openReplyAssist();
   }
   const openReplyAssist = useCallback(async () => {
@@ -288,6 +298,7 @@ export const Composer = forwardRef<ComposerHandle, {
   useEffect(() => {
     if (!["reply", "replyAll"].includes(initial.mode)) return;
     const enabled = readAiProvider() !== "none" && readAiFeatures().draftAssist;
+    setReplyAssistEnabled(enabled);
     if (!enabled) return;
     void isAiApiKeyConfigured()
       .then((configured) => { if (mounted.current) setReplyAssistAvailable(configured); })
@@ -384,15 +395,15 @@ export const Composer = forwardRef<ComposerHandle, {
           onRemoveImage={removeInlineImage}
           readInlineImage={readInlineImage}
         />
-        {replyAssistAvailable ? (
+        {replyAssistEnabled ? (
           <div className="reply-assist">
-            <button type="button" className="btn reply-assist-trigger" onClick={() => void openReplyAssist()}>
+            <button type="button" className="btn reply-assist-trigger" onClick={draftReplyWithAI}>
               <Sparkles size={ICON_SIZE.md} /> Draft Reply With AI <kbd>⌘/Ctrl J</kbd>
             </button>
           </div>
         ) : null}
         {replyAssistInstruction && !replyAssistAvailable ? (
-          <p className="reply-assist-task-context"><strong>Task-derived instruction:</strong> {replyAssistInstruction} Configure Reply Assist in AI settings to generate a suggestion.</p>
+          <p className="reply-assist-task-context"><strong>Task-derived instruction:</strong> {replyAssistInstruction}{replyAssistEnabled ? " Set up an AI provider and API key in AI settings to generate a suggestion." : null}</p>
         ) : null}
         {draft.attachments.some((attachment) => !attachment.inline) && <ul className="attachment-list">{draft.attachments.filter((attachment) => !attachment.inline).map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : "Download required"}</small></span>{!a.ready && <button className="btn btn-sm" disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); replaceDraft(next); })}>Download</button>}<button className="btn-icon btn-icon-sm" aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); replaceDraft(next); })}><X size={ICON_SIZE.sm} /></button></li>)}</ul>}
         {error && <div className="notice compose-error" role="alert">{error} <button className="btn btn-sm" onClick={() => void run(async () => { await flush(); })}>Retry Save</button></div>}
@@ -454,7 +465,7 @@ export const Composer = forwardRef<ComposerHandle, {
                 disabled={replyAssistBusy || !replyAssistContext || confirmAddToExisting}
                 onClick={() => void generateReply()}
               >
-                {replyAssistBusy ? "Preparing…" : "Generate Draft"}
+                <Sparkles size={ICON_SIZE.md} />{replyAssistBusy ? "Preparing…" : "Generate Draft"}
               </button>
               <span>The suggestion is never sent automatically.</span>
             </div>

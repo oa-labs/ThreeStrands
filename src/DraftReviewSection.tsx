@@ -1,13 +1,19 @@
 import { useEffect, useRef, useState } from "react";
+import { Sparkles } from "lucide-react";
 import { ContextSectionHeader } from "./ContextSections";
 import { mailClient } from "./data/client";
 import { readAiProvider, readAiRequestConfig } from "./aiSettings";
 import type { DraftReviewResult } from "./domain";
 import { reviewHasRevision, type DraftReviewActions, type DraftReviewSnapshot } from "./draftReview";
 import { errorMessage } from "./errors";
+import { ICON_SIZE } from "./iconSizes";
 
-export function DraftReviewSection({ actions, available, onOpenSettings }: {
+/** Feedback on a draft from AI. Hidden unless Draft Assist is on with a provider chosen. */
+export function DraftReviewSection({ actions, enabled, available, onOpenSettings }: {
   actions: DraftReviewActions;
+  /** Draft Assist is on and an AI provider is chosen. */
+  enabled: boolean;
+  /** An API key is also configured. */
   available: boolean;
   onOpenSettings(): void;
 }) {
@@ -74,6 +80,7 @@ export function DraftReviewSection({ actions, available, onOpenSettings }: {
     } catch (reason) { setError(errorMessage(reason)); }
   }
 
+  if (!enabled) return null;
   return <section className="context-section draft-review" aria-labelledby="draft-review-title">
     <ContextSectionHeader title="Draft Review" titleId="draft-review-title" />
     {available ? <div className="draft-review-content">
@@ -93,7 +100,7 @@ export function DraftReviewSection({ actions, available, onOpenSettings }: {
           {!review ? <p className="context-section-note">Only this subject, the text shown here, and the optional goal are sent. Recipient fields, separately stored quoted history, and attachments are excluded.</p> : null}
         </details>
         {!review ? <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => void getFeedback()}>
-          {busy ? "Reviewing…" : "Get Feedback"}
+          <Sparkles size={ICON_SIZE.sm} />{busy ? "Reviewing…" : "Get Feedback"}
         </button> : <>
           <p className="draft-review-assessment" role="status">{review.assessment}</p>
           {review.suggestions.length ? <ol className="draft-review-suggestions">
@@ -124,7 +131,7 @@ export function DraftReviewSection({ actions, available, onOpenSettings }: {
       </> : null}
       {error ? <p className="context-status" role="alert">{error}</p> : null}
     </div> : <div className="draft-review-content">
-      <p className="context-section-note">Enable Draft Assist and configure an AI provider to get writing feedback.</p>
+      <p className="context-section-note">Set up an AI provider and API key in AI settings to get writing feedback.</p>
       <button type="button" className="btn btn-sm" onClick={onOpenSettings}>AI Settings</button>
     </div>}
   </section>;

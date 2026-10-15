@@ -925,6 +925,31 @@ describe("Composer Reply Assist", () => {
     saveAiFeatures(DEFAULT_AI_FEATURES);
   });
 
+  it("offers Draft Reply With AI once Draft Assist is on, and explains a missing key instead of doing nothing", async () => {
+    await clearAiApiKey();
+    const replyAssistContext = vi.spyOn(mailClient, "replyAssistContext");
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const trigger = await screen.findByRole("button", { name: /Draft Reply With AI/ });
+    expect(trigger.querySelector("svg.lucide-sparkles")).not.toBeNull();
+
+    act(() => ref.current?.draftReplyWithAI());
+    const assist = await screen.findByRole("dialog", { name: "Reply Assist" });
+    expect(within(assist).getByRole("alert")).toHaveTextContent("Set up an AI provider and API key in AI settings to draft replies with AI.");
+    const generate = within(assist).getByRole("button", { name: "Generate Draft" });
+    expect(generate).toBeDisabled();
+    expect(generate.querySelector("svg.lucide-sparkles")).not.toBeNull();
+    expect(replyAssistContext).not.toHaveBeenCalled();
+  });
+
+  it("leaves Draft Reply With AI out when no AI provider is chosen", async () => {
+    saveAiProvider("none");
+    render(<Composer draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    await screen.findByRole("textbox", { name: "Message Body" });
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.queryByRole("button", { name: /Draft Reply With AI/ })).not.toBeInTheDocument();
+  });
+
   it("shows the exact reviewed context and inserts provider output only as plain text", async () => {
     vi.spyOn(mailClient, "replyAssistContext").mockResolvedValue(context);
     const generate = vi.spyOn(mailClient, "generateReply").mockResolvedValue({
