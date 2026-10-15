@@ -4,6 +4,8 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+## 0.133.2 — 2026-10-15
+
 ### New
 - Create reusable email signatures with formatted text, links, and logos in **Settings → Signatures**, and choose defaults for each sending address. Switch or remove signatures while composing, with separate defaults for new messages and replies or forwards.
 - A **Sent** folder lists the conversations you've sent messages in, including ones sent from your other devices or from webmail. Choose it from the folder menu or press G then S.
