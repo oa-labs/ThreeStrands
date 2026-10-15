@@ -14,6 +14,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - When adding members to a group, the people you've chosen now appear inside the search field, the search clears after each pick, and Backspace removes the last person.
 
 ### Fixed
+- Tables pasted from a spreadsheet, such as a price list, no longer show up as a tall blank box with nothing inside.
 - Adding members to a group no longer offers to create a new contact for an address that already belongs to someone in your address book; it picks that person instead. Typing the address of someone already in the group now says so rather than adding them again.
 
 ## 0.125.4 — 2026-10-15

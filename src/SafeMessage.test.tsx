@@ -437,6 +437,49 @@ describe("SafeMessage", () => {
     expect(outerCells[2].getAttribute("width")).toBe("20");
   });
 
+  it("keeps <col> widths that size a zero-width fixed-layout table", () => {
+    const cols = Array.from(parseSanitized("colWidthZeroWidthTable").querySelectorAll("col"));
+    expect(cols.map((col) => col.getAttribute("width"))).toEqual(["158", "601", "150"]);
+  });
+
+  it("keeps <colgroup> and <col> widths when the column structure mixes both", () => {
+    const body = parseSanitized("colgroupWidthFixedTable");
+    const [sized, wrapper] = Array.from(body.querySelectorAll("colgroup"));
+    const cols = Array.from(body.querySelectorAll("col"));
+    expect(sized.getAttribute("width")).toBe("160");
+    expect(wrapper.hasAttribute("width")).toBe(false);
+    expect(cols.map((col) => col.getAttribute("width"))).toEqual(["80", null]);
+  });
+
+  it("bounds column widths with the shared dimension parser and drops column heights", () => {
+    const sanitized = sanitizeMessageHtml(`
+      <table style="table-layout:fixed"><colgroup width="${EMAIL_CSS_LIMITS.maxAbsolutePx + 1}" height="40">
+        <col width="${EMAIL_CSS_LIMITS.maxAbsolutePx}" height="40">
+        <col width="120;background:url(https://example.com/x.png)">
+        <col width="calc(20px)">
+        <col width="25%">
+        <col width="-5">
+      </colgroup><tr><td>A</td><td>B</td><td>C</td><td>D</td><td>E</td></tr></table>
+    `);
+    const container = document.createElement("div");
+    container.innerHTML = sanitized;
+    const colgroup = container.querySelector("colgroup")!;
+    const cols = Array.from(container.querySelectorAll("col"));
+
+    // Past the limit or unparseable: removed, never clamped.
+    expect(colgroup.hasAttribute("width")).toBe(false);
+    expect(cols[0].getAttribute("width")).toBe(String(EMAIL_CSS_LIMITS.maxAbsolutePx));
+    // Trailing text cannot smuggle CSS: only the number is written back.
+    expect(cols[1].getAttribute("width")).toBe("120");
+    expect(cols[2].hasAttribute("width")).toBe(false);
+    expect(cols[3].getAttribute("width")).toBe("25%");
+    expect(cols[4].hasAttribute("width")).toBe(false);
+    // Height means nothing on a column and stays stripped.
+    expect(container.querySelector("[height]")).toBeNull();
+    expect(sanitized).not.toContain("url(");
+    expect(container.querySelector("col[style], colgroup[style]")).toBeNull();
+  });
+
   it("normalizes px-suffixed image, spacer, and table spacing attributes in a card layout", () => {
     const sanitized = sanitizeMessageHtml(`
       <div><table cellpadding="10px" cellspacing="0PX" width="100%">

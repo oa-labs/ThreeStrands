@@ -226,6 +226,11 @@ const allowedTags = [
 ];
 
 const dimensionAttributeTags = new Set(["img", "table", "td", "th"]);
+// Column widths are table-structure sizing, bounded by the same parser as
+// cell widths. A fixed-layout table often declares width:0 and takes its real
+// width from these alone; dropping them collapses every column and the cells'
+// overflow:hidden clips all of the content.
+const widthOnlyAttributeTags = new Set(["col", "colgroup"]);
 
 export function decodeHtmlEntities(text: string): string {
   const container = document.createElement("textarea");
@@ -361,7 +366,7 @@ export function sanitizeMessageHtml(html: string): string {
       }
     }
     const tag = element.tagName.toLowerCase();
-    if (!dimensionAttributeTags.has(tag)) element.removeAttribute("width");
+    if (!dimensionAttributeTags.has(tag) && !widthOnlyAttributeTags.has(tag)) element.removeAttribute("width");
     if (!dimensionAttributeTags.has(tag)) element.removeAttribute("height");
 
     const width = element.getAttribute("width");

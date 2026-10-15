@@ -120,6 +120,29 @@ export const emailRenderingFixtures = {
       </tr></table>
     </div>
   `,
+  // Column widths declared on <col>/<colgroup> rather than on cells. A
+  // spreadsheet paste declares the table 0px wide and takes its real width
+  // from the columns alone; losing them collapses every column and the
+  // cells' overflow:hidden clips all content. Keep both a <col> list and a
+  // bare <colgroup width> beside mixed <col> children covered.
+  colWidthZeroWidthTable: `
+    <p>Below are the options:</p>
+    <table cellspacing="0" cellpadding="0" border="1" style="table-layout:fixed;width:0px;border-collapse:collapse">
+      <colgroup><col width="158"><col width="601"><col width="150"></colgroup>
+      <tbody>
+        <tr style="height:21px"><td style="overflow:hidden;padding:2px 3px;border:1px solid rgb(204,204,204)">Option</td><td style="overflow:hidden;padding:2px 3px;border:1px solid rgb(204,204,204)">Details</td><td style="overflow:hidden;padding:2px 3px;border:1px solid rgb(204,204,204)">Price</td></tr>
+        <tr style="height:21px"><td style="overflow:hidden;padding:2px 3px;border:1px solid rgb(204,204,204)">Standard</td><td style="overflow:hidden;padding:2px 3px;border:1px solid rgb(204,204,204)">Everything in the basic plan, delivered over a single afternoon session.</td><td style="overflow:hidden;padding:2px 3px;border:1px solid rgb(204,204,204)">300 USD</td></tr>
+      </tbody>
+    </table>
+  `,
+  colgroupWidthFixedTable: `
+    <table role="presentation" cellspacing="0" cellpadding="0" style="table-layout:fixed;width:480px">
+      <colgroup width="160px"></colgroup>
+      <colgroup><col width="80"><col></colgroup>
+      <tr><td style="overflow:hidden">Name</td><td style="overflow:hidden">Qty</td><td style="overflow:hidden">Notes</td></tr>
+      <tr><td style="overflow:hidden">Widget</td><td style="overflow:hidden">2</td><td style="overflow:hidden">Ships next week</td></tr>
+    </table>
+  `,
   // A sender stylesheet resets spacing with !important, and individual
   // elements opt back in with their own inline !important. Inline important
   // declarations outrank stylesheet ones, so the opt-ins must keep priority.

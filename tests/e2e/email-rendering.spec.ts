@@ -239,6 +239,32 @@ test.describe("email rendering fixtures", () => {
     });
   }
 
+  for (const { fixture, columnWidths, text } of [
+    { fixture: "colWidthZeroWidthTable", columnWidths: [158, 601, 150], text: "300 USD" },
+    { fixture: "colgroupWidthFixedTable", columnWidths: [160, 80, 240], text: "Ships next week" },
+  ]) {
+    test(`${fixture} sizes its columns from <col>/<colgroup> widths`, async ({ page }) => {
+      await page.setViewportSize({ width: 1400, height: 900 });
+      await page.goto(`/tests/email-rendering.html?theme=light&fixture=${fixture}`);
+      const content = page.locator("iframe.message-body").contentFrame();
+      const cells = content.locator("tr").first().locator("td");
+      await expect(cells).toHaveCount(columnWidths.length);
+      for (const [index, width] of columnWidths.entries()) {
+        await expect.poll(async () => Math.round((await cells.nth(index).boundingBox())?.width ?? 0)).toBe(width);
+      }
+      // Collapsed columns wrap a word per line and clip it; sized columns keep
+      // each row's text visible on a short row.
+      const cell = content.getByText(text);
+      await expect(cell).toBeVisible();
+      const metrics = await cell.evaluate((element) => {
+        const td = element.closest("td")!;
+        return { clipped: td.scrollWidth - td.clientWidth, height: td.getBoundingClientRect().height };
+      });
+      expect(metrics.clipped).toBeLessThanOrEqual(0);
+      expect(metrics.height).toBeLessThan(100);
+    });
+  }
+
   for (const { fixture, alt } of [
     { fixture: "heroInTable", alt: "hero" },
     { fixture: "heroInFlow", alt: "banner" },
