@@ -1,5 +1,23 @@
 # Agent guidance
 
+## Working tree
+
+Do every task that changes files in its own git worktree on a new branch from
+`master` (for example under `../dispatch-worktrees/<branch>`), never in the
+developer's primary checkout. Other agents and the developer may be editing the
+primary checkout at the same time.
+
+- Do not run `git stash`, `git checkout`, `git reset`, or other commands that
+  rewrite files in the primary checkout.
+- Run tests, the version bump, and changelog edits inside the worktree.
+- Merge into the primary checkout only when the developer asks. Before merging,
+  check the primary checkout's status and report any files another agent has
+  also changed.
+- Leave nothing behind. Once the branch is merged, or the developer drops the
+  work, remove the worktree (`git worktree remove`) and delete its branch. A
+  worktree should exist only while its task is in progress or waiting to be
+  merged. Mention any still waiting in the final summary.
+
 ## Testing
 
 Agents own the automated test suite. The developer owns looking at the running app.
