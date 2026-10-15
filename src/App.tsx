@@ -1103,6 +1103,7 @@ export function App() {
           accounts={accounts}
           onKeyDown={contextPanelKeyDown}
           calendarConnected={calendarConnected}
+          findTimesAi={aiDraftAvailable}
           preferences={availabilityPreferences}
           taskRefreshKey={taskRevision}
           onAttach={correspondence.context.attachFiles}
@@ -1141,6 +1142,8 @@ export function App() {
             availability: calendarConnected ? (
               <AvailabilitySection
                 preferences={availabilityPreferences}
+                ai={aiDraftAvailable}
+                draft={correspondence.liveDraft}
                 onInsertTimes={draftAvailabilityReply}
                 onOpenCalendarSettings={() => openSettingsAt("calendarAccounts")}
               />

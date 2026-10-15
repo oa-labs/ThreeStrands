@@ -814,6 +814,43 @@ describe("conversation brief", () => {
     expect(await within(panel).findByText("Welcome to the app.")).toBeInTheDocument();
     expect(briefThread).toHaveBeenCalledTimes(2);
   });
+
+  it("reads the conversation for Find Times in a reply's panel when Draft Assist is on", async () => {
+    localStorage.removeItem("threestrands.demoCorrespondence");
+    clearScheduleCache();
+    await enableAi({ draftAssist: true });
+    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
+      { email: "calendar@example.com", connectedAt: "2026-09-18T00:00:00Z", status: "connected" },
+    ]);
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+    const rangeStart = new Date(Date.now() + 3 * 86_400_000).toISOString();
+    const rangeEnd = new Date(Date.now() + 10 * 86_400_000).toISOString();
+    const findTimes = vi.spyOn(mailClient, "findTimes").mockResolvedValue({
+      rangeStart, rangeEnd, durationMinutes: 45, weekdays: [], dayStart: null, dayEnd: null, reason: "The welcome note suggests a call next week.",
+    });
+    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    try {
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      const panel = screen.getByRole("complementary", { name: "Conversation context" });
+      fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+      await screen.findByRole("dialog", { name: "Reply Message" });
+      const availability = await within(panel).findByRole("region", { name: "Availability" });
+      fireEvent.click(within(availability).getByRole("button", { name: "Find Times" }));
+
+      expect(await within(availability).findByText("The welcome note suggests a call next week.")).toBeInTheDocument();
+      expect(findTimes).toHaveBeenCalledWith(
+        expect.objectContaining({ sourceMessageId: expect.any(String), instruction: null, current: null }),
+        "openai", expect.any(String), null,
+      );
+      await waitFor(() => expect(find).toHaveBeenCalledWith(expect.objectContaining({
+        rangeStart, rangeEnd, preferences: expect.objectContaining({ defaultDurationMinutes: 45 }),
+      })));
+      expect(within(availability).getByRole("textbox", { name: "Adjust times" })).toBeInTheDocument();
+    } finally {
+      localStorage.removeItem("threestrands.demoCorrespondence");
+    }
+  });
 });
 
 it("opens archived contact timeline email in All Mail and keeps it selected after refresh", async () => {

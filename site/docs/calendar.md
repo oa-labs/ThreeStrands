@@ -20,7 +20,7 @@ Google Calendar is the only calendar provider today. CalDAV is not yet supported
 
 Press <kbd>t</kbd> to show today's schedule beside your mail, and <kbd>-</kbd> or <kbd>=</kbd> to move between days. Set your timezone and working hours in **Settings → Availability**.
 
-To share free times, click **Find Times** in the **Availability** section of the side panel while you write a message. ThreeStrands offers open times from your working hours, spread across the coming days. Choose **Mornings** or **Afternoons** to narrow them, **Later** to look at the following week, or **Show More** for more times on the same days, then click **Insert These Times** to add the ones you picked to your message. Meeting suggestions in a conversation offer the same choices.
+To share free times, click **Find Times** in the **Availability** section of the side panel while you write a message. ThreeStrands offers open times from your working hours, spread across the coming days. With **Draft Assist** turned on in **Settings → AI Provider**, Find Times first reads the conversation and your draft, so a request to meet next week shows times next week, with a line saying why. Type a change such as "Thursday or Friday afternoon" and click **Adjust** to search again. Choose **Mornings** or **Afternoons** to narrow them, **Later** to look at the following week, or **Show More** for more times on the same days, then click **Insert These Times** to add the ones you picked to your message. Meeting suggestions in a conversation offer the same choices.
 
 ## Plan the Week
 

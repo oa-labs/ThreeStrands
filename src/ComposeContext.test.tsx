@@ -5,13 +5,14 @@ import { RecipientSummary } from "./RecipientSections";
 import { mailClient } from "./data/client";
 import { ICON_SIZE } from "./iconSizes";
 import { SLOTS_PER_DAY } from "./scheduling";
+import { saveAiProvider } from "./aiSettings";
 import type { Draft } from "./correspondence";
 import type { Account, AvailabilityPreferences, ContactActivity, ContactProfile, ContactSuggestion } from "./domain";
 
 vi.mock("./data/client", () => ({ mailClient: {
   listContactSuggestions: vi.fn(), resolveContactIds: vi.fn(), getContactProfile: vi.fn(), contactActivity: vi.fn(),
   contactTimeline: vi.fn(), contactFiles: vi.fn(), domainContext: vi.fn(), listTasks: vi.fn(), listContactTasks: vi.fn(),
-  findAvailability: vi.fn(), listScheduleEvents: vi.fn(), fileStars: vi.fn().mockResolvedValue([]),setFileStar: vi.fn().mockResolvedValue(undefined),openAttachment: vi.fn(), listContactGroupRecipients: vi.fn(),
+  findAvailability: vi.fn(), findTimes: vi.fn(), listScheduleEvents: vi.fn(), fileStars: vi.fn().mockResolvedValue([]),setFileStar: vi.fn().mockResolvedValue(undefined),openAttachment: vi.fn(), listContactGroupRecipients: vi.fn(),
 } }));
 
 const accounts = [{ email: "me@acme.com" }, { email: "me@gmail.com" }] as Account[];
@@ -38,7 +39,7 @@ const known = (email: string, sentCount: number, displayName: string | null = nu
 
 function renderPanel(overrides: Partial<Parameters<typeof ComposeContext>[0]> = {}) {
   const props: Parameters<typeof ComposeContext>[0] = {
-    draft, accounts, calendarConnected: false, preferences, taskRefreshKey: 0,
+    draft, accounts, calendarConnected: false, findTimesAi: false, preferences, taskRefreshKey: 0,
     onAttach: vi.fn(), onReplaceRecipient: vi.fn(), onSwitchAccount: vi.fn(), onMoveToBcc: vi.fn(), onInsertTimes: vi.fn(),
     onOpenCalendarSettings: vi.fn(), onOpenEvent: vi.fn(),
     onOpenThread: vi.fn(), onShowMessage: vi.fn(), onEditTask: vi.fn(), onDraftFollowUp: vi.fn(), onTasksChanged: vi.fn(),
@@ -201,6 +202,9 @@ describe("ComposeContext", () => {
     expect(within(section).queryByRole("button", { name: /Draft Reply/ })).not.toBeInTheDocument();
     // Open times are only offered; booking waits for the recipient to pick one.
     expect(within(section).queryByRole("button", { name: "Add to Calendar" })).not.toBeInTheDocument();
+    // Without Draft Assist the coming week is searched, and nothing is sent to an AI provider.
+    expect(mailClient.findTimes).not.toHaveBeenCalled();
+    expect(within(section).queryByRole("textbox", { name: "Adjust times" })).not.toBeInTheDocument();
     const searchAgain = within(section).getByRole("button", { name: "Search Again" });
     expect(searchAgain).toHaveClass("btn", "btn-sm");
     fireEvent.click(searchAgain);
@@ -210,6 +214,130 @@ describe("ComposeContext", () => {
   it("leaves out availability without a connected calendar", () => {
     renderPanel();
     expect(screen.queryByRole("region", { name: "Availability" })).not.toBeInTheDocument();
+  });
+});
+
+describe("Find Times with AI", () => {
+  const day = 86_400_000;
+  const search = {
+    rangeStart: new Date(Date.now() + 3 * day).toISOString(),
+    rangeEnd: new Date(Date.now() + 10 * day).toISOString(),
+    durationMinutes: null, weekdays: [4, 5], dayStart: "13:00", dayEnd: null,
+    reason: "Ann asked to meet Thursday or Friday afternoon next week.",
+  };
+  const reply: Draft = { ...draft, mode: "reply", sourceId: "message-9", to: "ann@partner.com", subject: "Re: Planning", body: "Here are some times that work for me:" };
+
+  beforeEach(() => {
+    saveAiProvider("openai");
+    vi.mocked(mailClient.listContactSuggestions).mockResolvedValue([]);
+    vi.mocked(mailClient.resolveContactIds).mockResolvedValue({});
+    vi.mocked(mailClient.listTasks).mockResolvedValue([]);
+    vi.mocked(mailClient.findAvailability).mockResolvedValue({
+      candidates: [{ start: search.rangeStart, end: new Date(Date.parse(search.rangeStart) + 1_800_000).toISOString(), status: "verified" }],
+      checkedCalendarCount: 1, totalCalendarCount: 1, errors: [],
+    });
+  });
+  // Answers queued for one call must not leak into the next test.
+  afterEach(() => { cleanup(); vi.clearAllMocks(); vi.mocked(mailClient.findTimes).mockReset(); localStorage.clear(); });
+
+  const section = () => screen.getByRole("region", { name: "Availability" });
+
+  it("reads the conversation and draft, explains the search, and searches only the days and hours it found", async () => {
+    let answer!: (value: typeof search) => void;
+    vi.mocked(mailClient.findTimes).mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    renderPanel({ calendarConnected: true, findTimesAi: true, draft: reply });
+    expect(within(section()).getByText("Suggest open times from your calendar, based on what this conversation asks for.")).toBeInTheDocument();
+    expect(within(section()).getByText("Find Times shares this conversation and your draft text with your AI provider. Your calendar is never sent.")).toBeInTheDocument();
+    // Nothing is sent until asked.
+    expect(mailClient.findTimes).not.toHaveBeenCalled();
+
+    fireEvent.click(within(section()).getByRole("button", { name: "Find Times" }));
+    expect(await within(section()).findByRole("status")).toHaveTextContent("Reading the conversation…");
+    expect(within(section()).getByRole("button", { name: "Find Times" })).toBeDisabled();
+    expect(mailClient.findTimes).toHaveBeenCalledWith({
+      sourceMessageId: "message-9", draftSubject: "Re: Planning", draftText: "Here are some times that work for me:",
+      instruction: null, current: null, userTimeZone: "UTC",
+    }, "openai", "gpt-4o", null);
+    answer(search);
+
+    expect(await within(section()).findByText(search.reason)).toBeInTheDocument();
+    await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalled());
+    const request = vi.mocked(mailClient.findAvailability).mock.calls[0][0];
+    expect(request.rangeStart).toBe(search.rangeStart);
+    expect(request.rangeEnd).toBe(search.rangeEnd);
+    expect(request.preferences.workingWindows).toEqual([
+      { weekday: 4, start: "13:00", end: "17:00" },
+      { weekday: 5, start: "13:00", end: "17:00" },
+    ]);
+    expect(await within(section()).findByRole("button", { name: "Insert This Time" })).toBeInTheDocument();
+  });
+
+  it("adjusts the search on screen, including chip changes, from the user's words", async () => {
+    vi.mocked(mailClient.findTimes)
+      .mockResolvedValueOnce(search)
+      .mockResolvedValueOnce({ ...search, weekdays: [4], reason: "Thursday afternoon, as you asked." })
+      .mockRejectedValueOnce(new Error("AI provider timed out."));
+    renderPanel({ calendarConnected: true, findTimesAi: true, draft: reply });
+    fireEvent.click(within(section()).getByRole("button", { name: "Find Times" }));
+    await within(section()).findByText(search.reason);
+
+    fireEvent.click(await within(section()).findByRole("button", { name: "Mornings" }));
+    await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalledTimes(2));
+    const input = await within(section()).findByRole("textbox", { name: "Adjust times" });
+    expect(input).toHaveAttribute("maxLength", "300");
+    expect(within(section()).getByRole("button", { name: "Adjust" })).toBeDisabled();
+    fireEvent.change(input, { target: { value: "only Thursday" } });
+    fireEvent.click(within(section()).getByRole("button", { name: "Adjust" }));
+
+    expect(await within(section()).findByText("Thursday afternoon, as you asked.")).toBeInTheDocument();
+    expect(vi.mocked(mailClient.findTimes).mock.calls[1][0]).toEqual({
+      sourceMessageId: "message-9", draftSubject: "Re: Planning", draftText: "Here are some times that work for me:",
+      instruction: "only Thursday",
+      current: {
+        rangeStart: new Date(search.rangeStart).toISOString(), rangeEnd: new Date(search.rangeEnd).toISOString(), durationMinutes: 30,
+        weekdays: [4, 5], dayStart: null, dayEnd: "12:00", reason: search.reason,
+      },
+      userTimeZone: "UTC",
+    });
+    const next = await within(section()).findByRole("textbox", { name: "Adjust times" });
+    expect(next).toHaveValue("");
+
+    // A failed adjustment keeps the times on screen and says why.
+    fireEvent.change(next, { target: { value: "later" } });
+    fireEvent.submit(within(section()).getByRole("textbox", { name: "Adjust times" }));
+    expect(await within(section()).findByRole("alert")).toHaveTextContent("AI provider timed out.");
+    expect(within(section()).getByText("Thursday afternoon, as you asked.")).toBeInTheDocument();
+    expect(within(section()).getByRole("textbox", { name: "Adjust times" })).toHaveValue("later");
+  });
+
+  it("falls back to the coming week when the conversation can't be read", async () => {
+    vi.mocked(mailClient.findTimes).mockRejectedValue(new Error("No AI API key configured."));
+    renderPanel({ calendarConnected: true, findTimesAi: true, draft: reply });
+    fireEvent.click(within(section()).getByRole("button", { name: "Find Times" }));
+
+    expect(await within(section()).findByRole("alert")).toHaveTextContent("No AI API key configured. Showing the coming week instead.");
+    await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalledTimes(1));
+    const request = vi.mocked(mailClient.findAvailability).mock.calls[0][0];
+    expect(Date.parse(request.rangeEnd) - Date.parse(request.rangeStart)).toBe(7 * day);
+    expect(request.preferences.workingWindows).toEqual(preferences.workingWindows);
+  });
+
+  it("reads only a new message's own text, and asks again from scratch on Search Again", async () => {
+    let first!: (value: typeof search) => void;
+    vi.mocked(mailClient.findTimes)
+      .mockReturnValueOnce(new Promise((resolve) => { first = resolve; }))
+      .mockResolvedValueOnce({ ...search, reason: "Second look." });
+    renderPanel({ calendarConnected: true, findTimesAi: true, draft: { ...draft, subject: "Lunch next week?", body: "Free next week?" } });
+    fireEvent.click(within(section()).getByRole("button", { name: "Find Times" }));
+    await waitFor(() => expect(mailClient.findTimes).toHaveBeenCalledTimes(1));
+    // A new message has no conversation; only its own subject and text are read.
+    expect(vi.mocked(mailClient.findTimes).mock.calls[0][0]).toEqual(expect.objectContaining({ sourceMessageId: null, draftSubject: "Lunch next week?", draftText: "Free next week?" }));
+    first(search);
+    expect(await within(section()).findByText(search.reason)).toBeInTheDocument();
+    fireEvent.click(within(section()).getByRole("button", { name: "Search Again" }));
+    expect(await within(section()).findByText("Second look.")).toBeInTheDocument();
+    expect(mailClient.findTimes).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(mailClient.findTimes).mock.calls[1][0]).toEqual(expect.objectContaining({ instruction: null, current: null }));
   });
 });
 

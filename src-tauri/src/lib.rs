@@ -4922,6 +4922,77 @@ fn ai_reply_assist_context(
     ))
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FindTimesInput {
+    /// The message the draft replies to or forwards; its conversation is read for timing.
+    source_message_id: Option<String>,
+    draft_subject: String,
+    draft_text: String,
+    /// The user's adjustment to `current`, such as "afternoons only".
+    instruction: Option<String>,
+    current: Option<ai::find_times::TimeSearch>,
+    user_time_zone: String,
+}
+
+/// Reads when a meeting should happen from the draft's conversation and the
+/// draft itself, and returns the days and hours to search. The calendar is
+/// searched by the app afterwards; the provider never sees it.
+#[tauri::command]
+async fn ai_find_times(
+    request: FindTimesInput,
+    provider: ai::AiProvider,
+    model: String,
+    endpoint: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<ai::find_times::TimeSearch, String> {
+    let zone = (request.user_time_zone.chars().count() <= 100)
+        .then(|| request.user_time_zone.parse::<chrono_tz::Tz>().ok())
+        .flatten()
+        .ok_or_else(|| format!("Unknown IANA timezone: {}", request.user_time_zone))?;
+    let instruction = ai::find_times::validate_instruction(request.instruction.as_deref())?;
+    if instruction.is_some() != request.current.is_some() {
+        return Err("An adjustment needs the search it changes".to_string());
+    }
+    let (subject, messages) = match request.source_message_id {
+        Some(source_id) => {
+            let database = state.database.clone();
+            let detail = run_database_task(move || database.get_thread_for_message(&source_id)).await?;
+            let messages = detail
+                .messages
+                .into_iter()
+                .map(|message| ai::ActionMessageInput {
+                    id: message.id,
+                    sender: message.sender,
+                    sent_at: message.sent_at,
+                    body_text: message.body_text,
+                })
+                .collect();
+            (detail.thread.subject, messages)
+        }
+        None => (request.draft_subject, Vec::new()),
+    };
+    let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
+    log::info!(target: "ai_find_times", "finding times with provider {provider:?} model {model}, {} message(s)", messages.len());
+    ai::find_times::find_times(
+        ai::find_times::FindTimesRequest {
+            provider,
+            model,
+            endpoint,
+            subject,
+            messages,
+            draft_text: request.draft_text,
+            instruction,
+            current: request.current,
+            current_time: Utc::now().with_timezone(&zone).to_rfc3339(),
+            user_time_zone: request.user_time_zone,
+        },
+        &api_key,
+    )
+    .await
+    .inspect_err(|error| log::error!(target: "ai_find_times", "find times failed: {error}"))
+}
+
 #[tauri::command]
 async fn ai_review_draft(
     request: ai::DraftReviewRequest,
@@ -5633,6 +5704,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         ai_reply_assist_context,
         ai_generate_reply,
         ai_review_draft,
+        ai_find_times,
         // Tasks and follow-ups
         list_tasks,
         create_task,

@@ -85,6 +85,8 @@ describe("AI provider preferences", () => {
       actionExtraction: "reasoning",
       brief: "reasoning",
       threadChat: "reasoning",
+      // Resolving "next week" and stated hours into dates benefits from reasoning.
+      findTimes: "reasoning",
     });
     saveAiProvider("fireworks");
     saveAiModel("example/reasoning");

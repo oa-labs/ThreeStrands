@@ -11,6 +11,8 @@ use crate::models::{
 
 use std::sync::{Arc, RwLock};
 
+pub mod find_times;
+
 const SERVICE: &str = "app.threestrands.mail";
 const KEY: &str = "ai-provider-api-key";
 

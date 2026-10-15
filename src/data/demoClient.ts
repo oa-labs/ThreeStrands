@@ -37,6 +37,7 @@ import type {
   ReplyAssistContext,
   ReplyAssistResult,
   DraftReviewResult,
+  TimeSearch,
   ScheduleEvent,
   Snippet,
   SplitInbox,
@@ -561,6 +562,29 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
           replacement: `${request.body.trim()}\n\nWould you be open to a brief conversation?` }],
         revisedSubject: request.subject,
         revisedBody: `${request.body.trim()}\n\nWould you be open to a brief conversation?`,
+      };
+    },
+    // A keyword stand-in for the provider: "next week" in the conversation or
+    // draft searches next Monday to Sunday, and an adjustment narrows the
+    // current search to mornings or afternoons.
+    async findTimes(request): Promise<TimeSearch> {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      if (request.instruction && request.current) {
+        const text = request.instruction.toLowerCase();
+        if (text.includes("afternoon")) return { ...request.current, dayStart: "12:00", dayEnd: null, reason: "Afternoons, as you asked." };
+        if (text.includes("morning")) return { ...request.current, dayStart: null, dayEnd: "12:00", reason: "Mornings, as you asked." };
+        return request.current;
+      }
+      const conversation = request.sourceMessageId ? (await threadForMessage(request.sourceMessageId)).messages.map((message) => message.bodyText).join("\n") : "";
+      const now = new Date();
+      if (/next week/i.test(`${conversation}\n${request.draftText}`)) {
+        const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + ((8 - now.getDay()) % 7 || 7));
+        const end = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 7);
+        return { rangeStart: monday.toISOString(), rangeEnd: end.toISOString(), durationMinutes: null, weekdays: [], dayStart: null, dayEnd: null, reason: "The conversation asks to meet next week." };
+      }
+      return {
+        rangeStart: now.toISOString(), rangeEnd: new Date(now.getTime() + 7 * 86_400_000).toISOString(),
+        durationMinutes: null, weekdays: [], dayStart: null, dayEnd: null, reason: "No particular days were mentioned, so this is the coming week.",
       };
     },
     async generateReply(context, instruction): Promise<ReplyAssistResult> {

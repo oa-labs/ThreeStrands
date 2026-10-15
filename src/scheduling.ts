@@ -1,4 +1,4 @@
-import type { AvailabilityCandidate, AvailabilityWindow, ChatAvailability, MeetingProposal } from "./domain";
+import type { AvailabilityCandidate, AvailabilityWindow, ChatAvailability, MeetingProposal, TimeSearch } from "./domain";
 import { dateInputValue } from "./calendarTime";
 
 /** Days searched when a meeting names no usable time or range. */
@@ -9,6 +9,8 @@ export const MAX_SCHEDULE_RANGE_DAYS = 14;
 export const SUGGESTED_SLOT_COUNT = 3;
 /** Open times fetched per day, so "Show More" has later slots to offer. */
 export const SLOTS_PER_DAY = 3;
+/** Longest adjustment the user can type for Find Times; the native layer enforces the same limit. */
+export const FIND_TIMES_INSTRUCTION_MAX_CHARS = 300;
 /** Where Mornings end and Afternoons begin, in the user's time zone. */
 export const MIDDAY = "12:00";
 export const MIN_MEETING_MINUTES = 5;
@@ -39,6 +41,8 @@ export type SchedulePlan = {
   day?: string;
   /** An announced event that names no date yet. */
   undated?: boolean;
+  /** Days and hours a range search starts limited to. */
+  bounds?: DayBounds;
 };
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -114,17 +118,44 @@ export function planChatAvailability(request: ChatAvailability, now: Date, defau
 
 export const slotKey = (slot: Pick<AvailabilityCandidate, "start" | "end">) => `${slot.start}/${slot.end}`;
 
-export type TimeOfDay = "any" | "morning" | "afternoon";
+/** Which days and hours of the working week a range search keeps. */
+export type DayBounds = {
+  /** Allowed weekdays, 0 for Sunday; empty allows every day. */
+  weekdays: number[];
+  /** Earliest local start, `HH:MM`. */
+  dayStart: string | null;
+  /** Latest local end, `HH:MM`. */
+  dayEnd: string | null;
+};
 
-/** Working windows narrowed to mornings or afternoons; a window outside that part of the day is dropped. */
-export function windowsForTimeOfDay(windows: AvailabilityWindow[], timeOfDay: TimeOfDay): AvailabilityWindow[] {
-  if (timeOfDay === "any") return windows;
+export const ANY_TIME: DayBounds = { weekdays: [], dayStart: null, dayEnd: null };
+export const MORNINGS = { dayStart: null, dayEnd: MIDDAY } as const;
+export const AFTERNOONS = { dayStart: MIDDAY, dayEnd: null } as const;
+
+/**
+ * Working windows limited to the allowed weekdays and clipped to the day's
+ * bounds; a window left empty is dropped.
+ */
+export function windowsWithin(windows: AvailabilityWindow[], bounds: DayBounds): AvailabilityWindow[] {
   return windows.flatMap((window) => {
+    if (bounds.weekdays.length > 0 && !bounds.weekdays.includes(window.weekday)) return [];
     // Clock values are zero-padded `HH:MM`, so they compare as strings.
-    const start = timeOfDay === "afternoon" && window.start < MIDDAY ? MIDDAY : window.start;
-    const end = timeOfDay === "morning" && window.end > MIDDAY ? MIDDAY : window.end;
+    const start = bounds.dayStart && bounds.dayStart > window.start ? bounds.dayStart : window.start;
+    const end = bounds.dayEnd && bounds.dayEnd < window.end ? bounds.dayEnd : window.end;
     return start < end ? [{ ...window, start, end }] : [];
   });
+}
+
+/** Plans the calendar search Find Times read from a conversation. */
+export function planTimeSearch(search: TimeSearch, now: Date, defaultDurationMinutes: number): SchedulePlan {
+  return {
+    // The provider only returns ranges that end in the future; one that has
+    // since passed falls back to the coming week.
+    query: boundedRange(new Date(search.rangeStart), new Date(search.rangeEnd), now) ?? lookaheadRange(now),
+    durationMinutes: clampMeetingMinutes(search.durationMinutes, defaultDurationMinutes),
+    timeZoneAssumed: false,
+    bounds: { weekdays: search.weekdays, dayStart: search.dayStart, dayEnd: search.dayEnd },
+  };
 }
 
 /** The same-length range after (positive steps) or before (negative steps) a search range. */

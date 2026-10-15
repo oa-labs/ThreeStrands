@@ -244,6 +244,45 @@ describe("MeetingScheduler", () => {
       expect(windowsOf(3)[0]).toEqual({ weekday: 1, start: "09:00", end: "17:00" });
     });
 
+    it("starts from the days and hours it was given, names them, and keeps the days when the hours change", async () => {
+      pinClock();
+      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      const onSearchChange = vi.fn();
+      renderScheduler({ ...week, bounds: { weekdays: [4, 5], dayStart: "15:00", dayEnd: null } }, { onSearchChange });
+
+      expect(await screen.findByText(`Wed, Sep 30 – Tue, Oct 6 · Thu, Fri · from ${label(15)}`)).toBeInTheDocument();
+      // Thursday and Friday from 3 PM: other days' windows are left out.
+      expect(find.mock.calls[0][0].preferences.workingWindows).toEqual([
+        { weekday: 4, start: "15:00", end: "17:00" },
+        { weekday: 5, start: "15:00", end: "17:00" },
+      ]);
+      expect(screen.getByRole("button", { name: "Mornings" })).toHaveAttribute("aria-pressed", "false");
+      expect(screen.getByRole("button", { name: "Afternoons" })).toHaveAttribute("aria-pressed", "false");
+      expect(onSearchChange).toHaveBeenLastCalledWith({ query: week.query, durationMinutes: 30, bounds: { weekdays: [4, 5], dayStart: "15:00", dayEnd: null } });
+
+      fireEvent.click(screen.getByRole("button", { name: "Mornings" }));
+      expect(await screen.findByText(`Wed, Sep 30 – Tue, Oct 6 · Thu, Fri · until ${label(12)}`)).toBeInTheDocument();
+      expect(find.mock.calls[1][0].preferences.workingWindows).toEqual([
+        { weekday: 4, start: "09:00", end: "12:00" },
+        { weekday: 5, start: "09:00", end: "12:00" },
+      ]);
+      expect(onSearchChange).toHaveBeenLastCalledWith(expect.objectContaining({ bounds: { weekdays: [4, 5], dayStart: null, dayEnd: "12:00" } }));
+
+      fireEvent.click(screen.getByRole("button", { name: "Mornings" }));
+      expect(await screen.findByText("Wed, Sep 30 – Tue, Oct 6 · Thu, Fri")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Later" }));
+      await waitFor(() => expect(onSearchChange).toHaveBeenLastCalledWith(expect.objectContaining({
+        query: { kind: "range", start: "2026-10-07T04:00:00.000Z", end: "2026-10-14T04:00:00.000Z" },
+      })));
+    });
+
+    it("shows what it is given beside the adjustment chips", async () => {
+      vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      renderScheduler(range, { adjustInput: <input aria-label="Adjust times" /> });
+      await screen.findByText("No open times in your working hours for this range.");
+      expect(screen.getByRole("textbox", { name: "Adjust times" })).toBeInTheDocument();
+    });
+
     it("moves to the following range and back, naming the days searched", async () => {
       pinClock();
       const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });

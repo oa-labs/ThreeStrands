@@ -42,6 +42,8 @@ import type {
   ReplyAssistContext,
   ReplyAssistResult,
   DraftReviewRequest,
+  FindTimesRequest,
+  TimeSearch,
   DraftReviewResult,
   SearchThreadsRequest,
   SearchReport,
@@ -148,6 +150,8 @@ export interface MailClient extends CorrespondenceClient {
   ): Promise<ThreadBriefResult>;
   replyAssistContext(draftId: string): Promise<ReplyAssistContext>;
   reviewDraft(request: DraftReviewRequest, provider: AiProvider, model: string, endpoint: string | null): Promise<DraftReviewResult>;
+  /** Reads when to meet from a draft's conversation; the calendar is searched separately. */
+  findTimes(request: FindTimesRequest, provider: AiProvider, model: string, endpoint: string | null): Promise<TimeSearch>;
   generateReply(
     context: ReplyAssistContext,
     instruction: string,
@@ -371,6 +375,7 @@ const tauriClient: MailClient = {
     complete("ai_brief_thread", { threadId, userTimeZone, provider, model, endpoint }),
   replyAssistContext: (draftId) => read("ai_reply_assist_context", { draftId }),
   reviewDraft: (request, provider, model, endpoint) => complete("ai_review_draft", { request, provider, model, endpoint }),
+  findTimes: (request, provider, model, endpoint) => complete("ai_find_times", { request, provider, model, endpoint }),
   generateReply: (context, instruction, provider, model, endpoint, reasoning = "default") =>
     complete("ai_generate_reply", { context, instruction, provider, model, endpoint, reasoning }),
   searchThreads: (request, accountId) => read("search_threads", { request, accountId }),

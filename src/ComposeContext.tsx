@@ -123,6 +123,7 @@ export function ComposeContext({
   draft,
   accounts,
   calendarConnected,
+  findTimesAi,
   preferences,
   taskRefreshKey,
   onAttach,
@@ -143,6 +144,8 @@ export function ComposeContext({
   draft: Draft;
   accounts: Account[];
   calendarConnected: boolean;
+  /** Find Times reads the conversation with AI. */
+  findTimesAi: boolean;
   preferences: AvailabilityPreferences;
   taskRefreshKey: number;
   onAttach(): void;
@@ -219,6 +222,8 @@ export function ComposeContext({
       {calendarConnected ? (
         <AvailabilitySection
           preferences={preferences}
+          ai={findTimesAi}
+          draft={draft}
           onInsertTimes={onInsertTimes}
           onOpenCalendarSettings={onOpenCalendarSettings}
         />

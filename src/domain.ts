@@ -663,6 +663,35 @@ export type ReplyAssistResult = {
   body: string;
 };
 
+/**
+ * The days and hours Find Times searches, read from a conversation by AI.
+ * The times themselves always come from the user's calendar.
+ */
+export type TimeSearch = {
+  rangeStart: string;
+  rangeEnd: string;
+  durationMinutes: number | null;
+  /** Allowed weekdays, 0 for Sunday; empty allows every day. */
+  weekdays: number[];
+  /** Earliest local start, `HH:MM`. */
+  dayStart: string | null;
+  /** Latest local end, `HH:MM`. */
+  dayEnd: string | null;
+  /** One line telling the user what the search is based on. */
+  reason: string;
+};
+
+export type FindTimesRequest = {
+  /** The message the draft replies to or forwards, whose conversation is read. */
+  sourceMessageId: string | null;
+  draftSubject: string;
+  draftText: string;
+  /** The user's change to `current`; both are set or neither. */
+  instruction: string | null;
+  current: TimeSearch | null;
+  userTimeZone: string;
+};
+
 export type DraftReviewRequest = {
   subject: string;
   body: string;
