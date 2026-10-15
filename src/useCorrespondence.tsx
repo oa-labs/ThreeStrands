@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { X } from "lucide-react";
@@ -15,6 +15,9 @@ import type { MessageAppearance } from "./SafeMessage";
 import type { MailtoRequest } from "./mailtoLink";
 import { ScheduleSendPicker, formatScheduledTime } from "./ScheduleSendPicker";
 import type { DraftReviewActions } from "./draftReview";
+import { formatDisplayName, parseAddress, splitAddressList } from "./emailAddress";
+import { formatMailTimestamp } from "./threadPresentation";
+import { outboxEditAsNewSource, outboxEntryTime, selectedOutboxEntry, type OutboxEntry } from "./outboxView";
 
 /**
  * Plain, honest label for an outbox item's raw state string. Only the states
@@ -38,6 +41,8 @@ type ComposeOptions = {
   replyAssistInstruction?: string;
   followUpTaskId?: string;
   prefill?: MailtoRequest;
+  /** Edit as New only: the account that sent the source, when no conversation is selected (the Outbox). */
+  sourceAccount?: string;
 };
 
 /**
@@ -161,7 +166,7 @@ export function useCorrespondence(
       const created = mode === "new"
         ? await mailClient.createDraft(mode)
         : mode === "editAsNew"
-          ? await draftFromSent(messageId ?? sourceId, sourceAccountId)
+          ? await draftFromSent(messageId ?? sourceId, options?.sourceAccount ?? sourceAccountId)
           : await mailClient.createDraft(mode, messageId ?? sourceId, sourceAccountId);
       const quoted = options?.selectedQuote ? draftWithSelectedQuote(created, options.selectedQuote) : null;
       const filled = quoted ?? (options?.prefill ? { ...created, ...options.prefill } : null);
@@ -271,7 +276,7 @@ export function useCorrespondence(
     });
   }, [start]);
   const forward = useCallback((messageId?: string, selectedQuote?: string) => { void start("forward", messageId, { selectedQuote }); }, [start]);
-  const editAsNew = useCallback((messageId: string) => { void start("editAsNew", messageId); }, [start]);
+  const editAsNew = useCallback((messageId: string, sourceAccount?: string) => { void start("editAsNew", messageId, { sourceAccount }); }, [start]);
   const openInbox = useCallback(() => {
     void closeComposer().catch((e: unknown) => setError(String(e)));
   }, [closeComposer]);
@@ -355,6 +360,11 @@ export function useCorrespondence(
       }}
     />
   ) : null;
+  // Peer schedules this computer also owns are shown once, as the local send.
+  const peerSummaries = useMemo(
+    () => summaries.filter((s) => !outbox.some((o) => o.schedule?.report.ownerInstallationId === s.ownerInstallationId && o.id === s.operationId)),
+    [outbox, summaries],
+  );
   return {
     context,
     composeMailto,
@@ -363,7 +373,7 @@ export function useCorrespondence(
     replyWithFollowUp,
     drafts,
     outbox,
-    summaries: summaries.filter((s) => !outbox.some((o) => o.schedule?.report.ownerInstallationId === s.ownerInstallationId && o.id === s.operationId)),
+    summaries: peerSummaries,
     refresh,
     clock,
     sentCount: outbox.filter((o) => o.state === "sent").length,
@@ -414,24 +424,109 @@ export function DraftsList({ drafts, onOpen, onDiscard }: { drafts: Draft[]; onO
   ))}</>;
 }
 
+function outboxRecipients(draft: Draft): string {
+  const recipients = splitAddressList([draft.to, draft.cc].filter(Boolean).join(", "));
+  if (recipients.length === 0) return "Bcc recipients";
+  return recipients.map((recipient) => formatDisplayName(parseAddress(recipient).name)).join(", ");
+}
+
+function ownerName(report: ScheduledSendReport): string {
+  return report.ownerName ?? report.ownerNameAtCreation;
+}
+
+/** The short delivery status a row shows, and whether it needs the user's attention. */
+function outboxRowStatus(entry: OutboxEntry, clock: number): { text: string; problem: boolean } {
+  if (entry.kind === "peer") {
+    const { report } = entry;
+    return report.state === "scheduled" && report.scheduledAt <= clock
+      ? { text: `Awaiting an update from ${ownerName(report)}`, problem: true }
+      : { text: `Sends from ${ownerName(report)}`, problem: false };
+  }
+  const { item } = entry;
+  if (item.schedule?.report.blockedReason) return { text: "Paused", problem: true };
+  if (item.state === "overdue") return { text: "Scheduled time missed", problem: true };
+  return {
+    text: outboxUndoText(item, clock) ?? outboxStateLabel(item.state),
+    problem: ["failed", "uncertain", "unverifiable"].includes(item.state) || item.sentCopy?.state === "abandoned",
+  };
+}
+
+function outboxUndoText(item: OutboxItem, clock: number): string | null {
+  if (item.state !== "undo_pending") return null;
+  return item.deadline > clock ? `Undo available · ${Math.ceil((item.deadline - clock) / 1000)}s` : "Waiting for connection";
+}
+
+/** The Outbox's message list. Selecting a row shows that send in the reader, like a conversation. */
 export function OutboxList({
-  outbox,
+  entries,
+  selectedKey,
+  clock,
+  onSelect,
+  selectedRowRef,
+}: {
+  entries: OutboxEntry[];
+  selectedKey: string | null;
+  clock: number;
+  onSelect(key: string): void;
+  selectedRowRef?: RefObject<HTMLButtonElement | null>;
+}) {
+  if (entries.length === 0) return <p className="empty">No outgoing messages.</p>;
+  const selected = selectedOutboxEntry(entries, selectedKey)?.key;
+  return <>{entries.map((entry) => {
+    const status = outboxRowStatus(entry, clock);
+    const isSelected = entry.key === selected;
+    return (
+      <button
+        key={entry.key}
+        ref={isSelected ? selectedRowRef : undefined}
+        type="button"
+        role="option"
+        aria-selected={isSelected}
+        className={`thread-row outbox-row${isSelected ? " selected" : ""}`}
+        onClick={() => onSelect(entry.key)}
+      >
+        <span className="thread-content">
+          <span className="thread-meta">
+            <span className="thread-sender">
+              <strong>{entry.kind === "local" ? `To ${outboxRecipients(entry.item.draft)}` : `From ${entry.report.account}`}</strong>
+            </span>
+            <span className="thread-meta-trailing">
+              <time>{formatMailTimestamp(new Date(outboxEntryTime(entry)).toISOString())}</time>
+            </span>
+          </span>
+          <span className="thread-subject">{(entry.kind === "local" ? entry.item.draft.subject : entry.report.subject) || "(no subject)"}</span>
+          <span className={`thread-snippet outbox-row-status${status.problem ? " problem" : ""}`}>{status.text}</span>
+        </span>
+      </button>
+    );
+  })}</>;
+}
+
+/**
+ * The reader for one Outbox entry: its delivery status and the actions that
+ * apply to it, above the message itself (`children`). A peer device's
+ * schedule is read-only and has no content here.
+ */
+export function OutboxDetail({
+  entry,
   clock,
   onUndo,
   onRestore,
   onReconcile,
+  onEditAsNew,
   pendingActions,
-  summaries = [],
   onChanged,
+  children,
 }: {
-  outbox: OutboxItem[];
+  entry: OutboxEntry;
   clock: number;
   onUndo(id: string): void;
   onRestore(id: string): void;
   onReconcile(id: string): void;
+  onEditAsNew?(messageId: string, account: string): void;
   pendingActions?: ReadonlySet<string>;
-  summaries?: ScheduledSendReport[];
   onChanged?(): Promise<void>;
+  children?: ReactNode;
 }) {
   const [rescheduling, setRescheduling] = useState<OutboxItem | null>(null);
   const [actionError, setActionError] = useState("");
@@ -443,41 +538,70 @@ export function OutboxList({
     catch (e) { setActionError(String(e)); }
     finally { actions.current.delete(item.id); }
   };
-  const visible = outbox.filter((o) => o.state !== "canceled");
-  if (visible.length === 0 && summaries.length === 0) return <p className="empty">No outgoing messages.</p>;
-  return <>{actionError && <p role="alert">{actionError}</p>}{rescheduling?.schedule && <ScheduleSendPicker initialAt={rescheduling.schedule.report.scheduledAt} initialZone={rescheduling.schedule.report.timeZone} onClose={() => setRescheduling(null)} onSchedule={async (selection) => {
-    await mailClient.rescheduleSend(rescheduling.id,rescheduling.schedule!.report.reportRevision,selection); setRescheduling(null); await onChanged?.();
-  }} />}{visible.map((o) => {
-    const busy = pendingActions?.has(o.id) ?? false;
+
+  if (entry.kind === "peer") {
+    const s = entry.report;
     return (
-    <article className="outbox-row" key={o.id}>
-      <strong>{o.draft.subject || "(no subject)"}</strong>
-      <span>From {o.draft.account} · To {o.draft.to || o.draft.cc || "Bcc recipients"}</span>
-      {o.schedule && <>
-        <small>{formatScheduledTime(o.schedule.report.scheduledAt,o.schedule.report.timeZone)} · Sends from {o.schedule.report.ownerNameAtCreation}</small>
-        {o.schedule.report.blockedReason && <p>Paused: {o.schedule.report.blockedReason === "owner_unavailable" ? "the sending-device identity is unavailable on this computer" : "reconnect the sending account"}.</p>}
-        <small>{o.schedule.visibility === "local" ? "Saved on this computer" : o.schedule.visibility === "published" ? "Published to sync storage" : o.schedule.visibility === "paused" ? "Visibility sync paused" : "Waiting to sync visibility"}</small>
-        {o.schedule.canManage && ["scheduled","overdue"].includes(o.state) && <>
-          <button className="btn btn-sm" onClick={() => setRescheduling(o)} disabled={busy}>Reschedule</button>
-          <button className="btn btn-sm" onClick={() => onUndo(o.id)} disabled={busy}>Return to draft</button>
-          {o.state === "overdue" && <button className="btn btn-sm" onClick={() => void runScheduleAction(o)} disabled={busy}>Send now</button>}
-        </>}
-        {o.state === "overdue" && <p>Scheduled time missed. Confirm sending or reschedule on the sending computer.</p>}
-      </>}
-      <small>{o.state === "undo_pending" ? (o.deadline > clock ? `Undo available · ${Math.ceil((o.deadline - clock) / 1000)}s` : "Waiting for connection") : outboxStateLabel(o.state)}</small>
-      {o.error && <p>{o.error}</p>}
-      {o.sentCopy?.state === "abandoned" && <p className="outbox-sent-copy-notice">{o.sentCopy.error ?? "Your message was sent, but a copy couldn't be saved to your Sent folder."}</p>}
-      {(!o.schedule || o.schedule.canManage) && ["undo_pending", "ready"].includes(o.state) && <button className="btn btn-sm" onClick={() => onUndo(o.id)}>Undo Send</button>}
-      {(!o.schedule || o.schedule.canManage) && o.state === "failed" && <button className="btn btn-sm" disabled={busy} onClick={() => onRestore(o.id)}>Restore Draft</button>}
-      {(!o.schedule || o.schedule.canManage) && o.state === "uncertain" && <button className="btn btn-sm" disabled={busy} onClick={() => onReconcile(o.id)}>Check Sent Mail</button>}
-    </article>
+      <div className="outbox-detail" role="region" aria-label="Outgoing message">
+        <header className="reader-header">
+          <div>
+            <span className="reader-account-scope">From {s.account}</span>
+            <div className="subject-row"><h2>{s.subject || "(no subject)"}</h2></div>
+            <div className="outbox-detail-status">
+              <small>{formatScheduledTime(s.scheduledAt,s.timeZone)} · Sends from {ownerName(s)}</small>
+              {s.timeZone !== Intl.DateTimeFormat().resolvedOptions().timeZone && <small>On this computer: {new Date(s.scheduledAt).toLocaleString()}</small>}
+              <p className="outbox-detail-problem">{s.state === "scheduled" && s.scheduledAt <= clock ? `Scheduled time passed; awaiting an update from ${ownerName(s)}` : `Last reported status: ${s.state}`}</p>
+              <small>Report changed {new Date(s.statusChangedAt).toLocaleString()}{s.lastContactAt ? ` · Last contact ${new Date(s.lastContactAt).toLocaleString()}` : ""}</small>
+            </div>
+          </div>
+        </header>
+        <div className="reader-empty">
+          <p>The message stays on {ownerName(s)}.</p>
+          <p>Manage on {ownerName(s)}</p>
+        </div>
+      </div>
     );
-  })}{summaries.filter((s) => s.state !== "canceled").map((s) => <article className="outbox-row" key={`${s.ownerInstallationId}:${s.operationId}`}>
-    <strong>{s.subject || "(no subject)"}</strong><span>From {s.account}</span>
-    <small>{formatScheduledTime(s.scheduledAt,s.timeZone)} · Sends from {s.ownerName ?? s.ownerNameAtCreation}</small>
-    {s.timeZone !== Intl.DateTimeFormat().resolvedOptions().timeZone && <small>On this computer: {new Date(s.scheduledAt).toLocaleString()}</small>}
-    <p>{s.state === "scheduled" && s.scheduledAt <= clock ? `Scheduled time passed; awaiting an update from ${s.ownerName ?? s.ownerNameAtCreation}` : `Last reported status: ${s.state}`}</p>
-    <small>Report changed {new Date(s.statusChangedAt).toLocaleString()}{s.lastContactAt ? ` · Last contact ${new Date(s.lastContactAt).toLocaleString()}` : ""}</small>
-    <span>Manage on {s.ownerName ?? s.ownerNameAtCreation}</span>
-  </article>)}</>;
+  }
+
+  const o = entry.item;
+  const busy = pendingActions?.has(o.id) ?? false;
+  const canManage = !o.schedule || o.schedule.canManage;
+  const editSource = outboxEditAsNewSource(entry);
+  return (
+    <div className="outbox-detail" role="region" aria-label="Outgoing message">
+      {rescheduling?.schedule && <ScheduleSendPicker initialAt={rescheduling.schedule.report.scheduledAt} initialZone={rescheduling.schedule.report.timeZone} onClose={() => setRescheduling(null)} onSchedule={async (selection) => {
+        await mailClient.rescheduleSend(rescheduling.id,rescheduling.schedule!.report.reportRevision,selection); setRescheduling(null); await onChanged?.();
+      }} />}
+      <header className="reader-header">
+        <div>
+          <span className="reader-account-scope">From {o.draft.from || o.draft.account}</span>
+          <div className="subject-row"><h2>{o.draft.subject || "(no subject)"}</h2></div>
+          <div className="outbox-detail-status">
+            {o.schedule && <>
+              <small>{formatScheduledTime(o.schedule.report.scheduledAt,o.schedule.report.timeZone)} · Sends from {o.schedule.report.ownerNameAtCreation}</small>
+              {o.schedule.report.blockedReason && <p className="outbox-detail-problem">Paused: {o.schedule.report.blockedReason === "owner_unavailable" ? "the sending-device identity is unavailable on this computer" : "reconnect the sending account"}.</p>}
+              <small>{o.schedule.visibility === "local" ? "Saved on this computer" : o.schedule.visibility === "published" ? "Published to sync storage" : o.schedule.visibility === "paused" ? "Visibility sync paused" : "Waiting to sync visibility"}</small>
+              {o.state === "overdue" && <p className="outbox-detail-problem">Scheduled time missed. Confirm sending or reschedule on the sending computer.</p>}
+            </>}
+            <small>{outboxUndoText(o, clock) ?? outboxStateLabel(o.state)}</small>
+            {o.error && <p className="outbox-detail-problem">{o.error}</p>}
+            {o.sentCopy?.state === "abandoned" && <p className="outbox-detail-problem outbox-sent-copy-notice">{o.sentCopy.error ?? "Your message was sent, but a copy couldn't be saved to your Sent folder."}</p>}
+            {actionError && <p className="outbox-detail-problem" role="alert">{actionError}</p>}
+          </div>
+          <div className="outbox-detail-actions">
+            {o.schedule?.canManage && ["scheduled","overdue"].includes(o.state) && <>
+              <button className="btn btn-sm" onClick={() => setRescheduling(o)} disabled={busy}>Reschedule</button>
+              <button className="btn btn-sm" onClick={() => onUndo(o.id)} disabled={busy}>Return to draft</button>
+              {o.state === "overdue" && <button className="btn btn-sm" onClick={() => void runScheduleAction(o)} disabled={busy}>Send now</button>}
+            </>}
+            {canManage && ["undo_pending", "ready"].includes(o.state) && <button className="btn btn-sm" onClick={() => onUndo(o.id)}>Undo Send</button>}
+            {canManage && o.state === "failed" && <button className="btn btn-sm" disabled={busy} onClick={() => onRestore(o.id)}>Restore Draft</button>}
+            {canManage && o.state === "uncertain" && <button className="btn btn-sm" disabled={busy} onClick={() => onReconcile(o.id)}>Check Sent Mail</button>}
+            {editSource && onEditAsNew && <button className="btn btn-sm" onClick={() => onEditAsNew(editSource.messageId, editSource.account)}>Edit as New</button>}
+          </div>
+        </div>
+      </header>
+      {children}
+    </div>
+  );
 }

@@ -451,7 +451,11 @@ test("the command palette can send from a composer and the outbox records simula
   await expect(page.getByRole("dialog", { name: "New Message" })).not.toBeVisible();
   await page.clock.fastForward(11000);
   await (await openFolders(page)).getByRole("button", { name: "Outbox" }).click();
-  await expect(page.getByRole("list", { name: "Outbox" })).toContainText("sent");
+  await expect(page.getByRole("listbox", { name: "Outbox" })).toContainText("sent");
+  // The Outbox reads like any folder: the selected send opens in the reader.
+  const reader = page.getByRole("region", { name: "Outgoing message" });
+  await expect(reader.getByRole("heading", { name: "Palette send" })).toBeVisible();
+  await expect(reader).toContainText("From demo@example.com");
 });
 
 test("a recipient badge can be dragged from To into Cc", async ({ page }) => {
@@ -536,9 +540,12 @@ test("scheduled send survives reload, reschedules, and requires confirmation aft
   await expect(composer).not.toBeVisible();
   await page.reload();
   await (await openFolders(page)).getByRole("button", { name: /Outbox/ }).click();
-  const item = page.locator(".outbox-row").filter({ hasText: "A scheduled email" });
+  const item = page.getByRole("option").filter({ hasText: "A scheduled email" });
   await expect(item).toContainText("scheduled");
-  await item.getByRole("button", { name: "Reschedule", exact: true }).click();
+  await item.click();
+  const detail = page.getByRole("region", { name: "Outgoing message" });
+  await expect(detail.getByLabel("Message content", { exact: true }).contentFrame().locator("body")).toContainText("Preserved scheduled content");
+  await detail.getByRole("button", { name: "Reschedule", exact: true }).click();
   const reschedule = page.getByRole("dialog", { name: "Reschedule email" });
   await reschedule.getByLabel("Scheduled date and time").fill("2026-10-12T09:00");
   await reschedule.getByRole("button", { name: "Save schedule" }).click();
@@ -546,9 +553,10 @@ test("scheduled send survives reload, reschedules, and requires confirmation aft
   await page.reload();
   await (await openFolders(page)).getByRole("button", { name: /Outbox/ }).click();
   await expect(item).toContainText("Scheduled time missed");
-  await expect(item.getByRole("button", { name: "Send now", exact: true })).toBeVisible();
-  await item.getByRole("button", { name: "Send now", exact: true }).click();
-  await item.getByRole("button", { name: "Undo Send", exact: true }).click();
+  await expect(detail).toContainText("Scheduled time missed");
+  await expect(detail.getByRole("button", { name: "Send now", exact: true })).toBeVisible();
+  await detail.getByRole("button", { name: "Send now", exact: true }).click();
+  await detail.getByRole("button", { name: "Undo Send", exact: true }).click();
   await expect(composer.getByRole("textbox", { name: "Message Body" })).toHaveText("Preserved scheduled content");
 });
 
@@ -563,10 +571,13 @@ test("peer scheduled visibility cannot send or restore message content", async (
   });
   await page.goto("/");
   await (await openFolders(page)).getByRole("button", { name: /Outbox/ }).click();
-  const item = page.locator(".outbox-row").filter({ hasText: "Peer scheduled email" });
-  await expect(item).toContainText("Scheduled time passed; awaiting an update from MacBook");
-  await expect(item).toContainText("Manage on MacBook");
-  await expect(item.getByRole("button")).toHaveCount(0);
+  const item = page.getByRole("option").filter({ hasText: "Peer scheduled email" });
+  await expect(item).toContainText("Awaiting an update from MacBook");
+  await expect(item).not.toContainText("@example.com>");
+  const detail = page.getByRole("region", { name: "Outgoing message" });
+  await expect(detail).toContainText("Scheduled time passed; awaiting an update from MacBook");
+  await expect(detail).toContainText("Manage on MacBook");
+  await expect(detail.getByRole("button")).toHaveCount(0);
 });
 
 test("the composer shows a sending-address picker for a multi-identity account and records the choice", async ({ page }) => {

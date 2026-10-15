@@ -6,9 +6,10 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ### New
 - In **Contacts → Groups**, **Email Group** starts a new message addressed to everyone in the group.
-- **Edit as New** starts a fresh message from one you sent before, with its subject, text, and attachments but no recipients, so you can send the same note to new people. Use the button beside **Forward** on any message you sent, or press Shift+C.
+- **Edit as New** starts a fresh message from one you sent before, with its subject, text, and attachments but no recipients, so you can send the same note to new people. Use the button beside **Forward** on any message you sent, or press Shift+C. It also works on a sent message in the **Outbox**.
 
 ### Improved
+- The **Outbox** now works like your other folders: choose a message on the left to read it on the right, with its delivery status and actions such as **Undo Send** and **Reschedule** above it. Use J and K to move between messages.
 - For newsletters and other bulk mail, the side panel now lists the sender's earlier emails in **Recent emails** instead of a separate card, with **Unsubscribe**, **Mute…**, and **New Split…** as small links at the bottom so they don't compete with the email you're reading.
 - Buttons that sit side by side, such as **Add Members** and the delete button on a contact group, now line up with each other.
 - When adding members to a group, the people you've chosen now appear inside the search field, the search clears after each pick, and Backspace removes the last person.

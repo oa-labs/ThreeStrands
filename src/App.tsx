@@ -70,7 +70,7 @@ import { MeetingScheduler } from "./MeetingScheduler";
 import { MessageCard } from "./MessageCard";
 import { OpenedCalendarDialog } from "./OpenedCalendarDialog";
 import { PanelResizeHandle, useInboxWidth } from "./PanelResizeHandle";
-import { messagesWithQueuedReplies } from "./queuedReplies";
+import { messagesWithQueuedReplies, queuedMessage } from "./queuedReplies";
 import { AvailabilitySection } from "./RecipientSections";
 import { planChatAvailability } from "./scheduling";
 import { SearchField } from "./SearchField";
@@ -96,7 +96,8 @@ import { useAiAvailability } from "./useAiAvailability";
 import { useAppCommandContext } from "./useAppCommandContext";
 import { useAppPreferences } from "./useAppPreferences";
 import { useCommandExecution, useCommandUndo } from "./useCommandExecution";
-import { DraftsList, OutboxList, useCorrespondence } from "./useCorrespondence";
+import { DraftsList, OutboxDetail, OutboxList, useCorrespondence } from "./useCorrespondence";
+import { useOutboxSelection } from "./useOutboxSelection";
 import { useLabelCatalog } from "./useLabelCatalog";
 import { useMailboxThreads } from "./useMailboxThreads";
 import { useMailNavigation } from "./useMailNavigation";
@@ -128,6 +129,10 @@ const Settings = lazy(() => import("./SettingsPanel").then((m) => ({ default: m.
 const CalendarWeekView = lazy(() => import("./CalendarWeekView").then((m) => ({ default: m.CalendarWeekView })));
 const FilesWorkspace = lazy(() => import("./FilesWorkspace").then((m) => ({ default: m.FilesWorkspace })));
 const ContactsWorkspace = lazy(() => import("./ContactsWorkspace").then((m) => ({ default: m.ContactsWorkspace })));
+
+// An Outbox message is shown alone and expanded: it has no conversation to
+// activate, collapse, scroll through, or reply within.
+const ignoreOutboxMessageEvent = () => {};
 
 export function App() {
   const inboxSize = useInboxWidth();
@@ -220,6 +225,12 @@ export function App() {
     [visibleDetail, correspondence.outbox],
   );
   const displayedThreadText = useMemo(() => threadTextIndex(displayedMessages), [displayedMessages]);
+  const outboxSelection = useOutboxSelection(correspondence.outbox, correspondence.summaries);
+  const selectedOutboxItem = outboxSelection.selectedEntry?.kind === "local" ? outboxSelection.selectedEntry.item : undefined;
+  const selectedOutboxMessage = useMemo(
+    () => selectedOutboxItem ? queuedMessage(selectedOutboxItem, `outbox-${selectedOutboxItem.id}`) : null,
+    [selectedOutboxItem],
+  );
   const reader = useReaderState({
     selectedThreadId: selectedId,
     detail: visibleDetail,
@@ -426,7 +437,7 @@ export function App() {
 
   const context = useAppCommandContext({
     correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads,
-    runBrief, recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, mutateIds,
+    runBrief, recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, mutateIds,
     view: { mailbox, setMailbox, setActiveSplitInboxId, activeAccountId, selectedId, setSelectedId, isTabbedMailbox },
     ui: { interactionScope, canUnsubscribe, latestMessage, aiSummaryAvailable, labelTargetIds, setLabelTargetIds, setUnsubscribeMessageId, setPaletteOpen, setShortcutHelpOpen, setGettingStartedOpen, openSettingsAt, adjustFontScale, toggleContextPanelFocus, selectAdjacentMessage, getSuggestions, openThreadChat, refreshMail },
   });
@@ -775,19 +786,16 @@ export function App() {
             />
           </div>
         ) : null}
-        <div className="thread-list" role={isThreadMailbox ? "listbox" : "list"} aria-label={mailboxTitle}>
+        <div className="thread-list" role={isThreadMailbox || mailbox === "outbox" ? "listbox" : "list"} aria-label={mailboxTitle}>
           {mailbox === "drafts" ? (
             <DraftsList drafts={correspondence.drafts} onOpen={correspondence.openDraft} onDiscard={correspondence.discardListedDraft} />
           ) : mailbox === "outbox" ? (
             <OutboxList
-              outbox={correspondence.outbox}
-              summaries={correspondence.summaries}
-              onChanged={correspondence.refresh}
+              entries={outboxSelection.entries}
+              selectedKey={outboxSelection.selectedEntry?.key ?? null}
               clock={correspondence.clock}
-              onUndo={correspondence.undoSendItem}
-              onRestore={correspondence.restoreFailedSend}
-              onReconcile={correspondence.reconcileSend}
-              pendingActions={correspondence.pendingOutboxActions}
+              onSelect={outboxSelection.select}
+              selectedRowRef={outboxSelection.selectedRowRef}
             />
           ) : (
             <>
@@ -981,6 +989,45 @@ export function App() {
             {correspondence.activeDraft ? correspondence.composer : null}
           </div>
           </ContactCardContext.Provider>
+        ) : mailbox === "outbox" && outboxSelection.selectedEntry ? (
+          <OutboxDetail
+            key={outboxSelection.selectedEntry.key}
+            entry={outboxSelection.selectedEntry}
+            clock={correspondence.clock}
+            onUndo={correspondence.undoSendItem}
+            onRestore={correspondence.restoreFailedSend}
+            onReconcile={correspondence.reconcileSend}
+            onEditAsNew={correspondence.context.editAsNew}
+            pendingActions={correspondence.pendingOutboxActions}
+            onChanged={correspondence.refresh}
+          >
+            {selectedOutboxItem && selectedOutboxMessage ? (
+              <ContactCardContext.Provider value={contactCardActions}>
+                <div className="message-stack">
+                  <MessageCard
+                    message={selectedOutboxMessage}
+                    index={0}
+                    isLatest
+                    isExpanded
+                    isActive
+                    accounts={accounts}
+                    queuedItem={selectedOutboxItem}
+                    loadRemoteImages={loadRemoteImages}
+                    theme={effectiveThemeValue}
+                    fontScale={fontScale / 100}
+                    fontFamily={fontFamily}
+                    emailMinimumFontSize={emailMinimumFontSize}
+                    onActivate={ignoreOutboxMessageEvent}
+                    onToggle={ignoreOutboxMessageEvent}
+                    onRespond={ignoreOutboxMessageEvent}
+                    onRegisterNode={ignoreOutboxMessageEvent}
+                    onImageClick={setLightboxImageSrc}
+                    onNotice={showNoticeMessage}
+                  />
+                </div>
+              </ContactCardContext.Provider>
+            ) : null}
+          </OutboxDetail>
         ) : detailLoading ? (
           <div className="reader-empty" role="status">
             <p>Loading conversation…</p>
@@ -992,7 +1039,7 @@ export function App() {
               {mailbox === "drafts"
                 ? "Select a draft to open it for editing"
                 : mailbox === "outbox"
-                  ? "Delivery details are shown in the list"
+                  ? "No outgoing messages"
                   : "Select a conversation"}
             </p>
           </div>

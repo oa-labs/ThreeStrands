@@ -5,6 +5,7 @@ import type { MutationTemplate } from "./threadMutations";
 import { adjacentContactsView } from "./contactsView";
 import { selectedMessageQuote } from "./selectedMessageQuote";
 import { editAsNewSource } from "./editAsNew";
+import { outboxEditAsNewSource } from "./outboxView";
 import { saveSelectedMailboxForAccount } from "./settings";
 import { scrollBehavior } from "./useReaderActions";
 import type { SettingsSection } from "./settingsPanelTypes";
@@ -18,6 +19,7 @@ import type { useCommandUndo } from "./useCommandExecution";
 import type { useMailboxThreads } from "./useMailboxThreads";
 import type { useTriageSession } from "./useTriageSession";
 import type { useThreadIntelligence } from "./useThreadIntelligence";
+import type { useOutboxSelection } from "./useOutboxSelection";
 
 type Options = {
   correspondence: ReturnType<typeof useCorrespondence>;
@@ -32,6 +34,7 @@ type Options = {
   recordTriageEvent: ReturnType<typeof useTriageSession>["recordTriageEvent"];
   displayedMessages: Message[];
   composerBelongsToVisibleThread: boolean;
+  outboxSelection: ReturnType<typeof useOutboxSelection>;
   mutateIds: (ids: string[], template: MutationTemplate, options?: { includeUnloaded?: boolean }) => Promise<CommandResult>;
   view: {
     mailbox: MailboxKind;
@@ -66,8 +69,9 @@ type Options = {
 /** Binds global commands to the current domain controllers and interaction scope. */
 export function useAppCommandContext({
   correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads, runBrief,
-  recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, mutateIds, view, ui,
+  recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, mutateIds, view, ui,
 }: Options) {
+  const outboxEditSource = useMemo(() => outboxEditAsNewSource(outboxSelection.selectedEntry), [outboxSelection.selectedEntry]);
   const { messageStackRef, setMessageExpansionOverrides, activeMessageIdRef } = reader;
   const {
     rightWorkspace, setRightWorkspace, setContactsView, openToday, openTasks, openTasksView,
@@ -123,10 +127,12 @@ export function useAppCommandContext({
     openDrafts: () => openFolder("drafts"),
     openOutbox: () => openFolder("outbox"),
     selectNext: () => {
+      if (mailbox === "outbox") { outboxSelection.selectAdjacent(1); return; }
       const next = Math.min(selectedIndex + 1, visibleThreads.length - 1);
       setSelectedId(visibleThreads[next]?.id ?? null);
     },
     selectPrevious: () => {
+      if (mailbox === "outbox") { outboxSelection.selectAdjacent(-1); return; }
       const next = Math.max(selectedIndex - 1, 0);
       setSelectedId(visibleThreads[next]?.id ?? null);
     },
@@ -204,8 +210,14 @@ export function useAppCommandContext({
       const quote = selectedMessageQuote();
       correspondence.context.forward(quote?.messageId, quote?.text);
     },
-    canEditAsNew: editAsNewSource(displayedMessages, selected?.accountId) !== null,
+    canEditAsNew: mailbox === "outbox"
+      ? outboxEditSource !== null
+      : editAsNewSource(displayedMessages, selected?.accountId) !== null,
     editAsNew: () => {
+      if (mailbox === "outbox") {
+        if (outboxEditSource) correspondence.context.editAsNew(outboxEditSource.messageId, outboxEditSource.account);
+        return;
+      }
       const source = editAsNewSource(displayedMessages, selected?.accountId, activeMessageIdRef.current);
       if (source) correspondence.context.editAsNew(source.id);
     },
@@ -273,7 +285,7 @@ export function useAppCommandContext({
   }), [
     correspondence.context, toggleContextPanelFocus, interactionScope, rightWorkspace, mailbox,
     selectedId, selected, canUnsubscribe, returnStep, goBack, displayedMessages,
-    composerBelongsToVisibleThread, goToInboxTab, accountSplitInboxes.length, goToNextSplitTab,
+    composerBelongsToVisibleThread, outboxSelection, outboxEditSource, goToInboxTab, accountSplitInboxes.length, goToNextSplitTab,
     goToPreviousSplitTab, goToSplitTab, taskLayout, selectedTaskStatus, selectedTaskHasThread,
     aiSummaryAvailable, refreshMail, openToday, openTasks, openMailView, openTasksView,
     openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView, getSuggestions,

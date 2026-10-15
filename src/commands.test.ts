@@ -432,6 +432,16 @@ describe("command registry", () => {
     expect(commandMatchesFilter(command!, "send again")).toBe(true);
   });
 
+  it("offers Edit as New in the Outbox for a delivered send without a conversation selection", () => {
+    const command = commands.find((candidate) => candidate.id === "draft.editAsNew");
+    const context = { ...noopContext(), mailbox: "outbox" as const, selectedId: null };
+    expect(command?.enabled(context)).toBe(false);
+    context.canEditAsNew = true;
+    expect(command?.enabled(context)).toBe(true);
+    expect(command?.enabled({ ...context, composerActive: true })).toBe(false);
+    expect(command?.enabled({ ...context, focusedPane: "tasks" })).toBe(false);
+  });
+
   it("gates AI summarize on a thread selection, thread mailbox, and AI availability", () => {
     const context = noopContext();
     expect(commands.find((command) => command.id === "thread.summarize")?.enabled(context)).toBe(false);

@@ -3090,9 +3090,16 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .attachment-list small { display: block; color: var(--muted); }
 .draft-row { display: flex; flex-direction: column; gap: var(--space-1); width: 100%; padding: var(--space-4) var(--space-2-5); text-align: left; background: transparent; border: 0; border-bottom: 1px solid var(--border); }
 .draft-row:hover { background: var(--hover); }
-.draft-row span, .draft-row small, .outbox-row small { color: var(--muted); }
-.outbox-row { display: flex; align-items: flex-start; flex-direction: column; gap: var(--space-2); padding: var(--space-4) var(--space-2-5); border-bottom: 1px solid var(--border); font-size: var(--text-body); overflow-wrap: anywhere; }
-.outbox-row p { color: var(--error); margin: 0; }
+.draft-row span, .draft-row small { color: var(--muted); }
+/* Outbox rows reuse .thread-row; only a status that needs attention differs. */
+.outbox-row-status.problem { color: var(--error); }
+.outbox-detail { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+.outbox-detail-status { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); font-size: var(--text-secondary); overflow-wrap: anywhere; }
+.outbox-detail-status small { color: var(--muted); }
+.outbox-detail-problem { margin: 0; color: var(--error); }
+.outbox-detail-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
+.outbox-detail-actions:empty { display: none; }
+.outbox-detail .reader-empty { flex: 1; height: auto; }
 .send-notice, .compose-notice, .exit-notice { position: fixed; z-index: var(--z-notice); bottom: 24px; left: 80px; display: flex; align-items: center; gap: var(--space-3); max-width: calc(100vw - 110px); padding: var(--space-4) var(--space-4); border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--raised); color: var(--text); box-shadow: var(--shadow-floating); font-size: var(--text-body); }
 .compose-notice { bottom: 88px; color: var(--error); }
 .exit-notice { bottom: 148px; }

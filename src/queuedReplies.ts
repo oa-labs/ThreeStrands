@@ -39,6 +39,29 @@ function providerMessageMatchesDraft(message: Message, draft: Draft): boolean {
   return Boolean(expected) && (actual === expected || actual.includes(expected) || expected.includes(actual));
 }
 
+/** An outbox item's local copy, shown as a message before (or instead of) the provider's. */
+export function queuedMessage(item: OutboxItem, threadId: string): Message {
+  return {
+    id: `outbox-${item.id}`,
+    threadId,
+    sender: item.draft.account,
+    recipients: splitDraftRecipients(item.draft),
+    sentAt: new Date(item.draft.updatedAt).toISOString(),
+    bodyHtml: item.draft.bodyHtml ?? "",
+    bodyText: item.draft.body,
+    unread: false,
+    unsubscribe: null,
+    attachments: item.draft.attachments.map((attachment) => ({
+      id: attachment.id,
+      filename: attachment.name,
+      mimeType: attachment.mime,
+      size: attachment.size,
+      contentId: attachment.contentId,
+      inline: attachment.inline,
+    })),
+  };
+}
+
 /**
  * Adds locally queued replies to their open conversation immediately. Once
  * Gmail's copy reaches the thread cache it wins, preventing a duplicate.
@@ -55,25 +78,7 @@ export function messagesWithQueuedReplies(detail: ThreadDetail, outbox: OutboxIt
         || providerMessageMatchesDraft(message, item.draft))
       )
     .sort((left, right) => left.draft.updatedAt - right.draft.updatedAt)
-    .map<Message>((item) => ({
-      id: `outbox-${item.id}`,
-      threadId: detail.thread.id,
-      sender: item.draft.account,
-      recipients: splitDraftRecipients(item.draft),
-      sentAt: new Date(item.draft.updatedAt).toISOString(),
-      bodyHtml: item.draft.bodyHtml ?? "",
-      bodyText: item.draft.body,
-      unread: false,
-      unsubscribe: null,
-      attachments: item.draft.attachments.map((attachment) => ({
-        id: attachment.id,
-        filename: attachment.name,
-        mimeType: attachment.mime,
-        size: attachment.size,
-        contentId: attachment.contentId,
-        inline: attachment.inline,
-      })),
-    }));
+    .map((item) => queuedMessage(item, detail.thread.id));
 
   return queuedReplies.length > 0 ? [...detail.messages, ...queuedReplies] : detail.messages;
 }

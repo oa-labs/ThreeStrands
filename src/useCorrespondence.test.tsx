@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Draft, OutboxItem, ScheduledSendReport } from "./correspondence";
 import { mailClient } from "./data/client";
 import type { Snippet } from "./domain";
-import { OutboxList, outboxStateLabel, useCorrespondence } from "./useCorrespondence";
+import { OutboxDetail, OutboxList, outboxStateLabel, useCorrespondence } from "./useCorrespondence";
+import { outboxEntries, type OutboxEntry } from "./outboxView";
 
 const draft: Draft = {
   id: "draft-1",
@@ -213,6 +214,17 @@ describe("useCorrespondence", () => {
     expect(result.current.activeDraft?.to).toBe("");
   });
 
+  it("copies an Outbox send from the account that sent it when no conversation is selected", async () => {
+    vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);
+    const createDraftFromSent = vi.spyOn(mailClient, "createDraftFromSent").mockResolvedValue({ ...draft, subject: "Dinner" });
+    const { result } = renderHook(() => useCorrespondence([], undefined, undefined, ...snippetArgs, null));
+
+    act(() => result.current.context.editAsNew("provider-sent", "me@example.com"));
+    await waitFor(() => expect(result.current.activeDraft?.subject).toBe("Dinner"));
+    expect(createDraftFromSent).toHaveBeenCalledWith("provider-sent", "me@example.com");
+  });
+
   it("still opens an Edit as New copy when its inline image cannot download", async () => {
     vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
     vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);
@@ -273,12 +285,18 @@ describe("useCorrespondence", () => {
   });
   it("shows peer schedules read-only without recipients or invented delivery outcomes", () => {
     const report: ScheduledSendReport={operationId:"remote",ownerInstallationId:"peer",ownerSyncDeviceId:null,ownerNameAtCreation:"MacBook",account:"me@example.com",subject:"Remote schedule",scheduledAt:10,timeZone:"UTC",state:"scheduled",blockedReason:null,reportRevision:1,statusChangedAt:1};
-    const undo=vi.fn(),restore=vi.fn(),reconcile=vi.fn();
-    render(<OutboxList outbox={[]} summaries={[report]} clock={20} onUndo={undo} onRestore={restore} onReconcile={reconcile} />);
+    const undo=vi.fn(),restore=vi.fn(),reconcile=vi.fn(),editAsNew=vi.fn();
+    const [entry] = outboxEntries([], [report]);
+    render(<OutboxList entries={[entry]} selectedKey={null} clock={20} onSelect={vi.fn()} />);
+    expect(screen.getByRole("option", { name: /Remote schedule/ })).toHaveTextContent("Awaiting an update from MacBook");
+    expect(screen.getByRole("option")).not.toHaveTextContent(/To /);
+    cleanup();
+    const { container } = render(<OutboxDetail entry={entry} clock={20} onUndo={undo} onRestore={restore} onReconcile={reconcile} onEditAsNew={editAsNew} />);
     expect(screen.getByText("Scheduled time passed; awaiting an update from MacBook")).toBeInTheDocument();
     expect(screen.getByText("Manage on MacBook")).toBeInTheDocument();
     expect(screen.queryAllByRole("button")).toHaveLength(0);
-    expect(undo).not.toHaveBeenCalled();expect(restore).not.toHaveBeenCalled();expect(reconcile).not.toHaveBeenCalled();
+    expect(container.querySelector(".message-stack")).toBeNull();
+    expect(undo).not.toHaveBeenCalled();expect(restore).not.toHaveBeenCalled();expect(reconcile).not.toHaveBeenCalled();expect(editAsNew).not.toHaveBeenCalled();
     cleanup();
   });
 
@@ -296,7 +314,8 @@ describe("useCorrespondence", () => {
     const report:ScheduledSendReport={operationId:outbox.id,ownerInstallationId:"self",ownerSyncDeviceId:null,ownerNameAtCreation:"Desktop",account:draft.account,subject:draft.subject,scheduledAt:10,timeZone:"UTC",state:"overdue",blockedReason:null,reportRevision:3,statusChangedAt:11};
     const sendNow=vi.spyOn(mailClient,"sendScheduledNow").mockResolvedValue();
     const changed=vi.fn().mockResolvedValue(undefined);
-    render(<OutboxList outbox={[{...outbox,state:"overdue",schedule:{report,canManage:true,visibility:"local"}}]} clock={20} onUndo={vi.fn()} onRestore={vi.fn()} onReconcile={vi.fn()} onChanged={changed} />);
+    const [entry] = outboxEntries([{...outbox,state:"overdue",schedule:{report,canManage:true,visibility:"local"}}], []);
+    render(<OutboxDetail entry={entry} clock={20} onUndo={vi.fn()} onRestore={vi.fn()} onReconcile={vi.fn()} onChanged={changed} />);
     fireEvent.click(screen.getByRole("button",{name:"Send now"}));fireEvent.click(screen.getByRole("button",{name:"Send now"}));
     await waitFor(() => expect(changed).toHaveBeenCalledTimes(1));expect(sendNow).toHaveBeenCalledTimes(1);expect(sendNow).toHaveBeenCalledWith(outbox.id,3);
     cleanup();
@@ -321,7 +340,11 @@ describe("outboxStateLabel", () => {
   );
 });
 
-describe("OutboxList send-state labels and Sent-copy notice", () => {
+const localEntry = (item: OutboxItem): OutboxEntry => outboxEntries([item], [])[0];
+const renderDetail = (item: OutboxItem, props: Partial<Parameters<typeof OutboxDetail>[0]> = {}) =>
+  render(<OutboxDetail entry={localEntry(item)} clock={0} onUndo={vi.fn()} onRestore={vi.fn()} onReconcile={vi.fn()} {...props} />);
+
+describe("Outbox send-state labels and Sent-copy notice", () => {
   afterEach(cleanup);
 
   it("shows the plain unverifiable label and keeps the explanatory error paragraph", () => {
@@ -330,14 +353,17 @@ describe("OutboxList send-state labels and Sent-copy notice", () => {
       state: "unverifiable",
       error: "This message may have been sent, but delivery could not be confirmed.",
     };
-    render(<OutboxList outbox={[item]} clock={0} onUndo={vi.fn()} onRestore={vi.fn()} onReconcile={vi.fn()} />);
+    render(<OutboxList entries={[localEntry(item)]} selectedKey={null} clock={0} onSelect={vi.fn()} />);
+    expect(screen.getByRole("option")).toHaveTextContent("May have been sent");
+    cleanup();
+    renderDetail(item);
     expect(screen.getByText("May have been sent")).toBeInTheDocument();
     expect(screen.getByText(/delivery could not be confirmed/)).toBeInTheDocument();
     expect(screen.queryByText("unverifiable")).not.toBeInTheDocument();
   });
 
   it("labels uncertain and failed in plain language", () => {
-    render(<OutboxList outbox={[{ ...outbox, id: "a", state: "uncertain" }, { ...outbox, id: "b", state: "failed" }]} clock={0} onUndo={vi.fn()} onRestore={vi.fn()} onReconcile={vi.fn()} />);
+    render(<OutboxList entries={outboxEntries([{ ...outbox, id: "a", state: "uncertain" }, { ...outbox, id: "b", state: "failed" }], [])} selectedKey={null} clock={0} onSelect={vi.fn()} />);
     expect(screen.getByText("Checking delivery")).toBeInTheDocument();
     expect(screen.getByText("Not sent")).toBeInTheDocument();
   });
@@ -348,13 +374,58 @@ describe("OutboxList send-state labels and Sent-copy notice", () => {
       state: "sent",
       sentCopy: { state: "abandoned", error: "Your message was sent, but a copy couldn't be saved to your Sent folder because no Sent folder is set up for this account." },
     };
-    render(<OutboxList outbox={[item]} clock={0} onUndo={vi.fn()} onRestore={vi.fn()} onReconcile={vi.fn()} />);
+    renderDetail(item);
     expect(screen.getByText(/no Sent folder is set up/)).toBeInTheDocument();
   });
 
   it.each(["pending", "verify", "done"] as const)("shows nothing for a %s Sent-copy state", (state) => {
     const item: OutboxItem = { ...outbox, state: "sent", sentCopy: { state, error: "should not appear" } };
-    render(<OutboxList outbox={[item]} clock={0} onUndo={vi.fn()} onRestore={vi.fn()} onReconcile={vi.fn()} />);
+    renderDetail(item);
     expect(screen.queryByText("should not appear")).not.toBeInTheDocument();
+  });
+});
+
+describe("Outbox list and reader", () => {
+  afterEach(cleanup);
+  const sent: OutboxItem = { ...outbox, id: "sent", state: "sent", providerId: "provider-sent", draft: { ...draft, subject: "Dinner", to: "Ana Lima <ana@example.com>, bo@example.com" } };
+  const failed: OutboxItem = { ...outbox, id: "failed", state: "failed", draft: { ...draft, subject: "Report" } };
+  const canceled: OutboxItem = { ...outbox, id: "canceled", state: "canceled", draft: { ...draft, subject: "Never mind" } };
+
+  it("lists sends as selectable rows with recipients, subject, and status, hiding canceled ones", () => {
+    const onSelect = vi.fn();
+    const entries = outboxEntries([sent, failed, canceled], []);
+    render(<OutboxList entries={entries} selectedKey={null} clock={0} onSelect={onSelect} />);
+    const rows = screen.getAllByRole("option");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveAttribute("aria-selected", "true");
+    expect(rows[0]).toHaveTextContent("To Ana Lima, bo@example.com");
+    expect(rows[0]).toHaveTextContent("Dinner");
+    expect(rows[1]).toHaveAttribute("aria-selected", "false");
+    expect(rows[1].querySelector(".outbox-row-status.problem")).toHaveTextContent("Not sent");
+    expect(screen.queryByText("Never mind")).not.toBeInTheDocument();
+    fireEvent.click(rows[1]);
+    expect(onSelect).toHaveBeenCalledWith(entries[1].key);
+  });
+
+  it("shows the selected send's message and offers Edit as New for a delivered send", () => {
+    const editAsNew = vi.fn();
+    renderDetail(sent, { onEditAsNew: editAsNew, children: <p>Message body</p> });
+    expect(screen.getByRole("heading", { name: "Dinner" })).toBeInTheDocument();
+    expect(screen.getByText("Message body")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit as New" }));
+    expect(editAsNew).toHaveBeenCalledWith("provider-sent", "me@example.com");
+  });
+
+  it("offers recovery, not Edit as New, for a send that did not go out", () => {
+    const restore = vi.fn();
+    renderDetail(failed, { onRestore: restore, onEditAsNew: vi.fn() });
+    expect(screen.queryByRole("button", { name: "Edit as New" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Restore Draft" }));
+    expect(restore).toHaveBeenCalledWith("failed");
+  });
+
+  it("keeps Edit as New hidden until the provider's message id is known", () => {
+    renderDetail({ ...sent, providerId: null }, { onEditAsNew: vi.fn() });
+    expect(screen.queryByRole("button", { name: "Edit as New" })).not.toBeInTheDocument();
   });
 });
