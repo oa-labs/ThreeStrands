@@ -2510,6 +2510,18 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .label-list > div.highlighted { background: var(--selected); }
 .label-option-name { display: flex; align-items: center; gap: var(--space-2); }
 .label-option-check-spacer { display: inline-block; width: 14px; }
+/* Chosen items sit inside the search field, ahead of the caret, like a recipient line. */
+.find-or-create-field { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); min-height: var(--control-h); box-sizing: border-box; padding: var(--space-1) var(--space-1-5); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--input); cursor: text; }
+.find-or-create-field:focus-within { border-color: var(--accent); }
+.label-search .find-or-create-field input { flex: 1; width: auto; min-width: 8ch; height: auto; padding: var(--space-1); border: 0; background: transparent; }
+.find-or-create-field .recipient-chip { cursor: default; }
+.find-or-create-field .recipient-chip-label { color: var(--text); font-size: inherit; }
+/* Creating something new reads as an action, not as a selected item. */
+.label-list > div.find-or-create-create { justify-content: flex-start; color: var(--muted); }
+.label-list > div.find-or-create-create.highlighted { color: var(--text); }
+.find-or-create-notice { margin: 0; padding: var(--space-2); color: var(--muted); font-size: var(--text-meta); }
+.contact-member-selection { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); max-width: 100%; }
+.contact-member-footer { padding-top: 0; }
 .label-actions { display: flex; align-items: center; gap: var(--space-1); }
 .rename-label { display: flex; gap: var(--space-2); padding: var(--space-2-5) var(--space-4); border-top: 1px solid var(--border); }
 .rename-label input { min-width: 0; flex: 1; height: var(--control-h); padding: 0 var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background: var(--input); }

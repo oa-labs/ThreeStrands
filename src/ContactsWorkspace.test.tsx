@@ -1130,6 +1130,70 @@ describe("ContactsWorkspace",()=>{
       expect(screen.getByRole("combobox",{name:"Find contacts to add"})).toBeInTheDocument();
     });
 
+    it("selects the contact a typed address belongs to instead of offering a new contact",async()=>{
+      vi.mocked(mailClient.listContactProfiles).mockResolvedValue([jane,newerContact]);
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([board]);
+      const {container}=groupsView();
+      fireEvent.click(await screen.findByRole("button",{name:"Add Members"}));
+      const search=()=>screen.getByRole("combobox",{name:"Find contacts to add"});
+      await waitFor(()=>expect(screen.getByRole("option",{name:"Jane Doe"})).toBeInTheDocument());
+      // Picking from the list clears the search, and the chip sits inside the search field.
+      fireEvent.change(search(),{target:{value:"jan"}});
+      fireEvent.click(screen.getByRole("option",{name:"Jane Doe"}));
+      expect(search()).toHaveValue("");
+      const selection=()=>screen.getByRole("group",{name:"Selected members"});
+      expect(search().parentElement).toContainElement(selection());
+
+      // A typed address, even written with a name, starts on its owner and offers no create row.
+      fireEvent.change(search(),{target:{value:"Newer <NEWER@example.com>"}});
+      expect(screen.getByRole("option",{name:"Newer Person"})).toHaveAttribute("aria-selected","true");
+      expect(screen.queryByRole("option",{name:/Add new contact/})).not.toBeInTheDocument();
+      fireEvent.keyDown(search(),{key:"Enter"});
+      // Typing a chosen contact's address again keeps them chosen.
+      fireEvent.change(search(),{target:{value:"jane@example.com"}});
+      fireEvent.keyDown(search(),{key:"Enter"});
+      expect(within(selection()).getAllByText(/./,{selector:".recipient-chip-label"}).map(chip=>chip.textContent)).toEqual(["Jane Doe","Newer Person"]);
+      expect(screen.getByRole("option",{name:"Jane Doe, selected"})).toBeInTheDocument();
+
+      // Backspace in the empty field removes the last chip.
+      fireEvent.keyDown(search(),{key:"Backspace"});
+      expect(within(selection()).getAllByText(/./,{selector:".recipient-chip-label"}).map(chip=>chip.textContent)).toEqual(["Jane Doe"]);
+
+      // The footer is inset with the rest of the dialog body.
+      const actions=container.ownerDocument.querySelector(".modal-form-actions") as HTMLElement;
+      expect(actions.closest(".modal-form")).not.toBeNull();
+      expect(within(actions).getByRole("button",{name:"Add 1 Member"})).toBeEnabled();
+    });
+
+    it("says when a typed address already belongs to a member and skips it in a pasted list",async()=>{
+      vi.mocked(mailClient.listContactProfiles).mockResolvedValue([jane,newerContact]);
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([withMembers(board,jane.id)]);
+      let finish:(group:ContactGroup)=>void=()=>{};
+      vi.mocked(mailClient.addContactGroupMembers).mockImplementation(()=>new Promise(resolve=>{finish=resolve;}));
+      groupsView();
+      await within(await screen.findByRole("region",{name:"Members"})).findByRole("button",{name:/Jane Doe.*jane@example.com/});
+      fireEvent.click(screen.getByRole("button",{name:"Add Members"}));
+      const search=()=>screen.getByRole("combobox",{name:"Find contacts to add"});
+      fireEvent.change(search(),{target:{value:"Jane@Example.com"}});
+      expect(screen.getByRole("status")).toHaveTextContent("Jane Doe is already in this group");
+      expect(screen.queryByRole("option",{name:/Add new contact/})).not.toBeInTheDocument();
+      fireEvent.keyDown(search(),{key:"Enter"});
+      expect(screen.queryByRole("group",{name:"Selected members"})).not.toBeInTheDocument();
+
+      fireEvent.change(search(),{target:{value:"jane@example.com, fresh@example.com"}});
+      fireEvent.keyDown(search(),{key:"Enter"});
+      expect(await screen.findByRole("alert")).toHaveTextContent("Already in this group: Jane Doe");
+      const selection=screen.getByRole("group",{name:"Selected members"});
+      expect(within(selection).getAllByText(/./,{selector:".recipient-chip-label"}).map(chip=>chip.textContent)).toEqual(["fresh@example.com"]);
+
+      // The button says it's working while the add is in flight.
+      fireEvent.click(screen.getByRole("button",{name:"Add 1 Member"}));
+      expect(await screen.findByRole("button",{name:"Adding…"})).toBeDisabled();
+      expect(mailClient.addContactGroupMembers).toHaveBeenCalledWith(board.id,[],["fresh@example.com"]);
+      finish(withMembers(board,jane.id,"contact:fresh@example.com"));
+      await waitFor(()=>expect(screen.queryByRole("combobox",{name:"Find contacts to add"})).not.toBeInTheDocument());
+    });
+
     it("leaves current members out of the member picker",async()=>{
       vi.mocked(mailClient.listContactProfiles).mockResolvedValue([jane,newerContact]);
       vi.mocked(mailClient.listContactGroups).mockResolvedValue([withMembers(board,jane.id)]);
