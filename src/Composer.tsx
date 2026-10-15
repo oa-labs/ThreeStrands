@@ -1,3 +1,5 @@
+import { draftSignatureSnapshot, type SignatureState } from "./signatures";
+import { SignaturesSettings } from "./SignaturesSettings";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Paperclip, Send, Sparkles, Trash, X } from "lucide-react";
 import { mailClient } from "./data/client";
@@ -41,6 +43,7 @@ export const Composer = forwardRef<ComposerHandle, {
   draft: Draft;
   accounts: Account[];
   messageAppearance?: MessageAppearance;
+  signatures?: SignatureState;
   snippets: Snippet[];
   onCreateSnippet(name: string, body: string): Promise<Snippet>;
   onUpdateSnippet(id: string, name: string, body: string): Promise<Snippet>;
@@ -52,11 +55,12 @@ export const Composer = forwardRef<ComposerHandle, {
   replyAssistInstruction?: string | null;
   /** Called with the draft as edits are made; body text arrives at each autosave. */
   onDraftChange?(draft: Draft): void;
-}>(function Composer({ draft: initial, accounts, messageAppearance, snippets, onCreateSnippet, onUpdateSnippet, onDeleteSnippet, onClose, onQueued, availabilityText = null, expandQuotedText = false, replyAssistInstruction = null, onDraftChange }, ref) {
+}>(function Composer({ draft: initial, accounts, messageAppearance, signatures, snippets, onCreateSnippet, onUpdateSnippet, onDeleteSnippet, onClose, onQueued, availabilityText = null, expandQuotedText = false, replyAssistInstruction = null, onDraftChange }, ref) {
   const bodyEditor = useRef<ComposeBodyEditorHandle>(null);
   const captureChanges = useCallback(() => bodyEditor.current?.captureChanges() ?? null, []);
   const [error, setError] = useState("");
   const { draft, latest, status, edit, markChanged, captureBody, flush, replaceDraft } = useDraftAutosave(initial, captureChanges, setError);
+  const [signaturesOpen, setSignaturesOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   // While body text is selected, the footer note trades its draft reminder for formatting shortcuts.
   const [textSelected, setTextSelected] = useState(false);
@@ -97,7 +101,8 @@ export const Composer = forwardRef<ComposerHandle, {
         && !saved.subject.trim()
         && !saved.body.trim()
         && !saved.bodyHtml?.trim()
-        && saved.attachments.length === 0;
+        && saved.attachments.length === 0
+        && (!saved.signature?.html.trim() || saved.signature.automatic);
       if (isEmpty) await mailClient.discardDraft(saved.id);
       onClose();
     });
@@ -130,13 +135,21 @@ export const Composer = forwardRef<ComposerHandle, {
     // identities are refetched by the effect below, and the backend clears
     // any stale `from` on the moved draft.
     setIdentities([]);
-    void run(async () => { await flush(); const next = await mailClient.setDraftAccount(latest.current.id, email); replaceDraft(next); });
+    void run(async () => { await flush(); const next = await mailClient.setDraftAccount(latest.current.id, email); replaceDraft(next); bodyEditor.current?.replaceSignature(next.signature); });
   }
   function changeFrom(address: string) {
     const primary = identities[0]?.address;
     const value = !address || address === primary ? null : address;
     if ((latest.current.from ?? null) === value) return;
-    void run(async () => { await flush(); const next = await mailClient.setDraftFrom(latest.current.id, value); replaceDraft(next); });
+    void run(async () => { await flush(); const next = await mailClient.setDraftFrom(latest.current.id, value); replaceDraft(next); bodyEditor.current?.replaceSignature(next.signature); });
+  }
+  function changeSignature(id: string) {
+    void run(async () => {
+      await flush();
+      const signature = draftSignatureSnapshot(signatures?.signatures.find((s) => s.id === id) ?? null);
+      replaceDraft({ ...latest.current, signature });
+      bodyEditor.current?.replaceSignature(signature);
+    });
   }
   function insertText(text: string) {
     if (!busyRef.current) bodyEditor.current?.insertText(text);
@@ -228,7 +241,7 @@ export const Composer = forwardRef<ComposerHandle, {
       hasInlineImages: authored.hasInlineImages,
       hasInlineQuotes: authored.hasInlineQuotes,
       fingerprint: JSON.stringify([current.id, current.account, current.from ?? null, current.to, current.cc, current.bcc,
-        current.subject, current.body, current.bodyHtml, current.attachments]),
+        current.subject, current.body, current.bodyHtml, current.signature, current.attachments]),
     };
   }
   const draftReview: DraftReviewActions = {
@@ -346,6 +359,11 @@ export const Composer = forwardRef<ComposerHandle, {
           )
         ))}
         <label className="compose-field"><span>Subject</span><input aria-label="Subject" value={draft.subject} onChange={(e) => edit("subject", e.target.value)} disabled={busy} /></label>
+        {signatures ? <div className="compose-signature-actions"><label className="compose-from"><span>Signature</span><select aria-label="Signature" value={draft.signature?.id ?? ""} disabled={busy} onChange={(event) => changeSignature(event.target.value)}>
+          <option value="">No Signature</option>
+          {draft.signature?.id && !signatures.signatures.some((s) => s.id === draft.signature?.id) ? <option value={draft.signature.id}>{draft.signature.name} (Saved in Draft)</option> : null}
+          {signatures.signatures.map((signature) => <option key={signature.id} value={signature.id}>{signature.name}</option>)}
+        </select></label><button type="button" className="btn btn-sm" disabled={busy} onClick={() => setSignaturesOpen(true)}>Manage Signatures…</button></div> : null}
         <ComposeBodyEditor
           ref={bodyEditor}
           initial={initial}
@@ -386,6 +404,7 @@ export const Composer = forwardRef<ComposerHandle, {
           : "Drafts are saved on this device. Send has a 10-second undo window."}
         {!("__TAURI_INTERNALS__" in window) && " Browser preview: delivery and attachments are simulated."}
       </p>
+      {signaturesOpen && signatures ? <Modal title="Manage Signatures" className="signature-dialog" onClose={() => setSignaturesOpen(false)}><div className="signature-form"><SignaturesSettings library={signatures} accounts={accounts} /></div></Modal> : null}
       {scheduleOpen && <ScheduleSendPicker onClose={() => setScheduleOpen(false)} onSchedule={async (selection) => {
         if (busyRef.current) throw new Error("Finish the current composer action first");
         busyRef.current = true; setBusy(true);

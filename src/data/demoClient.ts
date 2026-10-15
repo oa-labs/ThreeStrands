@@ -1,3 +1,4 @@
+import { demoSignatureClient } from "./demoSignatures";
 import type { WorkspaceFile } from "../domain";
 import { attachmentKind } from "../attachmentKind";
 import { demoCorrespondence } from "./demoCorrespondence";
@@ -1678,6 +1679,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       const items = visibleSplitInbox(splitInboxId);
       return { threads: structuredClone(items.slice(offset, offset + limit)), hasMore: offset + limit < items.length };
     },
+    ...demoSignatureClient,
     async listSnippets() {
       return structuredClone(snippets);
     },

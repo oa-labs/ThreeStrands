@@ -1,3 +1,4 @@
+import { signatureBody } from "./signatures";
 import type { Draft, OutboxItem } from "./correspondence";
 import type { Message, ThreadDetail } from "./domain";
 import { decodeHtmlEntities } from "./SafeMessage";
@@ -35,7 +36,7 @@ function providerMessageMatchesDraft(message: Message, draft: Draft): boolean {
   if (parseAddress(message.sender).email.toLocaleLowerCase() !== draft.account.toLocaleLowerCase()) return false;
   if (new Date(message.sentAt).getTime() < draft.updatedAt - DRAFT_MATCH_CLOCK_SKEW_MS) return false;
   const actual = comparableMessageBody(message.bodyText);
-  const expected = comparableMessageBody(draft.body);
+  const expected = comparableMessageBody(signatureBody(draft).text);
   return Boolean(expected) && (actual === expected || actual.includes(expected) || expected.includes(actual));
 }
 
@@ -47,8 +48,8 @@ export function queuedMessage(item: OutboxItem, threadId: string): Message {
     sender: item.draft.account,
     recipients: splitDraftRecipients(item.draft),
     sentAt: new Date(item.draft.updatedAt).toISOString(),
-    bodyHtml: item.draft.bodyHtml ?? "",
-    bodyText: item.draft.body,
+    bodyHtml: signatureBody(item.draft).html,
+    bodyText: signatureBody(item.draft).text,
     unread: false,
     unsubscribe: null,
     attachments: item.draft.attachments.map((attachment) => ({

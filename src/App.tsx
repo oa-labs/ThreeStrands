@@ -1,3 +1,4 @@
+import { useSignatures } from "./useSignatures";
 import type { FilesWorkspaceSnapshot } from "./FilesWorkspace";
 import type { CalendarWorkspaceSnapshot } from "./CalendarWeekView";
 import {
@@ -199,11 +200,13 @@ export function App() {
   const { detail, setDetail, visibleDetail, detailLoading } = threadDetail;
   const { applyThreadSummary } = useMailStateActions({ mailboxThreads, threadDetail });
   const snippetLibrary = useSnippets();
+  const signatureLibrary = useSignatures();
   const correspondence = useCorrespondence(
     accounts, visibleDetail?.messages.at(-1)?.id, visibleDetail?.thread.accountId,
     snippetLibrary.snippets, snippetLibrary.create, snippetLibrary.update, snippetLibrary.remove,
     selectedId,
     { theme: effectiveThemeValue, fontScale: fontScale / 100, fontFamily, emailMinimumFontSize, loadImages: loadRemoteImages },
+    signatureLibrary,
   );
   const composerBelongsToVisibleThread = Boolean(
     correspondence.activeDraft
@@ -1403,12 +1406,13 @@ export function App() {
             splitInboxes={splitInboxCatalog}
             mutedSenders={senderRuleCatalog}
             labelsByAccount={labelsByAccount}
+            signatures={signatureLibrary}
             snippets={snippetLibrary}
             syncStatus={syncStatus}
             recoveryStatus={recoveryStatus}
             syncDiagnostics={syncDiagnostics}
             onAiConfigChange={refreshAiAvailability}
-            onSettingsImported={applyImportedSettings}
+            onSettingsImported={async (result) => { await applyImportedSettings(result); await signatureLibrary.refresh(); }}
           />
         </Suspense>
       ) : null}

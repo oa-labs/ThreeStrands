@@ -464,23 +464,27 @@ export function insertHtmlAtRange(editor: HTMLElement, range: Range, html: strin
  * A reply's separately edited quoted history (see `splitReplyQuote`) joins
  * the authored text after a blank line, the shape a native reply starts with.
  */
-export function serializeComposeBody(editor: HTMLElement, quoted?: HTMLElement | null): { html: string; text: string } {
+export function serializeComposeBody(editor: HTMLElement, quoted?: HTMLElement | null, onAuthoredBoundary?: (body: { html: string; text: string }) => void): { html: string; text: string } {
   const clone = editor.cloneNode(true) as HTMLElement;
-  if (quoted && (quoted.textContent?.trim() || quoted.querySelector("img"))) {
-    while (clone.lastChild && isBlankTrailingNode(clone.lastChild)) clone.lastChild.remove();
-    clone.append(document.createElement("br"), document.createElement("br"), ...Array.from(quoted.cloneNode(true).childNodes));
+  const hasQuote = quoted && (quoted.textContent?.trim() || quoted.querySelector("img"));
+  if (hasQuote) while (clone.lastChild && isBlankTrailingNode(clone.lastChild)) clone.lastChild.remove();
+  if (onAuthoredBoundary) {
+    stripComposeImageControls(clone);
+    onAuthoredBoundary({ html: sanitizeComposeHtml(clone.innerHTML), text: composeHtmlToText(clone) });
   }
-  clone.querySelectorAll<HTMLElement>("[data-compose-image]").forEach((wrapper) => {
+  if (hasQuote) clone.append(document.createElement("br"), document.createElement("br"), ...Array.from(quoted.cloneNode(true).childNodes));
+  stripComposeImageControls(clone);
+  return { html: sanitizeComposeHtml(clone.innerHTML), text: composeHtmlToText(clone) };
+}
+
+function stripComposeImageControls(root: HTMLElement): void {
+  root.querySelectorAll<HTMLElement>("[data-compose-image]").forEach((wrapper) => {
     const image = wrapper.querySelector("img");
     const composeSource = image?.dataset.composeSource;
     if (image && composeSource) image.setAttribute("src", composeSource);
     if (image) wrapper.replaceWith(image);
     else wrapper.remove();
   });
-  return {
-    html: sanitizeComposeHtml(clone.innerHTML),
-    text: composeHtmlToText(clone),
-  };
 }
 
 /** Removes compose-only image controls before a draft is saved or sent. */

@@ -80,6 +80,8 @@ impl Database {
             match entity_type {
                 EntityType::ScheduledSendSummary => self.delete_synced_row("DELETE FROM scheduled_send_summaries WHERE id=?1", entity_id)?,
                 EntityType::Task => self.delete_synced_row("DELETE FROM tasks WHERE id=?1", entity_id)?,
+                EntityType::Signature => self.delete_signature(entity_id)?,
+                EntityType::SignatureDefaults => self.delete_signature_defaults(entity_id)?,
                 EntityType::Snippet => self.delete_synced_row("DELETE FROM snippets WHERE id=?1", entity_id)?,
                 EntityType::SplitInbox => self.delete_synced_row("DELETE FROM split_inboxes WHERE id=?1", entity_id)?,
                 EntityType::SenderRule => self.delete_synced_row("DELETE FROM sender_rules WHERE id=?1", entity_id)?,
@@ -116,6 +118,16 @@ impl Database {
                 }
                 EntityType::Task => {
                     self.upsert_synced_task(serde_json::from_value(payload.clone()).map_err(serialization_error)?)?
+                }
+                EntityType::Signature => {
+                    let item = crate::signatures::signature_from_sync(payload).map_err(DatabaseError::invalid)?;
+                    if item.id != entity_id { return Err(DatabaseError::invalid("Signature identity mismatch")); }
+                    self.store_signature(&item)?;
+                }
+                EntityType::SignatureDefaults => {
+                    let item: crate::signatures::SignatureDefaults = serde_json::from_value(payload.clone()).map_err(serialization_error)?;
+                    if item.id != entity_id { return Err(DatabaseError::invalid("Signature defaults identity mismatch")); }
+                    self.store_signature_defaults(&item)?;
                 }
                 EntityType::Snippet => {
                     self.upsert_synced_snippet(serde_json::from_value(payload.clone()).map_err(serialization_error)?)?
@@ -445,6 +457,26 @@ mod tests {
         // A deletion removes every value.
         db.record_local_entity_deletion(EntityType::Snippet, "one").unwrap();
         assert_eq!(operation_count(&db, "one"), 0);
+    }
+
+    #[test]
+    fn signature_templates_and_alias_defaults_materialize_update_and_delete_independently() {
+        use crate::signatures::tests::{template, defaults};
+        let db = Database::open_memory();
+        let signature = serde_json::to_value(template("work")).unwrap();
+        let defaults = defaults("me@example.com", "alias@example.com", Some("work"), None);
+        db.materialize_entity(EntityType::SignatureDefaults, &defaults.id, Some(&serde_json::to_value(&defaults).unwrap()), false).unwrap();
+        db.materialize_entity(EntityType::Signature, "work", Some(&signature), false).unwrap();
+        assert_eq!(db.default_draft_signature("me@example.com", "alias@example.com", "new").unwrap().unwrap().text, "work");
+        let mut edited = signature.clone(); edited["html"] = json!("<b>Updated</b>"); edited["text"] = json!("Updated");
+        db.materialize_entity(EntityType::Signature, "work", Some(&edited), false).unwrap();
+        assert_eq!(db.signature_library().unwrap().signatures[0].text, "Updated");
+        db.materialize_entity(EntityType::Signature, "work", None, true).unwrap();
+        assert!(db.default_draft_signature("me@example.com", "alias@example.com", "new").unwrap().is_none());
+        assert_eq!(db.signature_library().unwrap().defaults.len(), 1);
+        db.materialize_entity(EntityType::SignatureDefaults, &defaults.id, None, true).unwrap();
+        assert!(db.signature_library().unwrap().defaults.is_empty());
+        assert!(db.materialize_entity(EntityType::Signature, "wrong-id", Some(&signature), false).is_err());
     }
 
     #[test]

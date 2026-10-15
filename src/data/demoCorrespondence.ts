@@ -1,3 +1,5 @@
+import { readDemoSignatures } from "./demoSignatures";
+import { defaultSignature } from "../signatures";
 import { previewScheduleChoices } from "../scheduleTimes";
 import type { CorrespondenceClient, Draft, OutboxItem, ScheduledSendReport, ScheduleSelection } from "../correspondence";
 import { plainTextToHtml } from "../richText";
@@ -117,6 +119,7 @@ export function demoCorrespondence(getSourceThread: (messageId: string) => Promi
         d.replyId = `${sourceId}@threestrands.local`;
         d.references = [d.replyId];
       }
+      d.signature = defaultSignature(readDemoSignatures(), d.account, d.from ?? d.account, d.mode);
       store.drafts.push(d); write(store); return d;
     },
     async createDraftFromSent(sourceId, account) {
@@ -132,7 +135,13 @@ export function demoCorrespondence(getSourceThread: (messageId: string) => Promi
     async setDraftAccount(id, account) {
       const store = read(); const d = draft(store, id);
       if (d.mode !== "new") throw new Error("Only new messages can change the sending account");
-      d.account = account; d.from = null; d.revision++; d.updatedAt = Date.now(); write(store); return d;
+      d.account = account; d.from = null;
+      if (!d.signature || d.signature.automatic) {
+        const previous = d.signature;
+        d.signature = defaultSignature(readDemoSignatures(), account, account, d.mode);
+        if (d.signature && previous) { d.signature.htmlOffset = previous.htmlOffset; d.signature.textOffset = previous.textOffset; }
+      }
+      d.revision++; d.updatedAt = Date.now(); write(store); return d;
     },
     // Browser preview has no IMAP account, so every account is single-identity.
     async listIdentities(account) { return [{ address: account }]; },

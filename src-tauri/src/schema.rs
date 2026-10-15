@@ -14,7 +14,7 @@ pub(crate) const BASELINE_VERSION: i64 = 74;
 
 /// The current schema version. A new schema change adds an
 /// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 75;
+pub(crate) const LATEST_VERSION: i64 = 76;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -812,6 +812,9 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 76 {
+        tx.execute_batch("CREATE TABLE signatures(id TEXT PRIMARY KEY, payload TEXT NOT NULL); CREATE TABLE signature_defaults(id TEXT PRIMARY KEY, payload TEXT NOT NULL);").map_err(error)?;
+    }
     if version < LATEST_VERSION || stored == 0 {
         tx.pragma_update(None, "user_version", LATEST_VERSION)
             .map_err(error)?;
@@ -1030,6 +1033,8 @@ mod tests {
         "index:sender_rules_by_account",
         "table:sender_rule_actions",
         "table:sender_rules",
+        "table:signatures",
+        "table:signature_defaults",
     ];
 
     #[test]
@@ -1058,7 +1063,7 @@ mod tests {
     }
 
     #[test]
-    fn a_v74_database_upgrades_to_v75_and_keeps_its_data() {
+    fn a_v74_database_upgrades_to_v76_and_keeps_its_data() {
         // A database a 0.121 build left at v74 gains the sender rule tables
         // without losing what it already holds.
         let mut connection = Connection::open_in_memory().unwrap();
@@ -1078,7 +1083,7 @@ mod tests {
             connection
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            75
+            super::LATEST_VERSION
         );
         assert_eq!(
             connection

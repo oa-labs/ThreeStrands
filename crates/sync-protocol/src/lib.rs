@@ -7,6 +7,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+pub const MAX_SIGNATURE_HTML_BYTES: usize = 180_000;
+pub const MAX_SIGNATURE_TEXT_BYTES: usize = 32_000;
+
 pub const MAX_PAYLOAD_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
@@ -28,6 +31,8 @@ pub enum EntityType {
     /// A muted sender. Added in 0.122.0; an earlier build cannot open a
     /// snapshot that holds one.
     SenderRule,
+    Signature,
+    SignatureDefaults,
 }
 
 /// Most members one synchronized contact group may list.
@@ -52,6 +57,8 @@ impl EntityType {
             Self::ContactGroup => "contact_group",
             Self::ScheduledSendSummary => "scheduled_send_summary",
             Self::SenderRule => "sender_rule",
+            Self::Signature => "signature",
+            Self::SignatureDefaults => "signature_defaults",
         }
     }
 
@@ -80,6 +87,28 @@ impl EntityType {
             Self::Snippet => {
                 required_string(object, "name", 200)?;
                 required_string(object, "body", 32_000)?;
+            }
+            Self::Signature => {
+                required_string(object, "id", 128)?;
+                if object["id"].as_str().unwrap().len() > 128 { return Err("Signature id is too large".into()); }
+                required_string(object, "name", 200)?;
+                let (html, text) = signature_content(payload)?;
+                if html.trim().is_empty() || html.len() > MAX_SIGNATURE_HTML_BYTES || text.len() > MAX_SIGNATURE_TEXT_BYTES { return Err("Signature content is too large or empty".into()); }
+            }
+            Self::SignatureDefaults => {
+                if object.keys().any(|key| !["id", "account", "address", "newSignatureId", "replySignatureId"].contains(&key.as_str())) { return Err("Unknown signature defaults field".into()); }
+                required_string(object, "id", 320)?;
+                let id = object["id"].as_str().unwrap();
+                if !id.strip_prefix("signature-default:").is_some_and(|hash| hash.len() == 64 && hash.bytes().all(|ch| ch.is_ascii_hexdigit())) { return Err("Invalid signature defaults identity".into()); }
+                required_string(object, "account", 320)?;
+                let account = object["account"].as_str().unwrap();
+                let address = object.get("address").and_then(Value::as_str).ok_or("Signature address must be a string")?;
+                if !account.contains('@') || account.chars().any(char::is_control) || address.len() > 320 || (!address.is_empty() && (!address.contains('@') || address.chars().any(char::is_control))) { return Err("Invalid signature address".into()); }
+                for field in ["newSignatureId", "replySignatureId"] {
+                    // A cleared replica field projects as absence. Both it
+                    // and an explicit JSON null mean No Signature.
+                    if !matches!(object.get(field), None | Some(Value::Null)) { required_string(object, field, 128)?; }
+                }
             }
             Self::SenderRule => {
                 required_string(object, "id", 128)?;
@@ -181,6 +210,42 @@ impl EntityType {
     }
 }
 
+/// The portable model uses html/text. Replication writes an atomic content
+/// hash plus bounded, hash-addressed chunks, so HTML with an embedded logo
+/// fits the envelope's per-value budget without mixing concurrent edits.
+pub fn signature_content(payload: &Value) -> Result<(String, String), String> {
+    let object = payload.as_object().ok_or("Invalid signature content")?;
+    if object.contains_key("html") {
+        if object.keys().any(|key| !["id", "name", "html", "text"].contains(&key.as_str())) { return Err("Unknown signature field".into()); }
+        return Ok((object["html"].as_str().ok_or("Signature HTML must be a string")?.into(), object.get("text").and_then(Value::as_str).ok_or("Signature text must be a string")?.into()));
+    }
+    let hash = object.get("contentHash").and_then(Value::as_str).ok_or("Missing signature content hash")?;
+    if hash.len() != 64 || !hash.bytes().all(|ch| ch.is_ascii_hexdigit()) { return Err("Invalid signature content hash".into()); }
+    let mut html = std::collections::BTreeMap::new();
+    let mut text = std::collections::BTreeMap::new();
+    for (key, value) in object {
+        if ["id", "name", "contentHash"].contains(&key.as_str()) { continue; }
+        let mut parts = key.split(':');
+        let kind = parts.next().unwrap_or_default();
+        let version = parts.next().unwrap_or_default();
+        let index = parts.next().unwrap_or_default();
+        let number: usize = index.parse().map_err(|_| "Invalid signature chunk index")?;
+        if version != hash || index != number.to_string() || parts.next().is_some() { return Err("Invalid signature chunk identity".into()); }
+        let value = value.as_str().ok_or("Invalid signature chunk")?;
+        match kind { "html" => { html.insert(number, value); }, "text" => { text.insert(number, value); }, _ => return Err("Unknown signature field".into()) }
+    }
+    let join = |chunks: std::collections::BTreeMap<usize, &str>| -> Result<String, String> {
+        if chunks.is_empty() { return Err("Missing signature content chunks".into()); }
+        let mut result = String::new();
+        for (expected, (index, value)) in chunks.into_iter().enumerate() {
+            if expected != index { return Err("Missing signature content chunk".into()); }
+            result.push_str(value);
+        }
+        Ok(result)
+    };
+    Ok((join(html)?, join(text)?))
+}
+
 impl std::str::FromStr for EntityType {
     type Err = String;
 
@@ -199,6 +264,8 @@ impl std::str::FromStr for EntityType {
             "contact_group" => Ok(Self::ContactGroup),
             "scheduled_send_summary" => Ok(Self::ScheduledSendSummary),
             "sender_rule" => Ok(Self::SenderRule),
+            "signature" => Ok(Self::Signature),
+            "signature_defaults" => Ok(Self::SignatureDefaults),
             _ => Err("Unknown synchronized entity type".to_string()),
         }
     }
@@ -289,6 +356,33 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn signature_payloads_are_bounded_and_reject_unrelated_data() {
+        let valid = json!({"id":"work", "name":"Work", "html":"<p>Regards</p>", "text":"Regards"});
+        assert!(EntityType::Signature.validate_payload(&valid).is_ok());
+        for length in [MAX_SIGNATURE_HTML_BYTES - 1, MAX_SIGNATURE_HTML_BYTES, MAX_SIGNATURE_HTML_BYTES + 1] {
+            let mut value = valid.clone(); value["html"] = json!("x".repeat(length));
+            assert_eq!(EntityType::Signature.validate_payload(&value).is_ok(), length <= MAX_SIGNATURE_HTML_BYTES);
+        }
+        for length in [MAX_SIGNATURE_TEXT_BYTES - 1, MAX_SIGNATURE_TEXT_BYTES, MAX_SIGNATURE_TEXT_BYTES + 1] {
+            let mut value = valid.clone(); value["text"] = json!("x".repeat(length));
+            assert_eq!(EntityType::Signature.validate_payload(&value).is_ok(), length <= MAX_SIGNATURE_TEXT_BYTES);
+        }
+        let mut unicode = valid.clone(); unicode["html"] = json!("é".repeat(MAX_SIGNATURE_HTML_BYTES / 2 + 1));
+        assert!(EntityType::Signature.validate_payload(&unicode).is_err());
+        let mut secret = valid; secret["credentials"] = json!("must stay local");
+        assert!(EntityType::Signature.validate_payload(&secret).is_err());
+        let defaults = json!({"id":format!("signature-default:{}", "a".repeat(64)), "account":"me@example.com", "address":"alias@example.com", "newSignatureId":"work", "replySignatureId":null});
+        assert!(EntityType::SignatureDefaults.validate_payload(&defaults).is_ok());
+        let mut cleared = defaults.clone(); cleared.as_object_mut().unwrap().remove("replySignatureId");
+        assert!(EntityType::SignatureDefaults.validate_payload(&cleared).is_ok());
+        for field in ["id", "account", "address", "newSignatureId"] {
+            let mut invalid = defaults.clone(); invalid[field] = json!("bad");
+            if field == "newSignatureId" { invalid[field] = json!(42); }
+            assert!(EntityType::SignatureDefaults.validate_payload(&invalid).is_err(), "{field}");
+        }
+    }
+
+    #[test]
     fn every_entity_type_parses_back_from_its_stored_name() {
         // Adding a variant fails to compile here until it is listed below.
         let listed = |entity_type: EntityType| match entity_type {
@@ -304,7 +398,9 @@ mod tests {
             | EntityType::Goal
             | EntityType::ContactGroup
             | EntityType::ScheduledSendSummary
-            | EntityType::SenderRule => entity_type,
+            | EntityType::SenderRule
+            | EntityType::Signature
+            | EntityType::SignatureDefaults => entity_type,
         };
         for entity_type in [
             EntityType::Task,
@@ -320,6 +416,8 @@ mod tests {
             EntityType::ContactGroup,
             EntityType::ScheduledSendSummary,
             EntityType::SenderRule,
+            EntityType::Signature,
+            EntityType::SignatureDefaults,
         ] {
             let entity_type = listed(entity_type);
             assert_eq!(entity_type.as_str().parse::<EntityType>(), Ok(entity_type));

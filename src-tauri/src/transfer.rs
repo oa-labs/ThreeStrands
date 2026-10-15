@@ -377,6 +377,9 @@ struct TransferPayload {
     /// this device's muted senders instead of clearing them.
     #[serde(default)]
     sender_rules: Option<Vec<TransferSenderRule>>,
+    /// Earlier exports preserve the destination signature library and defaults.
+    #[serde(default)]
+    signatures: Option<crate::signatures::SignatureLibrary>,
 }
 
 impl TransferPayload {
@@ -394,6 +397,7 @@ impl TransferPayload {
             return Err(format!("Unsupported transfer version {}", self.version));
         }
         self.preferences.validate()?;
+        if let Some(library) = &self.signatures { library.validate()?; }
         validate_retention_days(self.retention_days)
             .map_err(|_| "The transfer contains an invalid retention period".to_string())?;
         let mut account_emails = HashSet::new();
@@ -597,6 +601,7 @@ fn build_export_payload(
         retention_days: database.retention_days()?,
         contact_groups: Some(contact_groups),
         sender_rules: Some(sender_rules),
+        signatures: Some(database.signature_library()?),
     })
 }
 
@@ -740,6 +745,7 @@ fn apply_import_choosing(
         payload.contact_groups.as_deref(),
         payload.sender_rules.as_deref(),
         payload.retention_days,
+        payload.signatures.as_ref(),
     )?;
     Ok(ImportResult {
         preferences: payload.preferences,
@@ -883,6 +889,7 @@ mod tests {
 
     fn payload() -> TransferPayload {
         TransferPayload {
+            signatures: None,
             version: VERSION,
             exported_at: "2026-03-06T00:00:00Z".to_string(),
             preferences: TransferPreferences {
@@ -1263,6 +1270,33 @@ mod tests {
     }
 
     #[test]
+    fn signatures_and_defaults_round_trip_and_the_preceding_export_preserves_them() {
+        use crate::signatures::tests::{template, defaults};
+        let db = Database::open_memory();
+        let mut signature = template("portable");
+        signature.html = "<p>portable<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j1ioAAAAASUVORK5CYII=\" alt=\"Logo\"></p>".into();
+        db.store_signature(&signature).unwrap();
+        db.store_signature_defaults(&defaults("me@example.com", "alias@example.com", Some("portable"), None)).unwrap();
+        let exported = build_export_payload(&db, payload().preferences).unwrap();
+        let encoded = encrypt(&exported, fixtures::PASSWORD).unwrap();
+        let destination = Database::open_memory();
+        apply_import(&destination, decrypt(&encoded, fixtures::PASSWORD).unwrap()).unwrap();
+        assert_eq!(destination.signature_library().unwrap().signatures[0].text, "portable");
+        assert_eq!(destination.signature_library().unwrap().signatures[0].html, signature.html);
+        assert_eq!(destination.signature_library().unwrap().defaults[0].address, "alias@example.com");
+        let previous = decrypt(fixtures::V5_0_132, fixtures::PASSWORD).unwrap();
+        assert!(previous.signatures.is_none());
+        apply_import(&destination, previous).unwrap();
+        assert_eq!(destination.signature_library().unwrap().signatures[0].text, "portable");
+        assert_eq!(destination.signature_library().unwrap().signatures[0].html, signature.html);
+        assert_eq!(destination.signature_library().unwrap().defaults[0].new_signature_id.as_deref(), Some("portable"));
+        let mut clear = payload();
+        clear.signatures = Some(crate::signatures::SignatureLibrary { signatures: vec![], defaults: vec![] });
+        apply_import(&destination, clear).unwrap();
+        assert!(destination.signature_library().unwrap().signatures.is_empty());
+    }
+
+    #[test]
     fn snippets_round_trip_through_the_encrypted_transfer() {
         let mut candidate = payload();
         candidate.snippets = vec![TransferSnippet {
@@ -1388,6 +1422,7 @@ mod tests {
         /// the fixture exercises the new `TransferAccount::imap` field end to
         /// end. The only fixture with a regenerate helper
         /// (`regenerate_current_settings_transfer_fixture`).
+        pub(super) const V5_0_132: &[u8] = include_bytes!("../tests/fixtures/settings-transfer/v5-0.132.dispatch-settings");
         pub(super) const V5_CURRENT: &[u8] =
             include_bytes!("../tests/fixtures/settings-transfer/v5-current.dispatch-settings");
         pub(super) const V5_CURRENT_PATH: &str = "tests/fixtures/settings-transfer/v5-current.dispatch-settings";
@@ -1638,6 +1673,10 @@ mod tests {
     /// set away from its default so a dropped or renamed field is visible.
     fn current_fixture_payload() -> TransferPayload {
         TransferPayload {
+            signatures: Some(crate::signatures::SignatureLibrary {
+                signatures: vec![crate::signatures::tests::template("work-signature")],
+                defaults: vec![crate::signatures::tests::defaults("current@example.com", "", Some("work-signature"), None)],
+            }),
             version: VERSION,
             exported_at: "2026-09-29T12:00:00+00:00".to_string(),
             preferences: TransferPreferences {
@@ -1876,6 +1915,8 @@ mod tests {
             split_owners_of(&database),
             vec![("split-current".into(), "pattern".into(), "build failed".into(), "other@example.net".into())]
         );
+        assert_eq!(database.signature_library().unwrap().signatures[0].text, "work-signature");
+        assert_eq!(database.signature_library().unwrap().defaults[0].new_signature_id.as_deref(), Some("work-signature"));
         assert_eq!(database.list_snippets().unwrap()[0].body, "<p>Thanks!</p>");
         let contacts = database.list_saved_contact_profiles().unwrap();
         assert_eq!(contacts.len(), 1);

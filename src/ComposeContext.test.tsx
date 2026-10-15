@@ -247,7 +247,6 @@ describe("Find Times with AI", () => {
     vi.mocked(mailClient.findTimes).mockReturnValue(new Promise((resolve) => { answer = resolve; }));
     renderPanel({ calendarConnected: true, findTimesAi: true, draft: reply });
     expect(within(section()).getByText("Suggest open times from your calendar, based on what this conversation asks for.")).toBeInTheDocument();
-    expect(within(section()).getByText("Find Times shares this conversation and your draft text with your AI provider. Your calendar is never sent.")).toBeInTheDocument();
     // Nothing is sent until asked.
     expect(mailClient.findTimes).not.toHaveBeenCalled();
 

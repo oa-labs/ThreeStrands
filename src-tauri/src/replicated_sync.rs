@@ -198,6 +198,13 @@ impl Database {
                 repaired += 1;
             }
         }
+        let library = self.signature_library()?;
+        for item in library.signatures {
+            if self.reconcile_one_entity(EntityType::Signature, &item.id, crate::signatures::signature_sync_payload(&item)?)? { repaired += 1; }
+        }
+        for item in library.defaults {
+            if self.reconcile_one_entity(EntityType::SignatureDefaults, &item.id, serde_json::to_value(&item).map_err(display)?)? { repaired += 1; }
+        }
         for snippet in self.list_snippets()? {
             if self.reconcile_one_entity(EntityType::Snippet, &snippet.id, serde_json::to_value(&snippet).map_err(display)?)? {
                 repaired += 1;
@@ -1308,6 +1315,7 @@ impl Database {
             }
         }
         let payload = Value::Object(payload);
+        let payload = if entity_type == EntityType::Signature { crate::signatures::selected_signature_payload(&payload)? } else { payload };
         let readiness = self.check_projection_readiness(entity_type, &payload)?;
         if readiness == ProjectionReadiness::Ready {
             self.materialize_entity(entity_type, entity_id, Some(&payload), false)?;
@@ -2880,6 +2888,37 @@ mod replicator_tests {
             )
             .unwrap();
         assert_eq!(observed_foreign_heads, 0);
+    }
+
+    #[tokio::test]
+    async fn signatures_and_alias_defaults_replicate_as_encrypted_snapshots_without_echoing() {
+        use crate::signatures::tests::{template, defaults};
+        let (a, b) = (Database::open_memory(), Database::open_memory());
+        a.set_beta_features_enabled(true).unwrap(); b.set_beta_features_enabled(true).unwrap();
+        let (ka, kb) = (test_keys(&a), test_keys(&b));
+        trust(&a, &kb); trust(&b, &ka);
+        let transports = fake("signature-shared");
+        let mut original = template("work");
+        original.html = format!("<p>{}</p>", "é".repeat(40_000));
+        a.store_signature(&original).unwrap();
+        a.store_signature_defaults(&defaults("me@example.com", "alias@example.com", Some("work"), None)).unwrap();
+        push_local_state(&a, &ka, &transports).await.unwrap();
+        pull_from_transports(&b, &kb, &transports).await.unwrap();
+        assert_eq!(b.signature_library().unwrap().signatures[0].html, original.html);
+        assert_eq!(b.default_draft_signature("me@example.com", "alias@example.com", "new").unwrap().unwrap().text, "work");
+        let mut edited = template("work"); edited.html = "<p>Updated</p>".into(); edited.text = "Updated".into();
+        b.store_signature(&edited).unwrap();
+        push_local_state(&b, &kb, &transports).await.unwrap();
+        pull_from_transports(&a, &ka, &transports).await.unwrap();
+        assert_eq!(a.signature_library().unwrap().signatures[0].text, "Updated");
+        assert!(a.list_frontier_conflicts().unwrap().is_empty());
+        assert!(b.list_frontier_conflicts().unwrap().is_empty());
+        a.delete_signature("work").unwrap();
+        a.delete_signature_defaults(&crate::signatures::SignatureDefaults::key("me@example.com", "alias@example.com")).unwrap();
+        push_local_state(&a, &ka, &transports).await.unwrap();
+        pull_from_transports(&b, &kb, &transports).await.unwrap();
+        assert!(b.signature_library().unwrap().signatures.is_empty());
+        assert!(b.signature_library().unwrap().defaults.is_empty());
     }
 
     #[tokio::test]

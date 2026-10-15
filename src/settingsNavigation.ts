@@ -10,6 +10,7 @@ const sections: Record<SettingsSection, true> = {
   splitInboxes: true,
   mutedSenders: true,
   snippets: true,
+  signatures: true,
   ai: true,
   replicatedSync: true,
   privacy: true,

@@ -1,3 +1,5 @@
+import { SignaturesSettings, SignatureDefaultsDialog } from "./SignaturesSettings";
+import type { SignatureState } from "./signatures";
 import {
   Activity,
   AppWindow,
@@ -71,6 +73,7 @@ const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   { id: "availability", label: "Availability", group: "Workflow", description: "Set your timezone, working hours, and meeting defaults.", keywords: "timezone working hours duration slots meetings", icon: Clock, autosaves: true },
   { id: "splitInboxes", label: "Split Inboxes", group: "Workflow", description: "Create focused inbox views for the messages that matter.", keywords: "filtered inbox domain label address pattern", icon: Inbox },
   { id: "mutedSenders", label: "Muted Senders", group: "Workflow", description: "Review senders whose new mail skips the Inbox.", keywords: "mute muted sender newsletter archive automatically skip inbox unmute rule", icon: BellOff },
+  { id: "signatures", label: "Signatures", group: "Workflow", description: "Create signatures and choose defaults for each sending address.", keywords: "signature sign-off logo alias footer compose", icon: TextQuote },
   { id: "snippets", label: "Snippets", group: "Workflow", description: "Manage reusable text for faster replies.", keywords: "canned text reply templates compose", icon: TextQuote },
   { id: "ai", label: "AI Provider", group: "Integrations", description: "Connect an AI provider and choose which features may use it.", keywords: "api key model endpoint draft summary actions", icon: Sparkles },
   { id: "replicatedSync", label: "Replicated Sync", group: "Integrations", description: "Configure end-to-end encrypted replication transports.", keywords: "folder ipfs rpc encrypted", icon: Network },
@@ -89,6 +92,7 @@ export function Settings({
   splitInboxes,
   mutedSenders,
   labelsByAccount,
+  signatures,
   snippets,
   syncStatus,
   recoveryStatus,
@@ -105,6 +109,7 @@ export function Settings({
   splitInboxes: SplitInboxSettingsState;
   mutedSenders: MutedSenderSettingsState;
   labelsByAccount: Record<string, Label[]>;
+  signatures?: SignatureState;
   snippets: SnippetSettingsState;
   syncStatus: SyncStatus | null;
   recoveryStatus: RecoveryStatus | null;
@@ -112,6 +117,7 @@ export function Settings({
   onAiConfigChange(): void;
   onSettingsImported(result: SettingsImportResult): Promise<void>;
 }) {
+  const [signatureAccount, setSignatureAccount] = useState<string | undefined>(undefined);
   const [settingsQuery, setSettingsQuery] = useState("");
   const settingsPanelRef = useRef<HTMLDivElement>(null);
   const selectedSectionButtonRef = useRef<HTMLButtonElement>(null);
@@ -249,6 +255,7 @@ export function Settings({
               authStatus={mailAccounts.authStatus}
               accounts={mailAccounts.accounts}
               availableAccounts={mailAccounts.availableAccounts}
+              onSignatureDefaults={signatures ? setSignatureAccount : undefined}
               onAdd={mailAccounts.add}
               onImapConnected={mailAccounts.refresh}
               onRemove={mailAccounts.remove}
@@ -295,6 +302,7 @@ export function Settings({
           {section === "mutedSenders" ? (
             <MutedSendersSettings rules={mutedSenders.senderRules} onUnmute={mutedSenders.unmute} />
           ) : null}
+          {section === "signatures" && signatures ? <SignaturesSettings library={signatures} accounts={mailAccounts.accounts} /> : null}
           {section === "snippets" ? (
             <SnippetsSettings
               snippets={snippets.snippets}
@@ -324,6 +332,7 @@ export function Settings({
         </div>
       </div>
     </Modal>
+    {signatureAccount && signatures ? <SignatureDefaultsDialog account={signatureAccount} library={signatures} onClose={() => setSignatureAccount(undefined)} /> : null}
     {/* A sibling after Settings, not a child: effects run children-first, so
         nesting it would let Settings mark it inert and take the Escape stack
         above it whenever Settings reopens with a phrase still pending. */}

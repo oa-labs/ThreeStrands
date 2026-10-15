@@ -10,6 +10,7 @@ mod backoff;
 mod calendar;
 mod calendar_files;
 mod correspondence;
+mod signatures;
 mod scheduled_send;
 mod contact_interchange;
 mod credentials;
@@ -4159,6 +4160,37 @@ async fn list_split_inbox_page(
 }
 
 #[tauri::command]
+async fn signature_library(state: State<'_, AppState>) -> Result<signatures::SignatureLibrary, String> {
+    let database = state.database.clone();
+    run_database_task(move || database.signature_library()).await
+}
+#[tauri::command(async)]
+fn save_signature(signature: signatures::Signature, state: State<'_, AppState>) -> Result<(), String> {
+    state.database.store_signature(&signature)?;
+    kick_replicated_sync(&state);
+    Ok(())
+}
+#[tauri::command(async)]
+fn delete_signature(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.database.delete_signature(&id)?;
+    kick_replicated_sync(&state);
+    Ok(())
+}
+#[tauri::command(async)]
+fn save_signature_defaults(mut defaults: signatures::SignatureDefaults, state: State<'_, AppState>) -> Result<(), String> {
+    defaults.id = signatures::SignatureDefaults::key(&defaults.account, &defaults.address);
+    state.database.store_signature_defaults(&defaults)?;
+    kick_replicated_sync(&state);
+    Ok(())
+}
+#[tauri::command(async)]
+fn delete_signature_defaults(account: String, address: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.database.delete_signature_defaults(&signatures::SignatureDefaults::key(&account, &address))?;
+    kick_replicated_sync(&state);
+    Ok(())
+}
+
+#[tauri::command]
 async fn list_snippets(state: State<'_, AppState>) -> Result<Vec<Snippet>, String> {
     let database = state.database.clone();
     run_database_task(move || database.list_snippets()).await
@@ -5682,6 +5714,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         delete_split_inbox,
         reorder_split_inboxes,
         list_split_inbox_page,
+        signature_library, save_signature, delete_signature, save_signature_defaults, delete_signature_defaults,
         list_snippets,
         create_snippet,
         update_snippet,

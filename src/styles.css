@@ -2530,6 +2530,23 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .snippet-field input { height: var(--control-h); padding-block: 0; }
 .snippet-field input:focus, .snippet-field textarea:focus { border-color: var(--accent); }
 .snippet-editor-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); }
+
+.signature-dialog { width: min(var(--dialog-w-xl), calc(100vw - var(--dialog-edge))); }
+.signature-form { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-1) var(--dialog-inset) var(--space-4); min-width: 0; }
+.signature-form .signature-form { padding-inline: 0; }
+.signature-form input, .signature-form select, .signature-toolbar select { box-sizing: border-box; height: var(--control-h); font-size: var(--text-control); color: var(--text); background-color: var(--input); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding-inline: var(--space-2); }
+.signature-form input[type="checkbox"] { height: auto; }
+.signature-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1-5); }
+.signature-toolbar .btn, .signature-toolbar select { height: var(--control-h-sm); }
+.signature-content { min-height: var(--space-16); max-height: 40vh; overflow: auto; padding: var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background: var(--input); font-size: var(--text-reading); overflow-wrap: anywhere; }
+.signature-content:focus { outline: var(--focus-ring); }
+.signature-content img, .signature-image-preview { max-width: 100%; height: auto; }
+.signature-image-preview { max-height: 25vh; object-fit: contain; align-self: flex-start; }
+.signature-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); }
+.signature-plain-preview { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: var(--text-secondary); }
+.compose-signature-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; padding-block: var(--space-2); }
+.compose-signature-actions .compose-from { margin: 0; }
+.compose-body.compose-signature { white-space: normal; height: auto; min-height: 0; margin-block: var(--space-3); overflow: auto; max-width: 100%; }
 .accounts-manager { width: 100%; padding: var(--space-2-5) var(--space-5) var(--space-6); }
 .accounts-manager-header { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-4); width: 100%; }
 .accounts-manager-header > div { min-width: 0; flex: 1 1 420px; }
@@ -2996,7 +3013,8 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .composer { display: flex; flex-direction: column; width: min(var(--dialog-w-xl), 100%); max-height: calc(100vh - 48px); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--raised); box-shadow: var(--shadow-dialog); overflow: hidden; }
 .composer { position: relative; max-width: 840px; margin: 0 auto; }
 .composer-inline { width: 100%; max-height: none; flex-shrink: 0; box-shadow: var(--shadow-raised); }
-.draft-message-stack { flex: 1; }
+.draft-message-stack { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+.draft-message-stack > .composer { flex: 1; min-height: 0; max-height: 100%; }
 .message-stack > .composer:not(:first-child) { margin-top: var(--space-6); }
 .composer > header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-4) var(--pane-inset); border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .composer h2 { margin: 0; font-size: var(--text-pane-title); }
@@ -3042,7 +3060,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-body { font-synthesis: style; display: block; width: 100%; min-height: 200px; height: min(32vh, 360px); flex-shrink: 0; padding: var(--space-3) 0; overflow-y: auto; color: var(--body-text); background: transparent; border: 0; outline: 0; font-family: inherit; font-size: var(--text-reading); line-height: var(--leading-normal); white-space: pre-wrap; }
 /* A new message has no thread above it, so its window is ~40% taller than a reply's;
    the 100vh cap keeps Send on screen in short windows, where the 200px floor applies. */
-.composer-new .compose-body:not(.compose-quoted) { height: min(45vh + 90px, 600px, 100vh - 400px); }
+.composer-new .compose-body:not(.compose-quoted):not(.compose-signature) { height: min(45vh + 90px, 600px, 100vh - 400px); }
 .compose-body:empty::before { content: attr(data-placeholder); color: var(--muted); pointer-events: none; }
 .compose-body blockquote { margin: .5em 0 .5em 1.25em; padding-left: 1em; border-left: 3px solid var(--border-strong); }
 .compose-body ol, .compose-body ul { margin: .5em 0; padding-left: 2em; }

@@ -20,6 +20,7 @@ export const TRANSFERRED_DATA = [
   { field: "preferences", label: "preferences", replacedOnImport: true },
   { field: "accounts", label: "account list", replacedOnImport: false },
   { field: "split_inboxes", label: "Split Inboxes", replacedOnImport: true },
+  { field: "signatures", label: "signatures and their defaults", replacedOnImport: true },
   { field: "snippets", label: "snippets", replacedOnImport: true },
   { field: "contacts", label: "saved contacts", replacedOnImport: true },
   { field: "contact_groups", label: "contact groups", replacedOnImport: true },

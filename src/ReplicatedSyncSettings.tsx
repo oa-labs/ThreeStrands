@@ -254,7 +254,7 @@ export function ReplicatedSyncSettings() {
       <h3>Replicated Sync</h3>
       <Disclosure summary="How replicated sync works">
         <p className="settings-hint">
-          Replicates tasks, snippets, Split Inboxes, and account metadata as end-to-end encrypted files through
+          Replicates tasks, snippets, signatures and their defaults, Split Inboxes, and account metadata as end-to-end encrypted files through
           connectors you choose: a shared folder, an S3-compatible bucket, or an IPFS endpoint. There is no Three
           Strands-operated sync server: ThreeStrands never sees the plaintext, but anyone with access to a connector’s
           storage can see the encrypted files themselves (their size and timing, not their contents). Deleting a

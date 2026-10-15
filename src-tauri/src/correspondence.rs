@@ -143,6 +143,8 @@ pub struct Draft {
     pub body: String,
     #[serde(default)]
     pub body_html: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<crate::signatures::DraftSignature>,
     // Sender HTML stays separate from the editable compose surface. Older
     // drafts have no preserved HTML and keep their existing text body.
     #[serde(default)]
@@ -510,6 +512,7 @@ impl Database {
             subject: String::new(),
             body: String::new(),
             body_html: String::new(),
+            signature: None,
             forwarded_content: None,
             follow_up_task_id: None,
             attachments: vec![],
@@ -644,6 +647,7 @@ impl Database {
                 // Gmail requires matching subjects for an existing thread.
             }
         }
+        d.signature = self.default_draft_signature(&d.account, d.from_address(), &d.mode)?;
         self.connection()?
             .execute(
                 "INSERT INTO drafts VALUES (?1,?2,?3)",
@@ -709,6 +713,7 @@ impl Database {
             // The composer sanitizes this before it becomes editable and
             // saves the sanitized copy, so what sends is what was shown.
             body_html: normalized.body_html.clone(),
+            signature: None,
             forwarded_content: None,
             follow_up_task_id: None,
             attachments: forward_attachments(&source, &normalized)?,
@@ -724,6 +729,13 @@ impl Database {
     }
     pub fn save_draft(&self, mut draft: Draft) -> Result<Draft, String> {
         let old = self.draft(&draft.id)?;
+        if let Some(signature) = &mut draft.signature {
+            signature.validate()?;
+            crate::signatures::utf16_byte_offset(&draft.body_html, signature.html_offset)?;
+            crate::signatures::utf16_byte_offset(&draft.body, signature.text_offset)?;
+            // A per-message edit always opts out of automatic From switching.
+            if old.signature.as_ref().is_some_and(|old| old.html != signature.html || old.text != signature.text) { signature.automatic = false; }
+        }
         // Only editable fields cross the trust boundary; routing and file locators are native-owned.
         if draft.body.len() + draft.body_html.len() > 2 * 1024 * 1024
             || draft.subject.len() > 998
@@ -774,6 +786,7 @@ impl Database {
         // rejects it with "no longer on this account". Clear it so the new
         // account sends from its own primary identity (`from = None`).
         d.from = None;
+        self.replace_automatic_signature(&mut d)?;
         let expected = d.revision;
         d.revision += 1;
         d.updated_at = now();
@@ -835,6 +848,7 @@ impl Database {
             }
         };
         d.from = resolved;
+        self.replace_automatic_signature(&mut d)?;
         let expected = d.revision;
         d.revision += 1;
         d.updated_at = now();
@@ -1172,6 +1186,25 @@ pub(crate) fn build_mime(
     };
     let mut body = d.body.clone();
     let mut body_html = d.body_html.clone();
+    let mut signature_images = Vec::new();
+    if let Some(signature) = &d.signature {
+        signature.validate()?;
+        if !signature.html.is_empty() {
+            let (html, images) = crate::signatures::embed_images(&signature.html, id)?;
+            signature_images = images;
+            body = crate::signatures::insert_signature(&body, signature.text_offset, &signature.text, false)?;
+            if body_html.is_empty() {
+                // Native-created drafts have no authored HTML yet. The native
+                // signature boundary starts at zero, above their reply history.
+                let byte = crate::signatures::utf16_byte_offset(&d.body, signature.text_offset)?;
+                let prefix = plain_text_html(&d.body[..byte]);
+                let suffix = plain_text_html(&d.body[byte..]);
+                body_html = format!("{prefix}{}{html}{}{suffix}", if byte > 0 { "<br><br>" } else { "" }, if byte < d.body.len() && !d.body[byte..].starts_with("\n\n") { "<br><br>" } else { "" });
+            } else {
+                body_html = crate::signatures::insert_signature(&body_html, signature.html_offset, &html, true)?;
+            }
+        }
+    }
     if let Some(forwarded) = &d.forwarded_content {
         body.push_str(&format!("\n\n{}", forwarded.text));
         if body_html.trim().is_empty() {
@@ -1203,6 +1236,10 @@ pub(crate) fn build_mime(
             .references(d.references.clone());
     }
     let mut size = body.len() + body_html.len();
+    for (mime, cid, bytes) in signature_images {
+        size += bytes.len();
+        builder = builder.inline(mime, cid, bytes);
+    }
     for attachment in &d.attachments {
         if !attachment.ready {
             return Err(format!(
@@ -2533,6 +2570,7 @@ mod tests {
             subject: String::new(),
             body: String::new(),
             body_html: String::new(),
+            signature: None,
             forwarded_content: None,
             follow_up_task_id: None,
             attachments: vec![],
@@ -4240,6 +4278,50 @@ mod tests {
             parsed.from().and_then(|f| f.first()).and_then(|a| a.address()),
             Some("me@proton.me")
         );
+    }
+
+    #[test]
+    fn signature_mime_keeps_plain_text_html_images_and_quote_placement_after_template_deletion() {
+        use crate::signatures::tests::{template, defaults};
+        let db = database();
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j1ioAAAAASUVORK5CYII=";
+        let mut signature = template("work");
+        signature.html = format!("<table><tr><td><img src=\"data:image/png;base64,{png}\" alt=\"Logo\" width=\"32\"></td><td>Regards</td></tr></table>");
+        signature.text = "Logo Regards".into();
+        db.store_signature(&signature).unwrap();
+        db.store_signature_defaults(&defaults("you@example.com", "", Some("work"), Some("work"))).unwrap();
+        let mut d = saved(&db);
+        d.body = "Hi 😀\n\nOn Monday, Ann wrote:\n> Quote".into();
+        d.body_html = "Hi 😀<br><br>On Monday, Ann wrote:<blockquote type=\"cite\">Quote</blockquote>".into();
+        d.signature.as_mut().unwrap().text_offset = 5;
+        d.signature.as_mut().unwrap().html_offset = 5;
+        let d = db.save_draft(d).unwrap();
+        db.delete_signature("work").unwrap();
+        let raw = build_mime(&d, &[], None, None, "signed", Path::new("/unused")).unwrap();
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        assert_eq!(parsed.body_text(0).unwrap().replace("\r\n", "\n"), "Hi 😀\n\nLogo Regards\n\nOn Monday, Ann wrote:\n> Quote");
+        let html = parsed.body_html(0).unwrap();
+        assert!(html.find("Hi 😀").unwrap() < html.find("<table>").unwrap());
+        assert!(html.find("Regards").unwrap() < html.find("On Monday").unwrap());
+        assert!(!html.contains("data:image"));
+        assert!(html.contains("cid:signature-0-signed@threestrands.local"));
+        assert!(parsed.parts.iter().any(|part| part.content_id() == Some("signature-0-signed@threestrands.local")));
+        assert_eq!(db.draft(&d.id).unwrap().signature.unwrap().text, "Logo Regards");
+    }
+
+    #[test]
+    fn switching_sending_alias_updates_only_an_automatic_signature() {
+        use crate::signatures::tests::{template, defaults};
+        let db = imap_database();
+        db.store_signature(&template("work")).unwrap();
+        db.store_signature_defaults(&defaults("me@proton.me", "work@proton.me", Some("work"), Some("work"))).unwrap();
+        let d = db.create_draft("new", None, "me@proton.me", &[]).unwrap();
+        let mut changed = db.set_draft_from(&d.id, Some("work@proton.me")).unwrap();
+        assert_eq!(changed.signature.as_ref().unwrap().text, "work");
+        changed.signature.as_mut().unwrap().automatic = false;
+        db.save_draft(changed).unwrap();
+        let back = db.set_draft_from(&d.id, None).unwrap();
+        assert_eq!(back.signature.unwrap().text, "work");
     }
 
     #[test]

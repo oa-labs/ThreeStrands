@@ -8,7 +8,7 @@ describe("remembered settings section", () => {
 
   it.each<SettingsSection>([
     "appearance", "defaultApps", "accounts", "calendarAccounts", "availability",
-    "splitInboxes", "snippets", "ai", "replicatedSync", "privacy", "diagnostics", "data",
+    "splitInboxes", "snippets", "signatures", "ai", "replicatedSync", "privacy", "diagnostics", "data",
   ])("restores %s from device storage", (section) => {
     saveSettingsSection(section);
     expect(readSettingsSection()).toBe(section);

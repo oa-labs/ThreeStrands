@@ -128,7 +128,6 @@ export function AvailabilitySection({ preferences, ai, draft, suggest, onInsertT
         />
       </> : reading ? null : ai ? <>
         <p className="context-status">Suggest open times from your calendar, based on what this conversation asks for.</p>
-        <p className="context-section-note">Find Times shares this conversation and your draft text with your AI provider. Your calendar is never sent.</p>
       </> : <p className="context-status">Suggest open times from your calendar for this message.</p>}
     </section>
   );

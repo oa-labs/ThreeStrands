@@ -41,7 +41,7 @@ describe("data transfer settings", () => {
     render(<DataTransferSettings onImported={vi.fn()} />);
     const hint = screen.getByText(/Creates a password-encrypted file/);
     expect(hint).toHaveTextContent(
-      "containing your preferences, account list, Split Inboxes, snippets, saved contacts, contact groups, muted senders, and retention setting.",
+      "containing your preferences, account list, Split Inboxes, signatures and their defaults, snippets, saved contacts, contact groups, muted senders, and retention setting.",
     );
     expect(hint).toHaveTextContent("Mail, tasks, OAuth credentials, passwords, API keys, and other keychain secrets are never exported.");
   });
@@ -50,7 +50,7 @@ describe("data transfer settings", () => {
     render(<DataTransferSettings onImported={vi.fn()} />);
     const hint = screen.getByText(/Importing replaces/);
     expect(hint).toHaveTextContent(
-      "Importing replaces the preferences, Split Inboxes, snippets, saved contacts, contact groups, muted senders, and retention setting on this installation.",
+      "Importing replaces the preferences, Split Inboxes, signatures and their defaults, snippets, saved contacts, contact groups, muted senders, and retention setting on this installation.",
     );
     expect(hint).toHaveTextContent("until you sign in to them again");
     expect(hint).not.toHaveTextContent(/Google/);

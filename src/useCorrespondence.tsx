@@ -1,3 +1,4 @@
+import { type SignatureState } from "./signatures";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -109,6 +110,7 @@ export function useCorrespondence(
   onDeleteSnippet: (id: string) => Promise<void>,
   selectedThreadId: string | null,
   messageAppearance?: MessageAppearance,
+  signatures?: SignatureState,
 ) {
   const [active, setActive] = useState<Draft | null>(null);
   const [selectedQuoteDraftId, setSelectedQuoteDraftId] = useState<string | null>(null);
@@ -334,6 +336,7 @@ export function useCorrespondence(
       expandQuotedText={active.id === selectedQuoteDraftId}
       accounts={accounts}
       messageAppearance={messageAppearance}
+      signatures={signatures}
       snippets={snippets}
       onCreateSnippet={onCreateSnippet}
       onUpdateSnippet={onUpdateSnippet}

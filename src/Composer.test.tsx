@@ -8,6 +8,7 @@ import { Composer, type ComposerHandle } from "./Composer";
 import type { Draft, OutboxItem } from "./correspondence";
 import { mailClient } from "./data/client";
 import type { Account, Snippet } from "./domain";
+import { draftSignatureSnapshot, signatureBody, type SignatureState } from "./signatures";
 import {
   clearAiApiKey,
   DEFAULT_AI_FEATURES,
@@ -61,6 +62,126 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+describe("Composer signatures", () => {
+  const full = { id: "full", name: "Full", html: "<p>Alex Example</p>", text: "Alex Example" };
+  const short = { id: "short", name: "Short", html: "<p>Alex</p>", text: "Alex" };
+  const signatures: SignatureState = { signatures: [full, short], defaults: [], refresh: vi.fn(), save: vi.fn(), remove: vi.fn(), saveDefaults: vi.fn(), inheritDefaults: vi.fn() };
+  beforeEach(() => {
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (value) => ({ ...value, revision: value.revision + 1 }));
+    vi.spyOn(mailClient, "listIdentities").mockResolvedValue([{ address: draft.account }]);
+  });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+  it("keeps the signature separate from authored text and quotes, including AI replacement and draft reopening", async () => {
+    const ref = createRef<ComposerHandle>();
+    const initial = { ...draft, mode: "reply" as const, body: "\n\nOn Monday, Ann wrote:\n> Quoted", signature: draftSignatureSnapshot(full, true) };
+    const view = render(<Composer ref={ref} draft={initial} accounts={accounts} signatures={signatures} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    const body = screen.getByRole("textbox", { name: "Message Body" });
+    const signature = screen.getByRole("textbox", { name: "Message Signature" });
+    const quote = document.querySelector('[aria-label="Quoted Text"]')!;
+    expect(body.compareDocumentPosition(signature) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(signature.compareDocumentPosition(quote) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    let saved!: Draft;
+    await act(async () => {
+      const review = ref.current!.draftReview.readDraft();
+      expect(review.body).not.toContain("Alex Example");
+      ref.current!.draftReview.replaceDraft(review, { subject: "Reply", body: "Hi 😀" });
+      saved = await ref.current!.flush();
+    });
+    expect(signature).toHaveTextContent("Alex Example");
+    expect(signatureBody(saved).text).toMatch(/Hi 😀[\s\S]*Alex Example[\s\S]*On Monday/);
+    expect(saved.signature?.automatic).toBe(true);
+    expect(saved.signature?.textOffset).toBe(5);
+    view.unmount();
+    render(<Composer draft={saved} accounts={accounts} signatures={{ ...signatures, signatures: [] }} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    expect(screen.getAllByRole("textbox", { name: "Message Signature" })).toHaveLength(1);
+    expect(screen.getByRole("textbox", { name: "Message Body" })).toHaveTextContent("Hi 😀");
+    expect(screen.getByRole("textbox", { name: "Message Body" })).not.toHaveTextContent("Alex Example");
+    expect(screen.getByRole("combobox", { name: "Signature" })).toHaveValue("full");
+  });
+
+  it("replaces and removes signatures without appending or changing the written message", async () => {
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={{ ...draft, body: "Written message", signature: draftSignatureSnapshot(full, true) }} accounts={accounts} signatures={signatures} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Signature" }), { target: { value: "short" } });
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Message Signature" })).toHaveTextContent(/^Alex$/));
+    let saved!: Draft; await act(async () => { saved = await ref.current!.flush(); });
+    expect(saved.body).toBe("Written message"); expect(saved.signature?.automatic).toBe(false);
+    expect(signatureBody(saved).text).toBe("Written message\n\nAlex");
+    fireEvent.change(screen.getByRole("combobox", { name: "Signature" }), { target: { value: "" } });
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Message Signature" })).toBeNull());
+    await act(async () => { saved = await ref.current!.flush(); });
+    expect(saved.signature).toEqual(expect.objectContaining({ id: null, automatic: false, html: "" }));
+    expect(saved.body).toBe("Written message");
+  });
+
+  it("keeps the signature above plain forwarded history when a written draft is reopened", async () => {
+    const ref = createRef<ComposerHandle>();
+    const initial = { ...draft, mode: "forward" as const, body: "\n\n---------- Forwarded message ----------\nFrom: Ann <ann@example.com>\n\nOriginal plain message", signature: draftSignatureSnapshot(full, true) };
+    const view = render(<Composer ref={ref} draft={initial} accounts={accounts} signatures={signatures} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    const body = screen.getByRole("textbox", { name: "Message Body" }); body.innerHTML = "Take a look"; fireEvent.input(body);
+    let saved!: Draft; await act(async () => { saved = await ref.current!.flush(); });
+    view.unmount();
+    render(<Composer ref={ref} draft={saved} accounts={accounts} signatures={signatures} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    expect(screen.getByRole("textbox", { name: "Message Body" })).toHaveTextContent(/^Take a look$/);
+    expect(document.querySelector('[aria-label="Quoted Text"]')).toHaveTextContent("Original plain message");
+    await act(async () => { saved = await ref.current!.flush(); });
+    expect(signatureBody(saved).text).toMatch(/Take a look[\s\S]*Alex Example[\s\S]*Forwarded message[\s\S]*Original plain message/);
+  });
+
+  it("snapshots inline signature edits without modifying the saved template", async () => {
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={{ ...draft, signature: draftSignatureSnapshot(full, true) }} accounts={accounts} signatures={signatures} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    const editor = screen.getByRole("textbox", { name: "Message Signature" });
+    editor.innerHTML = "<b>Cheers, Alex</b>"; fireEvent.input(editor);
+    let saved!: Draft; await act(async () => { saved = await ref.current!.flush(); });
+    expect(saved.signature).toEqual(expect.objectContaining({ html: "<b>Cheers, Alex</b>", text: "Cheers, Alex", automatic: false }));
+    expect(signatures.save).not.toHaveBeenCalled(); expect(full.text).toBe("Alex Example");
+  });
+
+  it("resolves a signature's pasted image after reopening and keeps its native CID when saving", async () => {
+    const ref = createRef<ComposerHandle>();
+    const read = vi.spyOn(mailClient, "readInlineImage").mockResolvedValue("data:image/png;base64,aA==");
+    const snapshot = draftSignatureSnapshot({ ...full, html: '<p>Alex<img src="cid:logo@local" alt="Logo" width="24"></p>', text: "AlexLogo" }, true);
+    render(<Composer ref={ref} draft={{ ...draft, signature: snapshot, attachments: [{ id: "inline", name: "logo.png", mime: "image/png", size: 1, ready: true, inline: true, contentId: "logo@local", messageId: null, providerId: null }] }} accounts={accounts} signatures={signatures} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    const editor = screen.getByRole("textbox", { name: "Message Signature" });
+    await waitFor(() => expect(editor.querySelector("img")).toHaveAttribute("src", "data:image/png;base64,aA=="));
+    expect(read).toHaveBeenCalledWith(draft.id, "inline");
+    let saved!: Draft; await act(async () => { saved = await ref.current!.flush(); });
+    expect(saved.signature?.html).toContain('src="cid:logo@local"');
+    expect(saved.signature?.html).not.toMatch(/data-compose|<button|data:image/);
+    expect(saved.signature?.text).toBe("AlexLogo");
+  });
+
+  it("treats removing a signature image as a per-message edit even after the button loses focus", async () => {
+    const ref = createRef<ComposerHandle>();
+    const snapshot = draftSignatureSnapshot({ ...full, html: '<p>Alex<img src="data:image/png;base64,aA==" alt="Logo"></p>', text: "AlexLogo" }, true);
+    render(<Composer ref={ref} draft={{ ...draft, signature: snapshot }} accounts={accounts} signatures={signatures} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    const editor = screen.getByRole("textbox", { name: "Message Signature" });
+    fireEvent.click(within(editor).getByRole("button", { name: "Remove Pasted Image" }));
+    let saved!: Draft; await act(async () => { saved = await ref.current!.flush(); });
+    expect(saved.signature).toEqual(expect.objectContaining({ html: "<p>Alex</p>", text: "Alex", automatic: false }));
+  });
+
+  it("reflects the native automatic signature when changing From and preserves body edits", async () => {
+    const ref = createRef<ComposerHandle>();
+    vi.spyOn(mailClient, "setDraftAccount").mockImplementation(async (_id, account) => ({ ...draft, account, body: "My message", bodyHtml: "My message", signature: draftSignatureSnapshot(short, true), revision: 3 }));
+    render(<Composer ref={ref} draft={{ ...draft, body: "My message", signature: draftSignatureSnapshot(full, true) }} accounts={accounts} signatures={signatures} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Send From" }), { target: { value: accounts[1].email } });
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Message Signature" })).toHaveTextContent(/^Alex$/));
+    await act(async () => { await ref.current!.flush(); });
+    expect(screen.getByRole("textbox", { name: "Message Body" })).toHaveTextContent("My message");
+  });
+
+  it.each([true, false])("closing a signature-only draft discards it only when automatic=%s", async (automatic) => {
+    const discard = vi.spyOn(mailClient, "discardDraft").mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    render(<Composer draft={{ ...draft, signature: draftSignatureSnapshot(full, automatic) }} accounts={accounts} signatures={signatures} {...snippetProps} onClose={onClose} onQueued={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Save and Close Draft" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(discard).toHaveBeenCalledTimes(automatic ? 1 : 0);
+  });
+});
+
 describe("Composer From selector", () => {
   afterEach(() => {
     cleanup();
@@ -102,7 +223,7 @@ describe("Composer From selector", () => {
     expect(screen.getByRole("dialog", { name: "Reply Message" })).not.toHaveClass("composer-new");
 
     const css = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
-    expect(css).toContain(".composer-new .compose-body:not(.compose-quoted) { height: min(45vh + 90px, 600px, 100vh - 400px); }");
+    expect(css).toContain(".composer-new .compose-body:not(.compose-quoted):not(.compose-signature) { height: min(45vh + 90px, 600px, 100vh - 400px); }");
   });
 });
 

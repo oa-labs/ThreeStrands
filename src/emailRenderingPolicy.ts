@@ -486,3 +486,14 @@ export const safeStyleProperties = Object.keys(validators);
 export const backgroundImageUrl = /^url\((?:"([^"]*)"|'([^']*)'|([^'")]*))\)$/i;
 export const safeImageSrc = /^(https?:|cid:|data:image\/)/i;
 export const blockedSrcAttr = "data-blocked-src";
+
+/** Portable signature budgets match the native sync payload contract. */
+export const SIGNATURE_LIMITS = {
+  maxNameLength: 200,
+  maxHtmlBytes: 180_000,
+  maxTextBytes: 32_000,
+  maxImageBytes: 128 * 1024,
+  defaultImageWidth: 160,
+} as const;
+
+export const SIGNATURE_FONT_SIZES: Record<string, string> = { "1": "10px", "2": "13px", "3": "16px", "4": "18px", "5": "24px", "6": "32px", "7": "48px" };

@@ -5,6 +5,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ## Unreleased
 
 ### New
+- Create reusable email signatures with formatted text, links, and logos in **Settings → Signatures**, and choose defaults for each sending address. Switch or remove signatures while composing, with separate defaults for new messages and replies or forwards.
 - A **Sent** folder lists the conversations you've sent messages in, including ones sent from your other devices or from webmail. Choose it from the folder menu or press G then S.
 - In **Contacts → Groups**, **Email Group** starts a new message addressed to everyone in the group.
 - **Edit as New** starts a fresh message from one you sent before, with its subject, text, and attachments but no recipients, so you can send the same note to new people. Use the button beside **Forward** on any message you sent, or press Shift+C. It works in the new **Sent** folder too.

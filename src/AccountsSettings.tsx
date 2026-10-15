@@ -34,6 +34,7 @@ export function AccountsSettings({
   onSetColor,
   onReorder,
   onImapConnected,
+  onSignatureDefaults,
 }: {
   authStatus: AuthStatus | null;
   accounts: Account[];
@@ -48,6 +49,7 @@ export function AccountsSettings({
   onSetColor(email: string, color: string): Promise<void>;
   onReorder(emails: string[]): Promise<void>;
   onImapConnected?(): Promise<void>;
+  onSignatureDefaults?(email: string): void;
 }) {
   const { pending: busyEmail, error, setError, runFor } = useSettingsOperation();
   const [accountSetup, setAccountSetup] = useState<"provider" | "imap" | null>(null);
@@ -204,6 +206,7 @@ export function AccountsSettings({
                   {account.provider === "imap" ? "IMAP" : "Gmail"}
                 </span>
               </div>
+              {onSignatureDefaults ? <div className="account-card-controls"><button type="button" className="btn btn-sm" onClick={() => onSignatureDefaults(account.email)}>Signature Defaults…</button></div> : null}
               <div className="account-card-fields">
                 <AccountNameInput
                   email={account.email}

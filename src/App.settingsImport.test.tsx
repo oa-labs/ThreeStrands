@@ -260,7 +260,7 @@ describe("settings section keyboard navigation", () => {
     const dialog = await screen.findByRole("dialog", { name: "Settings" });
     const nav = within(dialog).getByRole("navigation", { name: "Settings sections" });
     const sectionButtons = Array.from(nav.querySelectorAll<HTMLButtonElement>("button[data-section-id]"));
-    expect(sectionButtons).toHaveLength(13);
+    expect(sectionButtons).toHaveLength(14);
     for (const button of sectionButtons) {
       const icon = button.querySelector("svg");
       expect(icon).not.toBeNull();

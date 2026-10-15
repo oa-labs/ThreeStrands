@@ -1,3 +1,4 @@
+import type { Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
 import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
 import {
   BOUNDED_LOCAL_READ,
@@ -320,6 +321,11 @@ export interface MailClient extends CorrespondenceClient {
   reorderSplitInboxes(ids: string[]): Promise<void>;
   /** Always scoped to the split's own account — see `SplitInbox.accountId`. */
   listSplitInboxPage(splitInboxId: string, offset: number, limit: number): Promise<ThreadPage>;
+  signatureLibrary(): Promise<SignatureLibrary>;
+  saveSignature(signature: Signature): Promise<void>;
+  deleteSignature(id: string): Promise<void>;
+  saveSignatureDefaults(defaults: SignatureDefaults): Promise<void>;
+  deleteSignatureDefaults(account: string, address: string): Promise<void>;
   listSnippets(): Promise<Snippet[]>;
   createSnippet(name: string, body: string): Promise<Snippet>;
   updateSnippet(id: string, name: string, body: string): Promise<Snippet>;
@@ -492,6 +498,11 @@ const tauriClient: MailClient = {
   reorderSplitInboxes: (ids) => complete("reorder_split_inboxes", { ids }),
   listSplitInboxPage: (splitInboxId, offset, limit) =>
     read("list_split_inbox_page", { splitInboxId, offset, limit }),
+  signatureLibrary: () => read("signature_library"),
+  saveSignature: (signature) => complete("save_signature", { signature }),
+  deleteSignature: (id) => complete("delete_signature", { id }),
+  saveSignatureDefaults: (defaults) => complete("save_signature_defaults", { defaults }),
+  deleteSignatureDefaults: (account, address) => complete("delete_signature_defaults", { account, address }),
   listSnippets: () => read("list_snippets"),
   createSnippet: (name, body) => complete("create_snippet", { request: { name, body } }),
   updateSnippet: (id, name, body) => complete("update_snippet", { request: { id, name, body } }),

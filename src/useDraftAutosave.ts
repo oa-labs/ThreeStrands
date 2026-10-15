@@ -11,7 +11,7 @@ const AUTOSAVE_INTERVAL_MS = 3_000;
 /** Owns draft persistence; the editor supplies body changes only at a save boundary. */
 export function useDraftAutosave(
   initial: Draft,
-  captureChanges: () => Pick<Draft, "body" | "bodyHtml"> | null,
+  captureChanges: () => Pick<Draft, "body" | "bodyHtml" | "signature"> | null,
   onError: (message: string) => void,
 ) {
   const [draft, setDraft] = useState(initial);

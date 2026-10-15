@@ -1,4 +1,5 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { readSignatureEditor, sanitizeSignatureHtml, type DraftSignature } from "./signatures";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { Attachment, Draft } from "./correspondence";
 import type { Snippet } from "./domain";
 import {
@@ -25,7 +26,8 @@ const IMAGE_KEY_LARGE_STEP = 50;
 
 export type ComposeBodyEditorHandle = {
   /** Serialize only if the browser-owned DOM has changed. */
-  captureChanges(): Pick<Draft, "body" | "bodyHtml"> | null;
+  captureChanges(): Pick<Draft, "body" | "bodyHtml" | "signature"> | null;
+  replaceSignature(signature: DraftSignature | null | undefined): void;
   insertText(text: string): void;
   prependText(text: string): void;
   focusBody(): void;
@@ -62,6 +64,10 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
 }, ref) {
   const bodyEditor = useRef<HTMLDivElement>(null);
   const quotedEditor = useRef<HTMLDivElement>(null);
+  const signatureEditor = useRef<HTMLDivElement>(null);
+  const [signatureState, setSignatureState] = useState(initial.signature);
+  const signatureSnapshot = useRef(initial.signature);
+  const signatureMarkup = useMemo(() => signatureState?.html ? sanitizeSignatureHtml(signatureState.html, true) : "", [signatureState]);
   const bodyDirty = useRef(false);
   const mounted = useRef(true);
   // Restore the caret after focus moves to the context panel.
@@ -75,7 +81,7 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
     const update = () => {
       const selection = document.getSelection();
       const next = Boolean(selection && !selection.isCollapsed && selection.rangeCount
-        && [bodyEditor.current, quotedEditor.current].some((editor) => editor?.contains(selection.getRangeAt(0).commonAncestorContainer)));
+        && [bodyEditor.current, quotedEditor.current, signatureEditor.current].some((editor) => editor?.contains(selection.getRangeAt(0).commonAncestorContainer)));
       if (next === selected) return;
       selected = next;
       onSelectionChange(next);
@@ -90,7 +96,18 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
   // Lazy initializer: `useRef(expr)` would evaluate `expr` on every render, so
   // each status change re-sanitized the whole quoted thread before the next paint.
   const [initialBody] = useState(() => {
-    const html = sanitizeComposeHtml(initial.bodyHtml || draftTextToComposeHtml(initial.body));
+    const rawHtml = initial.bodyHtml || draftTextToComposeHtml(initial.body);
+    const boundary = initial.signature?.htmlOffset;
+    const separator = "<br><br>";
+    // This is the app-owned boundary captured with the draft, not an
+    // inference from a sender's markup. It also preserves plain forwarded
+    // history, which has no citation element, after a draft is reopened.
+    if (initial.mode !== "new" && initial.bodyHtml && boundary !== undefined
+      && Number.isInteger(boundary) && boundary >= 0 && rawHtml.slice(boundary).startsWith(separator)) {
+      return { authoredHtml: sanitizeComposeHtml(rawHtml.slice(0, boundary)), quotedHtml: sanitizeComposeHtml(rawHtml.slice(boundary + separator.length)) };
+    }
+    const html = sanitizeComposeHtml(rawHtml);
+    if (initial.mode === "forward" && initial.body.startsWith("\n\n---------- Forwarded message")) return { authoredHtml: "", quotedHtml: html };
     return splitReplyQuote(html) ?? { authoredHtml: html, quotedHtml: null };
   });
 
@@ -104,6 +121,7 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
   const editBody = useCallback(() => {
     // Keep cloning and sanitization off the keystroke path, including long quotes.
     bodyDirty.current = true;
+    if (signatureEditor.current?.contains(document.activeElement) && signatureSnapshot.current) signatureSnapshot.current = { ...signatureSnapshot.current, automatic: false };
     onChange();
   }, [onChange]);
   // A link or color shortcut asks for its value in-app, then applies it to the
@@ -127,9 +145,17 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
   }, [formattingPrompt, editBody]);
   const captureChanges = useCallback(() => {
     if (!bodyDirty.current || !bodyEditor.current) return null;
-    const { html, text } = serializeComposeBody(bodyEditor.current, quotedEditor.current);
+    const current = signatureSnapshot.current;
+    let htmlOffset = 0, textOffset = 0;
+    const { html, text } = serializeComposeBody(bodyEditor.current, quotedEditor.current, current ? (authored) => { htmlOffset = authored.html.length; textOffset = authored.text.length; } : undefined);
+    const content = current && signatureEditor.current ? readSignatureEditor(signatureEditor.current) : current;
+    const signature = current && content ? { ...current, html: content.html, text: content.text,
+      automatic: current.automatic && current.html === content.html && current.text === content.text,
+      htmlOffset, textOffset,
+    } : current;
+    signatureSnapshot.current = signature;
     bodyDirty.current = false;
-    return { body: text, bodyHtml: html };
+    return { body: text, bodyHtml: html, signature };
   }, []);
   const prependText = useCallback((text: string) => {
     if (!bodyEditor.current) return;
@@ -198,6 +224,7 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
   }
   useImperativeHandle(ref, () => ({
     captureChanges, insertText, prependText, focusBody,
+    replaceSignature: (signature) => { signatureSnapshot.current = signature; setSignatureState(signature); editBody(); },
     reviewBody: () => {
       if (!bodyEditor.current) throw new Error("The draft editor is unavailable");
       return {
@@ -217,10 +244,10 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
   }));
   useEffect(() => {
     mounted.current = true;
-    [bodyEditor.current, quotedEditor.current].flatMap((editor) => Array.from(editor?.querySelectorAll<HTMLImageElement>("img") ?? [])).forEach((image) => {
+    [bodyEditor.current, quotedEditor.current, signatureEditor.current].flatMap((editor) => Array.from(editor?.querySelectorAll<HTMLImageElement>("img") ?? [])).forEach((image) => {
       const source = image.getAttribute("src") ?? "";
       const attachment = source.startsWith("cid:")
-        ? initial.attachments.find((candidate) => candidate.inline && candidate.contentId === source.slice(4))
+        ? attachments.find((candidate) => candidate.inline && candidate.contentId === source.slice(4))
         : undefined;
       if (attachment) {
         image.dataset.composeSource = source;
@@ -229,12 +256,18 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
       decorateImage(image, attachment?.id);
     });
     return () => { mounted.current = false; };
-  }, [initial.attachments, onError, readInlineImage]);
+  }, [attachments, onError, readInlineImage, signatureState]);
   useEffect(() => {
     if (!availabilityText || insertedAvailabilityText.current === availabilityText) return;
     insertedAvailabilityText.current = availabilityText;
     prependText(`${availabilityText}\n\n`);
   }, [availabilityText, prependText]);
+  useEffect(() => {
+    // Capture the displayed authored/quoted boundary even when a mailto or
+    // other prefill is sent without typing. Native-created snapshots start at
+    // zero; the UI owns the eventual writing boundary and sanitized content.
+    if (signatureSnapshot.current) editBody();
+  }, [editBody, signatureState]);
   // Editing behavior shared by the body and a reply's quoted history.
   const editingProps = {
     contentEditable: !busy,
@@ -364,6 +397,12 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
         lastBodyRange.current = range && bodyEditor.current?.contains(range.startContainer) ? range.cloneRange() : null;
       }}
     />
+    {signatureState?.html ? <div key={`${signatureState.id}:${signatureState.html}`} ref={signatureEditor} className="compose-body compose-signature" role="textbox" aria-label="Message Signature" aria-multiline="true" tabIndex={0}
+      dangerouslySetInnerHTML={{ __html: signatureMarkup }} {...editingProps}
+      onInput={() => {
+        if (signatureSnapshot.current) signatureSnapshot.current = { ...signatureSnapshot.current, automatic: false };
+        editBody();
+      }} onClick={(event) => { if ((event.target as Element).closest("a")) event.preventDefault(); editingProps.onClick(event); }} /> : null}
     {initialBody.quotedHtml !== null ? (
       <>
         <button
