@@ -120,6 +120,27 @@ export const emailRenderingFixtures = {
       </tr></table>
     </div>
   `,
+  // A sender stylesheet resets spacing with !important, and individual
+  // elements opt back in with their own inline !important. Inline important
+  // declarations outrank stylesheet ones, so the opt-ins must keep priority.
+  // Keep both a table button and a flow card covered.
+  importantInlineTableButton: `
+    <style>body, a, span { border: 0 !important; margin: 0 !important; padding: 0 !important; }</style>
+    <table class="button" cellpadding="0" cellspacing="0"><tr>
+      <td align="center" height="40" style="height:40px !important;background-color:#625afa;border-radius:6px">
+        <a href="https://example.com/review" style="display:inline-block;height:40px !important;line-height:0 !important;padding:0 !important;color:#ffffff">
+          <span style="display:block;padding:10px 16px !important;height:20px !important;line-height:20px !important;font-size:16px;white-space:nowrap">Review this sign-in</span>
+        </a>
+      </td>
+    </tr></table>
+  `,
+  importantInlineFlowCard: `
+    <style>div, p { margin: 0 !important; padding: 0 !important; }</style>
+    <div class="card" style="padding:24px !important;background-color:#f4f4f4">
+      <p style="margin:0 0 16px !important">Your export finished.</p>
+      <p>Download it from your account.</p>
+    </div>
+  `,
   table: `
     <table cellpadding="12" cellspacing="4" width="100%"><thead><tr><th align="left">Item</th><th align="right">Amount</th></tr></thead><tbody><tr><td>Service</td><td align="right">$24</td></tr></tbody></table>
   `,

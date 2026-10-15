@@ -329,7 +329,7 @@ export function sanitizeMessageHtml(html: string): string {
 
   fragment.querySelectorAll<HTMLElement>("*").forEach((element) => {
     const original = element.style;
-    const declarations: string[] = [];
+    const declarations: { property: string; value: string; important: boolean }[] = [];
     // Email preview text is commonly kept in the body for inbox snippets and
     // hidden inline. Preserve that intent without retaining arbitrary CSS.
     if (original.display.trim().toLowerCase() === "none"
@@ -339,7 +339,15 @@ export function sanitizeMessageHtml(html: string): string {
     for (const property of safeStyleProperties) {
       const value = original.getPropertyValue(property).trim();
       const safeValue = sanitizeCssDeclaration(property, value);
-      if (safeValue !== null) declarations.push(`${property}: ${safeValue}`);
+      // Keep the sender's !important: embedded stylesheets keep theirs, and
+      // an important inline declaration must still outrank an important
+      // stylesheet reset (e.g. `span { padding: 0 !important }`) as it does
+      // in every other client. Priority only orders sender declarations; it
+      // adds no capability, and the reader's font floor replaces these
+      // inline values rather than competing with them.
+      if (safeValue !== null) {
+        declarations.push({ property, value: safeValue, important: original.getPropertyPriority(property) === "important" });
+      }
     }
     // Same URL scheme check as <img src>. Every remote background, like
     // every remote <img>, is always parked behind the blocked-src marker
@@ -385,13 +393,17 @@ export function sanitizeMessageHtml(html: string): string {
       if (safeColor.test(value)) element.setAttribute("bgcolor", value);
       else element.removeAttribute("bgcolor");
     }
-    if (tag === "img" && !declarations.some((declaration) => declaration.startsWith("min-width:"))) {
-      const cssWidth = declarations.find((declaration) => declaration.startsWith("width:"))?.slice("width:".length) ?? null;
+    if (tag === "img" && !declarations.some((declaration) => declaration.property === "min-width")) {
+      const cssWidth = declarations.find((declaration) => declaration.property === "width")?.value ?? null;
       const minWidth = preservedImageMinWidth(cssWidth, element.getAttribute("width"));
-      if (minWidth !== null) declarations.push(`min-width: ${minWidth}`);
+      if (minWidth !== null) declarations.push({ property: "min-width", value: minWidth, important: false });
     }
     element.removeAttribute("style");
-    if (declarations.length) element.setAttribute("style", declarations.join("; "));
+    if (declarations.length) {
+      element.setAttribute("style", declarations
+        .map(({ property, value, important }) => `${property}: ${value}${important ? " !important" : ""}`)
+        .join("; "));
+    }
 
     if (tag === "a") {
       const href = element.getAttribute("href") ?? "";

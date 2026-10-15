@@ -4,6 +4,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### Fixed
+- Buttons in some emails, such as security alerts, no longer lose their padding and show their label squeezed against the top edge.
+
 ## 0.125.1 — 2026-10-14
 
 ### New

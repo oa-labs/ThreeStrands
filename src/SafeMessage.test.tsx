@@ -119,6 +119,17 @@ describe("SafeMessage", () => {
     expect(doc.querySelector("p")!.style.backgroundImage).toContain("data:image/png;base64,aGVsbG8=");
   });
 
+  it("applies the font floor over important sender text and restores its priority", () => {
+    const html = '<p style="font-size:10px !important;line-height:12px !important">Small</p>';
+    const { rerender } = render(<SafeMessage html={html} emailMinimumFontSize={18} />);
+    const doc = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement);
+    expect(doc.querySelector("p")!.style.fontSize).toBe("18px");
+    rerender(<SafeMessage html={html} emailMinimumFontSize={0} />);
+    expect(doc.querySelector("p")!.style.fontSize).toBe("10px");
+    expect(doc.querySelector("p")!.style.getPropertyPriority("font-size")).toBe("important");
+    expect(doc.querySelector("p")!.style.getPropertyPriority("line-height")).toBe("important");
+  });
+
   it("uses the floor for plain text and rejects an invalid floor", () => {
     const { rerender } = render(<SafeMessage html="" text="Plain message" emailMinimumFontSize={18} />);
     expect(screen.getByTestId("message-body")).toHaveStyle({ fontSize: "max(18px, var(--text-reading))" });
@@ -163,6 +174,55 @@ describe("SafeMessage", () => {
     expect(table.getAttribute("cellspacing")).toBe("4");
     expect(table.querySelector("th")!.getAttribute("align")).toBe("left");
     expect(table.querySelector("td[align='right']")?.textContent).toBe("$24");
+  });
+
+  it("keeps inline !important so a table button outranks the sender's !important stylesheet reset", () => {
+    const body = parseSanitized("importantInlineTableButton");
+    const span = body.querySelector("span")!;
+    expect(span.style.padding).toBe("10px 16px");
+    expect(span.style.getPropertyPriority("padding")).toBe("important");
+    expect(span.style.getPropertyPriority("line-height")).toBe("important");
+    expect(span.style.getPropertyPriority("font-size")).toBe("");
+    const anchor = body.querySelector("a")!;
+    expect(anchor.style.lineHeight).toBe("0");
+    expect(anchor.style.getPropertyPriority("line-height")).toBe("important");
+    expect(body.querySelector("td")!.style.getPropertyPriority("height")).toBe("important");
+    expect(extractSafeStyleSheet(emailRenderingFixtures.importantInlineTableButton)).toContain("padding: 0 !important");
+  });
+
+  it("keeps inline !important so a flow card outranks the sender's !important stylesheet reset", () => {
+    const body = parseSanitized("importantInlineFlowCard");
+    const card = body.querySelector<HTMLElement>("div.card")!;
+    expect(card.style.padding).toBe("24px");
+    expect(card.style.getPropertyPriority("padding")).toBe("important");
+    expect(card.style.getPropertyPriority("background-color")).toBe("");
+    const [first, second] = Array.from(body.querySelectorAll("p"));
+    expect(first.style.margin).toBe("0px 0px 16px");
+    expect(first.style.getPropertyPriority("margin")).toBe("important");
+    expect(second.hasAttribute("style")).toBe(false);
+  });
+
+  it("does not let !important admit declarations outside the inline policy", () => {
+    const sanitized = sanitizeMessageHtml(`
+      <p style="position:fixed !important;background:url(https://tracker.invalid) !important;height:5000px !important;color:#123456 !important">Text</p>
+      <img src="https://example.com/icon.png" style="width:40px !important">
+    `);
+    expect(sanitized).not.toContain("fixed");
+    expect(sanitized).not.toContain("5000px");
+    const body = new DOMParser().parseFromString(sanitized, "text/html").body;
+    const paragraph = body.querySelector("p")!;
+    // The remote background stays parked behind the proxy marker, never in CSS.
+    expect(paragraph.getAttribute("style")).not.toContain("url(");
+    expect(paragraph.getAttribute("data-blocked-src")).toBe("https://tracker.invalid");
+    expect(paragraph.style.position).toBe("");
+    expect(paragraph.style.height).toBe("");
+    expect(paragraph.style.color).toBe("rgb(18, 52, 86)");
+    expect(paragraph.style.getPropertyPriority("color")).toBe("important");
+    // The derived image minimum is a ThreeStrands fallback, never important.
+    const image = body.querySelector("img")!;
+    expect(image.style.minWidth).toBe("40px");
+    expect(image.style.getPropertyPriority("min-width")).toBe("");
+    expect(image.style.getPropertyPriority("width")).toBe("important");
   });
 
   it("keeps the flex fixture's flow layout", () => {
