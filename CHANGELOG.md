@@ -4,6 +4,15 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### New
+- In **Settings → Signatures**, **Import from Gmail…** brings in a signature from a connected Gmail account. Preview and name the copy, include its images, and optionally use it as the account’s default for new messages.
+
+### Improved
+- Pasting a signature copied from webmail such as Gmail now keeps its logos and pictures: ThreeStrands downloads them and saves them with the signature, so they go out with your mail instead of being left out. **Import…** embeds remote images by default too.
+
+### Fixed
+- In **Settings → Signatures**, the **Choose File** button and its "no file selected" label now sit centered inside the field when adding a signature image or importing a signature file.
+
 ## 0.133.2 — 2026-10-15
 
 ### New

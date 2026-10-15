@@ -49,6 +49,14 @@ describe("native account requests", () => {
     vi.mocked(invoke).mockResolvedValue({});
   });
 
+  it("reads Gmail signatures and saves the reviewed import through distinct commands", async () => {
+    await client.listGmailSignatures("me@example.com");
+    const signature = { id: "gmail", name: "Gmail", html: "<p>Alex</p>", text: "Alex" };
+    await client.importGmailSignature("me@example.com", signature, true);
+    expect(invoke).toHaveBeenCalledWith("list_gmail_signatures", { account: "me@example.com" });
+    expect(invoke).toHaveBeenCalledWith("import_gmail_signature", { account: "me@example.com", signature, useAsDefault: true });
+  });
+
   it("probes each mail endpoint through its own certificate command", async () => {
     await client.probeImapCertificate("incoming.example.com", 993, "implicit_tls");
     await client.probeSmtpCertificate("outgoing.example.com", 587, "start_tls");

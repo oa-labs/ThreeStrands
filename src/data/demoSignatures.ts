@@ -6,6 +6,21 @@ export function readDemoSignatures(): SignatureLibrary {
 }
 function write(library: SignatureLibrary) { localStorage.setItem(key, JSON.stringify(library)); }
 export const demoSignatureClient = {
+  async listGmailSignatures(account: string) {
+    return [{ address: account, html: "<p>Best,<br>Alex Morgan</p>" }];
+  },
+  async importGmailSignature(account: string, signature: Signature, useAsDefault: boolean) {
+    validateSignature(signature);
+    const library = readDemoSignatures();
+    library.signatures = [...library.signatures.filter((s) => s.id !== signature.id), signature];
+    if (useAsDefault) {
+      const id = signatureDefaultsKey(account);
+      const previous = library.defaults.find((d) => signatureDefaultsKey(d.account, d.address) === id);
+      library.defaults = [...library.defaults.filter((d) => signatureDefaultsKey(d.account, d.address) !== id),
+        { id, account, address: "", newSignatureId: signature.id, replySignatureId: previous?.replySignatureId ?? null }];
+    }
+    write(library);
+  },
   async signatureLibrary() { return readDemoSignatures(); },
   async saveSignature(signature: Signature) {
     validateSignature(signature);

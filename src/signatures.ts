@@ -3,6 +3,7 @@ import type { Draft } from "./correspondence";
 import { composeHtmlToText } from "./richText";
 import { sanitizeCssDeclaration, sanitizeHtmlCellPadding, sanitizeHtmlDimension, SIGNATURE_LIMITS, SIGNATURE_FONT_SIZES } from "./emailRenderingPolicy";
 
+export type GmailSignature = { address: string; html: string };
 export type Signature = { id: string; name: string; html: string; text: string };
 export type SignatureDefaults = { id: string; account: string; address: string; newSignatureId: string | null; replySignatureId: string | null };
 export type SignatureLibrary = { signatures: Signature[]; defaults: SignatureDefaults[] };

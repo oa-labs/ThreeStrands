@@ -130,7 +130,7 @@ describe("primary workspace headers", () => {
     // "Opens in Contacts" description, running it into the name.
     const spanDisplay: string[] = [];
     css.walkRules((rule) => {
-      if (rule.selectors.some((selector) => /\.file-detail-metadata\b.*\bspan\b/.test(selector))) rule.walkDecls("display", () => spanDisplay.push(rule.selector));
+      if (rule.selectors.some((selector) => /\.file-detail-metadata\b.*\bspan\b/.test(selector))) rule.walkDecls("display", () => { spanDisplay.push(rule.selector); });
     });
     expect(spanDisplay).toEqual([]);
     expect(lastDeclaration(".file-detail-sender-email", "display")).toBe("block");

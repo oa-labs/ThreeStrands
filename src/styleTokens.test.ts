@@ -108,6 +108,26 @@ describe("form controls", () => {
     }
   });
 
+  it("insets a dialog file picker's button so it sits centered in a control-height field", () => {
+    const declarations = (selector: string) => {
+      const values = new Map<string, string>();
+      css.walkRules((rule) => {
+        if (rule.selectors.includes(selector)) rule.walkDecls((declaration) => { values.set(declaration.prop, declaration.value); });
+      });
+      return values;
+    };
+    // The field keeps the shared text-field height; the 2px inset plus a small
+    // button and the 1px border on each side add back up to --control-h.
+    expect(declarations(".snippet-field input").get("height")).toBe("var(--control-h)");
+    const field = declarations('.snippet-field input[type="file"]');
+    expect(field.get("padding")).toBe("var(--space-0-5)");
+    const button = declarations('.snippet-field input[type="file"]::file-selector-button');
+    expect(button.get("height")).toBe("var(--control-h-sm)");
+    expect(button.get("box-sizing")).toBe("border-box");
+    expect(button.get("vertical-align")).toBe("middle");
+    expect(button.get("font-size")).toBe("var(--text-control)");
+  });
+
   it("sizes text inputs, selects, and search fields from the shared control heights", () => {
     const raw: string[] = [];
     css.walkDecls(/^(height|min-height)$/, (declaration) => {

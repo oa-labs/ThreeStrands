@@ -6,7 +6,7 @@ import { applyFormattingShortcut, formattingShortcutFor, formattingShortcuts, in
 import { readSignatureEditor, sanitizeSignatureHtml, validateSignature, type Signature } from "./signatures";
 import { sanitizeHtmlDimension, SIGNATURE_LIMITS } from "./emailRenderingPolicy";
 import { errorMessage } from "./errors";
-import { mailClient } from "./data/client";
+import { remoteImageSources, embedRemoteImages } from "./signatureImport";
 
 export function SignatureEditor({ signature, onSave, onClose }: {
   signature: Signature | null; onSave(signature: Signature): Promise<void>; onClose(): void;
@@ -19,6 +19,7 @@ export function SignatureEditor({ signature, onSave, onClose }: {
   const lastRange = useRef<Range | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [status, setStatus] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [imageTarget, setImageTarget] = useState<HTMLImageElement | "new" | null>(null);
   const [imageChoices, setImageChoices] = useState<HTMLImageElement[] | null>(null);
@@ -114,12 +115,26 @@ export function SignatureEditor({ signature, onSave, onClose }: {
             return;
           }
           const html = event.clipboardData.getData("text/html");
-          const content = html ? sanitizeSignatureHtml(html) : linkifyPlainText(event.clipboardData.getData("text/plain"));
-          insertHtmlAtRange(event.currentTarget, restoreRange(), content);
-          rememberRange();
-          if (remoteImageSources(html).length) setError("Remote images were omitted. Use Import to embed them, or add images from your computer.");
+          if (!html || !remoteImageSources(html).length) {
+            insertHtmlAtRange(event.currentTarget, restoreRange(), html ? sanitizeSignatureHtml(html) : linkifyPlainText(event.clipboardData.getData("text/plain")));
+            rememberRange();
+            return;
+          }
+          // Signatures copied from webmail link their logos; download them so
+          // the saved signature carries its own images, as an upload would.
+          setStatus("Downloading images…");
+          void embedRemoteImages(html).then(({ html: embedded, failures }) => {
+            setStatus("");
+            if (!editor.current) return;
+            insertHtmlAtRange(editor.current, restoreRange(), sanitizeSignatureHtml(embedded));
+            rememberRange();
+            if (!failures.length) return;
+            const reason = errorMessage(failures[0]);
+            setError(`${failures.length === 1 ? "An image" : `${failures.length} images`} couldn't be added. ${reason}${/[.!?]$/.test(reason) ? "" : "."} Use Add Image… to add ${failures.length === 1 ? "it" : "them"} from your computer.`);
+          });
         }} />
       <p className="settings-hint">Paste your existing signature or write one here. Select text to format it; click an image to edit its size and description.</p>
+      {status ? <p className="settings-hint" role="status">{status}</p> : null}
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       <div className="signature-actions"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" disabled={busy}>{busy ? "Saving…" : "Save"}</button></div>
     </form>
@@ -136,32 +151,23 @@ export function SignatureEditor({ signature, onSave, onClose }: {
   </Modal>;
 }
 
-function remoteImageSources(html: string): string[] {
-  // Parse in an inert template; sender URLs never enter live app markup.
-  const template = document.createElement("template"); template.innerHTML = html;
-  return [...new Set(Array.from(template.content.querySelectorAll("img")).map((image) => image.getAttribute("src") ?? "").filter((src) => /^https?:\/\//i.test(src)))];
-}
-
 export function SignatureImportDialog({ onClose, onImport }: { onClose(): void; onImport(html: string): void }) {
   const sourceInput = useRef<HTMLTextAreaElement>(null);
   const [source, setSource] = useState("");
-  const [embedRemote, setEmbedRemote] = useState(false);
+  const [embedRemote, setEmbedRemote] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const remote = remoteImageSources(source);
   async function importHtml() {
     setBusy(true); setError("");
     try {
-      const template = document.createElement("template"); template.innerHTML = source;
+      let embedded = source;
       if (embedRemote) {
-        // Sequential requests share the existing native proxy's validation,
-        // resource bounds and blocked-source behavior. No CSS URLs are fetched.
-        for (const url of remote) {
-          const data = await mailClient.fetchRemoteImage(url);
-          template.content.querySelectorAll("img").forEach((image) => { if (image.getAttribute("src") === url) image.src = data; });
-        }
+        const result = await embedRemoteImages(source);
+        if (result.failures.length) throw result.failures[0];
+        embedded = result.html;
       }
-      const html = sanitizeSignatureHtml(template.innerHTML);
+      const html = sanitizeSignatureHtml(embedded);
       const node = document.createElement("div"); node.innerHTML = html;
       validateSignature({ id: "preview", name: "Imported", ...readSignatureEditor(node) });
       onImport(html);
@@ -176,7 +182,7 @@ export function SignatureImportDialog({ onClose, onImport }: { onClose(): void; 
         void file.text().then((text) => setSource(file.name.toLowerCase().endsWith(".txt") ? linkifyPlainText(text) : text)).catch((reason) => setError(errorMessage(reason)));
       }} /></label>
       {remote.length ? <label className="settings-checkbox"><input type="checkbox" checked={embedRemote} disabled={busy} onChange={(event) => setEmbedRemote(event.target.checked)} /><span>Embed Remote Images</span></label> : null}
-      {remote.length ? <p className="settings-hint">{remote.length} remote image source{remote.length === 1 ? "" : "s"}. Embedding downloads images through ThreeStrands; otherwise they are omitted.</p> : null}
+      {remote.length ? <p className="settings-hint">{remote.length} remote image source{remote.length === 1 ? "" : "s"}. Embedding downloads images through ThreeStrands and saves them with the signature; otherwise they are left out.</p> : null}
       {source ? <section aria-label="Signature Preview"><h3>Preview</h3><SafeMessage html={source} text="" loadImages={false} foldQuotes={false} /></section> : null}
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       <div className="signature-actions"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" disabled={busy || !source.trim()}>{busy ? "Importing…" : "Import"}</button></div>

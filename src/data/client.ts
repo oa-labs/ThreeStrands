@@ -1,4 +1,4 @@
-import type { Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
+import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
 import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
 import {
   BOUNDED_LOCAL_READ,
@@ -321,6 +321,8 @@ export interface MailClient extends CorrespondenceClient {
   reorderSplitInboxes(ids: string[]): Promise<void>;
   /** Always scoped to the split's own account — see `SplitInbox.accountId`. */
   listSplitInboxPage(splitInboxId: string, offset: number, limit: number): Promise<ThreadPage>;
+  listGmailSignatures(account: string): Promise<GmailSignature[]>;
+  importGmailSignature(account: string, signature: Signature, useAsDefault: boolean): Promise<void>;
   signatureLibrary(): Promise<SignatureLibrary>;
   saveSignature(signature: Signature): Promise<void>;
   deleteSignature(id: string): Promise<void>;
@@ -498,6 +500,8 @@ const tauriClient: MailClient = {
   reorderSplitInboxes: (ids) => complete("reorder_split_inboxes", { ids }),
   listSplitInboxPage: (splitInboxId, offset, limit) =>
     read("list_split_inbox_page", { splitInboxId, offset, limit }),
+  listGmailSignatures: (account) => complete("list_gmail_signatures", { account }),
+  importGmailSignature: (account, signature, useAsDefault) => complete("import_gmail_signature", { account, signature, useAsDefault }),
   signatureLibrary: () => read("signature_library"),
   saveSignature: (signature) => complete("save_signature", { signature }),
   deleteSignature: (id) => complete("delete_signature", { id }),

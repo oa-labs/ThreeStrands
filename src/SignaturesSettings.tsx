@@ -3,12 +3,15 @@ import type { Account, SendingIdentity } from "./domain";
 import { Modal } from "./AppChrome";
 import { SafeMessage } from "./SafeMessage";
 import { SignatureEditor } from "./SignatureEditor";
+import { GmailSignatureImportDialog } from "./GmailSignatureImportDialog";
 import { signatureDefaultsKey, type Signature, type SignatureDefaults, type SignatureState } from "./signatures";
 import { mailClient } from "./data/client";
 import { errorMessage } from "./errors";
 
 export function SignaturesSettings({ library, accounts }: { library: SignatureState; accounts: Account[] }) {
   const [editor, setEditor] = useState<Signature | "new" | null>(null);
+  const [gmailImport, setGmailImport] = useState(false);
+  const gmailAccounts = accounts.filter((account) => account.provider === "gmail" && account.onThisDevice);
   const [preview, setPreview] = useState<Signature | null>(null);
   const [defaultsAccount, setDefaultsAccount] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Signature | null>(null);
@@ -17,7 +20,7 @@ export function SignaturesSettings({ library, accounts }: { library: SignatureSt
   const ordered = [...library.signatures].sort((a, b) => a.name.localeCompare(b.name));
   function signatureName(id: string | null | undefined) { return library.signatures.find((s) => s.id === id)?.name ?? "No signature"; }
   return <section className="settings-section accounts-manager" aria-label="Signatures">
-    <div className="accounts-manager-header"><div><h3>Signatures</h3><p>Choose a sign-off for each sending address. Replies and forwards can use a shorter signature.</p></div><button className="btn btn-primary" type="button" onClick={() => setEditor("new")}>Add Signature</button></div>
+    <div className="accounts-manager-header"><div><h3>Signatures</h3><p>Choose a sign-off for each sending address. Replies and forwards can use a shorter signature.</p></div><span className="accounts-list-actions"><button className="btn" type="button" disabled={!gmailAccounts.length} onClick={() => setGmailImport(true)}>Import from Gmail…</button><button className="btn btn-primary" type="button" onClick={() => setEditor("new")}>Add Signature</button></span></div>
     {ordered.length ? <ul className="accounts-list">{ordered.map((signature) => <li className="account-card" key={signature.id}>
       <div className="account-card-row"><div className="account-card-identity"><strong>{signature.name}</strong><span className="account-card-email">{signature.text.replace(/\s+/g, " ") || "Image signature"}</span></div></div>
       <div className="account-card-controls"><span className="accounts-list-actions">
@@ -36,6 +39,7 @@ export function SignaturesSettings({ library, accounts }: { library: SignatureSt
       </li>;
     })}</ul> : <p className="settings-hint">Connect a mail account to choose default signatures.</p>}
     {editor ? <SignatureEditor key={editor === "new" ? "new" : editor.id} signature={editor === "new" ? null : editor} onSave={library.save} onClose={() => setEditor(null)} /> : null}
+    {gmailImport ? <GmailSignatureImportDialog accounts={gmailAccounts} onImported={library.refresh} onClose={() => setGmailImport(false)} /> : null}
     {preview ? <Modal title="Signature Preview" onClose={() => setPreview(null)} className="signature-dialog"><div className="signature-form"><SafeMessage html={preview.html} text={preview.text} loadImages={false} foldQuotes={false} /><h3>Plain Text</h3><pre className="signature-plain-preview">{preview.text}</pre><div className="signature-actions"><button type="button" className="btn" onClick={() => setPreview(null)}>Done</button></div></div></Modal> : null}
     {defaultsAccount ? <SignatureDefaultsDialog key={defaultsAccount} account={defaultsAccount} library={library} onClose={() => setDefaultsAccount(null)} /> : null}
     {deleteTarget ? <Modal title="Delete Signature" onClose={() => { if (!busy) setDeleteTarget(null); }}><div className="signature-form"><p>Delete “{deleteTarget.name}”? Addresses using it will have no signature. Existing drafts and queued messages keep their signatures.</p>{error ? <p role="alert" className="form-error">{error}</p> : null}<div className="signature-actions"><button className="btn" type="button" disabled={busy} onClick={() => setDeleteTarget(null)}>Cancel</button><button className="btn btn-danger" type="button" disabled={busy} onClick={() => {

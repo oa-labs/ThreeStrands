@@ -11,6 +11,7 @@ mod calendar;
 mod calendar_files;
 mod correspondence;
 mod signatures;
+mod gmail_signatures;
 mod scheduled_send;
 mod contact_interchange;
 mod credentials;
@@ -5715,6 +5716,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         reorder_split_inboxes,
         list_split_inbox_page,
         signature_library, save_signature, delete_signature, save_signature_defaults, delete_signature_defaults,
+        gmail_signatures::list_gmail_signatures, gmail_signatures::import_gmail_signature,
         list_snippets,
         create_snippet,
         update_snippet,

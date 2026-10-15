@@ -25,6 +25,20 @@ use crate::{
 
 const API: &str = "https://gmail.googleapis.com/gmail/v1/users/me";
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GmailSignature {
+    #[serde(rename(deserialize = "sendAsEmail"))]
+    pub address: String,
+    #[serde(default, rename(deserialize = "signature"))]
+    pub html: String,
+}
+
+#[derive(Deserialize)]
+struct SendAsList {
+    #[serde(default, rename = "sendAs")]
+    addresses: Vec<GmailSignature>,
+}
+
 #[derive(Clone)]
 pub struct GmailClient {
     http: reqwest::Client,
@@ -36,6 +50,14 @@ pub struct GmailClient {
 }
 
 impl GmailClient {
+    /// Read only: the existing gmail.modify grant authorizes this endpoint.
+    pub async fn list_signatures(&self) -> ProviderResult<Vec<GmailSignature>> {
+        let request = self.request(Method::GET, format!("{}/settings/sendAs", self.api)).await?
+            .query(&[("fields", "sendAs(sendAsEmail,signature)")]);
+        let response: SendAsList = self.json(request, false).await?;
+        Ok(response.addresses.into_iter().filter(|item| !item.html.trim().is_empty()).collect())
+    }
+
     pub fn new(auth: OAuthCredential) -> Self {
         Self {
             http: crate::http_client::builder()
@@ -814,6 +836,40 @@ mod tests {
                 },
             ))
             .with_api_base(base)
+        }
+
+        #[tokio::test]
+        async fn signatures_are_read_with_existing_authorization_and_keep_primary_and_alias_html() {
+            use axum::http::HeaderMap;
+            let router = Router::new().route("/settings/sendAs", get(|headers: HeaderMap, RawQuery(query): RawQuery| async move {
+                assert_eq!(headers.get("authorization").unwrap(), "Bearer access");
+                assert!(query.unwrap().contains("fields=sendAs"));
+                Json(json!({"sendAs": [
+                    {"sendAsEmail": "me@example.com", "signature": "<p><b>Alex</b></p>"},
+                    {"sendAsEmail": "alias@example.com", "signature": "<table><tr><td>Team</td></tr></table>"},
+                    {"sendAsEmail": "empty@example.com", "signature": "  "},
+                    {"sendAsEmail": "unset@example.com"}
+                ]}))
+            }));
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            let signatures = client(&base).list_signatures().await.unwrap();
+            assert_eq!(signatures.len(), 2);
+            assert_eq!(signatures[0].address, "me@example.com");
+            assert_eq!(signatures[1].html, "<table><tr><td>Team</td></tr></table>");
+            assert_eq!(serde_json::to_value(&signatures[0]).unwrap(), json!({"address": "me@example.com", "html": "<p><b>Alex</b></p>"}));
+        }
+
+        #[tokio::test]
+        async fn signatures_report_missing_permissions_instead_of_an_empty_library() {
+            let router = Router::new().route("/settings/sendAs", get(|| async {
+                (StatusCode::FORBIDDEN, Json(json!({"error": {"message": "Insufficient permission"}})))
+            }));
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            assert!(matches!(client(&base).list_signatures().await.unwrap_err(), ProviderError::PermanentClientRejection(_)));
         }
 
         #[tokio::test]

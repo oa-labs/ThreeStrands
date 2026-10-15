@@ -2529,6 +2529,12 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .snippet-field input, .snippet-field textarea { color: var(--text); background: var(--input); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: var(--space-2) var(--space-2-5); outline: none; font: inherit; resize: vertical; }
 .snippet-field input { height: var(--control-h); padding-block: 0; }
 .snippet-field input:focus, .snippet-field textarea:focus { border-color: var(--accent); }
+/* A file picker frames its native button like a segmented toggle: a small
+   button inset 2px inside the field lands on --control-h. */
+.snippet-field input[type="file"] { padding: var(--space-0-5); padding-inline-end: var(--space-2-5); color: var(--muted); cursor: pointer; }
+.snippet-field input[type="file"]::file-selector-button { box-sizing: border-box; height: var(--control-h-sm); margin: 0 var(--space-2) 0 0; padding: 0 var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background: var(--hover); font: inherit; font-size: var(--text-control); vertical-align: middle; cursor: pointer; }
+.snippet-field input[type="file"]:hover::file-selector-button { border-color: var(--accent); }
+.snippet-field input[type="file"]:disabled, .snippet-field input[type="file"]:disabled::file-selector-button { opacity: var(--opacity-disabled); cursor: default; }
 .snippet-editor-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); }
 
 .signature-dialog { width: min(var(--dialog-w-xl), calc(100vw - var(--dialog-edge))); }

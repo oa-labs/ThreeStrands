@@ -80,3 +80,37 @@ test("signature forms contain keyboard focus and suspend letter commands until d
   await expect(add).toBeFocused();
   await expect(settings.getByText("No signatures yet", { exact: true })).toBeVisible();
 });
+
+test("imports a Gmail signature after review and applies it to new messages", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await settings.getByRole("button", { name: "Signatures", exact: true }).click();
+  const trigger = settings.getByRole("button", { name: "Import from Gmail…" });
+  await trigger.focus(); await page.keyboard.press("Space");
+  const importer = page.getByRole("dialog", { name: "Import from Gmail", exact: true });
+  await expect(importer.getByLabel("Gmail Account", { exact: true })).toBeFocused();
+  await expect(importer.getByRole("region", { name: "Plain Text Preview" })).toContainText("Alex Morgan");
+  const name = importer.getByLabel("Name", { exact: true });
+  await name.fill("Gmail Copy"); await page.keyboard.type("c");
+  await expect(name).toHaveValue("Gmail Copyc");
+  await expect(page.getByRole("dialog", { name: "New Message", exact: true })).toHaveCount(0);
+  const submit = importer.getByRole("button", { name: "Import", exact: true });
+  await submit.focus(); await page.keyboard.press("Tab");
+  await expect(importer.getByRole("button", { name: "Close", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+  await expect(settings.getByText("No signatures yet", { exact: true })).toBeVisible();
+  await page.keyboard.press("Enter");
+  await name.fill("Gmail Copy");
+  await importer.getByLabel("Use as Account Default for New Messages").check();
+  await submit.focus(); await page.keyboard.press("Enter");
+  await expect(importer).toHaveCount(0);
+  await expect(settings.getByText("Gmail Copy", { exact: true })).toBeVisible();
+  await settings.getByRole("button", { name: "Close", exact: true }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "New Message (c)" }).click();
+  const composer = page.getByRole("dialog", { name: "New Message", exact: true });
+  await expect(composer.getByRole("textbox", { name: "Message Signature" })).toContainText("Alex Morgan");
+  await expect(composer.getByRole("combobox", { name: "Signature", exact: true })).toHaveValue(/.+/);
+});
