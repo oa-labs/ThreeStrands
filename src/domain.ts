@@ -572,7 +572,11 @@ export type ChatAttachmentRef = { messageId: string; attachmentId: string };
 export type ChatAttachmentSource = ChatAttachmentRef & { filename: string; truncated: boolean };
 
 /** A range the chat asked the app to search; times always come from the calendar. */
-export type ChatAvailability = { rangeStart: string; rangeEnd: string; durationMinutes: number | null };
+/** A search Thread Chat asked the app to run, limited like Find Times to some weekdays and hours. */
+export type ChatAvailability = {
+  rangeStart: string; rangeEnd: string; durationMinutes: number | null;
+  weekdays: number[]; dayStart: string | null; dayEnd: string | null;
+};
 
 /** Another conversation shared with the provider while answering. */
 export type ChatSource = { threadId: string; accountId: string; subject: string; lastMessageAt: string };

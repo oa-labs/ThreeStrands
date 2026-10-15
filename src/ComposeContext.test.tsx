@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ComposeContext, ReplyChecks } from "./ComposeContext";
-import { RecipientSummary } from "./RecipientSections";
+import { AvailabilitySection, RecipientSummary } from "./RecipientSections";
 import { mailClient } from "./data/client";
 import { ICON_SIZE } from "./iconSizes";
 import { SLOTS_PER_DAY } from "./scheduling";
@@ -320,6 +320,43 @@ describe("Find Times with AI", () => {
     const request = vi.mocked(mailClient.findAvailability).mock.calls[0][0];
     expect(Date.parse(request.rangeEnd) - Date.parse(request.rangeStart)).toBe(7 * day);
     expect(request.preferences.workingWindows).toEqual(preferences.workingWindows);
+  });
+
+  it("first reuses the range a meeting suggestion already found, then reads afresh on Search Again", async () => {
+    vi.mocked(mailClient.findTimes).mockResolvedValue({ ...search, reason: "A fresh read." });
+    const suggested = {
+      plan: { query: { kind: "range" as const, start: search.rangeStart, end: search.rangeEnd }, durationMinutes: 45, timeZoneAssumed: false },
+      reason: "From the suggested meeting: “next week”.",
+    };
+    const suggest = vi.fn(() => suggested);
+    render(<AvailabilitySection preferences={preferences} ai draft={reply} suggest={suggest} onInsertTimes={vi.fn()} onOpenCalendarSettings={vi.fn()} />);
+
+    fireEvent.click(within(section()).getByRole("button", { name: "Find Times" }));
+    expect(await within(section()).findByText("From the suggested meeting: “next week”.")).toBeInTheDocument();
+    await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalledWith(expect.objectContaining({
+      rangeStart: search.rangeStart, rangeEnd: search.rangeEnd, preferences: expect.objectContaining({ defaultDurationMinutes: 45 }),
+    })));
+    // Nothing was sent to the AI provider; the suggestion's search is adjustable like any other.
+    expect(mailClient.findTimes).not.toHaveBeenCalled();
+    expect(await within(section()).findByRole("textbox", { name: "Adjust times" })).toBeInTheDocument();
+
+    fireEvent.click(within(section()).getByRole("button", { name: "Search Again" }));
+    expect(await within(section()).findByText("A fresh read.")).toBeInTheDocument();
+    expect(mailClient.findTimes).toHaveBeenCalledTimes(1);
+    expect(suggest).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses a meeting suggestion's range even without AI", async () => {
+    const suggest = () => ({
+      plan: { query: { kind: "range" as const, start: search.rangeStart, end: search.rangeEnd }, durationMinutes: 30, timeZoneAssumed: false },
+      reason: "From the suggested meeting.",
+    });
+    render(<AvailabilitySection preferences={preferences} ai={false} draft={reply} suggest={suggest} onInsertTimes={vi.fn()} onOpenCalendarSettings={vi.fn()} />);
+    fireEvent.click(within(section()).getByRole("button", { name: "Find Times" }));
+    expect(await within(section()).findByText("From the suggested meeting.")).toBeInTheDocument();
+    await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalledWith(expect.objectContaining({ rangeStart: search.rangeStart })));
+    expect(within(section()).queryByRole("textbox", { name: "Adjust times" })).not.toBeInTheDocument();
+    expect(mailClient.findTimes).not.toHaveBeenCalled();
   });
 
   it("reads only a new message's own text, and asks again from scratch on Search Again", async () => {

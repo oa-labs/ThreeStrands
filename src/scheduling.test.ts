@@ -3,7 +3,7 @@ import type { MeetingProposal } from "./domain";
 import {
   boundedRange, clampMeetingMinutes, MAX_MEETING_MINUTES, MAX_SCHEDULE_RANGE_DAYS, MIN_MEETING_MINUTES,
   AFTERNOONS, ANY_TIME, MIDDAY, MORNINGS, planChatAvailability, planMeeting, planTimeSearch, SCHEDULE_LOOKAHEAD_DAYS, shiftedRange,
-  spreadAcrossDays, windowsWithin,
+  spreadAcrossDays, suggestedSearch, windowsWithin,
 } from "./scheduling";
 
 const now = new Date("2026-09-29T12:00:00Z");
@@ -85,8 +85,42 @@ describe("meeting scheduling plans", () => {
   });
 
   it("plans a chat availability request from the calendar rather than the model's words", () => {
-    const plan = planChatAvailability({ rangeStart: "2026-10-05T13:00:00Z", rangeEnd: "2026-10-09T21:00:00Z", durationMinutes: null }, now, 30);
-    expect(plan).toEqual({ query: { kind: "range", start: "2026-10-05T13:00:00.000Z", end: "2026-10-09T21:00:00.000Z" }, durationMinutes: 30, timeZoneAssumed: false });
+    const plan = planChatAvailability({ rangeStart: "2026-10-05T13:00:00Z", rangeEnd: "2026-10-09T21:00:00Z", durationMinutes: null, weekdays: [], dayStart: null, dayEnd: null }, now, 30);
+    expect(plan).toEqual({
+      query: { kind: "range", start: "2026-10-05T13:00:00.000Z", end: "2026-10-09T21:00:00.000Z" }, durationMinutes: 30, timeZoneAssumed: false,
+      bounds: { weekdays: [], dayStart: null, dayEnd: null },
+    });
+    // "Thursday afternoon" arrives already narrowed, the same way Find Times narrows a search.
+    expect(planChatAvailability({ rangeStart: "2026-10-05T13:00:00Z", rangeEnd: "2026-10-09T21:00:00Z", durationMinutes: 45, weekdays: [4], dayStart: "12:00", dayEnd: null }, now, 30).bounds)
+      .toEqual({ weekdays: [4], dayStart: "12:00", dayEnd: null });
+  });
+});
+
+describe("reusing a meeting suggestion's search", () => {
+  const nextWeek = { searchRangeStart: "2026-10-05T04:00:00Z", searchRangeEnd: "2026-10-12T04:00:00Z", rawTimeLanguage: "next week" };
+  const task = {
+    type: "task" as const, kind: "action" as const, title: "Send deck", notes: null, dueKind: "none" as const, dueValue: null,
+    timeZone: null, repeatIntervalDays: null, confidence: 0.9, evidence: { sourceMessageId: "m1", excerpt: "deck" },
+  };
+
+  it("offers the first meeting still to be arranged over a range, saying where it came from", () => {
+    const found = suggestedSearch([task, meeting({ ...nextWeek, durationMinutes: 45 }), meeting({ searchRangeStart: "2026-11-01T00:00:00Z", searchRangeEnd: "2026-11-02T00:00:00Z" })], now, 30);
+    expect(found).toEqual({
+      plan: { query: { kind: "range", start: "2026-10-05T04:00:00.000Z", end: "2026-10-12T04:00:00.000Z" }, durationMinutes: 45, timeZoneAssumed: false },
+      reason: "From the suggested meeting: “next week”.",
+    });
+    expect(suggestedSearch([meeting({ ...nextWeek, rawTimeLanguage: "  " })], now, 30)?.reason).toBe("From the suggested meeting.");
+  });
+
+  it("leaves out events to attend, exact times, dated events, vague meetings, and ranges that have passed", () => {
+    expect(suggestedSearch([], now, 30)).toBeNull();
+    expect(suggestedSearch([task], now, 30)).toBeNull();
+    expect(suggestedSearch([meeting({ ...nextWeek, intent: "attend" })], now, 30)).toBeNull();
+    expect(suggestedSearch([meeting({ ...nextWeek, normalizedStart: "2026-10-06T19:00:00Z" })], now, 30)).toBeNull();
+    expect(suggestedSearch([meeting({ eventDate: "2026-10-06" })], now, 30)).toBeNull();
+    // Without a range of its own, a meeting is no better than Find Times reading the conversation.
+    expect(suggestedSearch([meeting()], now, 30)).toBeNull();
+    expect(suggestedSearch([meeting({ searchRangeStart: "2026-09-01T00:00:00Z", searchRangeEnd: "2026-09-02T00:00:00Z" })], now, 30)).toBeNull();
   });
 });
 

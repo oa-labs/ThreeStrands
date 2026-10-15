@@ -1,4 +1,4 @@
-import type { AvailabilityCandidate, AvailabilityWindow, ChatAvailability, MeetingProposal, TimeSearch } from "./domain";
+import type { ActionProposal, AvailabilityCandidate, AvailabilityWindow, ChatAvailability, MeetingProposal, TimeSearch } from "./domain";
 import { dateInputValue } from "./calendarTime";
 
 /** Days searched when a meeting names no usable time or range. */
@@ -107,12 +107,34 @@ export function planMeeting(proposal: MeetingProposal, now: Date, defaultDuratio
   return { query: lookaheadRange(now), durationMinutes, timeZoneAssumed };
 }
 
-/** Plans the calendar search a chat answer asked for. */
+/** A search already found for a conversation, with why it was chosen. */
+export type SuggestedSearch = { plan: SchedulePlan; reason: string };
+
+/**
+ * The date range a meeting suggestion (from a brief, Suggestions, or Thread
+ * Chat) already found for a conversation, so Find Times can offer it without
+ * asking again. Only a meeting still to be arranged over a range that hasn't
+ * passed counts; an exact time is checked on the suggestion's own card.
+ */
+export function suggestedSearch(proposals: ActionProposal[], now: Date, defaultDurationMinutes: number): SuggestedSearch | null {
+  for (const proposal of proposals) {
+    if (proposal.type !== "meeting" || proposal.intent !== "schedule" || proposal.normalizedStart) continue;
+    if (!proposal.searchRangeStart || !proposal.searchRangeEnd) continue;
+    const plan = planMeeting(proposal, now, defaultDurationMinutes);
+    if (plan.query?.kind !== "range") continue;
+    const words = proposal.rawTimeLanguage.trim();
+    return { plan, reason: words ? `From the suggested meeting: “${words}”.` : "From the suggested meeting." };
+  }
+  return null;
+}
+
+/** Plans the calendar search a chat answer asked for, with any weekdays and hours it named. */
 export function planChatAvailability(request: ChatAvailability, now: Date, defaultDurationMinutes: number): SchedulePlan {
   return {
     query: boundedRange(new Date(request.rangeStart), new Date(request.rangeEnd), now),
     durationMinutes: clampMeetingMinutes(request.durationMinutes, defaultDurationMinutes),
     timeZoneAssumed: false,
+    bounds: { weekdays: request.weekdays, dayStart: request.dayStart, dayEnd: request.dayEnd },
   };
 }
 

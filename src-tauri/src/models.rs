@@ -871,6 +871,12 @@ pub struct ChatAvailability {
     pub range_start: String,
     pub range_end: String,
     pub duration_minutes: Option<u32>,
+    /// Allowed weekdays, 0 for Sunday; empty allows every day.
+    pub weekdays: Vec<u8>,
+    /// Earliest local start, `HH:MM`.
+    pub day_start: Option<String>,
+    /// Latest local end, `HH:MM`.
+    pub day_end: Option<String>,
 }
 
 /// A conversation shared with the provider while answering.

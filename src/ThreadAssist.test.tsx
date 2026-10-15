@@ -350,4 +350,22 @@ describe("ThreadAssist", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
+
+  it("adjusts a meeting suggestion's times with chips only, keeping the AI section free of text entry", async () => {
+    const meeting: ActionProposal = {
+      type: "meeting", intent: "schedule", title: "Website kickoff", participants: [], location: null,
+      rawTimeLanguage: "next week", normalizedStart: null, normalizedEnd: null,
+      searchRangeStart: null, searchRangeEnd: null, durationMinutes: 30, timeZone: null, confidence: 0.9,
+      evidence: { sourceMessageId: "message-1", excerpt: "Let's meet next week." },
+    };
+    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    const findTimes = vi.spyOn(mailClient, "findTimes");
+    render(<ThreadAssist {...props({ detail: summarized, suggestions: { requested: true, proposals: [taskProposal, meeting] }, scheduling: { calendarConnected: true } })} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Afternoons" }));
+    await waitFor(() => expect(find).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", { name: "Afternoons" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(findTimes).not.toHaveBeenCalled();
+  });
 });

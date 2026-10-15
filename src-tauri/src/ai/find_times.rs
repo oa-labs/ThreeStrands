@@ -160,13 +160,53 @@ pub async fn find_times(request: FindTimesRequest, api_key: &str) -> Result<Time
 
 fn parse_clock(value: Option<serde_json::Value>) -> Result<Option<String>, ()> {
     match value {
-        Some(serde_json::Value::Null) => Ok(None),
+        None | Some(serde_json::Value::Null) => Ok(None),
         Some(serde_json::Value::String(text)) => {
             let time = NaiveTime::parse_from_str(text.trim(), "%H:%M").map_err(|_| ())?;
             Ok(Some(time.format("%H:%M").to_string()))
         }
         _ => Err(()),
     }
+}
+
+/// Which weekdays and hours a search keeps, as every scheduling answer
+/// describes them.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct DayBounds {
+    pub weekdays: Vec<u8>,
+    pub day_start: Option<String>,
+    pub day_end: Option<String>,
+}
+
+/// Reads weekdays (0 for Sunday) and `HH:MM` hours. A missing field means
+/// no limit; an unknown day, a malformed clock, or hours that end before
+/// they start is an error.
+pub(crate) fn parse_day_bounds(
+    weekdays: Option<serde_json::Value>,
+    day_start: Option<serde_json::Value>,
+    day_end: Option<serde_json::Value>,
+) -> Result<DayBounds, ()> {
+    let days = match weekdays {
+        None | Some(serde_json::Value::Null) => Vec::new(),
+        Some(serde_json::Value::Array(days)) => days,
+        Some(_) => return Err(()),
+    };
+    let mut allowed = Vec::with_capacity(days.len());
+    for day in days {
+        let day = day.as_u64().filter(|day| *day <= 6).ok_or(())? as u8;
+        if !allowed.contains(&day) {
+            allowed.push(day);
+        }
+    }
+    allowed.sort_unstable();
+    let day_start = parse_clock(day_start)?;
+    let day_end = parse_clock(day_end)?;
+    if let (Some(from), Some(to)) = (&day_start, &day_end) {
+        if from >= to {
+            return Err(());
+        }
+    }
+    Ok(DayBounds { weekdays: allowed, day_start, day_end })
 }
 
 /// Validates the provider's search. Anything out of bounds fails the request
@@ -211,22 +251,11 @@ fn parse_time_search(content: &str, current_time: &str) -> Result<TimeSearch, St
         ),
         None => return Err(invalid()),
     };
-    let Some(serde_json::Value::Array(days)) = object.remove("weekdays") else { return Err(invalid()) };
-    let mut weekdays = Vec::with_capacity(days.len());
-    for day in days {
-        let day = day.as_u64().filter(|day| *day <= 6).ok_or_else(invalid)? as u8;
-        if !weekdays.contains(&day) {
-            weekdays.push(day);
-        }
+    if !(object.contains_key("weekdays") && object.contains_key("dayStart") && object.contains_key("dayEnd")) {
+        return Err(invalid());
     }
-    weekdays.sort_unstable();
-    let day_start = parse_clock(object.remove("dayStart")).map_err(|_| invalid())?;
-    let day_end = parse_clock(object.remove("dayEnd")).map_err(|_| invalid())?;
-    if let (Some(from), Some(to)) = (&day_start, &day_end) {
-        if from >= to {
-            return Err(invalid());
-        }
-    }
+    let DayBounds { weekdays, day_start, day_end } =
+        parse_day_bounds(object.remove("weekdays"), object.remove("dayStart"), object.remove("dayEnd")).map_err(|_| invalid())?;
     let Some(serde_json::Value::String(reason)) = object.remove("reason") else { return Err(invalid()) };
     let reason = reason.split_whitespace().collect::<Vec<_>>().join(" ");
     if reason.is_empty() || reason.chars().count() > MAX_FIND_TIMES_REASON_CHARS {

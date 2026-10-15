@@ -471,6 +471,37 @@ describe("conversation brief", () => {
       expect(create).toHaveBeenCalledTimes(2);
     });
 
+    it("narrows a chat answer's open times to the days and hours asked for, like Find Times", async () => {
+      clearScheduleCache();
+      await enableAi({ threadChat: true, draftAssist: true });
+      vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([{ email: "calendar@example.com", connectedAt: "2026-09-01T00:00:00Z", status: "connected" }]);
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+      const rangeStart = new Date(Date.now() + hour).toISOString();
+      const rangeEnd = new Date(Date.now() + 7 * 24 * hour).toISOString();
+      vi.spyOn(mailClient, "threadChat").mockResolvedValue({
+        answer: "Here are Thursday afternoons from your calendar.", analysis: { proposals: [], hiddenCount: 0 }, replyDraft: null, sources: [], searched: [],
+        attachments: [],
+        availability: { rangeStart, rangeEnd, durationMinutes: null, weekdays: [4], dayStart: "12:00", dayEnd: null },
+      });
+      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      const panel = screen.getByRole("complementary", { name: "Conversation context" });
+
+      fireEvent.keyDown(window, { key: "q" });
+      const input = await within(panel).findByRole("textbox", { name: "Ask About This Conversation" });
+      fireEvent.change(input, { target: { value: "When am I free Thursday afternoon?" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      await waitFor(() => expect(find).toHaveBeenCalled());
+      const windows = find.mock.calls[0][0].preferences.workingWindows;
+      expect(windows.length).toBeGreaterThan(0);
+      expect(windows.every((window) => window.weekday === 4 && window.start >= "12:00")).toBe(true);
+      // The chat box adjusts these times, so the answer adds no second text field.
+      expect(await within(panel).findByRole("button", { name: "Afternoons" })).toHaveAttribute("aria-pressed", "true");
+      expect(within(panel).queryByRole("textbox", { name: "Adjust times" })).not.toBeInTheDocument();
+    });
+
     it("shows open times from the calendar when a chat answer asks for them", async () => {
       clearScheduleCache();
       await enableAi({ threadChat: true });
@@ -481,7 +512,7 @@ describe("conversation brief", () => {
       vi.spyOn(mailClient, "threadChat").mockResolvedValue({
         answer: "Here are open times from your calendar.", analysis: { proposals: [], hiddenCount: 0 }, replyDraft: null, sources: [], searched: [],
         attachments: [],
-        availability: { rangeStart, rangeEnd, durationMinutes: 45 },
+        availability: { rangeStart, rangeEnd, durationMinutes: 45, weekdays: [], dayStart: null, dayEnd: null },
       });
       const slot = { start: new Date(Date.now() + 20 * hour).toISOString(), end: new Date(Date.now() + 20.75 * hour).toISOString(), status: "verified" as const };
       const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [slot], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
@@ -813,6 +844,47 @@ describe("conversation brief", () => {
 
     expect(await within(panel).findByText("Welcome to the app.")).toBeInTheDocument();
     expect(briefThread).toHaveBeenCalledTimes(2);
+  });
+
+  it("offers a brief's meeting range in a reply's Find Times without asking the provider again", async () => {
+    localStorage.removeItem("threestrands.demoCorrespondence");
+    clearScheduleCache();
+    await enableAi({ summarize: true, actionExtraction: true, draftAssist: true });
+    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
+      { email: "calendar@example.com", connectedAt: "2026-09-18T00:00:00Z", status: "connected" },
+    ]);
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+    const searchRangeStart = new Date(Date.now() + 4 * 86_400_000).toISOString();
+    const searchRangeEnd = new Date(Date.now() + 9 * 86_400_000).toISOString();
+    const meeting: MeetingProposal = {
+      type: "meeting", intent: "schedule", title: "Walkthrough", participants: [], location: null, rawTimeLanguage: "early next week",
+      normalizedStart: null, normalizedEnd: null, searchRangeStart, searchRangeEnd, durationMinutes: 45, timeZone: null, confidence: 0.9,
+      evidence: { sourceMessageId: "welcome-message", excerpt: "early next week" },
+    };
+    vi.spyOn(mailClient, "briefThread").mockResolvedValue({ ...briefResult, analysis: { proposals: [meeting], hiddenCount: 0 } });
+    const findTimes = vi.spyOn(mailClient, "findTimes");
+    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    try {
+      render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      const panel = screen.getByRole("complementary", { name: "Conversation context" });
+      fireEvent.click(await within(panel).findByRole("button", { name: "Get Brief" }));
+      expect(await within(panel).findByText("Walkthrough")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+      await screen.findByRole("dialog", { name: "Reply Message" });
+      const availability = await within(panel).findByRole("region", { name: "Availability" });
+      find.mockClear();
+      fireEvent.click(within(availability).getByRole("button", { name: "Find Times" }));
+
+      expect(await within(availability).findByText("From the suggested meeting: “early next week”.")).toBeInTheDocument();
+      await waitFor(() => expect(find).toHaveBeenCalledWith(expect.objectContaining({
+        rangeStart: searchRangeStart, rangeEnd: searchRangeEnd, preferences: expect.objectContaining({ defaultDurationMinutes: 45 }),
+      })));
+      expect(findTimes).not.toHaveBeenCalled();
+    } finally {
+      localStorage.removeItem("threestrands.demoCorrespondence");
+    }
   });
 
   it("reads the conversation for Find Times in a reply's panel when Draft Assist is on", async () => {

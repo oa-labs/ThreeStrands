@@ -510,7 +510,12 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       const fixture = seed.aiFixtures?.[request.threadId]?.chat;
       return {
         availability: wantsTimes
-          ? { rangeStart: now.toISOString(), rangeEnd: new Date(now.getTime() + 7 * 86_400_000).toISOString(), durationMinutes: 30 }
+          ? {
+            rangeStart: now.toISOString(), rangeEnd: new Date(now.getTime() + 7 * 86_400_000).toISOString(), durationMinutes: 30,
+            weekdays: [],
+            dayStart: /\bafternoons?\b/i.test(request.question) ? "12:00" : null,
+            dayEnd: /\bmornings?\b/i.test(request.question) ? "12:00" : null,
+          }
           : null,
         answer: (request.searchMailbox ? fixture?.answer : undefined) ?? `In the demo, answers come from “${detail.thread.subject}”: ${detail.thread.snippet}`,
         analysis: request.includeProposals && fixture ? structuredClone(fixture.analysis) : { proposals: [], hiddenCount: 0 },

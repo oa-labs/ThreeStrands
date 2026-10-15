@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Check, Copy, Pencil, RefreshCw, RotateCcw, Sparkles } from "lucide-react";
 import type { ActionProposal, AvailabilityCandidate, AvailabilityPreferences, MeetingProposal, ThreadDetail } from "./domain";
-import { MeetingScheduler, type CalendarAddition, type ScheduleSlot } from "./MeetingScheduler";
+import type { CalendarAddition, ScheduleSlot } from "./MeetingScheduler";
+import { FindTimesCard } from "./FindTimesCard";
 import { planMeeting } from "./scheduling";
 import { HoverTooltip } from "./AppChrome";
 import { parseAddress } from "./emailAddress";
@@ -191,11 +192,13 @@ export function ThreadAssist({ detail, summary, suggestions, scheduling, loading
             <div className="action-proposal-card-header"><span className="proposal-kind">{kind}</span>{uncertain || needsReview ? <span className="proposal-check">Check details</span> : null}</div>
             <strong>{proposal.title}</strong>
             {proposal.type === "meeting" ? <><p>{proposal.rawTimeLanguage || "Time not specified"}</p>{proposal.location ? <p>{proposal.location}</p> : null}{proposal.participants.length > 0 ? <p>{proposal.participants.join(", ")}</p> : null}</> : <p>{proposal.notes || proposal.kind.replace("_", " ")}{proposal.dueValue ? ` · Due ${proposal.dueValue}` : ""}</p>}
-            {proposal.type === "meeting" ? <MeetingScheduler
+            {proposal.type === "meeting" ? <FindTimesCard
               key={[proposal.intent, proposal.normalizedStart, proposal.normalizedEnd, proposal.eventDate, proposal.searchRangeStart, proposal.searchRangeEnd, proposal.durationMinutes, proposal.timeZone].join("|")}
               plan={planMeeting(proposal, new Date(), scheduling.preferences.defaultDurationMinutes)}
               preferences={scheduling.preferences}
               calendarConnected={scheduling.calendarConnected}
+              // The AI section stays read-only; Thread Chat is where to ask for other days in words.
+              ai={null}
               onAddToCalendar={(slot) => scheduling.onAddToCalendar(index, proposal, slot)}
               onReplyWithTimes={scheduling.onReplyWithTimes}
               onConfirmTime={scheduling.onConfirmTime}

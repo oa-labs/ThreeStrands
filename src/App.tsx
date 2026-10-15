@@ -66,13 +66,13 @@ import { ImageLightbox } from "./ImageLightbox";
 import { LabelManager } from "./LabelManager";
 import { conversationLabelGroups, formatLabelName, labelCapabilities } from "./labels";
 import { MeetingProposalDialog } from "./MeetingProposalDialog";
-import { MeetingScheduler } from "./MeetingScheduler";
+import { FindTimesCard } from "./FindTimesCard";
 import { MessageCard } from "./MessageCard";
 import { OpenedCalendarDialog } from "./OpenedCalendarDialog";
 import { PanelResizeHandle, useInboxWidth } from "./PanelResizeHandle";
 import { messagesWithQueuedReplies, queuedMessage } from "./queuedReplies";
 import { AvailabilitySection } from "./RecipientSections";
-import { planChatAvailability } from "./scheduling";
+import { planChatAvailability, suggestedSearch } from "./scheduling";
 import { SearchField } from "./SearchField";
 import { readSelectedAccountId, readSelectedMailboxForAccount } from "./settings";
 import type { SettingsSection } from "./settingsPanelTypes";
@@ -1144,6 +1144,7 @@ export function App() {
                 preferences={availabilityPreferences}
                 ai={aiDraftAvailable}
                 draft={correspondence.liveDraft}
+                suggest={() => suggestedSearch(actionProposals, new Date(), availabilityPreferences.defaultDurationMinutes)}
                 onInsertTimes={draftAvailabilityReply}
                 onOpenCalendarSettings={() => openSettingsAt("calendarAccounts")}
               />
@@ -1210,10 +1211,12 @@ export function App() {
               onOpenCalendarEvent={(event) => openCalendarView(eventDate(event), event)}
               onOpenSettings={() => openSettingsAt("ai")}
               renderAvailability={(availability) => (
-                <MeetingScheduler
-                  key={`${availability.rangeStart}|${availability.rangeEnd}|${availability.durationMinutes}`}
+                <FindTimesCard
+                  key={[availability.rangeStart, availability.rangeEnd, availability.durationMinutes, availability.weekdays.join(","), availability.dayStart, availability.dayEnd].join("|")}
                   plan={planChatAvailability(availability, new Date(), availabilityPreferences.defaultDurationMinutes)}
                   {...meetingScheduling}
+                  // A follow-up question adjusts these times; the chat box is already the place to type.
+                  ai={null}
                   onAddToCalendar={(slot) => addMeetingToCalendar(slot, { title: visibleDetail.thread.subject, participants: [], excerpt: null }, null)}
                 />
               )}
