@@ -25,6 +25,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Adding members to a group no longer offers to create a new contact for an address that already belongs to someone in your address book; it picks that person instead. Typing the address of someone already in the group now says so rather than adding them again.
 - The folder menu (Inbox, Drafts, Outbox, and the rest) works again while a draft is open, and switching folders saves what you've typed first.
 - In **Calendar**, the button that hides the side panel no longer covers the event count next to **Today's agenda**.
+- In **Files**, the sender in **File details** no longer has "Opens in Contacts" stuck to the end of their name.
 - **Draft Reply With AI** and **Enhance With AI** now say what setup is missing when no API key is configured, instead of doing nothing or failing after you click.
 
 ## 0.125.4 — 2026-10-15

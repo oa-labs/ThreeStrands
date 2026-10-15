@@ -125,6 +125,17 @@ describe("primary workspace headers", () => {
     expect(lastDeclaration(".file-detail-metadata > div", "align-items")).toBe("baseline");
   });
 
+  it("stacks only the sender's email under the name, leaving the name's hidden hint hidden", () => {
+    // A rule for every span in a detail value also displayed the sender's hidden
+    // "Opens in Contacts" description, running it into the name.
+    const spanDisplay: string[] = [];
+    css.walkRules((rule) => {
+      if (rule.selectors.some((selector) => /\.file-detail-metadata\b.*\bspan\b/.test(selector))) rule.walkDecls("display", () => spanDisplay.push(rule.selector));
+    });
+    expect(spanDisplay).toEqual([]);
+    expect(lastDeclaration(".file-detail-sender-email", "display")).toBe("block");
+  });
+
   it("titles Settings with the same page title type as the four workspaces", () => {
     for (const property of ["font-size", "font-weight", "letter-spacing"]) {
       expect(lastDeclaration(".settings-page-header h2", property)).toBe(lastDeclaration(".contacts-header h1", property));

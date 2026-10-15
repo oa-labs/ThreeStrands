@@ -220,7 +220,7 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
             <h2 className="file-detail-name">{meetingTitle(file) ?? file.attachment.filename}</h2>
             <p className="file-detail-meta">{fileTypeLabel(file.attachment.filename, file.attachment.mimeType)}{meetingTitle(file) ? ` · ${file.attachment.filename}` : ""} · {formatAttachmentSize(file.attachment.size)}</p>
             <dl className="file-detail-metadata">
-              <div><dt>From</dt><dd><FileSender file={file} own={accountIds} onOpenContact={onOpenContact} />{parseAddress(file.sender).email !== senderName(file) ? <span>{parseAddress(file.sender).email}</span> : null}</dd></div>
+              <div><dt>From</dt><dd><FileSender file={file} own={accountIds} onOpenContact={onOpenContact} />{parseAddress(file.sender).email !== senderName(file) ? <span className="file-detail-sender-email">{parseAddress(file.sender).email}</span> : null}</dd></div>
               <div><dt>{file.direction === "sent" ? "Sent" : "Received"}</dt><dd>{new Date(file.sentAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</dd></div>
               {showAccount ? <div><dt>Account</dt><dd>{file.accountId}</dd></div> : null}
             </dl>

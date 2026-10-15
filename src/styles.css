@@ -3285,7 +3285,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .file-detail-metadata .address { position: relative; display: inline-flex; max-width: 100%; }
 .file-detail-metadata dt { color: var(--muted); font-size: var(--text-meta); }
 .file-detail-metadata dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
-.file-detail-metadata dd span { display: block; color: var(--muted); font-size: var(--text-meta); }
+.file-detail-sender-email { display: block; color: var(--muted); font-size: var(--text-meta); }
 .file-detail-risk { display: flex; align-items: flex-start; gap: var(--space-1-5); margin: 0 0 var(--space-3); color: var(--warning); font-size: var(--text-secondary); }
 .file-detail-risk svg { flex: 0 0 auto; margin-top: var(--space-0-5); }
 .file-source-actions { margin: var(--space-1) 0 0 calc(var(--context-row-inset) + var(--context-glyph-column)); }

@@ -225,7 +225,7 @@ describe("Files workspace", () => {
     expect(within(row).getByText("Alice")).toHaveAttribute("title",report.sender);
     expect(row).not.toHaveTextContent("alice@example.com");
     expect(row).not.toHaveTextContent(report.accountId);
-    expect(within(screen.getByRole("complementary",{name:"File context"})).getByText("alice@example.com")).toBeInTheDocument();
+    expect(within(screen.getByRole("complementary",{name:"File context"})).getByText("alice@example.com")).toHaveClass("file-detail-sender-email");
     expect(container.querySelector(".file-list-heading-main")).toHaveTextContent("FilenameSenderDateSize");
     expect(container.querySelector(".context-row-wrap")).toHaveTextContent(report.subject);
   });
