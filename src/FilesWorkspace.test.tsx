@@ -161,6 +161,40 @@ describe("Files workspace", () => {
     render(<FilesWorkspace {...props} />);
     await waitFor(() => expect(within(screen.getByRole("complementary",{name:"File context"})).getByRole("heading",{name:hostile.attachment.filename})).toBeInTheDocument());
   });
+  it("names the source conversation by its subject alone, without repeating the sender and date above it", async () => {
+    vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[report],total:1});
+    const onOpenThread=vi.fn();
+    render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={onOpenThread} />);
+    const source=await screen.findByRole("region",{name:"Source conversation"});
+    expect(source).toHaveTextContent(report.subject);
+    expect(source).not.toHaveTextContent("Alice");
+    expect(source.querySelector("time, .context-row-date")).toBeNull();
+    fireEvent.click(within(source).getByRole("button",{name:new RegExp(report.subject)}));
+    expect(onOpenThread).toHaveBeenCalledWith(report.threadId);
+  });
+  it("re-reads the remembered number of files on return instead of showing ones that may since be spam", async () => {
+    const page=(offset:number,count:number)=>Array.from({length:count},(_,index)=>({...report,messageId:`m-${offset+index}`,attachment:{...report.attachment,id:`a-${offset+index}`,filename:`file-${offset+index}.pdf`}}));
+    const query=vi.spyOn(mailClient,"listFiles").mockImplementation(async ({offset=0}) => ({files:offset===0?page(0,50):page(50,10),total:60}));
+    const sessions={current:new Map<string,FilesWorkspaceSnapshot>()};
+    const props={accountId:report.accountId,accountIds:[report.accountId],onOpenThread:vi.fn(),sessions};
+    const view=render(<FilesWorkspace {...props} />);
+    await screen.findByRole("button",{name:/^file-0\.pdf/});
+    fireEvent.click(screen.getByRole("button",{name:"Load more files"}));
+    await screen.findByRole("button",{name:/^file-59\.pdf/});
+    fireEvent.click(screen.getByRole("button",{name:/^file-55\.pdf/}));
+    view.unmount();
+
+    // file-0's conversation was marked spam while Files was closed.
+    query.mockClear();
+    query.mockImplementation(async ({offset=0}) => ({files:offset===0?page(1,50):page(51,9),total:59}));
+    render(<FilesWorkspace {...props} />);
+    expect(screen.queryByRole("button",{name:/^file-0\.pdf/})).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Loading files…");
+    await screen.findByRole("button",{name:/^file-59\.pdf/});
+    expect(query.mock.calls.map(([request]) => request.offset)).toEqual([0,50]);
+    expect(screen.queryByRole("button",{name:/^file-0\.pdf/})).not.toBeInTheDocument();
+    expect(screen.getByRole("button",{name:/^file-55\.pdf/})).toHaveAttribute("aria-current","true");
+  });
   it("keeps secondary filters collapsed and lets users remove active filters without clearing search or stars", async () => {
     const query=vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[],total:0});
     render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} />);
@@ -231,6 +265,9 @@ describe("Files workspace", () => {
     expect(star).toHaveClass("btn");
     expect(star).toHaveTextContent("Star");
     expect(within(actions).getAllByRole("button").map((button) => button.textContent)).toEqual(["Open","Save as…","Star"]);
+    // Opening is what people come for, so it is the one primary action.
+    expect(within(actions).getByRole("button",{name:"Open"})).toHaveClass("btn","btn-primary");
+    for (const name of ["Save as…","Star forecast.pdf"]) expect(within(actions).getByRole("button",{name})).not.toHaveClass("btn-primary");
   });
   it("warns about a risky file and leaves confirmation to the native open", async () => {
     const risky={...report,attachment:{...report.attachment,id:"risky",filename:"Secure Message.html",mimeType:"text/html"}};

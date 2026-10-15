@@ -19,9 +19,10 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Times you offer or confirm in a reply now end with a familiar time zone abbreviation such as EDT or PST, instead of a name like America/New_York.
 - Attachments on a message now say what each part does: click the filename to open it, use the save button to save a copy, and the star at the end keeps it in **Files**. Attachments stacked in a column now line up.
 - Suggestions now read up to 10,000 characters of each message, so events further down a long newsletter aren't missed.
-- In **Files**, the details panel now lines up with its heading, and the **Star** button has a label like **Open** and **Save as…** beside it. Hover over the sender's name to see their contact card, or click it to open them in **Contacts**.
+- In **Files**, the details panel now lines up with its heading, and the **Star** button has a label like **Open** and **Save as…** beside it. Hover over the sender's name to see their contact card, or click it to open them in **Contacts**. **Open** is now the main button, and **Source conversation** shows just the email's subject instead of repeating the sender and date.
 
 ### Fixed
+- Returning to **Files** no longer briefly shows files from emails you marked as spam or deleted while you were away.
 - Emails written as preformatted text, such as some security and system notices, now wrap long lines to fit the reading pane instead of cutting them off at the edge.
 - Small icons in emails that specify only an image height now keep their proportions instead of appearing squeezed beside text.
 - Hovering over a message no longer shows a stray "Message content" tooltip.

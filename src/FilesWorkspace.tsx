@@ -20,7 +20,13 @@ import { AddressWithCard } from "./AddressWithCard";
 import { attachmentRisk } from "./attachmentRisk";
 import { FilePreview } from "./FilePreview";
 
-export type FilesWorkspaceSnapshot = { files: WorkspaceFile[]; total: number; hiddenCalendar?: number; selected: string | null; search: string; sender: string; type: string; direction: "" | "received" | "sent"; scope: string; after: string; before: string; starred: boolean; scroll: number };
+/**
+ * What Files remembers while another view is open: filters, selection,
+ * scroll, and how many files were loaded. Not the files themselves, which
+ * may have been marked spam, trashed, or unstarred meanwhile; the same number
+ * are read again before the list shows.
+ */
+export type FilesWorkspaceSnapshot = { loaded: number; selected: string | null; search: string; sender: string; type: string; direction: "" | "received" | "sent"; scope: string; after: string; before: string; starred: boolean; scroll: number };
 const PAGE_SIZE = 50;
 const keyFor = (file: WorkspaceFile) => JSON.stringify([file.accountId, file.messageId, file.attachment.id]);
 const senderName = (file: WorkspaceFile) => formatDisplayName(parseAddress(file.sender).name);
@@ -66,9 +72,9 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
   const sessionKey=accountId ?? "all";
   const restored=useRef(sessions?.current.get(sessionKey));
   const main=useRef<HTMLDivElement>(null);
-  const [files, setFiles] = useState<WorkspaceFile[]>(restored.current?.files ?? []);
-  const [total, setTotal] = useState(restored.current?.total ?? 0);
-  const [hiddenCalendar, setHiddenCalendar] = useState(restored.current?.hiddenCalendar ?? 0);
+  const [files, setFiles] = useState<WorkspaceFile[]>([]);
+  const [total, setTotal] = useState(0);
+  const [hiddenCalendar, setHiddenCalendar] = useState(0);
   const [showInvitations, setShowInvitationsState] = useState(readShowInvitations);
   const setShowInvitations = (show: boolean) => { setShowInvitationsState(show); writeShowInvitations(show); };
   const [selected, setSelected] = useState<string | null>(restored.current?.selected ?? null);
@@ -89,8 +95,8 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
     window.addEventListener("offline", changed);
     return () => { window.removeEventListener("online", changed); window.removeEventListener("offline", changed); };
   }, []);
-  const loaded = useRef(files.length);
-  loaded.current = files.length;
+  const loaded = useRef(restored.current?.loaded ?? 0);
+  if (files.length) loaded.current = files.length;
   const [load, setLoad] = useState<FileLoad>(() => ({ offset: 0, count: Math.max(PAGE_SIZE, loaded.current), attempt: 0 }));
   const reload = useCallback(() => setLoad((current) => ({ offset: 0, count: Math.max(PAGE_SIZE, loaded.current), attempt: current.attempt+1 })), []);
   const [loading, setLoading] = useState(true);
@@ -127,7 +133,7 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
     return () => { active=false; window.clearTimeout(timer); };
   }, [queryKey, load]);
   const snapshot=useRef<FilesWorkspaceSnapshot | null>(null);
-  snapshot.current={files,total,hiddenCalendar,selected,search,sender,type,direction,scope,after,before,starred,scroll:0};
+  snapshot.current={loaded:files.length || loaded.current,selected,search,sender,type,direction,scope,after,before,starred,scroll:0};
   useLayoutEffect(() => () => { if (sessions && snapshot.current) sessions.current.set(sessionKey,{...snapshot.current,scroll:main.current?.scrollTop ?? 0}); }, [sessions,sessionKey]);
   const scrollRestored=useRef(false);
   useLayoutEffect(() => { if (!loading && !scrollRestored.current && main.current) { main.current.scrollTop=restored.current?.scroll ?? 0; scrollRestored.current=true; } }, [loading]);
@@ -220,9 +226,9 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
             </dl>
             {risk ? <p className="file-detail-risk" role="note"><TriangleAlert size={ICON_SIZE.sm} aria-hidden="true" />{risk.reason}</p> : null}
             {file.availability === "offline" ? <p className="file-detail-meta">Available offline</p> : !online ? <p className="file-detail-meta" role="status">{file.availability === "download" ? "Connect to the internet to open this file." : "This file may need an internet connection."}</p> : null}
-            <div className="file-detail-actions"><button type="button" className="btn" onClick={() => action(mailClient.openAttachment(file.messageId,file.attachment.id))}><ExternalLink size={ICON_SIZE.sm} />Open</button><button type="button" className="btn" onClick={() => action(mailClient.saveAttachment(file.messageId,file.attachment.id))}><Download size={ICON_SIZE.sm} />Save as…</button><FileStarButton accountId={file.accountId} messageId={file.messageId} attachmentId={file.attachment.id} filename={file.attachment.filename} starred={file.starred} labeled /></div>
+            <div className="file-detail-actions"><button type="button" className="btn btn-primary" onClick={() => action(mailClient.openAttachment(file.messageId,file.attachment.id))}><ExternalLink size={ICON_SIZE.sm} />Open</button><button type="button" className="btn" onClick={() => action(mailClient.saveAttachment(file.messageId,file.attachment.id))}><Download size={ICON_SIZE.sm} />Save as…</button><FileStarButton accountId={file.accountId} messageId={file.messageId} attachmentId={file.attachment.id} filename={file.attachment.filename} starred={file.starred} labeled /></div>
           </div>
-          <ContextSection id="file-source" title="Source conversation" rows={[<ContextRow key="source" icon={<MessageSquareText size={ICON_SIZE.sm} />} title={file.subject} wrapTitle detail={senderName(file)} date={formatHistoryDate(file.sentAt)} onActivate={() => onOpenThread(file.threadId)} />]}
+          <ContextSection id="file-source" title="Source conversation" rows={[<ContextRow key="source" icon={<MessageSquareText size={ICON_SIZE.sm} />} title={file.subject} wrapTitle onActivate={() => onOpenThread(file.threadId)} />]}
             footer={onReportSpam && file.direction === "received" ? <div className="file-source-actions"><button type="button" className="btn btn-sm btn-danger" onClick={() => onReportSpam(file.threadId)}><ShieldAlert size={ICON_SIZE.sm} />Mark Spam</button></div> : null} />
         </> : <p className="context-status">Select a file to see its details and source email.</p>}
       </WorkspaceContextRail>
