@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ContactGroup, ContactGroupRecipients, ContactProfile } from "./domain";
-import { GROUP_VISIBLE_RECIPIENT_LIMIT, MAX_GROUP_SUGGESTIONS, filterGroups, groupCandidates, groupMembers, groupsForContact, matchingGroups, memberCountLabel, typedAddress } from "./contactGroups";
+import { GROUP_VISIBLE_RECIPIENT_LIMIT, MAX_GROUP_SUGGESTIONS, filterGroups, groupCandidates, groupMembers, groupToLine, groupsForContact, matchingGroups, memberCountLabel, typedAddress } from "./contactGroups";
 
 const profile = (id: string, displayName: string | null, addresses: string[]): ContactProfile => ({
   id, displayName, role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: false,
@@ -33,6 +33,14 @@ describe("contactGroups", () => {
   it("keeps the group's member order and skips members whose contact isn't loaded", () => {
     const board = group("g1", "Board", [bob.id, "contact:not-here", ada.id]);
     expect(groupMembers(board, [ada, bob]).map((item) => item.id)).toEqual([bob.id, ada.id]);
+  });
+
+  it("addresses a new message to each member once, by primary address", () => {
+    const quoted = profile("contact:quoted", "Doe, Jane", ["jane@example.com"]);
+    const sameAsBob = profile("contact:bob-alias", "Robert", ["BOB@example.com"]);
+    const board = group("g1", "Board", [bob.id, cyd.id, quoted.id, sameAsBob.id, "contact:not-here"]);
+    expect(groupToLine(board, [bob, cyd, quoted, sameAsBob])).toBe('Bob <bob@example.com>, cyd@example.com, "Doe, Jane" <jane@example.com>');
+    expect(groupToLine(group("g2", "Empty", []), [ada])).toBe("");
   });
 
   it("offers everyone not in the group, but not a derived duplicate of a member's address", () => {

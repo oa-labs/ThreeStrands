@@ -1,12 +1,12 @@
 import { useEffect, useId, useState } from "react";
-import { Check, Plus, Trash, UserPlus, Users, X } from "lucide-react";
+import { Check, Mail, Plus, Trash, UserPlus, Users, X } from "lucide-react";
 import { Modal } from "./AppChrome";
 import type { ContactGroup, ContactProfile } from "./domain";
 import { errorMessage } from "./errors";
 import { FindOrCreatePicker } from "./FindOrCreatePicker";
 import { InlineConfirm } from "./InlineConfirm";
 import { ICON_SIZE } from "./iconSizes";
-import { MAX_CONTACT_GROUP_NAME, groupCandidates, groupMembers, memberCountLabel, typedAddress } from "./contactGroups";
+import { MAX_CONTACT_GROUP_NAME, groupCandidates, groupMembers, groupToLine, memberCountLabel, typedAddress } from "./contactGroups";
 import { splitAddressList } from "./emailAddress";
 
 const contactName = (profile: ContactProfile) => profile.displayName || profile.addresses[0] || "Unnamed contact";
@@ -89,12 +89,13 @@ export function ContactGroupList({
   </>;
 }
 
-/** One group: rename it, see and change its members, or delete it. */
+/** One group: email it, rename it, see and change its members, or delete it. */
 export function ContactGroupDetail({
   group,
   profiles,
   busy,
   onOpenContact,
+  onCompose,
   onRename,
   onDelete,
   onAddMembers,
@@ -105,6 +106,8 @@ export function ContactGroupDetail({
   profiles: readonly ContactProfile[];
   busy: boolean;
   onOpenContact(id: string): void;
+  /** Opens a new message addressed to `to`; absent where compose isn't reachable. */
+  onCompose?(to: string): void;
   onRename(name: string): Promise<boolean>;
   onDelete(): Promise<void>;
   onAddMembers(contactIds: string[], emails: string[]): Promise<void>;
@@ -116,6 +119,7 @@ export function ContactGroupDetail({
   // Keyed by group id in the workspace, so only a rename needs syncing here.
   useEffect(() => setName(group.name), [group.name]);
   const members = groupMembers(group, profiles);
+  const toLine = groupToLine(group, profiles);
   const rename = async () => {
     if (name.trim() === group.name) {
       setName(group.name);
@@ -151,6 +155,7 @@ export function ContactGroupDetail({
         </div>
       </div>
       <div className="contact-profile-actions">
+        {onCompose ? <button type="button" className="btn btn-sm" disabled={busy || !toLine} onClick={() => onCompose(toLine)}><Mail size={ICON_SIZE.sm} />Email Group</button> : null}
         <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setAdding(true)}><UserPlus size={ICON_SIZE.sm} />Add Members</button>
         <button type="button" className="btn-icon" aria-label="Delete group" disabled={busy} onClick={() => setConfirmDelete(true)}><Trash size={ICON_SIZE.lg} /></button>
       </div>

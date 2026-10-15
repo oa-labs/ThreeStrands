@@ -370,11 +370,18 @@ dialog inset. Text inputs, selects, and search fields take their height from
 `--control-h`, `--control-h-sm`, or `--control-h-xs`, the same heights as
 buttons, so a field and the button beside it line up.
 
+Controls in one row share a midline. Small buttons (`--control-h-sm`) and
+icon buttons (`--control-h`) differ in height by design, so a row that mixes
+them must center its items instead of top-aligning them. Name a row of
+buttons `…-actions` and give it `align-items: center` alongside
+`display: flex`; do not fix an offset with margins on one button.
+
 Every padding, margin, and gap uses a scale step or a role; relative units
 (em, %, vw, vh) are allowed where spacing should follow the content or the
 window. `src/styleTokens.test.ts` fails on any raw length, on a list gutter
-and row inset that no longer add up to the pane inset, and on a custom
-property the stylesheet reads but never defines.
+and row inset that no longer add up to the pane inset, on a custom
+property the stylesheet reads but never defines, and on a flex `…-actions`
+row that does not set `align-items`.
 
 ## Icons, elevation, and state
 

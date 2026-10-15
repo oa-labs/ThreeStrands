@@ -1048,6 +1048,18 @@ describe("ContactsWorkspace",()=>{
       expect(screen.getByText("0 members",{selector:".contact-identity-meta"})).toBeInTheDocument();
     });
 
+    it("starts a new message to the group's members, and only when it has any",async()=>{
+      vi.mocked(mailClient.listContactProfiles).mockResolvedValue([jane,newerContact]);
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([withMembers(board,jane.id,newerContact.id),{...board,id:"group-empty",name:"Empty"}]);
+      const onCompose=vi.fn();
+      render(<ContactsWorkspace onOpenThread={vi.fn()} onCompose={onCompose} onSaved={vi.fn()} initialView="groups"/>);
+      await within(await screen.findByRole("region",{name:"Members"})).findByRole("button",{name:/Newer Person.*newer@example.com/});
+      fireEvent.click(screen.getByRole("button",{name:"Email Group"}));
+      expect(onCompose).toHaveBeenCalledWith("Jane Doe <jane@example.com>, Newer Person <newer@example.com>");
+      fireEvent.click(screen.getByRole("button",{name:/Empty.*0 members/}));
+      expect(await screen.findByRole("button",{name:"Email Group"})).toBeDisabled();
+    });
+
     it("opens a member's profile in All Contacts",async()=>{
       vi.mocked(mailClient.listContactGroups).mockResolvedValue([withMembers(board,jane.id)]);
       const onViewChange=vi.fn();

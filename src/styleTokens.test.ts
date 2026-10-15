@@ -193,6 +193,22 @@ function componentDeclarations(property: RegExp) {
   return declarations;
 }
 
+describe("alignment", () => {
+  it("centers every flex row of actions, so a small button and an icon button beside it share a midline", () => {
+    const flexRows = new Set<string>();
+    const aligned = new Set<string>();
+    css.walkRules((rule) => {
+      const actions = rule.selectors.filter((selector) => /-actions$/.test(selector.trim()));
+      rule.walkDecls((declaration) => {
+        if (declaration.prop === "display" && /^(inline-)?flex$/.test(declaration.value)) actions.forEach((selector) => flexRows.add(selector.trim()));
+        if (declaration.prop === "align-items") actions.forEach((selector) => aligned.add(selector.trim()));
+      });
+    });
+    expect(flexRows.size).toBeGreaterThan(0);
+    expect([...flexRows].filter((selector) => !aligned.has(selector))).toEqual([]);
+  });
+});
+
 describe("elevation and state", () => {
   it("lifts surfaces only with the elevation tokens; rings and inset edges stay literal", () => {
     const raw = componentDeclarations(/^box-shadow$/)

@@ -1,5 +1,5 @@
 import type { ContactGroup, ContactGroupRecipients, ContactProfile } from "./domain";
-import { parseAddress } from "./emailAddress";
+import { formatAddress, parseAddress } from "./emailAddress";
 
 /** Mirrors `MAX_GROUP_NAME` in `src-tauri/src/db/contact_groups.rs`. */
 export const MAX_CONTACT_GROUP_NAME = 100;
@@ -33,6 +33,20 @@ export function filterGroups(groups: readonly ContactGroup[], needle: string): C
 export function groupMembers(group: ContactGroup, profiles: readonly ContactProfile[]): ContactProfile[] {
   const byId = new Map(profiles.map((profile) => [profile.id, profile]));
   return group.memberIds.flatMap((id) => byId.get(id) ?? []);
+}
+
+/**
+ * The group as a To line for a new message: each member once, by their
+ * primary (first) address, the same address choosing the group in To adds.
+ */
+export function groupToLine(group: ContactGroup, profiles: readonly ContactProfile[]): string {
+  const seen = new Set<string>();
+  return groupMembers(group, profiles).flatMap((member) => {
+    const email = member.addresses[0];
+    if (!email || seen.has(email.toLocaleLowerCase())) return [];
+    seen.add(email.toLocaleLowerCase());
+    return [formatAddress(member.displayName, email)];
+  }).join(", ");
 }
 
 /**

@@ -16,7 +16,7 @@ The panel beside a conversation shows the same profile, with related tasks and m
 
 ## Groups
 
-Click **New Group** to create one, then **Add Members**. Typing a group's name in To or Cc offers the whole group, which expands into individual recipients.
+Click **New Group** to create one, then **Add Members**. **Email Group** starts a new message to everyone in the group. Typing a group's name in To or Cc also offers the whole group, which expands into individual recipients.
 
 ## Keep in Touch
 
