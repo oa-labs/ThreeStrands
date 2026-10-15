@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { mailClient } from "./data/client";
 import type { Account, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
-import { ContactFilesSection, DomainSection, RecentEmailsSection, ThreadOutlineSection } from "./ContextSections";
+import { ContactFilesSection, DomainSection, RecentEmailsSection, ThreadOutlineSection, type RecentEmailItem } from "./ContextSections";
 import { RecipientChips, RecipientSummary } from "./RecipientSections";
 import { parseAddress, splitAddressList } from "./emailAddress";
 import { logBackgroundFailure } from "./errors";
-import { SenderSection, TrustSection, type SenderActions } from "./SenderSections";
+import { SenderDecisions, TrustSection, useSenderHistory, type SenderActions, type SenderTarget } from "./SenderSections";
 import { bulkMessage, latestInbound } from "./senderSignals";
 
 /** A reply in the open conversation, as the context panel shows it. */
@@ -202,8 +202,22 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, reply = n
   }
   const inbound = useMemo(() => detail ? latestInbound(detail, own) : null, [detail, own]);
   const bulk = useMemo(() => detail ? bulkMessage(detail, own) : null, [detail, own]);
-  const bulkSender = bulk ? parseAddress(bulk.sender) : null;
-  const otherEmails = timeline.filter((item) => item.threadId !== detail?.thread.id).slice(0, 5);
+  const senderTarget = useMemo<SenderTarget | null>(() => {
+    if (!detail || !sender || !bulk) return null;
+    const from = parseAddress(bulk.sender);
+    return from.email.toLocaleLowerCase() === email ? { accountId: detail.thread.accountId, email, name: from.name } : null;
+  }, [detail, sender, bulk, email]);
+  const senderHistory = useSenderHistory(senderTarget, detail?.thread.id ?? "");
+  // The contact index leaves automated mail out, so a bulk sender's own mail
+  // joins the person's conversations in one newest-first list.
+  const recentEmails = useMemo<RecentEmailItem[]>(() => {
+    const otherEmails = timeline.filter((item) => item.threadId !== detail?.thread.id).slice(0, 5);
+    const merged = new Map<string, RecentEmailItem>(otherEmails.map((item) => [item.threadId, item]));
+    for (const item of senderHistory.history?.threads ?? []) {
+      if (item.threadId !== detail?.thread.id && !merged.has(item.threadId)) merged.set(item.threadId, item);
+    }
+    return [...merged.values()].sort((left, right) => right.sentAt.localeCompare(left.sentAt));
+  }, [timeline, senderHistory.history, detail?.thread.id]);
   const showMessage = onShowMessage ?? ((threadId: string) => onOpenThread(threadId));
   return (
     <aside className="context-panel" aria-label="Conversation context" tabIndex={-1} onKeyDown={onKeyDown}>
@@ -224,23 +238,23 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, reply = n
       {detail && related ? related(person, [...meetingPeople.values()]) : null}
       {inbound ? <TrustSection key={inbound.id} message={inbound} bulk={Boolean(bulk)} /> : null}
       {detail ? <ThreadOutlineSection detail={detail} accounts={accounts} onShowMessage={showMessage} /> : null}
-      {detail && sender && bulkSender && bulkSender.email.toLocaleLowerCase() === email ? (
-        <SenderSection
-          target={{ accountId: detail.thread.accountId, email, name: bulkSender.name }}
-          threadId={detail.thread.id}
-          hideThreadIds={otherEmails.map((item) => item.threadId)}
-          actions={sender}
-          onOpenThread={onOpenThread}
-        />
-      ) : null}
       {person ? <ContactFilesSection key={person.contactId} contactId={person.contactId} onShowMessage={showMessage} /> : null}
-      {person && otherEmails.length > 0 ? <RecentEmailsSection items={otherEmails} onOpenThread={onOpenThread} /> : null}
+      {senderTarget && sender ? (
+        // Waits for the sender's mail so the rows arrive together.
+        senderHistory.settled ? (
+          <RecentEmailsSection
+            items={recentEmails}
+            onOpenThread={onOpenThread}
+            closing={<SenderDecisions key={detail?.thread.id} target={senderTarget} history={senderHistory.history} actions={sender} />}
+          />
+        ) : null
+      ) : person && recentEmails.length > 0 ? <RecentEmailsSection items={recentEmails} onOpenThread={onOpenThread} /> : null}
       {person ? (
         <DomainSection
           email={person.email}
           addresses={person.addresses}
           accounts={accounts}
-          hideThreadIds={[...(detail ? [detail.thread.id] : []), ...otherEmails.map((item) => item.threadId)]}
+          hideThreadIds={[...(detail ? [detail.thread.id] : []), ...recentEmails.map((item) => item.threadId)]}
           onOpenThread={onOpenThread}
         />
       ) : null}

@@ -806,7 +806,7 @@ describe("bulk sender decisions in the context panel", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     const panel = screen.getByRole("complementary", { name: "Conversation context" });
-    const sender = await within(panel).findByRole("region", { name: /^From / });
+    const sender = await within(panel).findByRole("region", { name: "Recent emails" });
     expect(within(panel).getByRole("region", { name: "Trust" })).toBeInTheDocument();
 
     await act(async () => {
@@ -863,12 +863,12 @@ describe("bulk sender decisions in the context panel", () => {
     const mutateThreads = vi.spyOn(mailClient, "mutateThreads");
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    const sender = await screen.findByRole("region", { name: /^From / });
-    const email = sender.querySelector(".context-domain")!.textContent!;
+    const sender = await screen.findByRole("region", { name: "Recent emails" });
     await act(async () => {
       within(sender).getByRole("button", { name: "Mute…" }).click();
     });
     const dialog = await screen.findByRole("dialog", { name: "Mute Sender" });
+    const email = within(dialog).getByRole("option", { name: /^Address / }).textContent!.replace(/^Address /, "");
     expect(mute).not.toHaveBeenCalled();
     await act(async () => {
       within(dialog).getByRole("button", { name: "Mute Sender" }).click();
@@ -895,7 +895,7 @@ describe("bulk sender decisions in the context panel", () => {
   it("unmutes a muted sender from the panel", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    const sender = await screen.findByRole("region", { name: /^From / });
+    const sender = await screen.findByRole("region", { name: "Recent emails" });
     await act(async () => {
       within(sender).getByRole("button", { name: "Mute…" }).click();
     });
@@ -906,10 +906,11 @@ describe("bulk sender decisions in the context panel", () => {
     await act(async () => {
       within(dialog).getByRole("button", { name: "Mute Sender" }).click();
     });
-    const muted = await screen.findByRole("region", { name: /^From / });
-    await waitFor(() => expect(muted).toHaveTextContent("Muted"));
+    const muted = await screen.findByRole("region", { name: "Recent emails" });
+    const unmute = await within(muted).findByRole("button", { name: "Unmute" });
+    expect(unmute).toHaveAttribute("title", "Muted");
     await act(async () => {
-      within(muted).getByRole("button", { name: "Unmute" }).click();
+      unmute.click();
     });
     expect(await screen.findByRole("status")).toHaveTextContent(/^Unmuted /);
     expect(await mailClient.listSenderRules()).toEqual([]);
@@ -919,7 +920,7 @@ describe("bulk sender decisions in the context panel", () => {
     const create = vi.spyOn(mailClient, "createSplitInbox");
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    const sender = await screen.findByRole("region", { name: /^From / });
+    const sender = await screen.findByRole("region", { name: "Recent emails" });
     await act(async () => {
       within(sender).getByRole("button", { name: "New Split…" }).click();
     });

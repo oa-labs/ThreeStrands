@@ -2272,7 +2272,9 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-organization .context-section-note > span { min-width:0; overflow-wrap:anywhere; }
 .context-file-base { min-width:0; overflow:hidden; text-overflow:ellipsis; }
 /* Compose context: the panel while writing a message outside the open conversation. */
-.context-sender-actions { display:flex; flex-wrap:wrap; gap:var(--space-1-5); margin:0 0 var(--space-2) calc(var(--context-row-inset) + var(--context-glyph-column)); }
+/* A bulk sender's decisions: quiet links under the rows, so they never outrank the open message. */
+.context-sender-actions { display:flex; flex-wrap:wrap; align-items:baseline; gap:var(--space-1) var(--space-3); margin:var(--space-1-5) 0 0 calc(var(--context-row-inset) + var(--context-glyph-column)); }
+.context-sender-state { color:var(--muted); font-size:var(--text-control); }
 .context-row-warning .context-row-glyph { color:var(--warning); }
 .context-row-verified .context-row-glyph { color:var(--success); }
 .compose-check { display:grid; gap:var(--space-1); padding:var(--space-1-5) 0 var(--space-1-5) var(--space-2-5); border-left:2px solid var(--border); color:var(--muted); font-size:var(--text-meta); line-height:var(--leading-normal); }

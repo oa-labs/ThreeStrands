@@ -473,20 +473,28 @@ describe("ContextPanel",()=>{
       vi.mocked(mailClient.messageTrust).mockResolvedValue(verified);
     });
 
-    it("puts Trust with the conversation and the sender's history and decisions first about the person",async()=>{
+    it("lists the sender's mail in Recent emails with quiet decision links at the bottom",async()=>{
       const sender=actions();
       renderPanel({detail:newsDetail(),sender,assist:<section aria-label="Brief">brief</section>,related:()=><section aria-label="Conversation tasks">tasks</section>});
       const panel=screen.getByRole("complementary",{name:"Conversation context"});
-      const from=await within(panel).findByRole("region",{name:`From ${news}`});
+      const from=await within(panel).findByRole("region",{name:"Recent emails"});
       await within(panel).findByRole("region",{name:"Trust"});
       const regions=within(panel).getAllByRole("region").map((region)=>region.getAttribute("aria-label")??region.textContent?.split(/\d/)[0].trim());
-      expect(regions).toEqual(["Brief","Conversation tasks","Trust",`From ${news}`]);
+      expect(regions).toEqual(["Brief","Conversation tasks","Trust","Recent emails"]);
       expect(mailClient.senderHistory).toHaveBeenCalledWith("you@example.com",news,20);
-      expect(from).toHaveTextContent("4 emails since");
-      expect(from).toHaveTextContent("1 of 4 read");
+      // One simple card: no separate sender card or statistics line.
+      expect(within(panel).queryByRole("region",{name:/^From /})).not.toBeInTheDocument();
+      expect(from.querySelector(".context-section-note")).toBeNull();
       // The open conversation is not listed again under its own sender.
       expectContextRows(from);
       expect([...from.querySelectorAll(".context-row-title")].map((title)=>title.textContent)).toEqual(["Last week"]);
+      // The decisions are links after the rows, never full buttons.
+      const decisions=from.querySelector(".context-sender-actions");
+      expect(decisions).toBe(from.querySelector(":scope > div")?.lastElementChild);
+      for(const control of decisions!.querySelectorAll("button")){
+        expect(control).toHaveClass("btn-link");
+        expect(control).not.toHaveClass("btn");
+      }
       fireEvent.click(within(from).getByRole("button",{name:"Unsubscribe"}));
       expect(sender.onUnsubscribe).toHaveBeenCalled();
       fireEvent.click(within(from).getByRole("button",{name:"New Split…"}));
@@ -499,7 +507,8 @@ describe("ContextPanel",()=>{
     it("treats the Updates or Promotions category as bulk mail without an unsubscribe option",async()=>{
       for(const label of ["CATEGORY_UPDATES","CATEGORY_PROMOTIONS"]){
         renderPanel({detail:newsDetail({labels:["INBOX",label],unsubscribe:false}),sender:actions({onUnsubscribe:undefined})});
-        const from=await screen.findByRole("region",{name:`From ${news}`});
+        const from=await screen.findByRole("region",{name:"Recent emails"});
+        expect(within(from).getByRole("button",{name:"Mute…"})).toBeInTheDocument();
         expect(within(from).queryByRole("button",{name:"Unsubscribe"})).not.toBeInTheDocument();
         cleanup();
       }
@@ -508,7 +517,7 @@ describe("ContextPanel",()=>{
     it("names the split that already takes the sender's mail instead of offering a new one",async()=>{
       const split={id:"s",name:"Launch",matchKind:"domain" as const,matchValue:"launch.example",sortOrder:0,createdAt:"",accountId:"you@example.com"};
       renderPanel({detail:newsDetail(),sender:actions({splits:[split]})});
-      const from=await screen.findByRole("region",{name:`From ${news}`});
+      const from=await screen.findByRole("region",{name:"Recent emails"});
       expect(from).toHaveTextContent("Sorted into Launch");
       expect(within(from).queryByRole("button",{name:"New Split…"})).not.toBeInTheDocument();
     });
@@ -516,7 +525,7 @@ describe("ContextPanel",()=>{
     it("offers Mute with the Inbox conversations to archive, and Unmute once muted",async()=>{
       const sender=actions();
       renderPanel({detail:newsDetail(),sender});
-      const from=await screen.findByRole("region",{name:`From ${news}`});
+      const from=await screen.findByRole("region",{name:"Recent emails"});
       fireEvent.click(within(from).getByRole("button",{name:"Mute…"}));
       expect(sender.onMute).toHaveBeenCalledWith({accountId:"you@example.com",email:news,name:"Launch News"},["news-3","news-2","news-1"]);
       cleanup();
@@ -524,11 +533,34 @@ describe("ContextPanel",()=>{
       const rule={id:"r",accountId:"you@example.com",matchKind:"domain" as const,matchValue:"launch.example",action:"mute" as const,createdAt:"2026-10-01T00:00:00Z"};
       const muted=actions({rules:[rule]});
       renderPanel({detail:newsDetail(),sender:muted});
-      const mutedSection=await screen.findByRole("region",{name:`From ${news}`});
-      expect(mutedSection).toHaveTextContent("Muted, with everyone at launch.example");
+      const mutedSection=await screen.findByRole("region",{name:"Recent emails"});
+      expect(within(mutedSection).getByRole("button",{name:"Unmute"})).toHaveAttribute("title","Muted, with everyone at launch.example");
       expect(within(mutedSection).queryByRole("button",{name:"Mute…"})).not.toBeInTheDocument();
       fireEvent.click(within(mutedSection).getByRole("button",{name:"Unmute"}));
       expect(muted.onUnmute).toHaveBeenCalledWith(rule);
+    });
+
+    it("merges the person's conversations with the sender's mail, newest first, without repeats",async()=>{
+      vi.mocked(mailClient.contactTimeline).mockResolvedValue([
+        {threadId:"news-2",accountId:"you@example.com",contactEmail:news,subject:"Last week",snippet:"Recap",sentAt:"2026-09-30T09:00:00Z",labels:[]},
+        {threadId:"order-1",accountId:"you@example.com",contactEmail:news,subject:"Your order shipped",snippet:"",sentAt:"2026-10-01T09:00:00Z",labels:[]},
+        {threadId:"survey-1",accountId:"you@example.com",contactEmail:news,subject:"Feedback",snippet:"",sentAt:"2026-08-01T09:00:00Z",labels:[]},
+      ]);
+      renderPanel({detail:newsDetail(),sender:actions()});
+      const recent=await screen.findByRole("region",{name:"Recent emails"});
+      await waitFor(()=>expect([...recent.querySelectorAll(".context-row-title")].map((title)=>title.textContent)).toEqual(["Your order shipped","Last week","Feedback"]));
+      expect(screen.getAllByRole("region",{name:"Recent emails"})).toHaveLength(1);
+      expectContextRows(recent);
+    });
+
+    it("keeps the decisions when the sender's history cannot be read",async()=>{
+      vi.mocked(mailClient.senderHistory).mockRejectedValue(new Error("offline"));
+      const sender=actions();
+      renderPanel({detail:newsDetail(),sender});
+      const recent=await screen.findByRole("region",{name:"Recent emails"});
+      expect(within(recent).queryByRole("button",{name:/^Archive/})).not.toBeInTheDocument();
+      fireEvent.click(within(recent).getByRole("button",{name:"Mute…"}));
+      expect(sender.onMute).toHaveBeenCalledWith({accountId:"you@example.com",email:news,name:"Launch News"},[]);
     });
 
     it("leaves the sender section out of personal mail and shows Trust there only when something needs a look",async()=>{
@@ -537,7 +569,7 @@ describe("ContextPanel",()=>{
       await personLoaded(bob.id);
       await waitFor(()=>expect(mailClient.messageTrust).toHaveBeenCalledWith("2"));
       expect(screen.queryByRole("region",{name:"Trust"})).not.toBeInTheDocument();
-      expect(screen.queryByRole("region",{name:/^From /})).not.toBeInTheDocument();
+      expect(document.querySelector(".context-sender-actions")).toBeNull();
       expect(mailClient.senderHistory).not.toHaveBeenCalled();
       cleanup();
 

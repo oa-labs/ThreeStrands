@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Eye, Link2, Mail, Reply, Shield, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Eye, Link2, Reply, Shield, ShieldCheck, TriangleAlert } from "lucide-react";
 import type { Message, MessageTrust, SenderHistory, SenderRule, SplitInbox } from "./domain";
 import { mailClient } from "./data/client";
 import { ContextRow, ContextSection } from "./ContextSections";
-import { formatHistoryDate } from "./contactContext";
-import { decodeHtmlEntities } from "./SafeMessage";
 import { ICON_SIZE } from "./iconSizes";
 import { logBackgroundFailure } from "./errors";
-import { analyzeLinks, describeSender, matchingRule, matchingSplit, SENDER_HISTORY_LIMIT, trustFindings, type TrustFinding } from "./senderSignals";
+import { analyzeLinks, matchingRule, matchingSplit, SENDER_HISTORY_LIMIT, trustFindings, type TrustFinding } from "./senderSignals";
 
 /** The bulk sender a Sender section is about. */
 export type SenderTarget = { accountId: string; email: string; name: string };
@@ -30,84 +28,66 @@ export type SenderActions = {
 };
 
 /**
- * What the user has received from a bulk sender in this account, and what to
- * do about it: unsubscribe, archive what is still in the Inbox, mute the
- * sender so sync archives their new mail, or give the sender a split. Earlier conversations from the sender follow, since the
- * contact index (and so Recent emails) leaves automated mail out.
+ * What the user has received from a bulk sender in this account, reloaded
+ * when the open conversation changes. `settled` turns true once the read
+ * finishes, so the panel can wait for it rather than reorder rows; a failed
+ * read leaves `history` null.
  */
-export function SenderSection({ target, threadId, hideThreadIds, actions, onOpenThread }: {
-  target: SenderTarget;
-  /** The open conversation, which the rows leave out. */
-  threadId: string;
-  /** Conversations other sections already list. */
-  hideThreadIds: string[];
-  actions: SenderActions;
-  onOpenThread(id: string): void;
-}) {
-  const { accountId, email } = target;
-  const [history, setHistory] = useState<SenderHistory | null>(null);
-  // Hides Archive once used, until the next load says what is left.
-  const [archived, setArchived] = useState(false);
+export function useSenderHistory(target: SenderTarget | null, threadId: string) {
+  const accountId = target?.accountId ?? "";
+  const email = target?.email ?? "";
+  const [state, setState] = useState<{ key: string; history: SenderHistory | null } | null>(null);
+  const key = `${accountId}\n${email}\n${threadId}`;
   useEffect(() => {
+    if (!email) return;
     let active = true;
-    setHistory(null);
-    setArchived(false);
     mailClient.senderHistory(accountId, email, SENDER_HISTORY_LIMIT)
-      .then((loaded) => { if (active) setHistory(loaded); })
+      .then((loaded) => { if (active) setState({ key, history: loaded }); })
       .catch((reason: unknown) => {
-        // The section is supplementary; a failed read leaves it out.
-        if (active) setHistory(null);
+        // The history is supplementary; a failed read leaves its rows out.
+        if (active) setState({ key, history: null });
         logBackgroundFailure("Sender history")(reason);
       });
     return () => { active = false; };
-  }, [accountId, email, threadId]);
-  if (!history || history.receivedCount === 0) return null;
-  const facts = describeSender(history);
+  }, [accountId, email, key]);
+  const settled = Boolean(email) && state?.key === key;
+  return { history: settled ? state.history : null, settled };
+}
+
+/**
+ * What to do about a bulk sender, as quiet links under Recent emails:
+ * unsubscribe, archive what is still in the Inbox, mute the sender so sync
+ * archives their new mail, or give the sender a split. A mute or split that
+ * already covers the sender replaces its link with the current state.
+ */
+export function SenderDecisions({ target, history, actions }: {
+  target: SenderTarget;
+  history: SenderHistory | null;
+  actions: SenderActions;
+}) {
+  const { accountId, email } = target;
+  // Hides Archive once used; the panel remounts this for the next conversation.
+  const [archived, setArchived] = useState(false);
   const split = matchingSplit(actions.splits, accountId, email);
   const rule = matchingRule(actions.rules, accountId, email);
-  if (rule) facts.push(rule.matchKind === "domain" ? `Muted, with everyone at ${rule.matchValue}` : "Muted");
-  if (split) facts.push(`Sorted into ${split.name}`);
-  const inbox = archived ? [] : history.inboxThreadIds;
-  const hidden = new Set([threadId, ...hideThreadIds]);
-  const rows = history.threads.filter((item) => !hidden.has(item.threadId)).map((item) => {
-    const snippet = decodeHtmlEntities(item.snippet).replace(/\s+/g, " ").trim();
-    return (
-      <ContextRow
-        key={item.threadId}
-        icon={<Mail size={ICON_SIZE.sm} />}
-        title={item.subject || "(no subject)"}
-        date={formatHistoryDate(item.sentAt)}
-        detail={snippet || undefined}
-        onActivate={() => onOpenThread(item.threadId)}
-      />
-    );
-  });
+  const inbox = archived || !history ? [] : history.inboxThreadIds;
   // Archiving one conversation is the reader's own Archive; this is for the rest.
   const canArchive = inbox.length > 1;
-  const decisions = (
+  return (
     <div className="context-sender-actions">
-      {actions.onUnsubscribe ? <button type="button" className="btn btn-sm" onClick={actions.onUnsubscribe}>Unsubscribe</button> : null}
+      {actions.onUnsubscribe ? <button type="button" className="btn-link" onClick={actions.onUnsubscribe}>Unsubscribe</button> : null}
       {canArchive ? (
-        <button type="button" className="btn btn-sm" onClick={() => { setArchived(true); actions.onArchiveThreads(inbox); }}>
+        <button type="button" className="btn-link" onClick={() => { setArchived(true); actions.onArchiveThreads(inbox); }}>
           Archive {inbox.length} in Inbox
         </button>
       ) : null}
       {rule
-        ? <button type="button" className="btn btn-sm" onClick={() => actions.onUnmute(rule)}>Unmute</button>
-        : <button type="button" className="btn btn-sm" onClick={() => actions.onMute(target, inbox)}>Mute…</button>}
-      {split ? null : <button type="button" className="btn btn-sm" onClick={() => actions.onNewSplit(target)}>New Split…</button>}
+        ? <button type="button" className="btn-link" title={rule.matchKind === "domain" ? `Muted, with everyone at ${rule.matchValue}` : "Muted"} onClick={() => actions.onUnmute(rule)}>Unmute</button>
+        : <button type="button" className="btn-link" onClick={() => actions.onMute(target, inbox)}>Mute…</button>}
+      {split
+        ? <span className="context-sender-state">Sorted into {split.name}</span>
+        : <button type="button" className="btn-link" onClick={() => actions.onNewSplit(target)}>New Split…</button>}
     </div>
-  );
-  return (
-    <ContextSection
-      id="sender"
-      className="context-sender"
-      title={<>From <span className="context-domain">{email}</span></>}
-      count={rows.length}
-      note={facts.join(" · ")}
-      lead={decisions}
-      rows={rows}
-    />
   );
 }
 

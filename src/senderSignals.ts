@@ -1,10 +1,9 @@
-import type { Message, MessageTrust, SenderHistory, SenderRule, SplitInbox, ThreadDetail } from "./domain";
-import { estimateCadence, formatHistoryDate } from "./contactContext";
+import type { Message, MessageTrust, SenderRule, SplitInbox, ThreadDetail } from "./domain";
 import { parseAddress } from "./emailAddress";
 
 /** Gmail's category labels that mark a conversation as bulk mail. */
 export const BULK_CATEGORY_LABELS: readonly string[] = ["CATEGORY_UPDATES", "CATEGORY_PROMOTIONS"];
-/** Conversations a sender's history lists in the Sender section. */
+/** A bulk sender's conversations Recent emails can add. */
 export const SENDER_HISTORY_LIMIT = 20;
 /** Mismatched links listed in the Trust section; more are counted in the last one. */
 export const TRUST_MISMATCH_LIMIT = 3;
@@ -29,32 +28,6 @@ export function bulkMessage(detail: ThreadDetail, ownEmails: Set<string>): Messa
   const listed = Boolean(message.unsubscribe?.methods.length);
   const categorized = detail.thread.labels.some((label) => BULK_CATEGORY_LABELS.includes(label));
   return listed || categorized ? message : null;
-}
-
-const monthYear = new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" });
-const fullDate = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" });
-
-/**
- * Short facts about a sender for the Sender section, from local history: how
- * much mail and since when, any regular cadence, how much of it is read, and
- * the user's latest message to them. Matches the contact card's wording.
- */
-export function describeSender(history: SenderHistory, now = new Date()): string[] {
-  const total = history.receivedCount;
-  if (total === 0 || !history.firstAt) return [];
-  const facts = [total === 1
-    ? `1 email · ${fullDate.format(new Date(history.firstAt))}`
-    : `${total} emails since ${monthYear.format(new Date(history.firstAt))}`];
-  const cadence = estimateCadence(history.recentReceivedAt, now);
-  if (cadence) {
-    const label = cadence.label[0].toLocaleUpperCase() + cadence.label.slice(1);
-    facts.push(cadence.monthPart ? `${label}, usually ${cadence.monthPart} in the month` : label);
-  }
-  if (total > 1) {
-    facts.push(history.readCount === 0 ? "None read" : history.readCount === total ? "All read" : `${history.readCount} of ${total} read`);
-  }
-  if (history.lastSentAt) facts.push(`You last wrote ${formatHistoryDate(history.lastSentAt, now)}`);
-  return facts;
 }
 
 /** The account's split inbox that already takes this sender's mail, if any. */

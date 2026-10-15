@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Message, MessageTrust, SenderHistory, SenderRule, SplitInbox, ThreadDetail } from "./domain";
-import { analyzeLinks, bulkMessage, describeSender, latestInbound, matchingRule, matchingSplit, siteOf, trustFindings, TRUST_MISMATCH_LIMIT, type LinkAnalysis } from "./senderSignals";
+import type { Message, MessageTrust, SenderRule, SplitInbox, ThreadDetail } from "./domain";
+import { analyzeLinks, bulkMessage, latestInbound, matchingRule, matchingSplit, siteOf, trustFindings, TRUST_MISMATCH_LIMIT, type LinkAnalysis } from "./senderSignals";
 
 const own = new Set(["you@example.com"]);
 
@@ -30,29 +30,6 @@ describe("bulk mail detection", () => {
     expect(bulkMessage(detail([listed, reply]), own)?.id).toBe("n");
     expect(latestInbound(detail([reply]), own)).toBeNull();
     expect(bulkMessage(detail([reply], ["CATEGORY_UPDATES"]), own)).toBeNull();
-  });
-});
-
-describe("sender facts", () => {
-  const now = new Date("2026-10-14T12:00:00Z");
-  const history = (overrides: Partial<SenderHistory>): SenderHistory => ({
-    receivedCount: 0, readCount: 0, firstAt: null, lastSentAt: null, recentReceivedAt: [], inboxThreadIds: [], threads: [], ...overrides,
-  });
-
-  it("states volume, cadence, how much is read, and the user's latest message", () => {
-    const weekly = ["2026-10-07", "2026-09-30", "2026-09-23", "2026-09-16", "2026-09-09"].map((day) => `${day}T09:00:00Z`);
-    const facts = describeSender(history({ receivedCount: 11, readCount: 2, firstAt: "2026-06-02T09:00:00Z", recentReceivedAt: weekly, lastSentAt: "2026-09-01T00:00:00Z" }), now);
-    expect(facts[0]).toMatch(/^11 emails since /);
-    expect(facts.slice(1)).toEqual(["Weekly", "2 of 11 read", expect.stringMatching(/^You last wrote /)]);
-  });
-
-  it("says none or all are read, and skips the read count for a single email", () => {
-    expect(describeSender(history({ receivedCount: 3, readCount: 0, firstAt: "2026-06-02T09:00:00Z" }), now)).toContain("None read");
-    expect(describeSender(history({ receivedCount: 3, readCount: 3, firstAt: "2026-06-02T09:00:00Z" }), now)).toContain("All read");
-    const single = describeSender(history({ receivedCount: 1, readCount: 1, firstAt: "2026-06-02T09:00:00Z" }), now);
-    expect(single).toHaveLength(1);
-    expect(single[0]).toMatch(/^1 email · /);
-    expect(describeSender(history({}), now)).toEqual([]);
   });
 });
 
