@@ -33,7 +33,7 @@ function localDay(value: string): Date {
 type MeetingEditorState = { index: number; proposal: MeetingProposal };
 
 type Options = Pick<ReturnType<typeof useThreadIntelligence>, "ownAddresses" | "removeActionProposal"> & {
-  workspaces: Pick<ReturnType<typeof useWorkspaces>, "setRightWorkspace" | "refreshCalendarOptions" | "calendarConnected" | "setCalendarWeekAnchor" | "setCalendarEventToOpen" | "openCalendarAt">;
+  workspaces: Pick<ReturnType<typeof useWorkspaces>, "setRightWorkspace" | "refreshCalendarOptions" | "calendarConnected" | "setCalendarWeekAnchor" | "setCalendarEventToOpen">;
   correspondence: Pick<ReturnType<typeof useCorrespondence>, "activeDraft" | "liveDraft" | "insertIntoDraft" | "replyWithAvailability" | "replyWithText">;
   visibleDetail: ThreadDetail | null;
   availabilityPreferences: ReturnType<typeof useAppPreferences>["availabilityPreferences"];
@@ -47,7 +47,7 @@ export function useMeetingActions({
 }: Options) {
   const {
     setRightWorkspace, refreshCalendarOptions, calendarConnected, setCalendarWeekAnchor,
-    setCalendarEventToOpen, openCalendarAt,
+    setCalendarEventToOpen,
   } = workspaces;
   const [meetingEditor, setMeetingEditor] = useState<MeetingEditorState | null>(null);
   const draftAvailabilityReply = useCallback((candidates: AvailabilityCandidate[]) => {
@@ -125,19 +125,6 @@ export function useMeetingActions({
       source,
     });
   }, [ownAddresses, refreshCalendarOptions, visibleDetail]);
-  // Add to Calendar from the compose panel's open times: the draft's
-  // recipients are invited and its subject names the meeting.
-  const addComposeMeeting = useCallback((slot: ScheduleSlot, invitees: string[]) => {
-    void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"));
-    setMeetingEventDraft({
-      start: new Date(slot.start),
-      end: new Date(slot.end),
-      title: correspondence.liveDraft?.subject.trim() ?? "",
-      invitees,
-      description: "",
-      source: null,
-    });
-  }, [correspondence.liveDraft?.subject, refreshCalendarOptions]);
   const meetingCreated = useCallback((event: ScheduleEvent) => {
     const source = meetingEventDraft?.source;
     if (source) removeActionProposal(source.from, source.proposal, event);
@@ -160,13 +147,12 @@ export function useMeetingActions({
     preferences: availabilityPreferences,
     onReplyWithTimes: draftAvailabilityReply,
     onConfirmTime: confirmMeetingTime,
-    onMoreTimes: openCalendarAt,
     onOpenCalendarSettings: () => openSettingsAt("calendarAccounts"),
   };
 
   return {
     meetingEditor, setMeetingEditor, meetingEventDraft, setMeetingEventDraft, openedCalendarFiles,
     dismissOpenedCalendarFile, addOpenedInvitationToCalendar, addMeetingToCalendar,
-    addComposeMeeting, meetingCreated, meetingScheduling, draftAvailabilityReply,
+    meetingCreated, meetingScheduling, draftAvailabilityReply,
   };
 }

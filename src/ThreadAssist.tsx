@@ -49,7 +49,6 @@ export type ThreadAssistProps = {
     onAddToCalendar(index: number, proposal: MeetingProposal, slot: CalendarAddition): void;
     onReplyWithTimes(slots: AvailabilityCandidate[]): void;
     onConfirmTime(slot: ScheduleSlot): void;
-    onMoreTimes(day: Date, durationMinutes: number): void;
     onOpenCalendarSettings(): void;
   };
   loading: boolean;
@@ -200,7 +199,6 @@ export function ThreadAssist({ detail, summary, suggestions, scheduling, loading
               onAddToCalendar={(slot) => scheduling.onAddToCalendar(index, proposal, slot)}
               onReplyWithTimes={scheduling.onReplyWithTimes}
               onConfirmTime={scheduling.onConfirmTime}
-              onMoreTimes={scheduling.onMoreTimes}
               onOpenCalendarSettings={scheduling.onOpenCalendarSettings}
             /> : null}
             <details className="proposal-evidence"><summary>From the email</summary><blockquote>{proposal.evidence.excerpt}</blockquote>{source ? <small>{source}</small> : null}</details>

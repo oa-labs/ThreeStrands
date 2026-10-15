@@ -15,6 +15,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Buttons that sit side by side, such as **Add Members** and the delete button on a contact group, now line up with each other.
 - When adding members to a group, the people you've chosen now appear inside the search field, the search clears after each pick, and Backspace removes the last person.
 - A message you **Forward** now stays in the conversation it came from, so you can see what you sent on and read your coworkers' replies alongside the original thread.
+- Finding times to meet now happens right in the side panel. Open times are spread across the coming days, and you can narrow them to **Mornings** or **Afternoons**, move to **Later** dates, or click **Show More**, without a second calendar column squeezing the email you're reading. The **Find a time** section of the day calendar has been retired in favor of this.
 
 ### Fixed
 - Tables pasted from a spreadsheet, such as a price list, no longer show up as a tall blank box with nothing inside.

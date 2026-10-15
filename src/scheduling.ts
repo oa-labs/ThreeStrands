@@ -1,12 +1,16 @@
-import type { AvailabilityCandidate, ChatAvailability, MeetingProposal } from "./domain";
+import type { AvailabilityCandidate, AvailabilityWindow, ChatAvailability, MeetingProposal } from "./domain";
 import { dateInputValue } from "./calendarTime";
 
 /** Days searched when a meeting names no usable time or range. */
 export const SCHEDULE_LOOKAHEAD_DAYS = 7;
 /** Longest range searched for open times in one card. */
 export const MAX_SCHEDULE_RANGE_DAYS = 14;
-/** Open times offered in a card before "More Times". */
+/** Open times offered in a card at first, and added by each "Show More". */
 export const SUGGESTED_SLOT_COUNT = 3;
+/** Open times fetched per day, so "Show More" has later slots to offer. */
+export const SLOTS_PER_DAY = 3;
+/** Where Mornings end and Afternoons begin, in the user's time zone. */
+export const MIDDAY = "12:00";
 export const MIN_MEETING_MINUTES = 5;
 export const MAX_MEETING_MINUTES = 720;
 
@@ -109,3 +113,41 @@ export function planChatAvailability(request: ChatAvailability, now: Date, defau
 }
 
 export const slotKey = (slot: Pick<AvailabilityCandidate, "start" | "end">) => `${slot.start}/${slot.end}`;
+
+export type TimeOfDay = "any" | "morning" | "afternoon";
+
+/** Working windows narrowed to mornings or afternoons; a window outside that part of the day is dropped. */
+export function windowsForTimeOfDay(windows: AvailabilityWindow[], timeOfDay: TimeOfDay): AvailabilityWindow[] {
+  if (timeOfDay === "any") return windows;
+  return windows.flatMap((window) => {
+    // Clock values are zero-padded `HH:MM`, so they compare as strings.
+    const start = timeOfDay === "afternoon" && window.start < MIDDAY ? MIDDAY : window.start;
+    const end = timeOfDay === "morning" && window.end > MIDDAY ? MIDDAY : window.end;
+    return start < end ? [{ ...window, start, end }] : [];
+  });
+}
+
+/** The same-length range after (positive steps) or before (negative steps) a search range. */
+export function shiftedRange(query: ScheduleQuery, steps: number): ScheduleQuery {
+  const start = Date.parse(query.start);
+  const span = Math.min(Date.parse(query.end) - start, MAX_SCHEDULE_RANGE_DAYS * DAY_MS);
+  return { kind: "range", start: new Date(start + steps * span).toISOString(), end: new Date(start + (steps + 1) * span).toISOString() };
+}
+
+/**
+ * Orders open times so each day's first slot comes before any day's second:
+ * the first few cover different days, and "Show More" fills in later slots.
+ */
+export function spreadAcrossDays<T extends Pick<AvailabilityCandidate, "start">>(candidates: T[], timeZone: string): T[] {
+  const dayOf = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone });
+  const seen = new Map<string, number>();
+  return candidates
+    .map((candidate) => {
+      const day = dayOf.format(new Date(candidate.start));
+      const rank = seen.get(day) ?? 0;
+      seen.set(day, rank + 1);
+      return { candidate, rank };
+    })
+    .sort((left, right) => left.rank - right.rank || Date.parse(left.candidate.start) - Date.parse(right.candidate.start))
+    .map(({ candidate }) => candidate);
+}

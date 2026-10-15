@@ -4,7 +4,7 @@ import { useState } from "react";
 import { CalendarDays, UserRound } from "lucide-react";
 import type { AvailabilityCandidate, AvailabilityPreferences, ContactProfile } from "./domain";
 import { ContextSectionHeader } from "./ContextSections";
-import { MeetingScheduler, type ScheduleSlot } from "./MeetingScheduler";
+import { MeetingScheduler } from "./MeetingScheduler";
 import { lookaheadRange } from "./scheduling";
 import { ICON_SIZE } from "./iconSizes";
 
@@ -32,11 +32,9 @@ export function RecipientChips({ recipients, selectedEmail, onSelect }: {
 }
 
 /** Open times from the calendar over the next week, inserted into the draft at the caret. */
-export function AvailabilitySection({ preferences, onInsertTimes, onAddToCalendar, onMoreTimes, onOpenCalendarSettings }: {
+export function AvailabilitySection({ preferences, onInsertTimes, onOpenCalendarSettings }: {
   preferences: AvailabilityPreferences;
   onInsertTimes(candidates: AvailabilityCandidate[]): void;
-  onAddToCalendar(slot: ScheduleSlot): void;
-  onMoreTimes(day: Date, durationMinutes: number): void;
   onOpenCalendarSettings(): void;
 }) {
   // A search starts from the moment it was asked for; each Find Times press is a new one.
@@ -57,11 +55,10 @@ export function AvailabilitySection({ preferences, onInsertTimes, onAddToCalenda
           preferences={preferences}
           calendarConnected
           intoDraft
-          onAddToCalendar={onAddToCalendar}
+          // A lookahead range never yields a single proposed time to add or confirm.
+          onAddToCalendar={() => undefined}
           onReplyWithTimes={onInsertTimes}
-          // A lookahead range never yields a single proposed time to confirm.
           onConfirmTime={() => undefined}
-          onMoreTimes={onMoreTimes}
           onOpenCalendarSettings={onOpenCalendarSettings}
         />
       ) : <p className="context-status">Suggest open times from your calendar for this message.</p>}

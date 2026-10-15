@@ -5,7 +5,10 @@ import { mailClient } from "./data/client";
 import { refreshScheduleCache } from "./calendarScheduleCache";
 import { scheduleRequestFor } from "./CalendarSidebar";
 import { errorMessage } from "./errors";
-import { lookaheadRange, slotKey, SUGGESTED_SLOT_COUNT, type SchedulePlan, type ScheduleQuery } from "./scheduling";
+import {
+  lookaheadRange, shiftedRange, slotKey, SLOTS_PER_DAY, spreadAcrossDays, SUGGESTED_SLOT_COUNT, windowsForTimeOfDay,
+  type SchedulePlan, type ScheduleQuery, type TimeOfDay,
+} from "./scheduling";
 import { ICON_SIZE } from "./iconSizes";
 
 export type ScheduleSlot = Pick<AvailabilityCandidate, "start" | "end">;
@@ -26,6 +29,14 @@ function formatSlot(slot: ScheduleSlot, timeZone: string): string {
   return `${day} · ${time.format(start)}–${time.format(end)}`;
 }
 
+function formatRange(query: ScheduleQuery, timeZone: string): string {
+  const day = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", timeZone });
+  // The range end is exclusive; name the last day it covers.
+  const first = day.format(new Date(query.start));
+  const last = day.format(new Date(Date.parse(query.end) - 1));
+  return first === last ? first : `${first} – ${last}`;
+}
+
 function formatDay(date: string): string {
   const [year, month, day] = date.split("-").map(Number);
   return new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(new Date(year, month - 1, day));
@@ -44,9 +55,10 @@ async function overlappingTitles(slot: ScheduleSlot): Promise<string[]> {
 
 /**
  * Checks a meeting against the user's calendar without involving AI: an
- * exact time is checked for conflicts, a range yields the first open slot on
- * each of the next few days. Every outcome goes through a review step —
- * the event dialog, a reply in the composer, or the Calendar sidebar.
+ * exact time is checked for conflicts, a range yields open slots spread
+ * across its days. A range can be adjusted in place — mornings, afternoons,
+ * or a later range — and shows more slots on request. Every outcome goes
+ * through a review step: the event dialog or a reply in the composer.
  */
 export function MeetingScheduler({
   plan: initialPlan,
@@ -55,7 +67,6 @@ export function MeetingScheduler({
   onAddToCalendar,
   onReplyWithTimes,
   onConfirmTime,
-  onMoreTimes,
   onOpenCalendarSettings,
   intoDraft = false,
 }: {
@@ -65,7 +76,6 @@ export function MeetingScheduler({
   onAddToCalendar(slot: CalendarAddition): void;
   onReplyWithTimes(slots: AvailabilityCandidate[]): void;
   onConfirmTime(slot: ScheduleSlot): void;
-  onMoreTimes(day: Date, durationMinutes: number): void;
   onOpenCalendarSettings(): void;
   /** Times go into the open draft rather than a new reply. */
   intoDraft?: boolean;
@@ -81,7 +91,12 @@ export function MeetingScheduler({
   }
   // "Find Other Times" replaces a conflicting exact time with a search.
   const [override, setOverride] = useState<ScheduleQuery | null>(null);
-  const query = override ?? plan.query;
+  const baseQuery = override ?? plan.query;
+  // Adjustments to a range search: part of the day, and ranges later or earlier.
+  const [timeOfDay, setTimeOfDay] = useState<TimeOfDay>("any");
+  const [shift, setShift] = useState(0);
+  const query = baseQuery?.kind === "range" && shift !== 0 ? shiftedRange(baseQuery, shift) : baseQuery;
+  const [visibleCount, setVisibleCount] = useState(SUGGESTED_SLOT_COUNT);
   const [state, setState] = useState<CheckState>({ phase: "idle" });
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   const [attempt, setAttempt] = useState(0);
@@ -99,20 +114,25 @@ export function MeetingScheduler({
         const result = await mailClient.findAvailability({
           rangeStart: target.start,
           rangeEnd: target.end,
-          preferences: { ...preferences, defaultDurationMinutes: plan.durationMinutes },
-          maxPerDay: 1,
+          preferences: {
+            ...preferences,
+            workingWindows: windowsForTimeOfDay(preferences.workingWindows, timeOfDay),
+            defaultDurationMinutes: plan.durationMinutes,
+          },
+          maxPerDay: SLOTS_PER_DAY,
         });
-        const candidates = result.candidates.slice(0, SUGGESTED_SLOT_COUNT);
+        const candidates = spreadAcrossDays(result.candidates, timeZone);
         if (!isCurrent()) return;
         setState({ phase: "range", candidates });
-        setSelected(new Set(candidates.map(slotKey)));
+        setVisibleCount(SUGGESTED_SLOT_COUNT);
+        setSelected(new Set(candidates.slice(0, SUGGESTED_SLOT_COUNT).map(slotKey)));
       }
     } catch (reason) {
       if (isCurrent()) setState({ phase: "error", message: errorMessage(reason) });
     }
-  }, [plan.durationMinutes, preferences, timeZone]);
+  }, [plan.durationMinutes, preferences, timeOfDay, timeZone]);
 
-  const queryKey = query ? `${query.kind}:${query.start}:${query.end}` : "none";
+  const queryKey = query ? `${query.kind}:${query.start}:${query.end}:${query.kind === "range" ? timeOfDay : ""}` : "none";
   useEffect(() => {
     if (!calendarConnected || !query) return;
     let current = true;
@@ -122,8 +142,18 @@ export function MeetingScheduler({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [calendarConnected, queryKey, attempt, run]);
 
-  const firstDay = query ? new Date(query.start) : new Date();
-  const moreTimes = <button type="button" className="btn btn-sm" onClick={() => onMoreTimes(firstDay, plan.durationMinutes)}>More Times</button>;
+  const findOtherTimes = (start: string) => {
+    const day = new Date(start);
+    day.setHours(0, 0, 0, 0);
+    setOverride(lookaheadRange(new Date(Math.max(day.getTime(), Date.now()))));
+  };
+  const toggleTimeOfDay = (next: TimeOfDay) => setTimeOfDay((current) => current === next ? "any" : next);
+  const adjust = <div className="meeting-scheduler-adjust" role="group" aria-label="Adjust times">
+    <button type="button" className="btn btn-sm" aria-pressed={timeOfDay === "morning"} onClick={() => toggleTimeOfDay("morning")}>Mornings</button>
+    <button type="button" className="btn btn-sm" aria-pressed={timeOfDay === "afternoon"} onClick={() => toggleTimeOfDay("afternoon")}>Afternoons</button>
+    {shift > 0 ? <button type="button" className="btn btn-sm" onClick={() => setShift((current) => current - 1)}>Earlier</button> : null}
+    <button type="button" className="btn btn-sm" onClick={() => setShift((current) => current + 1)}>Later</button>
+  </div>;
   const assumedZone = plan.timeZoneAssumed ? <small className="meeting-scheduler-note">Using your time zone ({timeZone})</small> : null;
 
   if (!calendarConnected) {
@@ -172,46 +202,47 @@ export function MeetingScheduler({
       </p>
       <div className="meeting-scheduler-actions">
         <button type="button" className="btn btn-sm" onClick={() => onAddToCalendar(query)}><CalendarPlus size={ICON_SIZE.sm} /> Add to Calendar</button>
-        {announced ? null : state.check.status === "conflicting"
-          ? <button type="button" className="btn btn-sm" onClick={() => {
-            const day = new Date(query.start);
-            day.setHours(0, 0, 0, 0);
-            setOverride(lookaheadRange(new Date(Math.max(day.getTime(), Date.now()))));
-          }}>Find Other Times</button>
+        {announced || state.check.status === "conflicting" ? null
           : <button type="button" className="btn btn-sm" onClick={() => onConfirmTime(query)}>Reply &ldquo;That Works&rdquo;</button>}
-        {announced ? null : moreTimes}
+        {announced ? null : <button type="button" className="btn btn-sm" onClick={() => findOtherTimes(query.start)}>Find Other Times</button>}
       </div>
     </> : null}
-    {state.phase === "range" ? <>
+    {state.phase === "range" && query.kind === "range" ? <>
+      <p className="meeting-scheduler-range">{formatRange(query, timeZone)}</p>
       {state.candidates.length === 0 ? <p className="context-status">No open times in your working hours for this range.</p> : <>
         <div className="meeting-slots" role="group" aria-label="Open times">
-          {state.candidates.map((candidate) => {
-            const key = slotKey(candidate);
-            const pressed = selected.has(key);
-            return <button
-              type="button"
-              key={key}
-              aria-pressed={pressed}
-              className="meeting-slot-option"
-              onClick={() => setSelected((current) => {
-                const next = new Set(current);
-                if (pressed) next.delete(key);
-                else next.add(key);
-                return next;
-              })}
-            >{formatSlot(candidate, timeZone)}{candidate.status !== "verified" ? <small> · not every calendar checked</small> : null}</button>;
-          })}
+          {state.candidates.slice(0, visibleCount)
+            .sort((left, right) => Date.parse(left.start) - Date.parse(right.start))
+            .map((candidate) => {
+              const key = slotKey(candidate);
+              const pressed = selected.has(key);
+              return <button
+                type="button"
+                key={key}
+                aria-pressed={pressed}
+                className="meeting-slot-option"
+                onClick={() => setSelected((current) => {
+                  const next = new Set(current);
+                  if (pressed) next.delete(key);
+                  else next.add(key);
+                  return next;
+                })}
+              >{formatSlot(candidate, timeZone)}{candidate.status !== "verified" ? <small> · not every calendar checked</small> : null}</button>;
+            })}
         </div>
         {(() => {
-          const chosen = state.candidates.filter((candidate) => selected.has(slotKey(candidate)));
+          const chosen = state.candidates
+            .filter((candidate) => selected.has(slotKey(candidate)))
+            .sort((left, right) => Date.parse(left.start) - Date.parse(right.start));
           return <div className="meeting-scheduler-actions">
             <button type="button" className="btn btn-sm" disabled={chosen.length === 0} onClick={() => onReplyWithTimes(chosen)}>{intoDraft ? "Insert" : "Draft Reply With"} {chosen.length === 1 ? "This Time" : "These Times"}</button>
-            <button type="button" className="btn btn-sm" disabled={chosen.length !== 1} title={chosen.length !== 1 ? "Select one time to add it" : undefined} onClick={() => onAddToCalendar(chosen[0])}><CalendarPlus size={ICON_SIZE.sm} /> Add to Calendar</button>
-            {moreTimes}
+            {visibleCount < state.candidates.length
+              ? <button type="button" className="btn btn-sm" onClick={() => setVisibleCount((current) => current + SUGGESTED_SLOT_COUNT)}>Show More</button>
+              : null}
           </div>;
         })()}
       </>}
-      {state.candidates.length === 0 ? <div className="meeting-scheduler-actions">{moreTimes}</div> : null}
+      {adjust}
     </> : null}
     {assumedZone}
   </div>;

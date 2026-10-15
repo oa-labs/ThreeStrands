@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { clearAiApiKey, DEFAULT_AI_FEATURES, saveAiFeatures, saveAiProvider, setAiApiKey, type AiFeatureFlags } from "./aiSettings";
 import { proactiveDwellMs } from "./proactiveBrief";
+import { SLOTS_PER_DAY } from "./scheduling";
 import { App, formatMailTimestamp, messagesWithQueuedReplies } from "./App";
 import { mailClient } from "./data/client";
 import type { OutboxItem } from "./correspondence";
@@ -409,20 +410,21 @@ describe("conversation brief", () => {
       expect(check).not.toHaveBeenCalled();
     });
 
-    it("replies that a free time works, and opens more times on the meeting's day", async () => {
+    it("replies that a free time works, and finds other times in place without opening the calendar", async () => {
       const meeting = meetingAt(2);
       vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
       const { schedule } = await openWithMeeting(meeting);
 
-      fireEvent.click(await within(schedule).findByRole("button", { name: "More Times" }));
-      const sidebar = await screen.findByRole("complementary", { name: "Calendar schedule" });
-      expect(within(sidebar).getByRole("heading", { level: 2 })).toHaveTextContent(
-        new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(new Date(meeting.normalizedStart)),
-      );
-
-      fireEvent.click(within(schedule).getByRole("button", { name: "Reply “That Works”" }));
+      fireEvent.click(await within(schedule).findByRole("button", { name: "Reply “That Works”" }));
       const editor = await screen.findByRole("textbox", { name: "Message Body" });
       await waitFor(() => expect(editor).toHaveTextContent("That time works for me:"));
+
+      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      fireEvent.click(within(schedule).getByRole("button", { name: "Find Other Times" }));
+      expect(await within(schedule).findByText("No open times in your working hours for this range.")).toBeInTheDocument();
+      expect(find).toHaveBeenCalledTimes(1);
+      expect(within(schedule).queryByRole("button", { name: "More Times" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("complementary", { name: "Calendar schedule" })).not.toBeInTheDocument();
     });
 
     it("keeps a failed chat suggestion reviewable, then opens the saved event and replaces the review link", async () => {
@@ -494,7 +496,7 @@ describe("conversation brief", () => {
 
       const times = await within(panel).findByRole("group", { name: "Open times" });
       expect(within(times).getAllByRole("button")).toHaveLength(1);
-      expect(find).toHaveBeenCalledWith(expect.objectContaining({ rangeStart, rangeEnd, maxPerDay: 1, preferences: expect.objectContaining({ defaultDurationMinutes: 45 }) }));
+      expect(find).toHaveBeenCalledWith(expect.objectContaining({ rangeStart, rangeEnd, maxPerDay: SLOTS_PER_DAY, preferences: expect.objectContaining({ defaultDurationMinutes: 45 }) }));
     });
   });
 

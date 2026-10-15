@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mailClient } from "./data/client";
+import { SLOTS_PER_DAY } from "./scheduling";
 import { ThreadAssist, type ThreadAssistProps } from "./ThreadAssist";
 import type { ActionProposal, ThreadDetail } from "./domain";
 
@@ -87,7 +88,6 @@ function props(overrides: Partial<Omit<ThreadAssistProps, "summary" | "suggestio
       onAddToCalendar: vi.fn(),
       onReplyWithTimes: vi.fn(),
       onConfirmTime: vi.fn(),
-      onMoreTimes: vi.fn(),
       onOpenCalendarSettings: vi.fn(),
       ...scheduling,
     },
@@ -236,7 +236,7 @@ describe("ThreadAssist", () => {
     expect(screen.queryByRole("button", { name: "Find Times" })).not.toBeInTheDocument();
     const schedule = screen.getByRole("group", { name: "Schedule" });
     expect(within(schedule).getByText("Using your time zone (America/New_York)")).toBeInTheDocument();
-    await waitFor(() => expect(find).toHaveBeenCalledWith(expect.objectContaining({ maxPerDay: 1 })));
+    await waitFor(() => expect(find).toHaveBeenCalledWith(expect.objectContaining({ maxPerDay: SLOTS_PER_DAY })));
     expect(await within(schedule).findByText("No open times in your working hours for this range.")).toBeInTheDocument();
     fireEvent.click(screen.getByText("From the email"));
     expect(screen.queryByText(/message-unknown/)).not.toBeInTheDocument();

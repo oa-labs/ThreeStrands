@@ -4,6 +4,7 @@ import { ComposeContext, ReplyChecks } from "./ComposeContext";
 import { RecipientSummary } from "./RecipientSections";
 import { mailClient } from "./data/client";
 import { ICON_SIZE } from "./iconSizes";
+import { SLOTS_PER_DAY } from "./scheduling";
 import type { Draft } from "./correspondence";
 import type { Account, AvailabilityPreferences, ContactActivity, ContactProfile, ContactSuggestion } from "./domain";
 
@@ -39,7 +40,7 @@ function renderPanel(overrides: Partial<Parameters<typeof ComposeContext>[0]> = 
   const props: Parameters<typeof ComposeContext>[0] = {
     draft, accounts, calendarConnected: false, preferences, taskRefreshKey: 0,
     onAttach: vi.fn(), onReplaceRecipient: vi.fn(), onSwitchAccount: vi.fn(), onMoveToBcc: vi.fn(), onInsertTimes: vi.fn(),
-    onAddToCalendar: vi.fn(), onMoreTimes: vi.fn(), onOpenCalendarSettings: vi.fn(), onOpenEvent: vi.fn(),
+    onOpenCalendarSettings: vi.fn(), onOpenEvent: vi.fn(),
     onOpenThread: vi.fn(), onShowMessage: vi.fn(), onEditTask: vi.fn(), onDraftFollowUp: vi.fn(), onTasksChanged: vi.fn(),
     ...overrides,
   };
@@ -190,7 +191,7 @@ describe("ComposeContext", () => {
     fireEvent.click(findTimes);
     await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalledWith(expect.objectContaining({
       preferences: expect.objectContaining({ defaultDurationMinutes: 30 }),
-      maxPerDay: 1,
+      maxPerDay: SLOTS_PER_DAY,
     })));
     fireEvent.click(await within(section).findByRole("button", { name: "Insert These Times" }));
     expect(props.onInsertTimes).toHaveBeenCalledWith([
@@ -198,6 +199,8 @@ describe("ComposeContext", () => {
       expect.objectContaining({ start: "2030-01-08T15:00:00Z" }),
     ]);
     expect(within(section).queryByRole("button", { name: /Draft Reply/ })).not.toBeInTheDocument();
+    // Open times are only offered; booking waits for the recipient to pick one.
+    expect(within(section).queryByRole("button", { name: "Add to Calendar" })).not.toBeInTheDocument();
     const searchAgain = within(section).getByRole("button", { name: "Search Again" });
     expect(searchAgain).toHaveClass("btn", "btn-sm");
     fireEvent.click(searchAgain);

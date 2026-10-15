@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { CALENDAR_SCROLL_TOP_KEY, CalendarSidebar, EventViewer, hasWorkingHoursOnDate, scheduleRequestFor } from "./CalendarSidebar";
+import { CALENDAR_SCROLL_TOP_KEY, CalendarSidebar, EventViewer, scheduleRequestFor } from "./CalendarSidebar";
 import { mailClient } from "./data/client";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { UPCOMING_MEETING_DAYS } from "./ContactMeetings";
@@ -25,12 +25,6 @@ describe("calendar sidebar", () => {
     vi.mocked(openUrl).mockClear();
     localStorage.removeItem(CALENDAR_SCROLL_TOP_KEY);
     localStorage.removeItem("threestrands.settings.availabilityPreferences");
-  });
-
-  it("recognizes whether a date has configured working hours", () => {
-    const preferences = { workingWindows: [{ weekday: 1, start: "09:00", end: "17:00" }] };
-    expect(hasWorkingHoursOnDate(new Date(2026, 8, 21), preferences)).toBe(true);
-    expect(hasWorkingHoursOnDate(new Date(2026, 8, 20), preferences)).toBe(false);
   });
 
   it("opens http(s) URLs in an event location in the system browser", () => {
@@ -177,12 +171,6 @@ describe("calendar sidebar", () => {
       <CalendarSidebar
         onClose={vi.fn()}
         onOpenSettings={vi.fn()}
-        availabilityPreferences={{
-          timeZone: "America/New_York",
-          workingWindows: [],
-          defaultDurationMinutes: 30,
-          slotIncrementMinutes: 15,
-        }}
       />,
     );
     const sidebar = screen.getByRole("complementary", { name: "Calendar schedule" });
@@ -196,7 +184,7 @@ describe("calendar sidebar", () => {
     // selected calendar list.
     expect(within(sidebar).queryByText(/Calendar/)).not.toBeInTheDocument();
     cleanup();
-    render(<CalendarSidebar onClose={vi.fn()} onOpenSettings={vi.fn()} availabilityPreferences={{ timeZone: "America/New_York", workingWindows: [], defaultDurationMinutes: 30, slotIncrementMinutes: 15 }} selectedCalendarAccountIds={["personal@example.com", "work@example.com"]} />);
+    render(<CalendarSidebar onClose={vi.fn()} onOpenSettings={vi.fn()} selectedCalendarAccountIds={["personal@example.com", "work@example.com"]} />);
     expect(screen.getByRole("complementary", { name: "Calendar schedule" }).querySelector(".calendar-sidebar-header")).toHaveTextContent("Calendar · personal@example.com, work@example.com");
   });
 
@@ -494,143 +482,6 @@ describe("calendar sidebar", () => {
     expect(title.nextElementSibling?.querySelector("kbd")?.textContent).toBe("t");
   });
 
-  it("checks availability and distinguishes verified candidate slots", async () => {
-    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
-      { email: "calendar@example.com", connectedAt: "2026-09-18T00:00:00Z", status: "connected" },
-    ]);
-    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
-    const findAvailability = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
-      candidates: [
-        { start: "2026-09-18T13:00:00Z", end: "2026-09-18T13:30:00Z", status: "verified" },
-        { start: "2026-09-18T14:00:00Z", end: "2026-09-18T14:30:00Z", status: "verified" },
-      ],
-      checkedCalendarCount: 1,
-      totalCalendarCount: 1,
-      errors: [],
-    });
-    localStorage.setItem("threestrands.settings.availabilityPreferences", JSON.stringify({
-      timeZone: "America/New_York",
-      workingWindows: Array.from({ length: 7 }, (_, weekday) => ({ weekday, start: "09:00", end: "17:00" })),
-      defaultDurationMinutes: 30,
-      slotIncrementMinutes: 15,
-    }));
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    fireEvent.keyDown(window, { key: "T" });
-    fireEvent.click(await screen.findByRole("button", { name: "Check Schedule" }));
-    fireEvent.click(within(await screen.findByRole("dialog", { name: "Check Availability" })).getByRole("button", { name: "Check Schedule" }));
-    const candidates = await screen.findAllByRole("button", { name: /Verified/ });
-    expect(candidates).toHaveLength(2);
-    fireEvent.click(candidates[0]);
-    fireEvent.click(candidates[1]);
-    expect(candidates[0]).toHaveAttribute("aria-pressed", "true");
-    expect(candidates[1]).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByText("2 times selected")).toBeInTheDocument();
-    expect(findAvailability).toHaveBeenCalledTimes(1);
-  });
-
-  it("offers selected availability slots for a deterministic reply draft", async () => {
-    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
-    vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
-      candidates: [{ start: "2026-09-18T13:00:00Z", end: "2026-09-18T13:30:00Z", status: "verified" }],
-      checkedCalendarCount: 1,
-      totalCalendarCount: 1,
-      errors: [],
-    });
-    const onDraftAvailability = vi.fn();
-    render(
-      <CalendarSidebar
-        onClose={vi.fn()}
-        onOpenSettings={vi.fn()}
-        availabilityPreferences={{
-          timeZone: "America/New_York",
-          workingWindows: [{ weekday: new Date().getDay(), start: "09:00", end: "17:00" }],
-          defaultDurationMinutes: 30,
-          slotIncrementMinutes: 15,
-        }}
-        onDraftAvailability={onDraftAvailability}
-      />,
-    );
-    fireEvent.click(await screen.findByRole("button", { name: "Check Schedule" }));
-    fireEvent.click(within(await screen.findByRole("dialog", { name: "Check Availability" })).getByRole("button", { name: "Check Schedule" }));
-    const candidate = await screen.findByRole("button", { name: /Verified/ });
-    fireEvent.click(candidate);
-    fireEvent.click(screen.getByRole("button", { name: "Draft Reply With Selected Times" }));
-    expect(onDraftAvailability).toHaveBeenCalledWith([
-      { start: "2026-09-18T13:00:00Z", end: "2026-09-18T13:30:00Z", status: "verified" },
-    ]);
-  });
-
-  it("keeps availability parameters visible when the check fails", async () => {
-    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
-    vi.spyOn(mailClient, "findAvailability").mockRejectedValue(new Error("Calendar check failed"));
-    render(
-      <CalendarSidebar
-        onClose={vi.fn()}
-        onOpenSettings={vi.fn()}
-        availabilityPreferences={{
-          timeZone: "America/New_York",
-          workingWindows: [{ weekday: new Date().getDay(), start: "09:00", end: "17:00" }],
-          defaultDurationMinutes: 30,
-          slotIncrementMinutes: 15,
-        }}
-      />,
-    );
-
-    fireEvent.click(await screen.findByRole("button", { name: "Check Schedule" }));
-    const dialog = await screen.findByRole("dialog", { name: "Check Availability" });
-    fireEvent.change(within(dialog).getByRole("combobox", { name: "Duration" }), { target: { value: "45" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Check Schedule" }));
-
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Calendar check failed");
-    expect(within(dialog).getByRole("combobox", { name: "Duration" })).toHaveValue("45");
-  });
-
-  it("hides availability controls when the selected day has no working hours", async () => {
-    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
-    const selectedWeekday = new Date().getDay();
-    render(
-      <CalendarSidebar
-        onClose={vi.fn()}
-        onOpenSettings={vi.fn()}
-        availabilityPreferences={{
-          timeZone: "America/New_York",
-          workingWindows: [{ weekday: (selectedWeekday + 1) % 7, start: "09:00", end: "17:00" }],
-          defaultDurationMinutes: 30,
-          slotIncrementMinutes: 15,
-        }}
-      />,
-    );
-
-    await screen.findByRole("complementary", { name: "Calendar schedule" });
-    expect(screen.queryByRole("region", { name: "Check Availability" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Check Schedule" })).not.toBeInTheDocument();
-  });
-
-  it("hides availability controls on dates in the past", async () => {
-    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
-    render(
-      <CalendarSidebar
-        onClose={vi.fn()}
-        onOpenSettings={vi.fn()}
-        availabilityPreferences={{
-          timeZone: "America/New_York",
-          workingWindows: Array.from({ length: 7 }, (_, weekday) => ({ weekday, start: "09:00", end: "17:00" })),
-          defaultDurationMinutes: 30,
-          slotIncrementMinutes: 15,
-        }}
-      />,
-    );
-
-    expect(await screen.findByRole("button", { name: "Check Schedule" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Previous day (-)" }));
-    expect(screen.queryByRole("region", { name: "Check Availability" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Check Schedule" })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Next day (=)" }));
-    expect(await screen.findByRole("button", { name: "Check Schedule" })).toBeInTheDocument();
-  });
-
   it("hides the close control and ignores Escape when embedded", async () => {
     vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
     const onClose = vi.fn();
@@ -639,12 +490,6 @@ describe("calendar sidebar", () => {
         embedded
         onClose={onClose}
         onOpenSettings={vi.fn()}
-        availabilityPreferences={{
-          timeZone: "America/New_York",
-          workingWindows: [],
-          defaultDurationMinutes: 30,
-          slotIncrementMinutes: 15,
-        }}
       />,
     );
 
@@ -667,43 +512,21 @@ describe("calendar sidebar", () => {
     expect(request.timeZone).toBeTruthy();
   });
 
-describe("calendar sidebar opened from a meeting", () => {
+describe("calendar sidebar opened on a day", () => {
   afterEach(cleanup);
 
-  it("starts on the meeting's day and checks availability at the meeting's duration", async () => {
-    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+  it("starts on the requested day and leaves finding times to the scheduling cards", async () => {
+    const find = vi.spyOn(mailClient, "findAvailability");
     vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
     const day = new Date(2099, 8, 23, 12);
-    render(<CalendarSidebar
-      onClose={vi.fn()}
-      onOpenSettings={vi.fn()}
-      availabilityPreferences={{ timeZone: "America/New_York", workingWindows: [{ weekday: 3, start: "09:00", end: "17:00" }], defaultDurationMinutes: 30, slotIncrementMinutes: 15 }}
-      initialDate={day}
-      initialDurationMinutes={45}
-    />);
+    render(<CalendarSidebar onClose={vi.fn()} onOpenSettings={vi.fn()} initialDate={day} />);
 
     const sidebar = screen.getByRole("complementary", { name: "Calendar schedule" });
     expect(within(sidebar).getByRole("heading", { level: 2 })).toHaveTextContent(new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(day));
-    fireEvent.click(within(sidebar).getByRole("button", { name: "Check Schedule" }));
-    const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByRole("combobox", { name: "Duration" })).toHaveValue("45");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Check Schedule" }));
-    await waitFor(() => expect(find).toHaveBeenCalledWith(expect.objectContaining({ preferences: expect.objectContaining({ defaultDurationMinutes: 45 }) })));
-  });
-
-  it("offers a meeting's unusual length as a duration choice", async () => {
-    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
-    render(<CalendarSidebar
-      onClose={vi.fn()}
-      onOpenSettings={vi.fn()}
-      availabilityPreferences={{ timeZone: "America/New_York", workingWindows: [{ weekday: 3, start: "09:00", end: "17:00" }], defaultDurationMinutes: 30, slotIncrementMinutes: 15 }}
-      initialDate={new Date(2099, 8, 23, 12)}
-      initialDurationMinutes={50}
-    />);
-    fireEvent.click(screen.getByRole("button", { name: "Check Schedule" }));
-    const duration = within(await screen.findByRole("dialog")).getByRole("combobox", { name: "Duration" });
-    expect(duration).toHaveValue("50");
-    expect(within(duration).getAllByRole("option").map((option) => option.textContent)).toContain("50 Minutes");
+    await waitFor(() => expect(within(sidebar).getByText("No events scheduled.")).toBeInTheDocument());
+    expect(within(sidebar).queryByText("Find a time")).not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole("button", { name: "Check Schedule" })).not.toBeInTheDocument();
+    expect(find).not.toHaveBeenCalled();
   });
 });
 

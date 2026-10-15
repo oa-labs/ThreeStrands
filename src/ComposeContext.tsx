@@ -8,7 +8,6 @@ import { AvailabilitySection, RecipientChips, RecipientSummary } from "./Recipie
 import { KNOWN_ADDRESS_LIMIT } from "./contactContext";
 import { ThreadTasks } from "./ThreadTasks";
 import { ContactMeetings } from "./ContactMeetings";
-import type { ScheduleSlot } from "./MeetingScheduler";
 import { errorMessage, logBackgroundFailure } from "./errors";
 
 /**
@@ -131,8 +130,6 @@ export function ComposeContext({
   onSwitchAccount,
   onMoveToBcc,
   onInsertTimes,
-  onAddToCalendar,
-  onMoreTimes,
   onOpenCalendarSettings,
   onOpenEvent,
   onOpenThread,
@@ -153,8 +150,6 @@ export function ComposeContext({
   onSwitchAccount(email: string): void;
   onMoveToBcc(emails: string[]): void;
   onInsertTimes(candidates: AvailabilityCandidate[]): void;
-  onAddToCalendar(slot: ScheduleSlot, invitees: string[]): void;
-  onMoreTimes(day: Date, durationMinutes: number): void;
   onOpenCalendarSettings(): void;
   /** Shows a meeting without leaving the draft. */
   onOpenEvent(event: ScheduleEvent): void;
@@ -204,7 +199,6 @@ export function ComposeContext({
     email: recipient.email,
     name: (person?.email === recipient.email ? person.profile?.displayName : null) || recipient.name || recipient.email,
   }));
-  const invitees = recipients.map((recipient) => recipient.email);
 
   return (
     <aside className="context-panel compose-context" aria-label="Compose context" tabIndex={-1} onKeyDown={onKeyDown}>
@@ -226,8 +220,6 @@ export function ComposeContext({
         <AvailabilitySection
           preferences={preferences}
           onInsertTimes={onInsertTimes}
-          onAddToCalendar={(slot) => onAddToCalendar(slot, invitees)}
-          onMoreTimes={onMoreTimes}
           onOpenCalendarSettings={onOpenCalendarSettings}
         />
       ) : null}

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { MeetingProposal } from "./domain";
 import {
   boundedRange, clampMeetingMinutes, MAX_MEETING_MINUTES, MAX_SCHEDULE_RANGE_DAYS, MIN_MEETING_MINUTES,
-  planChatAvailability, planMeeting, SCHEDULE_LOOKAHEAD_DAYS,
+  MIDDAY, planChatAvailability, planMeeting, SCHEDULE_LOOKAHEAD_DAYS, shiftedRange, spreadAcrossDays, windowsForTimeOfDay,
 } from "./scheduling";
 
 const now = new Date("2026-09-29T12:00:00Z");
@@ -86,5 +86,54 @@ describe("meeting scheduling plans", () => {
   it("plans a chat availability request from the calendar rather than the model's words", () => {
     const plan = planChatAvailability({ rangeStart: "2026-10-05T13:00:00Z", rangeEnd: "2026-10-09T21:00:00Z", durationMinutes: null }, now, 30);
     expect(plan).toEqual({ query: { kind: "range", start: "2026-10-05T13:00:00.000Z", end: "2026-10-09T21:00:00.000Z" }, durationMinutes: 30, timeZoneAssumed: false });
+  });
+});
+
+describe("adjusting open-time searches", () => {
+  const windows = [
+    { weekday: 1, start: "09:00", end: "17:00" },
+    { weekday: 2, start: "07:30", end: "11:00" },
+    { weekday: 3, start: "13:00", end: "18:00" },
+    { weekday: 4, start: "12:00", end: "12:30" },
+  ];
+
+  it("keeps working windows as set for any time of day", () => {
+    expect(windowsForTimeOfDay(windows, "any")).toBe(windows);
+  });
+
+  it("clips working windows to the morning, dropping windows that start at or after midday", () => {
+    expect(windowsForTimeOfDay(windows, "morning")).toEqual([
+      { weekday: 1, start: "09:00", end: MIDDAY },
+      { weekday: 2, start: "07:30", end: "11:00" },
+    ]);
+  });
+
+  it("clips working windows to the afternoon, dropping windows that end by midday", () => {
+    expect(windowsForTimeOfDay(windows, "afternoon")).toEqual([
+      { weekday: 1, start: MIDDAY, end: "17:00" },
+      { weekday: 3, start: "13:00", end: "18:00" },
+      { weekday: 4, start: "12:00", end: "12:30" },
+    ]);
+  });
+
+  it("shifts a range by its own length, and caps the step at the longest range", () => {
+    const week = { kind: "range" as const, start: "2026-10-19T04:00:00.000Z", end: "2026-10-26T04:00:00.000Z" };
+    expect(shiftedRange(week, 1)).toEqual({ kind: "range", start: "2026-10-26T04:00:00.000Z", end: "2026-11-02T04:00:00.000Z" });
+    expect(shiftedRange(week, -1)).toEqual({ kind: "range", start: "2026-10-12T04:00:00.000Z", end: "2026-10-19T04:00:00.000Z" });
+    const long = { kind: "range" as const, start: "2026-10-01T00:00:00.000Z", end: "2026-12-01T00:00:00.000Z" };
+    const next = shiftedRange(long, 1);
+    expect(Date.parse(next.end) - Date.parse(next.start)).toBe(MAX_SCHEDULE_RANGE_DAYS * 86_400_000);
+  });
+
+  it("puts each day's first open time before any day's second, by day in the given time zone", () => {
+    const slot = (start: string) => ({ start });
+    // 03:00Z on the 20th is still the 19th in New York.
+    const candidates = [slot("2026-10-19T13:00:00Z"), slot("2026-10-19T14:00:00Z"), slot("2026-10-20T03:00:00Z"), slot("2026-10-20T13:00:00Z")];
+    expect(spreadAcrossDays(candidates, "America/New_York").map((candidate) => candidate.start)).toEqual([
+      "2026-10-19T13:00:00Z", "2026-10-20T13:00:00Z", "2026-10-19T14:00:00Z", "2026-10-20T03:00:00Z",
+    ]);
+    expect(spreadAcrossDays(candidates, "UTC").map((candidate) => candidate.start)).toEqual([
+      "2026-10-19T13:00:00Z", "2026-10-20T03:00:00Z", "2026-10-19T14:00:00Z", "2026-10-20T13:00:00Z",
+    ]);
   });
 });

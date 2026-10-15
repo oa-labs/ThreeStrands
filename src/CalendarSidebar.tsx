@@ -1,11 +1,10 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { TextAlignStart, CalendarDays, ChevronLeft, ChevronRight, Clock3, MapPin, Pencil, RefreshCw, Trash, Video, X } from "lucide-react";
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { HoverTooltip, Modal } from "./AppChrome";
+import { HoverTooltip } from "./AppChrome";
 import {
   HOUR_HEIGHT,
   HOURS,
-  dateInputValue,
   formatEventDate,
   formatEventTime,
   hourLabel,
@@ -19,7 +18,7 @@ import { calendarColorStyle, useCalendarColors } from "./calendarColors";
 import { removeFromScheduleCache, revalidateScheduleCache } from "./calendarScheduleCache";
 import { isEditableTarget } from "./commands";
 import { mailClient } from "./data/client";
-import type { AvailabilityCandidate, AvailabilityPreferences, AvailabilityResult, ScheduleEvent } from "./domain";
+import type { ScheduleEvent } from "./domain";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { errorMessage } from "./errors";
 import { useCalendarSchedule } from "./useCalendarSchedule";
@@ -113,40 +112,6 @@ function useDaySwipe(targetRef: RefObject<HTMLElement | null>, moveDay: (offset:
   }, [targetRef, moveDay]);
 }
 
-function AvailabilityRequestDialog({
-  date,
-  durationMinutes,
-  error,
-  loading,
-  onClose,
-  onSubmit,
-}: {
-  date: Date;
-  durationMinutes: number;
-  error: string | null;
-  loading: boolean;
-  onClose(): void;
-  onSubmit(date: Date, durationMinutes: number): Promise<void> | void;
-}) {
-  const [dateValue, setDateValue] = useState(dateInputValue(date));
-  const [duration, setDuration] = useState(durationMinutes);
-  const dateRef = useRef<HTMLInputElement>(null);
-  return (
-    <Modal title="Check Availability" className="availability-request-modal" onClose={onClose} initialFocusRef={dateRef}>
-      <form className="modal-form" onSubmit={(event) => {
-        event.preventDefault();
-        const [year, month, day] = dateValue.split("-").map(Number);
-        void onSubmit(new Date(year, month - 1, day), duration);
-      }}>
-        <label><span>Date</span><input ref={dateRef} type="date" value={dateValue} onChange={(event) => setDateValue(event.target.value)} required /></label>
-        <label><span>Duration</span><select value={duration} onChange={(event) => setDuration(Number(event.target.value))}>{[...new Set([15, 30, 45, 60, 90, 120, durationMinutes])].sort((left, right) => left - right).map((value) => <option key={value} value={value}>{value} Minutes</option>)}</select></label>
-        {error ? <p className="form-error" role="alert">{error}</p> : null}
-        <div className="modal-form-actions"><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" disabled={loading}>{loading ? "Checking…" : "Check Schedule"}</button></div>
-      </form>
-    </Modal>
-  );
-}
-
 export function scheduleRequestFor(date: Date) {
   const start = startOfLocalDay(date);
   const end = new Date(start);
@@ -156,13 +121,6 @@ export function scheduleRequestFor(date: Date) {
     timeMax: end.toISOString(),
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
   };
-}
-
-export function hasWorkingHoursOnDate(
-  date: Date,
-  preferences: Pick<AvailabilityPreferences, "workingWindows">,
-): boolean {
-  return preferences.workingWindows.some((window) => window.weekday === date.getDay());
 }
 
 const locationUrlPattern = /(https?:\/\/[^\s<>"]+)/;
@@ -282,49 +240,23 @@ export function EventViewer({ event, onDismiss, onUpdated, embedded = false }: {
 export function CalendarSidebar({
   onClose,
   onOpenSettings,
-  availabilityPreferences,
-  onDraftAvailability,
   selectedCalendarAccountIds,
   embedded = false,
   initialDate,
-  initialDurationMinutes,
-  draftLabel = "Draft Reply With Selected Times",
 }: {
   onClose(): void;
   onOpenSettings(): void;
-  availabilityPreferences: AvailabilityPreferences;
-  onDraftAvailability?(candidates: AvailabilityCandidate[]): void;
   selectedCalendarAccountIds?: string[];
   embedded?: boolean;
-  /** Opens on this day, for example a meeting suggestion's first day. */
+  /** Opens on this day, for example an event's day. */
   initialDate?: Date;
-  /** Starts availability checks at a meeting's duration. */
-  initialDurationMinutes?: number;
-  /** The label of the button that hands selected times to `onDraftAvailability`. */
-  draftLabel?: string;
 }) {
   const [date, setDate] = useState(() => startOfLocalDay(initialDate ?? new Date()));
   const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
   const calendarColors = useCalendarColors();
-  const [availability, setAvailability] = useState<AvailabilityResult | null>(null);
-  const [availabilityLoading, setAvailabilityLoading] = useState(false);
-  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
-  const [selectedCandidates, setSelectedCandidates] = useState<Set<string>>(() => new Set());
-  const [durationMinutes, setDurationMinutes] = useState(initialDurationMinutes ?? availabilityPreferences.defaultDurationMinutes);
-  const [availabilityDialogOpen, setAvailabilityDialogOpen] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
   useEscapeDismiss(onClose, !embedded);
-  const hasWorkingHours = hasWorkingHoursOnDate(date, availabilityPreferences);
-  const canCheckAvailability = hasWorkingHours && date >= startOfLocalDay(new Date());
-
-  useEffect(() => {
-    if (canCheckAvailability) return;
-    setAvailability(null);
-    setAvailabilityError(null);
-    setSelectedCandidates(new Set());
-    setAvailabilityDialogOpen(false);
-  }, [canCheckAvailability]);
 
   const { events, loading, error, reload } = useCalendarSchedule(scheduleRequestFor(date));
   useEffect(() => { setSelectedEvent(null); }, [date]);
@@ -336,41 +268,12 @@ export function CalendarSidebar({
   const timedEvents = useMemo(() => events.filter((event) => !event.allDay), [events]);
   const allDayEvents = useMemo(() => events.filter((event) => event.allDay), [events]);
   const moveDay = useCallback((offset: number) => {
-    setSelectedCandidates(new Set());
-    setAvailability(null);
-    setAvailabilityError(null);
-    setAvailabilityDialogOpen(false);
     setDate((current) => {
       const next = new Date(current);
       next.setDate(next.getDate() + offset);
       return next;
     });
   }, []);
-
-  const checkAvailability = useCallback(async (targetDate: Date, targetDurationMinutes: number) => {
-    setDate(targetDate);
-    setDurationMinutes(targetDurationMinutes);
-    setAvailability(null);
-    setAvailabilityLoading(true);
-    setAvailabilityError(null);
-    setSelectedCandidates(new Set());
-    const dayStart = startOfLocalDay(targetDate);
-    const dayEnd = new Date(dayStart);
-    dayEnd.setDate(dayEnd.getDate() + 1);
-    try {
-      setAvailability(await mailClient.findAvailability({
-        rangeStart: dayStart.toISOString(),
-        rangeEnd: dayEnd.toISOString(),
-        preferences: { ...availabilityPreferences, defaultDurationMinutes: targetDurationMinutes },
-      }));
-      setAvailabilityDialogOpen(false);
-    } catch (reason) {
-      setAvailability(null);
-      setAvailabilityError(errorMessage(reason));
-    } finally {
-      setAvailabilityLoading(false);
-    }
-  }, [availabilityPreferences]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -442,44 +345,6 @@ export function CalendarSidebar({
         </div>
       ) : null}
       <div className="calendar-timezone">{timeZoneLabel(date)}</div>
-      {canCheckAvailability ? (
-        <section className="availability-panel" aria-label="Check availability">
-          <div className="availability-panel-header"><strong>Find a time</strong><button type="button" className="btn btn-sm" onClick={() => setAvailabilityDialogOpen(true)} disabled={availabilityLoading}>{availabilityLoading ? "Checking…" : "Check Schedule"}</button></div>
-          {availability ? <p className="availability-coverage">{durationMinutes} minute slots</p> : null}
-          {availabilityError ? <p className="calendar-error-notice" role="alert">{availabilityError}</p> : null}
-          {availability ? <>
-            <p className="availability-coverage">{availability.totalCalendarCount === 0 ? "Not checked against a calendar" : availability.checkedCalendarCount === availability.totalCalendarCount ? "Verified against all selected calendars" : "Partially checked — review before sharing"}</p>
-            {availability.errors.length > 0 ? <p className="calendar-error-notice" role="alert">Some calendars could not be checked. Suggested times are not fully verified.</p> : null}
-            <div className="availability-candidates" aria-label="Suggested times">
-              {availability.candidates.map((candidate) => {
-                const key = `${candidate.start}:${candidate.end}`;
-                const selected = selectedCandidates.has(key);
-                const formatCandidateTime = (value: string) => new Intl.DateTimeFormat(undefined, {
-                  hour: "numeric",
-                  minute: "2-digit",
-                  timeZone: availabilityPreferences.timeZone,
-                }).format(new Date(value));
-                return <button type="button" key={key} className={`availability-candidate availability-${candidate.status}`} aria-pressed={selected} onClick={() => setSelectedCandidates((current) => {
-                  const next = new Set(current);
-                  if (next.has(key)) next.delete(key);
-                  else next.add(key);
-                  return next;
-                })}>{formatCandidateTime(candidate.start)}–{formatCandidateTime(candidate.end)}<small>{candidate.status === "verified" ? "Verified" : candidate.status === "partiallyChecked" ? "Partial" : "Not Checked"}</small></button>;
-              })}
-            </div>
-            {selectedCandidates.size > 0 ? <p className="availability-coverage">{selectedCandidates.size} time{selectedCandidates.size === 1 ? "" : "s"} selected</p> : null}
-            {selectedCandidates.size > 0 && onDraftAvailability ? (
-              <button
-                type="button"
-                className="btn btn-sm btn-primary availability-draft-reply"
-                onClick={() => onDraftAvailability(availability.candidates.filter((candidate) => selectedCandidates.has(`${candidate.start}:${candidate.end}`)))}
-              >{draftLabel}</button>
-            ) : null}
-            {availability.candidates.length === 0 ? <p className="calendar-grid-status">No open working-hours slots found.</p> : null}
-          </> : null}
-        </section>
-      ) : null}
-      {availabilityDialogOpen && canCheckAvailability ? <AvailabilityRequestDialog date={date} durationMinutes={durationMinutes} error={availabilityError} loading={availabilityLoading} onClose={() => setAvailabilityDialogOpen(false)} onSubmit={checkAvailability} /> : null}
       {!loading && error ? (
         <div className="calendar-error-notice" role="alert">
           <p>Calendar couldn’t be loaded. Try again or reconnect in Calendar Accounts.</p>

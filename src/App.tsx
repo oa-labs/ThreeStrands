@@ -358,7 +358,7 @@ export function App() {
   const {
     meetingEditor, setMeetingEditor, meetingEventDraft, setMeetingEventDraft, openedCalendarFiles,
     dismissOpenedCalendarFile, addOpenedInvitationToCalendar, addMeetingToCalendar,
-    addComposeMeeting, meetingCreated, meetingScheduling, draftAvailabilityReply,
+    meetingCreated, meetingScheduling, draftAvailabilityReply,
   } = useMeetingActions({ workspaces, correspondence, visibleDetail, availabilityPreferences, openSettingsAt, setNotice, ownAddresses, removeActionProposal });
   const { systemLabelNames: conversationSystemLabels, userLabels: conversationUserLabels } = visibleDetail
     ? conversationLabelGroups(visibleDetail.thread.labels, labelsByAccount[visibleDetail.thread.accountId])
@@ -1084,12 +1084,8 @@ export function App() {
         <CalendarSidebar
           key={calendarSidebarStart?.key ?? 0}
           initialDate={calendarSidebarStart?.date}
-          initialDurationMinutes={calendarSidebarStart?.durationMinutes}
           onClose={() => setRightWorkspace(null)}
           selectedCalendarAccountIds={[...new Set(calendar.calendars.filter((option) => option.selected).map((option) => option.accountId))]}
-          availabilityPreferences={availabilityPreferences}
-          onDraftAvailability={draftAvailabilityReply}
-          draftLabel={correspondence.activeDraft ? "Insert Selected Times" : undefined}
           onOpenSettings={() => {
             setRightWorkspace(null);
             openSettingsAt("calendarAccounts");
@@ -1114,10 +1110,8 @@ export function App() {
           onSwitchAccount={correspondence.switchDraftAccount}
           onMoveToBcc={correspondence.moveDraftRecipientsToBcc}
           onInsertTimes={draftAvailabilityReply}
-          onAddToCalendar={addComposeMeeting}
-          onMoreTimes={openCalendarAt}
           onOpenCalendarSettings={() => openSettingsAt("calendarAccounts")}
-          onOpenEvent={(event) => openCalendarAt(eventDate(event), availabilityPreferences.defaultDurationMinutes)}
+          onOpenEvent={(event) => openCalendarAt(eventDate(event))}
           onOpenThread={openThreadFromDraft}
           onShowMessage={(threadId) => openThreadFromDraft(threadId)}
           onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
@@ -1148,8 +1142,6 @@ export function App() {
               <AvailabilitySection
                 preferences={availabilityPreferences}
                 onInsertTimes={draftAvailabilityReply}
-                onAddToCalendar={(slot) => addComposeMeeting(slot, replyRecipients.map((item) => item.email))}
-                onMoreTimes={openCalendarAt}
                 onOpenCalendarSettings={() => openSettingsAt("calendarAccounts")}
               />
             ) : null,

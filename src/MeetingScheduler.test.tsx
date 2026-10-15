@@ -4,7 +4,7 @@ import { MeetingScheduler } from "./MeetingScheduler";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import type { AvailabilityCandidate, AvailabilityPreferences } from "./domain";
-import type { SchedulePlan } from "./scheduling";
+import { SLOTS_PER_DAY, type SchedulePlan } from "./scheduling";
 
 const preferences: AvailabilityPreferences = {
   timeZone: "America/New_York",
@@ -19,7 +19,7 @@ const candidate = (hours: number): AvailabilityCandidate => ({ start: later(hour
 
 function renderScheduler(plan: SchedulePlan, overrides: Partial<Parameters<typeof MeetingScheduler>[0]> = {}) {
   const handlers = {
-    onAddToCalendar: vi.fn(), onReplyWithTimes: vi.fn(), onConfirmTime: vi.fn(), onMoreTimes: vi.fn(), onOpenCalendarSettings: vi.fn(),
+    onAddToCalendar: vi.fn(), onReplyWithTimes: vi.fn(), onConfirmTime: vi.fn(), onOpenCalendarSettings: vi.fn(),
   };
   render(<MeetingScheduler plan={plan} preferences={preferences} calendarConnected {...handlers} {...overrides} />);
   return handlers;
@@ -35,8 +35,9 @@ describe("MeetingScheduler", () => {
   const pinClock = () => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date(NOW)); };
   const at = (iso: string, hours: number) => new Date(Date.parse(iso) + hours * 3_600_000).toISOString();
 
-  it("confirms a free exact time and offers to add it or reply that it works", async () => {
+  it("confirms a free exact time and offers to add it, reply that it works, or find other times in place", async () => {
     const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [candidate(50)], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
     const handlers = renderScheduler(specific);
 
     expect(await screen.findByText("You’re free")).toBeInTheDocument();
@@ -45,8 +46,10 @@ describe("MeetingScheduler", () => {
     expect(handlers.onAddToCalendar).toHaveBeenCalledWith(specific.query);
     fireEvent.click(screen.getByRole("button", { name: "Reply “That Works”" }));
     expect(handlers.onConfirmTime).toHaveBeenCalledWith(specific.query);
-    fireEvent.click(screen.getByRole("button", { name: "More Times" }));
-    expect(handlers.onMoreTimes).toHaveBeenCalledWith(new Date(specific.query!.start), 30);
+    expect(screen.queryByRole("button", { name: "More Times" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Find Other Times" }));
+    expect(await screen.findByRole("group", { name: "Open times" })).toBeInTheDocument();
+    expect(find).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -71,10 +74,10 @@ describe("MeetingScheduler", () => {
     fireEvent.click(screen.getByRole("button", { name: "Find Other Times" }));
     expect(await screen.findByRole("group", { name: "Open times" })).toBeInTheDocument();
     // The search starts at the conflict's local midnight, but never in the past.
-    expect(find).toHaveBeenCalledWith(expect.objectContaining({ rangeStart, rangeEnd, maxPerDay: 1 }));
+    expect(find).toHaveBeenCalledWith(expect.objectContaining({ rangeStart, rangeEnd, maxPerDay: SLOTS_PER_DAY }));
   });
 
-  it("offers the first open time on each of the next days, selectable with ordinary buttons", async () => {
+  it("offers the first open time on each of the next days, selectable with ordinary buttons, without booking any", async () => {
     const days = [candidate(20), candidate(44), candidate(68), candidate(92)];
     const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
       candidates: days, checkedCalendarCount: 1, totalCalendarCount: 1, errors: [],
@@ -84,12 +87,13 @@ describe("MeetingScheduler", () => {
     const slots = within(await screen.findByRole("group", { name: "Open times" })).getAllByRole("button");
     expect(slots).toHaveLength(3);
     expect(find).toHaveBeenCalledWith({
-      rangeStart: range.query!.start, rangeEnd: range.query!.end, maxPerDay: 1,
+      rangeStart: range.query!.start, rangeEnd: range.query!.end, maxPerDay: SLOTS_PER_DAY,
       preferences: { ...preferences, defaultDurationMinutes: 45 },
     });
     expect(screen.getByText("Using your time zone (America/New_York)")).toBeInTheDocument();
     expect(slots.every((slot) => slot.getAttribute("aria-pressed") === "true")).toBe(true);
-    expect(screen.getByRole("button", { name: "Add to Calendar" })).toBeDisabled();
+    // Offered times are proposals; nothing is booked until the other side picks one.
+    expect(screen.queryByRole("button", { name: "Add to Calendar" })).not.toBeInTheDocument();
 
     fireEvent.click(slots[1]);
     fireEvent.click(slots[2]);
@@ -97,8 +101,7 @@ describe("MeetingScheduler", () => {
     expect(slots[1]).toHaveAttribute("aria-pressed", "false");
     fireEvent.click(screen.getByRole("button", { name: "Draft Reply With This Time" }));
     expect(handlers.onReplyWithTimes).toHaveBeenCalledWith([days[0]]);
-    fireEvent.click(screen.getByRole("button", { name: "Add to Calendar" }));
-    expect(handlers.onAddToCalendar).toHaveBeenCalledWith(days[0]);
+    expect(handlers.onAddToCalendar).not.toHaveBeenCalled();
 
     fireEvent.click(slots[0]);
     expect(screen.getByRole("button", { name: "Draft Reply With These Times" })).toBeDisabled();
@@ -144,7 +147,6 @@ describe("MeetingScheduler", () => {
     expect(handlers.onAddToCalendar).toHaveBeenCalledWith(specific.query);
     expect(screen.queryByRole("button", { name: "Find Other Times" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reply “That Works”" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "More Times" })).not.toBeInTheDocument();
   });
 
   it("adds a date-only event as an all-day event without checking the calendar", () => {
@@ -174,7 +176,7 @@ describe("MeetingScheduler", () => {
 
   it("keeps its result when re-rendered with equal preferences", async () => {
     const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
-    const handlers = { onAddToCalendar: vi.fn(), onReplyWithTimes: vi.fn(), onConfirmTime: vi.fn(), onMoreTimes: vi.fn(), onOpenCalendarSettings: vi.fn() };
+    const handlers = { onAddToCalendar: vi.fn(), onReplyWithTimes: vi.fn(), onConfirmTime: vi.fn(), onOpenCalendarSettings: vi.fn() };
     const { rerender } = render(<MeetingScheduler plan={specific} preferences={preferences} calendarConnected {...handlers} />);
     expect(await screen.findByText("You’re free")).toBeInTheDocument();
     // A synced copy with the same values must not re-check (and flash) the card.
@@ -185,5 +187,78 @@ describe("MeetingScheduler", () => {
     // A real change still re-checks.
     rerender(<MeetingScheduler plan={specific} preferences={{ ...preferences, timeZone: "America/Chicago" }} calendarConnected {...handlers} />);
     await waitFor(() => expect(check).toHaveBeenCalledTimes(2));
+  });
+  describe("adjusting a range search", () => {
+    // Pinned Tuesday 2026-09-29 10:00 New York; slots are in local hours on later days.
+    const slotAt = (day: number, hour: number): AvailabilityCandidate => {
+      const start = new Date(2026, 8, day, hour);
+      return { start: start.toISOString(), end: new Date(start.getTime() + 30 * 60_000).toISOString(), status: "verified" };
+    };
+    const week: SchedulePlan = { query: { kind: "range", start: "2026-09-30T04:00:00.000Z", end: "2026-10-07T04:00:00.000Z" }, durationMinutes: 30, timeZoneAssumed: false };
+    const label = (hour: number) => new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }).format(new Date(2026, 8, 1, hour));
+
+    it("spreads the first times across days, then shows each day's later times on request", async () => {
+      pinClock();
+      vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
+        // Earliest first, as the calendar search returns them; day 31 is Oct 1.
+        candidates: [slotAt(30, 9), slotAt(30, 10), slotAt(30, 11), slotAt(31, 9)],
+        checkedCalendarCount: 1, totalCalendarCount: 1, errors: [],
+      });
+      renderScheduler(week);
+
+      const group = await screen.findByRole("group", { name: "Open times" });
+      // Sep 30's first slot, then Oct 1's first, before Sep 30's second.
+      expect(within(group).getAllByRole("button").map((slot) => slot.textContent)).toEqual([
+        expect.stringContaining(label(9)), expect.stringContaining(label(10)), expect.stringContaining(label(9)),
+      ]);
+      expect(within(group).getAllByRole("button")[0]).toHaveTextContent("Sep 30");
+      expect(within(group).getAllByRole("button")[2]).toHaveTextContent("Oct 1");
+      fireEvent.click(screen.getByRole("button", { name: "Show More" }));
+      const all = within(group).getAllByRole("button");
+      expect(all).toHaveLength(4);
+      // Newly shown times start unselected; the first three stay selected.
+      expect(all.map((slot) => slot.getAttribute("aria-pressed"))).toEqual(["true", "true", "false", "true"]);
+      expect(screen.queryByRole("button", { name: "Show More" })).not.toBeInTheDocument();
+    });
+
+    it("narrows the search to mornings or afternoons of the working hours, and back", async () => {
+      pinClock();
+      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [slotAt(30, 9)], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      renderScheduler(week);
+      await screen.findByRole("group", { name: "Open times" });
+      const windowsOf = (call: number) => find.mock.calls[call][0].preferences.workingWindows;
+      expect(windowsOf(0)[0]).toEqual({ weekday: 1, start: "09:00", end: "17:00" });
+
+      fireEvent.click(screen.getByRole("button", { name: "Afternoons" }));
+      await waitFor(() => expect(find).toHaveBeenCalledTimes(2));
+      expect(windowsOf(1)[0]).toEqual({ weekday: 1, start: "12:00", end: "17:00" });
+      expect(screen.getByRole("button", { name: "Afternoons" })).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.click(screen.getByRole("button", { name: "Mornings" }));
+      await waitFor(() => expect(find).toHaveBeenCalledTimes(3));
+      expect(windowsOf(2)[0]).toEqual({ weekday: 1, start: "09:00", end: "12:00" });
+      expect(screen.getByRole("button", { name: "Afternoons" })).toHaveAttribute("aria-pressed", "false");
+
+      fireEvent.click(screen.getByRole("button", { name: "Mornings" }));
+      await waitFor(() => expect(find).toHaveBeenCalledTimes(4));
+      expect(windowsOf(3)[0]).toEqual({ weekday: 1, start: "09:00", end: "17:00" });
+    });
+
+    it("moves to the following range and back, naming the days searched", async () => {
+      pinClock();
+      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      renderScheduler(week);
+      expect(await screen.findByText("Wed, Sep 30 – Tue, Oct 6")).toBeInTheDocument();
+      // An empty range can still be adjusted.
+      expect(screen.queryByRole("button", { name: "Earlier" })).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Later" }));
+      expect(await screen.findByText("Wed, Oct 7 – Tue, Oct 13")).toBeInTheDocument();
+      expect(find).toHaveBeenLastCalledWith(expect.objectContaining({ rangeStart: "2026-10-07T04:00:00.000Z", rangeEnd: "2026-10-14T04:00:00.000Z" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "Earlier" }));
+      expect(await screen.findByText("Wed, Sep 30 – Tue, Oct 6")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Earlier" })).not.toBeInTheDocument();
+    });
   });
 });

@@ -75,12 +75,12 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, op
     setRightWorkspace((current) => current === "tasks" ? null : "tasks");
   }, []);
 
-  // Opening the Calendar sidebar from a meeting starts it on that day at the
-  // meeting's duration; the key remounts the sidebar for each request.
+  // Opening the Calendar sidebar on an event starts it on that day; the key
+  // remounts the sidebar for each request.
   const calendarConnected = calendar.accounts.some((account) => account.status === "connected");
-  const [calendarSidebarStart, setCalendarSidebarStart] = useState<{ key: number; date: Date; durationMinutes: number } | null>(null);
-  const openCalendarAt = useCallback((date: Date, durationMinutes: number) => {
-    setCalendarSidebarStart((current) => ({ key: (current?.key ?? 0) + 1, date, durationMinutes }));
+  const [calendarSidebarStart, setCalendarSidebarStart] = useState<{ key: number; date: Date } | null>(null);
+  const openCalendarAt = useCallback((date: Date) => {
+    setCalendarSidebarStart((current) => ({ key: (current?.key ?? 0) + 1, date }));
     setRightWorkspace("calendar");
   }, []);
 

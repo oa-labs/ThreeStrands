@@ -1523,17 +1523,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
   font-size: var(--text-meta);
   text-align: right;
 }
-.availability-panel { margin: 0 var(--space-3) var(--space-2-5); padding: var(--space-2-5); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--raised); }
-.availability-panel-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
-.availability-coverage { margin: var(--space-2) 0; color: var(--muted); font-size: var(--text-meta); }
-.availability-candidates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-1); }
-.availability-candidate { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; padding: var(--space-1-5); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input); color: var(--text); text-align: left; cursor: pointer; font: inherit; font-size: var(--text-meta); }
-.availability-candidate[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.availability-candidate small { margin-top: var(--space-0-5); color: var(--muted); font-size: var(--text-meta); }
-.availability-draft-reply { width: 100%; margin-top: var(--space-2); }
-.availability-verified small { color: var(--success); }
-.availability-partiallyChecked small { color: var(--warning); }
-.availability-unverified small { color: var(--muted); }
 .action-analysis-preview { margin-top: var(--space-2); color: var(--muted); font-size: var(--text-meta); }
 .action-analysis-preview pre { max-height: 180px; margin: var(--space-1-5) 0 0; padding: var(--space-2); overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--input); white-space: pre-wrap; font: inherit; color: var(--text); }
 .action-analysis-error { margin-top: var(--space-2); padding: var(--space-2) var(--space-2-5); border: 1px solid var(--warning); border-radius: var(--radius-sm); background: var(--input); font-size: var(--text-secondary); }
@@ -1558,6 +1547,9 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .meeting-scheduler-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1-5); }
 .meeting-scheduler-error p { margin: 0 0 var(--space-1); color: var(--text); }
 .meeting-scheduler-note { color: var(--muted); font-size: var(--text-meta); }
+.meeting-scheduler-range { margin: 0; color: var(--muted); }
+.meeting-scheduler-adjust { display: flex; flex-wrap: wrap; gap: var(--space-1); padding-top: var(--space-1); border-top: 1px solid var(--border); }
+.meeting-scheduler-adjust .btn[aria-pressed="true"] { border-color: var(--accent); color: var(--text); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
 .ai-usage { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
 .ai-usage h3 { margin: var(--space-2) 0 0; }
 .ai-usage { width: 100%; }
@@ -2424,14 +2416,14 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 }
 .lightbox-close:hover { background: var(--hover); }
 .modal > header h2 { font-size: var(--text-pane-title); }
-.task-editor-modal, .availability-request-modal { overflow-y: auto; }
+.task-editor-modal { overflow-y: auto; }
 .task-editor-modal { width: min(var(--dialog-w-lg), calc(100vw - var(--dialog-edge))); }
 .calendar-event-modal { width: min(var(--dialog-w-md), calc(100vw - var(--dialog-edge))); overflow-y: auto; }
 .calendar-event-all-day-field { display: flex; align-items: center; gap: var(--space-2); width: fit-content; color: var(--text); font-size: var(--text-body); }
 .modal-form .calendar-event-all-day-field input { width: auto; }
 .calendar-event-time-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2-5); }
 @media (max-width: 560px) { .calendar-event-time-fields { grid-template-columns: 1fr; } }
-.availability-request-modal, .task-quick-add-modal { width: min(var(--dialog-w-sm), calc(100vw - var(--dialog-edge))); }
+.task-quick-add-modal { width: min(var(--dialog-w-sm), calc(100vw - var(--dialog-edge))); }
 .recovery-phrase-modal { overflow-y: auto; }
 .recovery-phrase-words { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: var(--space-1-5) var(--space-4); margin: 0; padding: var(--space-2-5) var(--space-3) var(--space-2-5) var(--space-8); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--input); color: var(--text); font-family: var(--font-mono); font-size: var(--text-body); user-select: text; }
 .modal-form { display: grid; gap: var(--space-3); padding: var(--space-2) var(--dialog-inset) var(--space-4); }
