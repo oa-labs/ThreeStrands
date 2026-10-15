@@ -6,6 +6,8 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ### Fixed
 - Buttons in some emails, such as security alerts, no longer lose their padding and show their label squeezed against the top edge.
+- Some emails no longer show small stray gaps between images, buttons, or blocks the sender placed tightly together.
+- In **Settings → Mail Accounts**, the Gmail or IMAP badge under **On Your Other Devices** now lines up with the **Set Up Here** button.
 
 ## 0.125.1 — 2026-10-14
 

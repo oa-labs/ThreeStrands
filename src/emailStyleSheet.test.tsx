@@ -17,6 +17,24 @@ describe("sanitizeStyleSheet", () => {
     expect(css).toContain("display: inline-block");
   });
 
+  it("keeps a unitless zero font-size in table and flow layouts", () => {
+    // A responsive table that hides a desktop-only image cell on small screens.
+    const table = sanitizeStyleSheet(`
+      @media only screen and (max-width: 600px) {
+        td.desktop-only img { display: none !important; font-size: 0 !important; line-height: 0 !important; max-height: 0 !important; }
+      }
+    `);
+    expect(table).toContain("font-size: 0 !important");
+    expect(table).toContain("line-height: 0 !important");
+    // An inline-block row that removes whitespace gaps between its children.
+    const flow = sanitizeStyleSheet(".row { font-size: 0; } .row > .item { display: inline-block; font-size: 14px; }");
+    expect(flow).toContain("font-size: 0;");
+    expect(flow).toContain("font-size: 14px");
+    // Negative and malformed zeros stay out.
+    expect(sanitizeStyleSheet(".row { font-size: -0; }")).toBe("");
+    expect(sanitizeStyleSheet(".row { font-size: 0 url(https://tracker.invalid); }")).toBe("");
+  });
+
   it("preserves basic floats used to separate email action links", () => {
     const css = sanitizeStyleSheet(".open-action { float: right; }");
     expect(css).toContain("float: right");

@@ -119,6 +119,14 @@ describe("SafeMessage", () => {
     expect(doc.querySelector("p")!.style.backgroundImage).toContain("data:image/png;base64,aGVsbG8=");
   });
 
+  it("leaves zero-size whitespace collapsers alone with a font floor enabled", () => {
+    const html = '<div class="row" style="font-size:0"><span style="display:inline-block;font-size:10px">A</span> <span style="display:inline-block;font-size:14px">B</span></div>';
+    render(<SafeMessage html={html} emailMinimumFontSize={18} />);
+    const doc = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement);
+    expect(doc.querySelector<HTMLElement>("div.row")!.style.fontSize).toMatch(/^0(px)?$/);
+    expect(Array.from(doc.querySelectorAll("span")).map((span) => span.style.fontSize)).toEqual(["18px", "18px"]);
+  });
+
   it("applies the font floor over important sender text and restores its priority", () => {
     const html = '<p style="font-size:10px !important;line-height:12px !important">Small</p>';
     const { rerender } = render(<SafeMessage html={html} emailMinimumFontSize={18} />);

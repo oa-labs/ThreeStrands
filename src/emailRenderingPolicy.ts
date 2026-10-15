@@ -125,6 +125,9 @@ function boundedLength(value: string, options: { allowNegative?: boolean; allowP
 
 function fontSize(value: string): string | null {
   const trimmed = value.trim().toLowerCase();
+  // Unitless zero is valid CSS and the common way senders collapse inline
+  // whitespace or hide a block's text; it is the lower bound, not a new size.
+  if (trimmed === "0") return trimmed;
   const match = trimmed.match(cssLength);
   if (!match || match[1] === "-") return null;
   const amount = Number(match[2]);
@@ -383,7 +386,7 @@ const validators: Record<string, Validator> = {
   bottom: layoutLength({ allowNegative: true, allowPercentage: true }),
   left: layoutLength({ allowNegative: true, allowPercentage: true }),
   font: (value) => {
-    const match = value.trim().toLowerCase().match(/^(?:(?:normal|italic|oblique)\s+)?(?:(?:normal|small-caps)\s+)?(?:(?:normal|bold|[1-9]00)\s+)?(\d+(?:\.\d+)?(?:px|em|rem|%))(?:\/(normal|\d+(?:\.\d+)?(?:px|em|rem|%)))?\s+(.+)$/i);
+    const match = value.trim().toLowerCase().match(/^(?:(?:normal|italic|oblique)\s+)?(?:(?:normal|small-caps)\s+)?(?:(?:normal|bold|[1-9]00)\s+)?(0|\d+(?:\.\d+)?(?:px|em|rem|%))(?:\/(normal|\d+(?:\.\d+)?(?:px|em|rem|%)))?\s+(.+)$/i);
     if (!match || fontSize(match[1]) === null || (match[2] && lineHeight(match[2]) === null) || !safeFontFamily.test(match[3])) return null;
     return value.trim().toLowerCase();
   },

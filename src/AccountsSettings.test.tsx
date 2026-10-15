@@ -300,6 +300,24 @@ describe("accounts on other devices", () => {
     expect(within(section).getByRole("button", { name: "Set up side@example.com on this device" })).toBeInTheDocument();
   });
 
+  it("centers the provider badge with Set Up Here", () => {
+    renderAccounts(vi.fn(), { availableAccounts: [side] });
+    const section = screen.getByRole("region", { name: "On Your Other Devices" });
+    const row = within(section).getByRole("button", { name: "Set up side@example.com on this device" }).parentElement!;
+    expect(row).toHaveClass("account-card-row");
+    expect(row.querySelector(".account-provider-badge")).toHaveTextContent("Gmail");
+
+    const css = postcss.parse(readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8"));
+    const decls: Record<string, Record<string, string>> = {};
+    css.walkRules((rule) => {
+      for (const selector of rule.selectors) {
+        rule.walkDecls((declaration) => { (decls[selector] ??= {})[declaration.prop] = declaration.value; });
+      }
+    });
+    expect(decls[".account-card-row"]).toMatchObject({ "align-items": "center" });
+    expect(decls[".available-account .account-provider-badge"]).toMatchObject({ "align-self": "center" });
+  });
+
   it("omits the section when every account is set up here", () => {
     renderAccounts(vi.fn());
     expect(screen.queryByRole("region", { name: "On Your Other Devices" })).not.toBeInTheDocument();

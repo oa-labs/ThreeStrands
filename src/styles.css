@@ -2573,6 +2573,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .account-card-heading strong { overflow: hidden; font-size: var(--text-body); text-overflow: ellipsis; white-space: nowrap; }
 .account-card-email { overflow: hidden; color: var(--muted); font-size: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
 .account-provider-badge { align-self: flex-start; }
+/* Cards on other devices have a single row, so the badge centers with Set Up Here. */
+.available-account .account-provider-badge { align-self: center; }
 .device-roster-id { display: flex; min-width: 0; gap: var(--space-1); color: var(--muted); font-size: var(--text-meta); }
 .device-roster-id code { min-width: 0; overflow-wrap: anywhere; user-select: all; }
 /* The controls row is identical on every card (status-dependent actions

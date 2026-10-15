@@ -107,6 +107,17 @@ describe("email rendering numeric policy", () => {
     expect(sanitizeCssDeclaration("font-size", `${EMAIL_CSS_LIMITS.maxFontSizePercentage}%`)).toBe(`${EMAIL_CSS_LIMITS.maxFontSizePercentage}%`);
     expect(sanitizeCssDeclaration("font-size", `${EMAIL_CSS_LIMITS.maxFontSizePercentage + 1}%`)).toBeNull();
     expect(sanitizeCssDeclaration("font", "14px Arial")).toBe("14px arial");
+    // Zero is the lower bound, with or without a unit; nothing below it passes.
+    expect(sanitizeCssDeclaration("font-size", "0")).toBe("0");
+    expect(sanitizeCssDeclaration("font-size", "0px")).toBe("0px");
+    expect(sanitizeCssDeclaration("font-size", "-0")).toBeNull();
+    expect(sanitizeCssDeclaration("font-size", "-1px")).toBeNull();
+    expect(sanitizeCssDeclaration("font-size", "00")).toBeNull();
+    expect(sanitizeCssDeclaration("font-size", "1")).toBeNull();
+    expect(sanitizeCssDeclaration("font", "0 Arial")).toBe("0 arial");
+    expect(sanitizeCssDeclaration("font", "0/0px Arial")).toBe("0/0px arial");
+    expect(sanitizeCssDeclaration("font", "0.5em Arial")).toBe("0.5em arial");
+    expect(sanitizeCssDeclaration("font", "05 Arial")).toBeNull();
     expect(sanitizeCssDeclaration("line-height", String(EMAIL_CSS_LIMITS.maxLineHeightUnitless))).toBe(String(EMAIL_CSS_LIMITS.maxLineHeightUnitless));
     expect(sanitizeCssDeclaration("line-height", String(EMAIL_CSS_LIMITS.maxLineHeightUnitless + 1))).toBeNull();
   });
