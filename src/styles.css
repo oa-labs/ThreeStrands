@@ -672,12 +672,17 @@ select:disabled { opacity: var(--opacity-disabled); cursor: default; }
   line-height: var(--leading-tight);
   letter-spacing: var(--tracking-tight);
 }
-.thread-header > .filters-anchor,
 .calendar-week-controls,
 .tasks-workspace .tasks-sidebar-header-actions,
 .contacts-header-actions { align-self: center; }
 
 .thread-header-title { display: flex; align-items: center; gap: var(--space-3); }
+.thread-header > .thread-header-title { flex: 1 1 auto; min-width: 0; }
+.mailbox-heading { flex: 1 1 auto; min-width: 0; }
+/* The count and the list's actions share one row; tabs, when there are splits, sit below. */
+.mailbox-title-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.mailbox-title-row h1 { min-width: 0; }
+.mailbox-header-actions { display: flex; flex: 0 0 auto; align-items: center; gap: var(--space-1); margin-top: var(--space-1); }
 .mailbox-heading-context { display: flex; align-items: center; gap: var(--space-2); min-width: 0; color: var(--muted); font-size: var(--text-meta); }
 .mailbox-heading-context .eyebrow-account { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Undoes a jump from the context panel, Tasks, or Contacts; a long subject
@@ -838,18 +843,6 @@ select:disabled { opacity: var(--opacity-disabled); cursor: default; }
   color: var(--border);
   font-weight: var(--weight-regular);
 }
-.mailbox-tab-add {
-  flex: 0 0 auto;
-  border: none;
-  background: none;
-  padding: 0;
-  font-size: var(--text-secondary);
-  font-weight: var(--weight-medium);
-  color: var(--muted);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.mailbox-tab-add:hover { color: var(--text); }
 
 h1, h2 { margin: var(--space-1) 0 0; line-height: var(--leading-tight); }
 h1 { font-size: var(--text-page-title); }
@@ -908,8 +901,13 @@ h1, h2, h3, h4 { font-weight: var(--weight-semibold); }
   font-size: var(--text-meta);
   font-weight: var(--weight-semibold);
 }
-.filters-anchor { position: relative; flex: 0 0 auto; align-self: flex-start; margin-top: var(--space-0-5); }
-.filters-trigger.active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--hover)); }
+.filters-anchor { position: relative; flex: 0 0 auto; }
+/* The tooltip would cover the menu it opens. */
+.filters-anchor:has(.filters-menu) .hover-tooltip { display: none; }
+.filters-trigger { position: relative; }
+.filters-trigger.active { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--hover)); }
+/* Active-filter count rides the icon's corner so the button stays icon-sized. */
+.filters-trigger .filters-badge { position: absolute; top: calc(-1 * var(--space-1)); right: calc(-1 * var(--space-1)); }
 .filters-badge {
   display: grid;
   place-items: center;
@@ -1455,6 +1453,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
   pointer-events: none;
 }
 .reader-empty { height: 100%; display: grid; place-content: center; justify-items: center; color: var(--muted); }
+.reader-empty p.inbox-zero-title { margin-bottom: 0; color: var(--text); font-size: var(--text-pane-title); font-weight: var(--weight-semibold); }
+.reader-empty p.inbox-zero-checked { margin-top: var(--space-1); font-size: var(--text-secondary); }
 /* A pane with nothing selected: an icon over one line of default UI text. */
 .reader-empty p,
 .contacts-empty-state p { font-size: var(--text-body); }

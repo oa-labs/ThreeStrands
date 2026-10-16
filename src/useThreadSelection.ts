@@ -32,6 +32,9 @@ export function useThreadSelection({ threads, selectedId, setSelectedId, query, 
       return next;
     });
   }, []);
+  const clearMessageFilters = useCallback(() => {
+    setActiveMessageFilters((current) => (current.size > 0 ? new Set() : current));
+  }, []);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const selectedThreadRowRef = useRef<HTMLButtonElement | null>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
@@ -106,7 +109,7 @@ export function useThreadSelection({ threads, selectedId, setSelectedId, query, 
 
   return {
     checkedIds, setCheckedIds, selectedThreadRowRef, selectAllRef, activeMessageFilters,
-    toggleMessageFilter, visibleThreads, selected, selectedIndex, selectThread,
+    toggleMessageFilter, clearMessageFilters, visibleThreads, selected, selectedIndex, selectThread,
     applyThreadSelectionGesture, toggleChecked,
   };
 }

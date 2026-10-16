@@ -548,7 +548,7 @@ test("opens Superhuman-compatible folder destinations", async ({ page }) => {
   await page.keyboard.press("g");
   await page.keyboard.press("i");
   await expect(page.getByRole("button", { name: "Choose folder, current folder Inbox" })).toBeVisible();
-  await expect(page.getByRole("tab", { name: /^Main/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tablist", { name: "Mailbox views" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
 
   await page.keyboard.press("l");

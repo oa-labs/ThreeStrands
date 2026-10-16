@@ -53,6 +53,11 @@ describe("split inbox search shortcuts", () => {
   });
 
   it("shows Inbox as the folder and Main as the default tab, with a dismissible folder menu", async () => {
+    vi.spyOn(mailClient, "listSplitInboxes").mockResolvedValue([{
+      id: "work-split", name: "Work", matchKind: "label", matchValue: "work", sortOrder: 0,
+      createdAt: "2026-03-01T00:00:00Z", accountId: "demo@example.com",
+    }]);
+    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
     render(<App />);
     expect(await screen.findByRole("tab", { name: /^Main/ })).toHaveAttribute("aria-selected", "true");
     const trigger = screen.getByRole("button", { name: "Choose folder, current folder Inbox" });
@@ -69,6 +74,27 @@ describe("split inbox search shortcuts", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("group", { name: "Folders" })).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+  });
+
+  it("hides the lone Main tab until a split exists, keeping Add Split and Filters on the title row", async () => {
+    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
+    const listSplits = vi.spyOn(mailClient, "listSplitInboxes").mockResolvedValue([]);
+    const first = render(<App />);
+    const addSplit = await screen.findByRole("button", { name: "Add Split Inbox" });
+    expect(screen.queryByRole("tablist", { name: "Mailbox views" })).not.toBeInTheDocument();
+    const titleRow = addSplit.closest(".mailbox-title-row") as HTMLElement;
+    expect(within(titleRow).getByRole("heading", { level: 1 })).toBeInTheDocument();
+    expect(within(titleRow).getByRole("button", { name: "Filters" })).toBeInTheDocument();
+    first.unmount();
+
+    listSplits.mockResolvedValue([{
+      id: "work-split", name: "Work", matchKind: "label", matchValue: "work", sortOrder: 0,
+      createdAt: "2026-03-01T00:00:00Z", accountId: "demo@example.com",
+    }]);
+    render(<App />);
+    const tabs = await screen.findByRole("tablist", { name: "Mailbox views" });
+    expect(within(tabs).getAllByRole("tab").map((tab) => tab.textContent)).toEqual([expect.stringMatching(/^Main/), "Work"]);
+    expect(within(tabs).queryByRole("button", { name: "Add Split Inbox" })).not.toBeInTheDocument();
   });
 
   it("keeps the search query while cycling or clicking between mailbox tabs", async () => {
@@ -185,7 +211,7 @@ describe("split inbox search shortcuts", () => {
   it("starts every folder outside the tab bar with a closed, empty search", async () => {
     localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
     render(<App />);
-    await screen.findByRole("tab", { name: /^Main/ });
+    await screen.findByRole("button", { name: "Choose folder, current folder Inbox" });
 
     for (const folder of ["All Mail", "Trash", "Drafts", "Outbox"]) {
       fireEvent.keyDown(window, { key: "/" });
@@ -196,7 +222,7 @@ describe("split inbox search shortcuts", () => {
       expect(screen.queryByRole("textbox", { name: "Search Mail" })).not.toBeInTheDocument();
 
       selectFolder("Inbox");
-      await screen.findByRole("tab", { name: /^Main/ });
+      await screen.findByRole("button", { name: "Choose folder, current folder Inbox" });
     }
   });
 

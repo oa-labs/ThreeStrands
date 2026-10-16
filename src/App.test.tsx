@@ -1804,3 +1804,63 @@ describe("getting started checklist", () => {
     expect(await screen.findByRole("dialog", { name: "Getting Started" })).toBeInTheDocument();
   });
 });
+
+describe("empty mail states", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  const syncedAt = new Date().toISOString();
+  const mockSyncStatus = (state: "idle" | "error") => vi.spyOn(mailClient, "syncStatus").mockResolvedValue({
+    state, lastSuccessfulSync: syncedAt, cursor: null, pendingMutations: 0, failedMutations: [], quarantinedMessages: [], error: null,
+  });
+
+  it("announces inbox zero once, in the reader, with when mail was last checked", async () => {
+    vi.spyOn(mailClient, "listThreadsPage").mockResolvedValue({ threads: [], hasMore: false });
+    mockSyncStatus("idle");
+    render(<App />);
+
+    const reader = screen.getByRole("region", { name: "Conversation" });
+    expect(await within(reader).findByText("Inbox zero")).toBeInTheDocument();
+    expect(await within(reader).findByText(/^Last checked /)).toBeInTheDocument();
+    expect(within(reader).queryByText("Select a conversation")).not.toBeInTheDocument();
+    const list = screen.getByRole("listbox", { name: "Inbox" });
+    expect(list).not.toHaveTextContent(/Inbox zero|No conversations/);
+  });
+
+  it("does not call the inbox current when the last check failed", async () => {
+    vi.spyOn(mailClient, "listThreadsPage").mockResolvedValue({ threads: [], hasMore: false });
+    mockSyncStatus("error");
+    render(<App />);
+
+    const reader = screen.getByRole("region", { name: "Conversation" });
+    expect(await within(reader).findByText("Couldn't check for new mail")).toBeInTheDocument();
+    expect(within(reader).queryByText(/^Last checked /)).not.toBeInTheDocument();
+  });
+
+  it("shows the load error instead of inbox zero when the inbox cannot be read", async () => {
+    vi.spyOn(mailClient, "listThreadsPage").mockRejectedValue(new Error("database is locked"));
+    render(<App />);
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText(/Inbox zero/)).not.toBeInTheDocument();
+  });
+
+  it("offers Clear Filters when filters hide every conversation, and the reader asks for nothing", async () => {
+    const [thread] = await mailClient.listThreads();
+    vi.spyOn(mailClient, "listThreadsPage").mockResolvedValue({ threads: [{ ...thread, starred: false }], hasMore: false });
+    render(<App />);
+    await screen.findByRole("option");
+
+    fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: /Starred/ }));
+    expect(await screen.findByText("No conversations match the selected filters.")).toBeInTheDocument();
+    expect(screen.queryByText(/Inbox zero/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Select a conversation")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear Filters" }));
+    expect(await screen.findByRole("option")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Filters" })).toBeInTheDocument();
+  });
+});

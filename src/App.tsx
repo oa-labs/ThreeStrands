@@ -11,7 +11,9 @@ import {
   Files,
   Inbox,
   ListChecks,
+  ListPlus,
   Mail,
+  MailCheck,
   MailOpen,
   Moon,
   Pencil,
@@ -41,6 +43,7 @@ import {
 import { AccountSwitcher } from "./AccountSwitcher";
 import { ActionButton, CommandPalette, FiltersButton, HoverTooltip, ShortcutHelp } from "./AppChrome";
 import { GettingStartedDialog, useGettingStarted } from "./GettingStarted";
+import { inboxCheckedLabel } from "./inboxZero";
 import { SERVER_SEARCH_FAILED_COPY, SERVER_SEARCHING_COPY } from "./searchStatusCopy";
 import type { GettingStartedStepId } from "./gettingStartedSteps";
 import { CalendarSidebar } from "./CalendarSidebar";
@@ -192,7 +195,7 @@ export function App() {
   const selection = useThreadSelection({ threads, selectedId, setSelectedId, query, includeArchived, contextOpenedThreadRef });
   const {
     checkedIds, setCheckedIds, selectedThreadRowRef, selectAllRef, activeMessageFilters,
-    toggleMessageFilter, visibleThreads, selected, selectThread, applyThreadSelectionGesture,
+    toggleMessageFilter, clearMessageFilters, visibleThreads, selected, selectThread, applyThreadSelectionGesture,
     toggleChecked,
   } = selection;
   const [notice, setNotice] = useNotice();
@@ -275,6 +278,10 @@ export function App() {
     selectedId, setSelectedId, selectedThreadRowRef, setNotice,
   });
   const { accountSplitInboxes, mailboxTitle, returnStep, openTaskThread, jumpToThread } = navigation;
+  // Only a loaded, unfiltered, unsearched Main inbox with no threads is inbox zero;
+  // a failed load or an empty split is not.
+  const inboxZero = mailbox === "inbox" && !loading && !mailboxError && threads.length === 0 && !query.trim() && accounts.length > 0;
+  const inboxCheckedText = inboxZero ? inboxCheckedLabel(syncStatus) : null;
   const { refreshMail, recoveryStatus, syncDiagnostics } = useMailRefresh({ query, loadThreadsRef, setSyncStatus, refreshTaskIndicators });
   const [labelTargetIds, setLabelTargetIds] = useState<string[] | null>(null);
   // Label ids belong to an account. Bulk actions target one account, so the
@@ -713,7 +720,7 @@ export function App() {
           ) : (
             <>
               <div className="thread-header-title">
-                <div>
+                <div className="mailbox-heading">
                   <div className="mailbox-heading-context">
                     <FolderSwitcher
                       selected={isTabbedMailbox ? "inbox" : mailbox}
@@ -733,14 +740,29 @@ export function App() {
                     />
                     <span className="eyebrow-account">· {activeAccountId ?? "All accounts"}</span>
                   </div>
-                  <h1>
-                    {mailbox === "drafts"
-                      ? `${correspondence.drafts.length} drafts`
-                      : mailbox === "outbox"
-                        ? `${outboxSelection.entries.length} outgoing`
-                        : `${visibleThreads.length} conversations`}
-                  </h1>
-                  {isTabbedMailbox ? (
+                  <div className="mailbox-title-row">
+                    <h1>
+                      {mailbox === "drafts"
+                        ? `${correspondence.drafts.length} drafts`
+                        : mailbox === "outbox"
+                          ? `${outboxSelection.entries.length} outgoing`
+                          : `${visibleThreads.length} conversations`}
+                    </h1>
+                    {isThreadMailbox ? (
+                      <div className="mailbox-header-actions">
+                        {isTabbedMailbox ? (
+                          <HoverTooltip label="Add split inbox" placement="bottom">
+                            <button type="button" className="btn-icon" aria-label="Add Split Inbox" onClick={() => openSettingsAt("splitInboxes")}>
+                              <ListPlus size={ICON_SIZE.md} />
+                            </button>
+                          </HoverTooltip>
+                        ) : null}
+                        <FiltersButton activeFilters={activeMessageFilters} onToggleFilter={toggleMessageFilter} />
+                      </div>
+                    ) : null}
+                  </div>
+                  {/* One tab is not a choice, so Main appears only beside at least one split. */}
+                  {isTabbedMailbox && accountSplitInboxes.length > 0 ? (
                     <div className="mailbox-tabs">
                       <div className="mailbox-tab-list" role="tablist" aria-label="Mailbox views">
                         <button
@@ -766,16 +788,10 @@ export function App() {
                           </button>
                         ))}
                       </div>
-                      <button type="button" className="mailbox-tab-add" onClick={() => openSettingsAt("splitInboxes")}>
-                        + Add Split
-                      </button>
                     </div>
                   ) : null}
                 </div>
               </div>
-              {isThreadMailbox ? (
-                <FiltersButton activeFilters={activeMessageFilters} onToggleFilter={toggleMessageFilter} />
-              ) : null}
             </>
           )}
         </header>
@@ -823,11 +839,17 @@ export function App() {
                 </div>
               </div>
             ) : query.trim() && remoteSearchState === "searching" ? null : (
-              <p className="empty">{query.trim() ? "No conversations match your search." : mailbox === "trash" ? "No trashed messages." : mailbox === "sent" ? "No sent messages." : "Inbox zero."}</p>
+              // An empty Main inbox is announced once, centered in the reader.
+              inboxZero || mailboxError ? null : (
+                <p className="empty">{query.trim() ? "No conversations match your search." : mailbox === "trash" ? "No trashed messages." : mailbox === "sent" ? "No sent messages." : mailbox === "split" ? `No conversations in ${mailboxTitle}.` : "No conversations."}</p>
+              )
             )
           ) : null}
           {!loading && threads.length > 0 && visibleThreads.length === 0 ? (
-            <p className="empty">No conversations match the selected filters.</p>
+            <div className="empty">
+              <p>No conversations match the selected filters.</p>
+              <button type="button" className="btn" onClick={clearMessageFilters}>Clear Filters</button>
+            </div>
           ) : null}
           {visibleThreads.map((thread) => (
             <ThreadRow
@@ -1038,6 +1060,15 @@ export function App() {
           <div className="reader-empty" role="status">
             <p>Loading conversation…</p>
           </div>
+        ) : inboxZero ? (
+          <div className="reader-empty inbox-zero">
+            <MailCheck size={ICON_SIZE.display} />
+            <p className="inbox-zero-title">Inbox zero</p>
+            {inboxCheckedText ? <p className="inbox-zero-checked">{inboxCheckedText}</p> : null}
+          </div>
+        ) : isThreadMailbox && !loading && visibleThreads.length === 0 ? (
+          // Nothing to select, so the reader gives no instruction to select.
+          <div className="reader-empty" />
         ) : (
           <div className="reader-empty">
             <Mail size={ICON_SIZE.display} />

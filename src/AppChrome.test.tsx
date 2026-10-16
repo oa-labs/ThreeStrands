@@ -37,7 +37,9 @@ describe("App chrome", () => {
     const onToggleFilter = vi.fn();
     render(<FiltersButton activeFilters={new Set(["starred"])} onToggleFilter={onToggleFilter} />);
 
-    expect(screen.getByRole("button", { name: /Filters/ })).toHaveClass("btn");
+    // Icon-only so it fits beside Add Split on the title row; the name still carries the count.
+    expect(screen.getByRole("button", { name: "Filters, 1 active" })).toHaveClass("btn-icon");
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Filters");
     fireEvent.click(screen.getByRole("button", { name: /Filters/ }));
     expect(screen.getByRole("menu", { name: "Filters" })).toBeInTheDocument();
     expect(screen.getByRole("menuitemcheckbox", { name: /Starred/ })).toHaveAttribute("aria-checked", "true");

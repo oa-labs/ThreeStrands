@@ -36,18 +36,20 @@ export function FiltersButton({
 
   return (
     <div className="filters-anchor" ref={anchorRef}>
-      <button
-        ref={triggerRef}
-        type="button"
-        className={`btn filters-trigger ${activeFilters.size > 0 ? "active" : ""}`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <ListFilter size={ICON_SIZE.md} />
-        <span>Filters</span>
-        {activeFilters.size > 0 ? <span className="filters-badge">{activeFilters.size}</span> : null}
-      </button>
+      <HoverTooltip label="Filters" placement="bottom">
+        <button
+          ref={triggerRef}
+          type="button"
+          className={`btn-icon filters-trigger ${activeFilters.size > 0 ? "active" : ""}`}
+          aria-label={activeFilters.size > 0 ? `Filters, ${activeFilters.size} active` : "Filters"}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={() => setOpen((current) => !current)}
+        >
+          <ListFilter size={ICON_SIZE.md} />
+          {activeFilters.size > 0 ? <span className="filters-badge" aria-hidden="true">{activeFilters.size}</span> : null}
+        </button>
+      </HoverTooltip>
       {open ? <FiltersMenu activeFilters={activeFilters} onToggleFilter={onToggleFilter} onClose={() => {
         setOpen(false);
         triggerRef.current?.focus();
