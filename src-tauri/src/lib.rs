@@ -1739,6 +1739,12 @@ async fn message_trust(message_id: String, state: State<'_, AppState>) -> Result
 }
 
 #[tauri::command]
+async fn sender_familiarity(message_id: String, email: String, name: String, state: State<'_, AppState>) -> Result<models::SenderFamiliarity, String> {
+    let database = state.database.clone();
+    run_database_task(move || database.sender_familiarity(&message_id, &email, &name)).await
+}
+
+#[tauri::command]
 async fn context_candidates(query: models::ContextQuery, state: State<'_, AppState>) -> Result<Vec<models::WorkspaceConversation>, String> {
     let database = state.database.clone();
     run_database_task(move || database.context_candidates(&query)).await
@@ -5640,6 +5646,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         contact_activity,
         sender_history,
         message_trust,
+        sender_familiarity,
         list_sender_rules,
         mute_sender,
         delete_sender_rule,

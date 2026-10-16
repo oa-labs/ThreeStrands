@@ -58,6 +58,8 @@ type SafeMessageProps = {
   foldQuotes?: boolean;
   /** Called with an image's resolved `src` when the reader clicks it in the message body. */
   onImageClick?: (src: string) => void;
+  /** A link to scroll to, focus, and briefly outline, such as one the Trust section warns about; a new `key` shows it again. */
+  revealLink?: LinkReveal | null;
   /**
    * Called when the reader presses a plain, unmodified Enter inside the
    * message body. Keydown events don't cross iframe boundaries, and the
@@ -529,6 +531,41 @@ export function fitsMessageImageBudget(currentBytes: number, candidateBytes: num
   return candidateBytes <= EMAIL_IMAGE_LIMITS.maxDataUriBytesPerMessage - currentBytes;
 }
 
+/** A link in the message to show the reader: its exact `href` and visible text, and a request key. */
+export type LinkReveal = { href: string; text: string; key: number };
+
+/** How long a revealed link keeps its outline. */
+const LINK_REVEAL_MS = 2000;
+
+/**
+ * The message's link with this `href` and visible text, or else the first
+ * with this `href`. Links are compared exactly as the sanitized markup wrote
+ * them, which is how the Trust section read them.
+ */
+export function findMessageLink(frameDoc: Document, link: { href: string; text: string }): HTMLAnchorElement | null {
+  const anchors = [...frameDoc.querySelectorAll<HTMLAnchorElement>("a[href]")].filter((anchor) => anchor.getAttribute("href") === link.href);
+  return anchors.find((anchor) => (anchor.textContent ?? "").trim() === link.text) ?? anchors[0] ?? null;
+}
+
+/**
+ * Scrolls a link into the middle of the view and focuses it, so the link
+ * status line shows its real destination, then outlines it for a moment.
+ * The outline is set through the element's style object by the app, never
+ * by sender markup, and the sender's own outline comes back afterwards.
+ */
+function revealMessageLink(link: HTMLAnchorElement) {
+  const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  link.scrollIntoView?.({ block: "center", behavior: reduced ? "auto" : "smooth" });
+  link.focus({ preventScroll: true });
+  const { outline, outlineOffset } = link.style;
+  link.style.outline = "2px solid Highlight";
+  link.style.outlineOffset = "2px";
+  window.setTimeout(() => {
+    link.style.outline = outline;
+    link.style.outlineOffset = outlineOffset;
+  }, LINK_REVEAL_MS);
+}
+
 export function SafeMessage({
   html,
   text = "",
@@ -544,6 +581,7 @@ export function SafeMessage({
   foldQuotes = true,
   onImageClick,
   onEnterKey,
+  revealLink = null,
 }: SafeMessageProps) {
   const minimumFontSize = parseEmailMinimumFontSize(emailMinimumFontSize);
   const minimumFontSizeRef = useRef(minimumFontSize);
@@ -648,6 +686,20 @@ export function SafeMessage({
   // Shown by the app outside the untrusted document, so a sender's markup,
   // CSS, or title attribute can't disguise where a link actually goes.
   const [hoveredLinkHref, setHoveredLinkHref] = useState<string | null>(null);
+  // A requested link is shown once per key, as soon as the document holding it has loaded.
+  const revealLinkRef = useRef(revealLink);
+  revealLinkRef.current = revealLink;
+  const revealedKeyRef = useRef<number | null>(null);
+  const showRequestedLink = useCallback(() => {
+    const request = revealLinkRef.current;
+    const frameDoc = frameRef.current?.contentDocument;
+    if (!request || revealedKeyRef.current === request.key || !frameDoc?.body) return;
+    const link = findMessageLink(frameDoc, request);
+    if (!link) return;
+    revealedKeyRef.current = request.key;
+    revealMessageLink(link);
+  }, []);
+  useEffect(() => { showRequestedLink(); }, [revealLink, showRequestedLink]);
 
   const handleLoad = useCallback(() => {
     cleanupRef.current?.();
@@ -754,7 +806,8 @@ export function SafeMessage({
       frameDoc.removeEventListener("focusout", onLinkLeave);
       setHoveredLinkHref(null);
     };
-  }, []);
+    showRequestedLink();
+  }, [showRequestedLink]);
 
   useEffect(() => () => cleanupRef.current?.(), []);
 

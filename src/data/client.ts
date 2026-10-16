@@ -67,6 +67,7 @@ import type {
   TriageSenderStats,
   SenderHistory,
   MessageTrust,
+  SenderFamiliarity,
   SenderRule,
   MuteResult,
   UnreadCounts,
@@ -214,6 +215,8 @@ export interface MailClient extends CorrespondenceClient {
   senderHistory(accountId: string, email: string, limit?: number): Promise<SenderHistory>;
   /** Trust signals from a message's stored headers; null when they are not cached. */
   messageTrust(messageId: string): Promise<MessageTrust | null>;
+  /** How well the user knows `email`, the sender of `messageId`, who goes by `name`. */
+  senderFamiliarity(messageId: string, email: string, name: string): Promise<SenderFamiliarity>;
   listSenderRules(): Promise<SenderRule[]>;
   /** Mutes a sender in one account, marking read and archiving the listed Inbox conversations from them. */
   muteSender(accountId: string, matchKind: SenderRule["matchKind"], matchValue: string, archiveThreadIds: string[]): Promise<MuteResult>;
@@ -420,6 +423,7 @@ const tauriClient: MailClient = {
   contactActivity: (id) => read("contact_activity", { id }),
   senderHistory: (accountId, email, limit) => read("sender_history", { accountId, email, limit }),
   messageTrust: (messageId) => read("message_trust", { messageId }),
+  senderFamiliarity: (messageId, email, name) => read("sender_familiarity", { messageId, email, name }),
   listSenderRules: () => read("list_sender_rules"),
   muteSender: (accountId, matchKind, matchValue, archiveThreadIds) => complete("mute_sender", { accountId, matchKind, matchValue, archiveThreadIds }),
   deleteSenderRule: (id) => complete("delete_sender_rule", { id }),

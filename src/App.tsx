@@ -421,7 +421,7 @@ export function App() {
       .catch((reason: unknown) => setNotice({ message: errorMessage(reason) }));
   }, [correspondence, openTaskThread, setNotice]);
   const {
-    selectAdjacentMessage, activateMessage, toggleMessage, showMessage, registerMessageNode,
+    selectAdjacentMessage, activateMessage, toggleMessage, showMessage, showMessageLink, linkReveal, registerMessageNode,
     respondToMessage,
     editMessageAsNew,
   } = useReaderActions({ reader, displayedMessages, visibleDetail, selected, correspondence, jumpToThread, mailbox, includeArchived, recordTriageEvent });
@@ -1012,6 +1012,7 @@ export function App() {
                     onRegisterNode={registerMessageNode}
                     onImageClick={setLightboxImageSrc}
                     onNotice={showNoticeMessage}
+                    revealLink={linkReveal?.messageId === message.id ? linkReveal.reveal : null}
                   />
                 );
             }) : null}
@@ -1204,6 +1205,7 @@ export function App() {
           sender={senderActions}
           onOpenThread={jumpToThread}
           onShowMessage={showMessage}
+          onShowLink={showMessageLink}
           assist={visibleDetail ? (<>
             <ThreadAssist
               detail={visibleDetail}

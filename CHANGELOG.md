@@ -6,6 +6,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ### New
 - In **Settings → Signatures**, **Import from Gmail…** brings in a signature from a connected Gmail account for preview, naming, and optional use as the account’s default for new messages. You can edit its plain-text alternative separately or regenerate it from the visual signature.
+- The **Trust** section in the side panel now spots common email tricks using only what's on your computer: a familiar name sent from a new address, an address or link that imitates a domain you write to, links that hide where they go, and risky attachments from people you haven't written to. It says **Be careful** when something looks wrong, shows **Known sender** for people you write to, and **Show link** scrolls to the link in question. Sender checks, linked sites, and tracking images are under **Details**.
 - When your inbox is empty, the side panel now shows what's next: your open tasks, people you're due to reconnect with from **Keep in Touch**, and today's agenda when you have a calendar connected. Click any item to open it.
 
 ### Improved

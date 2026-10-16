@@ -13,7 +13,7 @@ import type { Account, Message } from "./domain";
 import { formatDisplayName, parseAddress, splitAddressList } from "./emailAddress";
 import { errorMessage } from "./errors";
 import { isInlineImageAttachment, normalizeContentId, referencedImageContentIds } from "./inlineAttachments";
-import { decodeHtmlEntities, SafeMessage } from "./SafeMessage";
+import { decodeHtmlEntities, SafeMessage, type LinkReveal } from "./SafeMessage";
 import type { ThreadTextIndex } from "./quotedHistory";
 import type { FontFamily } from "./settings";
 import { formatMailTimestamp } from "./threadPresentation";
@@ -50,6 +50,8 @@ type MessageCardProps = {
   onRegisterNode: (messageId: string, isLatest: boolean, node: HTMLElement | null) => void;
   onImageClick: (src: string) => void;
   onNotice: (message: string) => void;
+  /** A link in this message to show, such as one the Trust section warns about. */
+  revealLink?: LinkReveal | null;
 };
 
 /**
@@ -78,6 +80,7 @@ export const MessageCard = memo(function MessageCard({
   onRegisterNode,
   onImageClick,
   onNotice,
+  revealLink = null,
 }: MessageCardProps) {
   const parsedSender = parseAddress(message.sender);
   const senderAccount = accounts.find(
@@ -274,6 +277,7 @@ export const MessageCard = memo(function MessageCard({
           emailMinimumFontSize={emailMinimumFontSize}
           tone={isLatest ? "current" : message.unread ? "default" : "muted"}
           priorThreadText={priorThreadText}
+          revealLink={revealLink}
         />
         {downloadableAttachments.length > 0 ? (
           <div className="message-attachments" aria-label="Attachments">

@@ -6,7 +6,7 @@ import { RecipientChips, RecipientSummary } from "./RecipientSections";
 import { parseAddress, splitAddressList } from "./emailAddress";
 import { logBackgroundFailure } from "./errors";
 import { SenderDecisions, TrustSection, useSenderHistory, type SenderActions, type SenderTarget } from "./SenderSections";
-import { bulkMessage, latestInbound } from "./senderSignals";
+import { bulkMessage, latestInbound, type TrustLink } from "./senderSignals";
 import { threadTextIndex } from "./threadTextIndex";
 
 /** A reply in the open conversation, as the context panel shows it. */
@@ -50,7 +50,7 @@ export type ContextPerson = {
  * sender's history and one-click decisions first in the person group. Other
  * conversations show Trust only when something needs a look.
  */
-export function ContextPanel({ detail, accounts, selectedEmail = null, reply = null, onOpenThread, onShowMessage, assist, related, chat, sender, idle = null, onKeyDown }: {
+export function ContextPanel({ detail, accounts, selectedEmail = null, reply = null, onOpenThread, onShowMessage, onShowLink, assist, related, chat, sender, idle = null, onKeyDown }: {
   detail: ThreadDetail | null;
   accounts: Account[];
   /** A participant the reader picked from a message header; ignored if not on the conversation. */
@@ -63,6 +63,8 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, reply = n
   onOpenThread(id: string): void;
   /** Reveals a message: in the reader when it belongs to the open conversation, otherwise by opening its conversation. */
   onShowMessage?(threadId: string, messageId: string): void;
+  /** Shows a link the Trust section warns about in the open message. */
+  onShowLink?(threadId: string, messageId: string, link: TrustLink): void;
   assist?: ReactNode;
   /** Sections about the conversation and the selected person. */
   related?(person: ContextPerson | null, meetingPeople: { email: string; name: string }[]): ReactNode;
@@ -245,7 +247,8 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, reply = n
       {detail ? null : idle}
       {detail ? assist : null}
       {detail && related ? related(person, [...meetingPeople.values()]) : null}
-      {inbound ? <TrustSection key={inbound.id} message={inbound} bulk={Boolean(bulk)} prior={inboundPrior} /> : null}
+      {inbound ? <TrustSection key={inbound.id} message={inbound} bulk={Boolean(bulk)} prior={inboundPrior}
+        onShowLink={onShowLink && detail ? (link) => onShowLink(detail.thread.id, inbound.id, link) : undefined} /> : null}
       {detail ? <ThreadOutlineSection detail={detail} accounts={accounts} onShowMessage={showMessage} /> : null}
       {person ? <ContactFilesSection key={person.contactId} contactId={person.contactId} onShowMessage={showMessage} /> : null}
       {senderTarget && sender ? (

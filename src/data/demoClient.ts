@@ -56,6 +56,7 @@ import type {
   TriageSenderStats,
   SenderHistory,
   MessageTrust,
+  SenderFamiliarity,
   SenderRule,
   MuteResult,
   UnsubscribeResult,
@@ -973,6 +974,34 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         fromDomain: domain,
         authentication: { spf: "pass", dkim: "pass", dmarc: "pass", dkimDomains: [domain] },
         replyTo: null,
+      };
+    },
+    /** Read from the sample conversations and saved contacts, as the app reads its cache. */
+    async senderFamiliarity(messageId, email, name): Promise<SenderFamiliarity> {
+      const address = email.trim().toLocaleLowerCase();
+      const own = new Set(accounts.map((account) => account.email.toLocaleLowerCase()));
+      const all = threads.flatMap(messagesFor);
+      const sent = all.filter((message) => own.has(parseAddress(message.sender).email.toLocaleLowerCase()));
+      const toAddress = sent.filter((message) => message.recipients.some((recipient) => parseAddress(recipient).email.toLocaleLowerCase() === address))
+        .sort((left, right) => left.sentAt.localeCompare(right.sentAt));
+      const current = findMessage(messageId);
+      const contact = savedContactProfiles.find((profile) => profile.addresses.some((item) => item.toLocaleLowerCase() === address));
+      const folded = name.trim().toLocaleLowerCase();
+      const knownAddresses = new Set([
+        ...sent.flatMap((message) => message.recipients.map((recipient) => parseAddress(recipient).email.toLocaleLowerCase())),
+        ...savedContactProfiles.flatMap((profile) => profile.addresses.map((item) => item.toLocaleLowerCase())),
+      ]);
+      return {
+        sentCount: toAddress.length,
+        firstSentAt: toAddress[0]?.sentAt ?? null,
+        receivedBefore: all.some((message) => message.id !== messageId && parseAddress(message.sender).email.toLocaleLowerCase() === address
+          && (!current || message.sentAt < current.sentAt)),
+        contactName: contact?.displayName ?? null,
+        nameMatches: folded.includes(" ") ? savedContactProfiles
+          .filter((profile) => profile.displayName?.trim().toLocaleLowerCase() === folded)
+          .flatMap((profile) => profile.addresses.map((item) => item.toLocaleLowerCase()))
+          .filter((item) => item !== address).slice(0, 3) : [],
+        knownDomains: [...new Set([...knownAddresses].map((item) => item.split("@")[1]).filter(Boolean))].sort(),
       };
     },
     async contextCandidates(query) {

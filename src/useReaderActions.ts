@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { Message, ThreadDetail, Thread } from "./domain";
 import type { MessageResponseKind } from "./MessageCard";
 import type { MailboxKind } from "./commands";
@@ -6,6 +6,8 @@ import type { useReaderState } from "./useReaderState";
 import type { useCorrespondence } from "./useCorrespondence";
 import type { useTriageSession } from "./useTriageSession";
 import { selectedMessageQuote } from "./selectedMessageQuote";
+import type { LinkReveal } from "./SafeMessage";
+import type { TrustLink } from "./senderSignals";
 
 export function scrollBehavior(): ScrollBehavior {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
@@ -74,6 +76,17 @@ export function useReaderActions({
       messageRefs.current.get(messageId)?.scrollIntoView?.({ block: "start", behavior: scrollBehavior() });
     });
   }, [activateMessage, jumpToThread, messageRefs, setMessageExpansionOverrides, visibleDetail?.thread.id]);
+  // The Trust section's Show link: expands the message and hands its card
+  // the link, which scrolls itself into view once the email has loaded.
+  const [linkReveal, setLinkReveal] = useState<{ messageId: string; reveal: LinkReveal } | null>(null);
+  const revealCountRef = useRef(0);
+  const showMessageLink = useCallback((threadId: string, messageId: string, link: TrustLink) => {
+    if (threadId !== visibleDetail?.thread.id) return;
+    activateMessage(messageId);
+    setMessageExpansionOverrides((current) => new Map(current).set(messageId, true));
+    revealCountRef.current += 1;
+    setLinkReveal({ messageId, reveal: { href: link.href, text: link.text, key: revealCountRef.current } });
+  }, [activateMessage, setMessageExpansionOverrides, visibleDetail?.thread.id]);
   const registerMessageNode = useCallback((messageId: string, isLatest: boolean, node: HTMLElement | null) => {
     if (isLatest) latestMessageRef.current = node;
     if (node) messageRefs.current.set(messageId, node);
@@ -98,5 +111,5 @@ export function useReaderActions({
   const editAsNewRef = useRef(correspondence.context.editAsNew);
   editAsNewRef.current = correspondence.context.editAsNew;
   const editMessageAsNew = useCallback((messageId: string) => { editAsNewRef.current(messageId); }, []);
-  return { selectAdjacentMessage, activateMessage, toggleMessage, showMessage, registerMessageNode, respondToMessage, editMessageAsNew };
+  return { selectAdjacentMessage, activateMessage, toggleMessage, showMessage, showMessageLink, linkReveal, registerMessageNode, respondToMessage, editMessageAsNew };
 }

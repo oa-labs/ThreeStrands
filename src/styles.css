@@ -2275,6 +2275,15 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-sender-state { color:var(--muted); font-size:var(--text-control); }
 .context-row-warning .context-row-glyph { color:var(--warning); }
 .context-row-verified .context-row-glyph { color:var(--success); }
+/* Trust: a one-word verdict in the heading, then the tricks found, then Details folded below. */
+.context-trust-summary { display:inline-flex; align-items:center; gap:var(--space-1); color:var(--muted); font-size:var(--text-meta); font-weight:var(--weight-medium); }
+.context-trust-careful { color:var(--warning); }
+.context-trust-known { color:var(--success); }
+.context-trust-details { margin-top:var(--space-1); }
+.context-trust-details-toggle { display:flex; align-items:center; width:100%; min-width:0; padding:var(--space-0-5) var(--context-row-inset); border:0; border-radius:var(--radius-sm); color:var(--muted); background:transparent; font:inherit; font-size:var(--text-meta); text-align:left; cursor:pointer; }
+.context-trust-details-toggle:hover { color:var(--text); background:var(--hover); }
+.context-trust-details-label { flex:0 0 auto; margin-right:var(--space-2); color:var(--text); font-weight:var(--weight-medium); }
+.context-trust-details-summary { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .compose-check { display:grid; gap:var(--space-1); padding:var(--space-1-5) 0 var(--space-1-5) var(--space-2-5); border-left:2px solid var(--border); color:var(--muted); font-size:var(--text-meta); line-height:var(--leading-normal); }
 .compose-check + .compose-check { margin-top:var(--space-1); }
 .compose-check strong { color:var(--text); font-weight:var(--weight-medium); overflow-wrap:anywhere; }

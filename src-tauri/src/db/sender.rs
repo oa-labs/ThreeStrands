@@ -8,7 +8,7 @@
 use super::messages::resolve_body;
 use super::{normalize_sender, Database, DbResult};
 use crate::mime::RawMessage;
-use crate::models::{SenderHistory, SenderThread};
+use crate::models::{SenderFamiliarity, SenderHistory, SenderThread};
 use crate::sender_trust::{message_trust, MessageTrust};
 use rusqlite::{params, OptionalExtension};
 
@@ -16,6 +16,19 @@ use rusqlite::{params, OptionalExtension};
 pub(crate) const MAX_SENDER_THREADS: usize = 50;
 /// Arrival times returned for estimating a cadence, newest first.
 const MAX_SENDER_ARRIVALS: usize = 24;
+/// Other addresses a familiarity read lists under the sender's display name.
+const MAX_NAME_MATCHES: usize = 3;
+/// Domains the user corresponds with that a familiarity read returns.
+pub(crate) const MAX_KNOWN_DOMAINS: usize = 5000;
+
+/// A display name folded for comparison: lowercased, quotes dropped, and
+/// whitespace collapsed. Names of one word, or shorter than five characters,
+/// fold to None: "Jane" or "Admin" is shared by too many people to suggest
+/// impersonation.
+fn comparable_name(name: &str) -> Option<String> {
+    let folded = name.replace(['"', '\''], " ").split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    (folded.split(' ').count() >= 2 && folded.chars().count() >= 5).then_some(folded)
+}
 
 impl Database {
     /// Every stored message from `email` in `account_id`: how many arrived and
@@ -87,6 +100,68 @@ impl Database {
                 |row| row.get(0),
             )?;
             Ok(history)
+        })
+    }
+
+    /// How well the user knows `email`, the sender of `message_id`: what they
+    /// sent it, whether its mail arrived before this message, its saved
+    /// contact, other known addresses that go by `name`, and the domains the
+    /// user corresponds with. Every account counts, since a person writes to
+    /// one inbox from the same address they write to another.
+    pub fn sender_familiarity(&self, message_id: &str, email: &str, name: &str) -> DbResult<SenderFamiliarity> {
+        let email = email.trim().to_ascii_lowercase();
+        let name = comparable_name(name);
+        self.with_connection(|connection| {
+            let mut familiarity = SenderFamiliarity::default();
+            if email.contains('@') {
+                (familiarity.sent_count, familiarity.first_sent_at) = connection.query_row(
+                    "SELECT COUNT(DISTINCT message_id), MIN(sent_at) FROM contact_interactions WHERE direction = 'sent' AND email = ?1",
+                    [&email],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                familiarity.contact_name = connection.query_row(
+                    "SELECT c.display_name FROM contact_addresses a JOIN contacts c ON c.id = a.contact_id WHERE a.email = ?1",
+                    [&email],
+                    |row| row.get::<_, Option<String>>(0),
+                ).optional()?.flatten();
+                // Any stored message counts, automated mail included, so the
+                // raw From header is compared exactly after `instr` narrows it.
+                let sent_at: Option<String> = connection.query_row("SELECT sent_at FROM messages WHERE id = ?1", [message_id], |row| row.get(0)).optional()?;
+                if let Some(sent_at) = sent_at {
+                    let mut statement = connection.prepare(
+                        "SELECT sender FROM messages WHERE id <> ?1 AND sent_at < ?2 AND instr(lower(sender), ?3) > 0",
+                    )?;
+                    let mut rows = statement.query(params![message_id, sent_at, email])?;
+                    while let Some(row) = rows.next()? {
+                        if normalize_sender(&row.get::<_, String>(0)?).0 == email {
+                            familiarity.received_before = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if let Some(name) = name {
+                let mut statement = connection.prepare(
+                    "SELECT email FROM (
+                         SELECT a.email AS email FROM contact_addresses a JOIN contacts c ON c.id = a.contact_id WHERE lower(trim(c.display_name)) = ?1
+                         UNION
+                         SELECT email FROM contact_interactions WHERE direction = 'sent' AND lower(trim(display_name)) = ?1
+                     ) WHERE email <> ?2 ORDER BY email LIMIT ?3",
+                )?;
+                familiarity.name_matches = statement
+                    .query_map(params![name, email, MAX_NAME_MATCHES as i64], |row| row.get(0))?
+                    .collect::<Result<_, _>>()?;
+            }
+            let mut statement = connection.prepare(
+                "SELECT DISTINCT lower(substr(email, instr(email, '@') + 1)) AS domain FROM (
+                     SELECT email FROM contact_interactions WHERE direction = 'sent'
+                     UNION SELECT email FROM contact_addresses
+                 ) WHERE instr(email, '@') > 0 ORDER BY domain LIMIT ?1",
+            )?;
+            familiarity.known_domains = statement
+                .query_map([MAX_KNOWN_DOMAINS as i64], |row| row.get(0))?
+                .collect::<Result<_, _>>()?;
+            Ok(familiarity)
         })
     }
 

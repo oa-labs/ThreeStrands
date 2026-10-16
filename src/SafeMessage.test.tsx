@@ -1564,6 +1564,46 @@ describe("link destination status", () => {
     expect(screen.queryByTestId("message-link-status")).toBeNull();
   });
 
+  it("reveals a requested link once per request: scrolled to, focused so its destination shows, and outlined for a moment", () => {
+    vi.useFakeTimers();
+    try {
+      const html = `<p><a href="https://pay.example/a">Pay</a> or <a href="https://pay.example/a">pay the invoice</a></p>
+        <table><tr><td><a href="https://other.example/">Other</a></td></tr></table>`;
+      const { rerender } = render(<SafeMessage html={html} />);
+      const frameDoc = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement);
+      const [plain, styled] = [...frameDoc.querySelectorAll("a")];
+      styled.style.outline = "1px dotted red";
+      const scrolled = vi.fn();
+      for (const anchor of frameDoc.querySelectorAll("a")) anchor.scrollIntoView = scrolled;
+
+      rerender(<SafeMessage html={html} revealLink={{ href: "https://pay.example/a", text: "pay the invoice", key: 1 }} />);
+      expect(scrolled).toHaveBeenCalledTimes(1);
+      expect(scrolled.mock.instances[0]).toBe(styled);
+      expect(frameDoc.activeElement).toBe(styled);
+      expect(screen.getByTestId("message-link-status")).toHaveTextContent("https://pay.example/a");
+      expect(styled.style.outline).toMatch(/^2px solid highlight$/i);
+      vi.advanceTimersByTime(2000);
+      expect(styled.style.outline).toBe("1px dotted red");
+
+      // The same request does not scroll again; a new one does, and an
+      // unmatched text falls back to the first link with that address.
+      rerender(<SafeMessage html={html} revealLink={{ href: "https://pay.example/a", text: "pay the invoice", key: 1 }} />);
+      expect(scrolled).toHaveBeenCalledTimes(1);
+      rerender(<SafeMessage html={html} revealLink={{ href: "https://pay.example/a", text: "Changed", key: 2 }} />);
+      expect(scrolled.mock.instances[1]).toBe(plain);
+      rerender(<SafeMessage html={html} revealLink={{ href: "https://missing.example/", text: "Gone", key: 3 }} />);
+      expect(scrolled).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reveals a link requested before the email finished loading", () => {
+    render(<SafeMessage html='<p><a href="https://news.example/story">Read more</a></p>' revealLink={{ href: "https://news.example/story", text: "Read more", key: 1 }} />);
+    const frameDoc = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement);
+    expect(frameDoc.activeElement).toBe(frameDoc.querySelector("a"));
+  });
+
   it("shows nothing for unsafe hrefs the sanitizer removed", () => {
     render(<SafeMessage html='<p><a href="javascript:alert(1)">Click</a></p>' />);
     const frameDoc = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement);

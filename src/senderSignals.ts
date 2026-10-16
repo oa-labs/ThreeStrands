@@ -1,5 +1,7 @@
-import type { Message, MessageTrust, SenderRule, SplitInbox, ThreadDetail } from "./domain";
+import { attachmentRisk } from "./attachmentRisk";
+import type { Message, MessageAttachment, MessageTrust, SenderFamiliarity, SenderRule, SplitInbox, ThreadDetail } from "./domain";
 import { parseAddress } from "./emailAddress";
+import { knownSites, lookalikeOf, mixesScripts, spelledOutSite, unicodeHost, type KnownSites } from "./lookalike";
 import { foldQuotedHistoryHtml, type PriorThreadText } from "./quotedHistory";
 import { sanitizeMessageHtml } from "./SafeMessage";
 
@@ -7,8 +9,12 @@ import { sanitizeMessageHtml } from "./SafeMessage";
 export const BULK_CATEGORY_LABELS: readonly string[] = ["CATEGORY_UPDATES", "CATEGORY_PROMOTIONS"];
 /** A bulk sender's conversations Recent emails can add. */
 export const SENDER_HISTORY_LIMIT = 20;
-/** Mismatched links listed in the Trust section; more are counted in the last one. */
+/** Link warnings listed in the Trust section; more are counted in the last one. */
 export const TRUST_MISMATCH_LIMIT = 3;
+/** Risky attachments listed in the Trust section. */
+export const TRUST_ATTACHMENT_LIMIT = 3;
+/** Distinct links read from one message. */
+export const TRUST_LINK_LIMIT = 500;
 
 /** The newest message in a conversation that someone else sent. */
 export function latestInbound(detail: ThreadDetail, ownEmails: Set<string>): Message | null {
@@ -71,12 +77,25 @@ export function siteOf(host: string): string {
   return labels.slice(last.length === 2 && SECOND_LEVEL.has(second) ? -3 : -2).join(".");
 }
 
-export type LinkMismatch = { shown: string; opens: string };
+/** One link in the message, as the reader shows it: where it goes and its visible text. */
+export type TrustLink = { href: string; text: string };
+export type LinkMismatch = { shown: string; opens: string; link: TrustLink };
+/** A web link read from the shown part of a message. */
+export type LinkFact = {
+  link: TrustLink;
+  /** The host the link opens, as the URL parser gives it (Punycode for international names). */
+  host: string;
+  site: string;
+  /** Text before an `@` in the address, which browsers skip: `https://bank.example@other.example`. */
+  userinfo: string | null;
+};
 export type LinkAnalysis = {
   /** Sites the shown part's web links open, most linked first. */
   sites: string[];
   /** Links whose visible text names one site while the link opens another. */
   mismatches: LinkMismatch[];
+  /** Distinct web links in the shown part, in document order. */
+  links: LinkFact[];
   /** Remote images sized or styled to be invisible, the usual open trackers. */
   trackingImages: number;
 };
@@ -85,13 +104,21 @@ export type LinkAnalysis = {
 const SHOWN_ADDRESS = /^(?:https?:\/\/)?((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,})(?::\d+)?(?:[/?#]\S*)?$/i;
 const HIDDEN_STYLE = /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden|(?:width|height)\s*:\s*[01](?:px)?\s*(?:;|$))/i;
 
-function webHost(value: string | null): string | null {
+function webUrl(value: string | null): URL | null {
   if (!value) return null;
   try {
     const url = new URL(value.trim());
-    return url.protocol === "https:" || url.protocol === "http:" ? url.hostname : null;
+    return url.protocol === "https:" || url.protocol === "http:" ? url : null;
   } catch {
     return null;
+  }
+}
+
+function decodedUserinfo(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
   }
 }
 
@@ -123,40 +150,72 @@ function shownHtml(html: string, prior?: PriorThreadText): string {
  * behind the reader's own proxy and blocking.
  */
 export function analyzeLinks(html: string, prior?: PriorThreadText): LinkAnalysis {
-  if (!html.trim()) return { sites: [], mismatches: [], trackingImages: 0 };
+  if (!html.trim()) return { sites: [], mismatches: [], links: [], trackingImages: 0 };
   const parser = new DOMParser();
   const document = parser.parseFromString(html, "text/html");
   const shown = parser.parseFromString(shownHtml(html, prior), "text/html");
   const counts = new Map<string, number>();
   const mismatches: LinkMismatch[] = [];
+  const links: LinkFact[] = [];
+  const seen = new Set<string>();
   for (const anchor of shown.querySelectorAll("a[href]")) {
-    const host = webHost(anchor.getAttribute("href"));
-    if (!host) continue;
+    const href = anchor.getAttribute("href") ?? "";
+    const url = webUrl(href);
+    if (!url) continue;
+    const host = url.hostname.replace(/^\[|\]$/g, "");
     const site = siteOf(host);
     counts.set(site, (counts.get(site) ?? 0) + 1);
     const text = (anchor.textContent ?? "").trim();
-    const shown = text.includes("@") ? null : SHOWN_ADDRESS.exec(text)?.[1];
-    if (shown && siteOf(shown) !== site && !mismatches.some((item) => item.shown === siteOf(shown) && item.opens === site)) {
-      mismatches.push({ shown: siteOf(shown), opens: site });
+    const link = { href, text };
+    const key = `${href}\n${text}`;
+    if (!seen.has(key) && links.length < TRUST_LINK_LIMIT) {
+      seen.add(key);
+      links.push({ link, host, site, userinfo: url.username ? decodedUserinfo(url.username) : null });
+    }
+    const shownHost = text.includes("@") ? null : SHOWN_ADDRESS.exec(text)?.[1];
+    if (shownHost && siteOf(shownHost) !== site && !mismatches.some((item) => item.shown === siteOf(shownHost) && item.opens === site)) {
+      mismatches.push({ shown: siteOf(shownHost), opens: site, link });
     }
   }
   let trackingImages = 0;
   for (const image of document.querySelectorAll("img[src]")) {
-    if (!webHost(image.getAttribute("src"))) continue;
+    if (!webUrl(image.getAttribute("src"))) continue;
     const sized = tiny(image.getAttribute("width")) && tiny(image.getAttribute("height"));
     if (sized || HIDDEN_STYLE.test(image.getAttribute("style") ?? "")) trackingImages += 1;
   }
   const sites = [...counts].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0])).map(([site]) => site);
-  return { sites, mismatches, trackingImages };
+  return { sites, mismatches, links, trackingImages };
 }
 
 export type TrustFinding = {
   key: string;
   /** Warnings come first and bring the section into any conversation. */
   tone: "warning" | "verified" | "info";
-  kind: "authentication" | "replyTo" | "mismatch" | "sites" | "tracking";
+  kind: "authentication" | "replyTo" | "mismatch" | "sites" | "tracking" | "impersonation" | "lookalike" | "link" | "attachment" | "history";
   title: string;
   detail: string;
+  /** The link a link finding is about, so the reader can show it. */
+  link?: TrustLink;
+};
+
+/**
+ * What the Trust section shows. `summary` heads the section: "careful" when
+ * anything warns, "known" for someone the user writes to or saved whose mail
+ * passed DMARC, otherwise none. `rows` are the warnings and the sender's
+ * history; `details` holds the rest, folded under Details.
+ */
+export type TrustReport = { summary: "careful" | "known" | null; rows: TrustFinding[]; details: TrustFinding[] };
+
+export type TrustInput = {
+  /** Null when the message's headers are not stored. */
+  trust: MessageTrust | null;
+  links: LinkAnalysis;
+  /** Null when the history could not be read; checks that need it are skipped. */
+  familiarity: SenderFamiliarity | null;
+  /** The From header as stored. */
+  sender: string;
+  attachments: readonly MessageAttachment[];
+  bulk: boolean;
 };
 
 const METHOD_NAMES = { dmarc: "DMARC", dkim: "DKIM", spf: "SPF" } as const;
@@ -198,31 +257,191 @@ function authenticationFinding(trust: MessageTrust): TrustFinding {
   return { ...base, tone: "info", title: "No sender checks", detail: "Your mail server reported no passing or failing result" };
 }
 
-/**
- * What the Trust section lists, warnings first: the receiving server's verdict
- * on the sender, a Reply-To at another organization, links whose text names a
- * different site than they open, the sites links open, and tracking images.
- * `trust` is null when the message's headers are not stored.
- */
-export function trustFindings(trust: MessageTrust | null, links: LinkAnalysis): TrustFinding[] {
-  const findings: TrustFinding[] = [];
-  if (trust) findings.push(authenticationFinding(trust));
-  if (trust?.replyTo) {
-    findings.push({ key: "reply-to", tone: "warning", kind: "replyTo", title: "Replies go elsewhere", detail: `Reply-To is ${trust.replyTo}` });
+/** A host in its ASCII (Punycode) form, as the URL parser writes it. */
+function asciiHost(host: string): string {
+  try {
+    return new URL(`http://${host}`).hostname;
+  } catch {
+    return host;
   }
-  const listed = links.mismatches.slice(0, TRUST_MISMATCH_LIMIT);
-  listed.forEach((item, index) => {
-    const extra = index === listed.length - 1 ? links.mismatches.length - listed.length : 0;
-    findings.push({
-      key: `mismatch:${item.shown}:${item.opens}`,
-      tone: "warning",
-      kind: "mismatch",
-      title: "Link text doesn't match",
-      detail: `Shows ${item.shown}, opens ${item.opens}${extra > 0 ? ` (and ${extra} more)` : ""}`,
+}
+
+/** A host as people read it, with its real ASCII form when the two differ. */
+function describeHost(host: string): string {
+  const shown = unicodeHost(asciiHost(host));
+  const ascii = asciiHost(host);
+  return shown === ascii ? shown : `${shown} (${ascii})`;
+}
+
+function registrableName(site: string): string {
+  return unicodeHost(site).split(".")[0] ?? "";
+}
+
+/** An address written into a display name: `"support@bank.example" <…>`. */
+const NAME_ADDRESS = /[\w.+-]+@((?:[a-z0-9-]+\.)+[a-z]{2,})/i;
+/**
+ * A domain written into a display name, such as "Shop.example" or "news.example.org".
+ * The suffix must be lowercase and two or three letters, so initials and
+ * abbreviations ("J.R. Doe", "Mr.Smith") are not read as domains.
+ */
+const NAME_DOMAIN = /(?:^|[\s(<[,"'])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)*[a-z0-9][a-z0-9-]*[a-z0-9]\.[a-z]{2,3})(?=$|[\s)>\],:;"'])/i;
+const LOWERCASE_SUFFIX = /\.[a-z]{2,3}$/;
+
+/** The address or domain a display name claims, when it names another organization than the sender's. */
+function claimedInName(name: string, email: string): string | null {
+  const domain = email.split("@")[1] ?? "";
+  if (!domain) return null;
+  const senderName = registrableName(siteOf(domain));
+  const address = NAME_ADDRESS.exec(name);
+  if (address) {
+    return registrableName(siteOf(address[1])) === senderName ? null : address[0];
+  }
+  const shown = NAME_DOMAIN.exec(name)?.[1];
+  if (!shown || !LOWERCASE_SUFFIX.test(shown)) return null;
+  return registrableName(siteOf(shown.toLocaleLowerCase())) === senderName ? null : shown;
+}
+
+function monthYear(iso: string): string {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString(undefined, { month: "short", year: "numeric" });
+}
+
+function times(count: number): string {
+  return count === 1 ? "once" : count === 2 ? "twice" : `${count} times`;
+}
+
+/** At most one warning per link, the most specific trick first. */
+function linkTrick(fact: LinkFact, known: KnownSites | null): Omit<TrustFinding, "key" | "tone" | "kind" | "link"> & { site: string; kind: string } | null {
+  if (fact.userinfo) {
+    return { kind: "userinfo", site: fact.site, title: "Link hides where it goes", detail: `Shows ${fact.userinfo}, opens ${describeHost(fact.site)}` };
+  }
+  const imitated = known ? lookalikeOf(fact.site, known) ?? spelledOutSite(fact.host, fact.site, known) : null;
+  if (imitated) {
+    return { kind: "lookalike", site: fact.site, title: `Link looks like ${unicodeHost(imitated)}`, detail: `Opens ${describeHost(fact.host)}` };
+  }
+  if (unicodeHost(fact.host).split(".").some(mixesScripts)) {
+    return { kind: "script", site: fact.site, title: "Link uses look-alike letters", detail: `Opens ${describeHost(fact.host)}` };
+  }
+  if (/^[\d.]+$/.test(fact.host) || fact.host.includes(":")) {
+    return { kind: "address", site: fact.site, title: "Link opens a numeric address", detail: `Opens ${fact.host}` };
+  }
+  return null;
+}
+
+/**
+ * What the Trust section shows, warnings first: the receiving server's
+ * verdict on the sender; a display name that belongs to someone the user
+ * knows at another address, or that spells out another organization; a
+ * From domain or link that imitates one the user corresponds with; links
+ * whose text or address hides where they go; risky attachments; and a
+ * Reply-To at another organization. The sender's history with the user
+ * follows. The sites links open and tracking images sit in the details.
+ */
+export function trustReport({ trust, links, familiarity, sender, attachments, bulk }: TrustInput): TrustReport {
+  const from = parseAddress(sender);
+  const email = from.email.toLocaleLowerCase();
+  const domain = email.split("@")[1] ?? "";
+  const fromSite = domain ? siteOf(domain) : "";
+  const known = familiarity ? knownSites(familiarity.knownDomains.map(siteOf)) : null;
+  const acquainted = Boolean(familiarity && (familiarity.sentCount > 0 || familiarity.contactName));
+  const warnings: TrustFinding[] = [];
+  const details: TrustFinding[] = [];
+  const warn = (finding: Omit<TrustFinding, "tone">) => warnings.push({ ...finding, tone: "warning" });
+
+  const authentication = trust ? authenticationFinding(trust) : null;
+  if (authentication?.tone === "warning") warnings.push(authentication);
+
+  if (familiarity && !acquainted && familiarity.nameMatches.length > 0 && from.name) {
+    const others = familiarity.nameMatches.length - 1;
+    warn({
+      key: "impersonation",
+      kind: "impersonation",
+      title: `Name matches ${from.name}, but from a new address`,
+      detail: `${email} · You know ${from.name} as ${familiarity.nameMatches[0]}${others > 0 ? ` and ${others} more` : ""}`,
     });
-  });
+  }
+  const claimed = from.name ? claimedInName(from.name, email) : null;
+  if (claimed) {
+    warn({ key: "claimed-name", kind: "impersonation", title: `Name shows ${claimed}`, detail: `Sent from ${email}` });
+  }
+  const imitated = known && fromSite ? lookalikeOf(fromSite, known) : null;
+  if (imitated) {
+    warn({ key: "lookalike", kind: "lookalike", title: `Address looks like ${unicodeHost(imitated)}`, detail: `Sent from ${describeHost(domain)}` });
+  } else if (domain && unicodeHost(asciiHost(domain)).split(".").some(mixesScripts)) {
+    warn({ key: "lookalike", kind: "lookalike", title: "Address uses look-alike letters", detail: `Sent from ${describeHost(domain)}` });
+  }
+
+  if (trust?.replyTo) {
+    const replyDomain = trust.replyTo.split("@")[1]?.toLocaleLowerCase() ?? "";
+    const familiarReply = Boolean(known && replyDomain && known.sites.has(siteOf(replyDomain)));
+    const finding: TrustFinding = {
+      key: "reply-to",
+      tone: familiarReply ? "info" : "warning",
+      kind: "replyTo",
+      title: "Replies go elsewhere",
+      detail: familiarReply ? `Reply-To is ${trust.replyTo}, a domain you write to` : `Reply-To is ${trust.replyTo}`,
+    };
+    if (familiarReply) details.push(finding);
+    else warnings.push(finding);
+  }
+
+  const linkWarnings: TrustFinding[] = links.mismatches.map((item) => ({
+    key: `mismatch:${item.shown}:${item.opens}`,
+    tone: "warning",
+    kind: "mismatch",
+    title: "Link text doesn't match",
+    detail: `Shows ${item.shown}, opens ${item.opens}`,
+    link: item.link,
+  }));
+  const mismatched = new Set(links.mismatches.map((item) => item.link.href));
+  for (const fact of links.links) {
+    if (mismatched.has(fact.link.href)) continue;
+    const trick = linkTrick(fact, known);
+    if (!trick) continue;
+    const key = `link:${trick.kind}:${trick.site}`;
+    if (linkWarnings.some((finding) => finding.key === key)) continue;
+    linkWarnings.push({ key, tone: "warning", kind: "link", title: trick.title, detail: trick.detail, link: fact.link });
+  }
+  const listed = linkWarnings.slice(0, TRUST_MISMATCH_LIMIT);
+  const extra = linkWarnings.length - listed.length;
+  if (extra > 0) {
+    const last = listed[listed.length - 1];
+    listed[listed.length - 1] = { ...last, detail: `${last.detail} (and ${extra} more)` };
+  }
+  warnings.push(...listed);
+
+  const risky = attachments
+    .filter((attachment) => !attachment.inline)
+    .map((attachment) => ({ attachment, risk: attachmentRisk(attachment.filename, attachment.mimeType) }))
+    // Office files and disk images are everyday attachments between people
+    // who know each other; programs and disguised names never are.
+    .filter(({ risk }) => risk && (!acquainted || risk.kind === "program" || risk.kind === "disguised"));
+  for (const { attachment, risk } of risky.slice(0, TRUST_ATTACHMENT_LIMIT)) {
+    warn({ key: `attachment:${attachment.id}`, kind: "attachment", title: attachment.filename, detail: risk?.reason ?? "" });
+  }
+
+  const history: TrustFinding[] = [];
+  if (familiarity) {
+    const who = familiarity.contactName || from.name || email;
+    if (familiarity.sentCount > 0) {
+      const since = familiarity.firstSentAt ? monthYear(familiarity.firstSentAt) : "";
+      history.push({
+        key: "history",
+        tone: "verified",
+        kind: "history",
+        title: `You've written to ${who.split(/\s+/)[0] || email} ${times(familiarity.sentCount)}`,
+        detail: since ? `Since ${since}` : email,
+      });
+    } else if (familiarity.contactName) {
+      history.push({ key: "history", tone: "verified", kind: "history", title: "Saved in your contacts", detail: `As ${familiarity.contactName}` });
+    } else if (!bulk && !familiarity.receivedBefore && email) {
+      history.push({ key: "history", tone: "info", kind: "history", title: "First email from this address", detail: email });
+    }
+  }
+
+  if (authentication && authentication.tone !== "warning") details.unshift(authentication);
   if (links.sites.length > 0) {
-    findings.push({
+    details.push({
       key: "sites",
       tone: "info",
       kind: "sites",
@@ -231,7 +450,7 @@ export function trustFindings(trust: MessageTrust | null, links: LinkAnalysis): 
     });
   }
   if (links.trackingImages > 0) {
-    findings.push({
+    details.push({
       key: "tracking",
       tone: "info",
       kind: "tracking",
@@ -239,8 +458,12 @@ export function trustFindings(trust: MessageTrust | null, links: LinkAnalysis): 
       detail: "Tells the sender you opened this email if remote images load",
     });
   }
-  const rank = { warning: 0, verified: 1, info: 2 } as const;
-  return findings.map((finding, index) => ({ finding, index }))
-    .sort((left, right) => rank[left.finding.tone] - rank[right.finding.tone] || left.index - right.index)
-    .map(({ finding }) => finding);
+
+  const rows = [...warnings, ...history];
+  // With nothing to warn about or recall, the sender check is the headline.
+  if (rows.length === 0 && details[0]?.kind === "authentication") rows.push(details.shift()!);
+  const summary = warnings.length > 0
+    ? "careful"
+    : acquainted && trust?.authentication?.dmarc === "pass" ? "known" : null;
+  return { summary, rows, details };
 }

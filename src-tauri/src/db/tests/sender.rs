@@ -115,3 +115,77 @@ fn message_trust_reads_the_stored_headers_and_is_absent_without_them() {
     assert!(database.message_trust("bare").unwrap().is_none());
     assert!(database.message_trust("missing").unwrap().is_none());
 }
+
+fn save_contact(database: &crate::db::Database, name: &str, addresses: &[&str]) {
+    database
+        .save_contact_profile(&crate::models::SaveContactRequest {
+            birthday: None,
+            keep_in_touch: None,
+            id: None,
+            display_name: Some(name.into()),
+            role: None,
+            company: None,
+            location: None,
+            bio: None,
+            notes: None,
+            links: Vec::new(),
+            photo_data: None,
+            favorite: false,
+            addresses: addresses.iter().map(|address| (*address).into()).collect(),
+        })
+        .unwrap();
+}
+
+#[test]
+fn sender_familiarity_reads_what_the_user_sent_received_and_saved() {
+    let database = database();
+    // The user wrote to Ana twice, and Ana wrote before the newest message.
+    let mut chat = vec![
+        from("a1", "chat", "2026-08-01T10:00:00Z", "Ana Ruiz <Ana@Studio.example>", &["INBOX"]),
+        from("a2", "chat", "2026-09-03T10:00:00Z", "Ana Ruiz <ana@studio.example>", &["INBOX"]),
+    ];
+    for (id, date) in [("s1", "2026-08-02T10:00:00Z"), ("s2", "2026-09-02T10:00:00Z")] {
+        let mut sent = message(id, "chat", date, "Thanks");
+        sent.from = ACCOUNT.into();
+        sent.to = vec!["Ana Ruiz <ana@studio.example>".into()];
+        chat.push(sent);
+    }
+    database.upsert_thread(ACCOUNT, &chat).unwrap();
+    save_contact(&database, "Jane Rivera", &["jane@partner.example"]);
+
+    let ana = database.sender_familiarity("a2", " ANA@studio.example ", "Ana Ruiz").unwrap();
+    assert_eq!(ana.sent_count, 2);
+    assert_eq!(ana.first_sent_at.as_deref(), Some("2026-08-02T10:00:00Z"));
+    assert!(ana.received_before);
+    assert_eq!(ana.contact_name, None);
+    assert!(ana.name_matches.is_empty(), "the sender's own address is not another address");
+    assert_eq!(ana.known_domains, vec!["partner.example".to_string(), "studio.example".to_string()]);
+
+    // Ana's first message had nothing before it.
+    assert!(!database.sender_familiarity("a1", "ana@studio.example", "Ana Ruiz").unwrap().received_before);
+
+    let jane = database.sender_familiarity("missing", "jane@partner.example", "Jane Rivera").unwrap();
+    assert_eq!(jane.contact_name.as_deref(), Some("Jane Rivera"));
+    assert_eq!(jane.sent_count, 0);
+}
+
+#[test]
+fn sender_familiarity_lists_known_addresses_that_share_the_display_name() {
+    let database = database();
+    let mut sent = message("s1", "chat", "2026-08-02T10:00:00Z", "Thanks");
+    sent.from = ACCOUNT.into();
+    sent.to = vec!["Ana Ruiz <ana@studio.example>".into()];
+    database.upsert_thread(ACCOUNT, &[sent]).unwrap();
+    save_contact(&database, "Jane Rivera", &["jane@partner.example", "j.rivera@partner.example"]);
+    // Only received mail does not make an address known.
+    database.upsert_thread(ACCOUNT, &[from("x1", "spam", "2026-08-05T10:00:00Z", "Jane Rivera <jane.rivera@freemail.example>", &["INBOX"])]).unwrap();
+
+    let impostor = database.sender_familiarity("x2", "jane.rivera.office@freemail.example", "  \"jane  RIVERA\" ").unwrap();
+    assert_eq!(impostor.name_matches, vec!["j.rivera@partner.example".to_string(), "jane@partner.example".to_string()]);
+    assert_eq!(impostor.sent_count, 0);
+    assert_eq!(impostor.contact_name, None);
+    assert_eq!(database.sender_familiarity("x2", "ana.r@freemail.example", "Ana Ruiz").unwrap().name_matches, vec!["ana@studio.example".to_string()]);
+    // One-word or very short names are too common to compare.
+    assert!(database.sender_familiarity("x2", "x@freemail.example", "Jane").unwrap().name_matches.is_empty());
+    assert!(database.sender_familiarity("x2", "x@freemail.example", "A Ru").unwrap().name_matches.is_empty());
+}

@@ -3,17 +3,18 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { ContextPanel } from "./ContextPanel";
 import { mailClient } from "./data/client";
 import { formatHistoryDate } from "./contactContext";
-import type { Account, ContactActivity, ContactProfile, ContactTimelineItem, MessageTrust, SenderHistory, ThreadDetail } from "./domain";
+import type { Account, ContactActivity, ContactProfile, ContactTimelineItem, MessageTrust, SenderFamiliarity, SenderHistory, ThreadDetail } from "./domain";
 import type { SenderActions } from "./SenderSections";
 import { expectContextRows } from "./test/contextRows";
 
-vi.mock("./data/client",()=>({mailClient:{getContactProfile:vi.fn(),resolveContactIds:vi.fn(),contactTimeline:vi.fn(),saveContactProfile:vi.fn(),contactActivity:vi.fn(),contactFiles:vi.fn(),domainContext:vi.fn(),senderHistory:vi.fn(),messageTrust:vi.fn(),fileStars:vi.fn().mockResolvedValue([]),setFileStar:vi.fn().mockResolvedValue(undefined),openAttachment:vi.fn()}}));
+vi.mock("./data/client",()=>({mailClient:{getContactProfile:vi.fn(),resolveContactIds:vi.fn(),contactTimeline:vi.fn(),saveContactProfile:vi.fn(),contactActivity:vi.fn(),contactFiles:vi.fn(),domainContext:vi.fn(),senderHistory:vi.fn(),messageTrust:vi.fn(),senderFamiliarity:vi.fn(),fileStars:vi.fn().mockResolvedValue([]),setFileStar:vi.fn().mockResolvedValue(undefined),openAttachment:vi.fn()}}));
 vi.mock("@tauri-apps/plugin-opener",()=>({openUrl:vi.fn()}));
 
 const jane:ContactProfile={id:"contact:jane@example.com",displayName:"Jane Doe",role:null,company:"Acme",location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:["jane@example.com"],sentCount:1,receivedCount:1,lastInteractedAt:null,birthday:null,keepInTouch:{intervalDays:null,startedAt:null,snoozedUntil:null,snoozedAt:null,lastTouchAt:null},keepInTouchDueAt:null};
 const bob:ContactProfile={...jane,id:"contact:bob@example.com",displayName:"Bob Lee",addresses:["bob@example.com"]};
 const detail={thread:{id:"thread-1",accountId:"you@example.com",labels:["INBOX"]},messages:[{id:"1",sender:"Jane Doe <jane@example.com>",recipients:["You <you@example.com>","Bob Lee <bob@example.com>"],sentAt:"2026-09-24T00:00:00Z",bodyText:"",bodyHtml:""},{id:"2",sender:"Bob Lee <bob@example.com>",recipients:["You <you@example.com>"],sentAt:"2026-09-25T00:00:00Z",bodyText:"",bodyHtml:""}]} as unknown as ThreadDetail;
 const account={email:"you@example.com"} as Account;
+const unfamiliar:SenderFamiliarity={sentCount:0,firstSentAt:null,receivedBefore:true,contactName:null,nameMatches:[],knownDomains:[]};
 const noActivity:ContactActivity={sentCount:0,receivedCount:0,threadCount:0,firstAt:null,lastSentAt:null,recentReceivedAt:[]};
 const timelineItem=(threadId:string,subject:string):ContactTimelineItem=>({threadId,accountId:"you@example.com",contactEmail:"bob@example.com",subject,snippet:"",sentAt:"2026-09-20T00:00:00Z",labels:[]});
 
@@ -33,6 +34,7 @@ describe("ContextPanel",()=>{
     vi.mocked(mailClient.contactFiles).mockResolvedValue({files:[],total:0});
     vi.mocked(mailClient.domainContext).mockResolvedValue({people:[],threads:[]});
     vi.mocked(mailClient.messageTrust).mockResolvedValue(null);
+    vi.mocked(mailClient.senderFamiliarity).mockResolvedValue(unfamiliar);
     vi.mocked(mailClient.resolveContactIds).mockImplementation(async emails=>Object.fromEntries(
       emails.filter(email=>email==="jane@example.com"||email==="bob@example.com")
         .map(email=>[email,`contact:${email}`])));
@@ -597,6 +599,60 @@ describe("ContextPanel",()=>{
       const trust=await screen.findByRole("region",{name:"Trust"});
       expect(trust).toHaveTextContent("Shows partner.example, opens relay.example");
       expect(trust).not.toHaveTextContent("feed.example");
+    });
+
+    it("heads a warning with Be careful, shows the link it is about, and folds the sender checks under Details",async()=>{
+      vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
+      vi.mocked(mailClient.messageTrust).mockResolvedValue({...verified,fromDomain:"example.com"});
+      vi.mocked(mailClient.senderFamiliarity).mockResolvedValue({...unfamiliar,knownDomains:["partner.example"]});
+      const href="https://partnr.example/pay";
+      const onShowLink=vi.fn();
+      renderPanel({onShowLink,detail:{...detail,messages:[detail.messages[0],{...detail.messages[1],bodyHtml:`<p>Please <a href="${href}">pay the invoice</a>.</p>`}]} as unknown as ThreadDetail});
+      const trust=await screen.findByRole("region",{name:"Trust"});
+      expect(mailClient.senderFamiliarity).toHaveBeenCalledWith("2","bob@example.com","Bob Lee");
+      expect(within(trust).getByText("Be careful")).toBeInTheDocument();
+      expect(trust).toHaveTextContent("Link looks like partner.example");
+      fireEvent.click(within(trust).getByRole("button",{name:"Show link"}));
+      expect(onShowLink).toHaveBeenCalledWith("thread-1","2",{href,text:"pay the invoice"});
+
+      const toggle=within(trust).getByRole("button",{name:/^Details/});
+      expect(toggle).toHaveAttribute("aria-expanded","false");
+      expect(toggle).toHaveTextContent("Sender checks · 1 site");
+      expect(within(trust).queryByText("Sender verified")).not.toBeVisible();
+      fireEvent.click(toggle);
+      expect(within(trust).getByText("Sender verified")).toBeVisible();
+    });
+
+    it("shows a verified sender the user writes to as one Known sender line in personal mail",async()=>{
+      vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
+      vi.mocked(mailClient.messageTrust).mockResolvedValue({...verified,fromDomain:"example.com"});
+      vi.mocked(mailClient.senderFamiliarity).mockResolvedValue({...unfamiliar,sentCount:3,firstSentAt:"2025-02-10T00:00:00Z",knownDomains:["example.com"]});
+      renderPanel();
+      const trust=await screen.findByRole("region",{name:"Trust"});
+      expect(within(trust).getByText("Known sender")).toBeInTheDocument();
+      expect(within(trust).queryByText("Be careful")).not.toBeInTheDocument();
+      expect(trust.querySelectorAll(".context-row:not([hidden] .context-row)")).toHaveLength(1);
+      expect(trust).toHaveTextContent("You've written to Bob 3 times");
+      expect(trust).toHaveTextContent("Since Feb 2025");
+    });
+
+    it("leaves Trust out of personal mail from a stranger with nothing to warn about",async()=>{
+      vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
+      vi.mocked(mailClient.messageTrust).mockResolvedValue({...verified,fromDomain:"example.com"});
+      vi.mocked(mailClient.senderFamiliarity).mockResolvedValue({...unfamiliar,receivedBefore:false});
+      renderPanel();
+      await personLoaded(bob.id);
+      await waitFor(()=>expect(mailClient.senderFamiliarity).toHaveBeenCalled());
+      expect(screen.queryByRole("region",{name:"Trust"})).not.toBeInTheDocument();
+    });
+
+    it("still reads the headers when the sender's history cannot be read",async()=>{
+      vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
+      vi.mocked(mailClient.messageTrust).mockResolvedValue({...verified,fromDomain:"example.com",replyTo:"desk@elsewhere.example"});
+      vi.mocked(mailClient.senderFamiliarity).mockRejectedValue(new Error("locked"));
+      renderPanel();
+      const trust=await screen.findByRole("region",{name:"Trust"});
+      expect(trust).toHaveTextContent("Replies go elsewhere");
     });
   });
 });

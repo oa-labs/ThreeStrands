@@ -700,6 +700,26 @@ pub struct SenderHistory {
     pub threads: Vec<SenderThread>,
 }
 
+/// How well the user knows a message's sender, for the Trust section. Read
+/// only from the local mail cache and contacts; nothing leaves the device.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SenderFamiliarity {
+    /// Messages the user sent to the address, from any account.
+    pub sent_count: i64,
+    pub first_sent_at: Option<String>,
+    /// Whether mail from the address arrived before this message.
+    pub received_before: bool,
+    /// The saved contact's name, when the address belongs to a saved contact.
+    pub contact_name: Option<String>,
+    /// Other addresses the user knows under the same display name: saved
+    /// contacts' addresses and addresses the user has written to.
+    pub name_matches: Vec<String>,
+    /// Domains of saved contacts' addresses and of addresses the user has
+    /// written to, lowercased.
+    pub known_domains: Vec<String>,
+}
+
 /// One conversation in a sender's history, dated by the sender's newest message in it.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

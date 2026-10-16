@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { Message, MessageTrust, SenderRule, SplitInbox, ThreadDetail } from "./domain";
+import type { Message, MessageAttachment, MessageTrust, SenderFamiliarity, SenderRule, SplitInbox, ThreadDetail } from "./domain";
 import { buildThreadTextIndex } from "./quotedHistory";
-import { analyzeLinks, bulkMessage, latestInbound, matchingRule, matchingSplit, siteOf, trustFindings, TRUST_MISMATCH_LIMIT, type LinkAnalysis } from "./senderSignals";
+import { analyzeLinks, bulkMessage, latestInbound, matchingRule, matchingSplit, siteOf, trustReport, TRUST_ATTACHMENT_LIMIT, TRUST_MISMATCH_LIMIT, type LinkAnalysis, type TrustInput } from "./senderSignals";
 
 const own = new Set(["you@example.com"]);
 
@@ -82,7 +82,7 @@ describe("link analysis", () => {
       <img src="https://open.tracker.example/o.gif" width="1" height="1" alt="">
       <img src="https://open.tracker.example/b.gif" style="display:none">
       <img src="cid:logo" width="1" height="1">`;
-    expect(analyzeLinks(newsletter)).toEqual({ sites: ["launch.example", "social.example"], mismatches: [], trackingImages: 2 });
+    expect(analyzeLinks(newsletter)).toMatchObject({ sites: ["launch.example", "social.example"], mismatches: [], trackingImages: 2 });
   });
 
   it("flags plain-paragraph link text that names one site while the link opens another", () => {
@@ -93,8 +93,8 @@ describe("link analysis", () => {
         <p><a href="https://bank-example.test/again">BANK.EXAMPLE</a></p>
         <p><a href="https://help.bank.example">help.bank.example</a></p></div>`;
     const links = analyzeLinks(notice);
-    expect(links.mismatches).toEqual([
-      { shown: "bank.example", opens: "203.0.113.9" },
+    expect(links.mismatches).toMatchObject([
+      { shown: "bank.example", opens: "203.0.113.9", link: { href: "http://203.0.113.9/login", text: "https://www.bank.example/login" } },
       { shown: "bank.example", opens: "bank-example.test" },
     ]);
     expect(links.trackingImages).toBe(0);
@@ -123,12 +123,12 @@ describe("link analysis", () => {
       expect(links.mismatches).toEqual([]);
       expect(links.sites).not.toContain("relay.example");
     }
-    expect(analyzeLinks(replyAttribution)).toEqual({ sites: ["agenda.example"], mismatches: [], trackingImages: 1 });
+    expect(analyzeLinks(replyAttribution)).toMatchObject({ sites: ["agenda.example"], mismatches: [], trackingImages: 1 });
 
     // The same link in the reply's own words still warns, quoted history or not.
     const ownWords = `<p>Sign in at ${rewritten} today.</p>${replyAttribution}`;
-    expect(analyzeLinks(ownWords).mismatches).toEqual([{ shown: "partner.example", opens: "relay.example" }]);
-    expect(analyzeLinks(`<p>Sign in at ${rewritten} today.</p>`).mismatches).toEqual([{ shown: "partner.example", opens: "relay.example" }]);
+    expect(analyzeLinks(ownWords).mismatches).toMatchObject([{ shown: "partner.example", opens: "relay.example" }]);
+    expect(analyzeLinks(`<p>Sign in at ${rewritten} today.</p>`).mismatches).toMatchObject([{ shown: "partner.example", opens: "relay.example" }]);
   });
 
   it("folds with the conversation text before the message, as the reader does", () => {
@@ -137,11 +137,11 @@ describe("link analysis", () => {
     const body = `Fixed now.<br><br>${signature}<br><br>On Mon, A. Sender wrote:<blockquote>Is the feed fixed?</blockquote>`;
     const prior = buildThreadTextIndex(["Can you check the feed?\n\nJane Doe\nPartnerships, Example Co\npartner.example"]).before(1);
     expect(analyzeLinks(body, prior).mismatches).toEqual([]);
-    expect(analyzeLinks(body).mismatches).toEqual([{ shown: "partner.example", opens: "relay.example" }]);
+    expect(analyzeLinks(body).mismatches).toMatchObject([{ shown: "partner.example", opens: "relay.example" }]);
   });
 
   it("reads nothing from an empty body and never treats an email address as link text", () => {
-    expect(analyzeLinks("  ")).toEqual({ sites: [], mismatches: [], trackingImages: 0 });
+    expect(analyzeLinks("  ")).toEqual({ sites: [], mismatches: [], links: [], trackingImages: 0 });
     expect(analyzeLinks('<a href="https://other.example">ops@bank.example</a>').mismatches).toEqual([]);
   });
 
@@ -154,11 +154,16 @@ describe("link analysis", () => {
 });
 
 describe("trust findings", () => {
-  const noLinks: LinkAnalysis = { sites: [], mismatches: [], trackingImages: 0 };
+  const noLinks: LinkAnalysis = { sites: [], mismatches: [], links: [], trackingImages: 0 };
   const trust = (authentication: MessageTrust["authentication"], extra: Partial<MessageTrust> = {}): MessageTrust =>
     ({ fromDomain: "launch.example", authentication, replyTo: null, ...extra });
   const verdicts = (spf: string | null, dkim: string | null, dmarc: string | null, dkimDomains: string[] = []) => ({ spf, dkim, dmarc, dkimDomains });
-  const first = (value: MessageTrust | null) => trustFindings(value, noLinks)[0];
+  const report = (value: MessageTrust | null, links = noLinks) =>
+    trustReport({ trust: value, links, familiarity: null, sender: "Launch <news@launch.example>", attachments: [], bulk: true });
+  const first = (value: MessageTrust | null) => {
+    const { rows, details } = report(value);
+    return [...rows, ...details].find((finding) => finding.kind === "authentication");
+  };
 
   it("calls a DMARC pass verified and names every check that passed", () => {
     expect(first(trust(verdicts("pass", "pass", "pass")))).toMatchObject({ tone: "verified", title: "Sender verified", detail: "launch.example passed DMARC, DKIM, and SPF" });
@@ -180,19 +185,152 @@ describe("trust findings", () => {
   it("says when the server reported no checks, and lists nothing about headers it does not have", () => {
     expect(first(trust(null))).toMatchObject({ tone: "info", title: "No sender checks" });
     expect(first(trust(verdicts("none", "neutral", null)))).toMatchObject({ tone: "info", title: "No sender checks" });
-    expect(trustFindings(null, noLinks)).toEqual([]);
+    expect(report(null)).toEqual({ summary: null, rows: [], details: [] });
   });
 
-  it("lists warnings first, then the verdict, sites, and tracking", () => {
+  it("lists warnings as rows and folds the verdict, sites, and tracking into details", () => {
     const links: LinkAnalysis = {
       sites: ["launch.example", "social.example"],
-      mismatches: Array.from({ length: TRUST_MISMATCH_LIMIT + 2 }, (_, index) => ({ shown: "bank.example", opens: `site${index}.example` })),
+      mismatches: Array.from({ length: TRUST_MISMATCH_LIMIT + 2 }, (_, index) => ({ shown: "bank.example", opens: `site${index}.example`, link: { href: `https://site${index}.example/`, text: "bank.example" } })),
+      links: [],
       trackingImages: 1,
     };
-    const findings = trustFindings(trust(verdicts("pass", "pass", "pass"), { replyTo: "desk@elsewhere.example" }), links);
-    expect(findings.map((finding) => finding.kind)).toEqual(["replyTo", "mismatch", "mismatch", "mismatch", "authentication", "sites", "tracking"]);
-    expect(findings[3].detail).toBe("Shows bank.example, opens site2.example (and 2 more)");
-    expect(findings[5]).toMatchObject({ title: "Links open 2 sites", detail: "launch.example, social.example" });
-    expect(findings[6].title).toBe("1 tracking image");
+    const { summary, rows, details } = report(trust(verdicts("pass", "pass", "pass"), { replyTo: "desk@elsewhere.example" }), links);
+    expect(summary).toBe("careful");
+    expect(rows.map((finding) => finding.kind)).toEqual(["replyTo", "mismatch", "mismatch", "mismatch"]);
+    expect(rows[3].detail).toBe("Shows bank.example, opens site2.example (and 2 more)");
+    expect(rows[1].link).toEqual({ href: "https://site0.example/", text: "bank.example" });
+    expect(details.map((finding) => finding.kind)).toEqual(["authentication", "sites", "tracking"]);
+    expect(details[1]).toMatchObject({ title: "Links open 2 sites", detail: "launch.example, social.example" });
+    expect(details[2].title).toBe("1 tracking image");
+  });
+
+  it("makes the sender check the headline when nothing warns and there is no history", () => {
+    const { summary, rows, details } = report(trust(verdicts("pass", "pass", "pass")), { ...noLinks, sites: ["launch.example"] });
+    expect(summary).toBeNull();
+    expect(rows.map((finding) => finding.title)).toEqual(["Sender verified"]);
+    expect(details.map((finding) => finding.kind)).toEqual(["sites"]);
+  });
+});
+
+describe("trust signals from the user's own history", () => {
+  const verified: MessageTrust = { fromDomain: "partner.example", authentication: { spf: "pass", dkim: "pass", dmarc: "pass", dkimDomains: ["partner.example"] }, replyTo: null };
+  const stranger: SenderFamiliarity = { sentCount: 0, firstSentAt: null, receivedBefore: false, contactName: null, nameMatches: [], knownDomains: ["partner.example", "studio.example", "example.co.uk"] };
+  const input = (overrides: Partial<TrustInput> = {}): TrustInput => ({
+    trust: verified,
+    links: analyzeLinks(""),
+    familiarity: stranger,
+    sender: "Jane Rivera <jane@partner.example>",
+    attachments: [],
+    bulk: false,
+    ...overrides,
+  });
+  const titles = (value: TrustInput) => trustReport(value).rows.map((finding) => finding.title);
+  const warnings = (value: TrustInput) => trustReport(value).rows.filter((finding) => finding.tone === "warning");
+  const attachment = (filename: string, extra: Partial<MessageAttachment> = {}): MessageAttachment => ({ id: filename, filename, mimeType: "application/octet-stream", size: 1, ...extra });
+
+  it("calls someone the user writes to a known sender, and says how often and since when", () => {
+    const report = trustReport(input({ familiarity: { ...stranger, sentCount: 12, firstSentAt: "2024-03-05T10:00:00Z" } }));
+    expect(report.summary).toBe("known");
+    expect(report.rows).toMatchObject([{ tone: "verified", kind: "history", title: "You've written to Jane 12 times", detail: "Since Mar 2024" }]);
+    expect(report.details.map((finding) => finding.kind)).toEqual(["authentication"]);
+    expect(titles(input({ familiarity: { ...stranger, sentCount: 1, firstSentAt: "2024-03-05T10:00:00Z" } }))).toEqual(["You've written to Jane once"]);
+    expect(titles(input({ familiarity: { ...stranger, contactName: "Jane R." } }))).toEqual(["Saved in your contacts"]);
+  });
+
+  it("needs a DMARC pass before calling anyone known", () => {
+    const familiar = { ...stranger, sentCount: 3 };
+    expect(trustReport(input({ familiarity: familiar, trust: { ...verified, authentication: null } })).summary).toBeNull();
+    expect(trustReport(input({ familiarity: familiar, trust: null })).summary).toBeNull();
+  });
+
+  it("notes a first email from personal senders only, and says nothing when the history cannot be read", () => {
+    expect(trustReport(input()).rows).toMatchObject([{ tone: "info", title: "First email from this address", detail: "jane@partner.example" }]);
+    expect(trustReport(input()).summary).toBeNull();
+    expect(titles(input({ familiarity: { ...stranger, receivedBefore: true } }))).toEqual(["Sender verified"]);
+    expect(titles(input({ bulk: true }))).toEqual(["Sender verified"]);
+    expect(titles(input({ familiarity: null }))).toEqual(["Sender verified"]);
+  });
+
+  it("warns when a display name the user knows arrives from a new address", () => {
+    const value = input({ sender: "Jane Rivera <jane.rivera.office@freemail.example>", familiarity: { ...stranger, nameMatches: ["jane@partner.example", "j.rivera@partner.example"] } });
+    const report = trustReport(value);
+    expect(report.summary).toBe("careful");
+    expect(report.rows[0]).toMatchObject({
+      tone: "warning", kind: "impersonation", title: "Name matches Jane Rivera, but from a new address",
+      detail: "jane.rivera.office@freemail.example · You know Jane Rivera as jane@partner.example and 1 more",
+    });
+    // Someone the user writes to at this address is the person, not an impostor.
+    expect(warnings({ ...value, familiarity: { ...stranger, sentCount: 1, nameMatches: ["jane@partner.example"] } })).toEqual([]);
+  });
+
+  it("warns when a display name spells out another organization's address or domain", () => {
+    expect(warnings(input({ sender: '"support@bank.example" <help@other.example>' }))[0]).toMatchObject({ title: "Name shows support@bank.example", detail: "Sent from help@other.example" });
+    expect(warnings(input({ sender: "Shop.net Orders <orders@mailer.example>" }))[0]).toMatchObject({ title: "Name shows Shop.net" });
+    // The sender's own organization, under any suffix, and initials are not claims.
+    expect(warnings(input({ sender: "Partner.com <news@partner.example>" }))).toEqual([]);
+    expect(warnings(input({ sender: "support@partner.example <help@mail.partner.example>" }))).toEqual([]);
+    expect(warnings(input({ sender: "J.R. Doe <jr@other.example>" }))).toEqual([]);
+    expect(warnings(input({ sender: "Jo.Doe <jo@other.example>" }))).toEqual([]);
+  });
+
+  it("warns when the sender's domain imitates one the user corresponds with", () => {
+    for (const domain of ["partn3r.example", "xn--prtner-3nf.example", "parnter.example", "partnerr.example", "exampl.co.uk"]) {
+      const [warning] = warnings(input({ sender: `Jane <jane@${domain}>`, trust: { ...verified, fromDomain: domain } }));
+      expect(warning, domain).toMatchObject({ kind: "lookalike" });
+      expect(warning.title, domain).toMatch(/^Address looks like (partner\.example|example\.co\.uk)$/);
+    }
+    const [punycode] = warnings(input({ sender: "Jane <jane@xn--prtner-3nf.example>" }));
+    expect(punycode.detail).toBe("Sent from pаrtner.example (xn--prtner-3nf.example)");
+    // A subdomain of a known site, a different suffix, or a short name a letter away is not a look-alike.
+    expect(warnings(input({ sender: "Jane <jane@mail.partner.example>" }))).toEqual([]);
+    expect(warnings(input({ sender: "Jane <jane@partner.test>" }))).toEqual([]);
+    expect(warnings(input({ sender: "Ann <ann@stdio.example>", familiarity: { ...stranger, knownDomains: ["stdo.example"] } }))).toEqual([]);
+  });
+
+  it("warns about an address that mixes alphabets even with no known site to compare", () => {
+    const [warning] = warnings(input({ sender: "Shop <orders@xn--shp-ted.example>", familiarity: { ...stranger, knownDomains: [] } }));
+    expect(warning).toMatchObject({ title: "Address uses look-alike letters", detail: "Sent from shоp.example (xn--shp-ted.example)" });
+    // A name written wholly in another alphabet is just a name.
+    expect(warnings(input({ sender: "Магазин <shop@xn--80aairftm.example>", familiarity: { ...stranger, knownDomains: [] } }))).toEqual([]);
+  });
+
+  it("warns once per link about addresses that hide where they go, so each can be shown", () => {
+    const html = `
+      <p><a href="https://partner.example@login.other.example/x">Sign in</a>
+        <a href="https://partner.example@login.other.example/y">Again</a></p>
+      <p><a href="https://partnr.example/pay">Pay now</a></p>
+      <table><tr><td><a href="https://partner.example.secure.other.test/">Review</a></td></tr></table>
+      <div><a href="http://198.51.100.7/">Download</a></div>
+      <a href="https://studio.example/ok">Studio</a>`;
+    const rows = warnings(input({ links: analyzeLinks(html) }));
+    expect(rows.map((finding) => [finding.title, finding.detail])).toEqual([
+      ["Link hides where it goes", "Shows partner.example, opens other.example"],
+      ["Link looks like partner.example", "Opens partnr.example"],
+      ["Link looks like partner.example", "Opens partner.example.secure.other.test (and 1 more)"],
+    ]);
+    expect(rows[0].link).toEqual({ href: "https://partner.example@login.other.example/x", text: "Sign in" });
+    expect(warnings(input({ links: analyzeLinks('<a href="http://198.51.100.7/">Download</a>') }))[0]).toMatchObject({ title: "Link opens a numeric address", detail: "Opens 198.51.100.7" });
+    expect(warnings(input({ links: analyzeLinks('<a href="https://xn--shp-ted.example/">Shop</a>'), familiarity: null }))[0]).toMatchObject({ title: "Link uses look-alike letters" });
+  });
+
+  it("does not add a second warning to a link whose text already mismatches", () => {
+    const rows = warnings(input({ links: analyzeLinks('<a href="http://198.51.100.7/">partner.example</a>') }));
+    expect(rows.map((finding) => finding.kind)).toEqual(["mismatch"]);
+  });
+
+  it("warns about programs and disguised files from anyone, and other risky files only from strangers", () => {
+    const files = [attachment("invoice.pdf.exe"), attachment("setup.exe"), attachment("budget.xlsm"), attachment("logo.png", { inline: true }), attachment("notes.txt")];
+    expect(warnings(input({ attachments: files })).map((finding) => finding.title)).toEqual(["invoice.pdf.exe", "setup.exe", "budget.xlsm"]);
+    expect(warnings(input({ attachments: files, familiarity: { ...stranger, sentCount: 4 } })).map((finding) => finding.title)).toEqual(["invoice.pdf.exe", "setup.exe"]);
+    const many = Array.from({ length: TRUST_ATTACHMENT_LIMIT + 2 }, (_, index) => attachment(`tool${index}.exe`));
+    expect(warnings(input({ attachments: many }))).toHaveLength(TRUST_ATTACHMENT_LIMIT);
+  });
+
+  it("keeps a Reply-To at a domain the user writes to out of the warnings", () => {
+    const familiar = trustReport(input({ trust: { ...verified, replyTo: "desk@studio.example" } }));
+    expect(familiar.rows.some((finding) => finding.kind === "replyTo")).toBe(false);
+    expect(familiar.details.find((finding) => finding.kind === "replyTo")).toMatchObject({ tone: "info", detail: "Reply-To is desk@studio.example, a domain you write to" });
+    expect(warnings(input({ trust: { ...verified, replyTo: "desk@elsewhere.example" } }))[0]).toMatchObject({ kind: "replyTo" });
   });
 });

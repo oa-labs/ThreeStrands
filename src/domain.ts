@@ -471,6 +471,21 @@ export type MessageTrust = {
   replyTo: string | null;
 };
 
+/** How well the user knows a message's sender, read from the local cache and contacts. */
+export type SenderFamiliarity = {
+  /** Messages the user sent to the address, from any account. */
+  sentCount: number;
+  firstSentAt: string | null;
+  /** Whether mail from the address arrived before this message. */
+  receivedBefore: boolean;
+  /** The saved contact's name, when the address belongs to a saved contact. */
+  contactName: string | null;
+  /** Other addresses the user knows under the same display name. */
+  nameMatches: string[];
+  /** Domains of saved contacts' addresses and of addresses the user has written to. */
+  knownDomains: string[];
+};
+
 /** One attachment a person sent, with the message it arrived on. */
 export type ContactFile = {
   messageId: string;
