@@ -14,10 +14,11 @@ The core experience combines:
 - a privacy-conscious desktop architecture that connects directly to mail
   providers without requiring a ThreeStrands backend in the free, signed-out mode.
 
-ThreeStrands currently works with Gmail as a desktop application for macOS and
-Linux. Sign-in credentials are kept in your operating system's keychain, your
-messages and search index stay on your computer, and actions you take offline
-are synced to Gmail when you reconnect.
+ThreeStrands connects Gmail and IMAP/SMTP accounts in a desktop application for
+macOS and Linux, including Proton Mail through Proton Mail Bridge. Sign-in
+credentials are kept in your operating system's keychain, your messages and
+search index stay on your computer, and actions you take offline are synced to
+your provider when you reconnect.
 
 NOTE: Only the macOS app is frequently used/tested currently.
 
@@ -29,15 +30,23 @@ Download the latest installer from
 - **macOS:** the `.dmg` for Apple Silicon (`aarch64`) or Intel (`x64`).
 - **Linux (x86-64):** a `.deb`, `.rpm`, or `.AppImage` package.
 
-Launch ThreeStrands and sign in with your Google account to connect Gmail.
+Launch ThreeStrands and add a Gmail account with Google sign-in, or connect an
+IMAP/SMTP account in **Settings → Mail Accounts**.
 
 ## Status
 
-Reading, triage, and correspondence are implemented and still being validated
-against live accounts. Compose, reply, forward, local drafts, attachments, and
-undo send are available for Gmail, and IMAP/SMTP support (for example Proton
-Mail Bridge) is in progress. See
+Reading, triage, and correspondence are available for Gmail and IMAP/SMTP.
+Compose with rich text, snippets, formatted signatures, and attachments; undo or
+schedule sends, browse Sent, and reuse a sent message with Edit as New.
+Newsletter controls include unsubscribe, mute, and Split Inboxes, while local
+Trust checks explain suspicious senders, links, and attachments. See
 [features, keyboard shortcuts, and known limitations](docs/features.md).
+
+Google Calendar connects separately from mail. Find Times offers available slots
+beside a conversation, using working-hour blocks and optional travel buffers.
+Optional AI assistance can interpret requests such as “next week”; calendar
+searches also work without AI. At Inbox zero, open tasks, Keep in Touch reminders,
+and today’s agenda give you a next step.
 
 Contacts include profiles with linked addresses, groups, birthdays, Keep in Touch
 reminders, CSV/vCard import and export, explicit profile merging, and reversible

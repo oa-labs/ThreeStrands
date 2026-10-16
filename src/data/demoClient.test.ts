@@ -132,6 +132,26 @@ describe("showcase dataset", () => {
     await expect(createDemoClient(defaultDemoDataset()).fetchAttachmentImage("welcome-message", "regional-rollout")).rejects.toThrow("unavailable in browser preview");
   });
 
+  it("provides newsletter history and an overdue contact for the marketing workflows", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    try {
+      const client = createDemoClient(buildShowcaseDataset(now));
+      const history = await client.senderHistory("maya.chen@example.com", "issues@weekendreader.example", 10);
+      expect(history.inboxThreadIds).toEqual(expect.arrayContaining(["reader", "reader-previous"]));
+      const reminders = await client.listKeepInTouch();
+      const sofia = reminders.find((profile) => profile.id === "contact:sofia@cedargrove.example");
+      expect(sofia?.keepInTouchDueAt).toBeTruthy();
+      expect(Date.parse(sofia!.keepInTouchDueAt!)).toBeLessThan(now.getTime());
+      const warning = await client.getThread("payment-check");
+      expect(warning.thread.archived).toBe(true);
+      expect(warning.messages[0].bodyHtml).toContain('href="https://cloudline-payments.example/verify"');
+      expect(warning.messages[0].bodyHtml).toContain(">https://cloudline.example/account</a>");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("only contains addresses and links on reserved domains", () => {
     const serialized = JSON.stringify(buildShowcaseDataset(now));
     const domains = [

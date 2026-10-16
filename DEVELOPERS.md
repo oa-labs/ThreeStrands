@@ -128,8 +128,11 @@ override either. `pnpm site:images` honors the same `SCREENSHOT_DIR`, and valida
 the complete light/dark capture set before replacing assets. Scenes live in
 `tests/screenshots/marketing.spec.ts`; data and deterministic AI responses live
 in `src/data/showcaseDataset.ts`.
-The brief, thread-chat, and calendar-creation scenes use fictional inputs; AI
-captures configure an in-memory placeholder key and never call a provider.
+The brief, thread-chat, calendar-creation, newsletter, Trust, Inbox zero, and
+signature scenes use fictional inputs. AI captures configure an in-memory
+placeholder key and never call a provider. The Files capture supplies the
+bundled rollout image as the native preview response because Quick Look is
+unavailable in the browser; it does not change the app or demo client.
 Hands-on visual review remains the developer’s responsibility. Keep the default
 fixtures in `src/data/demoDataset.ts` unchanged, because the test suites depend
 on them.

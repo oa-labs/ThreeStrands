@@ -1370,8 +1370,12 @@ button.keycap:active {
 }
 
 .privacy-shot {
-  position: sticky;
-  top: 110px;
+  display: grid;
+  gap: 32px;
+}
+
+.privacy-shot figure {
+  margin: 0;
 }
 
 .privacy-shot figcaption {

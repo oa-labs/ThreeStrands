@@ -32,6 +32,18 @@ Typing `* ` starts a bulleted list and `1. ` starts a numbered one. Paste an ima
 
 Snippets are reusable passages of text. Press <kbd>⌘/Ctrl + ;</kbd> in the message body to **Insert Snippet**. Type to find one, or type a new name to create it. Write `{first_name}` in a snippet to insert the first recipient's first name. Manage snippets in **Settings → Snippets**.
 
+## Signatures
+
+Open **Settings → Signatures** and choose **Add Signature**. Paste an existing signature or write one in the visual editor, then use the toolbar for formatting, fonts, and colors. Click a logo to edit its size and description. **More → Import…** imports pasted HTML or a file. Hosted HTTPS images keep their URLs by default; **Load Images** shows them while editing.
+
+**Import from Gmail…** brings in a signature from a connected Gmail account. Preview it, give it a name, and optionally make it the default for new messages. **Image Options → Embed Remote Images** embeds small hosted images when you prefer that to keeping their URLs.
+
+Edit the **Plain Text** alternative separately, or choose **Regenerate from Signature** to rebuild it from the visual version. In **Default Signatures**, choose **Edit Defaults…** for an account and set separate defaults for **New Messages** and **Replies and Forwards**, including **No Signature**. Sending addresses can use the account defaults or their own choices.
+
+<ts-shot scene="signatures" alt="The visual signature editor with formatted contact details, a formatting toolbar, and a separate plain-text alternative."></ts-shot>
+
+While composing, use the compact signature picker below the message to switch or remove a signature. Replies with no signature hide the picker. Your signature’s hosted images appear automatically while composing.
+
 ## Attachments
 
 Click the paperclip (**Attach Files**) to add files. Attachments can total up to 18 MB per message.
@@ -49,16 +61,22 @@ Its **Before you send** section checks your draft on this computer and suggests 
 - You usually write to these people from a different account.
 - Members of a group are visible in To or Cc, with an option to move them to Bcc.
 
-With [AI assistance](ai.html) turned on, **Draft Review** can also give feedback against the goal you describe.
+With [AI assistance](ai.html) turned on, click **Review** below your message to open **Draft Review** and get feedback against the goal you describe. **Draft Reply** sits beside it in a reply.
 
 ## Send, Undo, and Send Later
 
 - **Send** with <kbd>⌘/Ctrl + Enter</kbd>. You have ten seconds to click **Undo Send**.
-- **Send & Mark Done** with <kbd>⌘/Ctrl + Shift + Enter</kbd> sends and archives the conversation.
-- **Send later** with <kbd>⌘/Ctrl + Shift + l</kbd>. Choose the date, time, and timezone, then **Schedule email**.
+- **Send & archive** in **Send options** sends and archives the conversation. Its shortcut is <kbd>⌘/Ctrl + Shift + Enter</kbd>.
+- **Send later…** in **Send options**, or <kbd>⌘/Ctrl + Shift + l</kbd>. Choose the date, time, and timezone, then **Schedule email**.
 
 Scheduled mail is sent from the computer where you scheduled it, so keep ThreeStrands running there and the computer awake and online. If the time passes while it's off, ThreeStrands asks you to confirm before sending.
 
+## Sent and Edit as New
+
+Open **Sent** from the folder menu, or press <kbd>g</kbd> then <kbd>s</kbd>, to find conversations you have sent messages in, including messages sent from other devices or webmail.
+
+On a message you sent, click **Edit as New** beside **Forward**, or press <kbd>Shift + c</kbd>. A fresh message keeps the subject, text, and attachments but clears the recipients, so you can send the same note to someone else. Forwarding a message keeps the forwarded copy in its original conversation.
+
 ## Outbox
 
-The **Outbox** (<kbd>g</kbd> then <kbd>o</kbd>) lists scheduled and sending mail. From there you can reschedule, return a message to drafts, or send it now. If ThreeStrands can't confirm that a message was delivered, it offers **Check Sent Mail** rather than sending it again.
+The **Outbox** (<kbd>g</kbd> then <kbd>o</kbd>) holds mail that has not finished sending: the undo window, scheduled sends, and messages that failed or need a delivery check. Finished sends move to **Sent**. Select an item to read it with its delivery status and actions above the message. From there you can reschedule, return a message to drafts, or send it now. If ThreeStrands can't confirm that a message was delivered, it offers **Check Sent Mail** rather than sending it again.

@@ -7,7 +7,7 @@ import { shortcutGroups } from "../../src/shortcutCatalog";
 
 const RELEASES = "https://github.com/oa-labs/ThreeStrands/releases/latest";
 const LICENSE_URL = "https://github.com/oa-labs/ThreeStrands/blob/master/LICENSE";
-const TOUR_SCENES = ["inbox", "split-inbox", "reply", "tasks", "goals", "today-schedule", "calendar-week", "calendar-create", "contacts", "files"];
+const TOUR_SCENES = ["inbox", "split-inbox", "newsletter", "reply", "tasks", "goals", "inbox-zero", "find-times", "calendar-week", "calendar-create", "contacts", "files"];
 const { version } = JSON.parse(readFileSync(path.resolve("package.json"), "utf8")) as { version: string };
 
 /** Walks the whole page so every lazy image and scroll-driven effect gets a chance to run. */
@@ -70,7 +70,7 @@ test.describe("feature claims", () => {
     await expect(tour).toContainText("mark it achieved, drop it, or carry it forward");
     const roadmap = page.locator("#roadmap");
     await expect(roadmap.getByRole("heading", { level: 3 })).toHaveText([
-      "Snooze", "Sending Aliases and Signatures", "Drafts Across Devices",
+      "Snooze", "Sending Aliases", "Drafts Across Devices",
       "Connected Address Books", "Smarter Inbox Rules", "Microsoft 365",
       "Encrypted Sync Reliability", "Shared and Mobile Workflows",
     ]);
@@ -81,6 +81,30 @@ test.describe("feature claims", () => {
     await expect(roadmap).toContainText("Gmail and IMAP/SMTP connections available today");
     await expect(roadmap).not.toContainText(/scheduled sending|Gmail is the only/i);
     await expect(roadmap).not.toContainText(/\bbeta\b/i);
+  });
+
+  test("promotes the release’s signatures, newsletter controls, scheduling, and inbox-zero workflows", async ({ page }) => {
+    await page.goto("./");
+    const writing = page.locator('[data-step="reply"]');
+    for (const claim of ["formatted signatures with logos", "import your signature from Gmail", "Sent", "Edit as New"]) {
+      await expect(writing).toContainText(claim);
+    }
+    const newsletter = page.locator('[data-step="newsletter"]');
+    for (const claim of ["Unsubscribe", "Mute", "archives it automatically", "across your devices"]) {
+      await expect(newsletter).toContainText(claim);
+    }
+    const times = page.locator('[data-step="find-times"]');
+    for (const claim of ["optional Draft Assist", "next week", "lunch gap", "Drive Time Buffer"]) {
+      await expect(times).toContainText(claim);
+    }
+    const zero = page.locator('[data-step="inbox-zero"]');
+    for (const claim of ["open tasks", "Keep in Touch", "today’s agenda", "last checked"]) {
+      await expect(zero).toContainText(claim);
+    }
+    await expect(page.locator(".privacy-shot")).toContainText("Trust checks run on your computer");
+    await expect(page.locator(".privacy-shot")).toContainText("Show link takes you to the link in the email");
+    await expect(page.locator('[data-step="files"]')).toContainText("On macOS, preview");
+    await expect(page.locator('[data-step="files"]')).toContainText("never previewed");
   });
 
   test("describes mail compatibility separately from calendars in copy and metadata", async ({ page }) => {
@@ -110,7 +134,7 @@ test.describe("feature claims", () => {
       "jump straight to the source conversation", "Stars stay on this computer", "do not keep an offline copy",
     ]) await expect(files).toContainText(claim);
     await expect(files.locator("kbd")).toHaveText("5");
-    await expect(files.locator(".tour-inline img")).toHaveAttribute("alt", /Files view.*starred Q4 launch plan PDF.*source conversation/);
+    await expect(files.locator(".tour-inline img")).toHaveAttribute("alt", /Files view.*starred rollout image.*preview.*source conversation/);
   });
 
   test("keeps scheduled delivery ownership and missed-time requirements beside the feature", async ({ page }) => {
@@ -257,8 +281,8 @@ test.describe("images", () => {
     expect(images.filter((image) => image.alt === null)).toEqual([]);
     expect(images.filter((image) => image.rendered && !image.loaded)).toEqual([]);
     const described = images.filter((image) => !image.hidden && image.alt);
-    // Hero, command palette, sandboxed reader, two AI scenes, and one inline image per tour step.
-    expect(described).toHaveLength(5 + TOUR_SCENES.length);
+    // Hero, command palette, sandboxed reader, Trust, two AI scenes, and one inline image per tour step.
+    expect(described).toHaveLength(6 + TOUR_SCENES.length);
   });
 
   test("each tour step has a matching sticky frame and an inline fallback", async ({ page }) => {
@@ -651,6 +675,25 @@ test.describe("docs", () => {
       expect(undescribed).toBe(0);
     });
   }
+
+  test("documents the current compose and scheduling controls and the limits of Trust", async ({ page }) => {
+    await page.goto("./docs/compose.html");
+    const writing = page.locator(".docs-body");
+    for (const claim of ["Import from Gmail…", "Regenerate from Signature", "Send & archive", "Send options", "Sent and Edit as New", "Finished sends move to Sent"]) {
+      await expect(writing).toContainText(claim);
+    }
+    await expect(writing).not.toContainText("Send & Mark Done");
+    await page.goto("./docs/calendar.html");
+    const calendar = page.locator(".docs-body");
+    for (const claim of ["Drive Time Buffer", "Draft Reply With These Times", "also work without Draft Assist", "All day"]) {
+      await expect(calendar).toContainText(claim);
+    }
+    await page.goto("./docs/triage.html");
+    const triage = page.locator(".docs-body");
+    for (const claim of ["Muted Senders", "Known sender", "not a promise that every message is safe", "never previewed", "Remote images remain blocked until you allow them"]) {
+      await expect(triage).toContainText(claim);
+    }
+  });
 
   test("the shortcut reference lists exactly what the app's Keyboard Shortcuts window lists", async ({ page }) => {
     await page.goto("./docs/keyboard-shortcuts.html");
