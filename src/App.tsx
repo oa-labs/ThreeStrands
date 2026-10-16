@@ -44,6 +44,7 @@ import { AccountSwitcher } from "./AccountSwitcher";
 import { ActionButton, CommandPalette, FiltersButton, HoverTooltip, ShortcutHelp } from "./AppChrome";
 import { GettingStartedDialog, useGettingStarted } from "./GettingStarted";
 import { inboxCheckedLabel } from "./inboxZero";
+import { InboxZeroSections } from "./InboxZeroSections";
 import { SERVER_SEARCH_FAILED_COPY, SERVER_SEARCHING_COPY } from "./searchStatusCopy";
 import type { GettingStartedStepId } from "./gettingStartedSteps";
 import { CalendarSidebar } from "./CalendarSidebar";
@@ -264,7 +265,7 @@ export function App() {
     calendarEventToOpen, openCalendarAt, contactAddressBookTarget, contactsView, setContactsView,
     keepInTouchDueCount, refreshKeepInTouchCount, calendar, refreshCalendarOptions,
     calendarConnected, calendarSidebarStart, openContactsView, contactCardActions,
-    contextPersonEmail, openCalendarView,
+    contextPersonEmail, openCalendarView, openTasksView, openKeepInTouchView,
   } = workspaces;
   const { openTaskThreadIds, taskRevision, setTaskRevision, refreshTaskIndicators } = useTaskIndicators(activeAccountId);
   const splitInboxCatalog = useSplitInboxes();
@@ -1159,6 +1160,19 @@ export function App() {
       {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" && rightWorkspace !== "files" && !composingApart ? (
         <ContextPanel
           detail={visibleDetail}
+          idle={inboxZero ? (
+            <InboxZeroSections
+              accountId={activeAccountId}
+              taskRefreshKey={taskRevision}
+              calendarConnected={calendarConnected}
+              calendars={calendar.calendars}
+              onOpenEvent={(event) => openCalendarAt(eventDate(event))}
+              onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
+              onOpenTasks={openTasksView}
+              onOpenContact={contactCardActions.onOpenContact}
+              onOpenKeepInTouch={openKeepInTouchView}
+            />
+          ) : null}
           accounts={accounts}
           selectedEmail={contextPersonEmail}
           reply={composerBelongsToVisibleThread && correspondence.liveDraft ? {

@@ -49,7 +49,7 @@ export type ContextPerson = {
  * sender's history and one-click decisions first in the person group. Other
  * conversations show Trust only when something needs a look.
  */
-export function ContextPanel({ detail, accounts, selectedEmail = null, reply = null, onOpenThread, onShowMessage, assist, related, chat, sender, onKeyDown }: {
+export function ContextPanel({ detail, accounts, selectedEmail = null, reply = null, onOpenThread, onShowMessage, assist, related, chat, sender, idle = null, onKeyDown }: {
   detail: ThreadDetail | null;
   accounts: Account[];
   /** A participant the reader picked from a message header; ignored if not on the conversation. */
@@ -71,6 +71,8 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, reply = n
   sender?: SenderActions;
   /** Keyboard handling for the panel while focus is inside it. */
   onKeyDown?(event: KeyboardEvent<HTMLElement>): void;
+  /** Shown when no conversation is open, such as what's next at inbox zero. */
+  idle?: ReactNode;
 }) {
   const own = useMemo(() => new Set(accounts.map((account) => account.email.toLocaleLowerCase())), [accounts]);
   const participants = useMemo(() => {
@@ -234,6 +236,7 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, reply = n
         ) : <p className="context-status compose-context-empty">Add a recipient to see your history with them.</p>}
         {reply.availability}
       </> : null}
+      {detail ? null : idle}
       {detail ? assist : null}
       {detail && related ? related(person, [...meetingPeople.values()]) : null}
       {inbound ? <TrustSection key={inbound.id} message={inbound} bulk={Boolean(bulk)} /> : null}

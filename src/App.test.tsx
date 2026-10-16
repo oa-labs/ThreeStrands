@@ -1829,6 +1829,26 @@ describe("empty mail states", () => {
     expect(list).not.toHaveTextContent(/Inbox zero|No conversations/);
   });
 
+  it("fills the context panel with what's next at inbox zero, and not while a conversation is open", async () => {
+    const dueContact = {
+      id: "ada", displayName: "Ada Lovelace", role: null, company: null, location: null, bio: null, notes: null, links: [],
+      photoData: null, favorite: false, addresses: ["ada@example.com"], sentCount: 0, receivedCount: 0, lastInteractedAt: null,
+      birthday: null, keepInTouch: { intervalDays: 30, startedAt: null, snoozedUntil: null, snoozedAt: null, lastTouchAt: null },
+      keepInTouchDueAt: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+    };
+    vi.spyOn(mailClient, "listKeepInTouch").mockResolvedValue([dueContact]);
+    const listPage = vi.spyOn(mailClient, "listThreadsPage").mockResolvedValue({ threads: [], hasMore: false });
+    const first = render(<App />);
+    const panel = screen.getByRole("complementary", { name: "Conversation context" });
+    expect(await within(panel).findByRole("region", { name: "Keep in touch" })).toBeInTheDocument();
+    first.unmount();
+
+    listPage.mockRestore();
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    expect(within(screen.getByRole("complementary", { name: "Conversation context" })).queryByRole("region", { name: "Keep in touch" })).not.toBeInTheDocument();
+  });
+
   it("does not call the inbox current when the last check failed", async () => {
     vi.spyOn(mailClient, "listThreadsPage").mockResolvedValue({ threads: [], hasMore: false });
     mockSyncStatus("error");

@@ -6,6 +6,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ### New
 - In **Settings → Signatures**, **Import from Gmail…** brings in a signature from a connected Gmail account for preview, naming, and optional use as the account’s default for new messages. You can edit its plain-text alternative separately or regenerate it from the visual signature.
+- When your inbox is empty, the side panel now shows what's next: your open tasks, people you're due to reconnect with from **Keep in Touch**, and today's agenda when you have a calendar connected. Click any item to open it.
 
 ### Improved
 - Messages sent to a long list of people now show the first 20 recipients followed by "and N more". Click it to see everyone.
