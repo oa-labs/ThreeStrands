@@ -225,6 +225,16 @@ describe("ContextPanel",()=>{
     expect(onOpenThread).toHaveBeenCalledWith("thread-2");
   });
 
+  it("puts Find Times and the brief in one row at the top while reading",async()=>{
+    vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
+    renderPanel({availability:<section aria-label="Availability">times</section>,assist:<section aria-label="Brief">brief</section>});
+    const row=screen.getByRole("region",{name:"Availability"}).parentElement!;
+    expect(row).toHaveClass("context-ai-row");
+    expect(within(row).getAllByRole("region").map((region)=>region.getAttribute("aria-label"))).toEqual(["Availability","Brief"]);
+    await personLoaded(bob.id);
+  });
+
   it("groups conversation sections above the person sections",async()=>{
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([timelineItem("thread-2","Budget review")]);
@@ -501,8 +511,8 @@ describe("ContextPanel",()=>{
       renderPanel({
         reply:reply([toBob],{
           checks:<section aria-label="Before you send">checks</section>,
-          availability:<section aria-label="Availability">times</section>,
         }),
+        availability:<section aria-label="Availability">times</section>,
         assist:<section aria-label="Brief">brief</section>,
         related:()=><section aria-label="Conversation tasks">tasks</section>,
       });
@@ -550,6 +560,17 @@ describe("ContextPanel",()=>{
       vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
       vi.mocked(mailClient.senderHistory).mockResolvedValue(history);
       vi.mocked(mailClient.messageTrust).mockResolvedValue(verified);
+    });
+
+    it("leaves Find Times out while reading bulk mail but keeps the brief, and offers it in a reply",async()=>{
+      const props={detail:newsDetail(),availability:<section aria-label="Availability">times</section>,assist:<section aria-label="Brief">brief</section>};
+      const {rerender}=renderPanel(props);
+      const row=screen.getByRole("region",{name:"Brief"}).parentElement!;
+      expect(row).toHaveClass("context-ai-row");
+      expect(within(row).queryByRole("region",{name:"Availability"})).not.toBeInTheDocument();
+      await personLoaded(`derived:${news}`);
+      rerender(<ContextPanel accounts={[account]} onOpenThread={vi.fn()} {...props} reply={{recipients:[{email:news,name:null}]}}/>);
+      expect(within(row).getByRole("region",{name:"Availability"})).toBeInTheDocument();
     });
 
     it("lists the sender's mail in Recent emails with quiet decision links at the bottom",async()=>{

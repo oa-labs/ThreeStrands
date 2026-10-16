@@ -18,8 +18,6 @@ export type ReplyContext = {
   recipients: { email: string; name: string | null }[];
   /** Checks before sending, shown first. */
   checks?: ReactNode;
-  /** Open times to insert into the reply, below the recipient card. */
-  availability?: ReactNode;
 };
 
 /** The selected participant, once their contact record has been looked up. */
@@ -45,8 +43,13 @@ export type ContextPerson = {
  * to another message. The switcher lists the conversation's correspondents
  * before the user's colleagues.
  *
- * While the user replies in this conversation, the checks before sending and
- * open times to offer come first, and the person group is about who the reply
+ * The AI actions, Find Times and the brief, share one row at the top: each is
+ * a button until it has something to show, then opens to full width below
+ * the buttons. Find Times is left out while reading bulk mail, but offered
+ * when replying to it.
+ *
+ * While the user replies in this conversation, the checks before sending
+ * come first, and the person group is about who the reply
  * goes to: only its recipients can be selected, and a card shows what is
  * saved about the selected one.
  *
@@ -55,7 +58,7 @@ export type ContextPerson = {
  * sender's history and one-click decisions first in the person group. Other
  * conversations show Trust only when something needs a look.
  */
-export function ContextPanel({ detail, accounts, selectedEmail = null, readingMessageId = null, onSelectPerson, reply = null, onOpenThread, onShowMessage, onShowLink, assist, related, chat, sender, idle = null, onKeyDown }: {
+export function ContextPanel({ detail, accounts, selectedEmail = null, readingMessageId = null, onSelectPerson, reply = null, onOpenThread, onShowMessage, onShowLink, availability, assist, related, chat, sender, idle = null, onKeyDown }: {
   detail: ThreadDetail | null;
   accounts: Account[];
   /** A participant the reader picked from a message header; ignored if not on the conversation. */
@@ -74,6 +77,8 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, readingMe
   onShowMessage?(threadId: string, messageId: string): void;
   /** Shows a link the Trust section warns about in the open message. */
   onShowLink?(threadId: string, messageId: string, link: TrustLink): void;
+  /** Open times from the calendar to offer in a reply. */
+  availability?: ReactNode;
   assist?: ReactNode;
   /** Sections about the conversation and the selected person. */
   related?(person: ContextPerson | null, meetingPeople: { email: string; name: string }[]): ReactNode;
@@ -266,12 +271,9 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, readingMe
   const showMessage = onShowMessage ?? ((threadId: string) => onOpenThread(threadId));
   return (
     <aside className="context-panel" aria-label="Conversation context" tabIndex={-1} onKeyDown={onKeyDown}>
-      {detail && reply ? <>
-        {reply.checks}
-        {reply.availability}
-      </> : null}
+      {detail && reply ? reply.checks : null}
       {detail ? null : idle}
-      {detail ? assist : null}
+      {detail ? <div className="context-ai-row">{bulk && !reply ? null : availability}{assist}</div> : null}
       {detail && related ? related(person, [...meetingPeople.values()]) : null}
       {inbound ? <TrustSection key={inbound.id} message={inbound} bulk={Boolean(bulk)} prior={inboundPrior}
         onShowLink={onShowLink && detail ? (link) => onShowLink(detail.thread.id, inbound.id, link) : undefined} /> : null}

@@ -1194,22 +1194,28 @@ export function App() {
           onMoveToBcc={correspondence.moveDraftRecipientsToBcc}
               />
             ),
-            availability: calendarConnected ? (
-              <AvailabilitySection
-                preferences={availabilityPreferences}
-                ai={aiDraftAvailable}
-                draft={correspondence.liveDraft}
-                suggest={() => suggestedSearch(actionProposals, new Date(), availabilityPreferences.defaultDurationMinutes)}
-                onInsertTimes={draftAvailabilityReply}
-                onOpenCalendarSettings={() => openSettingsAt("calendarAccounts")}
-              />
-            ) : null,
           } : null}
           onKeyDown={contextPanelKeyDown}
           sender={senderActions}
           onOpenThread={jumpToThread}
           onShowMessage={showMessage}
           onShowLink={showMessageLink}
+          availability={calendarConnected && visibleDetail ? (
+            // While reading, Find Times reads the conversation, and choosing times starts a reply.
+            <AvailabilitySection
+              key={visibleDetail.thread.id}
+              compact
+              preferences={availabilityPreferences}
+              ai={aiDraftAvailable}
+              draft={composerBelongsToVisibleThread && correspondence.liveDraft
+                ? correspondence.liveDraft
+                : { sourceId: visibleDetail.messages.at(-1)?.id ?? null, subject: visibleDetail.thread.subject, body: "" }}
+              intoDraft={Boolean(composerBelongsToVisibleThread && correspondence.liveDraft)}
+              suggest={() => suggestedSearch(actionProposals, new Date(), availabilityPreferences.defaultDurationMinutes)}
+              onInsertTimes={draftAvailabilityReply}
+              onOpenCalendarSettings={() => openSettingsAt("calendarAccounts")}
+            />
+          ) : null}
           assist={visibleDetail ? (<>
             <ThreadAssist
               detail={visibleDetail}

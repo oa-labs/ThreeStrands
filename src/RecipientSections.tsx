@@ -28,7 +28,7 @@ type FindTimesState = {
  * it, the coming week is searched. Search Again always reads afresh. The
  * provider never sees the calendar.
  */
-export function AvailabilitySection({ preferences, ai, draft, suggest, onInsertTimes, onOpenCalendarSettings }: {
+export function AvailabilitySection({ preferences, ai, draft, suggest, intoDraft = true, compact = false, onInsertTimes, onOpenCalendarSettings }: {
   preferences: AvailabilityPreferences;
   /** Draft Assist is on and an AI provider is ready. */
   ai: boolean;
@@ -36,6 +36,13 @@ export function AvailabilitySection({ preferences, ai, draft, suggest, onInsertT
   draft: Pick<Draft, "sourceId" | "subject" | "body">;
   /** The search a meeting suggestion already found for this conversation, if any. */
   suggest?: () => SuggestedSearch | null;
+  /** The times go into an open draft; otherwise choosing them starts a reply. */
+  intoDraft?: boolean;
+  /**
+   * Before a search, only the Find Times button shows, for a row of AI
+   * actions; the section opens to full width once there are times.
+   */
+  compact?: boolean;
   onInsertTimes(candidates: AvailabilityCandidate[]): void;
   onOpenCalendarSettings(): void;
 }) {
@@ -77,15 +84,25 @@ export function AvailabilitySection({ preferences, ai, draft, suggest, onInsertT
     }
   };
 
+  const explanation = ai
+    ? "Suggest open times from your calendar, based on what this conversation asks for."
+    : "Suggest open times from your calendar for this message.";
+  const button = (
+    <button type="button" className="btn btn-sm" disabled={reading} title={compact && !search ? explanation : undefined} onClick={() => void findTimes()}>
+      {/* Marked only when the press reads the conversation with AI, not when it reuses a suggestion. */}
+      {ai && (search !== null || !suggest?.()) ? <Sparkles size={ICON_SIZE.sm} /> : null}{search ? "Search Again" : "Find Times"}
+    </button>
+  );
+  if (compact && !search && !reading) {
+    return <section className="context-ai-launcher compose-availability" aria-label="Availability">{button}</section>;
+  }
+
   return (
     <section className="context-section compose-availability" aria-label="Availability">
       <ContextSectionHeader
         title="Availability"
         icon={<CalendarDays size={ICON_SIZE.xs} />}
-        actions={<button type="button" className="btn btn-sm" disabled={reading} onClick={() => void findTimes()}>
-          {/* Marked only when the press reads the conversation with AI, not when it reuses a suggestion. */}
-          {ai && (search !== null || !suggest?.()) ? <Sparkles size={ICON_SIZE.sm} /> : null}{search ? "Search Again" : "Find Times"}
-        </button>}
+        actions={button}
       />
       {reading ? <p className="context-status" role="status">Reading the conversation…</p> : null}
       {search && !reading ? <>
@@ -97,16 +114,14 @@ export function AvailabilitySection({ preferences, ai, draft, suggest, onInsertT
           preferences={preferences}
           calendarConnected
           ai={ai ? context : null}
-          intoDraft
+          intoDraft={intoDraft}
           // A range search never yields a single proposed time to add or confirm.
           onAddToCalendar={() => undefined}
           onReplyWithTimes={onInsertTimes}
           onConfirmTime={() => undefined}
           onOpenCalendarSettings={onOpenCalendarSettings}
         />
-      </> : reading ? null : ai ? <>
-        <p className="context-status">Suggest open times from your calendar, based on what this conversation asks for.</p>
-      </> : <p className="context-status">Suggest open times from your calendar for this message.</p>}
+      </> : reading ? null : <p className="context-status">{explanation}</p>}
     </section>
   );
 }

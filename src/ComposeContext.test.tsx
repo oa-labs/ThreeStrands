@@ -362,6 +362,26 @@ describe("Find Times with AI", () => {
     expect(mailClient.findTimes).toHaveBeenCalledTimes(1);
   });
 
+  it("starts as one Find Times button in a compact row, and while reading offers to start a reply with the times", async () => {
+    vi.mocked(mailClient.findTimes).mockResolvedValue(search);
+    const onInsertTimes = vi.fn();
+    const reading = { sourceId: "message-9", subject: "Planning", body: "" };
+    render(<AvailabilitySection compact intoDraft={false} preferences={preferences} ai draft={reading} onInsertTimes={onInsertTimes} onOpenCalendarSettings={vi.fn()} />);
+    expect(section()).toHaveClass("context-ai-launcher");
+    expect(within(section()).queryByRole("heading")).not.toBeInTheDocument();
+    const findTimes = within(section()).getByRole("button", { name: "Find Times" });
+    expect(findTimes).toHaveAttribute("title", "Suggest open times from your calendar, based on what this conversation asks for.");
+    expect(findTimes.querySelector("svg.lucide-sparkles")).not.toBeNull();
+
+    fireEvent.click(findTimes);
+    // While reading, the conversation alone is read.
+    await waitFor(() => expect(mailClient.findTimes).toHaveBeenCalledWith(expect.objectContaining({ sourceMessageId: "message-9", draftText: "" }), "openai", "gpt-4o", null));
+    expect(await within(section()).findByRole("heading", { name: "Availability" })).toBeInTheDocument();
+    expect(section()).not.toHaveClass("context-ai-launcher");
+    fireEvent.click(await within(section()).findByRole("button", { name: "Draft Reply With This Time" }));
+    expect(onInsertTimes).toHaveBeenCalledOnce();
+  });
+
   it("uses a meeting suggestion's range even without AI", async () => {
     const suggest = () => ({
       plan: { query: { kind: "range" as const, start: search.rangeStart, end: search.rangeEnd }, durationMinutes: 30, timeZoneAssumed: false },

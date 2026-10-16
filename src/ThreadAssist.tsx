@@ -146,18 +146,25 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
     }
   };
 
+  const runButton = !failure && (missingSummary || missingSuggestions) ? (
+    <HoverTooltip title={missingSummary ? "Get Brief" : "Get Suggestions"} shortcut={missingSummary ? "i" : undefined} placement="bottom">
+      <button type="button" className="btn btn-sm thread-assist-run" aria-keyshortcuts={missingSummary ? "i" : undefined} onClick={() => onRun(false)}>
+        <Sparkles size={ICON_SIZE.sm} />{missingSummary ? "Get Brief" : "Get Suggestions"}
+      </button>
+    </HoverTooltip>
+  ) : null;
+  // Before anything has run, only the button shows, beside the panel's other
+  // AI actions; the section opens to full width once there is something to read.
+  if (runButton && !busy && !generated && !showSuggestions) {
+    return <section id={THREAD_ASSIST_ID} className="context-ai-launcher thread-assist" aria-label={title}>{runButton}</section>;
+  }
+
   return <section id={THREAD_ASSIST_ID} className="context-section thread-assist" aria-labelledby="thread-assist-heading">
     <header className="context-section-header">
       <h3><span className="context-row-glyph" aria-hidden="true"><ScrollText size={ICON_SIZE.xs} /></span><span id="thread-assist-heading">{title}</span></h3>
       {busy ? <span className="context-status" role="status">Reading the conversation…</span> : (
         <div className="context-section-header-actions">
-          {!failure && (missingSummary || missingSuggestions) ? (
-            <HoverTooltip title={missingSummary ? "Get Brief" : "Get Suggestions"} shortcut={missingSummary ? "i" : undefined} placement="bottom">
-              <button type="button" className="btn btn-sm thread-assist-run" aria-keyshortcuts={missingSummary ? "i" : undefined} onClick={() => onRun(false)}>
-                <Sparkles size={ICON_SIZE.sm} />{missingSummary ? "Get Brief" : "Get Suggestions"}
-              </button>
-            </HoverTooltip>
-          ) : null}
+          {runButton}
           {summaryText ? (
             <HoverTooltip title={copied ? "Copied brief" : "Copy brief"} placement="bottom">
               <button type="button" className="btn-icon btn-icon-sm" aria-label={copied ? "Copied brief" : "Copy brief"} onClick={() => void copyBrief()}>{copied ? <Check size={ICON_SIZE.sm} /> : <Copy size={ICON_SIZE.sm} />}</button>

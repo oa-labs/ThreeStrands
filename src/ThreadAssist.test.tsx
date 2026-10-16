@@ -101,11 +101,11 @@ describe("ThreadAssist", () => {
   it("offers one Get Brief action before anything has run and refreshes everything afterwards", () => {
     const onRun = vi.fn();
     const { rerender } = render(<ThreadAssist {...props({ onRun })} />);
-    // The label has a section icon like its neighbors; the AI mark stays on the action.
-    const heading = screen.getByRole("heading", { name: "Brief" });
-    expect(heading.querySelector(".context-row-glyph .lucide-scroll-text")).not.toBeNull();
-    expect(heading.querySelector(".lucide-sparkles")).toBeNull();
-    const getBrief = screen.getByRole("button", { name: "Get Brief" });
+    // Before anything has run, the section is just its button, beside the panel's other AI actions.
+    const launcher = screen.getByRole("region", { name: "Brief" });
+    expect(launcher).toHaveClass("context-ai-launcher");
+    expect(within(launcher).queryByRole("heading")).not.toBeInTheDocument();
+    const getBrief = within(launcher).getByRole("button", { name: "Get Brief" });
     expect(getBrief.querySelector("svg")).not.toBeNull();
     expect(getBrief).toHaveAttribute("aria-keyshortcuts", "i");
     const briefTooltip = within(getBrief.parentElement as HTMLElement).getByRole("tooltip");
@@ -116,6 +116,10 @@ describe("ThreadAssist", () => {
     expect(screen.queryByRole("button", { name: "Refresh brief" })).not.toBeInTheDocument();
 
     rerender(<ThreadAssist {...props({ onRun, detail: summarized, suggestions: { requested: true } })} />);
+    // With a brief, the section opens under a heading with a section icon; the AI mark stays on actions.
+    const heading = screen.getByRole("heading", { name: "Brief" });
+    expect(heading.querySelector(".context-row-glyph .lucide-scroll-text")).not.toBeNull();
+    expect(heading.querySelector(".lucide-sparkles")).toBeNull();
     expect(screen.getByText("The client needs the website.")).toBeInTheDocument();
     expect(screen.getByText("Due Friday.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Get Brief" })).not.toBeInTheDocument();
@@ -123,15 +127,19 @@ describe("ThreadAssist", () => {
     expect(onRun).toHaveBeenLastCalledWith(true);
   });
 
-  it("keeps the run button in the section header so an unrun brief takes one line", () => {
+  it("shows one run button before anything has run, then keeps actions in the section header", () => {
     const { rerender, container } = render(<ThreadAssist {...props()} />);
-    const header = container.querySelector(".context-section-header")!;
-    expect(within(header as HTMLElement).getByRole("button", { name: "Get Brief" })).toBeInTheDocument();
+    expect(container.querySelector(".context-section-header")).toBeNull();
     expect(container.querySelectorAll(".thread-assist-run")).toHaveLength(1);
+
+    // A brief without suggestions yet offers them from the header.
+    rerender(<ThreadAssist {...props({ detail: summarized })} />);
+    const header = container.querySelector(".context-section-header")!;
+    expect(within(header as HTMLElement).getByRole("button", { name: "Get Suggestions" })).toBeInTheDocument();
 
     rerender(<ThreadAssist {...props({ detail: summarized, suggestions: { requested: true } })} />);
     expect(screen.queryByRole("button", { name: "Get Brief" })).not.toBeInTheDocument();
-    expect(within(header as HTMLElement).getByRole("button", { name: "Refresh brief" })).toBeInTheDocument();
+    expect(within(container.querySelector(".context-section-header") as HTMLElement).getByRole("button", { name: "Refresh brief" })).toBeInTheDocument();
 
     rerender(<ThreadAssist {...props({ loading: true })} />);
     expect(within(container.querySelector(".context-section-header") as HTMLElement).getByRole("status")).toHaveTextContent("Reading the conversation…");
@@ -163,10 +171,12 @@ describe("ThreadAssist", () => {
   });
 
   it("titles the section Suggestions when summaries are off", () => {
-    render(<ThreadAssist {...props({ detail: summarized, summary: { enabled: false, available: false } })} />);
-    expect(screen.getByRole("heading", { name: "Suggestions" })).toBeInTheDocument();
+    const { rerender } = render(<ThreadAssist {...props({ detail: summarized, summary: { enabled: false, available: false } })} />);
+    const launcher = screen.getByRole("region", { name: "Suggestions" });
     expect(screen.queryByText("The client needs the website.")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Get Suggestions" })).toBeInTheDocument();
+    expect(within(launcher).getByRole("button", { name: "Get Suggestions" })).toBeInTheDocument();
+    rerender(<ThreadAssist {...props({ detail: summarized, summary: { enabled: false, available: false }, suggestions: { requested: true } })} />);
+    expect(screen.getByRole("heading", { name: "Suggestions" })).toBeInTheDocument();
   });
 
   it("shows a non-retryable error verbatim without Try Again or technical details", () => {
