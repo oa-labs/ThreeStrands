@@ -3095,13 +3095,17 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-body:empty::before { content: attr(data-placeholder); color: var(--muted); pointer-events: none; }
 .compose-body blockquote { margin: .5em 0 .5em 1.25em; padding-left: 1em; border-left: 3px solid var(--border-strong); }
 .compose-body ol, .compose-body ul { margin: .5em 0; padding-left: 2em; }
-.compose-quote-toggle { align-self: flex-start; flex-shrink: 0; margin: 0 0 var(--space-2); letter-spacing: var(--tracking-wide); }
+.compose-quote-toggle { flex-shrink: 0; letter-spacing: var(--tracking-wide); }
 .compose-body.compose-quoted { min-height: 0; height: auto; padding-top: 0; overflow: visible; }
 .compose-body.compose-quoted[hidden] { display: none; }
-.compose-writing-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); flex-shrink: 0; padding: var(--space-2) var(--pane-inset); border-top: 1px solid var(--border); }
+.compose-body-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); flex-shrink: 0; padding: var(--space-2) 0; }
+.compose-writing-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); flex-shrink: 0; min-width: 0; }
+.compose-body-actions > .compose-writing-actions { flex: 1 1 auto; justify-content: flex-end; }
+.compose-body-actions .compose-signature-picker { margin-right: auto; }
+.composer > .compose-writing-actions { padding: var(--space-2) var(--pane-inset); }
 .compose-signature-picker { display: flex; align-items: center; gap: var(--space-1); min-width: 0; max-width: 100%; color: var(--muted); font-size: var(--text-secondary); }
 .compose-signature-picker select { min-width: 0; max-width: 220px; width: auto; font-size: var(--text-control); background-color: var(--raised); border-color: var(--border); }
-.reply-assist-trigger { margin-left: auto; }
+.reply-assist-trigger, .draft-review-trigger:first-of-type { margin-left: auto; }
 .reply-assist-backdrop { place-items: center; padding: var(--space-4); }
 .reply-assist-modal { display: flex; flex-direction: column; width: min(var(--dialog-w-xl), 100%); max-height: calc(100dvh - 32px); }
 .reply-assist-modal > header { flex-shrink: 0; }

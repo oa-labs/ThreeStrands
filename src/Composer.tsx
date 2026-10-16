@@ -347,6 +347,24 @@ export const Composer = forwardRef<ComposerHandle, {
     return () => { active = false; };
   }, [draft.account]);
   useEscapeDismiss(close, !scheduleOpen);
+  const isReply = initial.mode === "reply" || initial.mode === "replyAll";
+  const writingTools = showSignaturePicker || replyAssistEnabled || reviewEnabled ? <div className="compose-writing-actions" role="group" aria-label="Writing tools">
+    {showSignaturePicker && signatures ? <label className="compose-signature-picker"><span>Signature:</span><select aria-label="Signature" value={draft.signature?.id ?? ""} disabled={busy} onChange={(event) => {
+      if (event.target.selectedOptions[0]?.dataset.action === "manage") setSignaturesOpen(true);
+      else changeSignature(event.target.value);
+    }}>
+      <option value="">None</option>
+      {draft.signature?.id && !signatures.signatures.some((s) => s.id === draft.signature?.id) ? <option value={draft.signature.id}>{draft.signature.name} (Saved in Draft)</option> : null}
+      {signatures.signatures.map((signature) => <option key={signature.id} value={signature.id}>{signature.name}</option>)}
+      <option value="__manage_signatures__" data-action="manage">Manage signatures…</option>
+    </select></label> : null}
+    {replyAssistEnabled ? <button type="button" className="btn btn-sm reply-assist-trigger" title={`Draft a reply with AI (${composeKeyLabel("Mod+j")})`} aria-keyshortcuts="Meta+J Control+J" disabled={busy} onClick={draftReplyWithAI}>
+      <Sparkles size={ICON_SIZE.md} /> Draft reply
+    </button> : null}
+    {reviewEnabled ? <button type="button" className="btn btn-sm draft-review-trigger" title="Get feedback on this draft from AI" aria-expanded={reviewOpen} disabled={busy} onClick={() => setReviewOpen((open) => !open)}>
+      <Sparkles size={ICON_SIZE.md} /> Review
+    </button> : null}
+  </div> : null;
   return <div ref={panel} className={initial.mode === "new" ? "composer composer-inline composer-new" : "composer composer-inline"} role="dialog" data-shortcut-scope="compose" aria-label={initial.mode === "new" ? "New Message" : initial.mode === "forward" ? "Forward Message" : "Reply Message"}
       onKeyDown={(event) => {
         if (event.nativeEvent.isComposing || replyAssistOpen || scheduleOpen) return;
@@ -401,6 +419,7 @@ export const Composer = forwardRef<ComposerHandle, {
           onAttachImage={attachInlineImage}
           onRemoveImage={removeInlineImage}
           readInlineImage={readInlineImage}
+          writingTools={isReply ? writingTools : null}
         />
         {replyAssistInstruction && !replyAssistAvailable ? (
           <p className="reply-assist-task-context"><strong>Task-derived instruction:</strong> {replyAssistInstruction}{replyAssistEnabled ? " Set up an AI provider and API key in AI settings to generate a suggestion." : null}</p>
@@ -411,23 +430,7 @@ export const Composer = forwardRef<ComposerHandle, {
           <DraftReviewSection actions={draftReview} enabled available={Boolean(review?.available)} onOpenSettings={review?.onOpenSettings} onClose={() => setReviewOpen(false)} />
         ) : null}
       </div>
-      {showSignaturePicker || replyAssistEnabled || reviewEnabled ? <div className="compose-writing-actions" role="group" aria-label="Writing tools">
-        {showSignaturePicker && signatures ? <label className="compose-signature-picker"><span>Signature:</span><select aria-label="Signature" value={draft.signature?.id ?? ""} disabled={busy} onChange={(event) => {
-          if (event.target.selectedOptions[0]?.dataset.action === "manage") setSignaturesOpen(true);
-          else changeSignature(event.target.value);
-        }}>
-          <option value="">None</option>
-          {draft.signature?.id && !signatures.signatures.some((s) => s.id === draft.signature?.id) ? <option value={draft.signature.id}>{draft.signature.name} (Saved in Draft)</option> : null}
-          {signatures.signatures.map((signature) => <option key={signature.id} value={signature.id}>{signature.name}</option>)}
-          <option value="__manage_signatures__" data-action="manage">Manage signatures…</option>
-        </select></label> : null}
-        {replyAssistEnabled ? <button type="button" className="btn btn-sm reply-assist-trigger" title={`Draft a reply with AI (${composeKeyLabel("Mod+j")})`} aria-keyshortcuts="Meta+J Control+J" disabled={busy} onClick={draftReplyWithAI}>
-          <Sparkles size={ICON_SIZE.md} /> Draft reply
-        </button> : null}
-        {reviewEnabled ? <button type="button" className="btn btn-sm draft-review-trigger" title="Get feedback on this draft from AI" aria-expanded={reviewOpen} disabled={busy} onClick={() => setReviewOpen((open) => !open)}>
-          <Sparkles size={ICON_SIZE.md} /> Review
-        </button> : null}
-      </div> : null}
+      {!isReply ? writingTools : null}
       <footer>
         <ComposeSendActions busy={busy} onSend={() => send()} onSchedule={() => setScheduleOpen(true)} onSendAndArchive={onSendAndArchive} />
         <button className="btn-icon" onClick={attach} disabled={busy} aria-label="Attach Files"><Paperclip size={ICON_SIZE.lg} /></button>

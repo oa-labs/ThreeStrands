@@ -1018,6 +1018,26 @@ describe("Composer Reply Assist", () => {
     saveAiFeatures(DEFAULT_AI_FEATURES);
   });
 
+  it.each(["reply", "replyAll"] as const)("groups writing tools with the quote toggle below the %s body", async (mode) => {
+    render(<Composer draft={{ ...replyDraft, mode }} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} review={{ enabled: true, available: true }} />);
+    const tools = await screen.findByRole("group", { name: "Writing tools" });
+    const trigger = await within(tools).findByRole("button", { name: "Draft reply" });
+    const review = within(tools).getByRole("button", { name: "Review" });
+    const toggle = screen.getByRole("button", { name: "Show Quoted Text" });
+    expect(toggle.parentElement).toBe(tools.parentElement);
+    expect(screen.getByRole("textbox", { name: "Message Body" }).compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(tools.closest(".composer-content")).not.toBeNull();
+    const quote = screen.getByLabelText("Quoted Text");
+    expect(quote).not.toBeVisible();
+    fireEvent.click(toggle);
+    expect(quote).toBeVisible();
+    expect(screen.getByRole("button", { name: "Hide Quoted Text" }).parentElement).toBe(tools.parentElement);
+    expect(trigger).toBeEnabled();
+    fireEvent.click(review);
+    expect(screen.getByRole("region", { name: "Draft Review" })).toBeVisible();
+    expect(quote).toBeVisible();
+  });
+
   it("offers Draft reply once Draft Assist is on, and explains a missing key instead of doing nothing", async () => {
     await clearAiApiKey();
     const replyAssistContext = vi.spyOn(mailClient, "replyAssistContext");

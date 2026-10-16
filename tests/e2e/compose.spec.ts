@@ -327,51 +327,71 @@ test("switching conversations saves an edited reply all and shows the selected t
   await expect(reply.getByRole("textbox", { name: "Message Body" })).toHaveText("Keep this reply all draft");
 });
 
-test("Reply Assist opens in the viewport over a long reply and Escape returns to compose", async ({ page }) => {
-  await page.setViewportSize({ width: 900, height: 600 });
-  await page.goto("/");
-  await page.evaluate(() => {
-    localStorage.setItem("threestrands.settings.ai.provider", "openai");
-    localStorage.setItem("threestrands.settings.ai.features", JSON.stringify({ draftAssist: true, summarize: false, actionExtraction: false }));
+for (const width of [900, 1280]) {
+  test(`Reply Assist opens in the viewport over a long reply and Escape returns to compose (${width}px)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 600 });
+    await page.goto("/");
+    await page.evaluate(() => {
+      localStorage.setItem("threestrands.settings.ai.provider", "openai");
+      localStorage.setItem("threestrands.settings.ai.features", JSON.stringify({ draftAssist: true, summarize: false, actionExtraction: false }));
+    });
+    // The app reads AI settings at startup (and again when Settings closes), as Draft reply is offered only when it's on.
+    await page.reload();
+    await page.evaluate('import("/src/aiSettings.ts").then(({ setAiApiKey }) => setAiApiKey("test-key"))');
+    await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
+    await page.keyboard.press("r");
+    const reply = page.getByRole("dialog", { name: "Reply Message" });
+    const editor = reply.getByRole("textbox", { name: "Message Body" });
+    await editor.fill("A long quoted thread.\n".repeat(80));
+    const tools = reply.getByRole("group", { name: "Writing tools" });
+    const draftReply = tools.getByRole("button", { name: "Draft reply", exact: true });
+    await expect(draftReply).toHaveAttribute("title", /Draft a reply with AI/);
+    await expect(draftReply.locator("kbd")).toHaveCount(0);
+    await tools.scrollIntoViewIfNeeded();
+    await expect(tools.getByRole("combobox", { name: "Signature" })).toHaveCount(0);
+    await expect(draftReply).toBeInViewport();
+    const review = tools.getByRole("button", { name: "Review", exact: true });
+    await expect(review).toBeInViewport();
+    const alignment = await tools.evaluate((element) => {
+      const row = element.parentElement!;
+      const buttons = Array.from(element.querySelectorAll("button"));
+      const ai = buttons[0].getBoundingClientRect();
+      const review = buttons.at(-1)!.getBoundingClientRect();
+      const toggle = row.querySelector(".compose-quote-toggle")!.getBoundingClientRect();
+      const trash = element.closest(".composer")!.querySelector('[aria-label="Discard Draft"]')!.getBoundingClientRect();
+      return {
+        scrollWidth: row.scrollWidth, clientWidth: row.clientWidth,
+        aiCenter: ai.y + ai.height / 2, reviewCenter: review.y + review.height / 2, toggleCenter: toggle.y + toggle.height / 2,
+        reviewRight: review.right, trashRight: trash.right,
+        toolsBorder: getComputedStyle(element).borderTopWidth, rowBorder: getComputedStyle(row).borderTopWidth,
+        toolsBottom: element.getBoundingClientRect().bottom, footerTop: trash.top,
+      };
+    });
+    expect(alignment.scrollWidth).toBeLessThanOrEqual(alignment.clientWidth);
+    expect(Math.abs(alignment.reviewRight - alignment.trashRight)).toBeLessThan(1);
+    if (width === 1280) {
+      expect(Math.abs(alignment.aiCenter - alignment.toggleCenter)).toBeLessThan(1);
+      expect(Math.abs(alignment.reviewCenter - alignment.toggleCenter)).toBeLessThan(1);
+    }
+    expect(alignment.toolsBorder).toBe("0px");
+    expect(alignment.rowBorder).toBe("0px");
+    expect(alignment.toolsBottom).toBeLessThanOrEqual(alignment.footerTop);
+
+    await editor.press("ControlOrMeta+j");
+
+    const assist = page.getByRole("dialog", { name: "Reply Assist" });
+    await expect(assist).toBeInViewport({ ratio: 1 });
+    await expect(assist.getByRole("textbox", { name: "Optional Short Instruction" })).toBeFocused();
+    const box = await assist.boundingBox();
+    expect(box).not.toBeNull();
+    expect(Math.abs(box!.y + box!.height / 2 - 300)).toBeLessThan(24);
+
+    await page.keyboard.press("Escape");
+    await expect(assist).not.toBeVisible();
+    await expect(reply).toBeVisible();
+    await expect(editor).toBeFocused();
   });
-  // The app reads AI settings at startup (and again when Settings closes), as Draft reply is offered only when it's on.
-  await page.reload();
-  await page.evaluate('import("/src/aiSettings.ts").then(({ setAiApiKey }) => setAiApiKey("test-key"))');
-  await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
-  await page.keyboard.press("r");
-  const reply = page.getByRole("dialog", { name: "Reply Message" });
-  const editor = reply.getByRole("textbox", { name: "Message Body" });
-  await editor.fill("A long quoted thread.\n".repeat(80));
-  const tools = reply.getByRole("group", { name: "Writing tools" });
-  const draftReply = tools.getByRole("button", { name: "Draft reply", exact: true });
-  await expect(draftReply).toHaveAttribute("title", /Draft a reply with AI/);
-  await expect(draftReply.locator("kbd")).toHaveCount(0);
-  await tools.scrollIntoViewIfNeeded();
-  await expect(tools.getByRole("combobox", { name: "Signature" })).toHaveCount(0);
-  await expect(draftReply).toBeInViewport();
-  const alignment = await tools.evaluate((element) => {
-    const ai = element.querySelector("button")!.getBoundingClientRect();
-    const trash = element.closest(".composer")!.querySelector('[aria-label="Discard Draft"]')!.getBoundingClientRect();
-    return { scrollWidth: element.scrollWidth, clientWidth: element.clientWidth, aiRight: ai.right, trashRight: trash.right, toolsBottom: element.getBoundingClientRect().bottom, footerTop: trash.top };
-  });
-  expect(alignment.scrollWidth).toBeLessThanOrEqual(alignment.clientWidth);
-  expect(Math.abs(alignment.aiRight - alignment.trashRight)).toBeLessThan(1);
-  expect(alignment.toolsBottom).toBeLessThanOrEqual(alignment.footerTop);
-
-  await editor.press("ControlOrMeta+j");
-
-  const assist = page.getByRole("dialog", { name: "Reply Assist" });
-  await expect(assist).toBeInViewport({ ratio: 1 });
-  await expect(assist.getByRole("textbox", { name: "Optional Short Instruction" })).toBeFocused();
-  const box = await assist.boundingBox();
-  expect(box).not.toBeNull();
-  expect(Math.abs(box!.y + box!.height / 2 - 300)).toBeLessThan(24);
-
-  await page.keyboard.press("Escape");
-  await expect(assist).not.toBeVisible();
-  await expect(reply).toBeVisible();
-  await expect(editor).toBeFocused();
-});
+}
 
 test("reply send options support keyboard navigation and send-and-archive without losing draft edits", async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 600 });

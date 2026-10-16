@@ -1,6 +1,6 @@
 import { loadSignatureEditorImages } from "./signatureEditorImages";
 import { readSignatureHtml, readSignatureEditor, signatureEditorHtml, type DraftSignature } from "./signatures";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { Attachment, Draft } from "./correspondence";
 import type { Snippet } from "./domain";
 import {
@@ -44,6 +44,7 @@ type ComposeBodyEditorProps = {
   recipientTo: string;
   availabilityText: string | null;
   expandQuotedText?: boolean;
+  writingTools?: ReactNode;
   snippets: Snippet[];
   onCreateSnippet(name: string, body: string): Promise<Snippet>;
   onUpdateSnippet(id: string, name: string, body: string): Promise<Snippet>;
@@ -59,7 +60,7 @@ type ComposeBodyEditorProps = {
 
 /** Owns editable DOM, selection, and compose-only controls; persistence stays outside. */
 export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBodyEditorProps>(function ComposeBodyEditor({
-  initial, attachments, messageAppearance, busy, recipientTo, availabilityText, expandQuotedText = false, snippets,
+  initial, attachments, messageAppearance, busy, recipientTo, availabilityText, expandQuotedText = false, snippets, writingTools,
   onCreateSnippet, onUpdateSnippet, onDeleteSnippet,
   onChange, onSelectionChange, onError, onAttachImage, onRemoveImage, readInlineImage,
 }, ref) {
@@ -417,8 +418,8 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
         if (signatureSnapshot.current) signatureSnapshot.current = { ...signatureSnapshot.current, automatic: false };
         editBody();
       }} onClick={(event) => { if ((event.target as Element).closest("a")) event.preventDefault(); editingProps.onClick(event); }} /> : null}
-    {initialBody.quotedHtml !== null ? (
-      <>
+    {initialBody.quotedHtml !== null || writingTools ? <div className="compose-body-actions">
+      {initialBody.quotedHtml !== null ? (
         <button
           type="button"
           className="btn btn-sm compose-quote-toggle"
@@ -428,21 +429,24 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
           title={quoteExpanded ? "Hide quoted text" : "Show quoted text"}
           onClick={() => setQuoteExpanded((expanded) => !expanded)}
         >···</button>
-        {/* Collapsed with `hidden`, so assistive and dictation software
-            reading the page skip the history until it is shown. */}
-        <div
-          ref={quotedEditor}
-          id={`${initial.id}-quoted`}
-          className="compose-body compose-quoted"
-          role="textbox"
-          aria-label="Quoted Text"
-          aria-multiline="true"
-          aria-disabled={busy}
-          hidden={!quoteExpanded}
-          dangerouslySetInnerHTML={{ __html: initialBody.quotedHtml }}
-          {...editingProps}
-        />
-      </>
+      ) : null}
+      {writingTools}
+    </div> : null}
+    {/* Collapsed with `hidden`, so assistive and dictation software
+        reading the page skip the history until it is shown. */}
+    {initialBody.quotedHtml !== null ? (
+      <div
+        ref={quotedEditor}
+        id={`${initial.id}-quoted`}
+        className="compose-body compose-quoted"
+        role="textbox"
+        aria-label="Quoted Text"
+        aria-multiline="true"
+        aria-disabled={busy}
+        hidden={!quoteExpanded}
+        dangerouslySetInnerHTML={{ __html: initialBody.quotedHtml }}
+        {...editingProps}
+      />
     ) : null}
     {initial.forwardedContent ? (
       <section aria-label="Forwarded message">
