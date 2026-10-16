@@ -77,6 +77,15 @@ describe("signature content and portability", () => {
     expect(content.text).toBe("Website (https://example.com)\nalex@example.com\nCall (+15551234567)");
   });
 
+  it.each([
+    ['<p><a href="tel:4122128417">(c) 412-212-8417</a></p>', "(c) 412-212-8417"],
+    ['<table><tr><td><a href="tel:+14122128417">+1 (412) 212-8417</a></td></tr></table>', "+1 (412) 212-8417"],
+    ['<a href="tel:4122128417">Call</a>', "Call (4122128417)"],
+    ['<a href="tel:4122128417">212-555-1000</a>', "212-555-1000 (4122128417)"],
+  ])("omits a telephone destination only when its displayed number is equivalent: %s", (html, text) => {
+    expect(readSignatureHtml(html).text).toBe(text);
+  });
+
   it.each([SIGNATURE_LIMITS.maxHtmlBytes - 1, SIGNATURE_LIMITS.maxHtmlBytes, SIGNATURE_LIMITS.maxHtmlBytes + 1])("enforces portable UTF-8 bytes at %s", (size) => {
     const signature = { id: "s", name: "Work", html: "a".repeat(size), text: "Work" };
     if (size <= SIGNATURE_LIMITS.maxHtmlBytes) expect(() => validateSignature(signature)).not.toThrow();

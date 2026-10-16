@@ -158,7 +158,9 @@ export function readSignatureHtml(source: string, allowCid = false): { html: str
     const target = /^mailto:|^tel:/i.test(href) ? href.replace(/^(mailto:|tel:)/i, "").split("?")[0] : href;
     const label = link.textContent?.trim() ?? "";
     if (!label) link.textContent = target;
-    else if (label !== target && label !== href) link.append(document.createTextNode(` (${target})`));
+    // Formatting alone does not make a telephone destination different.
+    else if (label !== target && label !== href && !(/^tel:/i.test(href)
+      && /[0-9]/.test(label) && label.replace(/^\((?:c|m|w|h|o)\)\s*/i, "").replace(/[\s().+-]/g, "") === target.replace(/[\s().+-]/g, ""))) link.append(document.createTextNode(` (${target})`));
   });
   clone.querySelectorAll("td,th").forEach((cell) => cell.append(document.createTextNode(" ")));
   clone.querySelectorAll("tr").forEach((row) => row.append(document.createElement("br")));

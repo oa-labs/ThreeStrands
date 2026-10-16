@@ -158,6 +158,7 @@ for (const layout of ["table", "flow"] as const) {
     await submit.scrollIntoViewIfNeeded();
     await expect(submit).toBeInViewport();
     expect(imageRequests).toBe(0);
+    await importer.getByText("Image Options", { exact: true }).click();
     await importer.getByRole("button", { name: "Embed Remote Images" }).click();
     if (layout === "table") {
       const error = importer.getByRole("alert");
@@ -201,6 +202,10 @@ for (const layout of ["table", "flow"] as const) {
     await settings.getByRole("button", { name: "Import from Gmail…" }).click();
     const importer = page.getByRole("dialog", { name: "Import from Gmail", exact: true });
     await importer.getByLabel("Name", { exact: true }).fill("Hosted Signature");
+    const plain = importer.getByRole("textbox", { name: "Plain Text", exact: true });
+    await plain.fill("Alex Morgan — custom alternative");
+    await expect(importer.frameLocator("iframe").locator("html")).toHaveAttribute("data-theme", "light");
+    await expect(importer.locator(".message-frame")).toHaveCSS("background-color", "rgb(255, 255, 255)");
     expect(requests).toBe(0);
     const image = importer.frameLocator("iframe").getByRole("img", { name: "Hosted Logo" });
     await expect(image).not.toHaveAttribute("src");
@@ -208,12 +213,15 @@ for (const layout of ["table", "flow"] as const) {
     await expect.poll(() => image.evaluate((element) => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
     expect(requests).toBe(1);
     // Embedding is optional and still size bounded. A failure leaves the URL usable.
+    await expect(importer.getByRole("button", { name: "Embed Remote Images" })).toBeHidden();
+    await importer.getByText("Image Options", { exact: true }).click();
     await importer.getByRole("button", { name: "Embed Remote Images" }).click();
     await expect(importer.getByRole("alert")).toContainText("larger than 128 KiB");
     await importer.getByLabel("Use as Account Default for New Messages").check();
     await importer.getByRole("button", { name: "Import", exact: true }).click();
     await settings.getByRole("button", { name: "Edit", exact: true }).click();
     const editor = page.getByRole("dialog", { name: "Edit Signature", exact: true });
+    await expect(editor.getByRole("textbox", { name: "Plain Text", exact: true })).toHaveValue("Alex Morgan — custom alternative");
     const content = editor.getByRole("textbox", { name: "Signature Content" });
     await expect(content.locator("img")).not.toHaveAttribute("src");
     await expect(content.locator("img")).toHaveAttribute("data-compose-source", url);
@@ -223,6 +231,9 @@ for (const layout of ["table", "flow"] as const) {
     await imageEditor.getByLabel("Width in Pixels").fill("48");
     await imageEditor.getByRole("button", { name: "Apply", exact: true }).click();
     await editor.getByRole("button", { name: "Save", exact: true }).click();
+    await settings.getByRole("button", { name: "Edit", exact: true }).click();
+    await expect(editor.getByRole("textbox", { name: "Plain Text", exact: true })).toHaveValue("Alex Morgan — custom alternative");
+    await editor.getByRole("button", { name: "Cancel", exact: true }).click();
     await settings.getByRole("button", { name: "Close", exact: true }).click();
     expect(requests).toBe(2);
     await page.getByRole("button", { name: "New Message (c)" }).click();

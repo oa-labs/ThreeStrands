@@ -156,6 +156,21 @@ describe("Composer signatures", () => {
     expect(signatures.save).not.toHaveBeenCalled(); expect(full.text).toBe("Alex Example");
   });
 
+  it("preserves custom signature plain text through composing and draft reopening", async () => {
+    const ref = createRef<ComposerHandle>();
+    const snapshot = draftSignatureSnapshot({ ...full, html: "<p>Alex Example</p>", text: "Alex — custom plain text" }, true);
+    const view = render(<Composer ref={ref} draft={{ ...draft, signature: snapshot }} accounts={accounts} signatures={signatures} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    const body = screen.getByRole("textbox", { name: "Message Body" }); body.innerHTML = "Hello"; fireEvent.input(body);
+    let saved!: Draft; await act(async () => { saved = await ref.current!.flush(); });
+    expect(saved.signature?.text).toBe(snapshot.text); expect(saved.signature?.automatic).toBe(true);
+    view.unmount();
+    render(<Composer ref={ref} draft={saved} accounts={accounts} signatures={signatures} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    const visual = screen.getByRole("textbox", { name: "Message Signature" }); visual.innerHTML = "<p>Alex Updated</p>"; fireEvent.input(visual);
+    await act(async () => { saved = await ref.current!.flush(); });
+    expect(saved.signature?.text).toBe(snapshot.text); expect(saved.signature?.automatic).toBe(false);
+    expect(signatureBody(saved).text).toContain("Alex — custom plain text");
+  });
+
   it("keeps hosted signature images inert and preserves their URLs through draft saving and reopening", async () => {
     const ref = createRef<ComposerHandle>();
     const fetch = vi.spyOn(mailClient, "fetchRemoteImage");

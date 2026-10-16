@@ -5,16 +5,16 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ## Unreleased
 
 ### New
-- In **Settings → Signatures**, **Import from Gmail…** brings in a signature from a connected Gmail account. Preview and name the copy, keep hosted HTTPS image URLs or explicitly embed copies, and optionally use it as the account’s default for new messages.
+- In **Settings → Signatures**, **Import from Gmail…** brings in a signature from a connected Gmail account for preview, naming, and optional use as the account’s default for new messages. You can edit its plain-text alternative separately or regenerate it from the visual signature.
 
 ### Improved
 - Messages sent to a long list of people now show the first 20 recipients followed by "and N more". Click it to see everyone.
 - The **Task details** heading in the **Tasks** side panel now has a task icon, matching the other side-panel headings.
 - Reply and new-message windows give more room to writing, with a compact signature picker below the message and **Send later…** in the **Send** menu. Replies also offer **Send & archive** in that menu and a shorter **Draft reply** button on the right; keyboard hints now match your platform.
-- Pasting or importing a signature now keeps hosted HTTPS image URLs by default, including images too large to embed. **Embed Remote Images** remains available when you want to send small images with the message instead.
+- Pasting or importing a signature now keeps hosted HTTPS image URLs by default, including images too large to embed. **Embed Remote Images** is tucked under **Image Options** in the Gmail import dialog when you want to send small images with the message instead.
 
 ### Fixed
-- In **Settings → Signatures**, signature dialogs now scroll so you can reach the plain-text preview and import controls, and embedded logos appear in previews. The **Choose File** button and its "no file selected" label also sit centered inside the field when adding a signature image or importing a signature file.
+- In **Settings → Signatures**, dialogs now scroll so you can reach the plain-text field and import controls, previews show embedded logos on a white default background, and generated plain text no longer repeats formatted phone numbers. The **Choose File** button and its "no file selected" label also sit centered inside the field when adding a signature image or importing a signature file.
 
 ## 0.133.2 — 2026-10-15
 

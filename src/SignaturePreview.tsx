@@ -26,5 +26,5 @@ export function SignaturePreview({ html, text }: { html: string; text: string })
     if (hostedSignatureImageSrc(source)) return mailClient.fetchRemoteImage(source);
     throw new Error("Unsupported signature image source.");
   }
-  return <SafeMessage html={preview.html} text={text} loadImages={false} imageCacheKey={preview.namespace} resolveImage={resolveImage} foldQuotes={false} />;
+  return <div className="signature-preview-paper"><SafeMessage theme="light" html={preview.html} text={text} loadImages={false} imageCacheKey={preview.namespace} resolveImage={resolveImage} foldQuotes={false} /></div>;
 }

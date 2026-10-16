@@ -1,4 +1,4 @@
-import { readSignatureEditor, signatureEditorHtml, type DraftSignature } from "./signatures";
+import { readSignatureHtml, readSignatureEditor, signatureEditorHtml, type DraftSignature } from "./signatures";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { Attachment, Draft } from "./correspondence";
 import type { Snippet } from "./domain";
@@ -149,6 +149,8 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
     let htmlOffset = 0, textOffset = 0;
     const { html, text } = serializeComposeBody(bodyEditor.current, quotedEditor.current, current ? (authored) => { htmlOffset = authored.html.length; textOffset = authored.text.length; } : undefined);
     const content = current && signatureEditor.current ? readSignatureEditor(signatureEditor.current) : current;
+    // Preserve the saved plain-text alternative while editing the message.
+    if (current && content && (current.html === content.html || current.text !== readSignatureHtml(current.html, true).text)) content.text = current.text;
     const signature = current && content ? { ...current, html: content.html, text: content.text,
       automatic: current.automatic && current.html === content.html && current.text === content.text,
       htmlOffset, textOffset,

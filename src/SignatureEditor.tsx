@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Modal } from "./AppChrome";
+import { SignaturePlainTextField } from "./SignaturePlainTextField";
 import { SignaturePreview } from "./SignaturePreview";
 import { FormattingPromptDialog } from "./FormattingPromptDialog";
 import { applyFormattingShortcut, formattingShortcutFor, formattingShortcuts, insertHtmlAtRange, linkifyPlainText } from "./richText";
@@ -17,6 +18,11 @@ export function SignatureEditor({ signature, onSave, onClose }: {
   const editor = useRef<HTMLDivElement>(null);
   const nameInput = useRef<HTMLInputElement>(null);
   const lastRange = useRef<Range | null>(null);
+  const [generatedText, setGeneratedText] = useState(() => readSignatureHtml(signature?.html ?? "").text);
+  const [plainText, setPlainText] = useState<string | null>(() => signature && signature.text !== readSignatureHtml(signature.html).text ? signature.text : null);
+  function refreshPlainText() {
+    if (editor.current) setGeneratedText(readSignatureEditor(editor.current).text);
+  }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [importOpen, setImportOpen] = useState(false);
@@ -40,6 +46,7 @@ export function SignatureEditor({ signature, onSave, onClose }: {
   function command(command: string, value?: string) {
     restoreRange();
     document.execCommand(command, false, value);
+    refreshPlainText();
     rememberRange();
   }
   useEffect(() => {
@@ -49,6 +56,7 @@ export function SignatureEditor({ signature, onSave, onClose }: {
     restoreRange();
     const shortcut = formattingShortcuts.find((s) => s.prompt === finished.kind)!;
     applyFormattingShortcut(editor.current, shortcut, () => finished.value);
+    refreshPlainText();
   });
 
   async function save() {
@@ -56,7 +64,7 @@ export function SignatureEditor({ signature, onSave, onClose }: {
     setError("");
     try {
       const content = readSignatureEditor(editor.current);
-      const next = { id: signatureId, name: name.trim(), ...content };
+      const next = { id: signatureId, name: name.trim(), ...content, text: plainText ?? content.text };
       validateSignature(next);
       setBusy(true);
       await onSave(next);
@@ -91,13 +99,13 @@ export function SignatureEditor({ signature, onSave, onClose }: {
       </div>
       <div ref={editor} className="signature-content" role="textbox" aria-label="Signature Content" aria-multiline="true" tabIndex={0}
         contentEditable={!busy} suppressContentEditableWarning dangerouslySetInnerHTML={{ __html: initialHtml }}
-        onBlur={rememberRange} onKeyUp={rememberRange} onMouseUp={rememberRange}
+        onInput={refreshPlainText} onBlur={rememberRange} onKeyUp={rememberRange} onMouseUp={rememberRange}
         onClick={(event) => { const image = (event.target as Element).closest("img"); if (image) { event.preventDefault(); setImageTarget(image); } if ((event.target as Element).closest("a")) event.preventDefault(); }}
         onKeyDown={(event) => {
           const shortcut = formattingShortcutFor(event.nativeEvent);
           if (!shortcut) return;
           if (shortcut.prompt) { event.preventDefault(); event.stopPropagation(); rememberRange(); setPrompt(shortcut.prompt); }
-          else if (applyFormattingShortcut(event.currentTarget, shortcut)) { event.preventDefault(); event.stopPropagation(); }
+          else if (applyFormattingShortcut(event.currentTarget, shortcut)) { event.preventDefault(); event.stopPropagation(); refreshPlainText(); }
         }}
         onPaste={(event) => {
           event.preventDefault();
@@ -109,28 +117,31 @@ export function SignatureEditor({ signature, onSave, onClose }: {
               const element = document.createElement("img"); element.src = source; element.alt = image.name || "Signature image";
               element.width = SIGNATURE_LIMITS.defaultImageWidth;
               insertHtmlAtRange(editor.current, restoreRange(), element.outerHTML);
+              refreshPlainText();
               rememberRange();
             }).catch((reason) => setError(errorMessage(reason)));
             return;
           }
           const html = event.clipboardData.getData("text/html");
           insertHtmlAtRange(event.currentTarget, restoreRange(), html ? signatureEditorHtml(html) : linkifyPlainText(event.clipboardData.getData("text/plain")));
+          refreshPlainText();
           rememberRange();
         }} />
       <p className="settings-hint">Paste your existing signature or write one here. Select text to format it; click an image to edit its size and description. Hosted images keep their URLs and can be loaded in the image preview.</p>
+      <SignaturePlainTextField text={plainText ?? generatedText} busy={busy} onChange={setPlainText} onRegenerate={() => { refreshPlainText(); setPlainText(null); }} />
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       <div className="signature-actions"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" disabled={busy}>{busy ? "Saving…" : "Save"}</button></div>
     </form>
     {prompt ? <FormattingPromptDialog kind={prompt} onClose={() => setPrompt(null)} onSubmit={(value) => { finishedPrompt.current = { kind: prompt, value }; setPrompt(null); }} /> : null}
-    {importOpen ? <SignatureImportDialog onClose={() => setImportOpen(false)} onImport={(html) => { editor.current!.innerHTML = signatureEditorHtml(html); lastRange.current = null; setError(""); setImportOpen(false); }} /> : null}
+    {importOpen ? <SignatureImportDialog onClose={() => setImportOpen(false)} onImport={(html) => { editor.current!.innerHTML = signatureEditorHtml(html); refreshPlainText(); lastRange.current = null; setError(""); setImportOpen(false); }} /> : null}
     {imageChoices ? <Modal title="Signature Images" onClose={() => setImageChoices(null)}><div className="signature-form">{imageChoices.map((image, index) => <button type="button" className="btn" key={index} onClick={() => { setImageTarget(image); setImageChoices(null); }}>Edit {image.alt || `Image ${index + 1}`}</button>)}<div className="signature-actions"><button type="button" className="btn" onClick={() => setImageChoices(null)}>Cancel</button></div></div></Modal> : null}
     {imageTarget ? <SignatureImageDialog image={imageTarget === "new" ? null : imageTarget} onClose={() => setImageTarget(null)} onSave={(source, alt, width) => {
       const image = imageTarget === "new" ? document.createElement("img") : imageTarget;
       setSignatureEditorImageSource(image, source); image.alt = alt;
       image.setAttribute("width", width);
       if (imageTarget === "new") insertHtmlAtRange(editor.current!, restoreRange(), image.outerHTML);
-      setImageTarget(null);
-    }} onRemove={imageTarget === "new" ? undefined : () => { imageTarget.remove(); setImageTarget(null); }} /> : null}
+      refreshPlainText(); setImageTarget(null);
+    }} onRemove={imageTarget === "new" ? undefined : () => { imageTarget.remove(); refreshPlainText(); setImageTarget(null); }} /> : null}
   </Modal>;
 }
 

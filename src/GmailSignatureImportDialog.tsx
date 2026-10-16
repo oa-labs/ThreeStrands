@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Account } from "./domain";
 import { Modal } from "./AppChrome";
+import { SignaturePlainTextField } from "./SignaturePlainTextField";
 import { SignaturePreview } from "./SignaturePreview";
 import { mailClient } from "./data/client";
 import { errorMessage } from "./errors";
@@ -23,6 +24,7 @@ export function GmailSignatureImportDialog({ accounts, onImported, onClose }: {
   const [address, setAddress] = useState("");
   const [name, setName] = useState("");
   const [id, setId] = useState(() => crypto.randomUUID());
+  const [plainText, setPlainText] = useState<string | null>(null);
   const [embedded, setEmbedded] = useState<string | null>(null);
   const [useAsDefault, setUseAsDefault] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -53,7 +55,7 @@ export function GmailSignatureImportDialog({ accounts, onImported, onClose }: {
 
   function reload(nextAccount: string) {
     setAccount(nextAccount); setSources([]); setAddress(""); setName("");
-    setEmbedded(null); setId(crypto.randomUUID()); setError(""); setLoading(true);
+    setEmbedded(null); setPlainText(null); setId(crypto.randomUUID()); setError(""); setLoading(true);
     setRetry((value) => value + 1);
   }
   async function embedImages() {
@@ -67,7 +69,7 @@ export function GmailSignatureImportDialog({ accounts, onImported, onClose }: {
     if (busy || loading || !selected) return;
     setError("");
     try {
-      const signature = { id, name: name.trim(), ...content };
+      const signature = { id, name: name.trim(), ...content, text: plainText ?? content.text };
       validateSignature(signature);
       setBusy(true);
       await mailClient.importGmailSignature(account, signature, useAsDefault);
@@ -87,14 +89,14 @@ export function GmailSignatureImportDialog({ accounts, onImported, onClose }: {
       {loading ? <p role="status">Loading Gmail signatures…</p> : !sources.length ? <>{!error ? <p>No signatures were found. Add a default signature for new messages in Gmail, then try again.</p> : null}<button className="btn" type="button" onClick={() => reload(account)}>Try Again</button></> : null}
       {selected ? <>
         <label className="snippet-field"><span>Sending Address</span><select value={address} disabled={busy || loading} onChange={(event) => {
-          setAddress(event.target.value); setName(importedName(event.target.value)); setId(crypto.randomUUID()); setEmbedded(null); setError("");
+          setAddress(event.target.value); setName(importedName(event.target.value)); setId(crypto.randomUUID()); setEmbedded(null); setPlainText(null); setError("");
         }}>{sources.map((source) => <option value={source.address} key={source.address}>{source.address}</option>)}</select></label>
         <label className="snippet-field"><span>Name</span><input value={name} disabled={busy} onChange={(event) => setName(event.target.value)} /></label>
         {error ? <p ref={errorRef} className="form-error" role="alert">{error}</p> : null}
         {embedded !== null ? <p ref={embeddedStatusRef} className="settings-hint" role="status">Images are embedded in the preview and will be included in the imported signature.</p> : null}
-        {remote.length ? <><p className="settings-hint">HTTPS image URLs are kept when you import. Use Load Images to preview them, or embed copies to send them with the message.</p><button type="button" className="btn" disabled={busy} onClick={() => void embedImages()}>{busy ? "Working…" : "Embed Remote Images"}</button></> : null}
+        {remote.length ? <><p className="settings-hint">Hosted images are kept when you import. Use Load Images to preview them.</p><details className="signature-image-options"><summary>Image Options</summary><p className="settings-hint">Optionally embed small images to send copies with each message.</p><button type="button" className="btn btn-sm" disabled={busy} onClick={() => void embedImages()}>{busy ? "Working…" : "Embed Remote Images"}</button></details></> : null}
         <section aria-label="Signature Preview"><h3>Preview</h3><SignaturePreview html={content.html} text={content.text} /></section>
-        <section aria-label="Plain Text Preview"><h3>Plain Text</h3><pre className="signature-plain-preview">{content.text}</pre></section>
+        <SignaturePlainTextField text={plainText ?? content.text} busy={busy} onChange={setPlainText} onRegenerate={() => setPlainText(null)} />
         <label className="settings-checkbox"><input type="checkbox" checked={useAsDefault} disabled={busy} onChange={(event) => setUseAsDefault(event.target.checked)} /><span>Use as Account Default for New Messages</span></label>
         <p className="settings-hint">Applies to {account}. Your reply and forward defaults stay as they are.</p>
       </> : null}

@@ -53,6 +53,30 @@ describe("signature settings", () => {
     expect(vi.mocked(state.save).mock.calls[0][0].id).not.toBe(signature.id);
   });
 
+  it("preserves independently edited plain text through rich edits, failures and reopening", async () => {
+    const save = vi.fn().mockRejectedValueOnce(new Error("Storage unavailable")).mockResolvedValue(undefined);
+    const source = { ...signature, text: "Custom alternative" };
+    const view = render(<SignatureEditor signature={source} onSave={save} onClose={vi.fn()} />);
+    const plain = screen.getByLabelText("Plain Text");
+    expect(plain).toHaveValue("Custom alternative");
+    const body = screen.getByRole("textbox", { name: "Signature Content" });
+    body.innerHTML = "<p>Updated visual</p>"; fireEvent.input(body);
+    expect(plain).toHaveValue("Custom alternative");
+    fireEvent.change(plain, { target: { value: "Corrected alternative" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Storage unavailable");
+    expect(plain).toHaveValue("Corrected alternative");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+    expect(save.mock.calls[1][0]).toEqual(expect.objectContaining({ html: "<p>Updated visual</p>", text: "Corrected alternative" }));
+    view.unmount();
+    render(<SignatureEditor signature={save.mock.calls[1][0]} onSave={save} onClose={vi.fn()} />);
+    expect(screen.getByLabelText("Plain Text")).toHaveValue("Corrected alternative");
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate from Signature" }));
+    expect(screen.getByLabelText("Plain Text")).toHaveValue("Updated visual");
+    expect(screen.getByRole("textbox", { name: "Signature Content" }).innerHTML).toBe("<p>Updated visual</p>");
+  });
+
   it("requires an explicit deletion and preserves the library on failure", async () => {
     const state = library({ remove: vi.fn().mockRejectedValue(new Error("Could not delete")) });
     render(<SignaturesSettings library={state} accounts={[]} />);
@@ -294,6 +318,43 @@ describe("Gmail signature import", () => {
     expect(save.mock.calls[0][1].text).toBe("Alias");
   });
 
+  it("keeps embedding collapsed and saves corrected plain text without changing the visual signature", async () => {
+    const html = '<p><img src="https://images.example/logo.png" alt="Alex">Alex</p>';
+    vi.spyOn(mailClient, "listGmailSignatures").mockResolvedValue([{ address: gmail.email, html }, { address: "alias@example.com", html: "<p>Alias</p>" }]);
+    const fetch = vi.spyOn(mailClient, "fetchRemoteImage").mockResolvedValue("data:image/png;base64,aA==");
+    const save = vi.spyOn(mailClient, "importGmailSignature").mockRejectedValueOnce(new Error("Offline")).mockResolvedValue(undefined);
+    render(<SignaturesSettings library={library()} accounts={[gmail]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Import from Gmail…" }));
+    const plain = await screen.findByLabelText("Plain Text");
+    expect(plain).toHaveValue("AlexAlex");
+    const options = screen.getByText("Image Options").closest("details")!;
+    expect(options).not.toHaveAttribute("open"); expect(fetch).not.toHaveBeenCalled();
+    fireEvent.change(plain, { target: { value: "Alex" } });
+    fireEvent.click(screen.getByText("Image Options"));
+    fireEvent.click(screen.getByRole("button", { name: "Embed Remote Images" }));
+    await screen.findByRole("status");
+    expect(plain).toHaveValue("Alex");
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Offline");
+    expect(plain).toHaveValue("Alex");
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+    expect(save.mock.calls[1][1]).toEqual(expect.objectContaining({ text: "Alex", html: '<p><img src="data:image/png;base64,aA==" alt="Alex">Alex</p>' }));
+  });
+
+  it("regenerates plain text explicitly and resets it when selecting another signature", async () => {
+    vi.spyOn(mailClient, "listGmailSignatures").mockResolvedValue([{ address: gmail.email, html: "<p>Primary</p>" }, { address: "alias@example.com", html: "<p>Alias</p>" }]);
+    render(<SignaturesSettings library={library()} accounts={[gmail]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Import from Gmail…" }));
+    const plain = await screen.findByLabelText("Plain Text");
+    fireEvent.change(plain, { target: { value: "Custom" } });
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate from Signature" }));
+    expect(plain).toHaveValue("Primary");
+    fireEvent.change(plain, { target: { value: "Custom" } });
+    fireEvent.change(screen.getByLabelText("Sending Address"), { target: { value: "alias@example.com" } });
+    expect(plain).toHaveValue("Alias");
+  });
+
   it("offers retry for provider failures and empty results without writing anything", async () => {
     const list = vi.spyOn(mailClient, "listGmailSignatures").mockRejectedValueOnce(new Error("Reconnect Gmail to continue")).mockResolvedValue([]);
     const save = vi.spyOn(mailClient, "importGmailSignature");
@@ -376,10 +437,22 @@ describe("signature previews", () => {
     expect(frame.contentDocument!.querySelector("img")).toHaveAttribute("alt", "Logo");
     expect(frame.contentDocument!.querySelector("img")).toHaveAttribute("width", "32");
     expect(frame).toHaveAttribute("sandbox", "allow-same-origin allow-scripts");
+    expect(frame.srcdoc).toContain('data-theme="light"');
     expect(frame.srcdoc).toContain("script-src 'none'");
     expect(frame.srcdoc).toContain("img-src data:");
     expect(fetch).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Load images" })).toBeNull();
+  });
+
+  it.each([
+    '<table style="background-color:rgb(255, 238, 204)"><tr><td>Alex</td><td></td></tr></table>',
+    '<div style="background-color:rgb(34, 34, 34);color:white"><p>Alex</p></div>',
+  ])("uses light rendering while preserving explicitly authored backgrounds: %s", (html) => {
+    render(<SignaturePreview html={html} text="Alex" />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    const doc = new DOMParser().parseFromString(frame.srcdoc, "text/html");
+    expect(doc.documentElement.getAttribute("data-theme")).toBe("light");
+    expect((doc.querySelector("table, .email-root > div") as HTMLElement).style.backgroundColor).toBe(html.includes("table") ? "rgb(255, 238, 204)" : "rgb(34, 34, 34)");
   });
 
   it("loads hosted previews only after the explicit action and keeps the stored HTML unchanged", async () => {

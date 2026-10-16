@@ -144,6 +144,7 @@
   --duration-base: 120ms;  /* hover, focus, and state changes */
   --duration-slow: 180ms;  /* ambient changes such as the unread dot */
   /* Fixed colors outside the theme palette. */
+  --signature-paper: #fff; /* signature previews use a light email canvas in either app theme */
   --on-color: #fff;        /* marks on a user-chosen account or calendar color, or a dark overlay */
   --unread: #ff8c1a;
   /* Component sizes. */
@@ -3330,3 +3331,9 @@ input::placeholder { color: var(--muted); opacity: 1; }
 }
 
 .workspace-context-container.collapsed .panel-resizer, .workspace-context-rail[hidden] { display: none; }
+
+.signature-preview-paper .message-frame { background: var(--signature-paper); }
+.signature-image-options summary { cursor: pointer; color: var(--secondary); font-size: var(--text-secondary); }
+.signature-image-options .settings-hint { margin-block: var(--space-2); }
+.signature-plain-field { display: flex; flex-direction: column; gap: var(--space-2); }
+.signature-plain-field textarea { width: 100%; box-sizing: border-box; resize: vertical; padding: var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background: var(--input); font-family: var(--font-mono); font-size: var(--text-body); }
