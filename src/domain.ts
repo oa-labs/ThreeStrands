@@ -529,10 +529,6 @@ export type WorkspaceContextTarget = { kind: "task"; task: ThreadTask } | { kind
 export type ContextQuery = { accountIds: string[]; threadId?: string; terms: string[]; attendees: string[]; after?: string; before?: string };
 export type WorkspaceConversation = { threadId: string; accountId: string; subject: string; sentAt: string; participants: string[]; reason?: string };
 
-export type DomainPerson = { email: string; displayName: string | null; lastAt: string };
-
-/** Other correspondents at an email domain and their latest conversations. */
-export type DomainContext = { people: DomainPerson[]; threads: ContactTimelineItem[] };
 
 /** Keep-in-touch settings change only through their own commands, never through the profile form. */
 export type SaveContactRequest = Omit<ContactProfile, "sentCount" | "receivedCount" | "lastInteractedAt" | "id" | "keepInTouch" | "keepInTouchDueAt"> & { id: string | null };

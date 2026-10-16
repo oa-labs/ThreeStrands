@@ -8,8 +8,8 @@ use rusqlite::params;
 use std::collections::HashMap;
 use uuid::Uuid;
 use crate::models::{
-    ContactActivity, ContactFile, ContactFiles, ContactProfile, ContactTimelineItem, DomainContext,
-    DomainPerson, KeepInTouch, SaveContactRequest,
+    ContactActivity, ContactFile, ContactFiles, ContactProfile, ContactTimelineItem, KeepInTouch,
+    SaveContactRequest,
 };
 use chrono::{DateTime, Duration, NaiveDate};
 use rusqlite::OptionalExtension;
@@ -19,7 +19,6 @@ const MAX_CONTACTS: usize = 5_000;
 /// Arrivals kept for estimating how often someone writes.
 const MAX_ACTIVITY_ARRIVALS: usize = 24;
 pub(crate) const MAX_CONTACT_FILES: usize = 100;
-pub(crate) const MAX_DOMAIN_CONTEXT: usize = 20;
 /// Longest keep-in-touch interval: two years.
 pub(crate) const MAX_KEEP_IN_TOUCH_DAYS: i64 = 730;
 /// Furthest a keep-in-touch reminder can be snoozed: two years.
@@ -691,34 +690,6 @@ impl Database {
             }
             Ok(ContactFiles{files,total})
         })
-    }
-
-    /// Other correspondents at `domain` and their latest conversations,
-    /// leaving out `exclude` (the selected person's own addresses).
-    pub fn domain_context(&self, domain: &str, exclude: &[String], limit: usize) -> DbResult<DomainContext> {
-        let domain = domain.trim().trim_start_matches('@').to_ascii_lowercase();
-        if domain.is_empty() || !domain.contains('.') {
-            return Ok(DomainContext { people: Vec::new(), threads: Vec::new() });
-        }
-        let suffix = format!("@{domain}");
-        let excluded = exclude.iter().map(|email| email.trim().to_ascii_lowercase()).filter(|email| !email.is_empty()).collect::<Vec<_>>();
-        let mut filter = "substr(ci.email,-?)=?".to_string();
-        let mut values = vec![
-            rusqlite::types::Value::Integer(suffix.len() as i64),
-            rusqlite::types::Value::Text(suffix.clone()),
-        ];
-        if !excluded.is_empty() {
-            filter.push_str(&format!(" AND ci.email NOT IN ({})", std::iter::repeat("?").take(excluded.len()).collect::<Vec<_>>().join(",")));
-            values.extend(excluded.iter().map(|email| rusqlite::types::Value::Text(email.clone())));
-        }
-        let limit = limit.clamp(1, MAX_DOMAIN_CONTEXT);
-        let people = self.with_connection(|connection|{
-            let mut statement=connection.prepare(&format!("SELECT ci.email,(SELECT display_name FROM contact_interactions named WHERE named.email=ci.email AND named.display_name IS NOT NULL ORDER BY named.sent_at DESC LIMIT 1),MAX(ci.sent_at) AS last_at FROM contact_interactions ci WHERE {filter} GROUP BY ci.email ORDER BY last_at DESC LIMIT {limit}"))?;
-            let rows=statement.query_map(rusqlite::params_from_iter(values.iter()),|row|Ok(DomainPerson{email:row.get(0)?,display_name:row.get(1)?,last_at:row.get(2)?}))?;
-            rows.collect::<Result<Vec<_>,_>>().map_err(Into::into)
-        })?;
-        let threads = self.interaction_threads(&filter, values, 0, limit)?;
-        Ok(DomainContext { people, threads })
     }
 
     /// Maps each address that belongs to a saved contact to that contact's id.

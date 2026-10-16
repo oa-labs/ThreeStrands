@@ -30,7 +30,6 @@ import type {
   ContactGroupRecipients,
   ContactProfile,
   ContactTimelineItem,
-  DomainContext,
   SaveContactRequest,
   ContactEnrichmentResult,
   ContactFieldSuggestion,
@@ -229,7 +228,6 @@ export interface MailClient extends CorrespondenceClient {
   setFileStar(accountId: string | undefined, messageId: string, attachmentId: string, starred: boolean): Promise<void>;
   contactFiles(id: string, limit: number): Promise<ContactFiles>;
   /** Other correspondents at `domain` and their conversations, leaving out `exclude`. */
-  domainContext(domain: string, exclude: string[], limit: number): Promise<DomainContext>;
   /** Open tasks from any conversation with the contact (a saved id or `derived:<email>`). */
   listContactTasks(id: string): Promise<ThreadTask[]>;
   /** Enhances a contact from local email history. `emptyFields` lists the fields holding nothing; only those are ever suggested for, so filled fields are neither revisited nor overwritten. */
@@ -432,7 +430,6 @@ const tauriClient: MailClient = {
   fileStars: (messageIds) => read("file_stars", { messageIds }),
   setFileStar: (accountId, messageId, attachmentId, starred) => complete("set_file_star", { accountId, messageId, attachmentId, starred }),
   contactFiles: (id, limit) => read("contact_files", { id, limit }),
-  domainContext: (domain, exclude, limit) => read("domain_context", { domain, exclude, limit }),
   listContactTasks: (id) => read("list_contact_tasks", { id }),
   enrichContact: (id, provider, model, endpoint, emptyFields, searchMore = false, accountId, reasoning = "default") => complete("ai_enrich_contact", { id, provider, model, endpoint, emptyFields, searchMore, accountId, reasoning }),
   pinContact: (accountId, email, displayName) => complete("pin_contact", { accountId, email, displayName }),

@@ -763,23 +763,6 @@ pub struct ContactFiles {
     pub total: i64,
 }
 
-/// Someone else at an email domain, from local correspondence history.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DomainPerson {
-    pub email: String,
-    pub display_name: Option<String>,
-    pub last_at: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DomainContext {
-    /// Most recently active first.
-    pub people: Vec<DomainPerson>,
-    pub threads: Vec<ContactTimelineItem>,
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveContactRequest {

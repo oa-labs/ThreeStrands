@@ -2,10 +2,10 @@ import { FileStarButton } from "./FileStarButton";
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, Mail, MessageSquareText } from "lucide-react";
 import { mailClient } from "./data/client";
-import type { Account, ContactFiles, ContactTimelineItem, DomainContext, Message, ThreadDetail } from "./domain";
+import type { Account, ContactFiles, ContactTimelineItem, Message, ThreadDetail } from "./domain";
 import { parseAddress } from "./emailAddress";
 import { errorMessage } from "./errors";
-import { CONTACT_FILE_LIMIT, CONTEXT_SECTION_ROWS, DOMAIN_CONTEXT_LIMIT, formatHistoryDate, organizationDomain, THREAD_OUTLINE_MIN_MESSAGES } from "./contactContext";
+import { CONTACT_FILE_LIMIT, CONTEXT_SECTION_ROWS, formatHistoryDate, THREAD_OUTLINE_MIN_MESSAGES } from "./contactContext";
 import { formatAttachmentSize, splitAttachmentName } from "./threadPresentation";
 import { decodeHtmlEntities } from "./SafeMessage";
 import { ICON_SIZE } from "./iconSizes";
@@ -343,52 +343,3 @@ export function RecentEmailsSection({ items, onOpenThread, limit, onLoadOlder, c
   );
 }
 
-/** Other people at the selected person's organization and their latest conversations. */
-export function DomainSection({ email, addresses, accounts, hideThreadIds, onOpenThread }: {
-  email: string;
-  /** The selected person's addresses, left out of the results. */
-  addresses: string[];
-  accounts: Account[];
-  /** Conversations already shown elsewhere in the panel. */
-  hideThreadIds: string[];
-  onOpenThread(id: string): void;
-}) {
-  const ownEmails = useMemo(() => accounts.map((account) => account.email), [accounts]);
-  const domain = organizationDomain(email, ownEmails);
-  const addressKey = addresses.join("\n");
-  const [context, setContext] = useState<DomainContext | null>(null);
-  useEffect(() => {
-    setContext(null);
-    if (!domain) return;
-    let active = true;
-    mailClient.domainContext(domain, addressKey.split("\n"), DOMAIN_CONTEXT_LIMIT)
-      .then((loaded) => { if (active) setContext(loaded); })
-      // The section is supplementary; a failed lookup leaves it out.
-      .catch(() => { if (active) setContext(null); });
-    return () => { active = false; };
-  }, [domain, addressKey]);
-  if (!domain || !context || context.people.length === 0) return null;
-  const hidden = new Set(hideThreadIds);
-  const threads = context.threads.filter((item) => !hidden.has(item.threadId));
-  const names = context.people.map((person) => person.displayName || person.email);
-  return (
-    <ContextSection
-      id="organization"
-      className="context-history context-organization"
-      title={<>Others at <span className="context-domain">{domain}</span></>}
-      // The heading counts the conversations it lists, like every other section; the names line covers the people.
-      count={threads.length}
-      note={<span title={context.people.map((person) => person.email).join(", ")}>{names.join(", ")}</span>}
-      rows={threads.map((item) => (
-        <ContextRow
-          key={item.threadId}
-          icon={emailIcon}
-          title={item.subject || "(no subject)"}
-          date={formatHistoryDate(item.sentAt)}
-          detail={item.contactEmail}
-          onActivate={() => onOpenThread(item.threadId)}
-        />
-      ))}
-    />
-  );
-}

@@ -11,7 +11,7 @@ import type { Account, AvailabilityPreferences, ContactActivity, ContactProfile,
 
 vi.mock("./data/client", () => ({ mailClient: {
   listContactSuggestions: vi.fn(), resolveContactIds: vi.fn(), getContactProfile: vi.fn(), contactActivity: vi.fn(),
-  contactTimeline: vi.fn(), contactFiles: vi.fn(), domainContext: vi.fn(), listTasks: vi.fn(), listContactTasks: vi.fn(),
+  contactTimeline: vi.fn(), contactFiles: vi.fn(), listTasks: vi.fn(), listContactTasks: vi.fn(),
   findAvailability: vi.fn(), findTimes: vi.fn(), listScheduleEvents: vi.fn(), fileStars: vi.fn().mockResolvedValue([]),setFileStar: vi.fn().mockResolvedValue(undefined),openAttachment: vi.fn(), listContactGroupRecipients: vi.fn(),
 } }));
 
@@ -63,7 +63,6 @@ describe("ComposeContext", () => {
     ]);
     vi.mocked(mailClient.contactFiles).mockResolvedValue({ files: [], total: 0 });
     vi.mocked(mailClient.listContactGroupRecipients).mockResolvedValue([]);
-    vi.mocked(mailClient.domainContext).mockResolvedValue({ people: [], threads: [] });
     vi.mocked(mailClient.listTasks).mockResolvedValue([]);
     vi.mocked(mailClient.listContactTasks).mockResolvedValue([]);
     vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [], errors: [] });

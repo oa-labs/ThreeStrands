@@ -2230,7 +2230,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-section-toggle:hover { color:var(--text); }
 .context-section-toggle .context-row-glyph { color:var(--muted); }
 .context-section-toggle > span:first-of-type { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.context-domain { text-transform:none; letter-spacing:normal; }
 /* The shared row. The glyph column lines up with the section chevrons; rows without a
    glyph keep it empty so all text starts at one edge. */
 .context-row { display:grid; grid-template-columns:var(--context-glyph-column) minmax(0,1fr) auto; align-items:start; padding-inline:var(--context-row-inset); border-radius:var(--radius-sm); }
@@ -2270,7 +2269,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-collapsible > div > .context-section-note,
 .context-collapsible > div > .context-link-button { margin-left:calc(var(--context-row-inset) + var(--context-glyph-column)); }
 .context-section-note { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--space-1) var(--space-2); margin:0 0 var(--space-1-5); color:var(--muted); font-size:var(--text-meta); line-height:var(--leading-normal); }
-.context-organization .context-section-note > span { min-width:0; overflow-wrap:anywhere; }
 .context-file-base { min-width:0; overflow:hidden; text-overflow:ellipsis; }
 /* Compose context: the panel while writing a message outside the open conversation. */
 /* A bulk sender's decisions: quiet links under the rows, so they never outrank the open message. */

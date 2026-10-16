@@ -3,7 +3,7 @@ import { mailClient } from "./data/client";
 import type { Draft } from "./correspondence";
 import type { Account, AvailabilityCandidate, ContactGroupRecipients, AvailabilityPreferences, ContactProfile, ContactTimelineItem, ScheduleEvent, ThreadTask } from "./domain";
 import { composeChecks, draftRecipients, knownAddressMap, type ComposeCheck, type KnownCorrespondents } from "./composeChecks";
-import { ContactFilesSection, ContextSection, DomainSection, RecentEmailsSection } from "./ContextSections";
+import { ContactFilesSection, ContextSection, RecentEmailsSection } from "./ContextSections";
 import { AvailabilitySection, RecipientSummary } from "./RecipientSections";
 import { ContextPersonHeader } from "./ContextPersonHeader";
 import { isColleagueAddress, KNOWN_ADDRESS_LIMIT } from "./contactContext";
@@ -252,15 +252,6 @@ export function ComposeContext({
       ) : null}
       {person && person.timeline.length > 0 ? <RecentEmailsSection items={person.timeline} onOpenThread={onOpenThread} /> : null}
       {person ? <ContactFilesSection key={`files:${person.contactId}`} contactId={person.contactId} onShowMessage={onShowMessage} /> : null}
-      {person ? (
-        <DomainSection
-          email={person.email}
-          addresses={person.profile?.addresses ?? [person.email]}
-          accounts={accounts}
-          hideThreadIds={person.timeline.map((item) => item.threadId)}
-          onOpenThread={onOpenThread}
-        />
-      ) : null}
       {error ? <p className="contacts-error" role="alert">{error}</p> : null}
     </aside>
   );

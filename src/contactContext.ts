@@ -6,8 +6,6 @@ export const CONTEXT_SECTION_ROWS = 3;
 export const THREAD_OUTLINE_MIN_MESSAGES = 6;
 /** Files fetched for a person; the section reports the full total. */
 export const CONTACT_FILE_LIMIT = 50;
-/** People and conversations fetched for the same-organization section. */
-export const DOMAIN_CONTEXT_LIMIT = 8;
 /** Longest message preview line, in characters; it is also the line's hover text. */
 export const MESSAGE_PREVIEW_MAX_CHARS = 200;
 /** Addresses loaded per account for the compose checks; the backend's own maximum. */
@@ -118,19 +116,6 @@ export function isPersonalMailDomain(domain: string): boolean {
   return PUBLIC_MAIL_DOMAINS.has(domain.trim().toLocaleLowerCase());
 }
 
-/**
- * The organization domain to look up colleagues at, or null for personal
- * mailbox providers and for the user's own domains, whose correspondents are
- * the user's colleagues rather than the selected person's.
- */
-export function organizationDomain(email: string, ownEmails: string[]): string | null {
-  const at = email.lastIndexOf("@");
-  if (at <= 0) return null;
-  const domain = email.slice(at + 1).trim().toLocaleLowerCase();
-  if (!domain.includes(".") || isPersonalMailDomain(domain)) return null;
-  if (ownEmails.some((own) => own.toLocaleLowerCase().endsWith(`@${domain}`))) return null;
-  return domain;
-}
 
 /**
  * Whether an address is at one of the user's own organization domains, so a

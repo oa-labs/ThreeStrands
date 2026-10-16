@@ -24,7 +24,6 @@ import type {
   ContactProfile,
   ContactTimelineItem,
   KeepInTouch,
-  DomainPerson,
   SaveContactRequest,
   CreateTaskRequest,
   CreateGoalRequest,
@@ -1058,30 +1057,6 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       }
       files.sort((left, right) => right.sentAt.localeCompare(left.sentAt));
       return structuredClone({ files: files.slice(0, limit), total: files.length });
-    },
-    async domainContext(domain, exclude, limit) {
-      const suffix = `@${domain.toLocaleLowerCase()}`;
-      const excluded = new Set(exclude.map((email) => email.toLocaleLowerCase()));
-      const people = new Map<string, DomainPerson>();
-      const items: ContactTimelineItem[] = [];
-      for (const thread of threads) {
-        let latest: ContactTimelineItem | null = null;
-        for (const message of (await client.getThread(thread.id)).messages) {
-          for (const raw of [message.sender, ...message.recipients.flatMap(splitAddressList)]) {
-            const address = parseAddress(raw);
-            const email = address.email.toLocaleLowerCase();
-            if (!email.endsWith(suffix) || excluded.has(email)) continue;
-            const known = people.get(email);
-            if (!known || known.lastAt < message.sentAt) people.set(email, { email, displayName: address.name && address.name !== address.email ? address.name : known?.displayName ?? null, lastAt: message.sentAt });
-            if (!latest || latest.sentAt < message.sentAt) latest = { threadId: thread.id, accountId: thread.accountId, contactEmail: email, subject: thread.subject, snippet: thread.snippet, sentAt: message.sentAt, labels: thread.labels };
-          }
-        }
-        if (latest) items.push(latest);
-      }
-      return structuredClone({
-        people: [...people.values()].sort((left, right) => right.lastAt.localeCompare(left.lastAt)).slice(0, limit),
-        threads: items.sort((left, right) => right.sentAt.localeCompare(left.sentAt)).slice(0, limit),
-      });
     },
     async enrichContact() { return { suggestions: [], messagesReviewed: 0, hasMore: false }; },
     async pinContact(_accountId, email, displayName) {

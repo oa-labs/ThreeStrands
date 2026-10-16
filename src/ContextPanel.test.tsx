@@ -7,7 +7,7 @@ import type { Account, ContactActivity, ContactProfile, ContactTimelineItem, Mes
 import type { SenderActions } from "./SenderSections";
 import { expectContextRows } from "./test/contextRows";
 
-vi.mock("./data/client",()=>({mailClient:{getContactProfile:vi.fn(),resolveContactIds:vi.fn(),contactTimeline:vi.fn(),saveContactProfile:vi.fn(),contactActivity:vi.fn(),contactFiles:vi.fn(),domainContext:vi.fn(),senderHistory:vi.fn(),messageTrust:vi.fn(),senderFamiliarity:vi.fn(),fileStars:vi.fn().mockResolvedValue([]),setFileStar:vi.fn().mockResolvedValue(undefined),openAttachment:vi.fn()}}));
+vi.mock("./data/client",()=>({mailClient:{getContactProfile:vi.fn(),resolveContactIds:vi.fn(),contactTimeline:vi.fn(),saveContactProfile:vi.fn(),contactActivity:vi.fn(),contactFiles:vi.fn(),senderHistory:vi.fn(),messageTrust:vi.fn(),senderFamiliarity:vi.fn(),fileStars:vi.fn().mockResolvedValue([]),setFileStar:vi.fn().mockResolvedValue(undefined),openAttachment:vi.fn()}}));
 vi.mock("@tauri-apps/plugin-opener",()=>({openUrl:vi.fn()}));
 
 const jane:ContactProfile={id:"contact:jane@example.com",displayName:"Jane Doe",role:null,company:"Acme",location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:["jane@example.com"],sentCount:1,receivedCount:1,lastInteractedAt:null,birthday:null,keepInTouch:{intervalDays:null,startedAt:null,snoozedUntil:null,snoozedAt:null,lastTouchAt:null},keepInTouchDueAt:null};
@@ -38,7 +38,6 @@ describe("ContextPanel",()=>{
     localStorage.clear();
     vi.mocked(mailClient.contactActivity).mockResolvedValue(noActivity);
     vi.mocked(mailClient.contactFiles).mockResolvedValue({files:[],total:0});
-    vi.mocked(mailClient.domainContext).mockResolvedValue({people:[],threads:[]});
     vi.mocked(mailClient.messageTrust).mockResolvedValue(null);
     vi.mocked(mailClient.senderFamiliarity).mockResolvedValue(unfamiliar);
     vi.mocked(mailClient.resolveContactIds).mockImplementation(async emails=>Object.fromEntries(
@@ -383,46 +382,6 @@ describe("ContextPanel",()=>{
     renderPanel();
     await personLoaded(bob.id);
     expect(screen.queryByRole("region",{name:"This thread"})).not.toBeInTheDocument();
-  });
-
-  it("shows other people at an organization domain without repeating conversations",async()=>{
-    const dana:ContactProfile={...jane,id:"contact:dana@acme.test",displayName:"Dana Ruiz",addresses:["dana@acme.test","dana@acme-mail.test"]};
-    const danaDetail={thread:detail.thread,messages:[{id:"1",sender:"Dana Ruiz <dana@acme.test>",recipients:["You <you@example.com>"],sentAt:"2026-09-24T00:00:00Z",bodyHtml:""}]} as unknown as ThreadDetail;
-    vi.mocked(mailClient.resolveContactIds).mockResolvedValue({"dana@acme.test":dana.id});
-    vi.mocked(mailClient.getContactProfile).mockResolvedValue(dana);
-    vi.mocked(mailClient.contactTimeline).mockResolvedValue([{...timelineItem("thread-2","Shared with Dana"),contactEmail:"dana@acme.test"}]);
-    vi.mocked(mailClient.domainContext).mockResolvedValue({
-      people:[{email:"sam@acme.test",displayName:"Sam Lee",lastAt:"2026-09-20T00:00:00Z"},{email:"pat@acme.test",displayName:null,lastAt:"2026-09-10T00:00:00Z"}],
-      threads:["thread-1","thread-2","thread-3"].map((id)=>({...timelineItem(id,`Subject ${id}`),contactEmail:"sam@acme.test"})),
-    });
-    const onOpenThread=vi.fn();
-    renderPanel({detail:danaDetail,onOpenThread});
-
-    const organization=await screen.findByRole("region",{name:"Others at acme.test"});
-    expectContextRows(organization);
-    for (const row of organization.querySelectorAll(".context-row")) expect(row.querySelector(".context-row-icon svg.lucide-mail")).not.toBeNull();
-    expect(mailClient.domainContext).toHaveBeenCalledWith("acme.test",["dana@acme.test","dana@acme-mail.test"],8);
-    expect(organization).toHaveTextContent("Sam Lee, pat@acme.test");
-    // The count is the conversations listed (thread-1 and thread-2 are shown elsewhere), not the two people.
-    expect(organization.querySelector(".context-section-header .context-count")).toHaveTextContent("1");
-    expect(within(organization).getAllByRole("button",{name:/Subject/}).map((button)=>button.textContent)).toEqual([expect.stringContaining("Subject thread-3")]);
-    fireEvent.click(within(organization).getByRole("button",{name:/Subject thread-3/}));
-    expect(onOpenThread).toHaveBeenCalledWith("thread-3");
-  });
-
-  it("does not look up colleagues on the user's own domain or a personal mail provider",async()=>{
-    vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
-    vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
-    renderPanel();
-    await personLoaded(bob.id);
-    cleanup();
-
-    const friend={...jane,id:"contact:friend@gmail.com",displayName:"Friend",addresses:["friend@gmail.com"]};
-    vi.mocked(mailClient.resolveContactIds).mockResolvedValue({"friend@gmail.com":friend.id});
-    vi.mocked(mailClient.getContactProfile).mockResolvedValue(friend);
-    renderPanel({detail:{thread:detail.thread,messages:[{id:"1",sender:"Friend <friend@gmail.com>",recipients:["you@example.com"],sentAt:"2026-09-24T00:00:00Z",bodyHtml:""}]} as unknown as ThreadDetail});
-    await personLoaded(friend.id);
-    expect(mailClient.domainContext).not.toHaveBeenCalled();
   });
 
   it("remembers a collapsed section on this device",async()=>{

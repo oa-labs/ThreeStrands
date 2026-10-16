@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeActivity, estimateCadence, isColleagueAddress, organizationDomain } from "./contactContext";
+import { describeActivity, estimateCadence, isColleagueAddress } from "./contactContext";
 import type { ContactActivity } from "./domain";
 
 const local = (year: number, month: number, day: number) => new Date(year, month - 1, day, 15).toISOString();
@@ -54,19 +54,6 @@ describe("describeActivity", () => {
   });
 });
 
-describe("organizationDomain", () => {
-  it("returns the domain for organization addresses in any case", () => {
-    expect(organizationDomain("Dan@Wealth.Example.com", ["you@example.org"])).toBe("wealth.example.com");
-  });
-
-  it("skips personal mailbox providers, the user's own domains, and malformed addresses", () => {
-    expect(organizationDomain("friend@gmail.com", [])).toBeNull();
-    expect(organizationDomain("friend@icloud.com", [])).toBeNull();
-    expect(organizationDomain("coworker@example.org", ["You@Example.org"])).toBeNull();
-    expect(organizationDomain("nobody@localhost", [])).toBeNull();
-    expect(organizationDomain("@example.com", [])).toBeNull();
-  });
-});
 
 describe("isColleagueAddress", () => {
   it("counts addresses at the user's own organization domains in any case", () => {

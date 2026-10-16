@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { mailClient } from "./data/client";
 import type { Account, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
-import { ContactFilesSection, DomainSection, RecentEmailsSection, ThreadOutlineSection, type RecentEmailItem } from "./ContextSections";
+import { ContactFilesSection, RecentEmailsSection, ThreadOutlineSection, type RecentEmailItem } from "./ContextSections";
 import { RecipientSummary } from "./RecipientSections";
 import { ContextPersonHeader, type ContextPersonOption } from "./ContextPersonHeader";
 import { isColleagueAddress } from "./contactContext";
@@ -33,7 +33,7 @@ export type ContextPerson = {
  * is about the conversation: the AI brief and suggestions, related tasks and
  * meetings, and an outline of a long conversation. Then, under a header
  * naming them, what is about the selected participant: files they sent, other
- * emails with them, and other people at their organization. Their contact
+ * emails with them. Their contact
  * card lives in the reader, on hover over their name. Sections without
  * content are left out.
  *
@@ -304,15 +304,6 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, readingMe
           />
         ) : null
       ) : person && recentEmails.length > 0 ? <RecentEmailsSection items={recentEmails} onOpenThread={onOpenThread} /> : null}
-      {person ? (
-        <DomainSection
-          email={person.email}
-          addresses={person.addresses}
-          accounts={accounts}
-          hideThreadIds={[...(detail ? [detail.thread.id] : []), ...recentEmails.map((item) => item.threadId)]}
-          onOpenThread={onOpenThread}
-        />
-      ) : null}
       {error ? <p className="contacts-error" role="alert">{error}</p> : null}
       {detail && chat ? <div className="context-chat-dock">{chat(person)}</div> : null}
     </aside>

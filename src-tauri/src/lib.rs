@@ -56,7 +56,7 @@ use auth::{AccountAuth, AuthConfig, GoogleConnection, OAuthProvider};
 use chrono::Utc;
 use db::Database;
 use models::{
-    ActionAnalysis, ActionProposal, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactActivity, ContactFiles, ContactGroup, ContactGroupRecipients, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, DomainContext, SaveContactRequest, CreateCalendarEventRequest, UpdateCalendarEventRequest, CreateLabelRequest,
+    ActionAnalysis, ActionProposal, Account, AuthStatus, BusyInterval, CalendarAccount, CalendarOption, CheckProposedTimeRequest, ContactActivity, ContactFiles, ContactGroup, ContactGroupRecipients, ContactSuggestion, ContactProfile, ContactRecord, ContactTimelineItem, SaveContactRequest, CreateCalendarEventRequest, UpdateCalendarEventRequest, CreateLabelRequest,
     CreateSnippetRequest, CreateSplitInboxRequest, Label, MailProviderKind, MailboxUnreadCounts, ReplyAssistContext, ReplyAssistResult,
     FindAvailabilityRequest, ProposedTimeCheck, ScheduleEvent, ScheduleResult, SearchThreadsRequest, Snippet, SplitInbox, SummaryResult, SyncStatus, ThreadBriefResult, AiUsageDay, ChatAttachmentRef, ChatAttachmentSource, ChatSource, ThreadChatReply, ThreadChatRequest, Thread,
     ThreadDetail, ThreadMutation, ThreadPage, ThreadTask, TriageEvent, TriageSenderStats,
@@ -1798,17 +1798,6 @@ async fn set_file_star(account_id: Option<String>, message_id: String, attachmen
 async fn contact_files(id: String, limit: usize, state: State<'_, AppState>) -> Result<ContactFiles, String> {
     let database = state.database.clone();
     run_database_task(move || database.contact_files(&id, limit)).await
-}
-
-#[tauri::command]
-async fn domain_context(
-    domain: String,
-    exclude: Vec<String>,
-    limit: usize,
-    state: State<'_, AppState>,
-) -> Result<DomainContext, String> {
-    let database = state.database.clone();
-    run_database_task(move || database.domain_context(&domain, &exclude, limit)).await
 }
 
 #[tauri::command]
@@ -5677,7 +5666,6 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         context_candidates,
         set_file_star,
         file_stars,
-        domain_context,
         list_contact_tasks,
         pin_contact,
         unpin_contact,
