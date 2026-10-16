@@ -11,6 +11,7 @@ test("creates an imported signature, sets defaults, and preserves its images and
   const editor = page.getByRole("dialog", { name: "New Signature" });
   await expect(editor.getByLabel("Name", { exact: true })).toBeFocused();
   await editor.getByLabel("Name", { exact: true }).fill("Work Full");
+  await editor.getByText("More", { exact: true }).click();
   await editor.getByRole("button", { name: "Import…", exact: true }).click();
   const importer = page.getByRole("dialog", { name: "Import Signature" });
   await importer.getByLabel("HTML", { exact: true }).fill(`<table cellpadding="0" cellspacing="8"><tr><td><img src="data:image/png;base64,${png}" alt="Logo" width="24"></td><td style="color:#245789">Alex Example<br>Designer</td><td></td></tr></table>`);
@@ -78,6 +79,7 @@ test("signature forms contain keyboard focus and suspend letter commands until d
   const save = editor.getByRole("button", { name: "Save", exact: true });
   await save.focus(); await page.keyboard.press("Tab");
   await expect(editor.getByRole("button", { name: "Close", exact: true })).toBeFocused();
+  await editor.getByText("More", { exact: true }).click();
   const importButton = editor.getByRole("button", { name: "Import…", exact: true });
   await importButton.focus(); await page.keyboard.press("Space");
   await expect(page.getByRole("dialog", { name: "Import Signature" }).getByLabel("HTML", { exact: true })).toBeFocused();
@@ -231,8 +233,7 @@ for (const layout of ["table", "flow"] as const) {
     await expect(content.locator("img")).toHaveAttribute("src", /^data:image\/png;base64,/);
     await expect(content.locator("img")).toHaveAttribute("data-compose-source", url);
     expect(requests).toBe(3);
-    await editor.getByRole("button", { name: "Edit Image…" }).click();
-    await page.getByRole("dialog", { name: "Signature Images" }).getByRole("button", { name: "Edit Hosted Logo" }).click();
+    await content.getByRole("img", { name: "Hosted Logo" }).click();
     const imageEditor = page.getByRole("dialog", { name: "Edit Signature Image" });
     await imageEditor.getByLabel("Width in Pixels").fill("48");
     await imageEditor.getByRole("button", { name: "Apply", exact: true }).click();
@@ -261,5 +262,47 @@ for (const layout of ["table", "flow"] as const) {
     await expect(signature.locator("img")).toHaveAttribute("data-compose-source", url);
     await expect(signature.locator("img")).not.toHaveAttribute("src");
     expect(requests).toBe(4);
+  });
+}
+
+for (const theme of ["light", "dark"] as const) {
+  test(`Jodit formatting and popups stay within the signature modal in ${theme} mode`, async ({ page }) => {
+    await page.goto("/");
+    await page.evaluate((value) => { document.documentElement.dataset.theme = value; }, theme);
+    await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+    const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+    await settings.getByRole("button", { name: "Signatures", exact: true }).click();
+    await settings.getByRole("button", { name: "Add Signature" }).click();
+    const editor = page.getByRole("dialog", { name: "New Signature", exact: true });
+    await editor.getByLabel("Name", { exact: true }).fill("Visual Signature");
+    const content = editor.getByRole("textbox", { name: "Signature Content" });
+    await editor.getByRole("button", { name: "Add Image…", exact: true }).focus();
+    await page.keyboard.press("Space");
+    const imageDialog = page.getByRole("dialog", { name: "Add Signature Image", exact: true });
+    await expect(imageDialog.getByLabel("Image", { exact: true })).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(editor.getByRole("button", { name: "Add Image…", exact: true })).toBeFocused();
+    await content.fill("Alex Example");
+    await content.press("ControlOrMeta+a");
+    await editor.getByRole("button", { name: "Bold", exact: true }).click();
+    await expect(content.locator("strong,b")).toHaveText("Alex Example");
+    await editor.locator("button[aria-label=\"Font\"]").click();
+    await expect(editor.locator(".jodit-popup")).toBeVisible();
+    await expect(page.locator("body > .jodit-popup")).toHaveCount(0);
+    await editor.locator(".jodit-popup button").first().focus();
+    await page.keyboard.press("Escape");
+    await expect(editor.locator(".jodit-popup")).toHaveCount(0);
+    await expect(editor).toBeVisible();
+    await expect(content).toBeFocused();
+    await editor.locator("button[aria-label=\"Text Color\"]").click();
+    await expect(editor.locator(".jodit-popup")).toBeVisible();
+    await content.focus(); await page.keyboard.press("Escape");
+    await expect(editor).toBeVisible();
+    await editor.getByRole("textbox", { name: "Plain Text", exact: true }).fill("Custom alternative");
+    await editor.getByRole("button", { name: "Save", exact: true }).click();
+    await settings.getByRole("button", { name: "Edit", exact: true }).click();
+    const reopened = page.getByRole("dialog", { name: "Edit Signature", exact: true });
+    await expect(reopened.getByRole("textbox", { name: "Signature Content" }).locator("strong,b")).toHaveText("Alex Example");
+    await expect(reopened.getByRole("textbox", { name: "Plain Text", exact: true })).toHaveValue("Custom alternative");
   });
 }

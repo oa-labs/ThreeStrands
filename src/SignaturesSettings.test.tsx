@@ -1,11 +1,11 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useState } from "react";
+import { StrictMode, useState } from "react";
 import { SignaturesSettings } from "./SignaturesSettings";
 import { SignaturePreview } from "./SignaturePreview";
 import { SignatureEditor, SignatureImportDialog } from "./SignatureEditor";
 import { mailClient } from "./data/client";
-import { readSignatureEditor, signatureDefaultsKey, type Signature, type SignatureState } from "./signatures";
+import { readSignatureEditor, sanitizeSignatureHtml, signatureDefaultsKey, type Signature, type SignatureState } from "./signatures";
 import type { Account } from "./domain";
 import DOMPurify from "dompurify";
 import * as signatureImport from "./signatureImport";
@@ -37,6 +37,40 @@ describe("signature settings", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(add).toHaveFocus(); expect(state.save).not.toHaveBeenCalled();
     expect((container as HTMLElement).inert).toBeFalsy();
+  });
+
+  it("mounts one Jodit toolbar in StrictMode without moving focus or rebuilding on plain-text edits", () => {
+    const save = vi.fn();
+    render(<StrictMode><SignatureEditor signature={signature} onSave={save} onClose={vi.fn()} /></StrictMode>);
+    expect(screen.getByRole("dialog", { name: "Edit Signature" }).querySelectorAll(".jodit-container")).toHaveLength(1);
+    expect(screen.getByLabelText("Name")).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Bold" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Font" })[0]).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Text Size" })[0]).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Text Color" })[0]).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit Image…" })).toBeNull();
+    const root = screen.getByRole("textbox", { name: "Signature Content" });
+    fireEvent.change(screen.getByLabelText("Plain Text"), { target: { value: "Independent" } });
+    expect(screen.getByRole("textbox", { name: "Signature Content" })).toBe(root);
+    expect(root.innerHTML).toBe("<p>Alex</p>"); expect(save).not.toHaveBeenCalled();
+    expect(screen.getByText("More").closest("details")).not.toHaveAttribute("open");
+  });
+
+  it.each([
+    '<table cellspacing="8" cellpadding="0" style="border-collapse:separate"><tr><td><img src="https://images.example/logo.png" width="80" alt="Logo"></td><td style="padding-left:12px">Alex<br>Designer</td><td> </td></tr></table><p></p>',
+    '<div style="display:flex;gap:12px;align-items:center"><div style="border-right:1px solid #ccc;padding-right:8px"><b>Alex</b><span></span></div><div><p></p><a href="https://example.com">Website</a></div></div>',
+  ])("preserves imported layout structure through Jodit save and reopen: %s", async (html) => {
+    const save = vi.fn(); const fetch = vi.spyOn(mailClient, "fetchRemoteImage");
+    const source = { ...signature, html, text: "Independent plain text" };
+    const view = render(<SignatureEditor signature={source} onSave={save} onClose={vi.fn()} />);
+    const root = screen.getByRole("textbox", { name: "Signature Content" });
+    expect(root.querySelector("p:empty")).not.toBeNull();
+    expect(root.querySelector("img[src]")).toBeNull(); expect(fetch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0]).toEqual(expect.objectContaining({ html: sanitizeSignatureHtml(html), text: "Independent plain text" }));
+    view.unmount(); render(<SignatureEditor signature={save.mock.calls[0][0]} onSave={save} onClose={vi.fn()} />);
+    expect(readSignatureEditor(screen.getByRole("textbox", { name: "Signature Content" })).html).toBe(sanitizeSignatureHtml(html));
   });
 
   it("duplicates only on Save and preserves edits when saving fails", async () => {
@@ -295,6 +329,19 @@ describe("signature import", () => {
     expect(flow.querySelectorAll("img[src]")).toHaveLength(0);
     expect(readSignatureEditor(flow).html).toContain('src="https://cdn.example/a.gif"');
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '<table><tr><td><img src="https://images.example/logo.png" onerror="alert(1)"></td><td><script>alert(1)</script>Alex</td></tr></table>',
+    '<div style="background:url(https://evil.example/bg.png);position:fixed"><svg onload="alert(1)"></svg><a href="javascript:alert(1)">Alex</a><iframe src="https://evil.example/frame"></iframe></div>',
+  ])("sanitizes dropped HTML before Jodit can insert it or request resources: %s", (html) => {
+    const fetch = vi.spyOn(mailClient, "fetchRemoteImage");
+    render(<SignatureEditor signature={null} onSave={vi.fn()} onClose={vi.fn()} />);
+    const root = screen.getByRole("textbox", { name: "Signature Content" });
+    fireEvent.drop(root, { dataTransfer: { files: [], getData: (type: string) => type === "text/html" ? html : "" } });
+    expect(root.querySelector("script,svg,iframe,img[src],[onerror],[onload]")).toBeNull();
+    expect(root.innerHTML).not.toMatch(/background:|position:|javascript:/);
+    expect(root.textContent).toContain("Alex"); expect(fetch).not.toHaveBeenCalled();
   });
 
   it("keeps every pasted hosted source without downloading or applying the embedding size limit", () => {

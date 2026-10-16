@@ -1,3 +1,5 @@
+import type { Jodit } from "jodit";
+import { SignatureRichEditor } from "./SignatureRichEditor";
 import { useEffect, useRef, useState } from "react";
 import { loadSignatureEditorImages } from "./signatureEditorImages";
 import { Modal } from "./AppChrome";
@@ -17,6 +19,7 @@ export function SignatureEditor({ signature, onSave, onClose }: {
   const [signatureId] = useState(() => signature?.id ?? crypto.randomUUID());
   const [initialHtml] = useState(() => signatureEditorHtml(signature?.html ?? ""));
   const editor = useRef<HTMLDivElement>(null);
+  const richEditor = useRef<Jodit | null>(null);
   const nameInput = useRef<HTMLInputElement>(null);
   const lastRange = useRef<Range | null>(null);
   const [initialText] = useState(() => readSignatureHtml(signature?.html ?? "").text);
@@ -27,6 +30,7 @@ export function SignatureEditor({ signature, onSave, onClose }: {
   const [imageStatus, setImageStatus] = useState("");
   function refreshPlainText() {
     if (editor.current) {
+      richEditor.current?.synchronizeValues();
       setGeneratedText(readSignatureEditor(editor.current).text);
       setHasHostedImages(Boolean(editor.current.querySelector("img[data-compose-source]")));
     }
@@ -35,7 +39,6 @@ export function SignatureEditor({ signature, onSave, onClose }: {
   const [error, setError] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [imageTarget, setImageTarget] = useState<HTMLImageElement | "new" | null>(null);
-  const [imageChoices, setImageChoices] = useState<HTMLImageElement[] | null>(null);
   const [prompt, setPrompt] = useState<"link" | "color" | null>(null);
   const finishedPrompt = useRef<{ kind: "link" | "color"; value: string } | null>(null);
 
@@ -51,12 +54,6 @@ export function SignatureEditor({ signature, onSave, onClose }: {
     window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(range);
     return range;
   }
-  function command(command: string, value?: string) {
-    restoreRange();
-    document.execCommand(command, false, value);
-    refreshPlainText();
-    rememberRange();
-  }
   useEffect(() => {
     const finished = finishedPrompt.current;
     if (prompt || !finished || !editor.current) return;
@@ -66,6 +63,26 @@ export function SignatureEditor({ signature, onSave, onClose }: {
     applyFormattingShortcut(editor.current, shortcut, () => finished.value);
     refreshPlainText();
   });
+
+  function insertTransfer(data: DataTransfer) {
+    rememberRange();
+    const image = Array.from(data.files).find((file) => file.type.startsWith("image/"));
+    if (image) {
+      void readImageFile(image).then((source) => {
+        if (!editor.current) return;
+        const element = document.createElement("img"); element.src = source; element.alt = image.name || "Signature image";
+        element.width = SIGNATURE_LIMITS.defaultImageWidth;
+        insertHtmlAtRange(editor.current, restoreRange(), element.outerHTML);
+        refreshPlainText();
+        rememberRange();
+      }).catch((reason) => setError(errorMessage(reason)));
+      return;
+    }
+    const html = data.getData("text/html");
+    insertHtmlAtRange(editor.current!, restoreRange(), html ? signatureEditorHtml(html) : linkifyPlainText(data.getData("text/plain")));
+    refreshPlainText();
+    rememberRange();
+  }
 
   async function loadImages() {
     const root = editor.current;
@@ -95,58 +112,22 @@ export function SignatureEditor({ signature, onSave, onClose }: {
       if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); void save(); }
     }}>
       <label className="snippet-field"><span>Name</span><input ref={nameInput} autoFocus value={name} disabled={busy} onChange={(event) => setName(event.target.value)} /></label>
-      <div className="signature-toolbar" role="group" aria-label="Signature Formatting">
-        {[['bold', 'Bold'], ['italic', 'Italic'], ['underline', 'Underline']].map(([action, label]) => <button key={action} className="btn btn-sm" type="button" disabled={busy} onClick={() => command(action)}>{label}</button>)}
-        <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setPrompt("link")}>Link…</button>
-        <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setPrompt("color")}>Text Color…</button>
-        <select aria-label="Signature Font" defaultValue="" disabled={busy} onChange={(event) => { command("fontName", event.target.value); event.target.value = ""; }}>
-          <option value="" disabled>Font</option><option value="sans-serif">Sans Serif</option><option value="serif">Serif</option><option value="monospace">Fixed-Width</option>
-        </select>
-        <select aria-label="Signature Text Size" defaultValue="" disabled={busy} onChange={(event) => { command("fontSize", event.target.value); event.target.value = ""; }}>
-          <option value="" disabled>Text Size</option><option value="2">Small</option><option value="3">Medium</option><option value="4">Large</option>
-        </select>
-        <select aria-label="Signature Alignment" defaultValue="" disabled={busy} onChange={(event) => { command(event.target.value); event.target.value = ""; }}>
-          <option value="" disabled>Alignment</option><option value="justifyLeft">Left</option><option value="justifyCenter">Center</option><option value="justifyRight">Right</option>
-        </select>
-        <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setImageTarget("new")}>Add Image…</button>
-        <button type="button" className="btn btn-sm" disabled={busy} onClick={() => {
-          const images = Array.from(editor.current?.querySelectorAll("img") ?? []);
-          if (images.length) setImageChoices(images); else setError("Add an image before editing its size or description.");
-        }}>Edit Image…</button>
-        <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setImportOpen(true)}>Import…</button>
-      </div>
+      <details className="signature-more"><summary>More</summary><button type="button" className="btn btn-sm" disabled={busy} onClick={() => setImportOpen(true)}>Import…</button></details>
       {hasHostedImages ? <div className="signature-image-actions"><span className="settings-hint">Load hosted images to see them while editing.</span><button type="button" className="btn btn-sm" disabled={busy || loadingImages} onClick={() => void loadImages()}>{loadingImages ? "Loading Images…" : "Load Images"}</button></div> : null}
       {imageStatus ? <p className="settings-hint" role="status">{imageStatus}</p> : null}
-      <div ref={editor} className="signature-content" role="textbox" aria-label="Signature Content" aria-multiline="true" tabIndex={0}
-        contentEditable={!busy} suppressContentEditableWarning dangerouslySetInnerHTML={{ __html: initialHtml }}
-        onInput={refreshPlainText} onBlur={rememberRange} onKeyUp={rememberRange} onMouseUp={rememberRange}
+      <SignatureRichEditor initialHtml={initialHtml} editorRef={editor} instanceRef={richEditor} busy={busy}
+        onLink={() => { rememberRange(); setPrompt("link"); }} onImage={() => { rememberRange(); setImageTarget("new"); }}
+        onBlur={() => { rememberRange(); refreshPlainText(); }} onKeyUp={rememberRange} onMouseUp={rememberRange}
         onClick={(event) => { const image = (event.target as Element).closest("img"); if (image) { event.preventDefault(); setImageTarget(image); } if ((event.target as Element).closest("a")) event.preventDefault(); }}
         onKeyDown={(event) => {
           const shortcut = formattingShortcutFor(event.nativeEvent);
           if (!shortcut) return;
           if (shortcut.prompt) { event.preventDefault(); event.stopPropagation(); rememberRange(); setPrompt(shortcut.prompt); }
-          else if (applyFormattingShortcut(event.currentTarget, shortcut)) { event.preventDefault(); event.stopPropagation(); refreshPlainText(); }
+          else if (["bold", "italic", "underline"].includes(shortcut.command)) { event.preventDefault(); event.stopPropagation(); richEditor.current?.execCommand(shortcut.command); refreshPlainText(); }
+          else if (applyFormattingShortcut(editor.current!, shortcut)) { event.preventDefault(); event.stopPropagation(); refreshPlainText(); }
         }}
-        onPaste={(event) => {
-          event.preventDefault();
-          rememberRange();
-          const image = Array.from(event.clipboardData.files).find((file) => file.type.startsWith("image/"));
-          if (image) {
-            void readImageFile(image).then((source) => {
-              if (!editor.current) return;
-              const element = document.createElement("img"); element.src = source; element.alt = image.name || "Signature image";
-              element.width = SIGNATURE_LIMITS.defaultImageWidth;
-              insertHtmlAtRange(editor.current, restoreRange(), element.outerHTML);
-              refreshPlainText();
-              rememberRange();
-            }).catch((reason) => setError(errorMessage(reason)));
-            return;
-          }
-          const html = event.clipboardData.getData("text/html");
-          insertHtmlAtRange(event.currentTarget, restoreRange(), html ? signatureEditorHtml(html) : linkifyPlainText(event.clipboardData.getData("text/plain")));
-          refreshPlainText();
-          rememberRange();
-        }} />
+        onPaste={(event) => { event.preventDefault(); event.stopPropagation(); insertTransfer(event.clipboardData); }}
+        onDrop={(event) => { event.preventDefault(); event.stopPropagation(); insertTransfer(event.dataTransfer); }} />
       <p className="settings-hint">Paste your existing signature or write one here. Select text to format it; click an image to edit its size and description. Hosted images keep their URLs when you save.</p>
       <SignaturePlainTextField text={plainText ?? generatedText} busy={busy} onChange={setPlainText} onRegenerate={() => { refreshPlainText(); setPlainText(null); }} />
       {error ? <p className="form-error" role="alert">{error}</p> : null}
@@ -154,7 +135,6 @@ export function SignatureEditor({ signature, onSave, onClose }: {
     </form>
     {prompt ? <FormattingPromptDialog kind={prompt} onClose={() => setPrompt(null)} onSubmit={(value) => { finishedPrompt.current = { kind: prompt, value }; setPrompt(null); }} /> : null}
     {importOpen ? <SignatureImportDialog onClose={() => setImportOpen(false)} onImport={(html) => { editor.current!.innerHTML = signatureEditorHtml(html); refreshPlainText(); lastRange.current = null; setError(""); setImportOpen(false); }} /> : null}
-    {imageChoices ? <Modal title="Signature Images" onClose={() => setImageChoices(null)}><div className="signature-form">{imageChoices.map((image, index) => <button type="button" className="btn" key={index} onClick={() => { setImageTarget(image); setImageChoices(null); }}>Edit {image.alt || `Image ${index + 1}`}</button>)}<div className="signature-actions"><button type="button" className="btn" onClick={() => setImageChoices(null)}>Cancel</button></div></div></Modal> : null}
     {imageTarget ? <SignatureImageDialog image={imageTarget === "new" ? null : imageTarget} onClose={() => setImageTarget(null)} onSave={(source, alt, width) => {
       const image = imageTarget === "new" ? document.createElement("img") : imageTarget;
       setSignatureEditorImageSource(image, source); image.alt = alt;

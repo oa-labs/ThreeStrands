@@ -32,6 +32,7 @@ export default defineConfig(({ command }) => ({
         // Keep large third-party libraries out of the app chunk.
         codeSplitting: {
           groups: [
+            { name: "jodit", test: /node_modules[\\/](jodit)[\\/]/ },
             { name: "react", test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/ },
             { name: "sanitizer", test: /node_modules[\\/](dompurify|postcss|postcss-selector-parser|cssesc|nanoid|picocolors|util-deprecate|source-map-js)[\\/]/ },
           ],

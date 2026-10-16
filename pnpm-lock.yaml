@@ -175,6 +175,9 @@ importers:
       dompurify:
         specifier: ^3.4.16
         version: 3.4.16
+      jodit:
+        specifier: ^4.18.1
+        version: 4.18.1
       lucide-react:
         specifier: ^1.52.0
         version: 1.52.0(@types/react@19.3.0)(react@19.3.0)
@@ -1440,6 +1443,9 @@ packages:
 
   isexe@2.0.0:
     resolution: {integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==}
+
+  jodit@4.18.1:
+    resolution: {integrity: sha512-OQMU8X0085ZHUNJSl8vChFrC19koOvwprLWDll3U8HhNUiR+61Cnihj6cj+jmBAXJlDlpv8Xn0m3IihIUr5FMg==}
 
   js-tokens@10.0.0:
     resolution: {integrity: sha512-lM/UBzQmfJRo9ABXbPWemivdCW8V2G8FHaHdypQaIy523snUjog0W71ayWXTjiR+ixeMyVHN2XcpnTd/liPg/Q==}
@@ -2960,6 +2966,8 @@ snapshots:
   is-potential-custom-element-name@1.0.1: {}
 
   isexe@2.0.0: {}
+
+  jodit@4.18.1: {}
 
   js-tokens@10.0.0: {}
 

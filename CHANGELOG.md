@@ -9,6 +9,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - When your inbox is empty, the side panel now shows what's next: your open tasks, people you're due to reconnect with from **Keep in Touch**, and today's agenda when you have a calendar connected. Click any item to open it.
 
 ### Improved
+- **Settings → Signatures** now uses a visual editor with a compact formatting toolbar, font and color pickers, and image editing when you click a logo. **Import…** is under **More**, and your imported layouts, hosted images, and separate plain-text alternative are preserved.
 - Messages sent to a long list of people now show the first 20 recipients followed by "and N more". Click it to see everyone.
 - The **Task details** heading in the **Tasks** side panel now has a task icon, matching the other side-panel headings.
 - Reply and new-message windows give more room to writing, with a compact signature picker below the message and **Send later…** in the **Send** menu. Replies also offer **Send & archive** in that menu and a shorter **Draft reply** button on the right; keyboard hints now match your platform.

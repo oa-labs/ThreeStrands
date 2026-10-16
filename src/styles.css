@@ -2542,10 +2542,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .signature-dialog { width: min(var(--dialog-w-xl), calc(100vw - var(--dialog-edge))); overflow-y: auto; }
 .signature-form { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-1) var(--dialog-inset) var(--space-4); min-width: 0; }
 .signature-form .signature-form { padding-inline: 0; }
-.signature-form input, .signature-form select, .signature-toolbar select { box-sizing: border-box; height: var(--control-h); font-size: var(--text-control); color: var(--text); background-color: var(--input); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding-inline: var(--space-2); }
+.signature-form input, .signature-form select { box-sizing: border-box; height: var(--control-h); font-size: var(--text-control); color: var(--text); background-color: var(--input); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding-inline: var(--space-2); }
 .signature-form input[type="checkbox"] { height: auto; }
-.signature-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1-5); }
-.signature-toolbar .btn, .signature-toolbar select { height: var(--control-h-sm); }
 .signature-content { min-height: var(--space-16); max-height: 40vh; overflow: auto; padding: var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background: var(--input); font-size: var(--text-reading); overflow-wrap: anywhere; }
 .signature-content:focus { outline: var(--focus-ring); }
 .signature-content img, .signature-image-preview { max-width: 100%; height: auto; }
@@ -3339,3 +3337,42 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .signature-plain-field textarea { width: 100%; box-sizing: border-box; resize: vertical; padding: var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background: var(--input); font-family: var(--font-mono); font-size: var(--text-body); }
 
 .signature-image-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+
+/* Jodit's chrome follows application tokens; authored signature styles remain
+   inside the editable surface and are preserved by the signature sanitizer. */
+.signature-rich-editor .jodit-container, .signature-rich-editor .jodit-popup {
+  --jd-color-default: var(--text);
+  --jd-color-text: var(--text);
+  --jd-color-text-icons: var(--text);
+  --jd-color-icon: var(--secondary);
+  --jd-color-label: var(--secondary);
+  --jd-color-border: var(--border-strong);
+  --jd-color-border-dark: var(--border-strong);
+  --jd-color-border-selected: var(--accent);
+  --jd-color-panel: var(--raised);
+  --jd-color-background-default: var(--surface);
+  --jd-color-background-light-gray: var(--raised);
+  --jd-color-background-gray: var(--hover);
+  --jd-color-background-gray-hover: var(--hover);
+  --jd-color-button-background-hover: var(--hover);
+  --jd-color-background-button-hover: var(--hover);
+  --jd-color-background-active: var(--accent);
+  --jd-color-background-selection: var(--hover);
+  --jd-font-default: var(--font-family);
+  --jd-font-size-default: var(--text-control);
+  --jd-font-size-small: var(--text-meta);
+  --jd-padding-default: var(--space-2);
+  --jd-border-radius-default: var(--radius-sm);
+  --jd-z-index-popup: var(--z-local-popover);
+  font-family: var(--font-family);
+  font-size: var(--text-control);
+}
+.signature-rich-editor .jodit-container { border-color: var(--border-strong); border-radius: var(--radius-sm); }
+.signature-rich-editor .jodit-wysiwyg.signature-content { padding: var(--space-3); border: 0; border-radius: 0; font-size: var(--text-reading); }
+.signature-rich-editor .jodit-toolbar__box { padding: var(--space-1); background: var(--raised); }
+.signature-rich-editor .jodit-toolbar-button__button { min-width: var(--control-h-sm); height: var(--control-h-sm); }
+.signature-rich-editor .jodit-toolbar-button__button:focus-visible { outline: var(--focus-ring); }
+.signature-rich-editor .jodit-popup { box-shadow: var(--shadow-popover); }
+.signature-more { align-self: flex-end; color: var(--secondary); font-size: var(--text-control); }
+.signature-more summary { cursor: pointer; }
+.signature-more .btn { margin-top: var(--space-2); }
