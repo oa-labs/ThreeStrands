@@ -156,6 +156,26 @@ describe("Composer signatures", () => {
     expect(signatures.save).not.toHaveBeenCalled(); expect(full.text).toBe("Alex Example");
   });
 
+  it("keeps hosted signature images inert and preserves their URLs through draft saving and reopening", async () => {
+    const ref = createRef<ComposerHandle>();
+    const fetch = vi.spyOn(mailClient, "fetchRemoteImage");
+    const snapshot = draftSignatureSnapshot({ ...full, html: '<p>Alex<img src="https://images.example/large.png" alt="Logo" width="120"></p>', text: "AlexLogo" }, true);
+    const view = render(<Composer ref={ref} draft={{ ...draft, signature: snapshot }} accounts={accounts} signatures={signatures} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    const editor = screen.getByRole("textbox", { name: "Message Signature" });
+    expect(editor.querySelector("img")).not.toHaveAttribute("src");
+    let saved!: Draft; await act(async () => { saved = await ref.current!.flush(); });
+    expect(saved.signature?.html).toContain('src="https://images.example/large.png"');
+    expect(saved.signature?.html).not.toMatch(/data-compose|<button/);
+    expect(saved.signature?.text).toBe("AlexLogo");
+    expect(saved.signature?.automatic).toBe(true);
+    view.unmount();
+    render(<Composer ref={ref} draft={saved} accounts={accounts} signatures={signatures} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    expect(screen.getByRole("textbox", { name: "Message Signature" }).querySelector("img")).not.toHaveAttribute("src");
+    let reopened!: Draft; await act(async () => { reopened = await ref.current!.flush(); });
+    expect(reopened.signature?.html).toContain('src="https://images.example/large.png"');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("resolves a signature's pasted image after reopening and keeps its native CID when saving", async () => {
     const ref = createRef<ComposerHandle>();
     const read = vi.spyOn(mailClient, "readInlineImage").mockResolvedValue("data:image/png;base64,aA==");

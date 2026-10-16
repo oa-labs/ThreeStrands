@@ -1,4 +1,4 @@
-import { readSignatureEditor, sanitizeSignatureHtml, type DraftSignature } from "./signatures";
+import { readSignatureEditor, signatureEditorHtml, type DraftSignature } from "./signatures";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { Attachment, Draft } from "./correspondence";
 import type { Snippet } from "./domain";
@@ -67,7 +67,7 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
   const signatureEditor = useRef<HTMLDivElement>(null);
   const [signatureState, setSignatureState] = useState(initial.signature);
   const signatureSnapshot = useRef(initial.signature);
-  const signatureMarkup = useMemo(() => signatureState?.html ? sanitizeSignatureHtml(signatureState.html, true) : "", [signatureState]);
+  const signatureMarkup = useMemo(() => signatureState?.html ? signatureEditorHtml(signatureState.html, true) : "", [signatureState]);
   const bodyDirty = useRef(false);
   const mounted = useRef(true);
   // Restore the caret after focus moves to the context panel.

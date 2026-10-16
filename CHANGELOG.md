@@ -5,13 +5,13 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ## Unreleased
 
 ### New
-- In **Settings → Signatures**, **Import from Gmail…** brings in a signature from a connected Gmail account. Preview and name the copy, include its images, and optionally use it as the account’s default for new messages.
+- In **Settings → Signatures**, **Import from Gmail…** brings in a signature from a connected Gmail account. Preview and name the copy, keep hosted HTTPS image URLs or explicitly embed copies, and optionally use it as the account’s default for new messages.
 
 ### Improved
 - Messages sent to a long list of people now show the first 20 recipients followed by "and N more". Click it to see everyone.
 - The **Task details** heading in the **Tasks** side panel now has a task icon, matching the other side-panel headings.
 - Reply and new-message windows give more room to writing, with a compact signature picker below the message and **Send later…** in the **Send** menu. Replies also offer **Send & archive** in that menu and a shorter **Draft reply** button on the right; keyboard hints now match your platform.
-- Pasting a signature copied from webmail such as Gmail now keeps its logos and pictures: ThreeStrands downloads them and saves them with the signature, so they go out with your mail instead of being left out. **Import…** embeds remote images by default too.
+- Pasting or importing a signature now keeps hosted HTTPS image URLs by default, including images too large to embed. **Embed Remote Images** remains available when you want to send small images with the message instead.
 
 ### Fixed
 - In **Settings → Signatures**, signature dialogs now scroll so you can reach the plain-text preview and import controls, and embedded logos appear in previews. The **Choose File** button and its "no file selected" label also sit centered inside the field when adding a signature image or importing a signature file.

@@ -490,6 +490,15 @@ export const blockedSrcAttr = "data-blocked-src";
 /** Local raster-only signature images; no SVG, external URL or executable data. */
 export const embeddedRasterImageSrc = /^data:image\/(?:avif|gif|jpeg|png|webp);base64,[a-z0-9+/]+=*$/i;
 
+/** Hosted signature sources are retained as data, never assigned to live editor src. */
+export function hostedSignatureImageSrc(value: string): boolean {
+  if (!/^https:\/\//i.test(value) || /\s/.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && Boolean(url.hostname) && !url.username && !url.password;
+  } catch { return false; }
+}
+
 /** Portable signature budgets match the native sync payload contract. */
 export const SIGNATURE_LIMITS = {
   maxNameLength: 200,

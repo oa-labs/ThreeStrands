@@ -92,7 +92,7 @@ export function GmailSignatureImportDialog({ accounts, onImported, onClose }: {
         <label className="snippet-field"><span>Name</span><input value={name} disabled={busy} onChange={(event) => setName(event.target.value)} /></label>
         {error ? <p ref={errorRef} className="form-error" role="alert">{error}</p> : null}
         {embedded !== null ? <p ref={embeddedStatusRef} className="settings-hint" role="status">Images are embedded in the preview and will be included in the imported signature.</p> : null}
-        {remote.length ? <><p className="settings-hint">Remote images are omitted from this preview. Embed them to include them in your signature.</p><button type="button" className="btn" disabled={busy} onClick={() => void embedImages()}>{busy ? "Working…" : "Embed Remote Images"}</button></> : null}
+        {remote.length ? <><p className="settings-hint">HTTPS image URLs are kept when you import. Use Load Images to preview them, or embed copies to send them with the message.</p><button type="button" className="btn" disabled={busy} onClick={() => void embedImages()}>{busy ? "Working…" : "Embed Remote Images"}</button></> : null}
         <section aria-label="Signature Preview"><h3>Preview</h3><SignaturePreview html={content.html} text={content.text} /></section>
         <section aria-label="Plain Text Preview"><h3>Plain Text</h3><pre className="signature-plain-preview">{content.text}</pre></section>
         <label className="settings-checkbox"><input type="checkbox" checked={useAsDefault} disabled={busy} onChange={(event) => setUseAsDefault(event.target.checked)} /><span>Use as Account Default for New Messages</span></label>

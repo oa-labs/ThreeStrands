@@ -2548,6 +2548,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .signature-content { min-height: var(--space-16); max-height: 40vh; overflow: auto; padding: var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background: var(--input); font-size: var(--text-reading); overflow-wrap: anywhere; }
 .signature-content:focus { outline: var(--focus-ring); }
 .signature-content img, .signature-image-preview { max-width: 100%; height: auto; }
+.signature-content img[data-compose-source]:not([src]), .compose-signature img[data-compose-source]:not([src]) { display: inline-block; min-width: var(--space-6); min-height: var(--space-6); border: 1px dashed var(--border-strong); background: var(--input); vertical-align: middle; }
 .signature-image-preview { max-height: 25vh; object-fit: contain; align-self: flex-start; }
 .signature-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); }
 .signature-plain-preview { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: var(--text-secondary); }

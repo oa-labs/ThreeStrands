@@ -1,7 +1,7 @@
 import DOMPurify from "dompurify";
 import type { Draft } from "./correspondence";
 import { composeHtmlToText } from "./richText";
-import { embeddedRasterImageSrc, sanitizeCssDeclaration, sanitizeHtmlCellPadding, sanitizeHtmlDimension, SIGNATURE_LIMITS, SIGNATURE_FONT_SIZES } from "./emailRenderingPolicy";
+import { embeddedRasterImageSrc, hostedSignatureImageSrc, sanitizeCssDeclaration, sanitizeHtmlCellPadding, sanitizeHtmlDimension, SIGNATURE_LIMITS, SIGNATURE_FONT_SIZES } from "./emailRenderingPolicy";
 
 export type GmailSignature = { address: string; html: string };
 export type Signature = { id: string; name: string; html: string; text: string };
@@ -96,22 +96,63 @@ export function sanitizeSignatureHtml(html: string, allowCid = false): string {
   container.querySelectorAll("img").forEach((image) => {
     const source = image.getAttribute("src") ?? "";
     if (!embeddedRasterImageSrc.test(source)
+      && !hostedSignatureImageSrc(source)
       && !(allowCid && /^cid:[a-z0-9._@-]+$/i.test(source))) image.remove();
   });
   return template.innerHTML;
 }
 
+/** Live editable markup keeps hosted sources inert; serialization restores them. */
+export function signatureEditorHtml(source: string, allowCid = false): string {
+  const template = document.createElement("template");
+  template.innerHTML = sanitizeSignatureHtml(source, allowCid);
+  template.content.querySelectorAll("img").forEach((image) => {
+    const source = image.getAttribute("src") ?? "";
+    if (hostedSignatureImageSrc(source)) {
+      const placeholder = image.ownerDocument.createElement("img");
+      for (const attribute of Array.from(image.attributes)) placeholder.setAttribute(attribute.name === "src" ? "data-compose-source" : attribute.name, attribute.value);
+      image.replaceWith(placeholder);
+    }
+  });
+  return template.innerHTML;
+}
+
+export function setSignatureEditorImageSource(image: HTMLImageElement, source: string) {
+  if (hostedSignatureImageSrc(source)) {
+    image.removeAttribute("src");
+    image.dataset.composeSource = source;
+  } else {
+    delete image.dataset.composeSource;
+    if (embeddedRasterImageSrc.test(source) || /^cid:[a-z0-9._@-]+$/i.test(source)) image.setAttribute("src", source);
+    else image.removeAttribute("src");
+  }
+}
+
 export function readSignatureEditor(editor: HTMLElement): { html: string; text: string } {
-  const clone = editor.cloneNode(true) as HTMLElement;
-  clone.querySelectorAll<HTMLElement>("[data-compose-image]").forEach((wrapper) => {
+  // Restoring a hosted src on a detached live div would start a browser fetch.
+  const template = document.createElement("template"); template.innerHTML = editor.innerHTML;
+  template.content.querySelectorAll<HTMLElement>("[data-compose-image]").forEach((wrapper) => {
     const image = wrapper.querySelector("img");
-    if (image?.dataset.composeSource) image.setAttribute("src", image.dataset.composeSource);
     if (image) wrapper.replaceWith(image); else wrapper.remove();
   });
-  const html = sanitizeSignatureHtml(clone.innerHTML, true);
-  clone.innerHTML = html;
+  template.content.querySelectorAll<HTMLImageElement>("img[data-compose-source]").forEach((image) => {
+    if (image.hasAttribute("src")) image.setAttribute("src", image.dataset.composeSource!);
+    else {
+      const restored = image.ownerDocument.createElement("img");
+      for (const attribute of Array.from(image.attributes)) restored.setAttribute(attribute.name === "data-compose-source" ? "src" : attribute.name, attribute.value);
+      image.replaceWith(restored);
+    }
+  });
+  return readSignatureHtml(template.innerHTML, true);
+}
+
+export function readSignatureHtml(source: string, allowCid = false): { html: string; text: string } {
+  const html = sanitizeSignatureHtml(source, allowCid);
+  const template = document.createElement("template"); template.innerHTML = html;
   // Table cells need separation, and logos should have an accessible text fallback.
-  clone.querySelectorAll("img").forEach((image) => image.replaceWith(document.createTextNode(image.alt)));
+  template.content.querySelectorAll("img").forEach((image) => image.replaceWith(document.createTextNode(image.alt)));
+  // Only text, safe formatting and links remain before entering a live document.
+  const clone = document.createElement("div"); clone.innerHTML = template.innerHTML;
   clone.querySelectorAll("a[href]").forEach((link) => {
     const href = link.getAttribute("href")!;
     const target = /^mailto:|^tel:/i.test(href) ? href.replace(/^(mailto:|tel:)/i, "").split("?")[0] : href;

@@ -1275,6 +1275,7 @@ mod tests {
         let db = Database::open_memory();
         let mut signature = template("portable");
         signature.html = "<p>portable<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j1ioAAAAASUVORK5CYII=\" alt=\"Logo\"></p>".into();
+        signature.html.push_str("<img src=\"https://images.example/large-logo.png?version=2&amp;size=large\" alt=\"Hosted logo\">");
         db.store_signature(&signature).unwrap();
         db.store_signature_defaults(&defaults("me@example.com", "alias@example.com", Some("portable"), None)).unwrap();
         let exported = build_export_payload(&db, payload().preferences).unwrap();

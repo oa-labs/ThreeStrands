@@ -181,3 +181,64 @@ for (const layout of ["table", "flow"] as const) {
     await expect(settings.getByText("No signatures yet", { exact: true })).toBeVisible();
   });
 }
+
+for (const layout of ["table", "flow"] as const) {
+  test(`keeps a large hosted signature image through Gmail import, editing and draft reopening (${layout})`, async ({ page }) => {
+    const url = "https://signature-images.example/large.png?version=2&size=large";
+    const largePng = Buffer.concat([Buffer.from(png, "base64"), Buffer.alloc(869 * 1024)]);
+    let requests = 0;
+    await page.route(url, (route) => { requests++; return route.fulfill({ contentType: "image/png", body: largePng }); });
+    await page.goto("/");
+    const html = layout === "table" ? `<table><tr><td><img src="${url}" alt="Hosted Logo" width="32"></td><td>Alex Morgan</td><td></td></tr></table>` : `<div style="display:flex"><img src="${url}" alt="Hosted Logo" width="32"><p>Alex Morgan</p></div>`;
+    await page.evaluate(async (source) => {
+      const modulePath = "/src/data/client.ts";
+      const { mailClient } = await import(modulePath);
+      mailClient.listGmailSignatures = async (account: string) => [{ address: account, html: source }];
+    }, html);
+    await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+    const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+    await settings.getByRole("button", { name: "Signatures", exact: true }).click();
+    await settings.getByRole("button", { name: "Import from Gmail…" }).click();
+    const importer = page.getByRole("dialog", { name: "Import from Gmail", exact: true });
+    await importer.getByLabel("Name", { exact: true }).fill("Hosted Signature");
+    expect(requests).toBe(0);
+    const image = importer.frameLocator("iframe").getByRole("img", { name: "Hosted Logo" });
+    await expect(image).not.toHaveAttribute("src");
+    await importer.getByRole("button", { name: "Load images", exact: true }).click();
+    await expect.poll(() => image.evaluate((element) => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+    expect(requests).toBe(1);
+    // Embedding is optional and still size bounded. A failure leaves the URL usable.
+    await importer.getByRole("button", { name: "Embed Remote Images" }).click();
+    await expect(importer.getByRole("alert")).toContainText("larger than 128 KiB");
+    await importer.getByLabel("Use as Account Default for New Messages").check();
+    await importer.getByRole("button", { name: "Import", exact: true }).click();
+    await settings.getByRole("button", { name: "Edit", exact: true }).click();
+    const editor = page.getByRole("dialog", { name: "Edit Signature", exact: true });
+    const content = editor.getByRole("textbox", { name: "Signature Content" });
+    await expect(content.locator("img")).not.toHaveAttribute("src");
+    await expect(content.locator("img")).toHaveAttribute("data-compose-source", url);
+    await editor.getByRole("button", { name: "Edit Image…" }).click();
+    await page.getByRole("dialog", { name: "Signature Images" }).getByRole("button", { name: "Edit Hosted Logo" }).click();
+    const imageEditor = page.getByRole("dialog", { name: "Edit Signature Image" });
+    await imageEditor.getByLabel("Width in Pixels").fill("48");
+    await imageEditor.getByRole("button", { name: "Apply", exact: true }).click();
+    await editor.getByRole("button", { name: "Save", exact: true }).click();
+    await settings.getByRole("button", { name: "Close", exact: true }).click();
+    expect(requests).toBe(2);
+    await page.getByRole("button", { name: "New Message (c)" }).click();
+    const composer = page.getByRole("dialog", { name: "New Message", exact: true });
+    const signature = composer.getByRole("textbox", { name: "Message Signature" });
+    await expect(signature.locator("img")).not.toHaveAttribute("src");
+    await expect(signature.locator("img")).toHaveAttribute("data-compose-source", url);
+    await expect(signature.locator("img")).toHaveAttribute("width", "48");
+    await composer.getByRole("textbox", { name: "Subject", exact: true }).fill("Hosted signature draft");
+    await composer.getByRole("button", { name: "Save and Close Draft" }).click();
+    await page.reload();
+    await page.getByRole("button", { name: /Choose folder, current folder/ }).click();
+    await page.getByRole("group", { name: "Folders" }).getByRole("button", { name: "Drafts", exact: true }).click();
+    await page.getByText("Hosted signature draft", { exact: true }).click();
+    await expect(signature.locator("img")).toHaveAttribute("data-compose-source", url);
+    await expect(signature.locator("img")).not.toHaveAttribute("src");
+    expect(requests).toBe(2);
+  });
+}

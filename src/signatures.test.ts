@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defaultSignature, readSignatureEditor, sanitizeSignatureHtml, signatureBody, signatureDefaultsKey, validateSignature } from "./signatures";
+import { defaultSignature, readSignatureEditor, readSignatureHtml, signatureEditorHtml, sanitizeSignatureHtml, signatureBody, signatureDefaultsKey, validateSignature } from "./signatures";
 import { EMAIL_CSS_LIMITS, SIGNATURE_LIMITS } from "./emailRenderingPolicy";
 import type { Draft } from "./correspondence";
 
@@ -26,12 +26,30 @@ describe("signature content and portability", () => {
     expect(readSignatureEditor(root).text).toContain("Alex");
   });
 
-  it("removes active markup, remote resources and app-escaping styles before insertion", () => {
-    const root = node(sanitizeSignatureHtml('<script>alert(1)</script><style>@import "https://evil.invalid";</style><iframe src="https://evil.invalid"></iframe><form action="https://evil.invalid"><input></form><svg onload="alert(1)"></svg><span id="app" data-secret="x" onclick="alert(1)" style="position:fixed;z-index:999999;top:0;background:url(https://evil.invalid/x);color:red">Name</span><a href="javascript:alert(1)" target="_top">Bad</a><img src="https://evil.invalid/x" onerror="alert(1)"><img src="file:///secret"><img src="data:image/svg+xml;base64,PHN2Zz4=">'));
-    expect(root.querySelector("script,style,iframe,form,input,svg,img")).toBeNull();
-    expect(root.innerHTML).not.toMatch(/onclick|onload|onerror|data-secret|id=|url\(|position|z-index|target|javascript|evil\.invalid/);
+  it("keeps hosted sources inert and removes active markup and app-escaping styles before insertion", () => {
+    const root = node(signatureEditorHtml('<script>alert(1)</script><style>@import "https://evil.invalid";</style><iframe src="https://evil.invalid"></iframe><form action="https://evil.invalid"><input></form><svg onload="alert(1)"></svg><span id="app" data-secret="x" onclick="alert(1)" style="position:fixed;z-index:999999;top:0;background:url(https://evil.invalid/x);color:red">Name</span><a href="javascript:alert(1)" target="_top">Bad</a><img src="https://evil.invalid/x" onerror="alert(1)"><img src="file:///secret"><img src="data:image/svg+xml;base64,PHN2Zz4=">'));
+    expect(root.querySelector("script,style,iframe,form,input,svg,img[src]")).toBeNull();
+    expect(root.innerHTML).not.toMatch(/onclick|onload|onerror|data-secret|id=|url\(|position|z-index|target|javascript/);
     expect((root.querySelector("span") as HTMLElement).style.color).toBe("red");
     expect(root.textContent).toContain("Name");
+  });
+
+  it.each([
+    '<table><tr><td><img src="https://cdn.example/logo.png?version=2&amp;size=large" alt="Logo" width="120"></td><td>Alex</td><td></td></tr></table>',
+    '<div style="display:flex"><img src="https://images.example/large.gif" alt="Team" height="80"><p>Alex</p></div>',
+  ])("preserves hosted image URLs through editing and plaintext conversion: %s", (html) => {
+    const canonical = sanitizeSignatureHtml(html);
+    const editor = node(signatureEditorHtml(html));
+    expect(editor.querySelector("img")).not.toHaveAttribute("src");
+    expect(editor.querySelector("img")).toHaveAttribute("data-compose-source");
+    const saved = readSignatureEditor(editor);
+    expect(saved.html).toBe(canonical);
+    expect(saved.html).not.toContain("data-compose");
+    expect(saved.text).toContain("Alex");
+    expect(readSignatureHtml(saved.html)).toEqual(saved);
+  });
+  it.each(["http://images.example/logo.png", "//images.example/logo.png", "https://user:secret@images.example/logo.png", "https://", "https://images.example/\nlogo.png", "javascript:alert(1)", "file:///logo.png"]) ("rejects nonportable or credential-bearing hosted sources: %s", (source) => {
+    expect(node(signatureEditorHtml(`<img src="${source}">`)).querySelector("img")).toBeNull();
   });
 
   it("rejects CID and blob references in portable templates but retains native draft CIDs", () => {

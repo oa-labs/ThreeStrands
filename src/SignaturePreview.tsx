@@ -1,21 +1,30 @@
 import { useMemo } from "react";
 import { SafeMessage } from "./SafeMessage";
-import { embeddedRasterImageSrc } from "./emailRenderingPolicy";
+import { mailClient } from "./data/client";
+import { embeddedRasterImageSrc, hostedSignatureImageSrc } from "./emailRenderingPolicy";
 import { sanitizeSignatureHtml } from "./signatures";
 
-async function resolveEmbeddedImage(source: string): Promise<string> {
-  if (!embeddedRasterImageSrc.test(source)) throw new Error("Only embedded raster images can be previewed.");
-  return source;
-}
-
-/**
- * Signature HTML contains local raster images after import. Sanitize before
- * enabling image display, and resolve only those data URIs locally. Remote
- * URLs, CSS URLs and active image formats never gain a loading path here;
- * downloads stay in the explicit import action and its native proxy.
- * SafeMessage retains its sandbox, CSP and shared image budgets.
- */
+/** Hosted images stay blocked until Load Images; the iframe receives only proxy data. */
 export function SignaturePreview({ html, text }: { html: string; text: string }) {
-  const sanitized = useMemo(() => sanitizeSignatureHtml(html), [html]);
-  return <SafeMessage html={sanitized} text={text} loadImages resolveImage={resolveEmbeddedImage} foldQuotes={false} />;
+  const preview = useMemo(() => {
+    const template = document.createElement("template"); template.innerHTML = sanitizeSignatureHtml(html);
+    const namespace = crypto.randomUUID();
+    const embedded = new Map<string, string>();
+    template.content.querySelectorAll("img").forEach((image, index) => {
+      const source = image.getAttribute("src") ?? "";
+      if (!embeddedRasterImageSrc.test(source)) return;
+      // Local CIDs use the reader's automatic embedded-image path, while HTTPS
+      // sources remain behind its existing blocked-source and native proxy flow.
+      const cid = `cid:signature-preview-${namespace}-${index}`;
+      embedded.set(cid, source); image.setAttribute("src", cid);
+    });
+    return { html: template.innerHTML, embedded, namespace };
+  }, [html]);
+  async function resolveImage(source: string): Promise<string> {
+    const embedded = preview.embedded.get(source);
+    if (embedded) return embedded;
+    if (hostedSignatureImageSrc(source)) return mailClient.fetchRemoteImage(source);
+    throw new Error("Unsupported signature image source.");
+  }
+  return <SafeMessage html={preview.html} text={text} loadImages={false} imageCacheKey={preview.namespace} resolveImage={resolveImage} foldQuotes={false} />;
 }

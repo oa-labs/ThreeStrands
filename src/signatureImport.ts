@@ -1,6 +1,6 @@
 import { mailClient } from "./data/client";
 import { SIGNATURE_LIMITS } from "./emailRenderingPolicy";
-import { readSignatureEditor, sanitizeSignatureHtml, validateSignature } from "./signatures";
+import { readSignatureHtml, validateSignature } from "./signatures";
 
 export function remoteImageSources(html: string): string[] {
   // Parse in an inert template; sender URLs never enter live app markup.
@@ -12,8 +12,7 @@ export function remoteImageSources(html: string): string[] {
  * Replaces each remote image source with a data URI downloaded through the
  * native proxy, which applies its URL validation, resource bounds and
  * blocked-source behavior. Requests run one at a time and CSS URLs are never
- * fetched. Images that fail keep their remote source, which the signature
- * sanitizer then drops.
+ * fetched. Images that fail keep their source, so users can retain them hosted.
  */
 export async function embedRemoteImages(html: string): Promise<{ html: string; failures: unknown[] }> {
   const template = document.createElement("template"); template.innerHTML = html;
@@ -35,8 +34,7 @@ function dataUriBytes(uri: string): number {
 }
 
 export function signatureImportContent(source: string) {
-  const node = document.createElement("div"); node.innerHTML = sanitizeSignatureHtml(source);
-  return readSignatureEditor(node);
+  return readSignatureHtml(source);
 }
 
 export async function prepareSignatureImport(source: string, embedRemote: boolean) {

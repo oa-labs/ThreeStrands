@@ -4310,6 +4310,28 @@ mod tests {
     }
 
     #[test]
+    fn signature_mime_keeps_hosted_sources_without_creating_image_parts() {
+        use crate::signatures::tests::{template, defaults};
+        for html in [
+            "<table><tr><td><img src=\"https://images.example/large.png?version=2&amp;size=large\" alt=\"Logo\"></td><td>Regards</td></tr></table>",
+            "<div><img src=\"https://cdn.example/logo.gif\" alt=\"Logo\"><p>Regards</p></div>",
+        ] {
+            let db = database();
+            let mut signature = template("hosted");
+            signature.html = html.into();
+            db.store_signature(&signature).unwrap();
+            db.store_signature_defaults(&defaults("you@example.com", "", Some("hosted"), None)).unwrap();
+            let draft = saved(&db);
+            let raw = build_mime(&draft, &[], None, None, "hosted", Path::new("/unused")).unwrap();
+            let parsed = MessageParser::default().parse(&raw).unwrap();
+            assert!(parsed.body_html(0).unwrap().contains(html));
+            assert!(!parsed.parts.iter().any(|part| part.content_id().is_some()));
+            assert!(!parsed.body_html(0).unwrap().contains("data:image"));
+            assert!(!parsed.body_html(0).unwrap().contains("cid:"));
+        }
+    }
+
+    #[test]
     fn switching_sending_alias_updates_only_an_automatic_signature() {
         use crate::signatures::tests::{template, defaults};
         let db = imap_database();

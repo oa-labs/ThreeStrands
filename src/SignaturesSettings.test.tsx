@@ -5,7 +5,7 @@ import { SignaturesSettings } from "./SignaturesSettings";
 import { SignaturePreview } from "./SignaturePreview";
 import { SignatureEditor, SignatureImportDialog } from "./SignatureEditor";
 import { mailClient } from "./data/client";
-import { signatureDefaultsKey, type Signature, type SignatureState } from "./signatures";
+import { readSignatureEditor, signatureDefaultsKey, type Signature, type SignatureState } from "./signatures";
 import type { Account } from "./domain";
 import { SIGNATURE_LIMITS } from "./emailRenderingPolicy";
 
@@ -114,7 +114,7 @@ describe("signature import", () => {
     else expect(await within(dialog).findByRole("alert")).toHaveTextContent("too large");
     expect(save).not.toHaveBeenCalled();
   });
-  it("uses the sandboxed preview, omits remote images when embedding is turned off and sanitizes imported content", async () => {
+  it("uses the sandboxed preview, keeps hosted images by default and sanitizes imported content", async () => {
     const fetch = vi.spyOn(mailClient, "fetchRemoteImage"); const onImport = vi.fn();
     render(<SignatureImportDialog onClose={vi.fn()} onImport={onImport} />);
     const html = screen.getByLabelText("HTML"); expect(html).toHaveFocus();
@@ -122,13 +122,13 @@ describe("signature import", () => {
     const preview = screen.getByRole("region", { name: "Signature Preview" });
     expect(preview.querySelector("iframe")).toHaveAttribute("sandbox", "allow-same-origin allow-scripts");
     expect(preview.querySelector("iframe")?.srcdoc).toContain("script-src 'none'");
-    expect(screen.getByLabelText("Embed Remote Images")).toBeChecked();
-    fireEvent.click(screen.getByLabelText("Embed Remote Images"));
+    expect(screen.getByLabelText("Embed Remote Images")).not.toBeChecked();
     expect(fetch).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Import" }));
     await waitFor(() => expect(onImport).toHaveBeenCalled());
     expect(onImport.mock.calls[0][0]).toContain("<td></td>");
-    expect(onImport.mock.calls[0][0]).not.toMatch(/script|img|https/);
+    expect(onImport.mock.calls[0][0]).not.toMatch(/script/);
+    expect(onImport.mock.calls[0][0]).toContain('src="https://images.example/logo.png"');
   });
 
   it("downloads opted-in images through the native proxy and keeps HTML when a source is blocked", async () => {
@@ -137,7 +137,8 @@ describe("signature import", () => {
     render(<SignatureImportDialog onClose={vi.fn()} onImport={onImport} />);
     const source = '<p>Alex</p><img src="https://images.example/logo.png" alt="Logo">';
     fireEvent.change(screen.getByLabelText("HTML"), { target: { value: source } });
-    expect(screen.getByLabelText("Embed Remote Images")).toBeChecked();
+    expect(screen.getByLabelText("Embed Remote Images")).not.toBeChecked();
+    fireEvent.click(screen.getByLabelText("Embed Remote Images"));
     fireEvent.click(screen.getByRole("button", { name: "Import" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Image source is blocked");
     expect(screen.getByLabelText("HTML")).toHaveValue(source); expect(onImport).not.toHaveBeenCalled();
@@ -157,45 +158,47 @@ describe("signature import", () => {
   /** A PNG data URI whose decoded payload is exactly `bytes` long. */
   const pngOfBytes = (bytes: number) => `data:image/png;base64,${Buffer.alloc(bytes).toString("base64")}`;
 
-  it("downloads pasted remote images through the native proxy and embeds them in the signature", async () => {
-    const fetch = vi.spyOn(mailClient, "fetchRemoteImage").mockResolvedValue("data:image/png;base64,aA==");
-    // Two structurally different webmail signatures: a table layout and a flow layout repeating one logo.
+  it("keeps pasted hosted images inert in the editor and retains their sources on save", () => {
+    const fetch = vi.spyOn(mailClient, "fetchRemoteImage");
     const editor = pasteSignature('<table><tr><td><img src="https://images.example/logo.png" alt="Logo" width="80"></td><td>Alex</td></tr></table><div style="background-image:url(https://images.example/bg.png)">x</div>');
-    expect(screen.getByRole("status")).toHaveTextContent("Downloading images…");
-    await waitFor(() => expect(editor.querySelector("img")).toHaveAttribute("src", "data:image/png;base64,aA=="));
+    expect(editor.querySelector("img")).not.toHaveAttribute("src");
+    expect(editor.querySelector("img")).toHaveAttribute("data-compose-source", "https://images.example/logo.png");
     expect(editor.querySelector("img")).toHaveAttribute("alt", "Logo");
     expect(editor.querySelector("img")).toHaveAttribute("width", "80");
-    expect(editor.innerHTML).not.toContain("https://");
-    expect(fetch.mock.calls).toEqual([["https://images.example/logo.png"]]);
-    expect(screen.queryByRole("status")).toBeNull(); expect(screen.queryByRole("alert")).toBeNull();
-    cleanup(); fetch.mockClear();
-    const flow = pasteSignature('<p><img src="https://cdn.example/a.gif"> Alex Doe</p><p><a href="https://example.com"><img src="https://cdn.example/a.gif"></a> <script>alert(1)</script></p>');
-    await waitFor(() => expect(flow.querySelectorAll("img")).toHaveLength(2));
-    expect(fetch.mock.calls).toEqual([["https://cdn.example/a.gif"]]);
-    expect(flow.innerHTML).not.toMatch(/script|cdn\.example/);
+    expect(readSignatureEditor(editor).html).toContain('src="https://images.example/logo.png"');
+    expect(editor.innerHTML).not.toContain("background-image");
+    expect(fetch).not.toHaveBeenCalled();
+    cleanup();
+    const flow = pasteSignature('<p><img src="https://cdn.example/a.gif"> Alex Doe</p><p><a href="https://example.com"><img src="https://cdn.example/a.gif"></a><script>alert(1)</script></p>');
+    expect(flow.querySelectorAll("img")).toHaveLength(2);
+    expect(flow.querySelectorAll("img[src]")).toHaveLength(0);
+    expect(readSignatureEditor(flow).html).toContain('src="https://cdn.example/a.gif"');
+    expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("keeps the rest of a pasted signature and explains when an image can't be downloaded", async () => {
-    vi.spyOn(mailClient, "fetchRemoteImage").mockImplementation(async (url) => {
-      if (url.includes("blocked")) throw new Error("Image source is blocked");
-      return "data:image/png;base64,aA==";
-    });
-    const editor = pasteSignature('<p>Alex</p><img src="https://images.example/blocked.png"><img src="https://images.example/ok.png">');
-    expect(await screen.findByRole("alert")).toHaveTextContent("An image couldn't be added. Image source is blocked. Use Add Image… to add it from your computer.");
-    expect(editor).toHaveTextContent("Alex");
-    expect(Array.from(editor.querySelectorAll("img"), (image) => image.getAttribute("src"))).toEqual(["data:image/png;base64,aA=="]);
+  it("keeps every pasted hosted source without downloading or applying the embedding size limit", () => {
+    const fetch = vi.spyOn(mailClient, "fetchRemoteImage").mockRejectedValue(new Error("Image source is blocked"));
+    const editor = pasteSignature('<p>Alex</p><img src="https://images.example/blocked.png"><img src="https://images.example/large.png">');
+    expect(editor.querySelectorAll("img")).toHaveLength(2);
+    expect(readSignatureEditor(editor).html).toContain('src="https://images.example/large.png"');
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
   });
 
-  it.each([SIGNATURE_LIMITS.maxImageBytes - 1, SIGNATURE_LIMITS.maxImageBytes, SIGNATURE_LIMITS.maxImageBytes + 1])("bounds pasted remote images at %s bytes like uploads", async (size) => {
+  it.each([SIGNATURE_LIMITS.maxImageBytes - 1, SIGNATURE_LIMITS.maxImageBytes, SIGNATURE_LIMITS.maxImageBytes + 1])("bounds explicitly embedded remote images at %s bytes like uploads", async (size) => {
     vi.spyOn(mailClient, "fetchRemoteImage").mockResolvedValue(pngOfBytes(size));
-    const editor = pasteSignature('<p>Alex</p><img src="https://images.example/logo.png">');
-    await waitFor(() => expect(editor).toHaveTextContent("Alex"));
+    const onImport = vi.fn();
+    render(<SignatureImportDialog onClose={vi.fn()} onImport={onImport} />);
+    fireEvent.change(screen.getByLabelText("HTML"), { target: { value: '<p>Alex<img src="https://images.example/logo.png"></p>' } });
+    fireEvent.click(screen.getByLabelText("Embed Remote Images"));
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
     if (size <= SIGNATURE_LIMITS.maxImageBytes) {
-      expect(editor.querySelector("img")?.getAttribute("src")).toBe(pngOfBytes(size));
+      await waitFor(() => expect(onImport).toHaveBeenCalled());
+      expect(onImport.mock.calls[0][0]).toContain(pngOfBytes(size));
       expect(screen.queryByRole("alert")).toBeNull();
     } else {
-      expect(editor.querySelector("img")).toBeNull();
-      expect(screen.getByRole("alert")).toHaveTextContent("larger than 128 KiB");
+      expect(await screen.findByRole("alert")).toHaveTextContent("larger than 128 KiB");
+      expect(onImport).not.toHaveBeenCalled();
     }
   });
 
@@ -266,7 +269,8 @@ describe("Gmail signature import", () => {
     await waitFor(() => expect(save).toHaveBeenCalled());
     const [email, signature, useDefault] = save.mock.calls[0];
     expect(email).toBe(gmail.email); expect(useDefault).toBe(true); expect(signature.name).toBe("Imported Work");
-    expect(signature.html).toContain("<table>"); expect(signature.html).not.toMatch(/script|onclick|background-image|<img/i);
+    expect(signature.html).toContain("<table>"); expect(signature.html).not.toMatch(/script|onclick|background-image/i);
+    expect(signature.html).toContain('src="https://images.example/logo.png"');
     expect(signature.text).toContain("https://example.com");
     expect(state.refresh).toHaveBeenCalled(); expect(state.save).not.toHaveBeenCalled();
   });
@@ -326,6 +330,22 @@ describe("Gmail signature import", () => {
     expect(save.mock.calls[0][2]).toBe(false);
   });
 
+  it("keeps a hosted image after an oversized embedding attempt and still allows importing its URL", async () => {
+    const url = "https://images.example/large.png";
+    vi.spyOn(mailClient, "listGmailSignatures").mockResolvedValue([{ address: gmail.email, html: `<p>Alex<img src="${url}" alt="Logo"></p>` }]);
+    const fetch = vi.spyOn(mailClient, "fetchRemoteImage").mockResolvedValue(`data:image/png;base64,${Buffer.alloc(869 * 1024).toString("base64")}`);
+    const save = vi.spyOn(mailClient, "importGmailSignature").mockResolvedValue(undefined);
+    render(<SignaturesSettings library={library()} accounts={[gmail]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Import from Gmail…" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Embed Remote Images" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("larger than 128 KiB");
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][1].html).toContain(`src="${url}"`);
+    expect(save.mock.calls[0][1].html).not.toContain("data:image");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("ignores an earlier account's response after switching accounts", async () => {
     let resolveFirst!: (value: { address: string; html: string }[]) => void;
     vi.spyOn(mailClient, "listGmailSignatures").mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
@@ -362,6 +382,23 @@ describe("signature previews", () => {
     expect(screen.queryByRole("button", { name: "Load images" })).toBeNull();
   });
 
+  it("loads hosted previews only after the explicit action and keeps the stored HTML unchanged", async () => {
+    const html = '<p>Alex<img src="https://images.example/logo.png" alt="Logo"></p>';
+    const fetch = vi.spyOn(mailClient, "fetchRemoteImage").mockResolvedValue(png);
+    const { rerender } = render(<SignaturePreview html={html} text="AlexLogo" />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    frame.contentDocument!.body.innerHTML = new DOMParser().parseFromString(frame.srcdoc, "text/html").body.innerHTML;
+    fireEvent.load(frame);
+    expect(frame.contentDocument!.querySelector("img")).not.toHaveAttribute("src");
+    expect(fetch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Load images" }));
+    await waitFor(() => expect(frame.contentDocument!.querySelector("img")).toHaveAttribute("src", png));
+    expect(fetch).toHaveBeenCalledWith("https://images.example/logo.png");
+    rerender(<SignaturePreview html={html} text="AlexLogo" />);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(html).toContain('src="https://images.example/logo.png"');
+  });
+
   it.each([
     '<p>Alex</p><img src="https://tracker.invalid/pixel.png"><img src="file:///private/logo.png"><script>parent.compromised=true</script>',
     '<table><tr><td style="background-image:url(https://tracker.invalid/bg.png)"><img src="data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=" onload="alert(1)"><img src="cid:sender-controlled"></td><td>Alex</td></tr></table>',
@@ -369,8 +406,8 @@ describe("signature previews", () => {
     const fetch = vi.spyOn(mailClient, "fetchRemoteImage");
     render(<SignaturePreview html={html} text="Alex" />);
     const doc = new DOMParser().parseFromString((screen.getByTestId("message-body") as HTMLIFrameElement).srcdoc, "text/html");
-    expect(doc.body.querySelector("img,script,[onload]")).toBeNull();
-    expect(doc.body.innerHTML).not.toMatch(/tracker\.invalid|file:|cid:|background-image|svg\+xml/);
+    expect(doc.body.querySelector("script,[onload],img[src]")).toBeNull();
+    expect(doc.body.innerHTML).not.toMatch(/file:|cid:|background-image|svg\+xml/);
     expect(doc.body.textContent).toContain("Alex");
     expect(fetch).not.toHaveBeenCalled();
   });

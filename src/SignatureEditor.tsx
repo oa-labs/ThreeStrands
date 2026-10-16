@@ -3,8 +3,8 @@ import { Modal } from "./AppChrome";
 import { SignaturePreview } from "./SignaturePreview";
 import { FormattingPromptDialog } from "./FormattingPromptDialog";
 import { applyFormattingShortcut, formattingShortcutFor, formattingShortcuts, insertHtmlAtRange, linkifyPlainText } from "./richText";
-import { readSignatureEditor, sanitizeSignatureHtml, validateSignature, type Signature } from "./signatures";
-import { sanitizeHtmlDimension, SIGNATURE_LIMITS } from "./emailRenderingPolicy";
+import { readSignatureEditor, readSignatureHtml, signatureEditorHtml, setSignatureEditorImageSource, validateSignature, type Signature } from "./signatures";
+import { hostedSignatureImageSrc, sanitizeHtmlDimension, SIGNATURE_LIMITS } from "./emailRenderingPolicy";
 import { errorMessage } from "./errors";
 import { remoteImageSources, embedRemoteImages } from "./signatureImport";
 
@@ -13,13 +13,12 @@ export function SignatureEditor({ signature, onSave, onClose }: {
 }) {
   const [name, setName] = useState(signature?.name ?? "");
   const [signatureId] = useState(() => signature?.id ?? crypto.randomUUID());
-  const [initialHtml] = useState(() => sanitizeSignatureHtml(signature?.html ?? ""));
+  const [initialHtml] = useState(() => signatureEditorHtml(signature?.html ?? ""));
   const editor = useRef<HTMLDivElement>(null);
   const nameInput = useRef<HTMLInputElement>(null);
   const lastRange = useRef<Range | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [status, setStatus] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [imageTarget, setImageTarget] = useState<HTMLImageElement | "new" | null>(null);
   const [imageChoices, setImageChoices] = useState<HTMLImageElement[] | null>(null);
@@ -115,35 +114,19 @@ export function SignatureEditor({ signature, onSave, onClose }: {
             return;
           }
           const html = event.clipboardData.getData("text/html");
-          if (!html || !remoteImageSources(html).length) {
-            insertHtmlAtRange(event.currentTarget, restoreRange(), html ? sanitizeSignatureHtml(html) : linkifyPlainText(event.clipboardData.getData("text/plain")));
-            rememberRange();
-            return;
-          }
-          // Signatures copied from webmail link their logos; download them so
-          // the saved signature carries its own images, as an upload would.
-          setStatus("Downloading images…");
-          void embedRemoteImages(html).then(({ html: embedded, failures }) => {
-            setStatus("");
-            if (!editor.current) return;
-            insertHtmlAtRange(editor.current, restoreRange(), sanitizeSignatureHtml(embedded));
-            rememberRange();
-            if (!failures.length) return;
-            const reason = errorMessage(failures[0]);
-            setError(`${failures.length === 1 ? "An image" : `${failures.length} images`} couldn't be added. ${reason}${/[.!?]$/.test(reason) ? "" : "."} Use Add Image… to add ${failures.length === 1 ? "it" : "them"} from your computer.`);
-          });
+          insertHtmlAtRange(event.currentTarget, restoreRange(), html ? signatureEditorHtml(html) : linkifyPlainText(event.clipboardData.getData("text/plain")));
+          rememberRange();
         }} />
-      <p className="settings-hint">Paste your existing signature or write one here. Select text to format it; click an image to edit its size and description.</p>
-      {status ? <p className="settings-hint" role="status">{status}</p> : null}
+      <p className="settings-hint">Paste your existing signature or write one here. Select text to format it; click an image to edit its size and description. Hosted images keep their URLs and can be loaded in the image preview.</p>
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       <div className="signature-actions"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" disabled={busy}>{busy ? "Saving…" : "Save"}</button></div>
     </form>
     {prompt ? <FormattingPromptDialog kind={prompt} onClose={() => setPrompt(null)} onSubmit={(value) => { finishedPrompt.current = { kind: prompt, value }; setPrompt(null); }} /> : null}
-    {importOpen ? <SignatureImportDialog onClose={() => setImportOpen(false)} onImport={(html) => { editor.current!.innerHTML = html; lastRange.current = null; setError(""); setImportOpen(false); }} /> : null}
+    {importOpen ? <SignatureImportDialog onClose={() => setImportOpen(false)} onImport={(html) => { editor.current!.innerHTML = signatureEditorHtml(html); lastRange.current = null; setError(""); setImportOpen(false); }} /> : null}
     {imageChoices ? <Modal title="Signature Images" onClose={() => setImageChoices(null)}><div className="signature-form">{imageChoices.map((image, index) => <button type="button" className="btn" key={index} onClick={() => { setImageTarget(image); setImageChoices(null); }}>Edit {image.alt || `Image ${index + 1}`}</button>)}<div className="signature-actions"><button type="button" className="btn" onClick={() => setImageChoices(null)}>Cancel</button></div></div></Modal> : null}
     {imageTarget ? <SignatureImageDialog image={imageTarget === "new" ? null : imageTarget} onClose={() => setImageTarget(null)} onSave={(source, alt, width) => {
       const image = imageTarget === "new" ? document.createElement("img") : imageTarget;
-      image.src = source; image.alt = alt;
+      setSignatureEditorImageSource(image, source); image.alt = alt;
       image.setAttribute("width", width);
       if (imageTarget === "new") insertHtmlAtRange(editor.current!, restoreRange(), image.outerHTML);
       setImageTarget(null);
@@ -154,7 +137,7 @@ export function SignatureEditor({ signature, onSave, onClose }: {
 export function SignatureImportDialog({ onClose, onImport }: { onClose(): void; onImport(html: string): void }) {
   const sourceInput = useRef<HTMLTextAreaElement>(null);
   const [source, setSource] = useState("");
-  const [embedRemote, setEmbedRemote] = useState(true);
+  const [embedRemote, setEmbedRemote] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const remote = remoteImageSources(source);
@@ -167,9 +150,9 @@ export function SignatureImportDialog({ onClose, onImport }: { onClose(): void; 
         if (result.failures.length) throw result.failures[0];
         embedded = result.html;
       }
-      const html = sanitizeSignatureHtml(embedded);
-      const node = document.createElement("div"); node.innerHTML = html;
-      validateSignature({ id: "preview", name: "Imported", ...readSignatureEditor(node) });
+      const content = readSignatureHtml(embedded);
+      const html = content.html;
+      validateSignature({ id: "preview", name: "Imported", ...content });
       onImport(html);
     } catch (reason) { setError(errorMessage(reason)); setBusy(false); }
   }
@@ -182,7 +165,7 @@ export function SignatureImportDialog({ onClose, onImport }: { onClose(): void; 
         void file.text().then((text) => setSource(file.name.toLowerCase().endsWith(".txt") ? linkifyPlainText(text) : text)).catch((reason) => setError(errorMessage(reason)));
       }} /></label>
       {remote.length ? <label className="settings-checkbox"><input type="checkbox" checked={embedRemote} disabled={busy} onChange={(event) => setEmbedRemote(event.target.checked)} /><span>Embed Remote Images</span></label> : null}
-      {remote.length ? <p className="settings-hint">{remote.length} remote image source{remote.length === 1 ? "" : "s"}. Embedding downloads images through ThreeStrands and saves them with the signature; otherwise they are left out.</p> : null}
+      {remote.length ? <p className="settings-hint">{remote.length} remote image source{remote.length === 1 ? "" : "s"}. Embedding downloads images through ThreeStrands and saves them with the signature; otherwise HTTPS image URLs are kept.</p> : null}
       {source ? <section aria-label="Signature Preview"><h3>Preview</h3><SignaturePreview html={source} text="" /></section> : null}
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       <div className="signature-actions"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" disabled={busy || !source.trim()}>{busy ? "Importing…" : "Import"}</button></div>
@@ -198,10 +181,15 @@ async function readImageFile(file: File): Promise<string> {
 
 function SignatureImageDialog({ image, onClose, onSave, onRemove }: { image: HTMLImageElement | null; onClose(): void; onSave(source: string, alt: string, width: string): void; onRemove?: () => void }) {
   const imageInput = useRef<HTMLInputElement>(null);
-  const [source, setSource] = useState(image?.getAttribute("src") ?? "");
+  const [source, setSource] = useState(image?.dataset.composeSource ?? image?.getAttribute("src") ?? "");
   const [alt, setAlt] = useState(image?.alt ?? "");
   const [width, setWidth] = useState(image?.getAttribute("width") ?? String(SIGNATURE_LIMITS.defaultImageWidth));
   const [error, setError] = useState("");
+  const preview = document.createElement("template"); preview.innerHTML = "<img>";
+  const previewImage = preview.content.querySelector("img")!;
+  previewImage.setAttribute("src", source); previewImage.alt = alt;
+  const previewWidth = sanitizeHtmlDimension(width, false);
+  if (previewWidth) previewImage.setAttribute("width", previewWidth);
   return <Modal title={image ? "Edit Signature Image" : "Add Signature Image"} initialFocusRef={imageInput} onClose={onClose}>
     <form className="signature-form" onSubmit={(event) => {
       event.preventDefault(); const size = sanitizeHtmlDimension(width, false);
@@ -211,7 +199,7 @@ function SignatureImageDialog({ image, onClose, onSave, onRemove }: { image: HTM
       <label className="snippet-field"><span>Image</span><input ref={imageInput} autoFocus type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readImageFile(file).then((data) => { setSource(data); if (!alt) setAlt(file.name); }).catch((reason) => setError(errorMessage(reason))); }} /></label>
       <label className="snippet-field"><span>Description</span><input value={alt} onChange={(event) => setAlt(event.target.value)} /></label>
       <label className="snippet-field"><span>Width in Pixels</span><input inputMode="numeric" value={width} onChange={(event) => setWidth(event.target.value)} /></label>
-      {source ? <img className="signature-image-preview" src={source} alt={alt} /> : null}
+      {source ? hostedSignatureImageSrc(source) ? <SignaturePreview html={preview.innerHTML} text={alt} /> : <img className="signature-image-preview" src={source} alt={alt} /> : null}
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       <div className="signature-actions">{onRemove ? <button className="btn btn-danger" type="button" onClick={onRemove}>Remove Image</button> : null}<button className="btn" type="button" onClick={onClose}>Cancel</button><button className="btn btn-primary" type="submit">Apply</button></div>
     </form>
