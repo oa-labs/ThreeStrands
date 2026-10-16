@@ -358,17 +358,28 @@ for (const width of [900, 1280]) {
       const ai = buttons[0].getBoundingClientRect();
       const review = buttons.at(-1)!.getBoundingClientRect();
       const toggle = row.querySelector(".compose-quote-toggle")!.getBoundingClientRect();
-      const trash = element.closest(".composer")!.querySelector('[aria-label="Discard Draft"]')!.getBoundingClientRect();
+      const composer = element.closest(".composer")!;
+      const trashButton = composer.querySelector('[aria-label="Discard Draft"]')!;
+      const trash = trashButton.getBoundingClientRect();
+      const trashIcon = trashButton.querySelector("svg")!.getBoundingClientRect();
+      const attach = composer.querySelector('[aria-label="Attach Files"]')!.getBoundingClientRect();
+      const saved = composer.querySelector('[role="status"]')!.getBoundingClientRect();
       return {
         scrollWidth: row.scrollWidth, clientWidth: row.clientWidth,
         aiCenter: ai.y + ai.height / 2, reviewCenter: review.y + review.height / 2, toggleCenter: toggle.y + toggle.height / 2,
-        reviewRight: review.right, trashRight: trash.right,
+        reviewRight: review.right, trashIconRight: trashIcon.right,
+        trashWidth: trash.width, trashHeight: trash.height, attachWidth: attach.width, attachHeight: attach.height,
+        savedRight: saved.right, trashLeft: trash.left, trashRight: trash.right, composerRight: composer.getBoundingClientRect().right,
         toolsBorder: getComputedStyle(element).borderTopWidth, rowBorder: getComputedStyle(row).borderTopWidth,
         toolsBottom: element.getBoundingClientRect().bottom, footerTop: trash.top,
       };
     });
     expect(alignment.scrollWidth).toBeLessThanOrEqual(alignment.clientWidth);
-    expect(Math.abs(alignment.reviewRight - alignment.trashRight)).toBeLessThan(1);
+    expect(Math.abs(alignment.reviewRight - alignment.trashIconRight)).toBeLessThan(1);
+    expect(alignment.trashWidth).toBe(alignment.attachWidth);
+    expect(alignment.trashHeight).toBe(alignment.attachHeight);
+    expect(alignment.savedRight).toBeLessThanOrEqual(alignment.trashLeft);
+    expect(alignment.trashRight).toBeLessThan(alignment.composerRight);
     if (width === 1280) {
       expect(Math.abs(alignment.aiCenter - alignment.toggleCenter)).toBeLessThan(1);
       expect(Math.abs(alignment.reviewCenter - alignment.toggleCenter)).toBeLessThan(1);
