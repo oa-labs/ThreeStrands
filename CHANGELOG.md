@@ -4,6 +4,8 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+## 0.141.0 — 2026-10-16
+
 ### New
 - Set a **Drive Time Buffer** at the bottom of **Settings → Availability** to reserve time before and after calendar events with a location. Meeting suggestions and conflict checks leave that time free for travel.
 - In **Settings → Signatures**, **Import from Gmail…** brings in a signature from a connected Gmail account for preview, naming, and optional use as the account’s default for new messages. You can edit its plain-text alternative separately or regenerate it from the visual signature.
