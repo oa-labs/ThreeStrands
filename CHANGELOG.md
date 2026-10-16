@@ -26,7 +26,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ### Fixed
 - The **Trust** section in the side panel no longer warns about links in the quoted earlier emails that are folded away in a reply. Those links are often rewritten by someone else's mail system, so their text and destination differ without anything being wrong.
-- In **Settings → Signatures**, dialogs now scroll so you can reach the plain-text field and import controls, previews show logos on a white default background, and **Load Images** lets you see hosted logos while editing. Editing plain text during Gmail import now responds without reprocessing the whole signature, formatted phone numbers are no longer repeated, and the **Choose File** button and its label are centered in the file field.
+- In **Settings → Signatures**, dialogs now scroll so you can reach the plain-text field and import controls, previews show logos on a white default background, and **Load Images** lets you see hosted logos while editing. Editing plain text during Gmail import now responds without reprocessing the whole signature, formatted phone numbers are no longer repeated, and the **Choose File** button and its label are centered in the file field. Divider lines in a signature, such as a vertical line beside a logo or a rule above a tagline, now stay in the preview and in the messages you send.
 
 ## 0.133.2 — 2026-10-15
 

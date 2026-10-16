@@ -48,6 +48,11 @@ describe("email rendering numeric policy", () => {
     expect(sanitizeCssDeclaration("width", "0px")).toBe("0px");
     expect(sanitizeCssDeclaration("width", `${EMAIL_CSS_LIMITS.maxAbsolutePx}px`)).toBe(`${EMAIL_CSS_LIMITS.maxAbsolutePx}px`);
     expect(sanitizeCssDeclaration("width", `${EMAIL_CSS_LIMITS.maxAbsolutePx + 1}px`)).toBeNull();
+    for (const [property, color] of [["border-left", "rgb(221, 221, 221)"], ["border", "#ddd"]]) {
+      expect(sanitizeCssDeclaration(property, `${EMAIL_CSS_LIMITS.maxAbsolutePx - 1}px solid ${color}`)).toBe(`${EMAIL_CSS_LIMITS.maxAbsolutePx - 1}px solid ${color}`);
+      expect(sanitizeCssDeclaration(property, `${EMAIL_CSS_LIMITS.maxAbsolutePx}px solid ${color}`)).toBe(`${EMAIL_CSS_LIMITS.maxAbsolutePx}px solid ${color}`);
+      expect(sanitizeCssDeclaration(property, `${EMAIL_CSS_LIMITS.maxAbsolutePx + 1}px solid ${color}`)).toBeNull();
+    }
     expect(sanitizeHtmlDimension(String(EMAIL_CSS_LIMITS.maxAbsolutePx), false)).toBe(String(EMAIL_CSS_LIMITS.maxAbsolutePx));
     expect(sanitizeHtmlDimension(String(EMAIL_CSS_LIMITS.maxAbsolutePx + 1), false)).toBeNull();
     expect(sanitizeHtmlDimension(`${EMAIL_CSS_LIMITS.maxAbsolutePx - 1}px`, false)).toBe(String(EMAIL_CSS_LIMITS.maxAbsolutePx - 1));
