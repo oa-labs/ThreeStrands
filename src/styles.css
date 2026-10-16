@@ -509,6 +509,8 @@ select:disabled { opacity: var(--opacity-disabled); cursor: default; }
 .btn:hover { border-color: var(--accent); }
 .btn:disabled { opacity: var(--opacity-disabled); cursor: default; }
 .btn-sm { height: var(--control-h-sm); padding: 0 var(--space-2); }
+/* The sparkles mark on any AI button, in one color everywhere; a primary button keeps its own text color. */
+.btn:not(.btn-primary) > .lucide-sparkles { color:var(--accent); }
 /* One primary look everywhere: the --primary fill, never a solid accent. */
 .btn-primary { border-color: var(--primary-border); background: var(--primary); color: var(--text); }
 .btn-danger { border-color: color-mix(in srgb, var(--error) 50%, var(--border-strong)); color: var(--error); }
@@ -2176,7 +2178,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .thread-assist-summary li { margin:var(--space-1) 0; }
 .thread-assist-run { white-space: nowrap; }
 .context-section-header-actions .thread-assist-run { margin-right:var(--space-1); }
-.thread-assist-run svg { color:var(--accent); }
 .thread-assist-suggestions { display:grid; grid-template-columns:minmax(0,1fr); min-width:0; gap:var(--space-2); margin-top:var(--space-2-5); }
 .thread-assist-suggestions h4 { margin:0; color:var(--muted); }
 .context-meeting-details { min-width:0; overflow:hidden; text-overflow:ellipsis; }

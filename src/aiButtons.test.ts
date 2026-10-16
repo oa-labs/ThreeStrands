@@ -63,4 +63,14 @@ describe("AI buttons", () => {
     expect(buttons.length, `no <button> contains ${label}`).toBeGreaterThan(0);
     for (const button of buttons) expect(button).toContain("<Sparkles");
   });
+
+  it("draws the sparkles mark in one color on every AI button, not per section", () => {
+    const styles = source("styles.css");
+    expect(styles).toContain(".btn:not(.btn-primary) > .lucide-sparkles { color:var(--accent); }");
+    // A section-specific tint would let one AI button drift from the others.
+    const tints = [...styles.matchAll(/^([^{}\n]*)\{[^}]*\bcolor:/gm)]
+      .map((match) => match[1].trim())
+      .filter((selector) => /sparkles|thread-assist-run|ai-run/.test(selector) && selector !== ".btn:not(.btn-primary) > .lucide-sparkles");
+    expect(tints).toEqual([]);
+  });
 });

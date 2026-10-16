@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Copy, Pencil, RefreshCw, RotateCcw, Sparkles } from "lucide-react";
+import { Check, Copy, Pencil, RefreshCw, RotateCcw, ScrollText, Sparkles } from "lucide-react";
 import type { ActionProposal, AvailabilityCandidate, AvailabilityPreferences, MeetingProposal, ThreadDetail } from "./domain";
 import type { CalendarAddition, ScheduleSlot } from "./MeetingScheduler";
 import { FindTimesCard } from "./FindTimesCard";
@@ -148,7 +148,7 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
 
   return <section id={THREAD_ASSIST_ID} className="context-section thread-assist" aria-labelledby="thread-assist-heading">
     <header className="context-section-header">
-      <h3 id="thread-assist-heading">{title}</h3>
+      <h3><span className="context-row-glyph" aria-hidden="true"><ScrollText size={ICON_SIZE.xs} /></span><span id="thread-assist-heading">{title}</span></h3>
       {busy ? <span className="context-status" role="status">Reading the conversation…</span> : (
         <div className="context-section-header-actions">
           {!failure && (missingSummary || missingSuggestions) ? (
