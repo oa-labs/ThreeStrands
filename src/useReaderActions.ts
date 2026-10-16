@@ -14,7 +14,7 @@ export function scrollBehavior(): ScrollBehavior {
 }
 
 type Options = Pick<ReturnType<typeof useTriageSession>, "recordTriageEvent"> & {
-  reader: Pick<ReturnType<typeof useReaderState>, "activeMessageIdRef" | "setActiveMessageId" | "pendingMessageToggleFocusRef" | "setMessageExpansionOverrides" | "messageRefs" | "latestMessageRef">;
+  reader: Pick<ReturnType<typeof useReaderState>, "activeMessageIdRef" | "setActiveMessageId" | "setReadingMessage" | "pendingMessageToggleFocusRef" | "setMessageExpansionOverrides" | "messageRefs" | "latestMessageRef">;
   displayedMessages: Message[];
   visibleDetail: ThreadDetail | null;
   selected: Thread | null;
@@ -29,7 +29,7 @@ export function useReaderActions({
   includeArchived, recordTriageEvent,
 }: Options) {
   const {
-    activeMessageIdRef, setActiveMessageId, pendingMessageToggleFocusRef,
+    activeMessageIdRef, setActiveMessageId, setReadingMessage, pendingMessageToggleFocusRef,
     setMessageExpansionOverrides, messageRefs, latestMessageRef,
   } = reader;
   const selectAdjacentMessage = useCallback((direction: -1 | 1) => {
@@ -53,7 +53,8 @@ export function useReaderActions({
   const activateMessage = useCallback((messageId: string) => {
     activeMessageIdRef.current = messageId;
     setActiveMessageId(messageId);
-  }, [activeMessageIdRef, setActiveMessageId]);
+    setReadingMessage(messageId, true);
+  }, [activeMessageIdRef, setActiveMessageId, setReadingMessage]);
   const toggleMessage = useCallback((messageId: string, isExpanded: boolean) => {
     activateMessage(messageId);
     pendingMessageToggleFocusRef.current = messageId;

@@ -1,4 +1,5 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, fireEvent, render, renderHook } from "@testing-library/react";
+import { createElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { Message, ThreadDetail } from "./domain";
 import { useReaderState } from "./useReaderState";
@@ -220,5 +221,77 @@ describe("useReaderState", () => {
     rerender({ selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen: false });
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
     expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+  });
+});
+
+describe("the message being read", () => {
+  const three = [message("first"), message("middle"), message("latest")];
+  const threeDetail = { ...detail, messages: three };
+
+  /** Mounts the reader's scroll container and message nodes, with their positions set by `layout`. */
+  function mountReader() {
+    let reader!: ReturnType<typeof useReaderState>;
+    function Reader() {
+      reader = useReaderState({ selectedThreadId: "thread-1", detail: threeDetail, displayedMessages: three, composerOpen: false });
+      return createElement("div", { ref: reader.messageStackRef, "data-testid": "stack" },
+        three.map((item) => createElement("article", { key: item.id, ref: (node: HTMLElement | null) => { if (node) reader.messageRefs.current.set(item.id, node); } })));
+    }
+    const view = render(createElement(Reader));
+    const stack = view.getByTestId("stack");
+    const rect = (top: number, height: number) => ({ top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+    /** Places each message's top relative to the reader, which is 600px tall at the viewport's top. */
+    const layout = (tops: Record<string, number>, atBottom = false) => {
+      stack.getBoundingClientRect = () => rect(0, 600);
+      Object.defineProperty(stack, "clientHeight", { configurable: true, value: 600 });
+      Object.defineProperty(stack, "scrollHeight", { configurable: true, value: 3000 });
+      Object.defineProperty(stack, "scrollTop", { configurable: true, value: atBottom ? 2400 : 1000 });
+      for (const item of three) {
+        reader.messageRefs.current.get(item.id)!.getBoundingClientRect = () => rect(tops[item.id], 500);
+      }
+    };
+    const scroll = () => act(() => { fireEvent.scroll(stack); });
+    return { current: () => reader, layout, scroll };
+  }
+
+  it("follows the message at the reading line as the reader scrolls, without changing the active message", () => {
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 0; });
+    try {
+      const reader = mountReader();
+      expect(reader.current().readingMessageId).toBe("latest");
+
+      reader.layout({ first: -300, middle: 100, latest: 700 });
+      reader.scroll();
+      expect(reader.current().readingMessageId).toBe("middle");
+      expect(reader.current().activeMessageId).toBe("latest");
+
+      reader.layout({ first: 50, middle: 650, latest: 1250 });
+      reader.scroll();
+      expect(reader.current().readingMessageId).toBe("first");
+
+      // At the end of the conversation the last message counts, even when short.
+      reader.layout({ first: -1900, middle: -1300, latest: 500 }, true);
+      reader.scroll();
+      expect(reader.current().readingMessageId).toBe("latest");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("holds a clicked message while any of it is on screen", () => {
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 0; });
+    try {
+      const reader = mountReader();
+      act(() => reader.current().setReadingMessage("latest", true));
+
+      reader.layout({ first: -300, middle: 100, latest: 550 });
+      reader.scroll();
+      expect(reader.current().readingMessageId).toBe("latest");
+
+      reader.layout({ first: -200, middle: 0, latest: 700 });
+      reader.scroll();
+      expect(reader.current().readingMessageId).toBe("middle");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

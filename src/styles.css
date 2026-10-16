@@ -2307,9 +2307,17 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .draft-review-suggestions blockquote { margin:var(--space-1) 0; padding-left:var(--space-2); border-left:2px solid var(--border); color:var(--muted); white-space:pre-wrap; }
 .draft-review-suggestions .draft-review-wording { margin-top:var(--space-1); white-space:pre-wrap; }
 .draft-review-preview p { overflow-wrap:anywhere; }
-.compose-recipient-chips { display:flex; flex-wrap:wrap; gap:var(--space-1); padding-top:var(--space-3); }
-.recipient-history-chip { max-width:100%; padding:var(--space-0-5) var(--space-2); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--muted); background:transparent; font:inherit; font-size:var(--text-meta); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.recipient-history-chip[aria-pressed="true"] { border-color:var(--border-strong); color:var(--text); background:var(--hover); }
+.context-person { padding:var(--space-3) var(--context-row-inset) var(--space-2); }
+.context-person-main { display:flex; align-items:center; gap:var(--space-2); min-width:0; }
+.contact-avatar.context-person-avatar { --avatar-size:var(--control-h-sm); }
+.context-person-text { display:grid; flex:1; min-width:0; grid-template-columns:minmax(0,1fr); }
+.context-person-name { min-width:0; overflow:hidden; color:var(--text); font-size:var(--text-secondary); font-weight:var(--weight-semibold); text-overflow:ellipsis; white-space:nowrap; }
+.context-person-email { min-width:0; overflow:hidden; color:var(--muted); font-size:var(--text-meta); text-overflow:ellipsis; white-space:nowrap; }
+.context-person-switch { flex:0 0 auto; white-space:nowrap; }
+.context-person-list { display:grid; gap:var(--space-0-5); margin:var(--space-2) 0 0; padding:var(--space-1); border:1px solid var(--border); border-radius:var(--radius-sm); list-style:none; }
+.context-person-option { display:grid; grid-template-columns:minmax(0,1fr); width:100%; min-width:0; padding:var(--space-1) var(--space-2); border:0; border-radius:var(--radius-sm); background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+.context-person-option:hover, .context-person-option:focus-visible { background:var(--hover); }
+.context-person-option .context-person-name { font-weight:var(--weight-medium); }
 .compose-recipient-role { margin:0; color:var(--muted); font-size:var(--text-meta); line-height:var(--leading-normal); overflow-wrap:anywhere; }
 .compose-recipient-notes { display:-webkit-box; margin:0; overflow:hidden; color:var(--text); font-size:var(--text-meta); line-height:var(--leading-normal); white-space:pre-wrap; -webkit-box-orient:vertical; -webkit-line-clamp:4; }
 .compose-recipient-role + .compose-recipient-notes { margin-top:var(--space-1); }

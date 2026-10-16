@@ -38,16 +38,12 @@ async function enableDraftReview(page: import("@playwright/test").Page) {
 }
 
 for (const name of [null, "A recipient with a very long display name that exceeds the panel width"]) {
-  test(`long recipient ${name ? "names and email addresses" : "email addresses"} truncate within the context panel's history chips`, async ({ page }) => {
+  test(`long recipient ${name ? "names and email addresses" : "email addresses"} truncate within the context panel's person header`, async ({ page }) => {
     await page.goto("/");
     await page.getByRole("button", { name: "New Message (c)" }).click();
     const composer = page.getByRole("dialog", { name: "New Message" });
     const email = "someone.with.a.long.address@a.very.long.organization.example.com";
     const otherEmail = "another.recipient.with.a.long.address@a.very.long.organization.example.com";
-    const recipients = [
-      { label: name || email, email },
-      { label: otherEmail, email: otherEmail },
-    ];
     const to = composer.getByRole("textbox", { name: "To", exact: true });
     await to.fill(name ? `${name} <${email}>` : email);
     await to.press(",");
@@ -55,19 +51,16 @@ for (const name of [null, "A recipient with a very long display name that exceed
     await to.press(",");
     await composer.getByRole("textbox", { name: "Subject" }).focus();
     const panel = page.getByRole("complementary", { name: "Compose context" });
-    const chips = panel.getByRole("group", { name: "Show history with" });
-    await expect(chips.getByRole("button")).toHaveCount(2);
-    // Unsaved recipients have no About section; their identities appear in the history chips.
+    const header = panel.getByRole("group", { name: "Showing history with" });
+    // Unsaved recipients have no About section; the header names whose history is shown.
     await expect(panel.getByRole("region", { name: /^About / })).toHaveCount(0);
-    for (const recipient of recipients) {
-      const chip = chips.getByRole("button", { name: recipient.label, exact: true });
-      await expect(chip).toBeVisible();
-      await expect(chip).toHaveText(recipient.label);
-      await expect(chip).toHaveAttribute("title", recipient.email);
-      await expect(chip).toHaveCSS("white-space", "nowrap");
-      await expect(chip).toHaveCSS("text-overflow", "ellipsis");
-      await expect(chip).toHaveCSS("overflow-x", "hidden");
-      const layout = await chip.evaluate((element) => ({
+    const expectTruncated = async (line: ReturnType<typeof header.locator>, text: string) => {
+      await expect(line).toBeVisible();
+      await expect(line).toHaveText(text);
+      await expect(line).toHaveCSS("white-space", "nowrap");
+      await expect(line).toHaveCSS("text-overflow", "ellipsis");
+      await expect(line).toHaveCSS("overflow-x", "hidden");
+      const layout = await line.evaluate((element) => ({
         scrollWidth: element.scrollWidth,
         clientWidth: element.clientWidth,
         right: element.getBoundingClientRect().right,
@@ -75,11 +68,22 @@ for (const name of [null, "A recipient with a very long display name that exceed
       }));
       expect(layout.scrollWidth).toBeGreaterThan(layout.clientWidth);
       expect(layout.right).toBeLessThanOrEqual(layout.panelRight);
-    }
-    await expect(chips.getByRole("button", { name: recipients[0].label, exact: true })).toHaveAttribute("aria-pressed", "true");
-    await chips.getByRole("button", { name: otherEmail, exact: true }).click();
-    await expect(chips.getByRole("button", { name: otherEmail, exact: true })).toHaveAttribute("aria-pressed", "true");
-    await expect(chips.getByRole("button", { name: recipients[0].label, exact: true })).toHaveAttribute("aria-pressed", "false");
+    };
+    await expectTruncated(header.locator(".context-person-main .context-person-name"), name || email);
+    if (name) await expectTruncated(header.locator(".context-person-main .context-person-email"), email);
+    const toggle = header.getByRole("button", { name: "1 other", exact: true });
+    await expect(toggle).toBeVisible();
+    expect((await toggle.boundingBox())!.x + (await toggle.boundingBox())!.width)
+      .toBeLessThanOrEqual((await panel.boundingBox())!.x + (await panel.boundingBox())!.width);
+
+    await toggle.click();
+    const others = header.getByRole("list", { name: "Other people" });
+    await expectTruncated(others.locator(".context-person-name"), otherEmail);
+    await others.getByRole("button").click();
+    await expect(others).toHaveCount(0);
+    await expect(header.locator(".context-person-main .context-person-name")).toHaveText(otherEmail);
+    await header.getByRole("button", { name: "1 other", exact: true }).click();
+    await expect(header.getByRole("list", { name: "Other people" }).locator(".context-person-name")).toHaveText(name || email);
   });
 }
 

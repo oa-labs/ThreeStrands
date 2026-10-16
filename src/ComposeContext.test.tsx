@@ -141,11 +141,22 @@ describe("ComposeContext", () => {
 
   it("switches whose history is shown among several recipients", async () => {
     renderPanel({ draft: { ...draft, to: "ann@partner.com", cc: "Pal <pal@friends.org>" } });
-    const chips = screen.getByRole("group", { name: "Show history with" });
-    expect(within(chips).getByRole("button", { name: "ann@partner.com" })).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(within(chips).getByRole("button", { name: "Pal" }));
-    expect(within(chips).getByRole("button", { name: "Pal" })).toHaveAttribute("aria-pressed", "true");
+    const header = screen.getByRole("group", { name: "Showing history with" });
+    expect(header).toHaveTextContent("ann@partner.com");
+    fireEvent.click(within(header).getByRole("button", { name: "1 other" }));
+    fireEvent.click(within(header).getByRole("button", { name: /^Pal/ }));
+    expect(header).toHaveTextContent("Pal");
+    expect(within(header).queryByRole("button", { name: /^Pal/ })).not.toBeInTheDocument();
     await waitFor(() => expect(mailClient.contactTimeline).toHaveBeenLastCalledWith("derived:pal@friends.org", 0, 5));
+  });
+
+  it("lists the user's colleagues after the people the message is going to", async () => {
+    renderPanel({ draft: { ...draft, to: "Sam <sam@acme.com>, ann@partner.com" } });
+    const header = screen.getByRole("group", { name: "Showing history with" });
+    // The first outside recipient is shown, not the colleague listed first.
+    expect(header).toHaveTextContent("ann@partner.com");
+    fireEvent.click(within(header).getByRole("button", { name: "1 other" }));
+    expect(within(within(header).getByRole("list", { name: "Other people" })).getAllByRole("button").map((button) => button.title)).toEqual(["sam@acme.com"]);
   });
 
   it("offers the address the user probably meant and applies it through the composer", async () => {

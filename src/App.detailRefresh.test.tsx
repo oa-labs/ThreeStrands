@@ -82,9 +82,10 @@ it("follows a reply's recipients in the conversation panel", async () => {
 
     const to = within(composer).getByRole("textbox", { name: "To" });
     fireEvent.change(to, { target: { value: `${(to as HTMLInputElement).value}, carol@example.com,` } });
-    const chips = await within(panel).findByRole("group", { name: "Show history with" });
-    fireEvent.click(within(chips).getByRole("button", { name: "carol@example.com" }));
-    expect(within(chips).getByRole("button", { name: "carol@example.com" })).toHaveAttribute("aria-pressed", "true");
+    const header = within(panel).getByRole("group", { name: "Showing history with" });
+    fireEvent.click(await within(header).findByRole("button", { name: /^\d+ others?$/ }));
+    fireEvent.click(within(header).getByRole("button", { name: "carol@example.com" }));
+    await waitFor(() => expect(within(header).getByText("carol@example.com")).toHaveClass("context-person-name"));
 
     fireEvent.click(within(composer).getByRole("button", { name: "Save and Close Draft" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reply Message" })).not.toBeInTheDocument());

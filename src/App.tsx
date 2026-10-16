@@ -248,6 +248,8 @@ export function App() {
     messageExpansionOverrides,
     messageStackRef,
     activeMessageId,
+    readingMessageId,
+    readingMessageIdRef,
     latestDisplayedMessageId,
   } = reader;
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -259,7 +261,7 @@ export function App() {
   const fileSessions = useRef(new Map<string, FilesWorkspaceSnapshot>());
   const calendarSession = useRef<CalendarWorkspaceSnapshot | null>(null);
   const taskSessions = useRef(new Map<string, TaskWorkspaceSnapshot>());
-  const workspaces = useWorkspaces({ settingsOpen, settingsSection, visibleDetail, openSettingsAt, setNotice });
+  const workspaces = useWorkspaces({ settingsOpen, settingsSection, visibleDetail, readingMessageId, readingMessageIdRef, openSettingsAt, setNotice });
   const {
     rightWorkspace, setRightWorkspace, calendarWeekAnchor, setCalendarWeekAnchor,
     calendarEventToOpen, openCalendarAt, contactAddressBookTarget, contactsView, setContactsView,
@@ -1181,6 +1183,8 @@ export function App() {
           ) : null}
           accounts={accounts}
           selectedEmail={contextPersonEmail}
+          readingMessageId={readingMessageId}
+          onSelectPerson={contactCardActions.onSelectPerson}
           reply={composerBelongsToVisibleThread && correspondence.liveDraft ? {
             review: <DraftReviewSection key={correspondence.liveDraft.id} actions={correspondence.draftReview}
               enabled={aiDraftFeatureEnabled} available={aiDraftAvailable} onOpenSettings={() => openSettingsAt("ai")} />,

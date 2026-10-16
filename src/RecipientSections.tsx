@@ -10,29 +10,6 @@ import { askFindTimes, FindTimesCard, type FindTimesContext } from "./FindTimesC
 import { lookaheadRange, planTimeSearch, type SchedulePlan, type SuggestedSearch } from "./scheduling";
 import { ICON_SIZE } from "./iconSizes";
 
-/** With several recipients, chooses whose history the panel shows. Left out for one or none. */
-export function RecipientChips({ recipients, selectedEmail, onSelect }: {
-  recipients: { email: string; name: string | null }[];
-  selectedEmail: string;
-  onSelect(email: string): void;
-}) {
-  if (recipients.length < 2) return null;
-  return (
-    <div className="compose-recipient-chips" role="group" aria-label="Show history with">
-      {recipients.map((recipient) => (
-        <button
-          type="button"
-          className="recipient-history-chip"
-          key={recipient.email}
-          aria-pressed={recipient.email === selectedEmail}
-          title={recipient.email}
-          onClick={() => onSelect(recipient.email)}
-        >{recipient.name || recipient.email}</button>
-      ))}
-    </div>
-  );
-}
-
 type FindTimesState = {
   /** Each search remounts the card. */
   key: number;

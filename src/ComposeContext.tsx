@@ -4,8 +4,9 @@ import type { Draft } from "./correspondence";
 import type { Account, AvailabilityCandidate, ContactGroupRecipients, AvailabilityPreferences, ContactProfile, ContactTimelineItem, ScheduleEvent, ThreadTask } from "./domain";
 import { composeChecks, draftRecipients, knownAddressMap, type ComposeCheck, type KnownCorrespondents } from "./composeChecks";
 import { ContactFilesSection, ContextSection, DomainSection, RecentEmailsSection } from "./ContextSections";
-import { AvailabilitySection, RecipientChips, RecipientSummary } from "./RecipientSections";
-import { KNOWN_ADDRESS_LIMIT } from "./contactContext";
+import { AvailabilitySection, RecipientSummary } from "./RecipientSections";
+import { ContextPersonHeader } from "./ContextPersonHeader";
+import { isColleagueAddress, KNOWN_ADDRESS_LIMIT } from "./contactContext";
 import { ThreadTasks } from "./ThreadTasks";
 import { ContactMeetings } from "./ContactMeetings";
 import { errorMessage, logBackgroundFailure } from "./errors";
@@ -167,7 +168,12 @@ export function ComposeContext({
   review?: ReactNode;
 }) {
   const ownEmails = useMemo(() => accounts.map((account) => account.email), [accounts]);
-  const recipients = draftRecipients(draft, ownEmails);
+  // The user's colleagues come last, so the panel opens on someone outside.
+  const allRecipients = draftRecipients(draft, ownEmails);
+  const recipients = [
+    ...allRecipients.filter((item) => !isColleagueAddress(item.email, ownEmails)),
+    ...allRecipients.filter((item) => isColleagueAddress(item.email, ownEmails)),
+  ];
   const known = useKnownCorrespondents(ownEmails, recipients.length > 0);
   const [picked, setPicked] = useState<string | null>(null);
   const selected = recipients.find((recipient) => recipient.email === picked) ?? recipients[0] ?? null;
@@ -215,7 +221,12 @@ export function ComposeContext({
         onMoveToBcc={onMoveToBcc}
       />
       {review}
-      <RecipientChips recipients={recipients} selectedEmail={email} onSelect={setPicked} />
+      <ContextPersonHeader
+        people={recipients}
+        selectedEmail={email}
+        displayName={person?.profile?.displayName}
+        onSelect={setPicked}
+      />
       {selected ? <RecipientSummary email={selected.email} name={selected.name} profile={person?.profile ?? null} /> : (
         <p className="context-status compose-context-empty">Add a recipient to see your history with them.</p>
       )}

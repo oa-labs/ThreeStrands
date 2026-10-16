@@ -8,6 +8,7 @@ function setup() {
   const reader = {
     activeMessageIdRef: { current: null as string | null },
     setActiveMessageId: vi.fn(),
+    setReadingMessage: vi.fn(),
     pendingMessageToggleFocusRef: { current: null as string | null },
     setMessageExpansionOverrides: vi.fn((update: (current: Map<string, boolean>) => Map<string, boolean>) => {
       for (const [key, value] of update(overrides)) overrides.set(key, value);
@@ -36,6 +37,8 @@ describe("showing a Trust link", () => {
     const link = { href: "https://partnr.example/pay", text: "pay the invoice" };
     act(() => hook.result.current.showMessageLink("thread-1", "m2", link));
     expect(reader.setActiveMessageId).toHaveBeenCalledWith("m2");
+    // The context panel follows the message shown, and holds it while it is on screen.
+    expect(reader.setReadingMessage).toHaveBeenCalledWith("m2", true);
     expect(overrides.get("m2")).toBe(true);
     const first = hook.result.current.linkReveal;
     expect(first).toEqual({ messageId: "m2", reveal: { ...link, key: expect.any(Number) } });

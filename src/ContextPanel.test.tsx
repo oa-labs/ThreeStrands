@@ -23,6 +23,12 @@ async function personLoaded(contactId:string){
   await waitFor(()=>expect(mailClient.contactFiles).toHaveBeenLastCalledWith(contactId,50));
 }
 
+/** Opens the person header's switcher and returns whom it offers, in order. */
+function otherPeople(header:HTMLElement){
+  fireEvent.click(within(header).getByRole("button",{name:/^\d+ others?$/}));
+  return within(within(header).getByRole("list",{name:"Other people"})).getAllByRole("button").map(button=>button.title);
+}
+
 function renderPanel(overrides:Partial<Parameters<typeof ContextPanel>[0]>={}){
   return render(<ContextPanel detail={detail} accounts={[account]} onOpenThread={vi.fn()} {...overrides}/>);
 }
@@ -58,6 +64,76 @@ describe("ContextPanel",()=>{
     // Someone who is not on this conversation falls back to the latest sender.
     rerender(<ContextPanel detail={detail} accounts={[account]} selectedEmail="stranger@example.com" onOpenThread={vi.fn()}/>);
     await personLoaded(bob.id);
+  });
+
+  describe("following the message being read",()=>{
+    const partner:ContactProfile={...jane,id:"contact:ana@partner.org",displayName:"Ana Ruiz",addresses:["ana@partner.org"]};
+    const thread={thread:{id:"thread-2",accountId:"you@example.com",labels:["INBOX"]},messages:[
+      {id:"a",sender:"Ana Ruiz <ana@partner.org>",recipients:["You <you@example.com>","Pat Kim <pat@example.com>"],sentAt:"2026-09-20T00:00:00Z",bodyText:"",bodyHtml:""},
+      {id:"b",sender:"You <you@example.com>",recipients:["Lee Ong <lee@vendor.net>"],sentAt:"2026-09-21T00:00:00Z",bodyText:"",bodyHtml:""},
+      {id:"c",sender:"Lee Ong <lee@vendor.net>",recipients:["You <you@example.com>"],sentAt:"2026-09-22T00:00:00Z",bodyText:"",bodyHtml:""},
+    ]} as unknown as ThreadDetail;
+    const panel=(props:Partial<Parameters<typeof ContextPanel>[0]>)=><ContextPanel detail={thread} accounts={[account]} onOpenThread={vi.fn()} {...props}/>;
+    beforeEach(()=>{
+      vi.mocked(mailClient.resolveContactIds).mockImplementation(async emails=>Object.fromEntries(
+        emails.filter(email=>email==="ana@partner.org").map(email=>[email,partner.id])));
+      vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===partner.id?partner:null);
+      vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
+    });
+
+    it("shows the sender of the message being read, or whom the user wrote to",async()=>{
+      const {rerender}=render(panel({readingMessageId:"a"}));
+      await personLoaded(partner.id);
+      expect(screen.getByRole("group",{name:"Showing history with"})).toHaveTextContent("Ana Ruiz");
+
+      rerender(panel({readingMessageId:"b"}));
+      await personLoaded("derived:lee@vendor.net");
+
+      // Without a message being read, the latest outside sender stays the default.
+      rerender(panel({readingMessageId:null}));
+      await personLoaded("derived:lee@vendor.net");
+    });
+
+    it("holds a person picked in a message header until the reader moves to another message",async()=>{
+      const {rerender}=render(panel({readingMessageId:"c",selectedEmail:"ana@partner.org"}));
+      await personLoaded(partner.id);
+      rerender(panel({readingMessageId:"c",selectedEmail:"ana@partner.org"}));
+      await personLoaded(partner.id);
+      // The reader drops a pick once its message is left, so the panel follows the next message.
+      rerender(panel({readingMessageId:"b",selectedEmail:null}));
+      await personLoaded("derived:lee@vendor.net");
+    });
+
+    it("lists the conversation's correspondents before the user's colleagues and switches to the one picked",async()=>{
+      const onSelectPerson=vi.fn();
+      const {rerender}=render(panel({readingMessageId:"c",onSelectPerson}));
+      await personLoaded("derived:lee@vendor.net");
+      const header=screen.getByRole("group",{name:"Showing history with"});
+      expect(otherPeople(header)).toEqual(["ana@partner.org","pat@example.com"]);
+      fireEvent.click(within(header).getByRole("button",{name:/Ana Ruiz/}));
+      expect(onSelectPerson).toHaveBeenCalledWith("ana@partner.org");
+      await personLoaded(partner.id);
+      expect(within(header).queryByRole("list",{name:"Other people"})).not.toBeInTheDocument();
+
+      // Moving to another message lets go of the pick.
+      rerender(panel({readingMessageId:"b",onSelectPerson}));
+      await personLoaded("derived:lee@vendor.net");
+    });
+
+    it("closes the switcher on Escape and returns focus to it",async()=>{
+      render(panel({readingMessageId:"c"}));
+      await personLoaded("derived:lee@vendor.net");
+      const toggle=screen.getByRole("button",{name:"2 others"});
+      fireEvent.click(toggle);
+      const list=screen.getByRole("list",{name:"Other people"});
+      expect(within(list).getAllByRole("button")[0]).toHaveFocus();
+      fireEvent.keyDown(list,{key:"ArrowDown"});
+      expect(within(list).getAllByRole("button")[1]).toHaveFocus();
+      fireEvent.keyDown(list,{key:"Escape"});
+      expect(screen.queryByRole("list",{name:"Other people"})).not.toBeInTheDocument();
+      expect(toggle).toHaveFocus();
+      expect(toggle).toHaveAttribute("aria-expanded","false");
+    });
   });
 
   it("names meeting attendees with a saved contact name even when the message says only a first name",async()=>{
@@ -372,17 +448,17 @@ describe("ContextPanel",()=>{
       vi.mocked(mailClient.contactActivity).mockResolvedValue({...noActivity,sentCount:3,receivedCount:4,threadCount:2});
     });
 
-    it("shows a card for the first To recipient, with chips to switch among the reply's recipients",async()=>{
+    it("heads the person sections with the first To recipient and switches among the reply's recipients",async()=>{
       renderPanel({selectedEmail:null,reply:reply([toBob,ccCarol])});
       const panel=screen.getByRole("complementary",{name:"Conversation context"});
       expect(await within(panel).findByRole("region",{name:"About Bob Lee"})).toBeInTheDocument();
       await personLoaded(bob.id);
       expect(mailClient.contactActivity).not.toHaveBeenCalled();
-      const chips=within(panel).getByRole("group",{name:"Show history with"});
-      expect(within(chips).getAllByRole("button").map(button=>button.textContent)).toEqual(["Bob Lee","carol@example.com"]);
-      expect(within(chips).getByRole("button",{name:"Bob Lee"})).toHaveAttribute("aria-pressed","true");
+      const header=within(panel).getByRole("group",{name:"Showing history with"});
+      expect(header).toHaveTextContent("Bob Lee");
+      expect(otherPeople(header)).toEqual(["carol@example.com"]);
 
-      fireEvent.click(within(chips).getByRole("button",{name:"carol@example.com"}));
+      fireEvent.click(within(header).getByRole("button",{name:"carol@example.com"}));
       const card=await within(panel).findByRole("region",{name:"About Carol Ng"});
       expect(card).toHaveTextContent("Buyer");
       expect(card).toHaveTextContent("Prefers mornings");
@@ -392,12 +468,13 @@ describe("ContextPanel",()=>{
     it("follows recipients the reply gains or loses, not the conversation's participants",async()=>{
       const {rerender}=renderPanel({reply:reply([toBob])});
       await personLoaded(bob.id);
-      // One recipient needs no chips; Jane is on the conversation but not on the reply.
-      expect(screen.queryByRole("group",{name:"Show history with"})).not.toBeInTheDocument();
+      // One recipient leaves nobody to switch to; Jane is on the conversation but not on the reply.
+      const header=screen.getByRole("group",{name:"Showing history with"});
+      expect(within(header).queryByRole("button",{name:/other/})).not.toBeInTheDocument();
 
       rerender(<ContextPanel detail={detail} accounts={[account]} reply={reply([toBob,ccCarol])} onOpenThread={vi.fn()}/>);
-      const chips=await screen.findByRole("group",{name:"Show history with"});
-      fireEvent.click(within(chips).getByRole("button",{name:"carol@example.com"}));
+      expect(otherPeople(header)).toEqual(["carol@example.com"]);
+      fireEvent.click(within(header).getByRole("button",{name:"carol@example.com"}));
       await personLoaded(carol.id);
 
       // Removing the chosen recipient returns the panel to the first one left.
@@ -419,7 +496,7 @@ describe("ContextPanel",()=>{
       await personLoaded(carol.id);
     });
 
-    it("puts the checks, the recipient card, and availability above the conversation's brief and sections",async()=>{
+    it("puts the checks and availability first, and the recipient card with the person sections below the conversation's",async()=>{
       vi.mocked(mailClient.contactTimeline).mockResolvedValue([timelineItem("thread-2","Budget review")]);
       renderPanel({
         reply:reply([toBob],{
@@ -433,7 +510,7 @@ describe("ContextPanel",()=>{
       await within(panel).findByRole("region",{name:"Recent emails"});
       await within(panel).findByRole("region",{name:"About Bob Lee"});
       const regions=within(panel).getAllByRole("region").map((region)=>region.getAttribute("aria-label")??region.textContent?.split(/\d/)[0].trim());
-      expect(regions).toEqual(["Before you send","About Bob Lee","Availability","Brief","Conversation tasks","Recent emails"]);
+      expect(regions).toEqual(["Before you send","Availability","Brief","Conversation tasks","About Bob Lee","Recent emails"]);
       // The brief stays open below the card rather than collapsing while replying.
       expect(within(panel).getByRole("region",{name:"Brief"})).toBeVisible();
     });

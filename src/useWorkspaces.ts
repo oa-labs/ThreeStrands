@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type RefObject } from "react";
 import type { ScheduleEvent, ThreadDetail } from "./domain";
 import type { ContactCardActions } from "./ContactCard";
 import { readContactsView, writeContactsView, type ContactsView } from "./contactsView";
@@ -19,12 +19,15 @@ type Options = {
   settingsOpen: boolean;
   settingsSection: SettingsSection;
   visibleDetail: ThreadDetail | null;
+  /** The message the reader is reading, which a person picked from it belongs to. */
+  readingMessageId: string | null;
+  readingMessageIdRef: RefObject<string | null>;
   openSettingsAt: (section: SettingsSection) => void;
   setNotice: (notice: Notice | null) => void;
 };
 
 /** Owns the selected workspace and calendar/contact entry points. */
-export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, openSettingsAt, setNotice }: Options) {
+export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, readingMessageId, readingMessageIdRef, openSettingsAt, setNotice }: Options) {
   const [rightWorkspace, setRightWorkspace] = useState<RightWorkspace>(null);
   const [calendarWeekAnchor, setCalendarWeekAnchor] = useState<Date | null>(null);
   const [calendarEventToOpen, setCalendarEventToOpen] = useState<ScheduleEvent | null>(null);
@@ -94,21 +97,24 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, op
   const openKeepInTouchView = useCallback(() => { setContactAddressBookTarget(null); setContactsView("keepInTouch"); setRightWorkspace("contacts"); }, []);
   const openContactGroupsView = useCallback(() => { setContactAddressBookTarget(null); setContactsView("groups"); setRightWorkspace("contacts"); }, []);
   const openContactInAddressBook = useCallback((id: string) => { setContactAddressBookTarget(id); setContactsView("all"); setRightWorkspace("contacts"); }, []);
-  // The participant picked from a message header, kept per conversation so
-  // opening another conversation returns the panel to its latest sender.
-  const [contextPersonPick, setContextPersonPick] = useState<{ threadId: string; email: string } | null>(null);
-  const contextPersonEmail = visibleDetail && contextPersonPick?.threadId === visibleDetail.thread.id ? contextPersonPick.email : null;
+  // The participant picked from a message header or the panel's person
+  // switcher. It holds while the reader stays on the message it was picked
+  // from; moving to another message, or another conversation, returns the
+  // panel to that message's person.
+  const [contextPersonPick, setContextPersonPick] = useState<{ threadId: string; messageId: string | null; email: string } | null>(null);
+  const contextPersonEmail = visibleDetail && contextPersonPick?.threadId === visibleDetail.thread.id
+    && contextPersonPick.messageId === readingMessageId ? contextPersonPick.email : null;
   const visibleThreadId = visibleDetail?.thread.id ?? null;
   const contactCardActions = useMemo<ContactCardActions>(() => ({
     onOpenContact: openContactInAddressBook,
     onSelectPerson: (email) => {
       if (!visibleThreadId) return;
-      setContextPersonPick({ threadId: visibleThreadId, email });
+      setContextPersonPick({ threadId: visibleThreadId, messageId: readingMessageIdRef.current, email });
       // Picking a person asks to see them, so bring the context panel back from another workspace.
       setRightWorkspace((current) => current === "tasks" || current === "week" || current === "contacts" || current === "files" ? null : current);
     },
     selectedEmail: contextPersonEmail,
-  }), [openContactInAddressBook, visibleThreadId, contextPersonEmail]);
+  }), [openContactInAddressBook, visibleThreadId, contextPersonEmail, readingMessageIdRef]);
   const openCalendarView = useCallback((day?: Date, event?: ScheduleEvent) => {
     setCalendarWeekAnchor((current) => day ? startOfLocalDay(day) : current ?? startOfLocalDay(new Date()));
     setCalendarEventToOpen(event ?? null);

@@ -131,3 +131,16 @@ export function organizationDomain(email: string, ownEmails: string[]): string |
   if (ownEmails.some((own) => own.toLocaleLowerCase().endsWith(`@${domain}`))) return null;
   return domain;
 }
+
+/**
+ * Whether an address is at one of the user's own organization domains, so a
+ * colleague rather than the person the conversation is with. Personal mailbox
+ * providers never count, since sharing one says nothing about an organization.
+ */
+export function isColleagueAddress(email: string, ownEmails: string[]): boolean {
+  const at = email.lastIndexOf("@");
+  if (at <= 0) return false;
+  const domain = email.slice(at + 1).trim().toLocaleLowerCase();
+  if (!domain.includes(".") || isPersonalMailDomain(domain)) return false;
+  return ownEmails.some((own) => own.toLocaleLowerCase().endsWith(`@${domain}`));
+}
