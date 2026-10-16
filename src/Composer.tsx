@@ -422,7 +422,7 @@ export const Composer = forwardRef<ComposerHandle, {
           <option value="__manage_signatures__" data-action="manage">Manage signatures…</option>
         </select></label> : null}
         {replyAssistEnabled ? <button type="button" className="btn btn-sm reply-assist-trigger" title={`Draft a reply with AI (${composeKeyLabel("Mod+j")})`} aria-keyshortcuts="Meta+J Control+J" disabled={busy} onClick={draftReplyWithAI}>
-          <Sparkles size={ICON_SIZE.md} /> Draft reply
+          <Sparkles size={ICON_SIZE.md} /> Draft Reply
         </button> : null}
         {reviewEnabled ? <button type="button" className="btn btn-sm draft-review-trigger" title="Get feedback on this draft from AI" aria-expanded={reviewOpen} disabled={busy} onClick={() => setReviewOpen((open) => !open)}>
           <Sparkles size={ICON_SIZE.md} /> Review

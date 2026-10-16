@@ -205,7 +205,7 @@ export const commands: Command[] = [
   // the composer's trash button. Typing "#" in a composer field still types.
   { id: "draft.discard", title: "Discard Draft", keys: ["#"], group: "Compose", enabled: (c) => c.composerActive && c.focusedPane === "mail" && c.mailbox === "drafts", run: (c) => complete(c.discardDraft) },
   { id: "draft.attach", title: "Attach Files", keys: [], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.attachFiles) },
-  { id: "draft.replyAssist", title: "Draft reply", keywords: ["AI", "write", "generate"], keys: ["Mod+j"], group: "Compose", enabled: (c) => c.composerActive && c.aiReplyAssistEnabled, run: (c) => complete(c.draftReplyWithAI) },
+  { id: "draft.replyAssist", title: "Draft Reply", keywords: ["AI", "write", "generate"], keys: ["Mod+j"], group: "Compose", enabled: (c) => c.composerActive && c.aiReplyAssistEnabled, run: (c) => complete(c.draftReplyWithAI) },
   { id: "draft.contextPanel", title: "Switch Between Draft and Context Panel", keys: ["F6", "Mod+Shift+p"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.toggleContextPanelFocus) },
   { id: "send.undo", title: "Undo Send", keys: [], group: "Compose", enabled: (c) => c.canUndoSend, run: (c) => complete(c.undoSend) },
   {
