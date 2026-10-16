@@ -36,6 +36,23 @@ describe("ContextRow", () => {
     expect(title).toHaveAttribute("title", "Screenshot 2026-09-16 at 11.49.10 AM.png");
   });
 
+  it("notices a wrapped title clamped below its last shown line, and only then", () => {
+    const { container } = render(<ContextRow title="CS Leadership Meeting (and Strategy Offsite Planning)" date="Tue" wrapTitle onActivate={() => {}} />);
+    const title = container.querySelector(".context-row-title")!;
+    setWidths(title, 180, 180);
+    const setHeights = (scrollHeight: number, clientHeight: number) => {
+      Object.defineProperty(title, "scrollHeight", { configurable: true, value: scrollHeight });
+      Object.defineProperty(title, "clientHeight", { configurable: true, value: clientHeight });
+    };
+    // A pixel of rounding is not a cut.
+    setHeights(41, 40);
+    fireEvent.mouseEnter(container.querySelector(".context-row")!);
+    expect(title).not.toHaveAttribute("title");
+    setHeights(60, 40);
+    fireEvent.mouseEnter(container.querySelector(".context-row")!);
+    expect(title).toHaveAttribute("title", "CS Leadership Meeting (and Strategy Offsite Planning)");
+  });
+
   it("keeps the glyph column and puts the date on the title line, with or without a glyph", () => {
     for (const element of [
       <ContextRow key="bare" title="You" date="Oct 7" detail="Progress on the Area Directors" />,

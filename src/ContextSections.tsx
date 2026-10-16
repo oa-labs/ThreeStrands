@@ -76,13 +76,15 @@ export function ContextSectionHeader({ title, titleId, count, toggle, icon, acti
 }
 
 /**
- * Gives a line its full text as a tooltip only while the text is cut off, so
+ * Gives a line its full text as a tooltip only while the text is cut off,
+ * across or below, so
  * hovering never repeats what is already visible. Checked on each hover,
  * since the panel's width changes.
  */
 function revealIfTruncated(line: HTMLElement | null) {
   if (!line) return;
-  const cut = [line, ...line.querySelectorAll<HTMLElement>("*")].some((node) => node.scrollWidth > node.clientWidth);
+  // Cut off at the side, or below the last line of a title clamped to a few lines.
+  const cut = [line, ...line.querySelectorAll<HTMLElement>("*")].some((node) => node.scrollWidth > node.clientWidth || node.scrollHeight > node.clientHeight + 1);
   const text = line.textContent?.trim() ?? "";
   if (cut && text) line.title = text;
   else line.removeAttribute("title");

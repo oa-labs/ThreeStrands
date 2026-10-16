@@ -106,6 +106,22 @@ export function formatEventDate(event: ScheduleEvent): string {
   }).format(eventDate(event));
 }
 
+/**
+ * A short date for an upcoming event, so its title keeps the room in a narrow
+ * list: "Today", "Tomorrow", the weekday within the coming week ("Fri"), then
+ * "Oct 21", with the year only when it is not this year's.
+ */
+export function formatUpcomingDate(event: ScheduleEvent, now = new Date()): string {
+  const date = eventDate(event);
+  const days = Math.round((startOfLocalDay(date).getTime() - startOfLocalDay(now).getTime()) / 86_400_000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Tomorrow";
+  if (days < 7) return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(date);
+  return new Intl.DateTimeFormat(undefined, date.getFullYear() === now.getFullYear()
+    ? { month: "short", day: "numeric" }
+    : { month: "short", day: "numeric", year: "numeric" }).format(date);
+}
+
 export function safeWebUrl(value: string | null | undefined): string | null {
   if (!value) return null;
   try {

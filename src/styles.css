@@ -2259,6 +2259,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-task-checkbox { width:var(--check-size); height:var(--check-size); margin:0; accent-color:var(--accent); cursor:pointer; }
 .context-task-done .context-row-title { color:var(--muted); text-decoration:line-through; }
 .context-meeting .context-row-icon { color:var(--accent); }
+.context-meeting .context-row-title { display:-webkit-box; overflow:hidden; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
+.context-meeting .context-row-line { align-items:flex-start; }
 .context-meeting .context-row-detail { display:flex; }
 .context-meeting-details { min-width:0; overflow:hidden; text-overflow:ellipsis; }
 .context-meeting-response { flex:0 0 auto; color:var(--accent); font-weight:var(--weight-semibold); white-space:pre; }

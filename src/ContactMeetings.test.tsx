@@ -4,7 +4,7 @@ import { ContactMeetings, MAX_UPCOMING_MEETINGS } from "./ContactMeetings";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import type { ScheduleEvent } from "./domain";
-import { formatEventDate } from "./calendarTime";
+import { formatEventDate, formatUpcomingDate } from "./calendarTime";
 import { expectContextRows } from "./test/contextRows";
 
 const hour = 60 * 60 * 1000;
@@ -43,7 +43,11 @@ describe("ContactMeetings", () => {
     expect(titles).toEqual(["Meeting soon", "Meeting later"]);
     const soon = within(section).getByRole("button", { name: /Meeting soon/ });
     // The date ends the title line, like every context panel row; the detail line names who is attending.
-    expect(soon.querySelector(".context-row-date")).toHaveTextContent(formatEventDate(meeting("soon", 2, ["jane@example.com"])));
+    // A short date keeps room for the title, which wraps to a second line; the full date is on hover.
+    const soonEvent = meeting("soon", 2, ["jane@example.com"]);
+    expect(soon.querySelector(".context-row-date")).toHaveTextContent(formatUpcomingDate(soonEvent));
+    expect(soon.querySelector(".context-row-date [title]")).toHaveAttribute("title", formatEventDate(soonEvent));
+    expect(soon.closest(".context-row")).toHaveClass("context-row-wrap");
     expect(soon.querySelector(".context-row-detail")).toHaveTextContent("with Jane Doe");
     expect(soon).not.toHaveTextContent(/\d:\d\d/);
     fireEvent.click(soon);
@@ -72,7 +76,7 @@ describe("ContactMeetings", () => {
     const section = await screen.findByRole("region", { name: "Upcoming meetings" });
     for (const [event, label] of [[pending, "Awaiting response"], [declined, "Not going"], [accepted, "Going"]] as const) {
       const row = within(section).getByRole("button", { name: new RegExp(`Meeting ${event.id}`) });
-      expect(row.querySelector(".context-row-date")).toHaveTextContent(formatEventDate(event));
+      expect(row.querySelector(".context-row-date")).toHaveTextContent(formatUpcomingDate(event));
       expect(row.querySelectorAll(".context-row-detail")).toHaveLength(1);
       expect(row.querySelector(".context-row-detail")).toHaveTextContent(`with Jane Doe · ${label}`);
     }

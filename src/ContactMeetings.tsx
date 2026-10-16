@@ -1,7 +1,7 @@
 import { CalendarDays } from "lucide-react";
 import { useState } from "react";
 import type { ScheduleEvent } from "./domain";
-import { addDays, eventDate, formatEventDate, startOfLocalDay } from "./calendarTime";
+import { addDays, eventDate, formatEventDate, formatUpcomingDate, startOfLocalDay } from "./calendarTime";
 import { useCalendarSchedule } from "./useCalendarSchedule";
 import { responseLabel } from "./calendarResponse";
 import { ContextRow, ContextSection } from "./ContextSections";
@@ -57,8 +57,10 @@ export function ContactMeetings({ people, timeZone, onOpenEvent }: {
         key={`${event.accountId}:${event.id}`}
         className="context-meeting"
         icon={<CalendarDays size={ICON_SIZE.sm} />}
+        // Meeting names run long; a title wraps to a second line before it is cut off.
         title={event.title}
-        date={formatEventDate(event)}
+        wrapTitle
+        date={<span title={formatEventDate(event)}>{formatUpcomingDate(event)}</span>}
         detail={<>
           <span className="context-meeting-details">with {name}</span>
           {responseLabel(event) ? <span className="context-meeting-response" data-response-status={event.responseStatus ?? undefined}> · {responseLabel(event)}</span> : null}
