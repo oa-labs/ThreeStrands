@@ -21,6 +21,9 @@ import { ICON_SIZE } from "./iconSizes";
 import { selectedMessageQuote } from "./selectedMessageQuote";
 import { formatShortcutStep } from "./shortcutCatalog";
 
+/** A long recipient list shows this many names, then "and N more" to reveal the rest. */
+const RECIPIENT_PREVIEW_LIMIT = 20;
+
 export type MessageResponseKind = "reply" | "replyAll" | "forward";
 
 type MessageCardProps = {
@@ -95,6 +98,7 @@ export const MessageCard = memo(function MessageCard({
     if (event.button === 0 && selectedMessageQuote(messageId)) event.preventDefault();
   };
 
+  const [showAllRecipients, setShowAllRecipients] = useState(false);
   const activateMessage = useCallback(() => onActivate(messageId), [messageId, onActivate]);
   const toggleMessage = useCallback(() => onToggle(messageId, isExpanded), [isExpanded, messageId, onToggle]);
   const toggleOnEnter = useCallback((event: KeyboardEvent) => {
@@ -150,6 +154,10 @@ export const MessageCard = memo(function MessageCard({
   }
 
   const recipients = splitAddressList(message.recipients.join(", "));
+  const hiddenRecipientCount = showAllRecipients || recipients.length <= RECIPIENT_PREVIEW_LIMIT
+    ? 0
+    : recipients.length - RECIPIENT_PREVIEW_LIMIT;
+  const shownRecipients = hiddenRecipientCount ? recipients.slice(0, RECIPIENT_PREVIEW_LIMIT) : recipients;
   const ownEmails = new Set(accounts.map((account) => account.email.toLocaleLowerCase()));
   const headerDetails = (
     <div className="message-header-details">
@@ -208,9 +216,9 @@ export const MessageCard = memo(function MessageCard({
       </div>
       <div className="message-recipients">
         to{" "}
-        {recipients.map((recipient, recipientIndex) => (
+        {shownRecipients.map((recipient, recipientIndex) => (
           <span key={recipient}>
-            {recipientListSeparator(recipientIndex, recipients.length)}
+            {recipientListSeparator(recipientIndex, shownRecipients.length + (hiddenRecipientCount ? 1 : 0))}
             <MessageAddress
               address={recipient}
               displayName={formatDisplayName(parseAddress(recipient).name)}
@@ -218,6 +226,12 @@ export const MessageCard = memo(function MessageCard({
             />
           </span>
         ))}
+        {hiddenRecipientCount ? <>
+          {", and "}
+          <button type="button" className="btn-link message-recipients-more" onClick={() => setShowAllRecipients(true)}>
+            {hiddenRecipientCount} more
+          </button>
+        </> : null}
       </div>
     </div>
   );

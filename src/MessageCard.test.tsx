@@ -71,6 +71,23 @@ describe("MessageCard", () => {
     expect(screen.getByTestId("message-body")).toBe(frame);
   });
 
+  it("lists the first 20 recipients of a long list and reveals the rest on request", () => {
+    const addresses = (count: number) => Array.from({ length: count }, (_, i) => `Person ${i + 1} <p${i + 1}@example.com>`);
+    const { container, rerender } = render(<MessageCard message={{ ...message, recipients: addresses(20) }} isExpanded {...stableProps} />);
+    const line = () => container.querySelector(".message-recipients")!;
+    // Exactly at the limit, every recipient shows.
+    expect(line()).toHaveTextContent(/Person 19p19@example\.com, and Person 20p20@example\.com$/);
+    expect(screen.queryByRole("button", { name: /more$/ })).not.toBeInTheDocument();
+
+    rerender(<MessageCard message={{ ...message, id: "m2", recipients: addresses(105) }} isExpanded {...stableProps} />);
+    expect(line()).toHaveTextContent(/Person 20p20@example\.com, and 85 more$/);
+    expect(line()).not.toHaveTextContent("p21@example.com");
+    fireEvent.click(screen.getByRole("button", { name: "85 more" }));
+    expect(line()).toHaveTextContent(/Person 104p104@example\.com, and Person 105p105@example\.com$/);
+    expect(screen.queryByRole("button", { name: /more$/ })).not.toBeInTheDocument();
+    expect(stableProps.onToggle).not.toHaveBeenCalled();
+  });
+
   it("reports toggles and responses by message id", () => {
     render(<MessageCard message={message} isExpanded {...stableProps} />);
     fireEvent.click(screen.getByRole("button", { name: "Reply All" }));

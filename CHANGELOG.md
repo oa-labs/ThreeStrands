@@ -8,6 +8,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - In **Settings → Signatures**, **Import from Gmail…** brings in a signature from a connected Gmail account. Preview and name the copy, include its images, and optionally use it as the account’s default for new messages.
 
 ### Improved
+- Messages sent to a long list of people now show the first 20 recipients followed by "and N more". Click it to see everyone.
 - Pasting a signature copied from webmail such as Gmail now keeps its logos and pictures: ThreeStrands downloads them and saves them with the signature, so they go out with your mail instead of being left out. **Import…** embeds remote images by default too.
 
 ### Fixed
