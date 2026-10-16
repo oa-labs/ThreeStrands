@@ -971,7 +971,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       if (!domain) return null;
       return {
         fromDomain: domain,
-        authentication: { spf: "pass", dkim: "pass", dmarc: "pass", dkimDomains: [domain] },
+        authentication: { spf: "pass", dkim: "pass", dmarc: "pass", dkimDomains: [domain], spfDomains: [domain] },
         replyTo: null,
       };
     },

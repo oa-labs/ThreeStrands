@@ -459,6 +459,8 @@ export type AuthenticationVerdicts = {
   dmarc: string | null;
   /** Signing domains of the DKIM signatures that passed. */
   dkimDomains: string[];
+  /** Envelope sender (smtp.mailfrom) domains of the SPF checks that passed. */
+  spfDomains: string[];
 };
 
 /** Trust signals read from a message's stored headers. */

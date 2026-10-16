@@ -91,7 +91,7 @@ fn message_trust_reads_the_stored_headers_and_is_absent_without_them() {
         internal_date: String::new(),
         payload: MimePart {
             headers: vec![
-                MimeHeader { name: "Authentication-Results".into(), value: "mx.example; dkim=pass header.d=launch.example; spf=pass; dmarc=pass header.from=launch.example".into() },
+                MimeHeader { name: "Authentication-Results".into(), value: "mx.example; dkim=pass header.d=launch.example; spf=pass smtp.mailfrom=bounce@launch.example; dmarc=pass header.from=launch.example".into() },
                 MimeHeader { name: "From".into(), value: "news@launch.example".into() },
                 MimeHeader { name: "Reply-To".into(), value: "desk@elsewhere.example".into() },
             ],
@@ -110,6 +110,7 @@ fn message_trust_reads_the_stored_headers_and_is_absent_without_them() {
     let verdicts = trust.authentication.unwrap();
     assert_eq!(verdicts.dmarc.as_deref(), Some("pass"));
     assert_eq!(verdicts.dkim_domains, vec!["launch.example".to_string()]);
+    assert_eq!(verdicts.spf_domains, vec!["launch.example".to_string()]);
     assert_eq!(trust.reply_to.as_deref(), Some("desk@elsewhere.example"));
 
     assert!(database.message_trust("bare").unwrap().is_none());

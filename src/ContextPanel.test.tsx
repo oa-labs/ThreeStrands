@@ -512,7 +512,7 @@ describe("ContextPanel",()=>{
     const history:SenderHistory={receivedCount:4,readCount:1,firstAt:"2026-06-02T09:00:00Z",lastSentAt:null,
       recentReceivedAt:[],inboxThreadIds:["news-3","news-2","news-1"],
       threads:[{threadId:"news-3",subject:"This week",snippet:"",sentAt:"2026-10-07T09:00:00Z"},{threadId:"news-2",subject:"Last week",snippet:"Recap",sentAt:"2026-09-30T09:00:00Z"}]};
-    const verified:MessageTrust={fromDomain:"launch.example",authentication:{spf:"pass",dkim:"pass",dmarc:"pass",dkimDomains:["launch.example"]},replyTo:null};
+    const verified:MessageTrust={fromDomain:"launch.example",authentication:{spf:"pass",dkim:"pass",dmarc:"pass",dkimDomains:["launch.example"],spfDomains:["launch.example"]},replyTo:null};
     const actions=(overrides:Partial<SenderActions>={}):SenderActions=>({splits:[],rules:[],onUnsubscribe:vi.fn(),onArchiveThreads:vi.fn(),onNewSplit:vi.fn(),onMute:vi.fn(),onUnmute:vi.fn(),...overrides});
     beforeEach(()=>{
       vi.mocked(mailClient.getContactProfile).mockResolvedValue(null);

@@ -201,7 +201,8 @@ export type TrustFinding = {
 /**
  * What the Trust section shows. `summary` heads the section: "careful" when
  * anything warns, "known" for someone the user writes to or saved whose mail
- * passed DMARC, otherwise none. `rows` are the warnings and the sender's
+ * passed DMARC (or, with no DMARC result, SPF or DKIM for its own domain),
+ * otherwise none. `rows` are the warnings and the sender's
  * history; `details` holds the rest, folded under Details.
  */
 export type TrustReport = { summary: "careful" | "known" | null; rows: TrustFinding[]; details: TrustFinding[] };
@@ -242,6 +243,14 @@ function authenticationFinding(trust: MessageTrust): TrustFinding {
   const passed = (["dmarc", "dkim", "spf"] as const).filter((method) => verdicts[method] === "pass").map((method) => METHOD_NAMES[method]);
   if (verdicts.dmarc === "pass") {
     return { ...base, tone: "verified", title: "Sender verified", detail: `${domain} passed ${joinNames(passed)}` };
+  }
+  // Without a DMARC result, a pass for the From domain's own organization is
+  // what DMARC would have checked (relaxed alignment), so it verifies too.
+  const aligned = ([["dkim", verdicts.dkimDomains], ["spf", verdicts.spfDomains]] as const)
+    .filter(([, domains]) => trust.fromDomain && domains.some((signer) => sameOrganization(signer, trust.fromDomain)))
+    .map(([method]) => METHOD_NAMES[method]);
+  if (!verdicts.dmarc && aligned.length > 0) {
+    return { ...base, tone: "verified", title: "Sender verified", detail: `${domain} passed ${joinNames(aligned)} for its own domain` };
   }
   if (verdicts.dmarc && FAILING.has(verdicts.dmarc)) {
     return { ...base, tone: "warning", title: "Sender not verified", detail: `${domain} failed DMARC` };
@@ -464,6 +473,6 @@ export function trustReport({ trust, links, familiarity, sender, attachments, bu
   if (rows.length === 0 && details[0]?.kind === "authentication") rows.push(details.shift()!);
   const summary = warnings.length > 0
     ? "careful"
-    : acquainted && trust?.authentication?.dmarc === "pass" ? "known" : null;
+    : acquainted && authentication?.tone === "verified" ? "known" : null;
   return { summary, rows, details };
 }

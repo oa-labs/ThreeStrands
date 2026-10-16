@@ -17,6 +17,9 @@ pub struct AuthenticationVerdicts {
     pub dmarc: Option<String>,
     /// Signing domains of the DKIM signatures that passed, lowercased.
     pub dkim_domains: Vec<String>,
+    /// Envelope sender (`smtp.mailfrom`) domains of the SPF checks that
+    /// passed, lowercased.
+    pub spf_domains: Vec<String>,
 }
 
 /// What the context panel's Trust section reads about one message.
@@ -60,6 +63,7 @@ pub fn authentication_verdicts(value: &str) -> Option<AuthenticationVerdicts> {
     let mut dkim = Vec::new();
     let mut dmarc = Vec::new();
     let mut dkim_domains = Vec::new();
+    let mut spf_domains = Vec::new();
     for segment in segments {
         let mut tokens = segment.split_whitespace();
         let Some((method, result)) = tokens.next().and_then(|token| token.split_once('=')) else {
@@ -68,7 +72,22 @@ pub fn authentication_verdicts(value: &str) -> Option<AuthenticationVerdicts> {
         let method = method.split('/').next().unwrap_or(method).to_ascii_lowercase();
         let result = result.trim_matches('"').to_ascii_lowercase();
         match method.as_str() {
-            "spf" => spf.push(result),
+            "spf" => {
+                if result == "pass" {
+                    // smtp.mailfrom may be a full address or a bare domain.
+                    let domain = tokens
+                        .filter_map(|token| token.split_once('='))
+                        .find(|(key, _)| key.eq_ignore_ascii_case("smtp.mailfrom"))
+                        .map(|(_, value)| value.trim_matches('"').to_ascii_lowercase())
+                        .map(|value| value.rsplit_once('@').map(|(_, domain)| domain.to_string()).unwrap_or(value));
+                    if let Some(domain) = domain.filter(|domain| !domain.is_empty()) {
+                        if !spf_domains.contains(&domain) {
+                            spf_domains.push(domain);
+                        }
+                    }
+                }
+                spf.push(result);
+            }
             "dmarc" => dmarc.push(result),
             "dkim" => {
                 if result == "pass" {
@@ -92,7 +111,7 @@ pub fn authentication_verdicts(value: &str) -> Option<AuthenticationVerdicts> {
     if spf.is_empty() && dkim.is_empty() && dmarc.is_empty() {
         return None;
     }
-    Some(AuthenticationVerdicts { spf: verdict(spf), dkim: verdict(dkim), dmarc: verdict(dmarc), dkim_domains })
+    Some(AuthenticationVerdicts { spf: verdict(spf), dkim: verdict(dkim), dmarc: verdict(dmarc), dkim_domains, spf_domains })
 }
 
 fn verdict(results: Vec<String>) -> Option<String> {
@@ -204,6 +223,28 @@ mod tests {
         assert_eq!(verdicts.dkim.as_deref(), Some("pass"));
         assert_eq!(verdicts.dmarc.as_deref(), Some("pass"));
         assert_eq!(verdicts.dkim_domains, vec!["news.example.com".to_string()]);
+        assert_eq!(verdicts.spf_domains, vec!["news.example.com".to_string()]);
+    }
+
+    #[test]
+    fn lists_the_envelope_domain_of_each_passing_spf_check_once() {
+        // A relay that reports no DMARC result, as for forwarded or filtered mail.
+        let verdicts = authentication_verdicts(
+            "mx.example.net; dkim=pass header.i=@tenant.mailhost.example header.s=s2; \
+             arc=pass (i=1 spf=pass spfdomain=other.example dmarc=pass fromdomain=other.example); \
+             spf=pass (mx.example.net: domain of Pat@Partner.example designates 192.0.2.7 as permitted sender) smtp.mailfrom=Pat@Partner.example",
+        )
+        .unwrap();
+        assert_eq!(verdicts.dmarc, None);
+        assert_eq!(verdicts.spf_domains, vec!["partner.example".to_string()]);
+        assert_eq!(verdicts.dkim_domains, vec!["tenant.mailhost.example".to_string()]);
+
+        let bare = authentication_verdicts("mx.example; spf=pass smtp.mailfrom=bounces.shop.example; spf=pass smtp.mailfrom=x@bounces.shop.example").unwrap();
+        assert_eq!(bare.spf_domains, vec!["bounces.shop.example".to_string()]);
+
+        let failed = authentication_verdicts("mx.example; spf=softfail smtp.mailfrom=a@partner.example; spf=pass").unwrap();
+        assert_eq!(failed.spf.as_deref(), Some("pass"));
+        assert!(failed.spf_domains.is_empty());
     }
 
     #[test]

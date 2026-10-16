@@ -157,7 +157,8 @@ describe("trust findings", () => {
   const noLinks: LinkAnalysis = { sites: [], mismatches: [], links: [], trackingImages: 0 };
   const trust = (authentication: MessageTrust["authentication"], extra: Partial<MessageTrust> = {}): MessageTrust =>
     ({ fromDomain: "launch.example", authentication, replyTo: null, ...extra });
-  const verdicts = (spf: string | null, dkim: string | null, dmarc: string | null, dkimDomains: string[] = []) => ({ spf, dkim, dmarc, dkimDomains });
+  const verdicts = (spf: string | null, dkim: string | null, dmarc: string | null, dkimDomains: string[] = [], spfDomains: string[] = []) =>
+    ({ spf, dkim, dmarc, dkimDomains, spfDomains });
   const report = (value: MessageTrust | null, links = noLinks) =>
     trustReport({ trust: value, links, familiarity: null, sender: "Launch <news@launch.example>", attachments: [], bulk: true });
   const first = (value: MessageTrust | null) => {
@@ -180,6 +181,27 @@ describe("trust findings", () => {
       tone: "info", title: "Partly verified", detail: "DKIM and SPF passed, no DMARC result; signed by mailer.example",
     });
     expect(first(trust(verdicts("pass", null, null)))).toMatchObject({ detail: "SPF passed, no DMARC result" });
+  });
+
+  it("verifies a sender without a DMARC result when SPF or DKIM passed for the From domain's organization", () => {
+    // A relay that drops the DMARC result: the envelope matches From, the signature is the mail host's.
+    expect(first(trust(verdicts("pass", "pass", null, ["tenant.mailhost.example"], ["launch.example"])))).toMatchObject({
+      tone: "verified", title: "Sender verified", detail: "launch.example passed SPF for its own domain",
+    });
+    expect(first(trust(verdicts("softfail", "pass", null, ["mail.launch.example"])))).toMatchObject({
+      tone: "verified", detail: "launch.example passed DKIM for its own domain",
+    });
+    expect(first(trust(verdicts("pass", "pass", null, ["launch.example"], ["bounce.launch.example"])))).toMatchObject({
+      detail: "launch.example passed DKIM and SPF for its own domain",
+    });
+  });
+
+  it("does not verify from passes for other domains, look-alikes, or over a DMARC result", () => {
+    expect(first(trust(verdicts("pass", "pass", null, ["mailer.example"], ["bounces.mailer.example"])))).toMatchObject({ tone: "info", title: "Partly verified" });
+    expect(first(trust(verdicts("pass", null, null, [], ["notlaunch.example"])))).toMatchObject({ tone: "info", title: "Partly verified" });
+    expect(first(trust(verdicts("pass", "pass", "fail", ["launch.example"], ["launch.example"])))).toMatchObject({ tone: "warning", title: "Sender not verified" });
+    expect(first(trust(verdicts("pass", "pass", "none", ["launch.example"], ["launch.example"])))).toMatchObject({ tone: "info", title: "Partly verified" });
+    expect(first(trust(verdicts("pass", null, null, [], ["launch.example"]), { fromDomain: "" }))).toMatchObject({ tone: "info", title: "Partly verified" });
   });
 
   it("says when the server reported no checks, and lists nothing about headers it does not have", () => {
@@ -214,7 +236,7 @@ describe("trust findings", () => {
 });
 
 describe("trust signals from the user's own history", () => {
-  const verified: MessageTrust = { fromDomain: "partner.example", authentication: { spf: "pass", dkim: "pass", dmarc: "pass", dkimDomains: ["partner.example"] }, replyTo: null };
+  const verified: MessageTrust = { fromDomain: "partner.example", authentication: { spf: "pass", dkim: "pass", dmarc: "pass", dkimDomains: ["partner.example"], spfDomains: ["partner.example"] }, replyTo: null };
   const stranger: SenderFamiliarity = { sentCount: 0, firstSentAt: null, receivedBefore: false, contactName: null, nameMatches: [], knownDomains: ["partner.example", "studio.example", "example.co.uk"] };
   const input = (overrides: Partial<TrustInput> = {}): TrustInput => ({
     trust: verified,
@@ -242,6 +264,15 @@ describe("trust signals from the user's own history", () => {
     const familiar = { ...stranger, sentCount: 3 };
     expect(trustReport(input({ familiarity: familiar, trust: { ...verified, authentication: null } })).summary).toBeNull();
     expect(trustReport(input({ familiarity: familiar, trust: null })).summary).toBeNull();
+    const partly = { spf: "pass", dkim: "pass", dmarc: null, dkimDomains: ["mailer.example"], spfDomains: ["mailer.example"] };
+    expect(trustReport(input({ familiarity: familiar, trust: { ...verified, authentication: partly } })).summary).toBeNull();
+  });
+
+  it("calls someone the user writes to known when a relay dropped DMARC but SPF passed for their domain", () => {
+    const relayed = { spf: "pass", dkim: "pass", dmarc: null, dkimDomains: ["tenant.mailhost.example"], spfDomains: ["partner.example"] };
+    const report = trustReport(input({ familiarity: { ...stranger, sentCount: 22 }, trust: { ...verified, authentication: relayed } }));
+    expect(report.summary).toBe("known");
+    expect(report.details[0]).toMatchObject({ tone: "verified", title: "Sender verified" });
   });
 
   it("notes a first email from personal senders only, and says nothing when the history cannot be read", () => {

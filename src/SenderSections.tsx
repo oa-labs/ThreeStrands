@@ -158,7 +158,7 @@ type TrustReads = { id: string; trust: MessageTrust | null; familiarity: SenderF
 /**
  * Whether the latest message from someone else can be trusted. A summary
  * heads the section: Be careful when anything warns, Known sender for
- * someone the user writes to or saved whose mail passed DMARC. Rows give the
+ * someone the user writes to or saved whose mail was verified. Rows give the
  * concrete tricks, such as a display name borrowed from a contact, a
  * look-alike domain, a link that hides where it goes, or a risky attachment,
  * and then the sender's history with the user; link rows can show their
