@@ -1,4 +1,4 @@
-import { Check, ChevronLeft, ChevronRight, Clock3, Columns3, List, Mail, Plus, RotateCcw, Target, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Clock3, Columns3, List, Mail, Plus, RotateCcw, SquareCheckBig, Target, X } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import type { Goal, ThreadTask, UpdateGoalRequest, UpdateTaskRequest, TaskStatus } from "./domain";
 import { mailClient } from "./data/client";
@@ -609,7 +609,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
           onLeave={() => { setGoalsOpen(false); (selectedTaskId ? taskCards.current.get(selectedTaskId)?.querySelector<HTMLElement>(".task-card-main") : null)?.focus(); }}
         /></div> : null}
         <WorkspaceContextRail label="Task context" onReturn={() => taskCards.current.get(selectedTaskId ?? "")?.querySelector<HTMLElement>(".task-card-main")?.focus()}>
-          <ContextSectionHeader title="Task details" />
+          <ContextSectionHeader title="Task details" icon={<SquareCheckBig size={ICON_SIZE.xs} />} />
           {detailTask ? <>
             <TaskDetailDialog embedded draftStore={taskDrafts.current} task={detailTask} goals={goals} position={detailPosition}
               onUpdate={(request) => updateTask(detailTask.id, request)} onSetStatus={(status) => void setStatus(detailTask, status)}

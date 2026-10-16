@@ -469,7 +469,9 @@ describe("TaskSidebar", () => {
 
     const dialog = await openTask("Draft agenda");
     expect(dialog.getByRole("textbox", { name: "Title" })).toHaveValue("Draft agenda");
-    expect(screen.getByRole("complementary", { name: "Task context" })).toHaveClass("context-panel");
+    const rail = screen.getByRole("complementary", { name: "Task context" });
+    expect(rail).toHaveClass("context-panel");
+    expect(rail.querySelector(".context-section-header .context-row-glyph svg")).not.toBeNull();
   });
 
   it("moves cards between columns with buttons and keyboard handles, and undo restores the prior column", async () => {

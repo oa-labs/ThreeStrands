@@ -9,6 +9,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ### Improved
 - Messages sent to a long list of people now show the first 20 recipients followed by "and N more". Click it to see everyone.
+- The **Task details** heading in the **Tasks** side panel now has a task icon, matching the other side-panel headings.
 - Reply and new-message windows give more room to writing, with a compact signature picker below the message and **Send later…** in the **Send** menu. Replies also offer **Send & archive** in that menu and a shorter **Draft reply** button on the right; keyboard hints now match your platform.
 - Pasting a signature copied from webmail such as Gmail now keeps its logos and pictures: ThreeStrands downloads them and saves them with the signature, so they go out with your mail instead of being left out. **Import…** embeds remote images by default too.
 
