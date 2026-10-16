@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import { SignaturesSettings } from "./SignaturesSettings";
+import { SignaturePreview } from "./SignaturePreview";
 import { SignatureEditor, SignatureImportDialog } from "./SignatureEditor";
 import { mailClient } from "./data/client";
 import { signatureDefaultsKey, type Signature, type SignatureState } from "./signatures";
@@ -312,6 +313,11 @@ describe("Gmail signature import", () => {
     expect(save).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Embed Remote Images" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Embed Remote Images" })).toBeNull());
+    expect(screen.getByRole("status")).toHaveTextContent("Images are embedded in the preview");
+    const frame = screen.getByRole("region", { name: "Signature Preview" }).querySelector("iframe")!;
+    frame.contentDocument!.body.innerHTML = new DOMParser().parseFromString(frame.srcdoc, "text/html").body.innerHTML;
+    fireEvent.load(frame);
+    await waitFor(() => expect(frame.contentDocument!.querySelector("img")).toHaveAttribute("src", "data:image/png;base64,aA=="));
     expect(screen.getByRole("region", { name: "Plain Text Preview" })).toHaveTextContent("Logo");
     fireEvent.click(screen.getByRole("button", { name: "Import" }));
     await waitFor(() => expect(save).toHaveBeenCalled());
@@ -331,5 +337,41 @@ describe("Gmail signature import", () => {
     await act(async () => resolveFirst([{ address: gmail.email, html: "<p>First</p>" }]));
     expect(screen.getByLabelText("Name")).toHaveValue("Gmail — second@example.com");
     expect(screen.getByRole("region", { name: "Plain Text Preview" })).toHaveTextContent("Second");
+  });
+});
+
+
+describe("signature previews", () => {
+  const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j1ioAAAAASUVORK5CYII=";
+  it.each([
+    `<table><tr><td><img src="${png}" alt="Logo" width="32"></td><td>Alex</td><td></td></tr></table>`,
+    `<div style="display:flex;gap:8px"><img src="${png}" alt="Logo" width="32"><p>Alex<br>Designer</p></div>`,
+  ])("displays embedded images locally in an isolated preview for %s", async (html) => {
+    const fetch = vi.spyOn(mailClient, "fetchRemoteImage");
+    render(<SignaturePreview html={html} text="Alex" />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    frame.contentDocument!.body.innerHTML = new DOMParser().parseFromString(frame.srcdoc, "text/html").body.innerHTML;
+    fireEvent.load(frame);
+    await waitFor(() => expect(frame.contentDocument!.querySelector("img")).toHaveAttribute("src", png));
+    expect(frame.contentDocument!.querySelector("img")).toHaveAttribute("alt", "Logo");
+    expect(frame.contentDocument!.querySelector("img")).toHaveAttribute("width", "32");
+    expect(frame).toHaveAttribute("sandbox", "allow-same-origin allow-scripts");
+    expect(frame.srcdoc).toContain("script-src 'none'");
+    expect(frame.srcdoc).toContain("img-src data:");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Load images" })).toBeNull();
+  });
+
+  it.each([
+    '<p>Alex</p><img src="https://tracker.invalid/pixel.png"><img src="file:///private/logo.png"><script>parent.compromised=true</script>',
+    '<table><tr><td style="background-image:url(https://tracker.invalid/bg.png)"><img src="data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=" onload="alert(1)"><img src="cid:sender-controlled"></td><td>Alex</td></tr></table>',
+  ])("keeps unsafe sources and network capabilities out of a local preview for %s", (html) => {
+    const fetch = vi.spyOn(mailClient, "fetchRemoteImage");
+    render(<SignaturePreview html={html} text="Alex" />);
+    const doc = new DOMParser().parseFromString((screen.getByTestId("message-body") as HTMLIFrameElement).srcdoc, "text/html");
+    expect(doc.body.querySelector("img,script,[onload]")).toBeNull();
+    expect(doc.body.innerHTML).not.toMatch(/tracker\.invalid|file:|cid:|background-image|svg\+xml/);
+    expect(doc.body.textContent).toContain("Alex");
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

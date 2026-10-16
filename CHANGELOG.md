@@ -14,7 +14,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Pasting a signature copied from webmail such as Gmail now keeps its logos and pictures: ThreeStrands downloads them and saves them with the signature, so they go out with your mail instead of being left out. **Import…** embeds remote images by default too.
 
 ### Fixed
-- In **Settings → Signatures**, the **Choose File** button and its "no file selected" label now sit centered inside the field when adding a signature image or importing a signature file.
+- In **Settings → Signatures**, signature dialogs now scroll so you can reach the plain-text preview and import controls, and embedded logos appear in previews. The **Choose File** button and its "no file selected" label also sit centered inside the field when adding a signature image or importing a signature file.
 
 ## 0.133.2 — 2026-10-15
 

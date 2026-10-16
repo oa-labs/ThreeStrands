@@ -1,7 +1,7 @@
 import DOMPurify from "dompurify";
 import type { Draft } from "./correspondence";
 import { composeHtmlToText } from "./richText";
-import { sanitizeCssDeclaration, sanitizeHtmlCellPadding, sanitizeHtmlDimension, SIGNATURE_LIMITS, SIGNATURE_FONT_SIZES } from "./emailRenderingPolicy";
+import { embeddedRasterImageSrc, sanitizeCssDeclaration, sanitizeHtmlCellPadding, sanitizeHtmlDimension, SIGNATURE_LIMITS, SIGNATURE_FONT_SIZES } from "./emailRenderingPolicy";
 
 export type GmailSignature = { address: string; html: string };
 export type Signature = { id: string; name: string; html: string; text: string };
@@ -46,12 +46,15 @@ const SIGNATURE_CSS = new Set([
 ]);
 
 export function sanitizeSignatureHtml(html: string, allowCid = false): string {
-  const container = document.createElement("div");
-  container.innerHTML = DOMPurify.sanitize(html, {
+  // A detached div can still load <img src> while it is being sanitized.
+  // Template contents stay inert until every source and capability is checked.
+  const template = document.createElement("template");
+  template.innerHTML = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: ["a", "b", "blockquote", "br", "div", "em", "font", "hr", "i", "img", "li", "ol", "p", "s", "span", "strike", "strong", "u", "ul", "table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption", "colgroup", "col"],
     ALLOWED_ATTR: ["size", "alt", "href", "src", "style", "width", "height", "color", "face", "align", "valign", "cellpadding", "cellspacing", "border", "colspan", "rowspan"],
     ALLOW_DATA_ATTR: false, ALLOW_ARIA_ATTR: false,
   });
+  const container = template.content;
   container.querySelectorAll<HTMLElement>("*").forEach((element) => {
     const style = element.style;
     const safe = document.createElement("span").style;
@@ -92,10 +95,10 @@ export function sanitizeSignatureHtml(html: string, allowCid = false): string {
   });
   container.querySelectorAll("img").forEach((image) => {
     const source = image.getAttribute("src") ?? "";
-    if (!/^data:image\/(?:avif|gif|jpeg|png|webp);base64,[a-z0-9+/]+=*$/i.test(source)
+    if (!embeddedRasterImageSrc.test(source)
       && !(allowCid && /^cid:[a-z0-9._@-]+$/i.test(source))) image.remove();
   });
-  return container.innerHTML;
+  return template.innerHTML;
 }
 
 export function readSignatureEditor(editor: HTMLElement): { html: string; text: string } {

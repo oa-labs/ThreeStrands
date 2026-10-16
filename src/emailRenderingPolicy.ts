@@ -487,6 +487,9 @@ export const backgroundImageUrl = /^url\((?:"([^"]*)"|'([^']*)'|([^'")]*))\)$/i;
 export const safeImageSrc = /^(https?:|cid:|data:image\/)/i;
 export const blockedSrcAttr = "data-blocked-src";
 
+/** Local raster-only signature images; no SVG, external URL or executable data. */
+export const embeddedRasterImageSrc = /^data:image\/(?:avif|gif|jpeg|png|webp);base64,[a-z0-9+/]+=*$/i;
+
 /** Portable signature budgets match the native sync payload contract. */
 export const SIGNATURE_LIMITS = {
   maxNameLength: 200,

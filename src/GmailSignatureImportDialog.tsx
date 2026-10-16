@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Account } from "./domain";
 import { Modal } from "./AppChrome";
-import { SafeMessage } from "./SafeMessage";
+import { SignaturePreview } from "./SignaturePreview";
 import { mailClient } from "./data/client";
 import { errorMessage } from "./errors";
 import { SIGNATURE_LIMITS } from "./emailRenderingPolicy";
@@ -16,6 +16,8 @@ export function GmailSignatureImportDialog({ accounts, onImported, onClose }: {
   accounts: Account[]; onImported(): Promise<void>; onClose(): void;
 }) {
   const accountInput = useRef<HTMLSelectElement>(null);
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  const embeddedStatusRef = useRef<HTMLParagraphElement>(null);
   const [account, setAccount] = useState(accounts[0]?.email ?? "");
   const [sources, setSources] = useState<GmailSignature[]>([]);
   const [address, setAddress] = useState("");
@@ -42,6 +44,12 @@ export function GmailSignatureImportDialog({ accounts, onImported, onClose }: {
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [account, retry]);
+
+  useEffect(() => {
+    // Reveal the result of an explicit action without moving keyboard focus.
+    if (error) errorRef.current?.scrollIntoView?.({ block: "nearest" });
+    else if (embedded !== null) embeddedStatusRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [error, embedded]);
 
   function reload(nextAccount: string) {
     setAccount(nextAccount); setSources([]); setAddress(""); setName("");
@@ -82,13 +90,15 @@ export function GmailSignatureImportDialog({ accounts, onImported, onClose }: {
           setAddress(event.target.value); setName(importedName(event.target.value)); setId(crypto.randomUUID()); setEmbedded(null); setError("");
         }}>{sources.map((source) => <option value={source.address} key={source.address}>{source.address}</option>)}</select></label>
         <label className="snippet-field"><span>Name</span><input value={name} disabled={busy} onChange={(event) => setName(event.target.value)} /></label>
+        {error ? <p ref={errorRef} className="form-error" role="alert">{error}</p> : null}
+        {embedded !== null ? <p ref={embeddedStatusRef} className="settings-hint" role="status">Images are embedded in the preview and will be included in the imported signature.</p> : null}
         {remote.length ? <><p className="settings-hint">Remote images are omitted from this preview. Embed them to include them in your signature.</p><button type="button" className="btn" disabled={busy} onClick={() => void embedImages()}>{busy ? "Working…" : "Embed Remote Images"}</button></> : null}
-        <section aria-label="Signature Preview"><h3>Preview</h3><SafeMessage html={content.html} text={content.text} loadImages={false} foldQuotes={false} /></section>
+        <section aria-label="Signature Preview"><h3>Preview</h3><SignaturePreview html={content.html} text={content.text} /></section>
         <section aria-label="Plain Text Preview"><h3>Plain Text</h3><pre className="signature-plain-preview">{content.text}</pre></section>
         <label className="settings-checkbox"><input type="checkbox" checked={useAsDefault} disabled={busy} onChange={(event) => setUseAsDefault(event.target.checked)} /><span>Use as Account Default for New Messages</span></label>
         <p className="settings-hint">Applies to {account}. Your reply and forward defaults stay as they are.</p>
       </> : null}
-      {error ? <p className="form-error" role="alert">{error}</p> : null}
+      {error && !selected ? <p ref={errorRef} className="form-error" role="alert">{error}</p> : null}
       <div className="signature-actions"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" disabled={busy || loading || !selected}>{busy ? "Importing…" : "Import"}</button></div>
     </form>
   </Modal>;

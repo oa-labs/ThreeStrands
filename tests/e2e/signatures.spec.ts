@@ -122,3 +122,62 @@ test("imports a Gmail signature after review and applies it to new messages", as
   await expect(composer.getByRole("textbox", { name: "Message Signature" })).toContainText("Alex Morgan");
   await expect(composer.getByRole("combobox", { name: "Signature", exact: true })).toHaveValue(/.+/);
 });
+
+for (const layout of ["table", "flow"] as const) {
+  test(`Gmail import scrolls to plain text and displays embedded logos in a ${layout} signature`, async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 600 });
+    const logoUrl = "https://signature-images.example/logo.png";
+    let imageRequests = 0;
+    await page.route(logoUrl, (route) => {
+      imageRequests++;
+      if (layout === "table" && imageRequests === 1) return route.fulfill({ status: 403, body: "blocked" });
+      return route.fulfill({ contentType: "image/png", body: Buffer.from(png, "base64") });
+    });
+    await page.goto("/");
+    const html = layout === "table"
+      ? `<table><tr><td><img src="${logoUrl}" alt="Company Logo" width="32" height="32"></td><td>Alex Morgan<br>Designer</td><td></td></tr></table>`
+      : `<div style="display:flex;gap:8px"><img src="${logoUrl}" alt="Company Logo" width="32" height="32"><p>Alex Morgan<br>Designer</p></div>`;
+    await page.evaluate(async (source) => {
+      const modulePath = "/src/data/client.ts";
+      const { mailClient } = await import(modulePath);
+      mailClient.listGmailSignatures = async (account: string) => [{ address: account, html: source }];
+    }, html);
+    await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+    const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+    await settings.getByRole("button", { name: "Signatures", exact: true }).click();
+    await settings.getByRole("button", { name: "Import from Gmail…" }).click();
+    const importer = page.getByRole("dialog", { name: "Import from Gmail", exact: true });
+    const plain = importer.getByRole("region", { name: "Plain Text Preview" });
+    await expect(plain).toContainText("Alex Morgan");
+    await importer.locator("p").first().hover();
+    await page.mouse.wheel(0, 800);
+    await expect.poll(() => importer.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    await plain.scrollIntoViewIfNeeded();
+    await expect(plain).toBeInViewport({ ratio: 1 });
+    const submit = importer.getByRole("button", { name: "Import", exact: true });
+    await submit.scrollIntoViewIfNeeded();
+    await expect(submit).toBeInViewport();
+    expect(imageRequests).toBe(0);
+    await importer.getByRole("button", { name: "Embed Remote Images" }).click();
+    if (layout === "table") {
+      const error = importer.getByRole("alert");
+      await expect(error).toContainText("HTTP 403");
+      await expect(error).toBeInViewport();
+      await expect(plain).toContainText("Alex Morgan");
+      await importer.getByRole("button", { name: "Embed Remote Images" }).click();
+    }
+    await expect(importer.getByRole("status")).toContainText("Images are embedded in the preview");
+    const image = importer.frameLocator("iframe").getByRole("img", { name: "Company Logo" });
+    await image.scrollIntoViewIfNeeded();
+    await expect(image).toHaveAttribute("src", `data:image/png;base64,${png}`);
+    await expect.poll(() => image.evaluate((element) => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+    expect(imageRequests).toBe(layout === "table" ? 2 : 1);
+    await expect(importer.getByRole("button", { name: "Load images" })).toHaveCount(0);
+    if (layout === "table") await expect(importer.frameLocator("iframe").locator("td")).toHaveCount(3);
+    await plain.scrollIntoViewIfNeeded();
+    await expect(plain).toBeInViewport({ ratio: 1 });
+    await expect(plain).toContainText("Company Logo");
+    await importer.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(settings.getByText("No signatures yet", { exact: true })).toBeVisible();
+  });
+}

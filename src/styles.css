@@ -2538,7 +2538,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .snippet-field input[type="file"]:disabled, .snippet-field input[type="file"]:disabled::file-selector-button { opacity: var(--opacity-disabled); cursor: default; }
 .snippet-editor-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); }
 
-.signature-dialog { width: min(var(--dialog-w-xl), calc(100vw - var(--dialog-edge))); }
+.signature-dialog { width: min(var(--dialog-w-xl), calc(100vw - var(--dialog-edge))); overflow-y: auto; }
 .signature-form { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-1) var(--dialog-inset) var(--space-4); min-width: 0; }
 .signature-form .signature-form { padding-inline: 0; }
 .signature-form input, .signature-form select, .signature-toolbar select { box-sizing: border-box; height: var(--control-h); font-size: var(--text-control); color: var(--text); background-color: var(--input); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding-inline: var(--space-2); }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Modal } from "./AppChrome";
-import { SafeMessage } from "./SafeMessage";
+import { SignaturePreview } from "./SignaturePreview";
 import { FormattingPromptDialog } from "./FormattingPromptDialog";
 import { applyFormattingShortcut, formattingShortcutFor, formattingShortcuts, insertHtmlAtRange, linkifyPlainText } from "./richText";
 import { readSignatureEditor, sanitizeSignatureHtml, validateSignature, type Signature } from "./signatures";
@@ -183,7 +183,7 @@ export function SignatureImportDialog({ onClose, onImport }: { onClose(): void; 
       }} /></label>
       {remote.length ? <label className="settings-checkbox"><input type="checkbox" checked={embedRemote} disabled={busy} onChange={(event) => setEmbedRemote(event.target.checked)} /><span>Embed Remote Images</span></label> : null}
       {remote.length ? <p className="settings-hint">{remote.length} remote image source{remote.length === 1 ? "" : "s"}. Embedding downloads images through ThreeStrands and saves them with the signature; otherwise they are left out.</p> : null}
-      {source ? <section aria-label="Signature Preview"><h3>Preview</h3><SafeMessage html={source} text="" loadImages={false} foldQuotes={false} /></section> : null}
+      {source ? <section aria-label="Signature Preview"><h3>Preview</h3><SignaturePreview html={source} text="" /></section> : null}
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       <div className="signature-actions"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" disabled={busy || !source.trim()}>{busy ? "Importing…" : "Import"}</button></div>
     </form>
