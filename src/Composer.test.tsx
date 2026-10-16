@@ -1021,7 +1021,7 @@ describe("Composer Reply Assist", () => {
   it.each(["reply", "replyAll"] as const)("groups writing tools with the quote toggle below the %s body", async (mode) => {
     render(<Composer draft={{ ...replyDraft, mode }} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} review={{ enabled: true, available: true }} />);
     const tools = await screen.findByRole("group", { name: "Writing tools" });
-    const trigger = await within(tools).findByRole("button", { name: "Draft reply" });
+    const trigger = await within(tools).findByRole("button", { name: "Draft Reply" });
     const review = within(tools).getByRole("button", { name: "Review" });
     const toggle = screen.getByRole("button", { name: "Show Quoted Text" });
     expect(toggle.parentElement).toBe(tools.parentElement);
@@ -1038,16 +1038,16 @@ describe("Composer Reply Assist", () => {
     expect(quote).toBeVisible();
   });
 
-  it("offers Draft reply once Draft Assist is on, and explains a missing key instead of doing nothing", async () => {
+  it("offers Draft Reply once Draft Assist is on, and explains a missing key instead of doing nothing", async () => {
     await clearAiApiKey();
     const replyAssistContext = vi.spyOn(mailClient, "replyAssistContext");
     const ref = createRef<ComposerHandle>();
     render(<Composer ref={ref} draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    const trigger = await screen.findByRole("button", { name: /Draft reply/ });
+    const trigger = await screen.findByRole("button", { name: /Draft Reply/ });
     expect(trigger.querySelector("svg.lucide-sparkles")).not.toBeNull();
     expect(trigger).toHaveAttribute("title", "Draft a reply with AI (Ctrl J)");
     expect(trigger.querySelector("kbd")).toBeNull();
-    expect(within(screen.getByRole("group", { name: "Writing tools" })).getByRole("button", { name: "Draft reply" })).toBe(trigger);
+    expect(within(screen.getByRole("group", { name: "Writing tools" })).getByRole("button", { name: "Draft Reply" })).toBe(trigger);
 
     act(() => ref.current?.draftReplyWithAI());
     const assist = await screen.findByRole("dialog", { name: "Reply Assist" });
@@ -1058,12 +1058,12 @@ describe("Composer Reply Assist", () => {
     expect(replyAssistContext).not.toHaveBeenCalled();
   });
 
-  it("leaves Draft reply out when no AI provider is chosen", async () => {
+  it("leaves Draft Reply out when no AI provider is chosen", async () => {
     saveAiProvider("none");
     render(<Composer draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     await screen.findByRole("textbox", { name: "Message Body" });
     await act(async () => { await Promise.resolve(); });
-    expect(screen.queryByRole("button", { name: /Draft reply/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Draft Reply/ })).not.toBeInTheDocument();
   });
 
   it("shows the exact reviewed context and inserts provider output only as plain text", async () => {
@@ -1074,7 +1074,7 @@ describe("Composer Reply Assist", () => {
     vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
 
     render(<Composer draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Draft reply/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Draft Reply/ }));
 
     expect(await screen.findByText("Can we meet Friday?")).toBeInTheDocument();
     expect(screen.getByText("Project timing")).toBeInTheDocument();
@@ -1178,7 +1178,7 @@ describe("Composer Reply Assist", () => {
     const existing = { ...replyDraft, body: `My existing words.${replyDraft.body}` };
 
     render(<Composer draft={existing} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Draft reply/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Draft Reply/ }));
     await screen.findByText("Can we meet Friday?");
     fireEvent.click(screen.getByRole("button", { name: "Generate Draft" }));
 
@@ -1198,7 +1198,7 @@ describe("Composer Reply Assist", () => {
     const ref = createRef<ComposerHandle>();
 
     render(<Composer ref={ref} draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    await screen.findByRole("button", { name: /Draft reply/ });
+    await screen.findByRole("button", { name: /Draft Reply/ });
 
     ref.current?.draftReplyWithAI();
 
@@ -1208,7 +1208,7 @@ describe("Composer Reply Assist", () => {
   it("opens over the composer, focuses the instruction, and restores focus when dismissed", async () => {
     vi.spyOn(mailClient, "replyAssistContext").mockResolvedValue(context);
     const { container } = render(<Composer draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    const trigger = await screen.findByRole("button", { name: /Draft reply/ });
+    const trigger = await screen.findByRole("button", { name: /Draft Reply/ });
     trigger.focus();
 
     fireEvent.click(trigger);
@@ -1258,7 +1258,7 @@ describe("Composer Reply Assist", () => {
     const replyAssistContext = vi.spyOn(mailClient, "replyAssistContext").mockResolvedValue(context);
     const ref = createRef<ComposerHandle>();
     render(<Composer ref={ref} draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    await screen.findByRole("button", { name: /Draft reply/ });
+    await screen.findByRole("button", { name: /Draft Reply/ });
 
     act(() => ref.current?.draftReplyWithAI());
     const assist = await screen.findByRole("dialog", { name: "Reply Assist" });

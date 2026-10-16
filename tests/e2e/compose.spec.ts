@@ -335,7 +335,7 @@ for (const width of [900, 1280]) {
       localStorage.setItem("threestrands.settings.ai.provider", "openai");
       localStorage.setItem("threestrands.settings.ai.features", JSON.stringify({ draftAssist: true, summarize: false, actionExtraction: false }));
     });
-    // The app reads AI settings at startup (and again when Settings closes), as Draft reply is offered only when it's on.
+    // The app reads AI settings at startup (and again when Settings closes), as Draft Reply is offered only when it's on.
     await page.reload();
     await page.evaluate('import("/src/aiSettings.ts").then(({ setAiApiKey }) => setAiApiKey("test-key"))');
     await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
@@ -344,7 +344,7 @@ for (const width of [900, 1280]) {
     const editor = reply.getByRole("textbox", { name: "Message Body" });
     await editor.fill("A long quoted thread.\n".repeat(80));
     const tools = reply.getByRole("group", { name: "Writing tools" });
-    const draftReply = tools.getByRole("button", { name: "Draft reply", exact: true });
+    const draftReply = tools.getByRole("button", { name: "Draft Reply", exact: true });
     await expect(draftReply).toHaveAttribute("title", /Draft a reply with AI/);
     await expect(draftReply.locator("kbd")).toHaveCount(0);
     await tools.scrollIntoViewIfNeeded();

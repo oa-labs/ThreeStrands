@@ -20,7 +20,7 @@ const AI_CLIENT_METHODS = [
 const AI_BUTTONS: { file: string; label: string }[] = [
   { file: "ThreadAssist.tsx", label: `"Get Brief" : "Get Suggestions"}` },
   { file: "ThreadChat.tsx", label: "Ask</button>" },
-  { file: "Composer.tsx", label: "Draft reply" },
+  { file: "Composer.tsx", label: "Draft Reply" },
   { file: "Composer.tsx", label: `"Generate Draft"` },
   { file: "DraftReviewSection.tsx", label: `"Get Feedback"` },
   { file: "ContactsWorkspace.tsx", label: "Enhance With AI" },
