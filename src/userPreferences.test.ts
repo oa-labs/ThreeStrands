@@ -70,6 +70,7 @@ describe("exportable preferences", () => {
         ],
         defaultDurationMinutes: 30,
         slotIncrementMinutes: 15,
+        driveTimeBufferMinutes: 30,
       },
       calendarColors: { "person@example.com": { primary: "teal", "team@example.com": "gray" } },
     };
@@ -77,6 +78,13 @@ describe("exportable preferences", () => {
     applyExportablePreferences(preferences);
 
     expect(readExportablePreferences()).toEqual(preferences);
+  });
+
+  it("imports older availability preferences with drive time disabled", () => {
+    const { driveTimeBufferMinutes: _buffer, ...previous } = nativeContractFixture.availabilityPreferences;
+    applyExportablePreferences(nativeContractFixture);
+    applyExportablePreferences({ ...nativeContractFixture, availabilityPreferences: previous } as ExportablePreferences);
+    expect(readExportablePreferences().availabilityPreferences).toEqual({ ...previous, driveTimeBufferMinutes: 0 });
   });
 
   it("imports the preceding preference schema with the email font floor off", () => {

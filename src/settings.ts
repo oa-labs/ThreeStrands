@@ -55,10 +55,14 @@ export type AvailabilityPreferencesSetting = {
   workingWindows: { weekday: number; start: string; end: string }[];
   defaultDurationMinutes: number;
   slotIncrementMinutes: number;
+  driveTimeBufferMinutes: number;
 };
 
 /** Slots one weekday can hold, such as a morning and an afternoon. */
 export const MAX_WORKING_WINDOWS_PER_DAY = 4;
+/** Matches MAX_DRIVE_TIME_BUFFER_MINUTES in the native availability policy. */
+export const MAX_DRIVE_TIME_BUFFER_MINUTES = 120;
+export const DRIVE_TIME_BUFFER_OPTIONS = [0, 5, 10, 15, 20, 30, 45, 60, 90, 120];
 /** Matches `MAX_WORKING_WINDOWS` in src-tauri/src/availability.rs. */
 export const MAX_WORKING_WINDOWS = 7 * MAX_WORKING_WINDOWS_PER_DAY;
 
@@ -69,6 +73,7 @@ export const DEFAULT_AVAILABILITY_PREFERENCES: AvailabilityPreferencesSetting = 
   ],
   defaultDurationMinutes: 30,
   slotIncrementMinutes: 15,
+  driveTimeBufferMinutes: 0,
 };
 
 const AVAILABILITY_PREFERENCES_KEY = "threestrands.settings.availabilityPreferences";
@@ -80,6 +85,7 @@ function validAvailabilityPreferences(value: unknown): value is AvailabilityPref
   if (!Array.isArray(candidate.workingWindows) || candidate.workingWindows.length > MAX_WORKING_WINDOWS) return false;
   if (!Number.isInteger(candidate.defaultDurationMinutes) || ![15, 30, 45, 60, 90, 120].includes(candidate.defaultDurationMinutes as number)) return false;
   if (!Number.isInteger(candidate.slotIncrementMinutes) || ![5, 10, 15, 30, 60].includes(candidate.slotIncrementMinutes as number)) return false;
+  if (!Number.isInteger(candidate.driveTimeBufferMinutes) || (candidate.driveTimeBufferMinutes as number) < 0 || (candidate.driveTimeBufferMinutes as number) > MAX_DRIVE_TIME_BUFFER_MINUTES) return false;
   return candidate.workingWindows.every((window) => {
     if (typeof window !== "object" || window === null) return false;
     const item = window as Record<string, unknown>;
@@ -95,7 +101,8 @@ export function readAvailabilityPreferences(): AvailabilityPreferencesSetting {
     const saved = localStorage.getItem(AVAILABILITY_PREFERENCES_KEY);
     if (saved) {
       const parsed: unknown = JSON.parse(saved);
-      if (validAvailabilityPreferences(parsed)) return parsed;
+      const normalized = normalizeAvailabilityPreferences(parsed);
+      if (validAvailabilityPreferences(normalized)) return normalized;
     }
   } catch {
     // A blocked or corrupted storage backend should not prevent app startup.
@@ -105,11 +112,18 @@ export function readAvailabilityPreferences(): AvailabilityPreferencesSetting {
     workingWindows: DEFAULT_AVAILABILITY_PREFERENCES.workingWindows.map((window) => ({ ...window })),
     defaultDurationMinutes: DEFAULT_AVAILABILITY_PREFERENCES.defaultDurationMinutes,
     slotIncrementMinutes: DEFAULT_AVAILABILITY_PREFERENCES.slotIncrementMinutes,
+    driveTimeBufferMinutes: 0,
   };
 }
 
+function normalizeAvailabilityPreferences(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  return { driveTimeBufferMinutes: 0, ...value };
+}
+
 export function saveAvailabilityPreferences(value: AvailabilityPreferencesSetting): AvailabilityPreferencesSetting {
-  const next = validAvailabilityPreferences(value) ? value : readAvailabilityPreferences();
+  const normalized = normalizeAvailabilityPreferences(value);
+  const next = validAvailabilityPreferences(normalized) ? normalized : readAvailabilityPreferences();
   try { localStorage.setItem(AVAILABILITY_PREFERENCES_KEY, JSON.stringify(next)); } catch { /* session value still applies */ }
   return next;
 }

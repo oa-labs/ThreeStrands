@@ -152,6 +152,7 @@ export type AvailabilityPreferences = {
   workingWindows: AvailabilityWindow[];
   defaultDurationMinutes: number;
   slotIncrementMinutes: number;
+  driveTimeBufferMinutes: number;
 };
 
 export type AvailabilityCandidate = {

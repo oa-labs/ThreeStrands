@@ -91,6 +91,7 @@ describe("synced preferences data boundary", () => {
         workingWindows: [],
         defaultDurationMinutes: 30,
         slotIncrementMinutes: 15,
+        driveTimeBufferMinutes: 0,
       },
     });
 

@@ -11,6 +11,7 @@ const preferences: AvailabilityPreferences = {
   workingWindows: [1, 2, 3, 4, 5].map((weekday) => ({ weekday, start: "09:00", end: "17:00" })),
   defaultDurationMinutes: 30,
   slotIncrementMinutes: 30,
+  driveTimeBufferMinutes: 0,
 };
 const later = (hours: number) => new Date(Date.now() + hours * 3_600_000).toISOString();
 const specific: SchedulePlan = { query: { kind: "specific", start: later(26), end: later(26.5) }, durationMinutes: 30, timeZoneAssumed: false };
@@ -35,13 +36,23 @@ describe("MeetingScheduler", () => {
   const pinClock = () => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date(NOW)); };
   const at = (iso: string, hours: number) => new Date(Date.parse(iso) + hours * 3_600_000).toISOString();
 
+  it("uses the drive time setting for exact checks and alternative time suggestions", async () => {
+    const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "conflicting", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    renderScheduler(specific, { preferences: { ...preferences, driveTimeBufferMinutes: 30 } });
+    await waitFor(() => expect(check).toHaveBeenCalledWith(expect.objectContaining({ driveTimeBufferMinutes: 30 })));
+    fireEvent.click(await screen.findByRole("button", { name: "Find Other Times" }));
+    await waitFor(() => expect(find).toHaveBeenCalledWith(expect.objectContaining({ preferences: expect.objectContaining({ driveTimeBufferMinutes: 30 }) })));
+  });
+
   it("confirms a free exact time and offers to add it, reply that it works, or find other times in place", async () => {
     const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
     const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [candidate(50)], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
     const handlers = renderScheduler(specific);
 
     expect(await screen.findByText("You’re free")).toBeInTheDocument();
-    expect(check).toHaveBeenCalledWith({ start: specific.query!.start, end: specific.query!.end, timeZone: "America/New_York" });
+    expect(check).toHaveBeenCalledWith({ start: specific.query!.start, end: specific.query!.end, timeZone: "America/New_York", driveTimeBufferMinutes: 0 });
     fireEvent.click(screen.getByRole("button", { name: "Add to Calendar" }));
     expect(handlers.onAddToCalendar).toHaveBeenCalledWith(specific.query);
     fireEvent.click(screen.getByRole("button", { name: "Reply “That Works”" }));

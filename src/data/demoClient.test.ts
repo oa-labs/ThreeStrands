@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDemoClient, DEMO_ACCOUNT_ID, demoClient } from "./demoClient";
 import { defaultDemoDataset } from "./demoDataset";
 import { buildShowcaseDataset, SHOWCASE_WORK_ACCOUNT } from "./showcaseDataset";
+import { DEFAULT_AVAILABILITY_PREFERENCES } from "../settings";
 import { goalIsStale, goalsToReview } from "../goals";
 
 const OTHER_ACCOUNT_ID = "other@example.com";
@@ -489,5 +490,27 @@ describe("demoClient contact group recipients", () => {
     expect(directory[0]).toEqual({ id: group.id, name: "Board", members: [{ contactId: ada.id, displayName: "Ada", email: "ada@home.example", addresses: ["ada@home.example", "ada@work.example"] }] });
     await client.deleteContactProfile(ada.id);
     expect((await client.listContactGroupRecipients())[0].members).toEqual([]);
+  });
+});
+
+describe("demoClient availability", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("leaves drive time before and after located events for both checks and suggestions", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2099-09-20T12:00:00-04:00"));
+    const dataset = defaultDemoDataset();
+    dataset.calendarAccounts = [{ email: DEMO_ACCOUNT_ID, connectedAt: "2099-09-20T12:00:00-04:00", status: "connected" }];
+    dataset.calendarOptions = [{ id: DEMO_ACCOUNT_ID, accountId: DEMO_ACCOUNT_ID, name: "Personal", primary: true, selected: true, writable: true }];
+    dataset.scheduleEvents = [{ id: "haircut", accountId: DEMO_ACCOUNT_ID, title: "Haircut", location: "123 Main Street", allDay: false, start: "2099-09-21T14:00:00-04:00", end: "2099-09-21T15:00:00-04:00" }];
+    const client = createDemoClient(dataset);
+    const preferences = { ...DEFAULT_AVAILABILITY_PREFERENCES, timeZone: "America/New_York", workingWindows: [{ weekday: 1, start: "13:00", end: "16:00" }], slotIncrementMinutes: 30, driveTimeBufferMinutes: 30 };
+    const result = await client.findAvailability({ rangeStart: "2099-09-21T13:00:00-04:00", rangeEnd: "2099-09-21T16:00:00-04:00", preferences });
+    expect(result.candidates.map((slot) => slot.start)).toEqual(["2099-09-21T17:00:00.000Z", "2099-09-21T19:30:00.000Z"]);
+    const request = { start: "2099-09-21T15:00:00-04:00", end: "2099-09-21T15:30:00-04:00", timeZone: "America/New_York" };
+    expect((await client.checkProposedTime({ ...request, driveTimeBufferMinutes: 30 })).status).toBe("conflicting");
+    expect((await client.checkProposedTime({ ...request, driveTimeBufferMinutes: 0 })).status).toBe("free");
+    dataset.scheduleEvents[0].location = " ";
+    expect((await createDemoClient(dataset).checkProposedTime({ ...request, driveTimeBufferMinutes: 30 })).status).toBe("free");
   });
 });

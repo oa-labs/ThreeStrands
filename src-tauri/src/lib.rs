@@ -3485,6 +3485,7 @@ async fn freebusy_coverage(
     time_min: &str,
     time_max: &str,
     time_zone: &str,
+    drive_time_buffer_minutes: u32,
     state: &AppState,
 ) -> Result<(Vec<BusyInterval>, usize, usize, Vec<String>), String> {
     let Ok(config) = state.auth_config.google() else {
@@ -3512,6 +3513,7 @@ async fn freebusy_coverage(
             time_min,
             time_max,
             time_zone,
+            drive_time_buffer_minutes,
         )
         .await
         {
@@ -3942,10 +3944,13 @@ async fn find_availability(
     request: FindAvailabilityRequest,
     state: State<'_, AppState>,
 ) -> Result<models::AvailabilityResult, String> {
+    availability::validate_preferences(&request.preferences)?;
+    availability::buffered_range(&request.range_start, &request.range_end, request.preferences.drive_time_buffer_minutes)?;
     let (busy, checked, total, errors) = freebusy_coverage(
         &request.range_start,
         &request.range_end,
         &request.preferences.time_zone,
+        request.preferences.drive_time_buffer_minutes,
         &state,
     )
     .await?;
@@ -3974,10 +3979,12 @@ async fn check_proposed_time(
     if request.time_zone.parse::<chrono_tz::Tz>().is_err() {
         return Err(format!("Unknown IANA timezone: {}", request.time_zone));
     }
+    availability::buffered_range(&request.start, &request.end, request.drive_time_buffer_minutes)?;
     let (busy, checked, total, errors) = freebusy_coverage(
         &request.start,
         &request.end,
         &request.time_zone,
+        request.drive_time_buffer_minutes,
         &state,
     )
     .await?;

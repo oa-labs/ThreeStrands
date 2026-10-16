@@ -10,6 +10,7 @@ const basePreferences: AvailabilityPreferences = {
   workingWindows: [{ weekday: 1, start: "09:00", end: "17:00" }],
   defaultDurationMinutes: 30,
   slotIncrementMinutes: 15,
+  driveTimeBufferMinutes: 0,
 };
 
 function renderSettings(initial: AvailabilityPreferences = basePreferences) {
@@ -33,6 +34,18 @@ function renderSettings(initial: AvailabilityPreferences = basePreferences) {
 const window = (weekday: number, start: string, end: string): AvailabilityWindow => ({ weekday, start, end });
 
 describe("AvailabilitySettings working hours", () => {
+  it("sets and disables the drive time buffer at the bottom of the panel", () => {
+    const latest = renderSettings();
+    const buffer = screen.getByRole("combobox", { name: "Drive Time Buffer" });
+    const fields = screen.getAllByRole("combobox");
+    expect(fields.at(-1)).toBe(buffer);
+    expect(buffer).toHaveValue("0");
+    fireEvent.change(buffer, { target: { value: "30" } });
+    expect(latest.current).toEqual({ ...basePreferences, driveTimeBufferMinutes: 30 });
+    fireEvent.change(buffer, { target: { value: "0" } });
+    expect(latest.current).toEqual(basePreferences);
+  });
+
   it("splits a day around lunch with a second slot", () => {
     const latest = renderSettings();
     fireEvent.change(screen.getByLabelText("Monday End"), { target: { value: "12:00" } });

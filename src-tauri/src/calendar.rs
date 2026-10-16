@@ -169,6 +169,95 @@ struct GoogleBusyInterval {
     end: String,
 }
 
+/// Separate from the agenda model: availability only needs busy semantics,
+/// locations and exact times, and must read every page of recurring instances.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DriveTimeEvents {
+    #[serde(default)]
+    items: Vec<DriveTimeEvent>,
+    next_page_token: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct DriveTimeEvent {
+    status: Option<String>,
+    transparency: Option<String>,
+    location: Option<String>,
+    start: Option<GoogleEventTime>,
+    end: Option<GoogleEventTime>,
+    #[serde(default)]
+    attendees: Vec<GoogleAttendee>,
+}
+
+fn drive_time_interval(event: DriveTimeEvent, minutes: u32) -> Result<Option<BusyInterval>, String> {
+    if minutes == 0 || event.status.as_deref() == Some("cancelled")
+        || event.transparency.as_deref() == Some("transparent")
+        || !event.location.as_deref().is_some_and(|location| !location.trim().is_empty())
+        || event.attendees.iter().any(|attendee| attendee.is_self && attendee.response_status.as_deref() == Some("declined")) {
+        return Ok(None);
+    }
+    let start = event.start.ok_or("Located calendar event has no start time")?;
+    let end = event.end.ok_or("Located calendar event has no end time")?;
+    // Date-only events have no departure or return time to buffer. FreeBusy
+    // continues to determine whether their actual days block availability.
+    if start.date.is_some() && end.date.is_some() { return Ok(None); }
+    let start = start.date_time.ok_or("Located calendar event has no exact start time")?;
+    let end = end.date_time.ok_or("Located calendar event has no exact end time")?;
+    let (start, end) = crate::availability::buffered_range(&start, &end, minutes)?;
+    Ok(Some(BusyInterval { start, end }))
+}
+
+/// Paginate independently of the agenda's display limit. The widened range
+/// includes events just outside the requested slot whose travel overlaps it.
+async fn fetch_drive_time_busy(
+    client: &reqwest::Client,
+    access_token: &str,
+    calendar_id: &str,
+    time_min: &str,
+    time_max: &str,
+    time_zone: &str,
+    minutes: u32,
+) -> Result<Vec<BusyInterval>, String> {
+    let url = events_url(calendar_id)?.ok_or("Calendar has no ID")?;
+    fetch_drive_time_pages(client, access_token, url, time_min, time_max, time_zone, minutes).await
+}
+
+async fn fetch_drive_time_pages(
+    client: &reqwest::Client,
+    access_token: &str,
+    url: url::Url,
+    time_min: &str,
+    time_max: &str,
+    time_zone: &str,
+    minutes: u32,
+) -> Result<Vec<BusyInterval>, String> {
+    let (time_min, time_max) = crate::availability::buffered_range(time_min, time_max, minutes)?;
+    let mut page_token = None;
+    let mut seen_tokens = std::collections::HashSet::new();
+    let mut busy = Vec::new();
+    loop {
+        let mut request = client.get(url.clone()).bearer_auth(access_token).query(&[
+            ("timeMin", time_min.as_str()), ("timeMax", time_max.as_str()),
+            ("timeZone", time_zone), ("singleEvents", "true"),
+            ("maxResults", "2500"), ("showHiddenInvitations", "true"),
+            ("fields", "nextPageToken,items(status,transparency,location,start,end,attendees(self,responseStatus))"),
+        ]);
+        if let Some(token) = &page_token { request = request.query(&[("pageToken", token)]); }
+        let page: DriveTimeEvents = checked_json(request.send().await.map_err(|error| error.to_string())?).await?;
+        for event in page.items {
+            if let Some(interval) = drive_time_interval(event, minutes)? { busy.push(interval); }
+        }
+        match page.next_page_token.filter(|token| !token.is_empty()) {
+            None => return Ok(busy),
+            Some(token) => {
+                if !seen_tokens.insert(token.clone()) { return Err("Calendar repeated an event page".into()); }
+                page_token = Some(token);
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FreeBusyResult {
     pub busy: Vec<BusyInterval>,
@@ -423,7 +512,9 @@ pub async fn fetch_freebusy(
     time_min: &str,
     time_max: &str,
     time_zone: &str,
+    drive_time_buffer_minutes: u32,
 ) -> Result<FreeBusyResult, String> {
+    crate::availability::validate_drive_time_buffer(drive_time_buffer_minutes)?;
     if calendar_ids.is_empty() {
         return Ok(FreeBusyResult {
             busy: Vec::new(),
@@ -435,7 +526,8 @@ pub async fn fetch_freebusy(
         .access_token()
         .await
         .map_err(|error| error.to_string())?;
-    let response = calendar_client()?
+    let client = calendar_client()?;
+    let response = client
         .post(FREEBUSY_URL)
         .bearer_auth(&access_token)
         .json(&FreeBusyRequest {
@@ -458,11 +550,18 @@ pub async fn fetch_freebusy(
     for calendar_id in calendar_ids {
         match freebusy.calendars.get(calendar_id) {
             Some(calendar) if calendar.errors.is_empty() => {
-                checked += 1;
                 busy.extend(calendar.busy.iter().map(|interval| BusyInterval {
                     start: interval.start.clone(),
                     end: interval.end.clone(),
                 }));
+                if drive_time_buffer_minutes > 0 {
+                    match fetch_drive_time_busy(&client, &access_token, calendar_id, time_min, time_max, time_zone, drive_time_buffer_minutes).await {
+                        Ok(intervals) => { busy.extend(intervals); checked += 1; }
+                        Err(error) => errors.push(format!("Calendar {calendar_id} drive time could not be checked: {error}")),
+                    }
+                } else {
+                    checked += 1;
+                }
             }
             Some(_calendar) => errors.push(format!("Calendar {calendar_id} returned a FreeBusy error")),
             None => errors.push(format!("Calendar {calendar_id} was not returned by FreeBusy")),
@@ -1359,6 +1458,83 @@ mod tests {
     fn does_not_build_an_event_url_for_an_empty_calendar_id() {
         assert_eq!(events_url("").unwrap(), None);
         assert_eq!(events_url("   ").unwrap(), None);
+    }
+
+    fn located_event() -> serde_json::Value {
+        serde_json::json!({
+            "location": "123 Main Street",
+            "start": {"dateTime": "2099-09-21T14:00:00-04:00"},
+            "end": {"dateTime": "2099-09-21T15:00:00-04:00"}
+        })
+    }
+
+    #[test]
+    fn drive_time_blocks_haircut_departure_and_return_with_exact_boundaries_free() {
+        let event = serde_json::from_value(located_event()).unwrap();
+        let interval = drive_time_interval(event, 30).unwrap().unwrap();
+        assert_eq!(interval.start, "2099-09-21T17:30:00+00:00");
+        assert_eq!(interval.end, "2099-09-21T19:30:00+00:00");
+        let busy = [interval];
+        for (start, end, expected) in [
+            ("17:00", "17:30", "free"),
+            ("17:30", "18:00", "conflicting"),
+            ("19:00", "19:30", "conflicting"),
+            ("19:30", "20:00", "free"),
+            ("17:15", "17:45", "conflicting"),
+        ] {
+            assert_eq!(crate::availability::check_time(&format!("2099-09-21T{start}:00Z"), &format!("2099-09-21T{end}:00Z"), &busy, 1, 1).unwrap(), expected);
+        }
+        let preferences = crate::models::AvailabilityPreferences {
+            time_zone: "America/New_York".into(),
+            working_windows: vec![crate::models::AvailabilityWindow { weekday: 1, start: "13:00".into(), end: "16:00".into() }],
+            default_duration_minutes: 30, slot_increment_minutes: 30, drive_time_buffer_minutes: 30,
+        };
+        let slots = crate::availability::find_candidates("2099-09-21T17:00:00Z", "2099-09-21T20:00:00Z", &preferences, &busy, 1, 1, None).unwrap();
+        assert_eq!(slots.iter().map(|slot| slot.start.as_str()).collect::<Vec<_>>(), vec!["2099-09-21T17:00:00+00:00", "2099-09-21T19:30:00+00:00"]);
+    }
+
+    #[test]
+    fn drive_time_ignores_unlocated_nonbusy_and_all_day_events() {
+        let mut cases = vec![located_event(); 7];
+        cases[0]["location"] = serde_json::Value::Null;
+        cases[1]["location"] = serde_json::json!("  ");
+        cases[2]["status"] = serde_json::json!("cancelled");
+        cases[2].as_object_mut().unwrap().remove("start");
+        cases[3]["transparency"] = serde_json::json!("transparent");
+        cases[4]["attendees"] = serde_json::json!([{"self":true,"responseStatus":"declined"}]);
+        cases[5]["start"] = serde_json::json!({"date":"2099-09-21"});
+        cases[5]["end"] = serde_json::json!({"date":"2099-09-22"});
+        for (index, case) in cases.into_iter().enumerate() {
+            let minutes = if index == 6 { 0 } else { 30 };
+            assert!(drive_time_interval(serde_json::from_value(case).unwrap(), minutes).unwrap().is_none());
+        }
+        let mut malformed = located_event();
+        malformed["end"]["dateTime"] = serde_json::json!("invalid");
+        assert!(drive_time_interval(serde_json::from_value(malformed).unwrap(), 30).is_err());
+    }
+
+    #[tokio::test]
+    async fn drive_time_fetches_every_page_and_widens_the_query_for_neighboring_events() {
+        use axum::{extract::Query, routing::get, Json, Router};
+        async fn page(Query(query): Query<HashMap<String, String>>) -> Json<serde_json::Value> {
+            assert_eq!(query["timeMin"], "2099-09-21T17:00:00+00:00");
+            assert_eq!(query["timeMax"], "2099-09-21T20:00:00+00:00");
+            assert_eq!(query["singleEvents"], "true");
+            if query.contains_key("pageToken") {
+                assert_eq!(query["pageToken"], "second");
+                Json(serde_json::json!({"items":[located_event()]}))
+            } else {
+                // A short (even empty) page is not the end of the results.
+                Json(serde_json::json!({"items":[],"nextPageToken":"second"}))
+            }
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = url::Url::parse(&format!("http://{}/events", listener.local_addr().unwrap())).unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, Router::new().route("/events", get(page))).await.unwrap() });
+        let busy = fetch_drive_time_pages(&reqwest::Client::new(), "test-token", url, "2099-09-21T17:30:00Z", "2099-09-21T19:30:00Z", "America/New_York", 30).await.unwrap();
+        server.abort();
+        assert_eq!(busy.len(), 1);
+        assert_eq!(busy[0].end, "2099-09-21T19:30:00+00:00");
     }
 
     #[test]
