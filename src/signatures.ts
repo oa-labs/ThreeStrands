@@ -136,12 +136,15 @@ export function readSignatureEditor(editor: HTMLElement): { html: string; text: 
     if (image) wrapper.replaceWith(image); else wrapper.remove();
   });
   template.content.querySelectorAll<HTMLImageElement>("img[data-compose-source]").forEach((image) => {
-    if (image.hasAttribute("src")) image.setAttribute("src", image.dataset.composeSource!);
-    else {
-      const restored = image.ownerDocument.createElement("img");
-      for (const attribute of Array.from(image.attributes)) restored.setAttribute(attribute.name === "data-compose-source" ? "src" : attribute.name, attribute.value);
-      image.replaceWith(restored);
+    const restored = image.ownerDocument.createElement("img");
+    for (const attribute of Array.from(image.attributes)) {
+      if (attribute.name === "src" || attribute.name === "data-compose-source") {
+        // Keep the original source's attribute position even after a proxy
+        // preview appended its temporary src. Hydration is not a user edit.
+        if (!restored.hasAttribute("src")) restored.setAttribute("src", image.dataset.composeSource!);
+      } else restored.setAttribute(attribute.name, attribute.value);
     }
+    image.replaceWith(restored);
   });
   return readSignatureHtml(template.innerHTML, true);
 }

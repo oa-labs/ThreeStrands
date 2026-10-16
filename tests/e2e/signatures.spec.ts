@@ -250,7 +250,8 @@ for (const layout of ["table", "flow"] as const) {
     await page.getByRole("button", { name: "New Message (c)" }).click();
     const composer = page.getByRole("dialog", { name: "New Message", exact: true });
     const signature = composer.getByRole("textbox", { name: "Message Signature" });
-    await expect(signature.locator("img")).not.toHaveAttribute("src");
+    await expect.poll(() => signature.locator("img").evaluate((element) => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+    await expect(signature.locator("[data-compose-image]")).toHaveCount(0);
     await expect(signature.locator("img")).toHaveAttribute("data-compose-source", url);
     await expect(signature.locator("img")).toHaveAttribute("width", "48");
     await composer.getByRole("textbox", { name: "Subject", exact: true }).fill("Hosted signature draft");
@@ -260,8 +261,9 @@ for (const layout of ["table", "flow"] as const) {
     await page.getByRole("group", { name: "Folders" }).getByRole("button", { name: "Drafts", exact: true }).click();
     await page.getByText("Hosted signature draft", { exact: true }).click();
     await expect(signature.locator("img")).toHaveAttribute("data-compose-source", url);
-    await expect(signature.locator("img")).not.toHaveAttribute("src");
-    expect(requests).toBe(4);
+    await expect.poll(() => signature.locator("img").evaluate((element) => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+    await expect(signature.locator("[data-compose-image]")).toHaveCount(0);
+    expect(requests).toBe(6);
   });
 }
 

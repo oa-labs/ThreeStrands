@@ -338,16 +338,14 @@ test("Reply Assist opens in the viewport over a long reply and Escape returns to
   await expect(draftReply).toHaveAttribute("title", /Draft a reply with AI/);
   await expect(draftReply.locator("kbd")).toHaveCount(0);
   await tools.scrollIntoViewIfNeeded();
-  await expect(tools.getByRole("combobox", { name: "Signature" })).toBeInViewport();
+  await expect(tools.getByRole("combobox", { name: "Signature" })).toHaveCount(0);
   await expect(draftReply).toBeInViewport();
   const alignment = await tools.evaluate((element) => {
-    const signature = element.querySelector("select")!.getBoundingClientRect();
     const ai = element.querySelector("button")!.getBoundingClientRect();
     const trash = element.closest(".composer")!.querySelector('[aria-label="Discard Draft"]')!.getBoundingClientRect();
-    return { scrollWidth: element.scrollWidth, clientWidth: element.clientWidth, aiRight: ai.right, trashRight: trash.right, toolsBottom: element.getBoundingClientRect().bottom, footerTop: trash.top, signatureWidth: signature.width };
+    return { scrollWidth: element.scrollWidth, clientWidth: element.clientWidth, aiRight: ai.right, trashRight: trash.right, toolsBottom: element.getBoundingClientRect().bottom, footerTop: trash.top };
   });
   expect(alignment.scrollWidth).toBeLessThanOrEqual(alignment.clientWidth);
-  expect(alignment.signatureWidth).toBeGreaterThan(60);
   expect(Math.abs(alignment.aiRight - alignment.trashRight)).toBeLessThan(1);
   expect(alignment.toolsBottom).toBeLessThanOrEqual(alignment.footerTop);
 

@@ -1,3 +1,4 @@
+import { loadSignatureEditorImages } from "./signatureEditorImages";
 import { readSignatureHtml, readSignatureEditor, signatureEditorHtml, type DraftSignature } from "./signatures";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { Attachment, Draft } from "./correspondence";
@@ -255,10 +256,21 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
         image.dataset.composeSource = source;
         void readInlineImage(attachment.id).then((preview) => { image.src = preview; }).catch((reason) => onError(String(reason)));
       }
-      decorateImage(image, attachment?.id);
+      if (!signatureEditor.current?.contains(image)) decorateImage(image, attachment?.id);
     });
     return () => { mounted.current = false; };
   }, [attachments, onError, readInlineImage, signatureState]);
+  useEffect(() => {
+    const root = signatureEditor.current;
+    if (!root) return;
+    let active = true;
+    // This is the user's chosen signature. Display its images automatically
+    // through the same bounded native proxy; incoming mail stays blocked.
+    void loadSignatureEditorImages(root).then((failures) => {
+      if (active && failures.length) onError(`Could not load signature images: ${failures[0]}`);
+    });
+    return () => { active = false; };
+  }, [signatureState, onError]);
   useEffect(() => {
     if (!availabilityText || insertedAvailabilityText.current === availabilityText) return;
     insertedAvailabilityText.current = availabilityText;

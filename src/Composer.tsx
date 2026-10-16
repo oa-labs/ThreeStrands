@@ -62,6 +62,7 @@ export const Composer = forwardRef<ComposerHandle, {
   const captureChanges = useCallback(() => bodyEditor.current?.captureChanges() ?? null, []);
   const [error, setError] = useState("");
   const { draft, latest, status, edit, markChanged, captureBody, flush, replaceDraft } = useDraftAutosave(initial, captureChanges, setError);
+  const showSignaturePicker = Boolean(signatures && (draft.mode !== "reply" && draft.mode !== "replyAll" || draft.signature?.html));
   const [signaturesOpen, setSignaturesOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   // While body text is selected, the footer note shows formatting shortcuts.
@@ -398,8 +399,8 @@ export const Composer = forwardRef<ComposerHandle, {
         {draft.attachments.some((attachment) => !attachment.inline) && <ul className="attachment-list">{draft.attachments.filter((attachment) => !attachment.inline).map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : "Download required"}</small></span>{!a.ready && <button className="btn btn-sm" disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); replaceDraft(next); })}>Download</button>}<button className="btn-icon btn-icon-sm" aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); replaceDraft(next); })}><X size={ICON_SIZE.sm} /></button></li>)}</ul>}
         {error && <div className="notice compose-error" role="alert">{error} <button className="btn btn-sm" onClick={() => void run(async () => { await flush(); })}>Retry Save</button></div>}
       </div>
-      {signatures || replyAssistEnabled ? <div className="compose-writing-actions" role="group" aria-label="Writing tools">
-        {signatures ? <label className="compose-signature-picker"><span>Signature:</span><select aria-label="Signature" value={draft.signature?.id ?? ""} disabled={busy} onChange={(event) => {
+      {showSignaturePicker || replyAssistEnabled ? <div className="compose-writing-actions" role="group" aria-label="Writing tools">
+        {showSignaturePicker && signatures ? <label className="compose-signature-picker"><span>Signature:</span><select aria-label="Signature" value={draft.signature?.id ?? ""} disabled={busy} onChange={(event) => {
           if (event.target.selectedOptions[0]?.dataset.action === "manage") setSignaturesOpen(true);
           else changeSignature(event.target.value);
         }}>

@@ -8,7 +8,7 @@ import { Composer, type ComposerHandle } from "./Composer";
 import type { Draft, OutboxItem } from "./correspondence";
 import { mailClient } from "./data/client";
 import type { Account, Snippet } from "./domain";
-import { draftSignatureSnapshot, signatureBody, type SignatureState } from "./signatures";
+import { draftSignatureSnapshot, sanitizeSignatureHtml, signatureBody, type SignatureState } from "./signatures";
 import {
   clearAiApiKey,
   DEFAULT_AI_FEATURES,
@@ -132,6 +132,43 @@ describe("Composer signatures", () => {
     expect(saved.body).toBe("Written message");
   });
 
+  it.each(["reply", "replyAll"] as const)("hides the picker for a %s with no applied signature", (mode) => {
+    render(<Composer draft={{ ...draft, mode, signature: draftSignatureSnapshot(null, true) }} accounts={accounts} signatures={{ ...signatures, defaults: [{ id: "account", account: draft.account, address: "", newSignatureId: full.id, replySignatureId: null }] }} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    expect(screen.queryByRole("combobox", { name: "Signature" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Writing tools" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Message Signature" })).toBeNull();
+  });
+
+  it.each(["new", "forward"] as const)("retains the picker for %s messages with no applied signature", (mode) => {
+    render(<Composer draft={{ ...draft, mode, signature: draftSignatureSnapshot(null, true) }} accounts={accounts} signatures={signatures} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    expect(screen.getByRole("combobox", { name: "Signature" })).toHaveValue("");
+  });
+
+  it.each([
+    '<table><tr><td><img src="https://images.example/logo.png" width="32" alt="Logo"></td><td>Alex</td><td></td></tr></table>',
+    '<div style="display:flex"><img src="https://images.example/logo.png" alt="Logo" height="32"><p>Alex</p></div>',
+  ])("loads only the user's selected signature images, keeping layout and automatic defaults intact: %s", async (html) => {
+    const fetch = vi.spyOn(mailClient, "fetchRemoteImage").mockResolvedValue("data:image/png;base64,aA==");
+    const ref = createRef<ComposerHandle>();
+    const canonical = sanitizeSignatureHtml(html);
+    const snapshot = draftSignatureSnapshot({ ...full, html: canonical, text: "Custom plain text" }, true);
+    render(<Composer ref={ref} draft={{ ...draft, mode: "reply", signature: snapshot, bodyHtml: '<p>Hello<img src="https://images.example/body.png"></p>' }} accounts={accounts} signatures={signatures} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    const root = screen.getByRole("textbox", { name: "Message Signature" });
+    await waitFor(() => expect(root.querySelector("img")).toHaveAttribute("src", "data:image/png;base64,aA=="));
+    expect(root.querySelector("button,[role=slider],[data-compose-image]")).toBeNull();
+    expect(fetch.mock.calls).toEqual([["https://images.example/logo.png"]]);
+    let saved!: Draft; await act(async () => { saved = await ref.current!.flush(); });
+    expect(saved.signature).toEqual(expect.objectContaining({ html: canonical, text: "Custom plain text", automatic: true }));
+  });
+
+  it.each(["data:image/svg+xml;base64,PHN2Zz4=", "https://images.example/redirect.png"])("keeps unsupported proxy results blocked in the signature: %s", async (data) => {
+    vi.spyOn(mailClient, "fetchRemoteImage").mockResolvedValue(data);
+    const snapshot = draftSignatureSnapshot({ ...full, html: '<p>Alex<img src="https://images.example/logo.png"></p>' }, true);
+    render(<Composer draft={{ ...draft, signature: snapshot }} accounts={accounts} signatures={signatures} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("did not return a supported image");
+    expect(screen.getByRole("textbox", { name: "Message Signature" }).querySelector("img")).not.toHaveAttribute("src");
+  });
+
   it("keeps the signature above plain forwarded history when a written draft is reopened", async () => {
     const ref = createRef<ComposerHandle>();
     const initial = { ...draft, mode: "forward" as const, body: "\n\n---------- Forwarded message ----------\nFrom: Ann <ann@example.com>\n\nOriginal plain message", signature: draftSignatureSnapshot(full, true) };
@@ -171,13 +208,14 @@ describe("Composer signatures", () => {
     expect(signatureBody(saved).text).toContain("Alex — custom plain text");
   });
 
-  it("keeps hosted signature images inert and preserves their URLs through draft saving and reopening", async () => {
+  it("automatically previews hosted signature images and preserves their URLs through draft saving and reopening", async () => {
     const ref = createRef<ComposerHandle>();
-    const fetch = vi.spyOn(mailClient, "fetchRemoteImage");
+    const fetch = vi.spyOn(mailClient, "fetchRemoteImage").mockResolvedValue("data:image/png;base64,aA==");
     const snapshot = draftSignatureSnapshot({ ...full, html: '<p>Alex<img src="https://images.example/large.png" alt="Logo" width="120"></p>', text: "AlexLogo" }, true);
     const view = render(<Composer ref={ref} draft={{ ...draft, signature: snapshot }} accounts={accounts} signatures={signatures} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
     const editor = screen.getByRole("textbox", { name: "Message Signature" });
-    expect(editor.querySelector("img")).not.toHaveAttribute("src");
+    await waitFor(() => expect(editor.querySelector("img")).toHaveAttribute("src", "data:image/png;base64,aA=="));
+    expect(editor.querySelector("[data-compose-image]" )).toBeNull();
     let saved!: Draft; await act(async () => { saved = await ref.current!.flush(); });
     expect(saved.signature?.html).toContain('src="https://images.example/large.png"');
     expect(saved.signature?.html).not.toMatch(/data-compose|<button/);
@@ -185,10 +223,11 @@ describe("Composer signatures", () => {
     expect(saved.signature?.automatic).toBe(true);
     view.unmount();
     render(<Composer ref={ref} draft={saved} accounts={accounts} signatures={signatures} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
-    expect(screen.getByRole("textbox", { name: "Message Signature" }).querySelector("img")).not.toHaveAttribute("src");
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Message Signature" }).querySelector("img")).toHaveAttribute("src", "data:image/png;base64,aA=="));
     let reopened!: Draft; await act(async () => { reopened = await ref.current!.flush(); });
     expect(reopened.signature?.html).toContain('src="https://images.example/large.png"');
-    expect(fetch).not.toHaveBeenCalled();
+    expect(reopened.signature?.automatic).toBe(true);
+    expect(fetch).toHaveBeenCalledWith("https://images.example/large.png");
   });
 
   it("resolves a signature's pasted image after reopening and keeps its native CID when saving", async () => {
@@ -205,12 +244,13 @@ describe("Composer signatures", () => {
     expect(saved.signature?.text).toBe("AlexLogo");
   });
 
-  it("treats removing a signature image as a per-message edit even after the button loses focus", async () => {
+  it("allows deleting a signature image as a per-message edit without overlay controls", async () => {
     const ref = createRef<ComposerHandle>();
     const snapshot = draftSignatureSnapshot({ ...full, html: '<p>Alex<img src="data:image/png;base64,aA==" alt="Logo"></p>', text: "AlexLogo" }, true);
     render(<Composer ref={ref} draft={{ ...draft, signature: snapshot }} accounts={accounts} signatures={signatures} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
     const editor = screen.getByRole("textbox", { name: "Message Signature" });
-    fireEvent.click(within(editor).getByRole("button", { name: "Remove Pasted Image" }));
+    expect(within(editor).queryByRole("button", { name: "Remove Pasted Image" })).toBeNull();
+    editor.querySelector("img")!.remove(); fireEvent.input(editor);
     let saved!: Draft; await act(async () => { saved = await ref.current!.flush(); });
     expect(saved.signature).toEqual(expect.objectContaining({ html: "<p>Alex</p>", text: "Alex", automatic: false }));
   });
