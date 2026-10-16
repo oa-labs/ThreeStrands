@@ -25,6 +25,14 @@ impl Database {
         use_as_default: bool,
     ) -> DbResult<()> {
         self.require_local_gmail_account(account)?;
+        if signature.name.trim().is_empty()
+            || signature
+                .name
+                .chars()
+                .any(|c| matches!(c, '\r' | '\n' | '\0'))
+        {
+            return Err(DatabaseError::invalid("Enter a valid signature name."));
+        }
         let library = crate::signatures::SignatureLibrary {
             signatures: vec![signature.clone()],
             defaults: vec![],
@@ -117,8 +125,10 @@ mod tests {
             .unwrap();
         let id = SignatureDefaults::key("me@example.com", "");
         let connection = db.connection().unwrap();
-        for (entity_type, entity_id) in [("signature", "gmail"), ("signatureDefaults", id.as_str())]
-        {
+        for (entity_type, entity_id) in [
+            (EntityType::Signature.as_str(), "gmail"),
+            (EntityType::SignatureDefaults.as_str(), id.as_str()),
+        ] {
             let count: i64 = connection
                 .query_row(
                     "SELECT COUNT(*) FROM sync_values WHERE entity_type=?1 AND entity_id=?2",
