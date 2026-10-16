@@ -169,7 +169,9 @@ function border(value: string): string | null {
   const trimmed = value.trim().toLowerCase();
   if (/^(?:none|0|0px)$/.test(trimmed)) return trimmed;
   const ordered = trimmed.match(/^(\d+(?:\.\d+)?(?:px|em|rem))\s+(none|solid|dashed|dotted|double|groove|ridge|inset|outset)(?:\s+(.+))?$/);
-  if (ordered && (!ordered[3] || safeColor.test(ordered[3]))) return trimmed;
+  // Width-style-color is how browsers serialize the shorthand (and how its
+  // colors gain spaces, e.g. `rgb(1, 2, 3)`); its width obeys the same limit.
+  if (ordered) return boundedLength(ordered[1]) !== null && (!ordered[3] || safeColor.test(ordered[3])) ? trimmed : null;
   const parts = trimmed.split(/\s+/);
   if (parts.length > 3) return null;
   const styles = new Set(["none", "solid", "dashed", "dotted", "double", "groove", "ridge", "inset", "outset"]);
