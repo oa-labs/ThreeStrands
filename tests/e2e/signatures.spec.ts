@@ -89,7 +89,7 @@ test("imports a Gmail signature after review and applies it to new messages", as
   const trigger = settings.getByRole("button", { name: "Import from Gmail…" });
   await trigger.focus(); await page.keyboard.press("Space");
   const importer = page.getByRole("dialog", { name: "Import from Gmail", exact: true });
-  await expect(importer.getByLabel("Gmail Account", { exact: true })).toBeFocused();
+  await expect(importer.getByRole("combobox", { name: "Gmail Account", exact: true })).toBeFocused();
   await expect(importer.getByRole("region", { name: "Plain Text Preview" })).toContainText("Alex Morgan");
   const name = importer.getByLabel("Name", { exact: true });
   await name.fill("Gmail Copy"); await page.keyboard.type("c");
