@@ -893,6 +893,7 @@ fn merge_sync_statuses(
     let mut pending_mutations = 0;
     let mut failed_mutations = Vec::new();
     let mut quarantined_messages = Vec::new();
+    let mut fetch_errors = Vec::new();
 
     for (email, status) in statuses {
         if status.last_successful_sync > last_successful_sync {
@@ -904,6 +905,7 @@ fn merge_sync_statuses(
         pending_mutations += status.pending_mutations;
         failed_mutations.extend(status.failed_mutations);
         quarantined_messages.extend(status.quarantined_messages);
+        fetch_errors.extend(status.fetch_errors);
         if let Some(error) = status.error {
             additional_errors.push(format!("{email}: {error}"));
         }
@@ -918,6 +920,7 @@ fn merge_sync_statuses(
         failed_mutations,
         quarantined_messages,
         error,
+        fetch_errors,
     }
 }
 
@@ -953,7 +956,26 @@ mod combined_sync_status_tests {
             failed_mutations: vec![],
             quarantined_messages: vec![],
             error: error.map(str::to_string),
+            fetch_errors: vec![],
         }
+    }
+
+    #[test]
+    fn keeps_each_accounts_fetch_errors_when_merging() {
+        let mut failing = status(None, None, 0, Some("timed out"));
+        failing.fetch_errors = vec![crate::models::AccountSyncError {
+            account_id: "second@example.com".into(),
+            error: "timed out".into(),
+        }];
+        let merged = merge_sync_statuses(
+            vec![
+                ("first@example.com".into(), status(Some("2026-09-18T12:00:00Z"), None, 0, None)),
+                ("second@example.com".into(), failing),
+            ],
+            vec![],
+        );
+        assert_eq!(merged.fetch_errors.len(), 1);
+        assert_eq!(merged.fetch_errors[0].account_id, "second@example.com");
     }
 
     #[test]

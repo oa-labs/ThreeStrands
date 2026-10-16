@@ -282,7 +282,9 @@ export function App() {
   // Only a loaded, unfiltered, unsearched Main inbox with no threads is inbox zero;
   // a failed load or an empty split is not.
   const inboxZero = mailbox === "inbox" && !loading && !mailboxError && threads.length === 0 && !query.trim() && accounts.length > 0;
-  const inboxCheckedText = inboxZero ? inboxCheckedLabel(syncStatus) : null;
+  const inboxChecked = inboxZero
+    ? inboxCheckedLabel(syncStatus, activeAccountId ? accounts.filter((account) => account.email === activeAccountId) : accounts)
+    : null;
   const { refreshMail, recoveryStatus, syncDiagnostics } = useMailRefresh({ query, loadThreadsRef, setSyncStatus, refreshTaskIndicators });
   const [labelTargetIds, setLabelTargetIds] = useState<string[] | null>(null);
   // Label ids belong to an account. Bulk actions target one account, so the
@@ -1066,7 +1068,10 @@ export function App() {
           <div className="reader-empty inbox-zero">
             <MailCheck size={ICON_SIZE.display} />
             <p className="inbox-zero-title">Inbox zero</p>
-            {inboxCheckedText ? <p className="inbox-zero-checked">{inboxCheckedText}</p> : null}
+            {inboxChecked ? <p className="inbox-zero-checked">{inboxChecked.text}</p> : null}
+            {inboxChecked?.needsReconnect ? (
+              <button type="button" className="btn" onClick={() => openSettingsAt("accounts")}>Open Mail Accounts</button>
+            ) : null}
           </div>
         ) : isThreadMailbox && !loading && visibleThreads.length === 0 ? (
           // Nothing to select, so the reader gives no instruction to select.

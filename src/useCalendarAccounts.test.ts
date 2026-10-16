@@ -99,8 +99,29 @@ describe("useCalendarAccounts", () => {
     expect(result.current.calendarsError).toBeNull();    expect(result.current.calendarsLoaded).toBe(true);
   });
 
-  it("reports calendars as loaded only after the first successful listing", async () => {
+  it("loads the calendar list on its own once a calendar account is connected", async () => {
     vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([work]);
+    const listOptions = vi.spyOn(mailClient, "listCalendarOptions").mockResolvedValue([calendar("work-main", work.email)]);
+    const { result } = renderHook(() => useCalendarAccounts());
+
+    await waitFor(() => expect(result.current.calendarsLoaded).toBe(true));
+    expect(result.current.calendars.map((option) => option.id)).toEqual(["work-main"]);
+    expect(listOptions).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not list calendars while no calendar account is connected", async () => {
+    const listAccounts = vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([{ ...work, status: "needs_reauth" }]);
+    const listOptions = vi.spyOn(mailClient, "listCalendarOptions").mockResolvedValue([]);
+    renderHook(() => useCalendarAccounts());
+
+    await waitFor(() => expect(listAccounts).toHaveBeenCalled());
+    await act(async () => {});
+    expect(listOptions).not.toHaveBeenCalled();
+  });
+
+  it("reports calendars as loaded only after the first successful listing", async () => {
+    // No connected account, so only the explicit refreshes below list calendars.
+    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([]);
     vi.spyOn(mailClient, "listCalendarOptions").mockRejectedValueOnce(new Error("calendar offline"));
     const { result } = renderHook(() => useCalendarAccounts());
     expect(result.current.calendarsLoaded).toBe(false);

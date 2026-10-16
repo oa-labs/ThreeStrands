@@ -1635,6 +1635,7 @@ mod tests {
             failed_mutations: vec![],
             quarantined_messages: vec![],
             error: None,
+            fetch_errors: vec![],
         };
 
         assert!(!should_notify_after_poll(0, &Ok((status(0), false))));
@@ -2241,6 +2242,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn reports_a_failed_check_for_new_mail_per_account_until_the_next_success() {
+        let database = Database::open_memory();
+        database.fail_sync("default", "connection timed out").unwrap();
+        let status = database.sync_status("default").unwrap();
+        assert_eq!(status.fetch_errors.len(), 1);
+        assert_eq!(status.fetch_errors[0].account_id, "default");
+        assert_eq!(status.fetch_errors[0].error, "connection timed out");
+
+        database.finish_sync("default", "1").unwrap();
+        assert!(database.sync_status("default").unwrap().fetch_errors.is_empty());
+    }
+
     #[tokio::test]
     async fn failed_mutations_can_be_retried_or_dismissed() {
         let database = Database::open_memory();
@@ -2268,6 +2282,7 @@ mod tests {
         assert_eq!(status.failed_mutations.len(), 1);
         assert_eq!(status.failed_mutations[0].attempts, 1);
         assert_eq!(status.state, "error");
+        assert!(status.fetch_errors.is_empty(), "a failed action is not a failed check for new mail");
 
         database.dismiss_sync_problems().unwrap();
         let status = database.sync_status("default").unwrap();

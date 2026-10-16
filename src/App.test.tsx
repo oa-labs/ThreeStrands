@@ -1812,13 +1812,25 @@ describe("empty mail states", () => {
   });
 
   const syncedAt = new Date().toISOString();
-  const mockSyncStatus = (state: "idle" | "error") => vi.spyOn(mailClient, "syncStatus").mockResolvedValue({
-    state, lastSuccessfulSync: syncedAt, cursor: null, pendingMutations: 0, failedMutations: [], quarantinedMessages: [], error: null,
-  });
+  /** Gives every account its own last check, optionally needing reconnection. */
+  const mockAccounts = async (status: "connected" | "needs_reauth" = "connected") => {
+    const accounts = (await mailClient.listAccounts()).map((account) => ({ ...account, status, lastSyncedAt: syncedAt }));
+    vi.spyOn(mailClient, "listAccounts").mockResolvedValue(accounts);
+    return accounts;
+  };
+  const mockSyncStatus = (fetchErrors: { accountId: string; error: string }[] = [], extra: { failedMutations?: number } = {}) =>
+    vi.spyOn(mailClient, "syncStatus").mockResolvedValue({
+      state: fetchErrors.length || extra.failedMutations ? "error" : "idle", lastSuccessfulSync: syncedAt, cursor: null, pendingMutations: 0,
+      failedMutations: Array.from({ length: extra.failedMutations ?? 0 }, (_, index) => ({
+        id: `m${index}`, kind: "archive", threadId: "t", attempts: 3, error: "rejected", createdAt: syncedAt,
+      })),
+      quarantinedMessages: [], error: fetchErrors.length ? "failed" : null, fetchErrors,
+    });
 
   it("announces inbox zero once, in the reader, with when mail was last checked", async () => {
     vi.spyOn(mailClient, "listThreadsPage").mockResolvedValue({ threads: [], hasMore: false });
-    mockSyncStatus("idle");
+    await mockAccounts();
+    mockSyncStatus();
     render(<App />);
 
     const reader = screen.getByRole("region", { name: "Conversation" });
@@ -1849,14 +1861,37 @@ describe("empty mail states", () => {
     expect(within(screen.getByRole("complementary", { name: "Conversation context" })).queryByRole("region", { name: "Keep in touch" })).not.toBeInTheDocument();
   });
 
-  it("does not call the inbox current when the last check failed", async () => {
+  it("does not call the inbox current when the account in view could not be checked", async () => {
     vi.spyOn(mailClient, "listThreadsPage").mockResolvedValue({ threads: [], hasMore: false });
-    mockSyncStatus("error");
+    const accounts = await mockAccounts();
+    mockSyncStatus(accounts.map((account) => ({ accountId: account.email, error: "timed out" })));
     render(<App />);
 
     const reader = screen.getByRole("region", { name: "Conversation" });
-    expect(await within(reader).findByText("Couldn't check for new mail")).toBeInTheDocument();
-    expect(within(reader).queryByText(/^Last checked /)).not.toBeInTheDocument();
+    expect(await within(reader).findByText(/^Couldn't check for new mail · Last checked /)).toBeInTheDocument();
+  });
+
+  it("ignores another account's sync error and failed queued actions", async () => {
+    vi.spyOn(mailClient, "listThreadsPage").mockResolvedValue({ threads: [], hasMore: false });
+    await mockAccounts();
+    mockSyncStatus([{ accountId: "someone-else@example.com", error: "token expired" }], { failedMutations: 2 });
+    render(<App />);
+
+    const reader = screen.getByRole("region", { name: "Conversation" });
+    expect(await within(reader).findByText(/^Last checked /)).toBeInTheDocument();
+    expect(within(reader).queryByText(/Couldn't check/)).not.toBeInTheDocument();
+  });
+
+  it("asks to reconnect an account that needs signing in again", async () => {
+    vi.spyOn(mailClient, "listThreadsPage").mockResolvedValue({ threads: [], hasMore: false });
+    await mockAccounts("needs_reauth");
+    mockSyncStatus();
+    render(<App />);
+
+    const reader = screen.getByRole("region", { name: "Conversation" });
+    expect(await within(reader).findByText(/^Reconnect .* to check for new mail$/)).toBeInTheDocument();
+    fireEvent.click(within(reader).getByRole("button", { name: "Open Mail Accounts" }));
+    expect(await screen.findByRole("heading", { name: "Mail Accounts" })).toBeInTheDocument();
   });
 
   it("shows the load error instead of inbox zero when the inbox cannot be read", async () => {

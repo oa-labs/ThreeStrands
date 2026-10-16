@@ -49,6 +49,14 @@ export function useCalendarAccounts({ onLastAccountRemoved }: { onLastAccountRem
     }
   }, []);
 
+  // Surfaces outside the Calendar view, such as the inbox-zero agenda, read
+  // the selection too, so load it as soon as a calendar is connected rather
+  // than waiting for the Calendar view or Settings to ask.
+  const hasConnectedAccount = accounts.some((account) => account.status === "connected");
+  useEffect(() => {
+    if (hasConnectedAccount && !calendarsLoaded) void refreshCalendars().catch(logBackgroundFailure("Calendar listing"));
+  }, [hasConnectedAccount, calendarsLoaded, refreshCalendars]);
+
   const add = useCallback(async () => {
     await mailClient.addCalendarAccount();
     clearScheduleCache();

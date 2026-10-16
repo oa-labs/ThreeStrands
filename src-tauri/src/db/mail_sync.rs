@@ -2,7 +2,7 @@
 //! Replicated application-state sync lives in crate::sync_state, separately.
 
 use super::{Database, DbResult};
-use crate::models::{FailedMutation, QuarantinedMessage, SyncStatus};
+use crate::models::{AccountSyncError, FailedMutation, QuarantinedMessage, SyncStatus};
 use chrono::Utc;
 use rusqlite::{params, OptionalExtension};
 
@@ -30,6 +30,10 @@ impl Database {
                     [account_id],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )?;
+            let fetch_errors = error
+                .iter()
+                .map(|error| AccountSyncError { account_id: account_id.to_string(), error: error.clone() })
+                .collect();
             if error.is_none() {
                 error = connection
                     .query_row(
@@ -99,6 +103,7 @@ impl Database {
                 failed_mutations,
                 quarantined_messages,
                 error,
+                fetch_errors,
             })
         })
     }

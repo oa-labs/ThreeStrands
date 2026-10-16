@@ -1042,6 +1042,16 @@ pub struct SyncStatus {
     pub failed_mutations: Vec<FailedMutation>,
     pub quarantined_messages: Vec<QuarantinedMessage>,
     pub error: Option<String>,
+    /// The last sync failure of each account whose latest check for new mail
+    /// failed. Unlike `error`, failed queued actions never appear here.
+    pub fetch_errors: Vec<AccountSyncError>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountSyncError {
+    pub account_id: String,
+    pub error: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

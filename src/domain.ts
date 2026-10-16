@@ -812,6 +812,13 @@ export type SyncStatus = {
   failedMutations: FailedMutation[];
   quarantinedMessages: QuarantinedMessage[];
   error: string | null;
+  /** Accounts whose latest check for new mail failed. Failed queued actions are not included. */
+  fetchErrors?: AccountSyncError[];
+};
+
+export type AccountSyncError = {
+  accountId: string;
+  error: string;
 };
 
 export type QuarantinedMessage = {
