@@ -14,6 +14,7 @@ import {
 import type { MessageAppearance } from "./SafeMessage";
 import { RecipientField } from "./RecipientField";
 import { Modal } from "./AppChrome";
+import { DraftReviewSection, type DraftReviewAvailability } from "./DraftReviewSection";
 import { ComposeBodyEditor, type ComposeBodyEditorHandle } from "./ComposeBodyEditor";
 import { useDraftAutosave } from "./useDraftAutosave";
 import { moveAddressesToBcc, replaceAddress } from "./composeChecks";
@@ -57,7 +58,13 @@ export const Composer = forwardRef<ComposerHandle, {
   replyAssistInstruction?: string | null;
   /** Called with the draft as edits are made; body text arrives at each autosave. */
   onDraftChange?(draft: Draft): void;
-}>(function Composer({ draft: initial, accounts, messageAppearance, signatures, snippets, onCreateSnippet, onUpdateSnippet, onDeleteSnippet, onClose, onQueued, onSendAndArchive, availabilityText = null, expandQuotedText = false, replyAssistInstruction = null, onDraftChange }, ref) {
+  /**
+   * Draft Review, offered for anything but a forward: shown once Draft Assist
+   * is on with a provider chosen, and able to send once an API key is set.
+   * Follows AI settings while the draft is open.
+   */
+  review?: DraftReviewAvailability;
+}>(function Composer({ draft: initial, accounts, messageAppearance, signatures, snippets, onCreateSnippet, onUpdateSnippet, onDeleteSnippet, onClose, onQueued, onSendAndArchive, availabilityText = null, expandQuotedText = false, replyAssistInstruction = null, onDraftChange, review }, ref) {
   const bodyEditor = useRef<ComposeBodyEditorHandle>(null);
   const captureChanges = useCallback(() => bodyEditor.current?.captureChanges() ?? null, []);
   const [error, setError] = useState("");
@@ -87,6 +94,8 @@ export const Composer = forwardRef<ComposerHandle, {
   const replyInstructionInput = useRef<HTMLInputElement>(null);
   const automaticallyOpenedInstruction = useRef<string | null>(null);
   const [confirmAddToExisting, setConfirmAddToExisting] = useState(false);
+  const reviewEnabled = Boolean(review?.enabled) && initial.mode !== "forward";
+  const [reviewOpen, setReviewOpen] = useState(false);
   const panel = useRef<HTMLDivElement>(null);
   const pendingRecipientFocus = useRef<"cc" | "bcc" | null>(null);
   const mounted = useRef(true);
@@ -398,8 +407,11 @@ export const Composer = forwardRef<ComposerHandle, {
         ) : null}
         {draft.attachments.some((attachment) => !attachment.inline) && <ul className="attachment-list">{draft.attachments.filter((attachment) => !attachment.inline).map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : "Download required"}</small></span>{!a.ready && <button className="btn btn-sm" disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); replaceDraft(next); })}>Download</button>}<button className="btn-icon btn-icon-sm" aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); replaceDraft(next); })}><X size={ICON_SIZE.sm} /></button></li>)}</ul>}
         {error && <div className="notice compose-error" role="alert">{error} <button className="btn btn-sm" onClick={() => void run(async () => { await flush(); })}>Retry Save</button></div>}
+        {reviewEnabled && reviewOpen ? (
+          <DraftReviewSection actions={draftReview} enabled available={Boolean(review?.available)} onOpenSettings={review?.onOpenSettings} onClose={() => setReviewOpen(false)} />
+        ) : null}
       </div>
-      {showSignaturePicker || replyAssistEnabled ? <div className="compose-writing-actions" role="group" aria-label="Writing tools">
+      {showSignaturePicker || replyAssistEnabled || reviewEnabled ? <div className="compose-writing-actions" role="group" aria-label="Writing tools">
         {showSignaturePicker && signatures ? <label className="compose-signature-picker"><span>Signature:</span><select aria-label="Signature" value={draft.signature?.id ?? ""} disabled={busy} onChange={(event) => {
           if (event.target.selectedOptions[0]?.dataset.action === "manage") setSignaturesOpen(true);
           else changeSignature(event.target.value);
@@ -411,6 +423,9 @@ export const Composer = forwardRef<ComposerHandle, {
         </select></label> : null}
         {replyAssistEnabled ? <button type="button" className="btn btn-sm reply-assist-trigger" title={`Draft a reply with AI (${composeKeyLabel("Mod+j")})`} aria-keyshortcuts="Meta+J Control+J" disabled={busy} onClick={draftReplyWithAI}>
           <Sparkles size={ICON_SIZE.md} /> Draft reply
+        </button> : null}
+        {reviewEnabled ? <button type="button" className="btn btn-sm draft-review-trigger" title="Get feedback on this draft from AI" aria-expanded={reviewOpen} disabled={busy} onClick={() => setReviewOpen((open) => !open)}>
+          <Sparkles size={ICON_SIZE.md} /> Review
         </button> : null}
       </div> : null}
       <footer>

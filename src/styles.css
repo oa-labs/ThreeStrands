@@ -2290,6 +2290,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .compose-check strong { color:var(--text); font-weight:var(--weight-medium); overflow-wrap:anywhere; }
 .compose-check-warning { border-left-color:var(--warning); color:var(--text); }
 .compose-check > .btn { justify-self:start; }
+.composer-content > .draft-review { margin-top:var(--space-3); padding:var(--space-3) 0; border-top:1px solid var(--border); }
 .draft-review-content { display:grid; gap:var(--space-2); min-width:0; font-size:var(--text-meta); line-height:var(--leading-normal); }
 .draft-review-content > .btn { justify-self:start; }
 .draft-review-content p { margin:0; }

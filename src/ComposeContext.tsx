@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { mailClient } from "./data/client";
 import type { Draft } from "./correspondence";
 import type { Account, AvailabilityCandidate, ContactGroupRecipients, AvailabilityPreferences, ContactProfile, ContactTimelineItem, ScheduleEvent, ThreadTask } from "./domain";
@@ -140,7 +140,6 @@ export function ComposeContext({
   onDraftFollowUp,
   onTasksChanged,
   onKeyDown,
-  review,
 }: {
   draft: Draft;
   accounts: Account[];
@@ -165,7 +164,6 @@ export function ComposeContext({
   onTasksChanged(): void;
   /** Keyboard handling for the panel while focus is inside it. */
   onKeyDown?(event: KeyboardEvent<HTMLElement>): void;
-  review?: ReactNode;
 }) {
   const ownEmails = useMemo(() => accounts.map((account) => account.email), [accounts]);
   // The user's colleagues come last, so the panel opens on someone outside.
@@ -220,7 +218,6 @@ export function ComposeContext({
         onSwitchAccount={onSwitchAccount}
         onMoveToBcc={onMoveToBcc}
       />
-      {review}
       <ContextPersonHeader
         people={recipients}
         selectedEmail={email}

@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { X } from "lucide-react";
 import { Composer, type ComposerHandle } from "./Composer";
+import type { DraftReviewAvailability } from "./DraftReviewSection";
 import { mailClient } from "./data/client";
 import type { ComposeMode, Draft, OutboxItem, ScheduledSendReport } from "./correspondence";
 import type { Account, Snippet } from "./domain";
@@ -15,7 +16,6 @@ import { ICON_SIZE } from "./iconSizes";
 import type { MessageAppearance } from "./SafeMessage";
 import type { MailtoRequest } from "./mailtoLink";
 import { ScheduleSendPicker, formatScheduledTime } from "./ScheduleSendPicker";
-import type { DraftReviewActions } from "./draftReview";
 import { formatDisplayName, parseAddress, splitAddressList } from "./emailAddress";
 import { formatMailTimestamp } from "./threadPresentation";
 import { outboxEditAsNewSource, outboxEntryTime, selectedOutboxEntry, type OutboxEntry } from "./outboxView";
@@ -298,16 +298,6 @@ export function useCorrespondence(
   const switchDraftAccount = useCallback((email: string) => editor.current?.switchAccount(email), []);
   const moveDraftRecipientsToBcc = useCallback((emails: string[]) => editor.current?.moveRecipientsToBcc(emails), []);
   const focusDraftBody = useCallback(() => editor.current?.focusBody(), []);
-  const draftReview = useMemo<DraftReviewActions>(() => ({
-    readDraft: () => {
-      if (!editor.current) throw new Error("Open a draft to review it");
-      return editor.current.draftReview.readDraft();
-    },
-    replaceDraft: (expected, replacement) => {
-      if (!editor.current) throw new Error("Open a draft to apply changes");
-      return editor.current.draftReview.replaceDraft(expected, replacement);
-    },
-  }), []);
 
   const context = useMemo(() => ({
     closing,
@@ -328,7 +318,7 @@ export function useCorrespondence(
     if (active?.id === draft.id) { editor.current?.discard(); return; }
     void mailClient.discardDraft(draft.id).then(() => refresh()).catch((e: unknown) => setError(String(e)));
   }, [active?.id, refresh]);
-  const renderComposer = (onSendAndArchive?: () => void) => active ? (
+  const renderComposer = (onSendAndArchive?: () => void, review?: DraftReviewAvailability) => active ? (
     <Composer
       key={active.id}
       ref={editor}
@@ -345,6 +335,7 @@ export function useCorrespondence(
       replyAssistInstruction={activeReplyAssistInstruction}
       onDraftChange={setLiveDraft}
       onSendAndArchive={onSendAndArchive}
+      review={review}
       onClose={() => { setActive(null); setActiveThreadId(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null); void refresh(); }}
       onQueued={(item) => {
         const followUpTaskId = activeFollowUpTaskId ?? active.followUpTaskId ?? null;
@@ -397,7 +388,6 @@ export function useCorrespondence(
     switchDraftAccount,
     moveDraftRecipientsToBcc,
     focusDraftBody,
-    draftReview,
     renderComposer,
     overlay: <>
       {pending && !active && <div className="send-notice" role="status">{pending.deadline > clock ? `Sending in ${Math.ceil((pending.deadline - clock) / 1000)}s` : "Queued for delivery"}<button className="btn-link" onClick={() => void undo(pending.id)}>Undo Send</button></div>}

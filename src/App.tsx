@@ -54,7 +54,6 @@ import { labelCommand, undoResult, type MailboxKind } from "./commands";
 import { FILES_CHANGED } from "./FileStarButton";
 import { draftRecipients } from "./composeChecks";
 import { ComposeContext, ReplyChecks } from "./ComposeContext";
-import { DraftReviewSection } from "./DraftReviewSection";
 import { ContactCardContext } from "./ContactCard";
 import { ContactMeetings } from "./ContactMeetings";
 import { ContextPanel } from "./ContextPanel";
@@ -1020,7 +1019,9 @@ export function App() {
                   />
                 );
             }) : null}
-            {correspondence.renderComposer(context.canSendAndMarkDone ? context.sendAndMarkDone : undefined)}
+            {correspondence.renderComposer(context.canSendAndMarkDone ? context.sendAndMarkDone : undefined, {
+              enabled: aiDraftFeatureEnabled, available: aiDraftAvailable, onOpenSettings: () => openSettingsAt("ai"),
+            })}
           </div>
           </ContactCardContext.Provider>
         ) : mailbox === "outbox" && outboxSelection.selectedEntry ? (
@@ -1141,10 +1142,6 @@ export function App() {
         <ComposeContext
           key={correspondence.liveDraft.id}
           draft={correspondence.liveDraft}
-          review={correspondence.liveDraft.mode !== "forward" ? (
-            <DraftReviewSection key={correspondence.liveDraft.id} actions={correspondence.draftReview}
-              enabled={aiDraftFeatureEnabled} available={aiDraftAvailable} onOpenSettings={() => openSettingsAt("ai")} />
-          ) : null}
           accounts={accounts}
           onKeyDown={contextPanelKeyDown}
           calendarConnected={calendarConnected}
@@ -1186,8 +1183,6 @@ export function App() {
           readingMessageId={readingMessageId}
           onSelectPerson={contactCardActions.onSelectPerson}
           reply={composerBelongsToVisibleThread && correspondence.liveDraft ? {
-            review: <DraftReviewSection key={correspondence.liveDraft.id} actions={correspondence.draftReview}
-              enabled={aiDraftFeatureEnabled} available={aiDraftAvailable} onOpenSettings={() => openSettingsAt("ai")} />,
             recipients: replyRecipients,
             checks: (
               <ReplyChecks

@@ -18,7 +18,6 @@ export type ReplyContext = {
   recipients: { email: string; name: string | null }[];
   /** Checks before sending, shown first. */
   checks?: ReactNode;
-  review?: ReactNode;
   /** Open times to insert into the reply, below the recipient card. */
   availability?: ReactNode;
 };
@@ -269,7 +268,6 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, readingMe
     <aside className="context-panel" aria-label="Conversation context" tabIndex={-1} onKeyDown={onKeyDown}>
       {detail && reply ? <>
         {reply.checks}
-        {reply.review}
         {reply.availability}
       </> : null}
       {detail ? null : idle}

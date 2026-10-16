@@ -1,8 +1,8 @@
 import { createRef } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Composer, type ComposerHandle } from "./Composer";
-import { DraftReviewSection } from "./DraftReviewSection";
+import { DraftReviewSection, type DraftReviewAvailability } from "./DraftReviewSection";
 import type { Draft } from "./correspondence";
 import type { Account, DraftReviewResult } from "./domain";
 import type { DraftReviewActions } from "./draftReview";
@@ -232,5 +232,69 @@ describe("Draft review", () => {
     await act(async () => { resolve(result); });
     expect(screen.queryByText(result.assessment)).not.toBeInTheDocument();
     expect(mailClient.saveDraft).not.toHaveBeenCalled();
+  });
+});
+
+describe("Draft review in the composer", () => {
+  const composer = (initial: Draft, review: DraftReviewAvailability) => (
+    <Composer draft={initial} accounts={[{ email: initial.account }] as Account[]} snippets={[]}
+      onCreateSnippet={vi.fn()} onUpdateSnippet={vi.fn()} onDeleteSnippet={vi.fn()} onClose={vi.fn()} onQueued={vi.fn()} review={review} />
+  );
+  const renderComposer = (initial: Draft = draft, review: DraftReviewAvailability = { enabled: true, available: true }) => render(composer(initial, review));
+  beforeEach(() => {
+    localStorage.clear();
+    saveAiProvider("openai");
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (value) => ({ ...value, revision: value.revision + 1 }));
+    vi.spyOn(mailClient, "reviewDraft").mockResolvedValue(result);
+  });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); });
+
+  it("opens below the message body from Review in the writing tools, and closes again", async () => {
+    renderComposer();
+    const tools = screen.getByRole("group", { name: "Writing tools" });
+    const trigger = await within(tools).findByRole("button", { name: "Review" });
+    expect(trigger.querySelector("svg.lucide-sparkles")).not.toBeNull();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("region", { name: "Draft Review" })).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    const review = await screen.findByRole("region", { name: "Draft Review" });
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    // It opens ready for the optional goal, with the draft still editable above it.
+    expect(within(review).getByRole("textbox", { name: /Goal for This Email/ })).toHaveFocus();
+    expect(screen.getByRole("textbox", { name: "Message Body" })).not.toHaveAttribute("contenteditable", "false");
+    await waitFor(() => expect(within(review).getByRole("button", { name: "Review Draft" })).toBeEnabled());
+    fireEvent.click(within(review).getByRole("button", { name: "Review Draft" }));
+    fireEvent.click(within(review).getByRole("button", { name: "Get Feedback" }));
+    expect(await within(review).findByText(result.assessment)).toBeInTheDocument();
+
+    fireEvent.click(within(review).getByRole("button", { name: "Close Draft Review" }));
+    expect(screen.queryByRole("region", { name: "Draft Review" })).not.toBeInTheDocument();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("is not offered for a forward, and follows Draft Assist being turned on or off while the draft is open", () => {
+    renderComposer({ ...draft, mode: "forward" });
+    expect(screen.queryByRole("button", { name: "Review" })).not.toBeInTheDocument();
+    cleanup();
+
+    const { rerender } = renderComposer(draft, { enabled: false, available: false });
+    expect(screen.queryByRole("button", { name: "Review" })).not.toBeInTheDocument();
+    rerender(composer(draft, { enabled: true, available: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(screen.getByRole("region", { name: "Draft Review" })).toBeInTheDocument();
+    rerender(composer(draft, { enabled: false, available: false }));
+    expect(screen.queryByRole("region", { name: "Draft Review" })).not.toBeInTheDocument();
+  });
+
+  it("links AI settings when no API key is configured", async () => {
+    const onOpenSettings = vi.fn();
+    renderComposer(draft, { enabled: true, available: false, onOpenSettings });
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    const review = await screen.findByRole("region", { name: "Draft Review" });
+    expect(review).toHaveTextContent("Set up an AI provider and API key");
+    fireEvent.click(within(review).getByRole("button", { name: "AI Settings" }));
+    expect(onOpenSettings).toHaveBeenCalledOnce();
+    expect(mailClient.reviewDraft).not.toHaveBeenCalled();
   });
 });

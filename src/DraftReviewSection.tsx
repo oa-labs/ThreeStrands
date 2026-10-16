@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Sparkles } from "lucide-react";
+import { Sparkles, X } from "lucide-react";
 import { ContextSectionHeader } from "./ContextSections";
 import { mailClient } from "./data/client";
 import { readAiProvider, readAiRequestConfig } from "./aiSettings";
@@ -8,14 +8,29 @@ import { reviewHasRevision, type DraftReviewActions, type DraftReviewSnapshot } 
 import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 
-/** Feedback on a draft from AI. Hidden unless Draft Assist is on with a provider chosen. */
-export function DraftReviewSection({ actions, enabled, available, onOpenSettings }: {
+/** Whether the composer offers Draft Review, from AI settings. */
+export type DraftReviewAvailability = {
+  /** Draft Assist is on and an AI provider is chosen. */
+  enabled: boolean;
+  /** An API key is also configured. */
+  available: boolean;
+  onOpenSettings?(): void;
+};
+
+/**
+ * Feedback on a draft from AI, opened from the composer's Review button below
+ * the message body, so the draft stays in view and editable while it is
+ * reviewed. Hidden unless Draft Assist is on with a provider chosen.
+ */
+export function DraftReviewSection({ actions, enabled, available, onOpenSettings, onClose }: {
   actions: DraftReviewActions;
   /** Draft Assist is on and an AI provider is chosen. */
   enabled: boolean;
   /** An API key is also configured. */
   available: boolean;
-  onOpenSettings(): void;
+  /** Opens AI settings; without it, setup is described but not linked. */
+  onOpenSettings?(): void;
+  onClose?(): void;
 }) {
   const [goal, setGoal] = useState("");
   const [original, setOriginal] = useState<DraftReviewSnapshot | null>(null);
@@ -25,12 +40,20 @@ export function DraftReviewSection({ actions, enabled, available, onOpenSettings
   const [error, setError] = useState("");
   const inFlight = useRef(false);
   const mounted = useRef(true);
+  const section = useRef<HTMLElement>(null);
   const replacesBody = Boolean(original && review && original.body !== review.revisedBody);
   const protectedBody = Boolean(original?.hasInlineImages || original?.hasInlineQuotes);
   useEffect(() => {
     mounted.current = true;
+    // Opened below a long draft, it scrolls into view.
+    section.current?.scrollIntoView?.({ block: "nearest" });
     return () => { mounted.current = false; };
   }, []);
+  // Focus goes to its first control, again once the API key check settles
+  // and the setup note gives way to the review controls.
+  useEffect(() => {
+    section.current?.querySelector<HTMLElement>("input, button:not(:disabled):not([aria-label='Close Draft Review'])")?.focus({ preventScroll: true });
+  }, [available]);
 
   function prepare() {
     try {
@@ -81,8 +104,10 @@ export function DraftReviewSection({ actions, enabled, available, onOpenSettings
   }
 
   if (!enabled) return null;
-  return <section className="context-section draft-review" aria-labelledby="draft-review-title">
-    <ContextSectionHeader title="Draft Review" titleId="draft-review-title" />
+  return <section ref={section} className="draft-review" aria-labelledby="draft-review-title">
+    <ContextSectionHeader title="Draft Review" titleId="draft-review-title" actions={onClose ? (
+      <button type="button" className="btn-icon btn-icon-sm" aria-label="Close Draft Review" onClick={onClose}><X size={ICON_SIZE.sm} /></button>
+    ) : undefined} />
     {available ? <div className="draft-review-content">
       <p className="context-section-note">Get specific suggestions while keeping your voice.</p>
       <label className="draft-review-goal">
@@ -132,7 +157,7 @@ export function DraftReviewSection({ actions, enabled, available, onOpenSettings
       {error ? <p className="context-status" role="alert">{error}</p> : null}
     </div> : <div className="draft-review-content">
       <p className="context-section-note">Set up an AI provider and API key in AI settings to get writing feedback.</p>
-      <button type="button" className="btn btn-sm" onClick={onOpenSettings}>AI Settings</button>
+      {onOpenSettings ? <button type="button" className="btn btn-sm" onClick={onOpenSettings}>AI Settings</button> : null}
     </div>}
   </section>;
 }
