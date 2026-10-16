@@ -1,5 +1,7 @@
 import type { Message, MessageTrust, SenderRule, SplitInbox, ThreadDetail } from "./domain";
 import { parseAddress } from "./emailAddress";
+import { foldQuotedHistoryHtml, type PriorThreadText } from "./quotedHistory";
+import { sanitizeMessageHtml } from "./SafeMessage";
 
 /** Gmail's category labels that mark a conversation as bulk mail. */
 export const BULK_CATEGORY_LABELS: readonly string[] = ["CATEGORY_UPDATES", "CATEGORY_PROMOTIONS"];
@@ -71,7 +73,7 @@ export function siteOf(host: string): string {
 
 export type LinkMismatch = { shown: string; opens: string };
 export type LinkAnalysis = {
-  /** Sites the message's web links open, most linked first. */
+  /** Sites the shown part's web links open, most linked first. */
   sites: string[];
   /** Links whose visible text names one site while the link opens another. */
   mismatches: LinkMismatch[];
@@ -100,16 +102,34 @@ function tiny(value: string | null): boolean {
 }
 
 /**
- * Reads a message body's links and images without rendering it. The body is
- * parsed into an inert document: nothing loads, runs, or leaves the device,
- * so remote images stay behind the reader's own proxy and blocking.
+ * The part of a message the reader shows before its folded quoted history:
+ * the same sanitize-then-fold cut the message view makes, or the whole
+ * sanitized body when nothing folds. Sanitizing parks every remote image
+ * behind the blocked-source marker, so building it loads nothing.
  */
-export function analyzeLinks(html: string): LinkAnalysis {
+function shownHtml(html: string, prior?: PriorThreadText): string {
+  const sanitized = sanitizeMessageHtml(html);
+  return foldQuotedHistoryHtml(sanitized, prior)?.visible ?? sanitized;
+}
+
+/**
+ * Reads a message body's links and images without rendering it. Links are
+ * read only from the part the reader shows before folded quoted history, so
+ * a link someone else's mail system rewrote in an earlier, quoted email never
+ * warns about this one; `prior` is the conversation text before the message,
+ * as the message view folds with it. Tracking images are counted across the
+ * whole body, since any of them can load. Bodies are parsed into inert
+ * documents: nothing loads, runs, or leaves the device, so remote images stay
+ * behind the reader's own proxy and blocking.
+ */
+export function analyzeLinks(html: string, prior?: PriorThreadText): LinkAnalysis {
   if (!html.trim()) return { sites: [], mismatches: [], trackingImages: 0 };
-  const document = new DOMParser().parseFromString(html, "text/html");
+  const parser = new DOMParser();
+  const document = parser.parseFromString(html, "text/html");
+  const shown = parser.parseFromString(shownHtml(html, prior), "text/html");
   const counts = new Map<string, number>();
   const mismatches: LinkMismatch[] = [];
-  for (const anchor of document.querySelectorAll("a[href]")) {
+  for (const anchor of shown.querySelectorAll("a[href]")) {
     const host = webHost(anchor.getAttribute("href"));
     if (!host) continue;
     const site = siteOf(host);

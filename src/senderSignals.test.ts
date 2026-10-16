@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Message, MessageTrust, SenderRule, SplitInbox, ThreadDetail } from "./domain";
+import { buildThreadTextIndex } from "./quotedHistory";
 import { analyzeLinks, bulkMessage, latestInbound, matchingRule, matchingSplit, siteOf, trustFindings, TRUST_MISMATCH_LIMIT, type LinkAnalysis } from "./senderSignals";
 
 const own = new Set(["you@example.com"]);
@@ -97,6 +98,46 @@ describe("link analysis", () => {
       { shown: "bank.example", opens: "bank-example.test" },
     ]);
     expect(links.trackingImages).toBe(0);
+  });
+
+  it("reads links only from the part shown before folded quoted history", () => {
+    // Someone else's mail system rewrote the links in the email being quoted:
+    // the text still names the site, but the link opens a scanning service.
+    const rewritten = '<a href="https://scan.relay.example/v2/url?u=https-3A__partner.example_">partner.example</a>';
+    const replyAttribution = `
+      <div dir="ltr"><p>Thanks, see you Tuesday.</p>
+        <p><a href="https://agenda.example/tue">agenda.example/tue</a></p></div>
+      <div><div dir="ltr">On Tue, Oct 13, 2026 at 9:14 AM Jane Doe &lt;jane@example.com&gt; wrote:<br></div>
+        <blockquote style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">
+          <p>Details are at ${rewritten}.</p>
+          <img src="https://open.tracker.example/q.gif" width="1" height="1" alt="">
+        </blockquote></div>`;
+    const headerCluster = `
+      <table><tr><td><p>Approved — go ahead.</p></td></tr></table>
+      <hr>
+      <p><b>From:</b> Jane Doe &lt;jane@example.com&gt;<br><b>Sent:</b> Tuesday, October 13, 2026 9:14 AM<br>
+        <b>To:</b> Bob Lee &lt;bob@example.com&gt;<br><b>Subject:</b> Order</p>
+      <table><tr><td><p>Track the order at ${rewritten}.</p></td></tr></table>`;
+    for (const body of [replyAttribution, headerCluster]) {
+      const links = analyzeLinks(body);
+      expect(links.mismatches).toEqual([]);
+      expect(links.sites).not.toContain("relay.example");
+    }
+    expect(analyzeLinks(replyAttribution)).toEqual({ sites: ["agenda.example"], mismatches: [], trackingImages: 1 });
+
+    // The same link in the reply's own words still warns, quoted history or not.
+    const ownWords = `<p>Sign in at ${rewritten} today.</p>${replyAttribution}`;
+    expect(analyzeLinks(ownWords).mismatches).toEqual([{ shown: "partner.example", opens: "relay.example" }]);
+    expect(analyzeLinks(`<p>Sign in at ${rewritten} today.</p>`).mismatches).toEqual([{ shown: "partner.example", opens: "relay.example" }]);
+  });
+
+  it("folds with the conversation text before the message, as the reader does", () => {
+    // A signature the thread already showed folds along with the quote below it.
+    const signature = 'Jane Doe<br>Partnerships, Example Co<br><a href="https://scan.relay.example/r?u=partner.example">partner.example</a>';
+    const body = `Fixed now.<br><br>${signature}<br><br>On Mon, A. Sender wrote:<blockquote>Is the feed fixed?</blockquote>`;
+    const prior = buildThreadTextIndex(["Can you check the feed?\n\nJane Doe\nPartnerships, Example Co\npartner.example"]).before(1);
+    expect(analyzeLinks(body, prior).mismatches).toEqual([]);
+    expect(analyzeLinks(body).mismatches).toEqual([{ shown: "partner.example", opens: "relay.example" }]);
   });
 
   it("reads nothing from an empty body and never treats an email address as link text", () => {

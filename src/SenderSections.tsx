@@ -4,6 +4,7 @@ import type { Message, MessageTrust, SenderHistory, SenderRule, SplitInbox } fro
 import { mailClient } from "./data/client";
 import { ContextRow, ContextSection } from "./ContextSections";
 import { ICON_SIZE } from "./iconSizes";
+import type { PriorThreadText } from "./quotedHistory";
 import { logBackgroundFailure } from "./errors";
 import { analyzeLinks, matchingRule, matchingSplit, SENDER_HISTORY_LIMIT, trustFindings, type TrustFinding } from "./senderSignals";
 
@@ -110,9 +111,10 @@ function findingIcon(finding: TrustFinding) {
  * server's verdict on the sender, a Reply-To at another organization, links
  * whose text names another site, the sites links open, and tracking images.
  * Bulk mail always shows it; other conversations only when something needs a
- * look.
+ * look. Links are read only from the part shown before folded quoted history;
+ * `prior` is the conversation text before the message, as the reader folds it.
  */
-export function TrustSection({ message, bulk }: { message: Message; bulk: boolean }) {
+export function TrustSection({ message, bulk, prior }: { message: Message; bulk: boolean; prior?: PriorThreadText }) {
   const [trust, setTrust] = useState<{ id: string; value: MessageTrust | null } | null>(null);
   useEffect(() => {
     let active = true;
@@ -124,7 +126,7 @@ export function TrustSection({ message, bulk }: { message: Message; bulk: boolea
       });
     return () => { active = false; };
   }, [message.id]);
-  const links = useMemo(() => analyzeLinks(message.bodyHtml), [message.bodyHtml]);
+  const links = useMemo(() => analyzeLinks(message.bodyHtml, prior), [message.bodyHtml, prior]);
   // Wait for the headers so the section does not appear and then reorder.
   if (trust?.id !== message.id) return null;
   const findings = trustFindings(trust.value, links);

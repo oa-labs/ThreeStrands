@@ -7,6 +7,7 @@ import { parseAddress, splitAddressList } from "./emailAddress";
 import { logBackgroundFailure } from "./errors";
 import { SenderDecisions, TrustSection, useSenderHistory, type SenderActions, type SenderTarget } from "./SenderSections";
 import { bulkMessage, latestInbound } from "./senderSignals";
+import { threadTextIndex } from "./threadTextIndex";
 
 /** A reply in the open conversation, as the context panel shows it. */
 export type ReplyContext = {
@@ -203,6 +204,11 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, reply = n
     }
   }
   const inbound = useMemo(() => detail ? latestInbound(detail, own) : null, [detail, own]);
+  // The conversation text before the inbound message, so Trust folds its quoted history as the reader does.
+  const inboundPrior = useMemo(() => {
+    if (!detail || !inbound?.bodyHtml.trim()) return undefined;
+    return threadTextIndex(detail.messages).before(detail.messages.indexOf(inbound));
+  }, [detail, inbound]);
   const bulk = useMemo(() => detail ? bulkMessage(detail, own) : null, [detail, own]);
   const senderTarget = useMemo<SenderTarget | null>(() => {
     if (!detail || !sender || !bulk) return null;
@@ -239,7 +245,7 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, reply = n
       {detail ? null : idle}
       {detail ? assist : null}
       {detail && related ? related(person, [...meetingPeople.values()]) : null}
-      {inbound ? <TrustSection key={inbound.id} message={inbound} bulk={Boolean(bulk)} /> : null}
+      {inbound ? <TrustSection key={inbound.id} message={inbound} bulk={Boolean(bulk)} prior={inboundPrior} /> : null}
       {detail ? <ThreadOutlineSection detail={detail} accounts={accounts} onShowMessage={showMessage} /> : null}
       {person ? <ContactFilesSection key={person.contactId} contactId={person.contactId} onShowMessage={showMessage} /> : null}
       {senderTarget && sender ? (

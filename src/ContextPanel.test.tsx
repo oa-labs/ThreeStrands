@@ -12,7 +12,7 @@ vi.mock("@tauri-apps/plugin-opener",()=>({openUrl:vi.fn()}));
 
 const jane:ContactProfile={id:"contact:jane@example.com",displayName:"Jane Doe",role:null,company:"Acme",location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:["jane@example.com"],sentCount:1,receivedCount:1,lastInteractedAt:null,birthday:null,keepInTouch:{intervalDays:null,startedAt:null,snoozedUntil:null,snoozedAt:null,lastTouchAt:null},keepInTouchDueAt:null};
 const bob:ContactProfile={...jane,id:"contact:bob@example.com",displayName:"Bob Lee",addresses:["bob@example.com"]};
-const detail={thread:{id:"thread-1",accountId:"you@example.com",labels:["INBOX"]},messages:[{id:"1",sender:"Jane Doe <jane@example.com>",recipients:["You <you@example.com>","Bob Lee <bob@example.com>"],sentAt:"2026-09-24T00:00:00Z",bodyHtml:""},{id:"2",sender:"Bob Lee <bob@example.com>",recipients:["You <you@example.com>"],sentAt:"2026-09-25T00:00:00Z",bodyHtml:""}]} as unknown as ThreadDetail;
+const detail={thread:{id:"thread-1",accountId:"you@example.com",labels:["INBOX"]},messages:[{id:"1",sender:"Jane Doe <jane@example.com>",recipients:["You <you@example.com>","Bob Lee <bob@example.com>"],sentAt:"2026-09-24T00:00:00Z",bodyText:"",bodyHtml:""},{id:"2",sender:"Bob Lee <bob@example.com>",recipients:["You <you@example.com>"],sentAt:"2026-09-25T00:00:00Z",bodyText:"",bodyHtml:""}]} as unknown as ThreadDetail;
 const account={email:"you@example.com"} as Account;
 const noActivity:ContactActivity={sentCount:0,receivedCount:0,threadCount:0,firstAt:null,lastSentAt:null,recentReceivedAt:[]};
 const timelineItem=(threadId:string,subject:string):ContactTimelineItem=>({threadId,accountId:"you@example.com",contactEmail:"bob@example.com",subject,snippet:"",sentAt:"2026-09-20T00:00:00Z",labels:[]});
@@ -458,7 +458,7 @@ describe("ContextPanel",()=>{
     const newsDetail=(overrides:{labels?:string[];unsubscribe?:boolean}={})=>({
       thread:{id:"news-3",accountId:"you@example.com",labels:overrides.labels??["INBOX"]},
       messages:[{id:"n3",sender:`Launch News <${news}>`,recipients:["You <you@example.com>"],sentAt:"2026-10-07T09:00:00Z",
-        bodyHtml:'<a href="https://launch.example/post">Read</a>',
+        bodyText:"",bodyHtml:'<a href="https://launch.example/post">Read</a>',
         unsubscribe:overrides.unsubscribe===false?null:{methods:["oneClick"],listId:null}}],
     }) as unknown as ThreadDetail;
     const history:SenderHistory={receivedCount:4,readCount:1,firstAt:"2026-06-02T09:00:00Z",lastSentAt:null,
@@ -578,6 +578,25 @@ describe("ContextPanel",()=>{
       const trust=await screen.findByRole("region",{name:"Trust"});
       expect(trust).toHaveTextContent("Replies go elsewhere");
       expect(trust).toHaveTextContent("Reply-To is desk@elsewhere.example");
+    });
+
+    it("does not warn about links in the quoted history the reader folds away",async()=>{
+      vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
+      vi.mocked(mailClient.messageTrust).mockResolvedValue({...verified,fromDomain:"example.com"});
+      const signature='Bob Lee<br>Partnerships, Example Co<br><a href="https://scan.relay.example/r?u=partner.example">partner.example</a>';
+      const reply=`Fixed now.<br><br>${signature}<br><br>On Mon, Jane Doe wrote:<blockquote>Is the feed fixed? <a href="https://scan.relay.example/r?u=feed.example">feed.example</a></blockquote>`;
+      const thread=(earlier:string)=>({...detail,messages:[{...detail.messages[0],bodyHtml:earlier},{...detail.messages[1],bodyHtml:reply}]}) as unknown as ThreadDetail;
+      // The thread showed Bob's signature before, so the reader folds it with the quote.
+      renderPanel({detail:thread(`<p>Can you check the feed?</p><p>${signature}</p>`)});
+      await personLoaded(bob.id);
+      await waitFor(()=>expect(mailClient.messageTrust).toHaveBeenCalledWith("2"));
+      expect(screen.queryByRole("region",{name:"Trust"})).not.toBeInTheDocument();
+      cleanup();
+
+      renderPanel({detail:thread("<p>Can you check the feed?</p>")});
+      const trust=await screen.findByRole("region",{name:"Trust"});
+      expect(trust).toHaveTextContent("Shows partner.example, opens relay.example");
+      expect(trust).not.toHaveTextContent("feed.example");
     });
   });
 });
