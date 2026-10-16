@@ -7,7 +7,10 @@ import { SignatureEditor, SignatureImportDialog } from "./SignatureEditor";
 import { mailClient } from "./data/client";
 import { readSignatureEditor, signatureDefaultsKey, type Signature, type SignatureState } from "./signatures";
 import type { Account } from "./domain";
-import { SIGNATURE_LIMITS } from "./emailRenderingPolicy";
+import DOMPurify from "dompurify";
+import * as signatureImport from "./signatureImport";
+import { loadSignatureEditorImages } from "./signatureEditorImages";
+import { EMAIL_IMAGE_LIMITS, SIGNATURE_LIMITS } from "./emailRenderingPolicy";
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const signature: Signature = { id: "work", name: "Work", html: "<p>Alex</p>", text: "Alex" };
@@ -75,6 +78,100 @@ describe("signature settings", () => {
     fireEvent.click(screen.getByRole("button", { name: "Regenerate from Signature" }));
     expect(screen.getByLabelText("Plain Text")).toHaveValue("Updated visual");
     expect(screen.getByRole("textbox", { name: "Signature Content" }).innerHTML).toBe("<p>Updated visual</p>");
+  });
+
+  it.each([
+    '<table><tr><td><img src="https://images.example/logo.png" alt="Logo" width="32"></td><td>Alex</td><td></td></tr></table>',
+    '<div style="display:flex"><img src="https://images.example/logo.png" alt="Logo" width="32"><p>Alex</p></div>',
+  ])("loads hosted logos for editing without embedding the preview data on save: %s", async (html) => {
+    const png = "data:image/png;base64,aA==";
+    const fetch = vi.spyOn(mailClient, "fetchRemoteImage").mockRejectedValueOnce(new Error("Image source is blocked")).mockResolvedValue(png);
+    const save = vi.fn();
+    render(<SignatureEditor signature={{ ...signature, html }} onSave={save} onClose={vi.fn()} />);
+    const content = screen.getByRole("textbox", { name: "Signature Content" });
+    const image = content.querySelector("img")!;
+    expect(image).not.toHaveAttribute("src"); expect(fetch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Load Images" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Image source is blocked");
+    expect(image).not.toHaveAttribute("src"); expect(save).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Load Images" }));
+    await waitFor(() => expect(image).toHaveAttribute("src", png));
+    expect(image).toHaveAttribute("data-compose-source", "https://images.example/logo.png");
+    fireEvent.click(screen.getByRole("button", { name: "Load Images" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Images loaded for editing"));
+    expect(fetch).toHaveBeenCalledTimes(2);
+    fireEvent.click(image);
+    const dialog = screen.getByRole("dialog", { name: "Edit Signature Image" });
+    expect(within(dialog).getByRole("img")).toHaveAttribute("src", png);
+    fireEvent.change(within(dialog).getByLabelText("Width in Pixels"), { target: { value: "48" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Apply" }));
+    expect(image).toHaveAttribute("src", png); expect(image).toHaveAttribute("width", "48");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0].html).toContain('src="https://images.example/logo.png"');
+    expect(save.mock.calls[0][0].html).not.toMatch(/data:image|data-compose/);
+  });
+
+  it.each(["data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=", "https://evil.example/image.png", "javascript:alert(1)"])("rejects unsafe editor proxy results: %s", async (data) => {
+    vi.spyOn(mailClient, "fetchRemoteImage").mockResolvedValue(data);
+    render(<SignatureEditor signature={{ ...signature, html: '<p>Alex<img src="https://images.example/logo.png"></p>' }} onSave={vi.fn()} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Load Images" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("did not return a supported image");
+    expect(screen.getByRole("textbox", { name: "Signature Content" }).querySelector("img")).not.toHaveAttribute("src");
+  });
+
+  it("does not apply an image response to an editor image replaced while loading", async () => {
+    let finish!: (data: string) => void;
+    vi.spyOn(mailClient, "fetchRemoteImage").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    render(<SignatureEditor signature={{ ...signature, html: '<img src="https://images.example/logo.png">' }} onSave={vi.fn()} onClose={vi.fn()} />);
+    const root = screen.getByRole("textbox", { name: "Signature Content" });
+    fireEvent.click(screen.getByRole("button", { name: "Load Images" }));
+    await waitFor(() => expect(finish).toBeDefined());
+    root.innerHTML = '<img data-compose-source="https://images.example/replacement.png">';
+    await act(async () => { finish("data:image/png;base64,aA=="); });
+    expect(root.querySelector("img")).not.toHaveAttribute("src");
+    expect(root.querySelector("img")).toHaveAttribute("data-compose-source", "https://images.example/replacement.png");
+  });
+
+  it.each([EMAIL_IMAGE_LIMITS.maxImagesPerMessage - 1, EMAIL_IMAGE_LIMITS.maxImagesPerMessage, EMAIL_IMAGE_LIMITS.maxImagesPerMessage + 1])("uses the shared editor preview image count boundary at %s", async (count) => {
+    const fetch = vi.spyOn(mailClient, "fetchRemoteImage").mockResolvedValue("data:image/png;base64,aA==");
+    const root = document.createElement("div"); document.body.append(root);
+    root.innerHTML = Array.from({ length: count }, (_, index) => `<img data-compose-source="https://images.example/${index}.png">`).join("");
+    try {
+      const failures = await loadSignatureEditorImages(root);
+      expect(fetch).toHaveBeenCalledTimes(Math.min(count, EMAIL_IMAGE_LIMITS.maxImagesPerMessage));
+      expect(root.querySelectorAll("img[src]")).toHaveLength(Math.min(count, EMAIL_IMAGE_LIMITS.maxImagesPerMessage));
+      expect(failures).toHaveLength(count > EMAIL_IMAGE_LIMITS.maxImagesPerMessage ? 1 : 0);
+    } finally { root.remove(); }
+  });
+
+  it.each([-1, 0, 1])("uses the shared editor image byte boundary at offset %s", async (offset) => {
+    const limit = EMAIL_IMAGE_LIMITS.maxDataUriBytesPerMessage;
+    const data = "data:image/png;base64,";
+    vi.spyOn(mailClient, "fetchRemoteImage").mockResolvedValue(data + "A".repeat(limit + offset - data.length));
+    const root = document.createElement("div"); document.body.append(root);
+    root.innerHTML = '<img data-compose-source="https://images.example/large.png">';
+    try {
+      const failures = await loadSignatureEditorImages(root);
+      expect(root.querySelector("img")!.hasAttribute("src")).toBe(offset <= 0);
+      expect(failures).toHaveLength(offset <= 0 ? 0 : 1);
+    } finally { root.remove(); }
+  });
+
+  it.each(["embedded", "hosted"])("counts existing %s images toward the aggregate editor budget", async (kind) => {
+    const data = "data:image/png;base64,";
+    const large = data + "A".repeat(EMAIL_IMAGE_LIMITS.maxDataUriBytesPerMessage - data.length);
+    const fetch = vi.spyOn(mailClient, "fetchRemoteImage").mockResolvedValue("data:image/png;base64,aA==");
+    const root = document.createElement("div"); document.body.append(root);
+    root.innerHTML = '<img><img data-compose-source="https://images.example/other.png">';
+    root.querySelector("img")!.src = large;
+    if (kind === "hosted") root.querySelector("img")!.dataset.composeSource = "https://images.example/already-loaded.png";
+    try {
+      const failures = await loadSignatureEditorImages(root);
+      expect(failures[0]).toContain("too large to preview together");
+      expect(root.querySelectorAll("img")[1]).not.toHaveAttribute("src");
+      expect(fetch).toHaveBeenCalledTimes(1);
+    } finally { root.remove(); }
   });
 
   it("requires an explicit deletion and preserves the library on failure", async () => {
@@ -353,6 +450,33 @@ describe("Gmail signature import", () => {
     fireEvent.change(plain, { target: { value: "Custom" } });
     fireEvent.change(screen.getByLabelText("Sending Address"), { target: { value: "alias@example.com" } });
     expect(plain).toHaveValue("Alias");
+  });
+
+  it.each([
+    '<table><tr><td><img src="https://images.example/logo.png" alt="Logo"></td><td>Alex</td></tr></table>',
+    '<div style="display:flex"><img src="https://images.example/logo.png" alt="Logo"><p>Alex</p></div>',
+  ])("does not reprocess signature HTML or reload the preview when editing plain text: %s", async (html) => {
+    vi.spyOn(mailClient, "listGmailSignatures").mockResolvedValue([{ address: gmail.email, html }]);
+    const convert = vi.spyOn(signatureImport, "signatureImportContent");
+    const sanitize = vi.spyOn(DOMPurify, "sanitize");
+    const save = vi.spyOn(mailClient, "importGmailSignature").mockResolvedValue(undefined);
+    render(<SignaturesSettings library={library()} accounts={[gmail]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Import from Gmail…" }));
+    const plain = await screen.findByLabelText("Plain Text");
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    const originalDoc = frame.srcdoc;
+    const conversions = convert.mock.calls.length, sanitizations = sanitize.mock.calls.length;
+    fireEvent.change(plain, { target: { value: "Alex " } });
+    expect(plain).toHaveValue("Alex ");
+    fireEvent.change(plain, { target: { value: "Alex Example" } });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Work" } });
+    expect(convert).toHaveBeenCalledTimes(conversions);
+    expect(sanitize).toHaveBeenCalledTimes(sanitizations);
+    expect(screen.getByTestId("message-body")).toBe(frame); expect(frame.srcdoc).toBe(originalDoc);
+    expect(save).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][1].text).toBe("Alex Example");
   });
 
   it("offers retry for provider failures and empty results without writing anything", async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Account } from "./domain";
 import { Modal } from "./AppChrome";
 import { SignaturePlainTextField } from "./SignaturePlainTextField";
@@ -32,8 +32,9 @@ export function GmailSignatureImportDialog({ accounts, onImported, onClose }: {
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   const selected = sources.find((source) => source.address === address);
-  const content = signatureImportContent(embedded ?? selected?.html ?? "");
-  const remote = remoteImageSources(embedded ?? selected?.html ?? "");
+  const sourceHtml = embedded ?? selected?.html ?? "";
+  const content = useMemo(() => signatureImportContent(sourceHtml), [sourceHtml]);
+  const remote = useMemo(() => remoteImageSources(sourceHtml), [sourceHtml]);
 
   useEffect(() => {
     let active = true;

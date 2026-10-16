@@ -1,11 +1,11 @@
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { SafeMessage } from "./SafeMessage";
 import { mailClient } from "./data/client";
 import { embeddedRasterImageSrc, hostedSignatureImageSrc } from "./emailRenderingPolicy";
 import { sanitizeSignatureHtml } from "./signatures";
 
 /** Hosted images stay blocked until Load Images; the iframe receives only proxy data. */
-export function SignaturePreview({ html, text }: { html: string; text: string }) {
+export const SignaturePreview = memo(function SignaturePreview({ html, text }: { html: string; text: string }) {
   const preview = useMemo(() => {
     const template = document.createElement("template"); template.innerHTML = sanitizeSignatureHtml(html);
     const namespace = crypto.randomUUID();
@@ -27,4 +27,4 @@ export function SignaturePreview({ html, text }: { html: string; text: string })
     throw new Error("Unsupported signature image source.");
   }
   return <div className="signature-preview-paper"><SafeMessage theme="light" html={preview.html} text={text} loadImages={false} imageCacheKey={preview.namespace} resolveImage={resolveImage} foldQuotes={false} /></div>;
-}
+});

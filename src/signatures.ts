@@ -119,7 +119,7 @@ export function signatureEditorHtml(source: string, allowCid = false): string {
 
 export function setSignatureEditorImageSource(image: HTMLImageElement, source: string) {
   if (hostedSignatureImageSrc(source)) {
-    image.removeAttribute("src");
+    if (image.dataset.composeSource !== source || !embeddedRasterImageSrc.test(image.getAttribute("src") ?? "")) image.removeAttribute("src");
     image.dataset.composeSource = source;
   } else {
     delete image.dataset.composeSource;

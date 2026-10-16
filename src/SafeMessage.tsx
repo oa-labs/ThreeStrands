@@ -511,7 +511,7 @@ function withGlobalImageSlot<T>(task: () => Promise<T>): Promise<T> {
   });
 }
 
-function resolveSharedImage(cacheKey: string, url: string, resolveImage: (url: string) => Promise<string>) {
+export function resolveSharedImage(cacheKey: string, url: string, resolveImage: (url: string) => Promise<string>) {
   const existing = pendingImagePromises.get(cacheKey);
   if (existing) return existing;
   const pending = withGlobalImageSlot(() => resolveImage(url));

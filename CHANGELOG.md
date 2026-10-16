@@ -14,7 +14,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Pasting or importing a signature now keeps hosted HTTPS image URLs by default, including images too large to embed. **Embed Remote Images** is tucked under **Image Options** in the Gmail import dialog when you want to send small images with the message instead.
 
 ### Fixed
-- In **Settings → Signatures**, dialogs now scroll so you can reach the plain-text field and import controls, previews show embedded logos on a white default background, and generated plain text no longer repeats formatted phone numbers. The **Choose File** button and its "no file selected" label also sit centered inside the field when adding a signature image or importing a signature file.
+- In **Settings → Signatures**, dialogs now scroll so you can reach the plain-text field and import controls, previews show logos on a white default background, and **Load Images** lets you see hosted logos while editing. Editing plain text during Gmail import now responds without reprocessing the whole signature, formatted phone numbers are no longer repeated, and the **Choose File** button and its label are centered in the file field.
 
 ## 0.133.2 — 2026-10-15
 

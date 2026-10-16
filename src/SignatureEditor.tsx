@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
+import { loadSignatureEditorImages } from "./signatureEditorImages";
 import { Modal } from "./AppChrome";
 import { SignaturePlainTextField } from "./SignaturePlainTextField";
 import { SignaturePreview } from "./SignaturePreview";
 import { FormattingPromptDialog } from "./FormattingPromptDialog";
 import { applyFormattingShortcut, formattingShortcutFor, formattingShortcuts, insertHtmlAtRange, linkifyPlainText } from "./richText";
 import { readSignatureEditor, readSignatureHtml, signatureEditorHtml, setSignatureEditorImageSource, validateSignature, type Signature } from "./signatures";
-import { hostedSignatureImageSrc, sanitizeHtmlDimension, SIGNATURE_LIMITS } from "./emailRenderingPolicy";
+import { embeddedRasterImageSrc, hostedSignatureImageSrc, sanitizeHtmlDimension, SIGNATURE_LIMITS } from "./emailRenderingPolicy";
 import { errorMessage } from "./errors";
 import { remoteImageSources, embedRemoteImages } from "./signatureImport";
 
@@ -18,10 +19,17 @@ export function SignatureEditor({ signature, onSave, onClose }: {
   const editor = useRef<HTMLDivElement>(null);
   const nameInput = useRef<HTMLInputElement>(null);
   const lastRange = useRef<Range | null>(null);
-  const [generatedText, setGeneratedText] = useState(() => readSignatureHtml(signature?.html ?? "").text);
-  const [plainText, setPlainText] = useState<string | null>(() => signature && signature.text !== readSignatureHtml(signature.html).text ? signature.text : null);
+  const [initialText] = useState(() => readSignatureHtml(signature?.html ?? "").text);
+  const [generatedText, setGeneratedText] = useState(initialText);
+  const [plainText, setPlainText] = useState<string | null>(() => signature && signature.text !== initialText ? signature.text : null);
+  const [hasHostedImages, setHasHostedImages] = useState(() => remoteImageSources(signature?.html ?? "").length > 0);
+  const [loadingImages, setLoadingImages] = useState(false);
+  const [imageStatus, setImageStatus] = useState("");
   function refreshPlainText() {
-    if (editor.current) setGeneratedText(readSignatureEditor(editor.current).text);
+    if (editor.current) {
+      setGeneratedText(readSignatureEditor(editor.current).text);
+      setHasHostedImages(Boolean(editor.current.querySelector("img[data-compose-source]")));
+    }
   }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -58,6 +66,16 @@ export function SignatureEditor({ signature, onSave, onClose }: {
     applyFormattingShortcut(editor.current, shortcut, () => finished.value);
     refreshPlainText();
   });
+
+  async function loadImages() {
+    const root = editor.current;
+    if (!root || loadingImages) return;
+    setLoadingImages(true); setImageStatus("");
+    const failures = await loadSignatureEditorImages(root);
+    if (editor.current !== root) return;
+    setLoadingImages(false);
+    setImageStatus(failures.length ? `Some images could not be loaded. ${failures[0]}` : "Images loaded for editing. Hosted image URLs will be kept when you save.");
+  }
 
   async function save() {
     if (busy || !editor.current) return;
@@ -97,6 +115,8 @@ export function SignatureEditor({ signature, onSave, onClose }: {
         }}>Edit Image…</button>
         <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setImportOpen(true)}>Import…</button>
       </div>
+      {hasHostedImages ? <div className="signature-image-actions"><span className="settings-hint">Load hosted images to see them while editing.</span><button type="button" className="btn btn-sm" disabled={busy || loadingImages} onClick={() => void loadImages()}>{loadingImages ? "Loading Images…" : "Load Images"}</button></div> : null}
+      {imageStatus ? <p className="settings-hint" role="status">{imageStatus}</p> : null}
       <div ref={editor} className="signature-content" role="textbox" aria-label="Signature Content" aria-multiline="true" tabIndex={0}
         contentEditable={!busy} suppressContentEditableWarning dangerouslySetInnerHTML={{ __html: initialHtml }}
         onInput={refreshPlainText} onBlur={rememberRange} onKeyUp={rememberRange} onMouseUp={rememberRange}
@@ -127,7 +147,7 @@ export function SignatureEditor({ signature, onSave, onClose }: {
           refreshPlainText();
           rememberRange();
         }} />
-      <p className="settings-hint">Paste your existing signature or write one here. Select text to format it; click an image to edit its size and description. Hosted images keep their URLs and can be loaded in the image preview.</p>
+      <p className="settings-hint">Paste your existing signature or write one here. Select text to format it; click an image to edit its size and description. Hosted images keep their URLs when you save.</p>
       <SignaturePlainTextField text={plainText ?? generatedText} busy={busy} onChange={setPlainText} onRegenerate={() => { refreshPlainText(); setPlainText(null); }} />
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       <div className="signature-actions"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" disabled={busy}>{busy ? "Saving…" : "Save"}</button></div>
@@ -196,6 +216,8 @@ function SignatureImageDialog({ image, onClose, onSave, onRemove }: { image: HTM
   const [alt, setAlt] = useState(image?.alt ?? "");
   const [width, setWidth] = useState(image?.getAttribute("width") ?? String(SIGNATURE_LIMITS.defaultImageWidth));
   const [error, setError] = useState("");
+  const loadedSource = image?.getAttribute("src") ?? "";
+  const loadedPreview = source === image?.dataset.composeSource && embeddedRasterImageSrc.test(loadedSource) ? loadedSource : null;
   const preview = document.createElement("template"); preview.innerHTML = "<img>";
   const previewImage = preview.content.querySelector("img")!;
   previewImage.setAttribute("src", source); previewImage.alt = alt;
@@ -210,7 +232,7 @@ function SignatureImageDialog({ image, onClose, onSave, onRemove }: { image: HTM
       <label className="snippet-field"><span>Image</span><input ref={imageInput} autoFocus type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readImageFile(file).then((data) => { setSource(data); if (!alt) setAlt(file.name); }).catch((reason) => setError(errorMessage(reason))); }} /></label>
       <label className="snippet-field"><span>Description</span><input value={alt} onChange={(event) => setAlt(event.target.value)} /></label>
       <label className="snippet-field"><span>Width in Pixels</span><input inputMode="numeric" value={width} onChange={(event) => setWidth(event.target.value)} /></label>
-      {source ? hostedSignatureImageSrc(source) ? <SignaturePreview html={preview.innerHTML} text={alt} /> : <img className="signature-image-preview" src={source} alt={alt} /> : null}
+      {source ? hostedSignatureImageSrc(source) && !loadedPreview ? <SignaturePreview html={preview.innerHTML} text={alt} /> : <img className="signature-image-preview" src={loadedPreview ?? source} alt={alt} /> : null}
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       <div className="signature-actions">{onRemove ? <button className="btn btn-danger" type="button" onClick={onRemove}>Remove Image</button> : null}<button className="btn" type="button" onClick={onClose}>Cancel</button><button className="btn btn-primary" type="submit">Apply</button></div>
     </form>

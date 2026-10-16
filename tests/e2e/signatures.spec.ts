@@ -225,17 +225,27 @@ for (const layout of ["table", "flow"] as const) {
     const content = editor.getByRole("textbox", { name: "Signature Content" });
     await expect(content.locator("img")).not.toHaveAttribute("src");
     await expect(content.locator("img")).toHaveAttribute("data-compose-source", url);
+    await editor.getByRole("button", { name: "Load Images", exact: true }).focus();
+    await page.keyboard.press("Space");
+    await expect.poll(() => content.locator("img").evaluate((element) => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+    await expect(content.locator("img")).toHaveAttribute("src", /^data:image\/png;base64,/);
+    await expect(content.locator("img")).toHaveAttribute("data-compose-source", url);
+    expect(requests).toBe(3);
     await editor.getByRole("button", { name: "Edit Image…" }).click();
     await page.getByRole("dialog", { name: "Signature Images" }).getByRole("button", { name: "Edit Hosted Logo" }).click();
     const imageEditor = page.getByRole("dialog", { name: "Edit Signature Image" });
     await imageEditor.getByLabel("Width in Pixels").fill("48");
     await imageEditor.getByRole("button", { name: "Apply", exact: true }).click();
+    await expect(content.locator("img")).toHaveAttribute("src", /^data:image\/png;base64,/);
     await editor.getByRole("button", { name: "Save", exact: true }).click();
     await settings.getByRole("button", { name: "Edit", exact: true }).click();
+    await expect(content.locator("img")).not.toHaveAttribute("src");
+    await editor.getByRole("button", { name: "Load Images", exact: true }).click();
+    await expect.poll(() => content.locator("img").evaluate((element) => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
     await expect(editor.getByRole("textbox", { name: "Plain Text", exact: true })).toHaveValue("Alex Morgan — custom alternative");
     await editor.getByRole("button", { name: "Cancel", exact: true }).click();
     await settings.getByRole("button", { name: "Close", exact: true }).click();
-    expect(requests).toBe(2);
+    expect(requests).toBe(4);
     await page.getByRole("button", { name: "New Message (c)" }).click();
     const composer = page.getByRole("dialog", { name: "New Message", exact: true });
     const signature = composer.getByRole("textbox", { name: "Message Signature" });
@@ -250,6 +260,6 @@ for (const layout of ["table", "flow"] as const) {
     await page.getByText("Hosted signature draft", { exact: true }).click();
     await expect(signature.locator("img")).toHaveAttribute("data-compose-source", url);
     await expect(signature.locator("img")).not.toHaveAttribute("src");
-    expect(requests).toBe(2);
+    expect(requests).toBe(4);
   });
 }
