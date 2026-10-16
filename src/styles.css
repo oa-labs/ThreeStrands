@@ -2551,8 +2551,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .signature-image-preview { max-height: 25vh; object-fit: contain; align-self: flex-start; }
 .signature-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); }
 .signature-plain-preview { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: var(--text-secondary); }
-.compose-signature-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; padding-block: var(--space-2); }
-.compose-signature-actions .compose-from { margin: 0; }
 .compose-body.compose-signature { white-space: normal; height: auto; min-height: 0; margin-block: var(--space-3); overflow: auto; max-width: 100%; }
 .accounts-manager { width: 100%; padding: var(--space-2-5) var(--space-5) var(--space-6); }
 .accounts-manager-header { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-4); width: 100%; }
@@ -3023,7 +3021,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .draft-message-stack { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
 .draft-message-stack > .composer { flex: 1; min-height: 0; max-height: 100%; }
 .message-stack > .composer:not(:first-child) { margin-top: var(--space-6); }
-.composer > header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-4) var(--pane-inset); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.composer > header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) var(--pane-inset); border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .composer h2 { margin: 0; font-size: var(--text-pane-title); }
 .composer header span { display: block; margin-top: var(--space-1); color: var(--muted); font-size: var(--text-secondary); }
 .compose-from { display: flex; align-items: center; gap: var(--space-1-5); margin-top: var(--space-1); }
@@ -3031,7 +3029,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 /* An inline picker in the composer header: control text on the raised surface. */
 .compose-from select { font-size: var(--text-control); background-color: var(--raised); border-color: var(--border); }
 .composer-content { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: auto; padding: 0 var(--pane-inset); }
-.compose-field { display: flex; align-items: center; gap: var(--space-3); min-height: 44px; border-bottom: 1px solid var(--border); font-size: var(--text-body); flex-shrink: 0; }
+.compose-field { display: flex; align-items: center; gap: var(--space-3); min-height: 38px; border-bottom: 1px solid var(--border); font-size: var(--text-body); flex-shrink: 0; }
 .compose-field:focus-within { border-bottom-color: var(--accent); }
 .compose-field > span, .compose-field > label { width: 50px; flex-shrink: 0; color: var(--muted); }
 .compose-field input { box-sizing: border-box; height: var(--control-h); min-width: 0; flex: 1; color: var(--text); background: transparent; border: 0; padding: var(--space-1) var(--space-1-5); outline: none; line-height: var(--leading-normal); }
@@ -3040,7 +3038,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .recipient-field:focus-within { border-bottom-color: transparent; }
 .recipient-field-label { width: 50px; flex-shrink: 0; padding: 0; border: 0; color: var(--muted); background: transparent; font: inherit; text-align: left; cursor: pointer; }
 .recipient-field-label:disabled { cursor: default; }
-.recipient-chip-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1-5); flex: 1; min-width: 0; padding: var(--space-1-5) 0; }
+.recipient-chip-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1-5); flex: 1; min-width: 0; padding: var(--space-1) 0; }
 .recipient-chip-row.drag-over { outline: 2px dashed var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
 .recipient-chip-row input { flex: 1 1 120px; min-width: 60px; padding: var(--space-1) var(--space-0-5); }
 .recipient-chip { display: inline-flex; align-items: center; gap: var(--space-1); flex-shrink: 0; padding: var(--space-1) var(--space-1-5) var(--space-1) var(--space-2); border-radius: var(--radius-pill); background: var(--hover); font-size: var(--text-secondary); cursor: grab; }
@@ -3074,7 +3072,10 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-quote-toggle { align-self: flex-start; flex-shrink: 0; margin: 0 0 var(--space-2); letter-spacing: var(--tracking-wide); }
 .compose-body.compose-quoted { min-height: 0; height: auto; padding-top: 0; overflow: visible; }
 .compose-body.compose-quoted[hidden] { display: none; }
-.reply-assist { flex-shrink: 0; margin: 0 0 var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border); }
+.compose-writing-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); flex-shrink: 0; padding: var(--space-2) var(--pane-inset); border-top: 1px solid var(--border); }
+.compose-signature-picker { display: flex; align-items: center; gap: var(--space-1); min-width: 0; max-width: 100%; color: var(--muted); font-size: var(--text-secondary); }
+.compose-signature-picker select { min-width: 0; max-width: 220px; width: auto; font-size: var(--text-control); background-color: var(--raised); border-color: var(--border); }
+.reply-assist-trigger { margin-left: auto; }
 .reply-assist-backdrop { place-items: center; padding: var(--space-4); }
 .reply-assist-modal { display: flex; flex-direction: column; width: min(var(--dialog-w-xl), 100%); max-height: calc(100dvh - 32px); }
 .reply-assist-modal > header { flex-shrink: 0; }
@@ -3099,8 +3100,16 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-image-remove { position: absolute; top: 6px; right: 6px; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 1px solid color-mix(in srgb, white 45%, transparent); border-radius: var(--radius-circle); color: var(--on-color); background: color-mix(in srgb, black 72%, transparent); font-family: var(--font-family); font-size: var(--text-glyph); line-height: var(--leading-none); box-shadow: var(--shadow-control); }
 .compose-image-remove:hover { background: color-mix(in srgb, black 88%, transparent); }
 .compose-image-resize { position: absolute; right: -5px; bottom: -5px; width: 14px; height: 14px; border: 2px solid var(--raised); border-radius: var(--radius-circle); background: var(--accent); box-shadow: var(--shadow-control); cursor: nwse-resize; }
-.composer footer { display: flex; align-items: center; gap: var(--space-2-5); padding: var(--space-4) var(--pane-inset); border-top: 1px solid var(--border); flex-shrink: 0; }
-.save-status { margin-left: auto; font-size: var(--text-meta); color: var(--muted); }
+.composer footer { position: relative; display: flex; align-items: center; gap: var(--space-2-5); padding: var(--space-4) var(--pane-inset); border-top: 1px solid var(--border); flex-shrink: 0; }
+.compose-send-actions { display: inline-flex; align-items: center; flex-shrink: 0; }
+.compose-send-actions .send-button { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.compose-send-options { padding-inline: var(--space-1-5); border-left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.compose-send-menu { position: absolute; z-index: var(--z-local-popover); bottom: calc(100% - var(--space-2)); left: var(--pane-inset); width: max-content; max-width: calc(100% - 2 * var(--pane-inset)); padding: var(--space-1); border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--raised); box-shadow: var(--shadow-popover); }
+.compose-send-menu-item { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: var(--space-1) var(--space-3); width: 100%; min-height: var(--control-h); padding: var(--space-2); border: 0; border-radius: var(--radius-sm); color: var(--text); background: transparent; font-size: var(--text-control); text-align: left; cursor: pointer; }
+.compose-send-menu-item:hover, .compose-send-menu-item:focus-visible { background: var(--hover); }
+.compose-send-menu kbd { flex-shrink: 0; color: var(--muted); }
+.compose-draft-status { display: flex; align-items: center; gap: var(--space-2-5); min-width: 0; margin-left: auto; }
+.save-status { font-size: var(--text-meta); color: var(--muted); }
 .compose-note { flex-shrink: 0; margin: 0; padding: 0 var(--pane-inset) var(--space-4); color: var(--muted); font-size: var(--text-meta); }
 .compose-format-hints { display: inline-flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); }
 .compose-error { margin: var(--space-2) 0 var(--space-3); }

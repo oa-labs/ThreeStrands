@@ -34,9 +34,11 @@ export const formattingShortcuts: FormattingShortcut[] = [
 export const selectionFormattingHints = ["format.bold", "format.italic", "format.underline", "format.strike", "format.link"]
   .map((id) => formattingShortcuts.find((shortcut) => shortcut.id === id)!);
 
-/** Renders a shortcut like the compose footer's other hints: "Mod+Shift+x" → "⌘/Ctrl ⇧ X". */
-export function composeKeyLabel(key: string): string {
-  return key.split(/\+(?=.)/).map((part) => part === "Mod" ? "⌘/Ctrl" : part === "Shift" ? "⇧" : part.toUpperCase()).join(" ");
+/** Render compact compose hints using the current platform's modifier. */
+export function composeKeyLabel(key: string, platform = navigator.platform): string {
+  const mac = /Mac|iPhone|iPad|iPod/i.test(platform);
+  return key.split(/\+(?=.)/).map((part) => part === "Mod" ? (mac ? "⌘" : "Ctrl")
+    : part === "Shift" ? (mac ? "⇧" : "Shift") : part === "Enter" ? (mac ? "↵" : "Enter") : part.toUpperCase()).join(" ");
 }
 
 export function formattingShortcutFor(event: KeyboardEvent): FormattingShortcut | undefined {

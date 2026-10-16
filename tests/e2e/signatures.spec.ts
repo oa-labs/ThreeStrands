@@ -28,10 +28,18 @@ test("creates an imported signature, sets defaults, and preserves its images and
   const composer = page.getByRole("dialog", { name: "New Message", exact: true });
   const signature = composer.getByRole("textbox", { name: "Message Signature" });
   await expect(signature).toContainText("Alex Example");
-  await expect(composer.getByRole("button", { name: /^Send ⌘/ })).toBeInViewport();
+  await expect(composer.getByRole("button", { name: "Send", exact: true })).toBeInViewport();
   await expect(signature.locator("img")).toHaveAttribute("src", `data:image/png;base64,${png}`);
   await composer.getByRole("textbox", { name: "Subject", exact: true }).fill("Signature snapshot");
   await composer.getByRole("textbox", { name: "Message Body" }).fill("Hello 😀");
+  const signaturePicker = composer.getByRole("combobox", { name: "Signature", exact: true });
+  await expect(signaturePicker).toBeInViewport();
+  await signaturePicker.selectOption({ label: "Manage signatures…" });
+  const manager = page.getByRole("dialog", { name: "Manage Signatures" });
+  await expect(manager.getByRole("button", { name: "Add Signature" })).toBeVisible();
+  await manager.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(signaturePicker.locator("option:checked")).toHaveText("Work Full");
+  await expect(composer.getByRole("textbox", { name: "Message Body" })).toHaveText("Hello 😀");
   await composer.getByRole("button", { name: "Save and Close Draft" }).click();
   // Updating the library cannot rewrite the draft's snapshot.
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();

@@ -200,12 +200,12 @@ export const commands: Command[] = [
   },
   { id: "draft.schedule", title: "Send later", keys: ["Mod+Shift+L"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(() => c.scheduleDraft?.()) },
   { id: "draft.send", title: "Send Draft", keys: ["Mod+Enter"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.sendDraft) },
-  { id: "draft.sendAndMarkDone", title: "Send & Mark Done", keys: ["Mod+Shift+Enter"], group: "Compose", enabled: (c) => c.composerActive && c.canSendAndMarkDone, run: (c) => complete(c.sendAndMarkDone) },
+  { id: "draft.sendAndMarkDone", title: "Send & archive", keywords: ["mark done"], keys: ["Mod+Shift+Enter"], group: "Compose", enabled: (c) => c.composerActive && c.canSendAndMarkDone, run: (c) => complete(c.sendAndMarkDone) },
   // The open draft in the Drafts folder is what "#" deletes there, matching
   // the composer's trash button. Typing "#" in a composer field still types.
   { id: "draft.discard", title: "Discard Draft", keys: ["#"], group: "Compose", enabled: (c) => c.composerActive && c.focusedPane === "mail" && c.mailbox === "drafts", run: (c) => complete(c.discardDraft) },
   { id: "draft.attach", title: "Attach Files", keys: [], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.attachFiles) },
-  { id: "draft.replyAssist", title: "Draft Reply With AI", keys: ["Mod+j"], group: "Compose", enabled: (c) => c.composerActive && c.aiReplyAssistEnabled, run: (c) => complete(c.draftReplyWithAI) },
+  { id: "draft.replyAssist", title: "Draft reply", keywords: ["AI", "write", "generate"], keys: ["Mod+j"], group: "Compose", enabled: (c) => c.composerActive && c.aiReplyAssistEnabled, run: (c) => complete(c.draftReplyWithAI) },
   { id: "draft.contextPanel", title: "Switch Between Draft and Context Panel", keys: ["F6", "Mod+Shift+p"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.toggleContextPanelFocus) },
   { id: "send.undo", title: "Undo Send", keys: [], group: "Compose", enabled: (c) => c.canUndoSend, run: (c) => complete(c.undoSend) },
   {

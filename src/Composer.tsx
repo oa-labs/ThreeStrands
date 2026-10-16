@@ -1,7 +1,7 @@
 import { draftSignatureSnapshot, type SignatureState } from "./signatures";
 import { SignaturesSettings } from "./SignaturesSettings";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { Paperclip, Send, Sparkles, Trash, X } from "lucide-react";
+import { Paperclip, Sparkles, Trash, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { Draft, OutboxItem, SendingIdentity } from "./correspondence";
 import type { Account, ReplyAssistContext, Snippet } from "./domain";
@@ -23,6 +23,7 @@ import { ICON_SIZE } from "./iconSizes";
 import type { DraftReviewActions } from "./draftReview";
 import { composeKeyLabel, plainTextToHtml, selectionFormattingHints } from "./richText";
 import { ScheduleSendPicker } from "./ScheduleSendPicker";
+import { ComposeSendActions } from "./ComposeSendActions";
 
 export type ComposerHandle = {
   draftReview: DraftReviewActions;
@@ -50,19 +51,20 @@ export const Composer = forwardRef<ComposerHandle, {
   onDeleteSnippet(id: string): Promise<void>;
   onClose(): void;
   onQueued(item: OutboxItem): void;
+  onSendAndArchive?: () => void;
   availabilityText?: string | null;
   expandQuotedText?: boolean;
   replyAssistInstruction?: string | null;
   /** Called with the draft as edits are made; body text arrives at each autosave. */
   onDraftChange?(draft: Draft): void;
-}>(function Composer({ draft: initial, accounts, messageAppearance, signatures, snippets, onCreateSnippet, onUpdateSnippet, onDeleteSnippet, onClose, onQueued, availabilityText = null, expandQuotedText = false, replyAssistInstruction = null, onDraftChange }, ref) {
+}>(function Composer({ draft: initial, accounts, messageAppearance, signatures, snippets, onCreateSnippet, onUpdateSnippet, onDeleteSnippet, onClose, onQueued, onSendAndArchive, availabilityText = null, expandQuotedText = false, replyAssistInstruction = null, onDraftChange }, ref) {
   const bodyEditor = useRef<ComposeBodyEditorHandle>(null);
   const captureChanges = useCallback(() => bodyEditor.current?.captureChanges() ?? null, []);
   const [error, setError] = useState("");
   const { draft, latest, status, edit, markChanged, captureBody, flush, replaceDraft } = useDraftAutosave(initial, captureChanges, setError);
   const [signaturesOpen, setSignaturesOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  // While body text is selected, the footer note trades its draft reminder for formatting shortcuts.
+  // While body text is selected, the footer note shows formatting shortcuts.
   const [textSelected, setTextSelected] = useState(false);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
@@ -370,11 +372,6 @@ export const Composer = forwardRef<ComposerHandle, {
           )
         ))}
         <label className="compose-field"><span>Subject</span><input aria-label="Subject" value={draft.subject} onChange={(e) => edit("subject", e.target.value)} disabled={busy} /></label>
-        {signatures ? <div className="compose-signature-actions"><label className="compose-from"><span>Signature</span><select aria-label="Signature" value={draft.signature?.id ?? ""} disabled={busy} onChange={(event) => changeSignature(event.target.value)}>
-          <option value="">No Signature</option>
-          {draft.signature?.id && !signatures.signatures.some((s) => s.id === draft.signature?.id) ? <option value={draft.signature.id}>{draft.signature.name} (Saved in Draft)</option> : null}
-          {signatures.signatures.map((signature) => <option key={signature.id} value={signature.id}>{signature.name}</option>)}
-        </select></label><button type="button" className="btn btn-sm" disabled={busy} onClick={() => setSignaturesOpen(true)}>Manage Signatures…</button></div> : null}
         <ComposeBodyEditor
           ref={bodyEditor}
           initial={initial}
@@ -395,24 +392,38 @@ export const Composer = forwardRef<ComposerHandle, {
           onRemoveImage={removeInlineImage}
           readInlineImage={readInlineImage}
         />
-        {replyAssistEnabled ? (
-          <div className="reply-assist">
-            <button type="button" className="btn reply-assist-trigger" onClick={draftReplyWithAI}>
-              <Sparkles size={ICON_SIZE.md} /> Draft Reply With AI <kbd>⌘/Ctrl J</kbd>
-            </button>
-          </div>
-        ) : null}
         {replyAssistInstruction && !replyAssistAvailable ? (
           <p className="reply-assist-task-context"><strong>Task-derived instruction:</strong> {replyAssistInstruction}{replyAssistEnabled ? " Set up an AI provider and API key in AI settings to generate a suggestion." : null}</p>
         ) : null}
         {draft.attachments.some((attachment) => !attachment.inline) && <ul className="attachment-list">{draft.attachments.filter((attachment) => !attachment.inline).map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : "Download required"}</small></span>{!a.ready && <button className="btn btn-sm" disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); replaceDraft(next); })}>Download</button>}<button className="btn-icon btn-icon-sm" aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); replaceDraft(next); })}><X size={ICON_SIZE.sm} /></button></li>)}</ul>}
         {error && <div className="notice compose-error" role="alert">{error} <button className="btn btn-sm" onClick={() => void run(async () => { await flush(); })}>Retry Save</button></div>}
       </div>
-      <footer><button className="btn btn-primary send-button" onClick={() => send()} disabled={busy}><Send size={ICON_SIZE.md} /> Send <kbd>⌘/Ctrl ↵</kbd></button><button className="btn" onClick={() => setScheduleOpen(true)} disabled={busy} aria-label="Send later" aria-keyshortcuts="Meta+Shift+L Control+Shift+L">Send later <kbd>⌘/Ctrl ⇧ L</kbd></button><button className="btn-icon" onClick={attach} disabled={busy} aria-label="Attach Files"><Paperclip size={ICON_SIZE.lg} /></button><span className="save-status" role="status">{status}</span><button className="btn-icon" disabled={busy} aria-label="Discard Draft" onClick={discard}><Trash size={ICON_SIZE.lg} /></button></footer>
+      {signatures || replyAssistEnabled ? <div className="compose-writing-actions" role="group" aria-label="Writing tools">
+        {signatures ? <label className="compose-signature-picker"><span>Signature:</span><select aria-label="Signature" value={draft.signature?.id ?? ""} disabled={busy} onChange={(event) => {
+          if (event.target.selectedOptions[0]?.dataset.action === "manage") setSignaturesOpen(true);
+          else changeSignature(event.target.value);
+        }}>
+          <option value="">None</option>
+          {draft.signature?.id && !signatures.signatures.some((s) => s.id === draft.signature?.id) ? <option value={draft.signature.id}>{draft.signature.name} (Saved in Draft)</option> : null}
+          {signatures.signatures.map((signature) => <option key={signature.id} value={signature.id}>{signature.name}</option>)}
+          <option value="__manage_signatures__" data-action="manage">Manage signatures…</option>
+        </select></label> : null}
+        {replyAssistEnabled ? <button type="button" className="btn btn-sm reply-assist-trigger" title={`Draft a reply with AI (${composeKeyLabel("Mod+j")})`} aria-keyshortcuts="Meta+J Control+J" disabled={busy} onClick={draftReplyWithAI}>
+          <Sparkles size={ICON_SIZE.md} /> Draft reply
+        </button> : null}
+      </div> : null}
+      <footer>
+        <ComposeSendActions busy={busy} onSend={() => send()} onSchedule={() => setScheduleOpen(true)} onSendAndArchive={onSendAndArchive} />
+        <button className="btn-icon" onClick={attach} disabled={busy} aria-label="Attach Files"><Paperclip size={ICON_SIZE.lg} /></button>
+        <div className="compose-draft-status">
+          <span className="save-status" role="status">{status}</span>
+          <button className="btn-icon" disabled={busy} aria-label="Discard Draft" onClick={discard}><Trash size={ICON_SIZE.lg} /></button>
+        </div>
+      </footer>
       <p className="compose-note">
         {textSelected
           ? <span className="compose-format-hints" aria-label="Formatting shortcuts">{selectionFormattingHints.map((shortcut) => <span key={shortcut.id}>{shortcut.title} <kbd>{composeKeyLabel(shortcut.key)}</kbd></span>)}</span>
-          : "Drafts are saved on this device. Send has a 10-second undo window."}
+          : "Send has a 10-second undo window."}
         {!("__TAURI_INTERNALS__" in window) && " Browser preview: delivery and attachments are simulated."}
       </p>
       {signaturesOpen && signatures ? <Modal title="Manage Signatures" className="signature-dialog" onClose={() => setSignaturesOpen(false)}><div className="signature-form"><SignaturesSettings library={signatures} accounts={accounts} /></div></Modal> : null}

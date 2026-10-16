@@ -328,7 +328,7 @@ export function useCorrespondence(
     if (active?.id === draft.id) { editor.current?.discard(); return; }
     void mailClient.discardDraft(draft.id).then(() => refresh()).catch((e: unknown) => setError(String(e)));
   }, [active?.id, refresh]);
-  const composer = active ? (
+  const renderComposer = (onSendAndArchive?: () => void) => active ? (
     <Composer
       key={active.id}
       ref={editor}
@@ -344,6 +344,7 @@ export function useCorrespondence(
       availabilityText={activeAvailabilityText}
       replyAssistInstruction={activeReplyAssistInstruction}
       onDraftChange={setLiveDraft}
+      onSendAndArchive={onSendAndArchive}
       onClose={() => { setActive(null); setActiveThreadId(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null); void refresh(); }}
       onQueued={(item) => {
         const followUpTaskId = activeFollowUpTaskId ?? active.followUpTaskId ?? null;
@@ -397,7 +398,7 @@ export function useCorrespondence(
     moveDraftRecipientsToBcc,
     focusDraftBody,
     draftReview,
-    composer,
+    renderComposer,
     overlay: <>
       {pending && !active && <div className="send-notice" role="status">{pending.deadline > clock ? `Sending in ${Math.ceil((pending.deadline - clock) / 1000)}s` : "Queued for delivery"}<button className="btn-link" onClick={() => void undo(pending.id)}>Undo Send</button></div>}
       {closing && <div className="exit-backdrop"><div className="exit-notice" tabIndex={-1} role="dialog" aria-modal="true" aria-label="Closing ThreeStrands" onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Tab") { e.preventDefault(); e.currentTarget.querySelector("button")?.focus(); } }}><span>Saving drafts and finishing pending delivery before closing… Queued mail remains saved for the next launch.</span>{pending && <button className="btn" onClick={() => void undo(pending.id)}>Undo Queued Send</button>}</div></div>}

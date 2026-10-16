@@ -71,6 +71,24 @@ describe("Composer signatures", () => {
     vi.spyOn(mailClient, "listIdentities").mockResolvedValue([{ address: draft.account }]);
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+  it.each(["new", "reply", "replyAll", "forward"] as const)("keeps signature management below the editor without changing the %s draft", async (mode) => {
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={{ ...draft, mode, body: "Keep this message", signature: draftSignatureSnapshot(full, true) }} accounts={accounts} signatures={signatures} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    const picker = screen.getByRole("combobox", { name: "Signature" });
+    const body = screen.getByRole("textbox", { name: "Message Body" });
+    expect(body.compareDocumentPosition(picker) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Manage Signatures/i })).not.toBeInTheDocument();
+    fireEvent.change(picker, { target: { value: "__manage_signatures__" } });
+    const manager = screen.getByRole("dialog", { name: "Manage Signatures" });
+    expect(within(manager).getByRole("button", { name: "Add Signature" })).toBeInTheDocument();
+    expect(picker).toHaveValue("full");
+    fireEvent.click(within(manager).getByRole("button", { name: "Close" }));
+    let saved!: Draft;
+    await act(async () => { saved = await ref.current!.flush(); });
+    expect(saved.signature?.id).toBe("full");
+    expect(saved.body).toBe("Keep this message");
+  });
+
   it("keeps the signature separate from authored text and quotes, including AI replacement and draft reopening", async () => {
     const ref = createRef<ComposerHandle>();
     const initial = { ...draft, mode: "reply" as const, body: "\n\nOn Monday, Ann wrote:\n> Quoted", signature: draftSignatureSnapshot(full, true) };
@@ -282,21 +300,21 @@ describe("Composer formatting hints", () => {
     act(() => { document.dispatchEvent(new Event("selectionchange")); });
   };
 
-  it("trades the draft reminder for formatting shortcuts only while body text is selected", () => {
+  it("trades the undo reminder for formatting shortcuts only while body text is selected", () => {
     render(<Composer draft={{ ...draft, body: "Hello there" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     const editor = screen.getByRole("textbox", { name: "Message Body" });
-    expect(screen.getByText(/Drafts are saved on this device/)).toBeInTheDocument();
+    expect(screen.getByText(/Send has a 10-second undo window/)).toBeInTheDocument();
 
     select(editor.firstChild!, 0, 5);
     const hints = screen.getByLabelText("Formatting shortcuts");
-    expect(hints).toHaveTextContent("Bold ⌘/Ctrl B");
-    expect(hints).toHaveTextContent("Italics ⌘/Ctrl I");
-    expect(hints).toHaveTextContent("Strikethrough ⌘/Ctrl ⇧ X");
-    expect(screen.queryByText(/Drafts are saved on this device/)).not.toBeInTheDocument();
+    expect(hints).toHaveTextContent("Bold Ctrl B");
+    expect(hints).toHaveTextContent("Italics Ctrl I");
+    expect(hints).toHaveTextContent("Strikethrough Ctrl Shift X");
+    expect(screen.queryByText(/Send has a 10-second undo window/)).not.toBeInTheDocument();
 
     select(editor.firstChild!, 2, 2);
     expect(screen.queryByLabelText("Formatting shortcuts")).not.toBeInTheDocument();
-    expect(screen.getByText(/Drafts are saved on this device/)).toBeInTheDocument();
+    expect(screen.getByText(/Send has a 10-second undo window/)).toBeInTheDocument();
   });
 
   it("asks for a link in-app, since the desktop webview has no window.prompt", () => {
@@ -325,9 +343,9 @@ describe("Composer formatting hints", () => {
     expect(nativePrompt).not.toHaveBeenCalled();
   });
 
-  it("keeps the draft reminder for selections outside the message body", () => {
+  it("keeps the undo reminder for selections outside the message body", () => {
     render(<Composer draft={{ ...draft, subject: "Status", body: "Hello there" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    select(screen.getByText(/Drafts are saved on this device/).firstChild!, 0, 6);
+    select(screen.getByText(/Send has a 10-second undo window/).firstChild!, 0, 6);
     expect(screen.queryByLabelText("Formatting shortcuts")).not.toBeInTheDocument();
   });
 });
@@ -885,7 +903,7 @@ describe("Composer forwarded content and attachments", () => {
 
     await waitFor(() => expect(fetchAttachment).toHaveBeenCalledWith("draft-1", "forwarded-image"));
     await waitFor(() => expect(screen.getByText(/Ready/)).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: /^Send ⌘/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => expect(queueDraft).toHaveBeenCalledWith("draft-1", 1));
     expect(onQueued).toHaveBeenCalledWith(queued);
@@ -925,13 +943,16 @@ describe("Composer Reply Assist", () => {
     saveAiFeatures(DEFAULT_AI_FEATURES);
   });
 
-  it("offers Draft Reply With AI once Draft Assist is on, and explains a missing key instead of doing nothing", async () => {
+  it("offers Draft reply once Draft Assist is on, and explains a missing key instead of doing nothing", async () => {
     await clearAiApiKey();
     const replyAssistContext = vi.spyOn(mailClient, "replyAssistContext");
     const ref = createRef<ComposerHandle>();
     render(<Composer ref={ref} draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    const trigger = await screen.findByRole("button", { name: /Draft Reply With AI/ });
+    const trigger = await screen.findByRole("button", { name: /Draft reply/ });
     expect(trigger.querySelector("svg.lucide-sparkles")).not.toBeNull();
+    expect(trigger).toHaveAttribute("title", "Draft a reply with AI (Ctrl J)");
+    expect(trigger.querySelector("kbd")).toBeNull();
+    expect(within(screen.getByRole("group", { name: "Writing tools" })).getByRole("button", { name: "Draft reply" })).toBe(trigger);
 
     act(() => ref.current?.draftReplyWithAI());
     const assist = await screen.findByRole("dialog", { name: "Reply Assist" });
@@ -942,12 +963,12 @@ describe("Composer Reply Assist", () => {
     expect(replyAssistContext).not.toHaveBeenCalled();
   });
 
-  it("leaves Draft Reply With AI out when no AI provider is chosen", async () => {
+  it("leaves Draft reply out when no AI provider is chosen", async () => {
     saveAiProvider("none");
     render(<Composer draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     await screen.findByRole("textbox", { name: "Message Body" });
     await act(async () => { await Promise.resolve(); });
-    expect(screen.queryByRole("button", { name: /Draft Reply With AI/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Draft reply/ })).not.toBeInTheDocument();
   });
 
   it("shows the exact reviewed context and inserts provider output only as plain text", async () => {
@@ -958,7 +979,7 @@ describe("Composer Reply Assist", () => {
     vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
 
     render(<Composer draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Draft Reply With AI/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Draft reply/ }));
 
     expect(await screen.findByText("Can we meet Friday?")).toBeInTheDocument();
     expect(screen.getByText("Project timing")).toBeInTheDocument();
@@ -1062,7 +1083,7 @@ describe("Composer Reply Assist", () => {
     const existing = { ...replyDraft, body: `My existing words.${replyDraft.body}` };
 
     render(<Composer draft={existing} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Draft Reply With AI/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Draft reply/ }));
     await screen.findByText("Can we meet Friday?");
     fireEvent.click(screen.getByRole("button", { name: "Generate Draft" }));
 
@@ -1082,7 +1103,7 @@ describe("Composer Reply Assist", () => {
     const ref = createRef<ComposerHandle>();
 
     render(<Composer ref={ref} draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    await screen.findByRole("button", { name: /Draft Reply With AI/ });
+    await screen.findByRole("button", { name: /Draft reply/ });
 
     ref.current?.draftReplyWithAI();
 
@@ -1092,7 +1113,7 @@ describe("Composer Reply Assist", () => {
   it("opens over the composer, focuses the instruction, and restores focus when dismissed", async () => {
     vi.spyOn(mailClient, "replyAssistContext").mockResolvedValue(context);
     const { container } = render(<Composer draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    const trigger = await screen.findByRole("button", { name: /Draft Reply With AI/ });
+    const trigger = await screen.findByRole("button", { name: /Draft reply/ });
     trigger.focus();
 
     fireEvent.click(trigger);
@@ -1142,7 +1163,7 @@ describe("Composer Reply Assist", () => {
     const replyAssistContext = vi.spyOn(mailClient, "replyAssistContext").mockResolvedValue(context);
     const ref = createRef<ComposerHandle>();
     render(<Composer ref={ref} draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    await screen.findByRole("button", { name: /Draft Reply With AI/ });
+    await screen.findByRole("button", { name: /Draft reply/ });
 
     act(() => ref.current?.draftReplyWithAI());
     const assist = await screen.findByRole("dialog", { name: "Reply Assist" });
@@ -1607,8 +1628,87 @@ describe("Composer context panel actions", () => {
 });
 
 
-describe("Composer scheduled sending", () => {
+describe("Composer send options", () => {
   afterEach(() => {cleanup();vi.restoreAllMocks();});
+  it("keeps secondary delivery actions in a keyboard-accessible menu and restores focus on Escape", () => {
+    const onClose = vi.fn();
+    const onSendAndArchive = vi.fn();
+    render(<Composer draft={{ ...draft, mode: "reply" }} accounts={accounts} {...snippetProps} onClose={onClose} onQueued={vi.fn()} onSendAndArchive={onSendAndArchive} />);
+    const trigger = screen.getByRole("button", { name: "Send options" });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send later" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toHaveTextContent("Send Ctrl Enter");
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    const later = screen.getByRole("menuitem", { name: "Send later…" });
+    const archive = screen.getByRole("menuitem", { name: "Send & archive" });
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(later).toHaveFocus();
+    expect(later).toHaveTextContent("Ctrl Shift L");
+    expect(archive).toHaveTextContent("Ctrl Shift Enter");
+    fireEvent.keyDown(later, { key: "ArrowDown" });
+    expect(archive).toHaveFocus();
+    fireEvent.keyDown(archive, { key: "Home" });
+    expect(later).toHaveFocus();
+    fireEvent.keyDown(later, { key: "ArrowUp" });
+    expect(archive).toHaveFocus();
+    fireEvent.keyDown(archive, { key: "Escape" });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Send & archive" }));
+    expect(onSendAndArchive).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("offers only scheduling when archive is unavailable and dismisses on outside clicks or focus leaving", () => {
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    const trigger = screen.getByRole("button", { name: "Send options" });
+    fireEvent.click(trigger);
+    expect(screen.getAllByRole("menuitem")).toHaveLength(1);
+    fireEvent.pointerDown(screen.getByRole("textbox", { name: "Subject" }));
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    fireEvent.click(trigger);
+    act(() => { screen.getByRole("textbox", { name: "Message Body" }).focus(); });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    fireEvent.click(trigger);
+    fireEvent.keyDown(screen.getByRole("menuitem"), { key: "Tab" });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it.each([false, true])("honors shifted send from the menu with metaKey=%s without activating scheduling", async (metaKey) => {
+    const archive = vi.fn();
+    const schedule = vi.spyOn(mailClient, "schedulingInfo");
+    render(<Composer draft={{ ...draft, mode: "reply" }} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} onSendAndArchive={archive} />);
+    fireEvent.click(screen.getByRole("button", { name: "Send options" }));
+    fireEvent.keyDown(screen.getByRole("menuitem", { name: "Send later…" }), { key: "Enter", metaKey, ctrlKey: !metaKey, shiftKey: true });
+    expect(archive).toHaveBeenCalledOnce();
+    expect(schedule).not.toHaveBeenCalled();
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("sends normally from a focused menu item without opening scheduling", async () => {
+    const queue = vi.spyOn(mailClient, "queueDraft").mockResolvedValue({ id: "queued", draft, state: "undo_pending", deadline: 10000, error: null });
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Send options" }));
+    fireEvent.keyDown(screen.getByRole("menuitem", { name: "Send later…" }), { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(queue).toHaveBeenCalledWith("draft-1", 0));
+    expect(screen.queryByRole("dialog", { name: "Send later" })).not.toBeInTheDocument();
+  });
+
+  it("disables sending and its options while the draft is being saved for delivery", async () => {
+    const pending = deferred<Draft>();
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(() => pending.promise);
+    vi.spyOn(mailClient, "queueDraft").mockResolvedValue({ id: "queued", draft, state: "undo_pending", deadline: 10000, error: null });
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "Sending" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send options" })).toBeDisabled();
+    await act(async () => { pending.resolve({ ...draft, subject: "Sending", revision: 1 }); });
+  });
+
   it("flushes edited content before scheduling and closes only after durable queueing",async () => {
     vi.spyOn(mailClient,"schedulingInfo").mockResolvedValue({deviceName:"MacBook",sharing:true});
     vi.spyOn(mailClient,"scheduleChoices").mockResolvedValue([{scheduledAt:Date.now()+3600000,offsetSeconds:0}]);
@@ -1618,7 +1718,8 @@ describe("Composer scheduled sending", () => {
     const immediate=vi.spyOn(mailClient,"queueDraft");const onQueued=vi.fn(),onClose=vi.fn();
     render(<Composer draft={{...draft,to:"client@example.com"}} accounts={accounts} {...snippetProps} onClose={onClose} onQueued={onQueued}/>);
     fireEvent.change(screen.getByRole("textbox",{name:"Subject"}),{target:{value:"Saved before scheduling"}});
-    fireEvent.click(screen.getByRole("button",{name:"Send later"}));
+    fireEvent.click(screen.getByRole("button", { name: "Send options" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Send later…" }));
     const dialog=screen.getByRole("dialog",{name:"Send later"});
     await waitFor(() => expect(within(dialog).getByRole("button",{name:"Schedule email"})).toBeEnabled());
     expect(within(dialog).getByText(/Recipients, message bodies, and attachments stay/)).toBeInTheDocument();
@@ -1630,7 +1731,8 @@ describe("Composer scheduled sending", () => {
     vi.spyOn(mailClient,"schedulingInfo").mockResolvedValue({deviceName:"Desktop",sharing:false});
     vi.spyOn(mailClient,"scheduleChoices").mockResolvedValue([{scheduledAt:Date.now()+3600000,offsetSeconds:-14400},{scheduledAt:Date.now()+7200000,offsetSeconds:-18000}]);
     const close=vi.fn();render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={close} onQueued={vi.fn()}/>);
-    fireEvent.click(screen.getByRole("button",{name:"Send later"}));
+    fireEvent.click(screen.getByRole("button", { name: "Send options" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Send later…" }));
     await waitFor(() => expect(screen.getByRole("combobox",{name:"UTC Offset"})).toBeInTheDocument());
     expect(screen.getByRole("button",{name:"Schedule email"})).toBeDisabled();
     fireEvent.change(screen.getByRole("combobox",{name:"UTC Offset"}),{target:{value:"-18000"}});
@@ -1705,6 +1807,6 @@ describe("Composer sending-address picker", () => {
     await waitFor(() => expect(mailClient.listIdentities).toHaveBeenCalled());
     expect(screen.queryByRole("combobox", { name: "Sending Address" })).not.toBeInTheDocument();
     // Send is still available (not disabled by the failed fetch).
-    expect(screen.getByRole("button", { name: /Send ⌘\/Ctrl/ })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
   });
 });

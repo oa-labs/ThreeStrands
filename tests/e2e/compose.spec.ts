@@ -248,7 +248,7 @@ test("HTML forwarding preserves formatting and blocked images after reopening, s
   await expect(body).toHaveText("Please see the original message below.");
   await expect(frame.locator("strong")).toHaveText("ThreeStrands");
   await expect(frame.locator("img")).not.toHaveAttribute("src");
-  await composer.getByRole("button", { name: /^Send ⌘/ }).click();
+  await composer.getByRole("button", { name: "Send", exact: true }).click();
   await expect(composer).not.toBeVisible();
   await page.getByRole("button", { name: "Undo Send", exact: true }).click();
   await expect(body).toHaveText("Please see the original message below.");
@@ -325,7 +325,7 @@ test("Reply Assist opens in the viewport over a long reply and Escape returns to
     localStorage.setItem("threestrands.settings.ai.provider", "openai");
     localStorage.setItem("threestrands.settings.ai.features", JSON.stringify({ draftAssist: true, summarize: false, actionExtraction: false }));
   });
-  // The app reads AI settings at startup (and again when Settings closes), as Draft Reply With AI is offered only when it's on.
+  // The app reads AI settings at startup (and again when Settings closes), as Draft reply is offered only when it's on.
   await page.reload();
   await page.evaluate('import("/src/aiSettings.ts").then(({ setAiApiKey }) => setAiApiKey("test-key"))');
   await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
@@ -333,6 +333,23 @@ test("Reply Assist opens in the viewport over a long reply and Escape returns to
   const reply = page.getByRole("dialog", { name: "Reply Message" });
   const editor = reply.getByRole("textbox", { name: "Message Body" });
   await editor.fill("A long quoted thread.\n".repeat(80));
+  const tools = reply.getByRole("group", { name: "Writing tools" });
+  const draftReply = tools.getByRole("button", { name: "Draft reply", exact: true });
+  await expect(draftReply).toHaveAttribute("title", /Draft a reply with AI/);
+  await expect(draftReply.locator("kbd")).toHaveCount(0);
+  await tools.scrollIntoViewIfNeeded();
+  await expect(tools.getByRole("combobox", { name: "Signature" })).toBeInViewport();
+  await expect(draftReply).toBeInViewport();
+  const alignment = await tools.evaluate((element) => {
+    const signature = element.querySelector("select")!.getBoundingClientRect();
+    const ai = element.querySelector("button")!.getBoundingClientRect();
+    const trash = element.closest(".composer")!.querySelector('[aria-label="Discard Draft"]')!.getBoundingClientRect();
+    return { scrollWidth: element.scrollWidth, clientWidth: element.clientWidth, aiRight: ai.right, trashRight: trash.right, toolsBottom: element.getBoundingClientRect().bottom, footerTop: trash.top, signatureWidth: signature.width };
+  });
+  expect(alignment.scrollWidth).toBeLessThanOrEqual(alignment.clientWidth);
+  expect(alignment.signatureWidth).toBeGreaterThan(60);
+  expect(Math.abs(alignment.aiRight - alignment.trashRight)).toBeLessThan(1);
+  expect(alignment.toolsBottom).toBeLessThanOrEqual(alignment.footerTop);
 
   await editor.press("ControlOrMeta+j");
 
@@ -347,6 +364,48 @@ test("Reply Assist opens in the viewport over a long reply and Escape returns to
   await expect(assist).not.toBeVisible();
   await expect(reply).toBeVisible();
   await expect(editor).toBeFocused();
+});
+
+test("reply send options support keyboard navigation and send-and-archive without losing draft edits", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 600 });
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Welcome to ThreeStrands" })).toBeVisible();
+  await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
+  await page.keyboard.press("r");
+  const reply = page.getByRole("dialog", { name: "Reply Message" });
+  const body = reply.getByRole("textbox", { name: "Message Body" });
+  await body.fill("Thanks for the introduction.");
+  const trigger = reply.getByRole("button", { name: "Send options" });
+  await trigger.focus();
+  await trigger.press("ArrowDown");
+  const menu = reply.getByRole("menu", { name: "Send options" });
+  const later = menu.getByRole("menuitem", { name: "Send later…" });
+  const archive = menu.getByRole("menuitem", { name: "Send & archive" });
+  await expect(later).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(archive).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).not.toBeVisible();
+  await expect(trigger).toBeFocused();
+  await expect(body).toHaveText("Thanks for the introduction.");
+  await trigger.click();
+  await page.keyboard.press("Tab");
+  await expect(menu).not.toBeVisible();
+  await expect(reply.getByRole("button", { name: "Attach Files" })).toBeFocused();
+  await trigger.click();
+  await expect(archive).toBeInViewport({ ratio: 1 });
+  const menuFits = await menu.evaluate((element) => {
+    const menuBox = element.getBoundingClientRect();
+    const composerBox = element.closest(".composer")!.getBoundingClientRect();
+    return menuBox.left >= composerBox.left && menuBox.right <= composerBox.right && element.scrollWidth <= element.clientWidth;
+  });
+  expect(menuFits).toBe(true);
+  await later.focus();
+  await page.keyboard.press("ControlOrMeta+Shift+Enter");
+  await expect(reply).not.toBeVisible();
+  await expect(page.getByRole("listbox").getByRole("option").filter({ hasText: "Welcome to ThreeStrands" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Undo Send", exact: true }).click();
+  await expect(body).toHaveText("Thanks for the introduction.");
 });
 
 test("removing an added reply recipient keeps the original recipient", async ({ page }) => {
@@ -424,7 +483,7 @@ test("attachment selection and removal survive autosave; invalid recipients keep
   await expect(composer.getByText("résumé.txt", { exact: false })).toBeVisible();
   await composer.getByRole("button", { name: "Remove résumé.txt" }).click();
   await expect(composer.getByText("résumé.txt", { exact: false })).not.toBeVisible();
-  await composer.getByRole("button", { name: /^Send ⌘/ }).click();
+  await composer.getByRole("button", { name: "Send", exact: true }).click();
   await expect(composer.getByRole("alert")).toContainText("Add at least one recipient");
   await expect(composer).toBeVisible();
 });
@@ -507,7 +566,7 @@ for (const theme of ["light", "dark"] as const) {
     await page.getByRole("textbox", { name: "Subject" }).fill("A quick update");
     await page.getByRole("textbox", { name: "Message Body" }).fill("Hi Jane,\n\nI've attached my notes from today. Let me know what you think.\n\nThanks!");
     await page.getByRole("button", { name: "To", exact: true }).click();
-    await expect(page.getByRole("button", { name: /^Send ⌘/ })).toBeInViewport();
+    await expect(page.getByRole("button", { name: "Send", exact: true })).toBeInViewport();
     await expect(page.getByRole("button", { name: "Save and Close Draft" })).toBeInViewport();
     await expect(page.getByRole("dialog").getByRole("status")).toHaveText("Saved on this device");
     await page.screenshot({ path: testInfo.outputPath(`composer-${theme}.png`) });
@@ -544,8 +603,10 @@ test("scheduled send survives reload, reschedules, and requires confirmation aft
   await composer.getByRole("textbox", { name: "To", exact: true }).fill("test@example.com");
   await composer.getByRole("textbox", { name: "Subject" }).fill("A scheduled email");
   await composer.getByRole("textbox", { name: "Message Body" }).fill("Preserved scheduled content");
-  await expect(composer.getByRole("button", { name: "Send later", exact: true })).toHaveAttribute("aria-keyshortcuts", "Meta+Shift+L Control+Shift+L");
-  await page.keyboard.press("ControlOrMeta+Shift+L");
+  await composer.getByRole("button", { name: "Send options" }).click();
+  await expect(composer.getByRole("menuitem")).toHaveCount(1);
+  await expect(composer.getByRole("menuitem", { name: "Send later…", exact: true })).toHaveAttribute("aria-keyshortcuts", "Meta+Shift+L Control+Shift+L");
+  await composer.getByRole("menuitem", { name: "Send later…" }).click();
   const picker = page.getByRole("dialog", { name: "Send later" });
   await expect(picker).toBeVisible();
   await page.keyboard.press("Escape");

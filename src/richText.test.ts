@@ -90,13 +90,23 @@ describe("Superhuman formatting shortcuts", () => {
 });
 
 describe("selection formatting hints", () => {
+  it.each([
+    ["MacIntel", "⌘ ⇧ ↵", "⌘ J"],
+    ["Win32", "Ctrl Shift Enter", "Ctrl J"],
+    ["Linux x86_64", "Ctrl Shift Enter", "Ctrl J"],
+  ])("uses platform-specific compose shortcut labels on %s", (platform, send, reply) => {
+    expect(composeKeyLabel("Mod+Shift+Enter", platform)).toBe(send);
+    expect(composeKeyLabel("Mod+j", platform)).toBe(reply);
+    expect(composeKeyLabel("Tab", platform)).toBe("TAB");
+  });
+
   it("offers the everyday formats with footer-style key labels", () => {
-    expect(selectionFormattingHints.map(({ title, key }) => [title, composeKeyLabel(key)])).toEqual([
-      ["Bold", "⌘/Ctrl B"],
-      ["Italics", "⌘/Ctrl I"],
-      ["Underline", "⌘/Ctrl U"],
-      ["Strikethrough", "⌘/Ctrl ⇧ X"],
-      ["Hyperlink", "⌘/Ctrl K"],
+    expect(selectionFormattingHints.map(({ title, key }) => [title, composeKeyLabel(key, "MacIntel")])).toEqual([
+      ["Bold", "⌘ B"],
+      ["Italics", "⌘ I"],
+      ["Underline", "⌘ U"],
+      ["Strikethrough", "⌘ ⇧ X"],
+      ["Hyperlink", "⌘ K"],
     ]);
   });
 });

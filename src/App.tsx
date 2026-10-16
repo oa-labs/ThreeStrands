@@ -992,7 +992,7 @@ export function App() {
                   />
                 );
             }) : null}
-            {correspondence.activeDraft ? correspondence.composer : null}
+            {correspondence.renderComposer(context.canSendAndMarkDone ? context.sendAndMarkDone : undefined)}
           </div>
           </ContactCardContext.Provider>
         ) : mailbox === "outbox" && outboxSelection.selectedEntry ? (
