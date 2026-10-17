@@ -1,3 +1,4 @@
+import { installTestShortcuts } from "./test/commandContext";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ContactGroup, ContactProfile } from "./domain";
@@ -31,6 +32,25 @@ describe("ContactsWorkspace",()=>{
   beforeEach(async()=>{await setAiApiKey("test-key");});
   afterEach(async()=>{cleanup();vi.clearAllMocks();localStorage.clear();await clearAiApiKey();});
 
+  it("saves from editing fields with Mod+Enter and creates contacts and groups with scoped shortcuts", async () => {
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()} />);
+    installTestShortcuts({ focusedPane: "contacts" });
+    const name = await screen.findByDisplayValue("Jane Doe");
+    fireEvent.change(name, { target: { value: "Edited Jane" } });
+    fireEvent.keyDown(name, { key: "N", shiftKey: true });
+    expect(name).toHaveValue("Edited Jane");
+    fireEvent.keyDown(name, { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({ displayName: "Edited Jane" })));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Save changes" })).not.toBeInTheDocument());
+    fireEvent.keyDown(document.body, { key: "N", shiftKey: true });
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("");
+    expect(screen.getByText("New contact", { exact: true })).toBeInTheDocument();
+    fireEvent.keyDown(document.body, { key: "G", shiftKey: true });
+    expect(screen.getByRole("textbox", { name: "Name" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Discard$/ }));
+    fireEvent.keyDown(document.body, { key: "G", shiftKey: true });
+    expect(await screen.findByRole("textbox", { name: "New Group Name" })).toBeInTheDocument();
+  });
   it("merges selected saved contacts and refreshes groups, reminders, and the surviving profile",async()=>{
     vi.mocked(mailClient.listContactProfiles).mockResolvedValue([jane,newerContact]);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([{threadId:"history",accountId:"me@example.com",contactEmail:"jane@example.com",subject:"History",snippet:"",sentAt:"2026-09-20T00:00:00Z",labels:[]}]);

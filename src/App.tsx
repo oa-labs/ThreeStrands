@@ -627,7 +627,7 @@ export function App() {
           </HoverTooltip>
           <HoverTooltip label="Files" shortcut="5"><button className={`nav-button ${rightWorkspace === "files" ? "active" : ""}`} aria-label="Files (5)" onClick={() => executeById("view.files")}><Files size={ICON_SIZE.lg} /></button></HoverTooltip>
           <hr className="sidebar-nav-separator" aria-hidden="true" />
-          <HoverTooltip title={checkingMail ? "Checking for mail…" : "Refresh mail"}><button className="nav-button" aria-label="Refresh mail" aria-busy={checkingMail} onClick={() => executeById("mail.refresh")}>
+          <HoverTooltip title={checkingMail ? "Checking for mail…" : "Refresh mail (⌘/Ctrl+R)"}><button className="nav-button" aria-label="Refresh mail" aria-keyshortcuts="Meta+R Control+R" aria-busy={checkingMail} onClick={() => executeById("mail.refresh")}>
             <RefreshCw size={ICON_SIZE.lg} className={checkingMail ? "spin" : ""} />
           </button></HoverTooltip>
           <HoverTooltip title={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`}>
@@ -668,10 +668,10 @@ export function App() {
                 <input
                   ref={selectAllRef}
                   type="checkbox"
-                  checked={threads.length > 0 && checkedIds.size === threads.length}
-                  aria-label="Select All Conversations"
+                  checked={visibleThreads.length > 0 && visibleThreads.every((thread) => checkedIds.has(thread.id))}
+                  aria-label="Select All Conversations" title="Select all visible conversations (⌘/Ctrl+A)" aria-keyshortcuts="Meta+A Control+A"
                   onChange={(event) =>
-                    setCheckedIds(event.target.checked ? new Set(threads.map((thread) => thread.id)) : new Set())
+                    event.target.checked ? context.selectAllConversations?.() : setCheckedIds(new Set())
                   }
                 />
               </label>
@@ -729,7 +729,7 @@ export function App() {
                 <HoverTooltip label="Clear selection" placement="bottom">
                   <button
                     className="btn-icon"
-                    aria-label="Clear Selection"
+                    aria-label="Clear Selection" title="Clear selection (Esc)" aria-keyshortcuts="Escape"
                     onClick={() => setCheckedIds(new Set())}
                   >
                     <X size={ICON_SIZE.lg} />
@@ -1334,6 +1334,10 @@ export function App() {
           accountId={activeAccountId}
           accountOptions={accounts.map((account) => account.email)}
           onOpenThread={jumpToThread}
+          onUndoableCompletion={(result) => rememberUndo({
+            id: "task.complete", title: "Complete Task", keys: [], group: "Triage",
+            enabled: () => true, run: async () => result, undo: undoResult,
+          }, result, false)}
           onTasksChanged={() => void refreshTaskIndicators()}
           onDraftFollowUp={(task) => void draftFollowUp(task)}
           refreshKey={taskRevision}

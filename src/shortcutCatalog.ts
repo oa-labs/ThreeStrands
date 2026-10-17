@@ -11,9 +11,23 @@ export type ShortcutGroupName = (typeof SHORTCUT_GROUP_ORDER)[number];
 export type ShortcutEntry = { id: string; title: string; keys: string[] };
 export type ShortcutGroup = { group: ShortcutGroupName; entries: ShortcutEntry[] };
 
+/** Bindings owned by editors, calendar views, and the selection Escape handler. */
+export const localShortcuts = [
+  { id: "compose.snippets", title: "Insert Snippet", keys: ["Mod+;"], group: "Compose" },
+  { id: "compose.to", title: "Focus To", keys: ["Mod+Shift+o"], group: "Compose" },
+  { id: "compose.cc", title: "Focus Cc", keys: ["Mod+Shift+c"], group: "Compose" },
+  { id: "compose.bcc", title: "Focus Bcc", keys: ["Mod+Shift+b"], group: "Compose" },
+  { id: "calendar.previousRange", title: "Previous Calendar Day or Range", keys: ["-"], group: "Navigation" },
+  { id: "calendar.nextRange", title: "Next Calendar Day or Range", keys: ["="], group: "Navigation" },
+  { id: "calendar.cycleRange", title: "Previous / Next Calendar Range", keys: ["Shift+Tab", "Tab"], group: "Navigation" },
+  { id: "selection.clear", title: "Clear Conversation Selection / Filters", keys: ["Escape"], group: "Triage" },
+] satisfies (ShortcutEntry & { group: ShortcutGroupName })[];
+
 export function shortcutGroups(extraCommands: Command[] = []): ShortcutGroup[] {
   const entries = [
-    ...[...commands, ...extraCommands].filter((command) => command.keys.length > 0),
+    ...commands.filter((command) => command.keys.length > 0),
+    ...localShortcuts,
+    ...extraCommands.filter((command) => command.keys.length > 0),
     ...formattingShortcuts.map((shortcut) => ({ id: shortcut.id, title: shortcut.title, keys: [shortcut.key], group: "Compose" as const })),
   ];
   return SHORTCUT_GROUP_ORDER.map((group) => ({
