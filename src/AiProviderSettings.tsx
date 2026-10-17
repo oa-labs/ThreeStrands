@@ -1,11 +1,14 @@
 import { CircleAlert, CircleCheck, RefreshCw } from "lucide-react";
-import { useEffect, useRef, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import {
   AI_MODEL_PLACEHOLDERS,
   AI_MODEL_SUGGESTIONS,
   AI_PROVIDER_OPTIONS,
+  canListAiModels,
   clearAiApiKey,
   isAiApiKeyConfigured,
+  isLikelyChatModel,
+  listAiModels,
   readAiEndpoint,
   readAiFastModel,
   readAiFeatures,
@@ -20,8 +23,10 @@ import {
   setAiApiKey,
   testAiConnection,
   type AiFeatureFlags,
+  type AiModelInfo,
   type AiProvider,
 } from "./aiSettings";
+import { ModelCombobox } from "./ModelCombobox";
 import { errorMessage } from "./errors";
 import { AiUsageSummary } from "./AiUsageSummary";
 import { MIN_PROACTIVE_DWELL_SECONDS } from "./proactiveBrief";
@@ -40,16 +45,72 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
   const [endpoint, setEndpoint] = useState(readAiEndpoint);
   const [features, setFeatures] = useState<AiFeatureFlags>(readAiFeatures);
   const featuresRef = useRef(features);
-  const [keyConfigured, setKeyConfigured] = useState(false);
+  // `null` until the keychain check answers, so the catalog is fetched once
+  // with the real key state instead of once before it and again after.
+  const [keyConfigured, setKeyConfigured] = useState<boolean | null>(null);
   const [keyInput, setKeyInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [configurationError, setConfigurationError] = useState<string | null>(null);
   const [testingConnection, setTestingConnection] = useState(false);
   const [connectionTested, setConnectionTested] = useState(false);
+  const [models, setModels] = useState<AiModelInfo[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  // Each catalog request takes a number; only the newest may write its result,
+  // so a slow response for a provider the user has left cannot fill the picker.
+  const modelRequest = useRef(0);
 
-  useEffect(() => {
-    void isAiApiKeyConfigured().then(setKeyConfigured);
+  /** Drops the loaded catalog and abandons any request still in flight. */
+  const clearModels = useCallback(() => {
+    modelRequest.current += 1;
+    setModels([]);
+    setModelsError(null);
+    setModelsLoading(false);
   }, []);
+
+  /**
+   * Loads a provider's model catalog for the pickers. The fetched list only
+   * augments the pickers (the fields stay free text), so a failure records a
+   * reason and otherwise changes nothing.
+   */
+  const loadModels = useCallback((forProvider: AiProvider, hasKey: boolean | null) => {
+    if (!canListAiModels(forProvider, hasKey)) {
+      clearModels();
+      return;
+    }
+    const request = ++modelRequest.current;
+    setModelsLoading(true);
+    setModelsError(null);
+    void listAiModels(forProvider)
+      .then((list) => {
+        if (request === modelRequest.current) setModels(list);
+      })
+      .catch((reason: unknown) => {
+        if (request !== modelRequest.current) return;
+        setModels([]);
+        setModelsError(errorMessage(reason));
+      })
+      .finally(() => {
+        if (request === modelRequest.current) setModelsLoading(false);
+      });
+  }, [clearModels]);
+
+  // The saved key belongs to the saved provider, so listing that provider's
+  // catalog on open sends the key only where it is already used.
+  useEffect(() => {
+    void isAiApiKeyConfigured().then((configured) => {
+      setKeyConfigured(configured);
+      loadModels(readAiProvider(), configured);
+    });
+  }, [loadModels]);
+
+  // The pickers show fetched chat models when available, otherwise the static
+  // per-provider suggestions, so the list is never empty before a fetch.
+  const chatModels = models.filter((entry) => isLikelyChatModel(entry.id));
+  const pickerModels: AiModelInfo[] =
+    chatModels.length > 0
+      ? chatModels
+      : AI_MODEL_SUGGESTIONS[provider].map((id) => ({ id, label: null }));
 
   const updateFeature = (flag: keyof AiFeatureFlags, value: boolean) => {
     const next = { ...featuresRef.current, [flag]: value };
@@ -62,6 +123,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
   const brief = features.summarize || features.actionExtraction;
   const testDisabled = busy || testingConnection || !keyConfigured || !resolveAiModel(provider, model)
     || (provider === "custom" && !endpoint.trim());
+  const hasCatalog = provider !== "none" && provider !== "custom";
 
   return (
     <section className="settings-section ai-settings" aria-label="AI provider">
@@ -81,6 +143,12 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
             setConnectionTested(false);
             saveAiProvider(next);
             onChange?.();
+            // The keychain key was set up for some provider, not necessarily
+            // this one, so switching never sends it anywhere on its own: only
+            // OpenRouter's public catalog loads here, and a keyed provider's
+            // waits for Refresh model list or a newly saved key.
+            if (next === "openrouter") loadModels(next, keyConfigured);
+            else clearModels();
           }}
         >
           {AI_PROVIDER_OPTIONS.map((option) => (
@@ -128,8 +196,12 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
                     setKeyInput("");
                     return isAiApiKeyConfigured();
                   })
-                  .then(setKeyConfigured)
-                  .then(() => onChange?.())
+                  .then((configured) => {
+                    setKeyConfigured(configured);
+                    // A newly saved key is for the provider shown, so load its catalog.
+                    loadModels(provider, configured);
+                    onChange?.();
+                  })
                   .catch((reason: unknown) => setConfigurationError(errorMessage(reason)))
                   .finally(() => setBusy(false));
               }}
@@ -153,8 +225,12 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
                   setConfigurationError(null);
                   void clearAiApiKey()
                     .then(() => isAiApiKeyConfigured())
-                    .then(setKeyConfigured)
-                    .then(() => onChange?.())
+                    .then((configured) => {
+                      setKeyConfigured(configured);
+                      // OpenRouter's catalog never used the key, so it stays.
+                      if (provider !== "openrouter") clearModels();
+                      onChange?.();
+                    })
                     .catch((reason: unknown) => setConfigurationError(errorMessage(reason)))
                     .finally(() => setBusy(false));
                 }}
@@ -188,36 +264,38 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
           <h3>Models</h3>
           <label className="settings-field settings-field-row">
             <span>Reasoning Model</span>
-            <input
+            <ModelCombobox
               value={model}
+              models={pickerModels}
+              ariaLabel="Reasoning model"
               placeholder={AI_MODEL_PLACEHOLDERS[provider]}
-              onChange={(event) => {
-                setModel(event.target.value);
+              onCommit={(next) => {
+                setModel(next);
                 setConnectionTested(false);
-                saveAiModel(event.target.value);
+                saveAiModel(next);
                 onChange?.();
               }}
             />
           </label>
-          <div className="settings-field-detail">
-            {AI_MODEL_SUGGESTIONS[provider].length > 0 ? (
-              <div className="model-suggestions" aria-label="Suggested models">
-                {AI_MODEL_SUGGESTIONS[provider].map((suggestion) => (
-                  <button
-                    key={suggestion}
-                    type="button"
-                    className={`model-suggestion${model.trim() === suggestion ? " selected" : ""}`}
-                    onClick={() => {
-                      setModel(suggestion);
-                      setConnectionTested(false);
-                      saveAiModel(suggestion);
-                      onChange?.();
-                    }}
-                  >
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
+          <div className="settings-field-detail ai-model-list-status">
+            {hasCatalog ? (
+              <button
+                type="button"
+                className="btn-link"
+                disabled={modelsLoading || !canListAiModels(provider, keyConfigured)}
+                onClick={() => loadModels(provider, keyConfigured)}
+              >
+                <RefreshCw size={ICON_SIZE.xs} aria-hidden="true" />
+                {modelsLoading ? "Loading models…" : "Refresh model list"}
+              </button>
+            ) : null}
+            {hasCatalog && provider !== "openrouter" && keyConfigured === false ? (
+              <span className="settings-hint">Save your API key to load available models.</span>
+            ) : null}
+            {modelsError ? (
+              <span className="settings-hint">
+                Couldn’t load the model list ({modelsError}). You can still type a model name.
+              </span>
             ) : null}
             <p className="settings-hint">
               Used for suggestions, briefs, and conversation chat, where working through
@@ -227,12 +305,14 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
 
           <label className="settings-field settings-field-row">
             <span>Fast Model</span>
-            <input
+            <ModelCombobox
               value={fastModel}
+              models={pickerModels}
+              ariaLabel="Fast model"
               placeholder="Same as reasoning model"
-              onChange={(event) => {
-                setFastModel(event.target.value);
-                saveAiFastModel(event.target.value);
+              onCommit={(next) => {
+                setFastModel(next);
+                saveAiFastModel(next);
                 onChange?.();
               }}
             />

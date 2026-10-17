@@ -37,6 +37,17 @@ pub(crate) async fn ai_test_connection(
 }
 
 #[tauri::command]
+pub(crate) async fn ai_list_models(provider: ai::AiProvider) -> AppResult<Vec<ai::ModelInfo>> {
+    // `list_models` decides per provider whether the key is sent: never to
+    // OpenRouter, whose catalog is public, and required by the others. A
+    // missing key is passed through rather than rejected here.
+    let api_key = ai::get_key()?;
+    ai::list_models(provider, api_key.as_deref())
+        .await
+        .map_err(AppError::from)
+}
+
+#[tauri::command]
 pub(crate) async fn ai_summarize_thread(
     thread_id: String,
     provider: ai::AiProvider,

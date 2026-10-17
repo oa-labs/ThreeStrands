@@ -3,7 +3,9 @@ import {
   clearAiApiKey,
   DEFAULT_AI_FEATURES,
   AI_MODEL_SUGGESTIONS,
+  canListAiModels,
   isAiApiKeyConfigured,
+  listAiModels,
   readAiFeatures,
   readAiProvider,
   readAiRequestConfig,
@@ -74,6 +76,27 @@ describe("AI provider preferences", () => {
       endpoint: "http://localhost:8080/v1",
       reasoning: "default",
     });
+  });
+
+  it("returns an empty model list outside Tauri and for providers without a catalog", async () => {
+    // The browser preview has no provider to query; the picker falls back to
+    // its static suggestions rather than erroring.
+    await expect(listAiModels("none")).resolves.toEqual([]);
+    await expect(listAiModels("custom")).resolves.toEqual([]);
+    await expect(listAiModels("openai")).resolves.toEqual([]);
+  });
+
+  it("lists OpenRouter's public catalog without a key and keyed providers only with one", () => {
+    expect(canListAiModels("openrouter", null)).toBe(true);
+    expect(canListAiModels("openrouter", false)).toBe(true);
+    for (const provider of ["openai", "anthropic", "fireworks"] as const) {
+      // `null` is the pending keychain check, which must not trigger a fetch.
+      expect(canListAiModels(provider, null)).toBe(false);
+      expect(canListAiModels(provider, false)).toBe(false);
+      expect(canListAiModels(provider, true)).toBe(true);
+    }
+    expect(canListAiModels("none", true)).toBe(false);
+    expect(canListAiModels("custom", true)).toBe(false);
   });
 
   it("sends reading and copying work to the fast model and reasoning work to the main model", () => {

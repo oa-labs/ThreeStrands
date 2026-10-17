@@ -11,6 +11,9 @@ export const AI_PROVIDERS = [
 
 export type AiProvider = (typeof AI_PROVIDERS)[number]["id"];
 
+/** A model offered by a provider's catalog, from the `ai_list_models` command. */
+export type AiModelInfo = { id: string; label: string | null };
+
 export type AiFeatureFlags = {
   draftAssist: boolean;
   summarize: boolean;
@@ -304,4 +307,42 @@ export async function testAiConnection(
     model,
     endpoint: endpoint.trim() || null,
   });
+}
+
+/**
+ * Model ids that are plainly not chat models, so the picker hides them from
+ * its default view. OpenAI's catalog in particular lists embeddings, audio,
+ * and image models the AI features cannot use. The free-text path still
+ * reaches a hidden id, so this narrows the list without removing a choice.
+ */
+const NON_CHAT_MODEL_PATTERN =
+  /(embedding|whisper|tts|audio|dall-e|dalle|moderation|image|realtime|transcribe|rerank|guard)/i;
+
+/** Whether a model id looks like a usable chat/completions model. */
+export function isLikelyChatModel(id: string): boolean {
+  return !NON_CHAT_MODEL_PATTERN.test(id);
+}
+
+/**
+ * Fetches the models the provider offers, for the settings model picker.
+ * Returns an empty list outside Tauri (browser preview, tests), for `none`,
+ * and for `custom`, whose endpoint offers no known catalog to read. Errors
+ * (missing key, offline, rate limit) propagate so the panel can fall back to
+ * free text with the reason shown.
+ */
+export async function listAiModels(provider: AiProvider): Promise<AiModelInfo[]> {
+  if (!isTauri() || provider === "none" || provider === "custom") return [];
+  const result = await invoke<unknown>("ai_list_models", { provider });
+  return Array.isArray(result) ? (result as AiModelInfo[]) : [];
+}
+
+/**
+ * Whether the settings panel may fetch a provider's catalog. OpenRouter's is
+ * public and fetched without the key; the other listed providers need a saved
+ * key; `none` and `custom` have no catalog. `hasKey` is `null` while the
+ * keychain check is still pending, which never permits a keyed fetch.
+ */
+export function canListAiModels(provider: AiProvider, hasKey: boolean | null): boolean {
+  if (provider === "none" || provider === "custom") return false;
+  return provider === "openrouter" || hasKey === true;
 }

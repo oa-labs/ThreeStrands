@@ -2309,6 +2309,21 @@ fn parse_stop_reason(protocol: ApiProtocol, body: &str) -> Option<String> {
     reason.and_then(|reason| reason.as_str()).map(str::to_string)
 }
 
+/// Attaches a provider's credentials: Anthropic takes an `x-api-key` header
+/// plus its API version, the OpenAI-compatible providers a bearer token.
+fn authorize(
+    request: reqwest::RequestBuilder,
+    protocol: ApiProtocol,
+    api_key: &str,
+) -> reqwest::RequestBuilder {
+    match protocol {
+        ApiProtocol::Anthropic => request
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01"),
+        ApiProtocol::OpenAiCompatible | ApiProtocol::Disabled => request.bearer_auth(api_key),
+    }
+}
+
 async fn send_provider_request(
     base_url: &str,
     request: &ProviderRequest<'_>,
@@ -2317,10 +2332,8 @@ async fn send_provider_request(
 ) -> Result<ProviderReply, ProviderError> {
     match request.provider.descriptor().protocol {
         ApiProtocol::Anthropic => {
-            let response = ai_client()?
-                .post(format!("{base_url}/messages"))
-                .header("x-api-key", api_key)
-                .header("anthropic-version", "2023-06-01")
+            let client = ai_client()?;
+            let response = authorize(client.post(format!("{base_url}/messages")), ApiProtocol::Anthropic, api_key)
                 .json(&anthropic_body(request, schema))
                 .send()
                 .await
@@ -2333,10 +2346,13 @@ async fn send_provider_request(
             })
         }
         ApiProtocol::OpenAiCompatible => {
-            let response = ai_client()?
-                .post(format!("{base_url}/chat/completions"))
-                .bearer_auth(api_key)
-                .json(&openai_body(request, schema))
+            let client = ai_client()?;
+            let response = authorize(
+                client.post(format!("{base_url}/chat/completions")),
+                ApiProtocol::OpenAiCompatible,
+                api_key,
+            )
+            .json(&openai_body(request, schema))
                 .send()
                 .await
                 .map_err(display)?;
@@ -2438,6 +2454,87 @@ pub async fn test_connection(
     .map(|_| ())
 }
 
+/// One model offered by a provider's list endpoint. `label` is a human name
+/// when the provider gives one (OpenRouter `name`, Anthropic `display_name`);
+/// `id` is the value the user selects and the request sends.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelInfo {
+    pub id: String,
+    pub label: Option<String>,
+}
+
+/// Fetches the models a provider offers, for the settings model picker. Reads
+/// nothing but the provider's own catalog: no mail data leaves the device.
+/// Returns the list verbatim; the webview filters and sorts it.
+///
+/// OpenRouter's catalog is public, so it is always fetched anonymously: the
+/// keychain holds one key for whichever provider the user set up, and a key
+/// must never reach a vendor that does not need it. The other providers
+/// require `api_key` and error without one.
+pub async fn list_models(
+    provider: AiProvider,
+    api_key: Option<&str>,
+) -> Result<Vec<ModelInfo>, String> {
+    let protocol = provider.descriptor().protocol;
+    if matches!(protocol, ApiProtocol::Disabled) {
+        return Err("Select an AI provider in settings".to_string());
+    }
+    fetch_models(provider, &provider.base_url(None)?, api_key).await
+}
+
+async fn fetch_models(
+    provider: AiProvider,
+    base_url: &str,
+    api_key: Option<&str>,
+) -> Result<Vec<ModelInfo>, String> {
+    let protocol = provider.descriptor().protocol;
+    let url = match protocol {
+        ApiProtocol::Anthropic => format!("{base_url}/models?limit=1000"),
+        _ => format!("{base_url}/models"),
+    };
+    let mut request = ai_client()?.get(url);
+    if !matches!(provider, AiProvider::OpenRouter) {
+        let api_key = api_key.ok_or_else(|| "No AI API key configured".to_string())?;
+        request = authorize(request, protocol, api_key);
+    }
+    let text = request
+        .send()
+        .await
+        .map_err(display)?
+        .error_for_status()
+        .map_err(display)?
+        .text()
+        .await
+        .map_err(display)?;
+    parse_models(&text)
+}
+
+/// Parses a `/models` list (`{ "data": [{ "id", "name" | "display_name"? }] }`).
+/// OpenAI, OpenRouter, and Fireworks share the OpenAI-compatible shape, where
+/// OpenRouter adds `name`; Anthropic's differs only in calling it `display_name`.
+fn parse_models(body: &str) -> Result<Vec<ModelInfo>, String> {
+    #[derive(Deserialize)]
+    struct ModelsResponse {
+        data: Vec<ModelEntry>,
+    }
+    #[derive(Deserialize)]
+    struct ModelEntry {
+        id: String,
+        #[serde(default, alias = "display_name")]
+        name: Option<String>,
+    }
+    let parsed: ModelsResponse = serde_json::from_str(body).map_err(display)?;
+    Ok(parsed
+        .data
+        .into_iter()
+        .filter(|entry| !entry.id.trim().is_empty())
+        .map(|entry| ModelInfo {
+            id: entry.id,
+            label: entry.name.filter(|name| !name.trim().is_empty()),
+        })
+        .collect())
+}
+
 fn ai_client() -> Result<reqwest::Client, String> {
     crate::http_client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
@@ -2526,6 +2623,99 @@ mod tests {
     use super::*;
     use axum::{extract::State, routing::post, Json, Router};
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn parse_models_reads_id_and_optional_name() {
+        // OpenAI omits `name`; OpenRouter supplies it. One payload shape covers
+        // every OpenAI-compatible provider.
+        let body = r#"{"data":[
+            {"id":"gpt-4o","object":"model"},
+            {"id":"anthropic/claude-3.5-sonnet","name":"Claude 3.5 Sonnet"},
+            {"id":"  ","name":"blank id dropped"},
+            {"id":"text-embedding-3-small"}
+        ]}"#;
+        let models = parse_models(body).expect("parses");
+        assert_eq!(
+            models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["gpt-4o", "anthropic/claude-3.5-sonnet", "text-embedding-3-small"]
+        );
+        assert_eq!(models[0].label, None);
+        assert_eq!(models[1].label.as_deref(), Some("Claude 3.5 Sonnet"));
+    }
+
+    #[test]
+    fn parse_models_reads_anthropic_display_name() {
+        let body = r#"{"data":[
+            {"type":"model","id":"claude-sonnet-4-5","display_name":"Claude Sonnet 4.5"},
+            {"type":"model","id":"claude-3-5-haiku-latest"},
+            {"type":"model","id":"","display_name":"blank id dropped"}
+        ]}"#;
+        let models = parse_models(body).expect("parses");
+        assert_eq!(
+            models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["claude-sonnet-4-5", "claude-3-5-haiku-latest"]
+        );
+        assert_eq!(models[0].label.as_deref(), Some("Claude Sonnet 4.5"));
+        assert_eq!(models[1].label, None);
+    }
+
+    #[test]
+    fn parse_models_rejects_malformed_payloads() {
+        assert!(parse_models("not json").is_err());
+        assert!(parse_models(r#"{"models":[]}"#).is_err());
+    }
+
+    #[tokio::test]
+    async fn list_models_without_key_errors_for_keyed_providers_only() {
+        // OpenRouter is the only one whose catalog lists anonymously; the others
+        // must report the missing key rather than fire a doomed request.
+        assert!(list_models(AiProvider::OpenAi, None).await.is_err());
+        assert!(list_models(AiProvider::Anthropic, None).await.is_err());
+        assert!(list_models(AiProvider::Fireworks, None).await.is_err());
+        assert!(list_models(AiProvider::None, None).await.is_err());
+        assert!(list_models(AiProvider::Custom, None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn list_models_never_sends_the_key_to_openrouter_but_does_to_keyed_providers() {
+        // The keychain holds one key, issued for whichever provider the user set
+        // up. OpenRouter's catalog is public, so listing it must not hand that
+        // key to OpenRouter; a keyed provider still authenticates.
+        let captured = Arc::new(Mutex::new(Vec::<axum::http::HeaderMap>::new()));
+        async fn respond(
+            State(captured): State<Arc<Mutex<Vec<axum::http::HeaderMap>>>>,
+            headers: axum::http::HeaderMap,
+        ) -> Json<serde_json::Value> {
+            captured.lock().unwrap().push(headers);
+            Json(json!({"data": [{"id": "model-a"}]}))
+        }
+        let app = Router::new()
+            .route("/models", axum::routing::get(respond))
+            .with_state(captured.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let models = fetch_models(AiProvider::OpenRouter, &base_url, Some("secret-key"))
+            .await
+            .unwrap();
+        assert_eq!(models[0].id, "model-a");
+        fetch_models(AiProvider::OpenAi, &base_url, Some("secret-key"))
+            .await
+            .unwrap();
+        fetch_models(AiProvider::Anthropic, &base_url, Some("secret-key"))
+            .await
+            .unwrap();
+
+        let headers = captured.lock().unwrap();
+        assert_eq!(headers.len(), 3);
+        assert!(headers[0].get("authorization").is_none());
+        assert!(headers[0].get("x-api-key").is_none());
+        assert_eq!(headers[1].get("authorization").unwrap(), "Bearer secret-key");
+        assert_eq!(headers[2].get("x-api-key").unwrap(), "secret-key");
+        assert!(headers[2].get("anthropic-version").is_some());
+        server.abort();
+    }
 
     fn review_request() -> DraftReviewRequest {
         DraftReviewRequest {
