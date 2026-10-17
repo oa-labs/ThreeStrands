@@ -308,7 +308,7 @@ export interface MailClient extends CorrespondenceClient {
   deleteCalendarEvent(event: ScheduleEvent): Promise<void>;
   /** `maxPerDay` spreads the candidates across days instead of the earliest slots of one day. */
   findAvailability(request: { rangeStart: string; rangeEnd: string; preferences: AvailabilityPreferences; maxPerDay?: number }): Promise<AvailabilityResult>;
-  checkProposedTime(request: { start: string; end: string; timeZone: string }): Promise<ProposedTimeCheck>;
+  checkProposedTime(request: { start: string; end: string; timeZone: string; driveTimeBufferMinutes?: number }): Promise<ProposedTimeCheck>;
   /** Lists labels for the primary account, or for the specified account when provided. */
   listLabels(accountId?: string): Promise<Label[]>;
   /** Mutates the primary account's labels, or the specified account's when provided. */

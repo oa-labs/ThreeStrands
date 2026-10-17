@@ -34,7 +34,8 @@
       }
     ],
     "defaultDurationMinutes": 30,
-    "slotIncrementMinutes": 15
+    "slotIncrementMinutes": 15,
+    "driveTimeBufferMinutes": 30
   },
   "emailMinimumFontSize": 18,
   "calendarColors": {

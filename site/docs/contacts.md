@@ -12,7 +12,7 @@ Press <kbd>4</kbd> for Contacts. ThreeStrands builds a record of who you corresp
 
 Click **New Contact** to add someone. A profile can hold several email addresses, a role and company, location, birthday, links, notes, and a photo. Click the heart to make someone a favorite; favorites appear first.
 
-The panel beside a conversation shows the same profile, with related tasks and meetings.
+The conversation side panel names the person whose history it shows. It follows the sender of the message you are reading; choose the **2 others** button (or the count shown) to switch participants. Colleagues appear last. While replying, the panel follows the recipients of your draft.
 
 ## Groups
 
@@ -22,7 +22,7 @@ Click **New Group** to create one, then **Add Members**. **Email Group** starts 
 
 Set a **Keep in Touch** frequency on a profile, from weekly to yearly or a custom number of days. Email in either direction counts as being in touch. The Keep in Touch view groups people as Overdue, Due Today, This Week, and Later, and shows upcoming birthdays.
 
-Use **Mark Contacted** when you've talked another way, or **Snooze** a reminder for a while. The Contacts icon in the sidebar shows how many people are due.
+Use **Mark Contacted** when you've talked another way, or **Snooze** a reminder for a while. The Contacts icon in the sidebar shows how many people are due. At Inbox zero, due reminders also appear beside your open tasks and today’s agenda; click a person to open their profile.
 
 ## Merge Duplicates
 

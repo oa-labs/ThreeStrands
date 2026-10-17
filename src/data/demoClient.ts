@@ -336,11 +336,15 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
   }
 
   /** Timed events on connected calendars, as busy intervals; all-day events do not block time. */
-  function demoBusyIntervals(): [number, number][] {
+  function demoBusyIntervals(driveTimeBufferMinutes = 0): [number, number][] {
     const connected = new Set(calendarAccounts.filter((account) => account.status === "connected").map((account) => account.email));
     return scheduleEvents
       .filter((event) => !event.allDay && connected.has(event.accountId))
-      .map(eventRange);
+      .map((event) => {
+        const [start, end] = eventRange(event);
+        const buffer = event.location?.trim() ? driveTimeBufferMinutes * 60_000 : 0;
+        return [start - buffer, end + buffer];
+      });
   }
 
   /** Thread id to the suggestions saved for its newest message, as the native client keeps them. */
@@ -608,6 +612,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       const pool = includeArchived
         ? [...threads]
             .filter((thread) => !accountId || accountId === "all" || thread.accountId === accountId)
+            .filter((thread) => !thread.trashed && !thread.labels.includes("SPAM"))
             .sort((a, b) => b.lastReceivedAt.localeCompare(a.lastReceivedAt))
         : visible(accountId);
       return structuredClone(
@@ -1427,7 +1432,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       const total = calendarOptions.filter((option) => option.selected).length;
       const candidates: AvailabilityResult["candidates"] = [];
       const perDay = new Map<string, number>();
-      const busy = demoBusyIntervals();
+      const busy = demoBusyIntervals(request.preferences.driveTimeBufferMinutes);
       const now = Date.now();
       for (let cursor = new Date(start); cursor < end && candidates.length < 20; cursor.setMinutes(cursor.getMinutes() + request.preferences.slotIncrementMinutes)) {
         const weekday = cursor.getDay();
@@ -1452,11 +1457,11 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       }
       return { candidates, checkedCalendarCount: total, totalCalendarCount: total, errors: [] };
     },
-    async checkProposedTime(request: { start: string; end: string; timeZone: string }): Promise<ProposedTimeCheck> {
+    async checkProposedTime(request: { start: string; end: string; timeZone: string; driveTimeBufferMinutes?: number }): Promise<ProposedTimeCheck> {
       const total = calendarOptions.filter((option) => option.selected).length;
       const start = Date.parse(request.start);
       const end = Date.parse(request.end);
-      const conflicts = demoBusyIntervals()
+      const conflicts = demoBusyIntervals(request.driveTimeBufferMinutes)
         .filter(([busyStart, busyEnd]) => busyStart < end && busyEnd > start)
         .map(([busyStart, busyEnd]) => ({ start: new Date(busyStart).toISOString(), end: new Date(busyEnd).toISOString() }));
       return {

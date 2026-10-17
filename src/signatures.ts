@@ -58,8 +58,11 @@ export function sanitizeSignatureHtml(html: string, allowCid = false): string {
   container.querySelectorAll<HTMLElement>("*").forEach((element) => {
     const style = element.style;
     const safe = document.createElement("span").style;
-    for (const property of Array.from(style)) {
-      if (!SIGNATURE_CSS.has(property)) continue;
+    // Read each allowed property, shorthands included, as the reader does.
+    // Browsers list a declared `border-left` only as its longhands, so
+    // walking the declaration would drop every one-sided border.
+    for (const property of SIGNATURE_CSS) {
+      if (!style.getPropertyValue(property)) continue;
       const value = sanitizeCssDeclaration(property, style.getPropertyValue(property));
       if (value !== null) safe.setProperty(property, value);
     }

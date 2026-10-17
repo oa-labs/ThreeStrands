@@ -174,7 +174,8 @@ plus the group's key changes and join records.
 ## Data boundary
 
 Replicated entities are tasks (including the goal each one supports), goals,
-saved contacts, contact groups, snippets, Split Inboxes, muted senders, mail-account display metadata, calendar-account
+saved contacts, contact groups, snippets, signatures and their defaults,
+Split Inboxes, muted senders, mail-account display metadata, calendar-account
 metadata and selections, scheduled-send summaries, retention, and the portable
 preference allowlist.
 

@@ -1,3 +1,4 @@
+import { runWorkspaceCommand, type WorkspaceCommandId } from "./workspaceCommands";
 import type { MessageFilterKind } from "./messageFilters";
 import type { SplitInbox, TaskStatus } from "./domain";
 import { adjacentTaskStatus, isActiveTaskStatus } from "./taskViews";
@@ -11,6 +12,8 @@ export type CommandContext = {
   focusedPane: FocusedPane;
   mailbox: MailboxKind;
   selectedId: string | null;
+  checkedCount?: number;
+  selectAllConversations?(): void;
   selectedArchived: boolean;
   selectedTrashed: boolean;
   canUnsubscribe: boolean;
@@ -148,6 +151,8 @@ export type Command = {
    * next thread the user never chose.
    */
   repeatable?: boolean;
+  /** A modified shortcut that also works in this view’s editing fields. */
+  allowInEditable?: boolean;
 };
 
 /** Palette search: every query word must appear in the title or keywords, in any order. */
@@ -169,7 +174,22 @@ export const undoResult = async (result: CommandResult): Promise<void> => {
 const isThreadMailbox = (context: CommandContext): boolean =>
   context.focusedPane === "mail" && context.mailbox !== "drafts" && context.mailbox !== "outbox";
 
+const hasThreadTarget = (c: CommandContext) => c.selectedId !== null || (c.checkedCount ?? 0) > 0;
+const workspaceCommand = (id: WorkspaceCommandId, title: string, keys: string[], pane: FocusedPane, allowInEditable = false): Command => ({
+  id, title, keys, group: "Application", allowInEditable,
+  enabled: (c) => c.focusedPane === pane && !c.composerActive,
+  run: () => complete(() => runWorkspaceCommand(id)),
+});
+
 export const commands: Command[] = [
+  workspaceCommand("calendar.new", "New Calendar Event", ["Shift+n"], "calendar"),
+  workspaceCommand("contacts.new", "New Contact", ["Shift+n"], "contacts"),
+  workspaceCommand("contacts.newGroup", "New Contact Group", ["Shift+g"], "contacts"),
+  workspaceCommand("contacts.save", "Save Contact", ["Mod+Enter"], "contacts", true),
+  workspaceCommand("files.open", "Open Selected File", ["o"], "files"),
+  workspaceCommand("files.save", "Save Selected File As…", ["Mod+Shift+s"], "files"),
+  workspaceCommand("files.star", "Toggle File Star", ["s"], "files"),
+  { id: "selection.all", title: "Select All Conversations", keys: ["Mod+a"], group: "Triage", enabled: (c) => isThreadMailbox(c) && !c.composerActive, run: (c) => complete(() => c.selectAllConversations?.()) },
   { id: "draft.new", title: "New Message", keys: ["c"], group: "Compose", enabled: () => true, run: (c) => complete(c.compose) },
   { id: "draft.reply", title: "Reply", keys: ["r"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive, run: (c) => complete(c.reply) },
   { id: "draft.replyAll", title: "Reply All", keys: ["a"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive, run: (c) => complete(c.replyAll) },
@@ -204,7 +224,7 @@ export const commands: Command[] = [
   // The open draft in the Drafts folder is what "#" deletes there, matching
   // the composer's trash button. Typing "#" in a composer field still types.
   { id: "draft.discard", title: "Discard Draft", keys: ["#"], group: "Compose", enabled: (c) => c.composerActive && c.focusedPane === "mail" && c.mailbox === "drafts", run: (c) => complete(c.discardDraft) },
-  { id: "draft.attach", title: "Attach Files", keys: [], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.attachFiles) },
+  { id: "draft.attach", title: "Attach Files", keys: ["Mod+Shift+a"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.attachFiles) },
   { id: "draft.replyAssist", title: "Draft Reply", keywords: ["AI", "write", "generate"], keys: ["Mod+j"], group: "Compose", enabled: (c) => c.composerActive && c.aiReplyAssistEnabled, run: (c) => complete(c.draftReplyWithAI) },
   { id: "draft.contextPanel", title: "Switch Between Draft and Context Panel", keys: ["F6", "Mod+Shift+p"], group: "Compose", enabled: (c) => c.composerActive, run: (c) => complete(c.toggleContextPanelFocus) },
   { id: "send.undo", title: "Undo Send", keys: [], group: "Compose", enabled: (c) => c.canUndoSend, run: (c) => complete(c.undoSend) },
@@ -389,7 +409,7 @@ export const commands: Command[] = [
     title: "Archive",
     keys: ["e"],
     group: "Triage",
-    enabled: (context) => context.focusedPane === "mail" && context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
+    enabled: (context) => context.focusedPane === "mail" && hasThreadTarget(context) && isThreadMailbox(context) && !context.composerActive,
     run: (context) => context.archiveSelected(),
     undo: undoResult,
   },
@@ -421,7 +441,7 @@ export const commands: Command[] = [
     keys: ["#"],
     group: "Triage",
     enabled: (context) =>
-      context.selectedId !== null && !context.selectedTrashed && isThreadMailbox(context) && !context.composerActive,
+      hasThreadTarget(context) && !context.selectedTrashed && isThreadMailbox(context) && !context.composerActive,
     run: (context) => context.trashSelected(),
     undo: undoResult,
   },
@@ -440,7 +460,7 @@ export const commands: Command[] = [
     title: "Mark Spam",
     keys: ["!"],
     group: "Triage",
-    enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
+    enabled: (context) => hasThreadTarget(context) && isThreadMailbox(context) && !context.composerActive,
     run: (context) => context.markSpamSelected(),
     undo: undoResult,
   },
@@ -449,7 +469,7 @@ export const commands: Command[] = [
     title: "Toggle Read",
     keys: ["u"],
     group: "Triage",
-    enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
+    enabled: (context) => hasThreadTarget(context) && isThreadMailbox(context) && !context.composerActive,
     run: (context) => context.toggleReadSelected(),
     undo: undoResult,
   },
@@ -466,7 +486,7 @@ export const commands: Command[] = [
     title: "Toggle Star",
     keys: ["s"],
     group: "Triage",
-    enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
+    enabled: (context) => hasThreadTarget(context) && isThreadMailbox(context) && !context.composerActive,
     run: (context) => context.toggleStarSelected(),
     undo: undoResult,
   },
@@ -510,12 +530,12 @@ export const commands: Command[] = [
     title: "Manage Labels",
     keys: ["l"],
     group: "Triage",
-    enabled: (context) => context.selectedId !== null && isThreadMailbox(context) && !context.composerActive,
+    enabled: (context) => hasThreadTarget(context) && isThreadMailbox(context) && !context.composerActive,
     run: (context) => complete(context.openLabels),
   },
   {
     id: "search.focus",
-    title: "Search Mail",
+    title: "Search Current View", keywords: ["mail", "contacts", "files"],
     keys: ["/"],
     group: "Application",
     enabled: () => true,
@@ -548,11 +568,11 @@ export const commands: Command[] = [
   },
   {
     id: "calendar.today",
-    title: "Toggle Today’s Schedule",
+    title: "Today in Calendar / Toggle Today’s Schedule",
     keys: ["t"],
     group: "Application",
     enabled: (context) => !context.composerActive,
-    run: (context) => complete(context.openToday),
+    run: (context) => complete(() => context.focusedPane === "calendar" ? runWorkspaceCommand("calendar.goToday") : context.openToday()),
   },
   {
     id: "view.mail",
@@ -643,7 +663,7 @@ export const commands: Command[] = [
   {
     id: "mail.refresh",
     title: "Refresh Mail",
-    keys: [],
+    keys: ["Mod+r"],
     group: "Application",
     enabled: () => true,
     run: (context) => complete(context.refresh),
@@ -711,7 +731,7 @@ export const commands: Command[] = [
     title: "Undo Last Action",
     keys: ["z", "Mod+z"],
     group: "Application",
-    enabled: (context) => context.canUndoAction && !context.composerActive,
+    enabled: (context) => (context.canUndoAction || context.canUndoSend) && !context.composerActive,
     run: (context) => complete(context.undoLastAction),
   },
 ];

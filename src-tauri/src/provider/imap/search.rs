@@ -42,7 +42,7 @@
 
 use chrono::Datelike;
 
-use crate::search_query::{DateBound, MessageState, QueryTerm, SearchQuery};
+use crate::search_query::{render_gmail_term, DateBound, MessageState, QueryTerm, SearchQuery};
 
 use super::plan::{LabelKind, SyncPlan};
 use super::policy;
@@ -251,8 +251,10 @@ pub fn render_imap(query: &SearchQuery, ctx: &ImapSearchContext<'_>) -> ImapSear
         };
     }
 
-    // Count the user-supplied terms against the term cap first.
-    if policy::check_search_terms(query.terms.len()).is_err() {
+    // Count the user-supplied terms against the term cap first, each
+    // alternative of an `OR` included.
+    let term_count = query.terms.iter().map(|term| term.leaves().len()).sum();
+    if policy::check_search_terms(term_count).is_err() {
         return ImapSearchOutcome::Skipped {
             reasons: vec![SearchNotice::OverLimit {
                 limit: OverLimit::Terms,
@@ -294,6 +296,22 @@ pub fn render_imap(query: &SearchQuery, ctx: &ImapSearchContext<'_>) -> ImapSear
             QueryTerm::Label(name) => builder.push_label(name, ctx),
             QueryTerm::In(location) => builder.push_in(location, ctx),
             QueryTerm::HasAttachment => builder.local_filters.push(LocalFilter::HasAttachment),
+            QueryTerm::Not(_) | QueryTerm::AnyOf(_) => {
+                let criterion = match term {
+                    QueryTerm::Not(inner) => plain_criterion(inner, ctx).map(|criterion| format!("NOT {criterion}")),
+                    QueryTerm::AnyOf(alternatives) => any_of_criterion(alternatives, ctx),
+                    _ => unreachable!("matched Not or AnyOf"),
+                };
+                match criterion {
+                    Ok(criterion) => builder.push_criteria(criterion),
+                    // Name the whole term the user wrote (`-in:trash`), not
+                    // the part inside it that the server can't express.
+                    Err(SearchNotice::UnsupportedSyntax { .. }) => builder.skip(SearchNotice::UnsupportedSyntax {
+                        token: render_gmail_term(term),
+                    }),
+                    Err(notice) => builder.skip(notice),
+                }
+            }
             QueryTerm::Raw(token) => builder.skip(SearchNotice::UnsupportedSyntax {
                 token: token.clone(),
             }),
@@ -301,6 +319,64 @@ pub fn render_imap(query: &SearchQuery, ctx: &ImapSearchContext<'_>) -> ImapSear
     }
 
     builder.finish(ctx)
+}
+
+/// One parenthesized `SEARCH` key for a term inside `NOT` or `OR`. Only terms
+/// that are a plain criterion qualify: a mailbox restriction (`in:`, a label
+/// stored as a folder) or a local post-filter (`has:attachment`) cannot be
+/// negated or offered as an alternative server-side, nor can a label that no
+/// message can carry, so those make the whole search local-only rather than
+/// quietly change its meaning.
+fn plain_criterion(term: &QueryTerm, ctx: &ImapSearchContext<'_>) -> Result<String, SearchNotice> {
+    let unsupported = || SearchNotice::UnsupportedSyntax {
+        token: render_gmail_term(term),
+    };
+    let criterion = match term {
+        QueryTerm::FreeText { text, .. } => format!("TEXT {}", quote_or_note(text, SearchField::FreeText)?),
+        QueryTerm::From(value) => format!("FROM {}", quote_or_note(value, SearchField::From)?),
+        QueryTerm::To(value) => {
+            let quoted = quote_or_note(value, SearchField::To)?;
+            format!("OR OR TO {quoted} CC {quoted} BCC {quoted}")
+        }
+        QueryTerm::Subject(value) => format!("SUBJECT {}", quote_or_note(value, SearchField::Subject)?),
+        QueryTerm::Date { bound, date } => {
+            let key = match bound {
+                DateBound::After => "SINCE",
+                DateBound::Before => "BEFORE",
+            };
+            format!("{key} {}", format_imap_date(date))
+        }
+        QueryTerm::State(MessageState::Unread) => "UNSEEN".to_string(),
+        QueryTerm::State(MessageState::Starred) => "FLAGGED".to_string(),
+        QueryTerm::Label(name) => {
+            check_value(name, SearchField::Label)?;
+            match (ctx.label_storage, validate_flag(name)) {
+                (LabelStorage::Keywords, Ok(atom)) if !atom.starts_with('\\') => format!("KEYWORD {atom}"),
+                _ => return Err(unsupported()),
+            }
+        }
+        QueryTerm::Not(inner) => format!("NOT {}", plain_criterion(inner, ctx)?),
+        QueryTerm::In(_) | QueryTerm::HasAttachment | QueryTerm::AnyOf(_) | QueryTerm::Raw(_) => {
+            return Err(unsupported());
+        }
+    };
+    Ok(format!("({criterion})"))
+}
+
+/// `a OR b OR c` as IMAP's binary `OR`: `OR (a) (OR (b) (c))`.
+fn any_of_criterion(alternatives: &[QueryTerm], ctx: &ImapSearchContext<'_>) -> Result<String, SearchNotice> {
+    let mut criteria = alternatives
+        .iter()
+        .map(|alternative| plain_criterion(alternative, ctx))
+        .collect::<Result<Vec<_>, _>>()?;
+    // Each criterion is already one parenthesized key; only a nested `OR`
+    // needs wrapping to stay one key.
+    let mut combined = criteria.pop().ok_or(SearchNotice::EmptyQuery)?;
+    while let Some(previous) = criteria.pop() {
+        let right = if combined.starts_with("OR ") { format!("({combined})") } else { combined };
+        combined = format!("OR {previous} {right}");
+    }
+    Ok(combined)
 }
 
 // ===========================================================================
@@ -826,8 +902,10 @@ mod tests {
 
     #[test]
     fn raw_terms_are_skipped_never_sent_as_text() {
-        // Negation, OR, and an unknown operator are all Raw.
-        for input in ["-in:trash", "from:a OR from:b", "category:promotions"] {
+        // An unknown operator and mixed grouping are Raw; a negated or OR'd
+        // location is modelled but has no server criterion. None is ever sent
+        // as TEXT.
+        for input in ["-in:trash", "in:inbox OR in:sent", "(a b OR c)", "category:promotions", "{from:a has:attachment}"] {
             match render(input, LabelStorage::Keywords) {
                 ImapSearchOutcome::Skipped { reasons } => {
                     assert!(
@@ -838,6 +916,57 @@ mod tests {
                 other => panic!("{input}: expected Skipped, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn negation_renders_not() {
+        assert_eq!(
+            criteria_of(&render("-from:alice roadmap", LabelStorage::Keywords)),
+            "CHARSET UTF-8 NOT (FROM \"alice\") TEXT \"roadmap\""
+        );
+        assert_eq!(
+            criteria_of(&render("-label:work", LabelStorage::Keywords)),
+            "CHARSET UTF-8 NOT (KEYWORD work)"
+        );
+    }
+
+    #[test]
+    fn alternatives_render_nested_binary_or() {
+        assert_eq!(
+            criteria_of(&render("from:a OR from:b", LabelStorage::Keywords)),
+            "CHARSET UTF-8 OR (FROM \"a\") (FROM \"b\")"
+        );
+        assert_eq!(
+            criteria_of(&render("{from:a from:b -is:unread}", LabelStorage::Keywords)),
+            "CHARSET UTF-8 OR (FROM \"a\") (OR (FROM \"b\") (NOT (UNSEEN)))"
+        );
+        // `to:` keeps covering Cc and Bcc inside an alternative.
+        assert_eq!(
+            criteria_of(&render("to:a OR is:starred", LabelStorage::Keywords)),
+            "CHARSET UTF-8 OR (OR OR TO \"a\" CC \"a\" BCC \"a\") (FLAGGED)"
+        );
+    }
+
+    #[test]
+    fn a_skip_names_the_whole_negated_term() {
+        match render("in:sent -in:trash", LabelStorage::Keywords) {
+            ImapSearchOutcome::Skipped { reasons } => assert_eq!(
+                reasons,
+                vec![SearchNotice::UnsupportedSyntax { token: "-in:trash".into() }]
+            ),
+            other => panic!("expected Skipped, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn alternatives_count_toward_the_term_cap() {
+        let at_cap = (0..policy::MAX_SEARCH_TERMS).map(|i| format!("from:a{i}")).collect::<Vec<_>>().join(" OR ");
+        assert!(matches!(render(&at_cap, LabelStorage::Keywords), ImapSearchOutcome::Plan(_)));
+        let over = format!("{at_cap} OR from:extra");
+        assert_eq!(
+            render(&over, LabelStorage::Keywords),
+            ImapSearchOutcome::Skipped { reasons: vec![SearchNotice::OverLimit { limit: OverLimit::Terms }] }
+        );
     }
 
     // --- labels -----------------------------------------------------------
@@ -1289,7 +1418,7 @@ mod tests {
 //
 // Compiles ALWAYS; runs only when THREESTRANDS_IMAP_IT=1 AND the Dovecot
 // container's fingerprint is in DOVECOT_TEST_FP, exactly like the live tests in
-// `provider.rs` / `fetch.rs`. It creates a SCRATCH mailbox it also deletes
+// `provider/tests/live.rs` / `fetch.rs`. It creates a SCRATCH mailbox it also deletes
 // (the harness's seed messages are never touched), APPENDs a handful of known
 // messages, then renders each case through `render_imap` and runs the REAL
 // criteria with `ImapSession::uid_search`, asserting the exact UID set. This

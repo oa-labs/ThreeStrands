@@ -132,7 +132,7 @@ export function MeetingScheduler({
     setState({ phase: "loading" });
     try {
       if (target.kind === "specific") {
-        const check = await mailClient.checkProposedTime({ start: target.start, end: target.end, timeZone });
+        const check = await mailClient.checkProposedTime({ start: target.start, end: target.end, timeZone, driveTimeBufferMinutes: preferences.driveTimeBufferMinutes });
         const conflictTitles = check.status === "conflicting" ? await overlappingTitles(target).catch(() => []) : [];
         if (isCurrent()) setState({ phase: "specific", check, conflictTitles });
       } else {

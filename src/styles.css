@@ -859,7 +859,15 @@ h1, h2, h3, h4 { font-weight: var(--weight-semibold); }
   gap: var(--space-2);
   margin: var(--space-2) var(--pane-inset) var(--space-3);
 }
+.list-toolbar .search-field { flex: 1; min-width: 0; }
 .list-toolbar .search-box { flex: 1; min-width: 0; margin: 0; }
+.search-field { position: relative; }
+.search-suggestions { position: absolute; z-index: var(--z-local-popover); top: 100%; left: 0; right: 0; margin: var(--space-1) 0 0; padding: var(--space-1); list-style: none; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--raised); box-shadow: var(--shadow-popover); max-height: 320px; overflow: auto; }
+.search-suggestions li { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2); border-radius: var(--radius-sm); color: var(--text); font-size: var(--text-body); cursor: pointer; }
+.search-suggestions li > svg { flex-shrink: 0; color: var(--muted); }
+.search-suggestions li.active, .search-suggestions li:hover { background: var(--hover); }
+.search-suggestion-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-suggestions small { flex-shrink: 0; margin-left: auto; color: var(--muted); font-size: var(--text-meta); }
 
 .search-box {
   height: var(--control-h);
@@ -999,8 +1007,9 @@ kbd {
 }
 .thread-attachment { flex: 0 0 auto; color: var(--muted); }
 .thread-task-indicator { flex: 0 0 auto; color: var(--accent); }
+.thread-location-tag { flex: 0 0 auto; padding: 0 var(--space-1-5); border: 1px solid var(--border); border-radius: var(--radius-pill); color: var(--muted); font-size: var(--text-meta); }
 .row-check:hover, .row-check.checked { color: var(--accent); }
-.thread-row:hover .row-check,
+:where(.thread-list:not([data-input-mode="keyboard"])) .thread-row:hover .row-check,
 .thread-row:focus-within .row-check,
 .row-check.checked { opacity: 1; }
 .thread-list:has(.row-check.checked) .row-check { opacity: 1; }
@@ -1030,7 +1039,8 @@ kbd {
   content-visibility: auto;
   contain-intrinsic-size: 72px;
 }
-.thread-row:hover { background: var(--hover); }
+/* A parked pointer must not compete with the keyboard selection. */
+:where(.thread-list:not([data-input-mode="keyboard"])) .thread-row:hover { background: var(--hover); }
 .thread-row.selected { background: var(--selected); box-shadow: inset 2px 0 var(--accent); }
 .unread-dot { width: var(--dot-size); height: var(--dot-size); flex: 0 0 auto; margin-top: var(--space-1-5); border-radius: var(--radius-circle); }
 .unread-dot.visible { background: var(--unread); }
@@ -1459,7 +1469,18 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .reader-empty p.inbox-zero-checked { margin-top: var(--space-1); font-size: var(--text-secondary); }
 /* A pane with nothing selected: an icon over one line of default UI text. */
 .reader-empty p,
-.contacts-empty-state p { font-size: var(--text-body); }
+.contacts-empty-state p,
+.pane-error p { font-size: var(--text-body); }
+
+/* An area that failed to render: the error boundary's fallback takes the
+   failed area's place so the rest of the window keeps working. */
+.pane-error { min-width: 0; min-height: 0; height: 100%; display: grid; place-content: center; justify-items: center; gap: var(--space-3); padding: var(--space-6); color: var(--muted); text-align: center; }
+.pane-error > .lucide { color: var(--error); }
+.pane-error p { margin: 0; color: var(--text); }
+.pane-error-actions { display: flex; align-items: center; gap: var(--space-2); }
+.pane-error.side { border-left: 1px solid var(--border); background: var(--surface); }
+.pane-error.floating { position: fixed; z-index: var(--z-notice); right: var(--space-6); bottom: var(--space-6); height: auto; max-width: 360px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--raised); box-shadow: var(--shadow-floating); }
+.pane-error.app { height: 100vh; background: var(--background); }
 
 .calendar-sidebar {
   position: relative;

@@ -356,6 +356,25 @@ function threadSeeds(): ThreadSeed[] {
       messages: [message(people.library, [me.personal], 60 * 50, paragraphs("Good news! <strong>A Field Guide to Clouds</strong> is waiting for you at the Main Branch holds shelf until Friday."))],
     },
     {
+      id: "reader-previous",
+      accountId: SHOWCASE_PERSONAL_ACCOUNT,
+      subject: "The Weekend Reader — Issue 111",
+      labels: ["INBOX", "newsletters"],
+      messages: [message(people.reader, [me.personal], 60 * 24 * 9, readerHtml.replace("Issue 112", "Issue 111"), { unsubscribe: { methods: ["oneClick", "mailto"], listId: "weekendreader.example" } })],
+    },
+    {
+      id: "payment-check",
+      accountId: SHOWCASE_WORK_ACCOUNT,
+      subject: "Please confirm your billing details",
+      labels: ["receipts"],
+      archived: true,
+      messages: [message("Cloudline Billing <billing@cloudline-payments.example>", [me.work], 60 * 27, paragraphs(
+        "Hi Maya, please confirm your billing details before the next renewal.",
+        '<a href="https://cloudline-payments.example/verify">https://cloudline.example/account</a>',
+        "Thank you,<br>Cloudline Billing",
+      ))],
+    },
+    {
       id: "prize",
       accountId: SHOWCASE_PERSONAL_ACCOUNT,
       subject: "You've been selected!!!",
@@ -576,6 +595,12 @@ export function buildShowcaseDataset(now: Date = new Date()): DemoDataset {
         bio: "Brother. Trail runner, terrible puns.", notes: "Mom's birthday: Sunday the 12th.",
         links: [], photoData: null, favorite: false, addresses: ["ben.chen@example.org"], sentCount: 35, receivedCount: 38, lastInteractedAt: daysAgo(0.1),
         birthday: monthDayIn(5), keepInTouch: keepInTouch(7, 30),
+      },
+      {
+        id: "contact:sofia@cedargrove.example", displayName: "Sofia Patel", role: "Design Director", company: "Cedar Grove", location: "Portland, OR",
+        bio: "Former teammate. Catch up about the studio’s latest work.", notes: null,
+        links: [], photoData: null, favorite: false, addresses: ["sofia@cedargrove.example"], sentCount: 8, receivedCount: 9, lastInteractedAt: daysAgo(30),
+        keepInTouch: keepInTouch(14, 90),
       },
     ],
     contactGroups: [

@@ -68,6 +68,7 @@ describe("settings import navigation", () => {
           workingWindows: [1, 2, 3, 4, 5].map((weekday) => ({ weekday, start: "09:00", end: "17:00" })),
           defaultDurationMinutes: 30,
           slotIncrementMinutes: 15,
+          driveTimeBufferMinutes: 0,
         },
       },
       accountCount: 2,
@@ -250,6 +251,30 @@ describe("settings section keyboard navigation", () => {
     const lastButton = within(dialog).getByRole("button", { name: "Data Transfer" });
     expect(lastButton).toHaveAttribute("aria-current", "true");
     expect(lastButton).toHaveFocus();
+  });
+
+  it.each(["search", "section control"])("keeps arrow navigation working after clicking a section from %s", async (focusOrigin) => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    const previousControl = focusOrigin === "search"
+      ? within(dialog).getByRole("searchbox", { name: "Search Settings" })
+      : within(dialog).getByRole("spinbutton", { name: "Auto-Read Delay" });
+    previousControl.focus();
+
+    // A click alone does not focus buttons in macOS WebKit. Send subsequent
+    // keys to the actual focused element, as the browser does.
+    const defaultApps = within(dialog).getByRole("button", { name: "Default Apps" });
+    fireEvent.click(defaultApps);
+    expect(defaultApps).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
+    const accounts = within(dialog).getByRole("button", { name: "Mail Accounts" });
+    expect(accounts).toHaveAttribute("aria-current", "true");
+    expect(accounts).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowUp" });
+    expect(defaultApps).toHaveAttribute("aria-current", "true");
+    expect(defaultApps).toHaveFocus();
   });
 
   it("shows a decorative icon for every section without changing its accessible name", async () => {

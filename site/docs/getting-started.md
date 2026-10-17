@@ -50,7 +50,9 @@ In **Settings → Mail Accounts**, each account has:
 ## Settings Worth a Look
 
 - **Appearance** — theme, accent color, font size, and when conversations are marked read.
-- **Availability** — your timezone and working hours, used when you share free times.
+- **Availability** — your timezone, working-hour blocks with gaps for breaks, and **Drive Time Buffer** around events with a location.
+- **Signatures** — formatted sign-offs with logos, Gmail import, and separate defaults for new messages and replies.
+- **Muted Senders** — review senders whose new mail is marked read and archived automatically.
 - **Privacy** — remote images are blocked by default; turn on **Load Remote Images Automatically** here, or click **Load images** on a single message. You can also choose how long to keep mail on this device.
 - **Default Apps** (macOS) — open email links and `.ics` invitations in ThreeStrands.
 

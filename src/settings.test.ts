@@ -3,6 +3,7 @@ import {
   applyFontFamily,
   DEFAULT_AVAILABILITY_PREFERENCES,
   MAX_WORKING_WINDOWS,
+  MAX_DRIVE_TIME_BUFFER_MINUTES,
   DEFAULT_AUTO_READ_DELAY_SECONDS,
   DEFAULT_FONT_FAMILY,
   DEFAULT_LOAD_REMOTE_IMAGES,
@@ -38,6 +39,24 @@ describe("availability preferences", () => {
     const next = { ...DEFAULT_AVAILABILITY_PREFERENCES, timeZone: "America/New_York", defaultDurationMinutes: 45 };
     saveAvailabilityPreferences(next);
     expect(readAvailabilityPreferences()).toEqual(next);
+  });
+
+  it("restores old preferences without losing working hours and defaults drive time to none", () => {
+    const { driveTimeBufferMinutes: _buffer, ...previous } = { ...DEFAULT_AVAILABILITY_PREFERENCES, timeZone: "Asia/Tokyo", workingWindows: [] };
+    localStorage.setItem("threestrands.settings.availabilityPreferences", JSON.stringify(previous));
+    expect(readAvailabilityPreferences()).toEqual({ ...previous, driveTimeBufferMinutes: 0 });
+  });
+
+  it("persists drive time and rejects values outside its supported range", () => {
+    for (const minutes of [0, 30, MAX_DRIVE_TIME_BUFFER_MINUTES - 1, MAX_DRIVE_TIME_BUFFER_MINUTES]) {
+      const next = { ...DEFAULT_AVAILABILITY_PREFERENCES, driveTimeBufferMinutes: minutes };
+      expect(saveAvailabilityPreferences(next)).toEqual(next);
+      expect(readAvailabilityPreferences()).toEqual(next);
+    }
+    const saved = readAvailabilityPreferences();
+    for (const minutes of [-1, 1.5, MAX_DRIVE_TIME_BUFFER_MINUTES + 1, NaN]) {
+      expect(saveAvailabilityPreferences({ ...saved, driveTimeBufferMinutes: minutes })).toEqual(saved);
+    }
   });
 
   it("persists several slots per day up to the weekly limit", () => {

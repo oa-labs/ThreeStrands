@@ -13,6 +13,19 @@ import { expect, test, type Page } from "@playwright/test";
 const outputDir = process.env.SCREENSHOT_DIR ?? path.join("artifacts", "screenshots");
 const frozenNow = new Date(process.env.SCREENSHOT_NOW ?? "2026-09-22T10:24:00-07:00");
 
+const signature = {
+  id: "showcase-signature", name: "Harborlight",
+  html: '<p><strong>Maya Chen</strong><br>Product Lead · Harborlight<br><a href="https://harborlight.example">harborlight.example</a></p>',
+  text: "Maya Chen\nProduct Lead · Harborlight\nharborlight.example",
+};
+
+async function openSettings(page: Page, section: string) {
+  await page.getByRole("button", { name: /^Settings/ }).click();
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await settings.getByRole("button", { name: section, exact: true }).click();
+  return settings;
+}
+
 type Scene = { name: string; capture: (page: Page) => Promise<void> };
 
 async function waitForMessage(page: Page) {
@@ -48,6 +61,74 @@ async function configureDemoAi(page: Page, features: string[]) {
 
 const scenes: Scene[] = [
   {
+    name: "newsletter",
+    capture: async (page) => {
+      await openThread(page, /The Weekend Reader — Issue 112/);
+      const context = page.getByRole("complementary", { name: "Conversation context", exact: true });
+      await expect(context.getByRole("button", { name: "Unsubscribe", exact: true })).toBeVisible();
+      await expect(context.getByRole("button", { name: "Archive 2 in Inbox", exact: true })).toBeVisible();
+      await expect(context.getByRole("button", { name: "Mute…", exact: true })).toBeVisible();
+      await expect(context.getByRole("button", { name: "New Split…", exact: true })).toBeVisible();
+      await expect(context.getByText("The Weekend Reader — Issue 111", { exact: true })).toBeVisible();
+    },
+  },
+  {
+    name: "trust",
+    capture: async (page) => {
+      await page.keyboard.press("g");
+      await page.keyboard.press("a");
+      await openThread(page, /Please confirm your billing details/);
+      const trust = page.getByRole("region", { name: "Trust", exact: true });
+      await expect(trust.getByText("Be careful", { exact: true })).toBeVisible();
+      await expect(trust.getByRole("button", { name: "Show link", exact: true }).first()).toBeVisible();
+      await trust.getByRole("button", { name: /^Details/ }).click();
+      await expect(trust.getByText(/cloudline-payments.example/).first()).toBeVisible();
+    },
+  },
+  {
+    name: "inbox-zero",
+    capture: async (page) => {
+      await waitForMessage(page);
+      // Clear only this isolated browser's fictional inbox using ordinary triage.
+      const conversations = page.getByRole("option");
+      while (await conversations.count()) {
+        await conversations.first().click();
+        await page.keyboard.press("e");
+      }
+      await expect(page.getByText("Inbox zero", { exact: true })).toBeVisible();
+      const context = page.getByRole("complementary", { name: "Conversation context", exact: true });
+      await expect(context.getByRole("heading", { name: "Open tasks", exact: true })).toBeVisible();
+      await expect(context.getByRole("heading", { name: "Keep in touch", exact: true })).toBeVisible();
+      await expect(context.getByRole("heading", { name: "Today's agenda", exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "Dismiss", exact: true }).click();
+    },
+  },
+  {
+    name: "find-times",
+    capture: async (page) => {
+      await configureDemoAi(page, ["Draft Assist"]);
+      await openThread(page, /Contract renewal — Brightwater Co-op/);
+      await page.getByRole("button", { name: "Find Times", exact: true }).click();
+      const availability = page.getByRole("region", { name: "Availability", exact: true });
+      await expect(availability.getByText("The conversation asks to meet next week.", { exact: true })).toBeVisible();
+      await expect(availability.getByRole("button", { name: "Draft Reply With These Times", exact: true })).toBeEnabled();
+      await expect(availability.getByRole("group", { name: "Open times", exact: true }).getByRole("button", { pressed: true }).first()).toBeVisible();
+    },
+  },
+  {
+    name: "signatures",
+    capture: async (page) => {
+      const settings = await openSettings(page, "Signatures");
+      await settings.getByRole("button", { name: "Edit", exact: true }).click();
+      const editor = page.getByRole("dialog", { name: "Edit Signature", exact: true });
+      await expect(editor.getByRole("textbox", { name: "Plain Text", exact: true })).toHaveValue(signature.text);
+      await expect(editor.getByRole("textbox", { name: "Signature Content", exact: true })).toContainText("Maya Chen");
+      await editor.getByRole("button", { name: "Save", exact: true }).scrollIntoViewIfNeeded();
+      await expect(editor.getByRole("button", { name: "Save", exact: true })).toBeInViewport();
+      await expect(editor.getByRole("textbox", { name: "Name", exact: true })).toBeInViewport();
+    },
+  },
+  {
     name: "inbox",
     capture: async (page) => {
       await openThread(page, /Q4 launch plan — final review/);
@@ -71,13 +152,17 @@ const scenes: Scene[] = [
   {
     name: "reply",
     capture: async (page) => {
+      await configureDemoAi(page, ["Draft Assist"]);
       await openThread(page, /Q4 launch plan — final review/);
       await waitForThumbnail(page, "regional-rollout.png");
       await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
       await page.keyboard.press("r");
       const reply = page.getByRole("dialog", { name: "Reply Message" });
       await expect(reply).toBeVisible();
-      await reply.getByRole("textbox", { name: "Message Body" }).pressSequentially("Staging by region sounds right to me — see you Thursday.");
+      await reply.getByRole("textbox", { name: "Message Body", exact: true }).fill("Staging by region sounds right to me — see you Thursday.");
+      await expect(reply.getByRole("textbox", { name: "Message Signature", exact: true })).toContainText("Maya Chen");
+      await reply.getByRole("button", { name: "Send", exact: true }).scrollIntoViewIfNeeded();
+      await expect(reply.getByRole("button", { name: "Review", exact: true })).toBeVisible();
     },
   },
   {
@@ -111,6 +196,8 @@ const scenes: Scene[] = [
       const event = page.getByRole("dialog", { name: "New event", exact: true });
       await event.getByLabel("Title", { exact: true }).fill("Q4 launch rollout review");
       await event.getByLabel("Invite People", { exact: true }).fill("priya@harborlight.example");
+      await event.getByLabel("Location", { exact: true }).fill("Harborlight · Studio 2");
+      await expect(event.getByLabel("All day", { exact: true })).toBeVisible();
       await event.getByLabel("Description", { exact: true }).fill("Confirm North America first, then EU and APAC 48 hours later.");
       await expect(event.getByRole("button", { name: "Create event", exact: true })).toBeEnabled();
       await expect(event.getByRole("combobox", { name: "Calendar", exact: true })).not.toHaveValue("");
@@ -122,7 +209,7 @@ const scenes: Scene[] = [
       await configureDemoAi(page, ["Thread Summaries", "Suggestions"]);
       await openThread(page, /Contract renewal — Brightwater Co-op/);
       const brief = page.getByRole("region", { name: "Brief", exact: true });
-      await brief.getByRole("button", { name: "Get Brief", exact: true }).click();
+      await page.getByRole("button", { name: "Get Brief", exact: true }).click();
       await expect(brief.getByText("Send Marcus pricing for 35 seats", { exact: true })).toBeVisible();
       await brief.getByText("From the email", { exact: true }).click();
       await expect(brief.locator("blockquote")).toBeVisible();
@@ -190,18 +277,29 @@ const scenes: Scene[] = [
   {
     name: "files",
     capture: async (page) => {
+      // Supply the native preview response with the actual bundled image.
+      // The browser demo has no Quick Look; no app behavior is changed.
+      await page.evaluate(async () => {
+        const modulePath = "/src/data/client.ts";
+        const { mailClient } = await import(/* @vite-ignore */ modulePath);
+        mailClient.filePreview = async (messageId: string, attachmentId: string) => {
+          if (attachmentId !== "regional-rollout") return null;
+          return mailClient.fetchAttachmentImage(messageId, attachmentId);
+        };
+      });
       await page.keyboard.press("5");
       const files = page.getByRole("region", { name: "Files", exact: true });
       await expect(files).toBeVisible();
       const attachments = files.getByRole("list", { name: "Mail attachments" });
-      const plan = attachments.getByRole("listitem").filter({ hasText: "Q4-launch-plan-v7.pdf" });
+      const plan = attachments.getByRole("listitem").filter({ hasText: "regional-rollout.png" });
       await expect(plan).toBeVisible();
       await expect(attachments.getByText("onboarding-v3-flows.png", { exact: true })).toBeVisible();
-      await plan.getByRole("button", { name: "Star Q4-launch-plan-v7.pdf", exact: true }).click();
-      await expect(plan.getByRole("button", { name: "Unstar Q4-launch-plan-v7.pdf", exact: true })).toBeVisible();
+      await plan.getByRole("button", { name: "Star regional-rollout.png", exact: true }).click();
+      await expect(plan.getByRole("button", { name: "Unstar regional-rollout.png", exact: true })).toBeVisible();
       await plan.locator(".file-list-select").click();
       const context = files.getByRole("complementary", { name: "File context" });
-      await expect(context.getByRole("heading", { name: "Q4-launch-plan-v7.pdf", exact: true })).toBeVisible();
+      await expect(context.getByRole("heading", { name: "regional-rollout.png", exact: true })).toBeVisible();
+      await expect(context.locator(".file-detail-preview img")).toBeVisible();
       await expect(context.getByRole("button", { name: /Q4 launch plan — final review/ })).toBeVisible();
     },
   },
@@ -230,6 +328,13 @@ for (const theme of ["light", "dark"] as const) {
             // The emulated color scheme still selects the theme.
           }
         }, theme);
+        await page.addInitScript((value) => {
+          const account = "maya@harborlight.example";
+          localStorage.setItem("threestrands.demoSignatures", JSON.stringify({
+            signatures: [value],
+            defaults: [{ id: JSON.stringify([account, ""]), account, address: "", newSignatureId: value.id, replySignatureId: value.id }],
+          }));
+        }, signature);
         await page.goto("/");
         await expect(page.getByRole("heading", { name: /\d+ conversations?/ })).toBeVisible();
 
@@ -243,6 +348,7 @@ for (const theme of ["light", "dark"] as const) {
           });
         }
         expect(foreignRequests).toEqual([]);
+        await expect(page.locator("vite-error-overlay")).toHaveCount(0);
 
         // Park the pointer so no hover tooltip or row highlight leaks into the shot.
         const viewport = page.viewportSize()!;

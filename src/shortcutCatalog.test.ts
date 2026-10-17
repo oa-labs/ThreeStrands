@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { commands, type Command } from "./commands";
 import { formattingShortcuts } from "./richText";
-import { formatShortcutStep, SHORTCUT_GROUP_ORDER, shortcutDisplaySteps, shortcutGroups } from "./shortcutCatalog";
+import { formatShortcutStep, SHORTCUT_GROUP_ORDER, shortcutDisplaySteps, shortcutGroups, localShortcuts } from "./shortcutCatalog";
 
 describe("shortcut catalog", () => {
   it("lists every bound command and formatting shortcut once, in group order", () => {
@@ -12,6 +12,7 @@ describe("shortcut catalog", () => {
     expect(ids).toEqual(expect.arrayContaining([
       ...commands.filter((command) => command.keys.length > 0).map((command) => command.id),
       ...formattingShortcuts.map((shortcut) => shortcut.id),
+      ...localShortcuts.map((shortcut) => shortcut.id),
     ]));
     expect(ids).not.toContain("gettingStarted.open");
   });

@@ -14,7 +14,7 @@ pub(crate) const BASELINE_VERSION: i64 = 74;
 
 /// The current schema version. A new schema change adds an
 /// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 76;
+pub(crate) const LATEST_VERSION: i64 = 77;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -815,6 +815,27 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
     if version < 76 {
         tx.execute_batch("CREATE TABLE signatures(id TEXT PRIMARY KEY, payload TEXT NOT NULL); CREATE TABLE signature_defaults(id TEXT PRIMARY KEY, payload TEXT NOT NULL);").map_err(error)?;
     }
+    if version < 77 {
+        // Cc and Bcc recipients, so search's `to:` matches them as Gmail's
+        // does. Existing mail is filled in from each message's stored payload
+        // by the bounded search-reindex queue (`reindex_next_search_batch`).
+        tx.execute_batch(
+            "ALTER TABLE messages ADD COLUMN cc_bcc_json TEXT NOT NULL DEFAULT '[]';
+             INSERT OR IGNORE INTO pending_search_reindex(thread_id)
+                 SELECT DISTINCT thread_id FROM messages;",
+        )
+        .map_err(error)?;
+    }
+    if stored == 0 {
+        // Only new installations get the 90-day default. Existing databases
+        // without a retention setting still mean Forever. Keep the default
+        // separate from a chosen value so joining sync cannot publish it as
+        // a concurrent settings change.
+        tx.execute(
+            "INSERT OR IGNORE INTO compose_settings(key, value) VALUES ('retention_days_default', '90')",
+            [],
+        ).map_err(error)?;
+    }
     if version < LATEST_VERSION || stored == 0 {
         tx.pragma_update(None, "user_version", LATEST_VERSION)
             .map_err(error)?;
@@ -1010,6 +1031,65 @@ mod tests {
     }
 
     #[test]
+    fn retention_default_preserves_existing_installations_and_choices() {
+        use rusqlite::OptionalExtension;
+
+        for version in [super::BASELINE_VERSION, super::LATEST_VERSION] {
+            for choice in [None, Some(30), Some(90), Some(365)] {
+                let mut connection = Connection::open_in_memory().unwrap();
+                connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
+                if version == super::LATEST_VERSION {
+                    super::migrate(&mut connection).unwrap();
+                    connection
+                        .execute(
+                            "DELETE FROM compose_settings WHERE key='retention_days_default'",
+                            [],
+                        )
+                        .unwrap();
+                } else {
+                    connection
+                        .pragma_update(None, "user_version", version)
+                        .unwrap();
+                }
+                if let Some(days) = choice {
+                    connection
+                        .execute(
+                            "INSERT INTO compose_settings(key, value) VALUES ('retention_days', ?1)",
+                            [days.to_string()],
+                        )
+                        .unwrap();
+                }
+
+                // An upgrade and subsequent opens must preserve both finite
+                // choices and the absence that historically means Forever.
+                for _ in 0..2 {
+                    super::migrate(&mut connection).unwrap();
+                    let chosen: Option<String> = connection
+                        .query_row(
+                            "SELECT value FROM compose_settings WHERE key='retention_days'",
+                            [],
+                            |row| row.get(0),
+                        )
+                        .optional()
+                        .unwrap();
+                    assert_eq!(chosen, choice.map(|days| days.to_string()));
+                    let defaults: i64 = connection
+                        .query_row(
+                            "SELECT COUNT(*) FROM compose_settings WHERE key='retention_days_default'",
+                            [],
+                            |row| row.get(0),
+                        )
+                        .unwrap();
+                    assert_eq!(
+                        defaults, 0,
+                        "existing v{version} must not acquire a new default"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn fresh_initial_schema_matches_the_fully_migrated_object_set() {
         // The new baseline must reproduce EXACTLY the sqlite_master object set
         // a 0->74 migration produced (captured in EXPECTED_V74_OBJECTS from a
@@ -1105,6 +1185,49 @@ mod tests {
                 [],
             )
             .is_err(), "only address and domain rules are stored");
+    }
+
+    #[test]
+    fn a_v76_database_gains_cc_bcc_and_queues_its_mail_for_backfill() {
+        // Mail stored before v77 has no Cc/Bcc yet: it gets an empty list and
+        // its thread is queued so the reindex batch can fill it in.
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(crate::schema::INITIAL_SCHEMA)
+            .unwrap();
+        connection.pragma_update(None, "user_version", 76).unwrap();
+        connection.pragma_update(None, "foreign_keys", false).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO messages(id, thread_id, sender, recipients_json, sent_at, body_html, body_text)
+                 VALUES ('m1', 'thread-a', 'a@example.com', '[\"b@example.com\"]', '2026-01-01T00:00:00Z', '', ''),
+                        ('m2', 'thread-a', 'b@example.com', '[]', '2026-01-02T00:00:00Z', '', ''),
+                        ('m3', 'thread-b', 'c@example.com', '[]', '2026-01-03T00:00:00Z', '', '');",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let cc_bcc: Vec<String> = connection
+            .prepare("SELECT cc_bcc_json FROM messages ORDER BY id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(cc_bcc, vec!["[]", "[]", "[]"]);
+        let queued: Vec<String> = connection
+            .prepare("SELECT thread_id FROM pending_search_reindex ORDER BY thread_id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(queued, vec!["thread-a", "thread-b"]);
+        assert_eq!(
+            connection
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            super::LATEST_VERSION
+        );
     }
 
     #[test]

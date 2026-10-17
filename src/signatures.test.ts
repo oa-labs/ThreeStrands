@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { defaultSignature, readSignatureEditor, readSignatureHtml, signatureEditorHtml, sanitizeSignatureHtml, signatureBody, signatureDefaultsKey, validateSignature } from "./signatures";
 import { EMAIL_CSS_LIMITS, SIGNATURE_LIMITS } from "./emailRenderingPolicy";
 import type { Draft } from "./correspondence";
@@ -24,6 +24,39 @@ describe("signature content and portability", () => {
       expect(root.querySelector("p")).not.toBeNull();
     }
     expect(readSignatureEditor(root).text).toContain("Alex");
+  });
+
+  it.each([
+    ['<table><tr><td><img src="data:image/png;base64,aA==" alt="Logo"></td><td style="border-left:2px solid #dddddd;padding-left:16px">Alex<div style="border-top:1px solid #eeeeee;margin-top:8px">Tagline</div></td></tr></table>', "td + td", "div"],
+    ['<div style="display:flex;gap:12px"><div style="border-right:1px dashed rgb(204, 204, 204);border-radius:4px">Alex</div><p style="border-bottom:1px solid #eeeeee">Tagline</p></div>', ":scope > div > div", "p"],
+  ])("keeps one-sided border shorthands such as dividers and rules: %s", (fixture, divider, rule) => {
+    // WebKit and Chromium enumerate a declared side shorthand only as its
+    // longhands; jsdom also lists the shorthand, which hid this regression.
+    const declaration = Object.getPrototypeOf(document.createElement("span").style) as CSSStyleDeclaration;
+    const enumerate = declaration[Symbol.iterator];
+    const longhandsOnly = vi.spyOn(declaration, Symbol.iterator).mockImplementation(function (this: CSSStyleDeclaration) {
+      return Array.from(enumerate.call(this)).filter((property) => !/^border(?:-(?:top|right|bottom|left))?$/.test(property))[Symbol.iterator]();
+    });
+    const html = sanitizeSignatureHtml(fixture);
+    longhandsOnly.mockRestore();
+    expect(sanitizeSignatureHtml(html)).toBe(html);
+    const root = node(html);
+    const dividerStyle = (root.querySelector(divider) as HTMLElement).style;
+    const ruleStyle = (root.querySelector(rule) as HTMLElement).style;
+    expect(dividerStyle.borderLeftStyle || dividerStyle.borderRightStyle).toMatch(/solid|dashed/);
+    expect(dividerStyle.borderLeftWidth || dividerStyle.borderRightWidth).toMatch(/^[12]px$/);
+    expect(ruleStyle.borderTopStyle || ruleStyle.borderBottomStyle).toBe("solid");
+    expect(ruleStyle.borderTopColor || ruleStyle.borderBottomColor).not.toBe("");
+  });
+
+  it.each([
+    "border-left:1px solid url(https://evil.invalid/x)",
+    `border-left:${EMAIL_CSS_LIMITS.maxAbsolutePx + 1}px solid #ddd`,
+    "border-left:1px solid expression(alert(1))",
+  ])("drops one-sided borders outside the shared grammar: %s", (declaration) => {
+    const html = sanitizeSignatureHtml(`<div style="${declaration};color:red">Alex</div>`);
+    expect(html).not.toMatch(/border|url\(|expression/);
+    expect((node(html).firstElementChild as HTMLElement).style.color).toBe("red");
   });
 
   it("keeps hosted sources inert and removes active markup and app-escaping styles before insertion", () => {

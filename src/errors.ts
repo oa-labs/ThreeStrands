@@ -1,3 +1,5 @@
+import { writeNativeLog } from "./crashReporting";
+
 /**
  * Human-readable text for a rejection reason. Tauri commands reject with plain
  * strings while browser APIs reject with `Error`s, so both are normalized to
@@ -10,11 +12,13 @@ export function errorMessage(reason: unknown): string {
 /**
  * Rejection handler for best-effort background work — status polls, counts,
  * reconciliation, autosave retries — where the UI has nothing to show and the
- * next attempt will try again. The failure is logged instead of vanishing so
- * it stays diagnosable from the developer console.
+ * next attempt will try again. The failure is logged instead of vanishing:
+ * to the developer console, and to the app's log file so it stays
+ * diagnosable in release builds too.
  */
 export function logBackgroundFailure(task: string): (reason: unknown) => void {
   return (reason) => {
     console.warn(`${task} failed:`, reason);
+    writeNativeLog("warn", `${task} failed: ${errorMessage(reason)}`);
   };
 }

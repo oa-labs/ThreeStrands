@@ -125,6 +125,7 @@ fn default_availability_preferences() -> AvailabilityPreferences {
             .collect(),
         default_duration_minutes: 30,
         slot_increment_minutes: 15,
+        drive_time_buffer_minutes: 0,
     }
 }
 
@@ -1469,6 +1470,7 @@ mod tests {
         assert_eq!(availability.time_zone, "UTC");
         assert_eq!(availability.default_duration_minutes, 30);
         assert_eq!(availability.slot_increment_minutes, 15);
+        assert_eq!(availability.drive_time_buffer_minutes, 0);
         let weekdays: Vec<u8> = availability.working_windows.iter().map(|w| w.weekday).collect();
         assert_eq!(weekdays, vec![1, 2, 3, 4, 5]);
     }
@@ -1589,6 +1591,7 @@ mod tests {
         assert_eq!(availability.time_zone, "America/New_York");
         assert_eq!(availability.default_duration_minutes, 45);
         assert_eq!(availability.slot_increment_minutes, 15);
+        assert_eq!(availability.drive_time_buffer_minutes, 0);
         let windows: Vec<(u8, &str, &str)> = availability
             .working_windows
             .iter()
@@ -1712,6 +1715,7 @@ mod tests {
                     }],
                     default_duration_minutes: 25,
                     slot_increment_minutes: 5,
+                    drive_time_buffer_minutes: 30,
                 },
                 calendar_colors: CalendarColors::from([
                     (
@@ -1842,6 +1846,24 @@ mod tests {
     }
 
     #[test]
+    fn frozen_v5_0_140_export_defaults_drive_time_to_none_and_preserves_availability() {
+        let bytes = include_bytes!("../tests/fixtures/settings-transfer/v5-0.140.dispatch-settings");
+        let (_, result) = import_fixture(bytes);
+        let availability = result.preferences.availability_preferences;
+        assert_eq!(availability.drive_time_buffer_minutes, 0);
+        assert_eq!(availability.time_zone, "Asia/Tokyo");
+        assert_eq!(availability.slot_increment_minutes, 5);
+        assert_eq!(availability.working_windows[0].start, "07:00");
+    }
+
+    #[test]
+    fn transfer_rejects_excessive_drive_time() {
+        let mut payload = current_fixture_payload();
+        payload.preferences.availability_preferences.drive_time_buffer_minutes = crate::availability::MAX_DRIVE_TIME_BUFFER_MINUTES + 1;
+        assert!(payload.validate().is_err());
+    }
+
+    #[test]
     fn frozen_v5_current_export_imports_every_current_field() {
         assert_eq!(envelope_version(fixtures::V5_CURRENT), VERSION);
         let (database, result) = import_fixture(fixtures::V5_CURRENT);
@@ -1861,6 +1883,7 @@ mod tests {
         assert!(!features.classify);
         assert_eq!(preferences.availability_preferences.time_zone, "Asia/Tokyo");
         assert_eq!(preferences.availability_preferences.slot_increment_minutes, 5);
+        assert_eq!(preferences.availability_preferences.drive_time_buffer_minutes, 30);
         assert_eq!(preferences.calendar_colors, current_fixture_payload().preferences.calendar_colors);
         assert_eq!(preferences.calendar_colors["current@example.com"]["team@group.calendar.google.com"], "coral");
 

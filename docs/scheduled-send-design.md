@@ -37,7 +37,7 @@ scheduling are separate features.
   mailbox polling and distinguishes definite rejection from uncertain delivery.
 - `src-tauri/src/schema.rs` currently resets every `undo_pending` deadline on
   startup. Scheduled timestamps must survive recovery unchanged.
-- `finish_exit` in `src-tauri/src/lib.rs` waits for pending undo windows.
+- `finish_exit` in `src-tauri/src/commands/mail.rs` waits for pending undo windows.
   A scheduled message must not keep the app open until its scheduled time.
 - Replicated sync carries selected entities through `sync-protocol`,
   `sync_state.rs`, and `sync_projection.rs`. It currently excludes queued mail.

@@ -1,3 +1,4 @@
+import { nextUndoOrder } from "./undoOrder";
 import { type SignatureState } from "./signatures";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -122,6 +123,7 @@ export function useCorrespondence(
   const [liveDraft, setLiveDraft] = useState<Draft | null>(null);
   const [drafts, setDrafts] = useCorrespondenceList(sameDraft);
   const [outbox, setOutbox] = useCorrespondenceList(sameOutbox);
+  const sendUndoOrders = useRef(new Map<string, number>());
   const [summaries, setSummaries] = useCorrespondenceList(sameSummary);
   const [error, setError] = useState("");
   const [closing, setClosing] = useState(false);
@@ -201,19 +203,6 @@ export function useCorrespondence(
     try { await closeComposer(); await refresh(); }
     catch (e) { setError(String(e)); }
   }, [closeComposer, refresh]);
-  const undo = useCallback(async (id?: string) => {
-    const target = id ?? outbox.find((o) => ["undo_pending", "ready"].includes(o.state))?.id;
-    if (!target) return;
-    try {
-      await editor.current?.flush();
-      const d = await mailClient.cancelSend(target);
-      setActiveFollowUpTaskId(d.followUpTaskId ?? null);
-      setActiveThreadId(null);
-      setActive(d);
-      await refresh();
-    }
-    catch (e) { setError(String(e)); }
-  }, [outbox, refresh]);
   const withOutboxActionGuard = useCallback((id: string, action: () => Promise<void>) => {
     if (pendingOutboxActionsRef.current.has(id)) return;
     const pending = new Set(pendingOutboxActionsRef.current);
@@ -230,6 +219,21 @@ export function useCorrespondence(
       });
     });
   }, []);
+  const undo = useCallback((id?: string) => {
+    const target = id ?? outbox.find((o) => ["undo_pending", "ready"].includes(o.state))?.id;
+    if (!target) return;
+    withOutboxActionGuard(target, async () => {
+      try {
+        await editor.current?.flush();
+        const d = await mailClient.cancelSend(target);
+        setActiveFollowUpTaskId(d.followUpTaskId ?? null);
+        setActiveThreadId(null);
+        setActive(d);
+        await refresh();
+      }
+      catch (e) { setError(String(e)); }
+    });
+  }, [outbox, refresh, withOutboxActionGuard]);
   const restoreFailedSend = useCallback((id: string) => {
     if (pendingOutboxActionsRef.current.has(id)) return;
     withOutboxActionGuard(id, () =>
@@ -243,6 +247,14 @@ export function useCorrespondence(
   useEffect(() => { if (closing) document.querySelector<HTMLElement>(".exit-notice")?.focus(); }, [closing]);
   const pending = outbox.find((o) => ["undo_pending", "ready"].includes(o.state));
   const pendingId = pending?.id ?? null;
+  const pendingUndoOrder = useMemo(() => {
+    // The list is newest first. Remember every pending send so canceling the
+    // newest one cannot make an older send appear newer than a task or mail action.
+    for (const item of [...outbox].reverse()) {
+      if (["undo_pending", "ready"].includes(item.state) && !sendUndoOrders.current.has(item.id)) sendUndoOrders.current.set(item.id, nextUndoOrder());
+    }
+    return pendingId ? sendUndoOrders.current.get(pendingId) ?? 0 : 0;
+  }, [outbox, pendingId]);
   const hasActiveDelivery = outbox.some((o) => ["undo_pending", "ready", "uncertain", "sending"].includes(o.state));
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -362,6 +374,7 @@ export function useCorrespondence(
   );
   return {
     context,
+    pendingUndoOrder,
     composeMailto,
     replyWithAvailability,
     replyWithText,
@@ -390,7 +403,7 @@ export function useCorrespondence(
     focusDraftBody,
     renderComposer,
     overlay: <>
-      {pending && !active && <div className="send-notice" role="status">{pending.deadline > clock ? `Sending in ${Math.ceil((pending.deadline - clock) / 1000)}s` : "Queued for delivery"}<button className="btn-link" onClick={() => void undo(pending.id)}>Undo Send</button></div>}
+      {pending && !active && <div className="send-notice" role="status">{pending.deadline > clock ? `Sending in ${Math.ceil((pending.deadline - clock) / 1000)}s` : "Queued for delivery"}<button className="btn-link" title="Undo Send (z or ⌘/Ctrl+Z outside editing fields)" onClick={() => void undo(pending.id)}>Undo Send</button></div>}
       {closing && <div className="exit-backdrop"><div className="exit-notice" tabIndex={-1} role="dialog" aria-modal="true" aria-label="Closing ThreeStrands" onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Tab") { e.preventDefault(); e.currentTarget.querySelector("button")?.focus(); } }}><span>Saving drafts and finishing pending delivery before closing… Queued mail remains saved for the next launch.</span>{pending && <button className="btn" onClick={() => void undo(pending.id)}>Undo Queued Send</button>}</div></div>}
       {error && <div className="compose-notice" role="alert">{error}<button className="btn-icon btn-icon-sm" aria-label="Dismiss Compose Error" onClick={() => setError("")}><X size={ICON_SIZE.sm} /></button></div>}
     </>,

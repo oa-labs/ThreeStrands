@@ -95,3 +95,27 @@ test("reader attachment chips share a right edge per column and show each target
     return clipping;
   })).toEqual([]);
 });
+
+
+test("Files searches locally, stars by keyboard, and saves the selected attachment", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Files (5)" }).click();
+  const files = page.getByRole("region", { name: "Files", exact: true });
+  await expect(files.getByRole("listitem").first()).toBeVisible();
+  await page.keyboard.press("/");
+  const search = files.getByRole("searchbox", { name: "Search Files" });
+  await expect(search).toBeFocused();
+  await search.fill("threestrands-shortcuts.txt");
+  const row = files.locator(".file-list-select").first();
+  await row.focus();
+  await page.keyboard.press("s");
+  await expect(files.getByRole("complementary", { name: "File context" }).getByRole("button", { name: "Unstar threestrands-shortcuts.txt" })).toBeVisible();
+  const download = page.waitForEvent("download");
+  await page.keyboard.press("ControlOrMeta+Shift+s");
+  expect((await download).suggestedFilename()).toBe("threestrands-shortcuts.txt");
+  await page.keyboard.press("ControlOrMeta+k");
+  const palette = page.getByRole("dialog", { name: "Command Palette" });
+  await palette.getByRole("textbox", { name: "Filter Commands" }).fill("Search Current View");
+  await palette.getByRole("button", { name: /Search Current View/ }).click();
+  await expect(search).toBeFocused();
+});

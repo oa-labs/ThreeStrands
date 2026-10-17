@@ -1,3 +1,4 @@
+import type { CommandResult } from "./commands";
 import { Check, ChevronLeft, ChevronRight, Clock3, Columns3, List, Mail, Plus, RotateCcw, SquareCheckBig, Target, X } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import type { Goal, ThreadTask, UpdateGoalRequest, UpdateTaskRequest, TaskStatus } from "./domain";
@@ -99,6 +100,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   accountOptions?: string[];
   onOpenThread(threadId: string): void;
   onTasksChanged?(): void;
+  onUndoableCompletion?(result: CommandResult): () => void;
   onDraftFollowUp?(task: ThreadTask): void;
   onCreateTask?(title: string, accountId?: string, goalId?: string): Promise<ThreadTask>;
   onSelectedTaskChange?(task: ThreadTask | null): void;
@@ -110,6 +112,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   accountOptions = [],
   onOpenThread,
   onTasksChanged,
+  onUndoableCompletion,
   onDraftFollowUp,
   onCreateTask,
   onSelectedTaskChange,
@@ -147,6 +150,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const [newTaskError, setNewTaskError] = useState<string | null>(null);
   const [lastAddedTitle, setLastAddedTitle] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
+  const completionUndo = useRef<(() => void) | null>(null);
   const [completionToast, setCompletionToast] = useState<ThreadTask | null>(null);
   const completionToastTimeout = useRef<number | null>(null);
   const taskCards = useRef(new Map<string, HTMLElement>());
@@ -265,6 +269,22 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       clearCompletionToast();
       if (status === "completed") {
         setCompletionToast(task);
+        let undone = false;
+        completionUndo.current = onUndoableCompletion?.({ message: `Completed: ${updated.title}`, undoAction: async () => {
+          if (undone) return;
+          undone = true;
+          let restored;
+          try {
+            const operation = saveQueue.current.then(() => mailClient.setTaskStatus(task.id, previous));
+            saveQueue.current = operation.catch(() => undefined);
+            restored = await operation;
+          }
+          catch (reason) { undone = false; throw reason; }
+          setTasks((current) => current.map((candidate) => candidate.id === restored.id ? restored : candidate));
+          setCompletionToast(null);
+          clearCompletionToast();
+          onTasksChanged?.();
+        } }) ?? null;
         completionToastTimeout.current = window.setTimeout(() => {
           completionToastTimeout.current = null;
           setCompletionToast(null);
@@ -276,7 +296,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     } catch (reason) {
       setError(errorMessage(reason));
     }
-  }, [clearCompletionToast, onTasksChanged, tasks]);
+  }, [clearCompletionToast, onTasksChanged, onUndoableCompletion, tasks]);
 
   // Saves run one at a time so a slower earlier response cannot overwrite a later edit.
   const updateTask = useCallback((taskId: string, request: Omit<UpdateTaskRequest, "id">) => {
@@ -573,7 +593,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       {completionToast ? (
         <div className="toast task-complete-toast" role="status">
           Completed &ldquo;{completionToast.title}&rdquo;
-          <button type="button" className="btn-link" onClick={() => void setStatus(completionToast, isActiveTaskStatus(completionToast.status) ? completionToast.status : "open")}>Undo</button>
+          <button type="button" className="btn-link" onClick={() => completionUndo.current ? completionUndo.current() : void setStatus(completionToast, isActiveTaskStatus(completionToast.status) ? completionToast.status : "open")}>Undo</button>
         </div>
       ) : null}
       {loading ? <p className="tasks-status">Loading tasks…</p> : null}

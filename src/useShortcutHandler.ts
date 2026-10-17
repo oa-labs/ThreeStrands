@@ -20,6 +20,7 @@ function targetShortcutScope(target: EventTarget | null): InteractionScope | nul
 
 function reservesNativeActivation(event: KeyboardEvent): boolean {
   if (!(event.target instanceof HTMLElement) || (event.key !== "Enter" && event.code !== "Space")) return false;
+  if (event.metaKey || event.ctrlKey || event.altKey) return false;
   return Boolean(event.target.closest("button, a[href], summary, [role='button'], [role='menuitem'], [role='menuitemcheckbox'], [role='option']"));
 }
 
@@ -58,6 +59,11 @@ export function useShortcutHandler(
         return;
       }
       const interactionScope = targetShortcutScope(event.target) ?? currentContext.interactionScope;
+      const allCommands = [...commands, ...extraRef.current];
+      const editableCommand = interactionScope === "read" && allCommands.some((command) => command.allowInEditable && command.enabled(currentContext) && command.keys.some((key) => matchesShortcut(event, key)));
+      const attachShortcut = interactionScope === "compose" && event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && currentContext.composerActive && matchesShortcut(event, "Mod+Shift+a");
+      // Select All belongs to the mail list, never to text selected in the reader.
+      if (matchesShortcut(event, "Mod+a") && (!(event.target instanceof HTMLElement) || (event.target !== document.body && !event.target.closest(".thread-list, .thread-header")))) return;
       const sendShortcut = event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && currentContext.composerActive && (event.metaKey || event.ctrlKey) && event.key === "Enter";
       const replyAssistShortcut = event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && currentContext.composerActive && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j";
       const scheduleShortcut = interactionScope === "compose" && event.target instanceof HTMLElement && Boolean(event.target.closest(".composer")) && currentContext.composerActive && matchesShortcut(event, "Mod+Shift+L");
@@ -76,14 +82,13 @@ export function useShortcutHandler(
       const entryScope = interactionScope !== "read";
       if (
         reservesNativeActivation(event)
-        || (!sendShortcut && !replyAssistShortcut && !scheduleShortcut && !discardDraftShortcut && !fontShortcut && !contextPanelShortcut && !allowsMailboxTabShortcut
+        || (!editableCommand && !attachShortcut && !sendShortcut && !replyAssistShortcut && !scheduleShortcut && !discardDraftShortcut && !fontShortcut && !contextPanelShortcut && !allowsMailboxTabShortcut
           && (entryScope || isEditableTarget(event.target) || focusedControl))
       ) {
         clearPendingStep();
         return;
       }
 
-      const allCommands = [...commands, ...extraRef.current];
       // A held key only repeats commands that opt in. Anything else (Archive,
       // Trash, a chord step) still claims the repeat so it can't fall through.
       if (event.repeat) {

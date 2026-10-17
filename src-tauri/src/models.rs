@@ -221,6 +221,9 @@ pub struct AvailabilityPreferences {
     pub working_windows: Vec<AvailabilityWindow>,
     pub default_duration_minutes: u32,
     pub slot_increment_minutes: u32,
+    /// Older settings exports and replicas have no drive-time buffer.
+    #[serde(default)]
+    pub drive_time_buffer_minutes: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -237,6 +240,8 @@ pub struct FindAvailabilityRequest {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CheckProposedTimeRequest {
+    #[serde(default)]
+    pub drive_time_buffer_minutes: u32,
     pub start: String,
     pub end: String,
     pub time_zone: String,

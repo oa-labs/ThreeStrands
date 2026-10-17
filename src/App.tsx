@@ -85,7 +85,7 @@ import { TaskEditorDialog } from "./TaskEditorDialog";
 import { TaskSidebar, type TaskWorkspaceSnapshot } from "./TaskSidebar";
 import { THREAD_ASSIST_ID, ThreadAssist } from "./ThreadAssist";
 import { sharedChatAttachments, ThreadChat } from "./ThreadChat";
-import { ThreadRow } from "./ThreadList";
+import { ThreadList, ThreadRow } from "./ThreadList";
 import { ThreadTasks } from "./ThreadTasks";
 import { threadTextIndex } from "./threadTextIndex";
 import { UnsubscribeConfirm } from "./UnsubscribeConfirm";
@@ -103,6 +103,7 @@ import { useCommandExecution, useCommandUndo } from "./useCommandExecution";
 import { DraftsList, OutboxDetail, OutboxList, useCorrespondence } from "./useCorrespondence";
 import { useOutboxSelection } from "./useOutboxSelection";
 import { useLabelCatalog } from "./useLabelCatalog";
+import { loadSearchContacts } from "./searchContacts";
 import { useMailboxThreads } from "./useMailboxThreads";
 import { useMailNavigation } from "./useMailNavigation";
 import { useMailRefresh, useUnreadCounts } from "./useMailRefresh";
@@ -123,6 +124,7 @@ import { useThreadMutations } from "./useThreadMutations";
 import { useThreadSelection } from "./useThreadSelection";
 import { useTriageSession } from "./useTriageSession";
 import { useWorkspaces } from "./useWorkspaces";
+import { ErrorBoundary } from "./ErrorBoundary";
 export { AccountSwitcher } from "./AccountSwitcher";
 export { messagesWithQueuedReplies } from "./queuedReplies";
 export { NOTICE_TIMEOUT_MS } from "./useNotice";
@@ -188,7 +190,7 @@ export function App() {
   });
   const {
     threads, setThreads, query, setQuery, queryRef, searchOpen, setSearchOpen, includeArchived,
-    setIncludeArchived, remoteSearchState, searchStatus, setSearchStatus, hasMoreResults, loading,
+    inboxOnly, setInboxOnly, remoteSearchState, searchStatus, setSearchStatus, hasMoreResults, loading,
     mailboxError, loadingMoreState,
     loadThreads, loadThreadsRef, loadMoreResults, contextOpenedThreadRef,
   } = mailboxThreads;
@@ -549,7 +551,22 @@ export function App() {
     setSearchOpen(false);
     selectedThreadRowRef.current?.focus();
   }, [selectedThreadRowRef, setQuery, setSearchOpen]);
-  const toggleIncludeArchived = useCallback(() => setIncludeArchived((current) => !current), [setIncludeArchived]);
+  const toggleInboxOnly = useCallback(() => setInboxOnly((current) => !current), [setInboxOnly]);
+  // Search suggestions draw on the account(s) being searched: the active one,
+  // or every account in the merged view.
+  const searchAccountIds = useMemo(
+    () => (activeAccountId ? [activeAccountId] : accounts.map((account) => account.email)),
+    [activeAccountId, accounts],
+  );
+  const searchLabelNames = useMemo(
+    () => searchAccountIds.flatMap((accountId) =>
+      (labelsByAccount[accountId] ?? []).filter((label) => label.kind === "user").map((label) => label.name)),
+    [searchAccountIds, labelsByAccount],
+  );
+  const loadSearchSuggestionContacts = useCallback(
+    (contactQuery: string) => loadSearchContacts(searchAccountIds, contactQuery),
+    [searchAccountIds],
+  );
 
   const showNoticeMessage = useCallback((message: string) => setNotice({ message }), [setNotice]);
 
@@ -611,7 +628,7 @@ export function App() {
           </HoverTooltip>
           <HoverTooltip label="Files" shortcut="5"><button className={`nav-button ${rightWorkspace === "files" ? "active" : ""}`} aria-label="Files (5)" onClick={() => executeById("view.files")}><Files size={ICON_SIZE.lg} /></button></HoverTooltip>
           <hr className="sidebar-nav-separator" aria-hidden="true" />
-          <HoverTooltip title={checkingMail ? "Checking for mail…" : "Refresh mail"}><button className="nav-button" aria-label="Refresh mail" aria-busy={checkingMail} onClick={() => executeById("mail.refresh")}>
+          <HoverTooltip title={checkingMail ? "Checking for mail…" : "Refresh mail (⌘/Ctrl+R)"}><button className="nav-button" aria-label="Refresh mail" aria-keyshortcuts="Meta+R Control+R" aria-busy={checkingMail} onClick={() => executeById("mail.refresh")}>
             <RefreshCw size={ICON_SIZE.lg} className={checkingMail ? "spin" : ""} />
           </button></HoverTooltip>
           <HoverTooltip title={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`}>
@@ -645,6 +662,7 @@ export function App() {
       {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" && rightWorkspace !== "files" ? <>
       <section id="inbox-panel" className="thread-column" aria-label="Inbox">
         <PanelResizeHandle {...inboxSize} label="Resize Inbox" controlsId="inbox-panel" title="Drag to resize inbox. Use arrow keys to adjust; double-click to reset." />
+        <ErrorBoundary area="the inbox" resetKey={`${activeAccountId ?? "all"}:${mailbox}`}>
         <header className="thread-header">
           {isThreadMailbox && checkedIds.size > 0 ? (
             <div className="batch-toolbar" role="toolbar" aria-label="Batch actions">
@@ -652,10 +670,10 @@ export function App() {
                 <input
                   ref={selectAllRef}
                   type="checkbox"
-                  checked={threads.length > 0 && checkedIds.size === threads.length}
-                  aria-label="Select All Conversations"
+                  checked={visibleThreads.length > 0 && visibleThreads.every((thread) => checkedIds.has(thread.id))}
+                  aria-label="Select All Conversations" title="Select all visible conversations (⌘/Ctrl+A)" aria-keyshortcuts="Meta+A Control+A"
                   onChange={(event) =>
-                    setCheckedIds(event.target.checked ? new Set(threads.map((thread) => thread.id)) : new Set())
+                    event.target.checked ? context.selectAllConversations?.() : setCheckedIds(new Set())
                   }
                 />
               </label>
@@ -713,7 +731,7 @@ export function App() {
                 <HoverTooltip label="Clear selection" placement="bottom">
                   <button
                     className="btn-icon"
-                    aria-label="Clear Selection"
+                    aria-label="Clear Selection" title="Clear selection (Esc)" aria-keyshortcuts="Escape"
                     onClick={() => setCheckedIds(new Set())}
                   >
                     <X size={ICON_SIZE.lg} />
@@ -807,12 +825,14 @@ export function App() {
               onCommit={setQuery}
               onInput={clearContextOpenedThread}
               onEscape={closeSearch}
-              includeArchived={includeArchived}
-              onToggleIncludeArchived={toggleIncludeArchived}
+              inboxOnly={inboxOnly}
+              onToggleInboxOnly={toggleInboxOnly}
+              labels={searchLabelNames}
+              loadContacts={loadSearchSuggestionContacts}
             />
           </div>
         ) : null}
-        <div className="thread-list" role={isThreadMailbox || mailbox === "outbox" ? "listbox" : "list"} aria-label={mailboxTitle}>
+        <ThreadList role={isThreadMailbox || mailbox === "outbox" ? "listbox" : "list"} aria-label={mailboxTitle}>
           {mailbox === "drafts" ? (
             <DraftsList drafts={correspondence.drafts} onOpen={correspondence.openDraft} onDiscard={correspondence.discardListedDraft} />
           ) : mailbox === "outbox" ? (
@@ -868,6 +888,7 @@ export function App() {
               onSelectionGesture={applyThreadSelectionGesture}
               rowRef={thread.id === selectedId ? selectedThreadRowRef : undefined}
               hasTask={openTaskThreadIds.has(thread.id)}
+              showLocation={isTabbedMailbox && includeArchived}
             />
           ))}
           {hasMoreResults ? (
@@ -877,10 +898,12 @@ export function App() {
           ) : null}
             </>
           )}
-        </div>
+        </ThreadList>
+        </ErrorBoundary>
       </section>
 
       <section className="reader" aria-label="Conversation">
+        <ErrorBoundary area="this conversation" resetKey={`${mailbox}:${selectedId ?? ""}:${correspondence.activeDraft?.id ?? ""}`}>
         {visibleDetail && (!correspondence.activeDraft || composerBelongsToVisibleThread) ? (
           <>
             <header className="reader-header">
@@ -1091,10 +1114,12 @@ export function App() {
             </p>
           </div>
         )}
+        </ErrorBoundary>
       </section>
       </> : null}
 
       {rightWorkspace === "week" ? (
+        <ErrorBoundary area="the calendar" variant="side">
         <Suspense fallback={null}>
           <CalendarWeekView
             session={calendarSession}
@@ -1125,8 +1150,10 @@ export function App() {
             onCreated={() => void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"))}
           />
         </Suspense>
+        </ErrorBoundary>
       ) : null}
       {rightWorkspace === "calendar" ? (
+        <ErrorBoundary area="the calendar" variant="side">
         <CalendarSidebar
           key={calendarSidebarStart?.key ?? 0}
           initialDate={calendarSidebarStart?.date}
@@ -1137,8 +1164,10 @@ export function App() {
             openSettingsAt("calendarAccounts");
           }}
         />
+        </ErrorBoundary>
       ) : null}
       {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" && rightWorkspace !== "files" && composingApart && correspondence.liveDraft ? (
+        <ErrorBoundary area="this draft's context" variant="side" resetKey={correspondence.liveDraft.id}>
         <ComposeContext
           key={correspondence.liveDraft.id}
           draft={correspondence.liveDraft}
@@ -1161,8 +1190,10 @@ export function App() {
           onDraftFollowUp={(task) => void draftFollowUp(task)}
           onTasksChanged={() => { setTaskRevision((current) => current + 1); void refreshTaskIndicators(); }}
         />
+        </ErrorBoundary>
       ) : null}
       {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" && rightWorkspace !== "files" && !composingApart ? (
+        <ErrorBoundary area="the context panel" variant="side" resetKey={selectedId}>
         <ContextPanel
           detail={visibleDetail}
           idle={inboxZero ? (
@@ -1304,10 +1335,12 @@ export function App() {
             ) : null}
           </> : null}
         />
+        </ErrorBoundary>
       ) : null}
-      {rightWorkspace === "files" ? <Suspense fallback={null}><FilesWorkspace refreshKey={syncStatus?.lastSuccessfulSync ?? ""} key={activeAccountId ?? "all"} sessions={fileSessions} accountId={activeAccountId} accountIds={accounts.map((account) => account.email)} onOpenThread={jumpToThread} onOpenContact={contactCardActions.onOpenContact} onReportSpam={markFileSourceSpam} /></Suspense> : null}
-      {rightWorkspace === "contacts" ? <Suspense fallback={null}><ContactsWorkspace key={`${activeAccountId ?? "all"}:${contactAddressBookTarget ?? ""}`} accountId={activeAccountId} onOpenThread={jumpToThread} onCompose={(to) => { setRightWorkspace(null); correspondence.composeMailto({ to, cc: "", bcc: "", subject: "", body: "" }); }} onSaved={() => { setNotice({ message: "Contact saved" }); void refreshKeepInTouchCount(); }} initialContactId={contactAddressBookTarget} view={contactsView} onViewChange={setContactsView} onKeepInTouchChanged={() => void refreshKeepInTouchCount()} onOpenAiSettings={() => { setRightWorkspace(null); openSettingsAt("ai"); }} /></Suspense> : null}
+      {rightWorkspace === "files" ? <ErrorBoundary area="Files" variant="side" resetKey={activeAccountId}><Suspense fallback={null}><FilesWorkspace refreshKey={syncStatus?.lastSuccessfulSync ?? ""} key={activeAccountId ?? "all"} sessions={fileSessions} accountId={activeAccountId} accountIds={accounts.map((account) => account.email)} onOpenThread={jumpToThread} onOpenContact={contactCardActions.onOpenContact} onReportSpam={markFileSourceSpam} /></Suspense></ErrorBoundary> : null}
+      {rightWorkspace === "contacts" ? <ErrorBoundary area="Contacts" variant="side" resetKey={activeAccountId}><Suspense fallback={null}><ContactsWorkspace key={`${activeAccountId ?? "all"}:${contactAddressBookTarget ?? ""}`} accountId={activeAccountId} onOpenThread={jumpToThread} onCompose={(to) => { setRightWorkspace(null); correspondence.composeMailto({ to, cc: "", bcc: "", subject: "", body: "" }); }} onSaved={() => { setNotice({ message: "Contact saved" }); void refreshKeepInTouchCount(); }} initialContactId={contactAddressBookTarget} view={contactsView} onViewChange={setContactsView} onKeepInTouchChanged={() => void refreshKeepInTouchCount()} onOpenAiSettings={() => { setRightWorkspace(null); openSettingsAt("ai"); }} /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "tasks" ? (
+        <ErrorBoundary area="Tasks" variant="side" resetKey={activeAccountId}>
         <TaskSidebar
           key={activeAccountId ?? "all"}
           sessions={taskSessions}
@@ -1315,6 +1348,10 @@ export function App() {
           accountId={activeAccountId}
           accountOptions={accounts.map((account) => account.email)}
           onOpenThread={jumpToThread}
+          onUndoableCompletion={(result) => rememberUndo({
+            id: "task.complete", title: "Complete Task", keys: [], group: "Triage",
+            enabled: () => true, run: async () => result, undo: undoResult,
+          }, result, false)}
           onTasksChanged={() => void refreshTaskIndicators()}
           onDraftFollowUp={(task) => void draftFollowUp(task)}
           refreshKey={taskRevision}
@@ -1325,6 +1362,7 @@ export function App() {
             setSelectedTaskHasThread(Boolean(task?.threadId));
           }}
         />
+        </ErrorBoundary>
       ) : null}
 
       {correspondence.overlay}
@@ -1455,6 +1493,7 @@ export function App() {
         />
       ) : null}
       {settingsOpen ? (
+        <ErrorBoundary area="Settings" variant="floating" onDismiss={() => setSettingsOpen(false)}>
         <Suspense fallback={null}>
           <Settings
             section={settingsSection}
@@ -1475,6 +1514,7 @@ export function App() {
             onSettingsImported={async (result) => { await applyImportedSettings(result); await signatureLibrary.refresh(); }}
           />
         </Suspense>
+        </ErrorBoundary>
       ) : null}
       <EnrollmentRequestNotice
         suppressed={settingsOpen && settingsSection === "replicatedSync"}

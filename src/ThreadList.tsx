@@ -1,5 +1,5 @@
 import { SquareCheckBig, Paperclip, Square, Star } from "lucide-react";
-import { memo, type RefObject } from "react";
+import { memo, useEffect, useState, type ComponentProps, type RefObject } from "react";
 import type { Thread } from "./domain";
 import { formatDisplayName, parseAddress } from "./emailAddress";
 import { formatMailTimestamp } from "./threadPresentation";
@@ -9,6 +9,29 @@ import { ICON_SIZE } from "./iconSizes";
 
 const MATCH_START = "\u0001";
 const MATCH_END = "\u0002";
+
+export function ThreadList(props: Pick<ComponentProps<"div">, "children" | "role" | "aria-label">) {
+  const [keyboardNavigation, setKeyboardNavigation] = useState(false);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || ["Shift", "Control", "Alt", "Meta"].includes(event.key)) return;
+      setKeyboardNavigation(true);
+    };
+    // Shortcuts can navigate the list while focus is in the reading pane.
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
+
+  return (
+    <div
+      {...props}
+      className="thread-list"
+      data-input-mode={keyboardNavigation ? "keyboard" : "pointer"}
+      onPointerMove={() => setKeyboardNavigation(false)}
+      onPointerDown={() => setKeyboardNavigation(false)}
+    />
+  );
+}
 
 export function HighlightedSnippet({ thread }: { thread: Thread }) {
   const raw = thread.matchSnippet;
@@ -41,6 +64,7 @@ export const ThreadRow = memo(function ThreadRow({
   onSelectionGesture,
   rowRef,
   hasTask = false,
+  showLocation = false,
 }: {
   thread: Thread;
   selected: boolean;
@@ -52,6 +76,8 @@ export const ThreadRow = memo(function ThreadRow({
   onSelectionGesture?(id: string, gesture: SelectionGesture): void;
   rowRef?: RefObject<HTMLButtonElement | null>;
   hasTask?: boolean;
+  /** Marks threads still in the inbox, for result lists that span all mail. */
+  showLocation?: boolean;
 }) {
   return (
     <button
@@ -95,6 +121,7 @@ export const ThreadRow = memo(function ThreadRow({
           </span>
           <span className="thread-meta-trailing">
             {showAccount ? <span className="account-dot" aria-hidden="true" style={{ background: accountColor }} /> : null}
+            {showLocation && !thread.archived && !thread.trashed ? <span className="thread-location-tag">Inbox</span> : null}
             {hasTask ? <SquareCheckBig className="thread-task-indicator" size={ICON_SIZE.xs} aria-label="Has open task" /> : null}
             <time>{formatMailTimestamp(thread.lastMessageAt)}</time>
           </span>

@@ -67,6 +67,38 @@ describe("useCorrespondence", () => {
     expect(renders).toBe(initialRenders);
   });
 
+  it("keeps older pending sends in their original undo order when a newer send leaves the queue", async () => {
+    vi.useFakeTimers();
+    let items: OutboxItem[] = [{ ...outbox, id: "new-send" }, { ...outbox, id: "old-send" }];
+    vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listOutbox").mockImplementation(async () => items);
+    vi.spyOn(mailClient, "listScheduledSummaries").mockResolvedValue([]);
+    const { result } = renderHook(() => useCorrespondence([], undefined, undefined, ...snippetArgs, null));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const newerOrder = result.current.pendingUndoOrder;
+    expect(newerOrder).toBeGreaterThan(0);
+    items = [{ ...outbox, id: "old-send" }];
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(result.current.pendingUndoOrder).toBeGreaterThan(0);
+    expect(result.current.pendingUndoOrder).toBeLessThan(newerOrder);
+  });
+
+  it("coalesces repeated Undo Send requests until cancellation finishes", async () => {
+    vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
+    const listOutbox = vi.spyOn(mailClient, "listOutbox").mockResolvedValue([outbox]);
+    vi.spyOn(mailClient, "listScheduledSummaries").mockResolvedValue([]);
+    let finish!: (draft: Draft) => void;
+    const cancel = vi.spyOn(mailClient, "cancelSend").mockImplementation(() => new Promise<Draft>((resolve) => { finish = resolve; }));
+    const { result } = renderHook(() => useCorrespondence([], undefined, undefined, ...snippetArgs, null));
+    await waitFor(() => expect(result.current.context.canUndoSend).toBe(true));
+    act(() => { result.current.context.undoSend(); result.current.context.undoSend(); });
+    await waitFor(() => expect(cancel).toHaveBeenCalledExactlyOnceWith(outbox.id));
+    listOutbox.mockResolvedValue([]);
+    await act(async () => { finish(draft); });
+    expect(result.current.activeDraft?.id).toBe(draft.id);
+    expect(result.current.context.canUndoSend).toBe(false);
+  });
+
   it("keeps countdowns live and publishes delivery changes without polling draft bodies", async () => {
     vi.useFakeTimers();
     const listDrafts = vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);

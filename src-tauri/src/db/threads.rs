@@ -315,9 +315,9 @@ impl Database {
 
     /// Deletes threads (and their messages, via `ON DELETE CASCADE`) whose
     /// newest message is older than the configured retention window.
-    /// Starred and trashed threads are always kept regardless of age. A
-    /// no-op when retention is unset (unlimited). Returns the number of
-    /// threads removed.
+    /// Starred threads are kept unless trashed. Trash follows the same age
+    /// limit as other mail. A no-op when retention is unlimited. Returns the
+    /// number of threads removed.
     pub fn prune_expired_threads(&self) -> DbResult<usize> {
         let Some(days) = self.retention_days()? else {
             return Ok(0);
@@ -327,12 +327,12 @@ impl Database {
             transaction
                 .execute(
                     "DELETE FROM thread_search WHERE thread_id IN
-                        (SELECT id FROM threads WHERE last_message_at < ?1 AND starred = 0 AND trashed = 0)",
+                        (SELECT id FROM threads WHERE last_message_at < ?1 AND (starred = 0 OR trashed = 1))",
                     [&cutoff],
                 )?;
             let removed = transaction
                 .execute(
-                    "DELETE FROM threads WHERE last_message_at < ?1 AND starred = 0 AND trashed = 0",
+                    "DELETE FROM threads WHERE last_message_at < ?1 AND (starred = 0 OR trashed = 1)",
                     [&cutoff],
                 )?;
             Ok(removed)

@@ -222,8 +222,9 @@ fn a_summary_for_an_older_revision_never_replaces_a_newer_one() {
 }
 
 #[test]
-fn prune_expired_threads_is_a_noop_when_retention_is_unset() {
+fn prune_expired_threads_is_a_noop_when_retention_is_unlimited() {
     let database = database();
+    database.set_retention_days(None).unwrap();
     database
         .upsert_thread(
             "work@example.com",
@@ -261,6 +262,105 @@ fn prune_expired_threads_removes_only_old_unstarred_threads() {
     let threads = database.list_threads(None).unwrap();
     assert!(!threads.iter().any(|t| t.id == "work@example.com:t1"));
     assert!(threads.iter().any(|t| t.id == "work@example.com:t2"));
+}
+
+#[test]
+fn pruning_trash_and_archived_mail_uses_newest_message_age_and_star_rules() {
+    for retention in [None, Some(30), Some(90), Some(365)] {
+        let database = database();
+        clear_seed_threads(&database);
+        database.set_retention_days(retention).unwrap();
+        let mut expected_removed = 0;
+        for archived in [false, true] {
+            for trashed in [false, true] {
+                for starred in [false, true] {
+                    for recent_reply in [false, true] {
+                        let id = format!("a{archived}-t{trashed}-s{starred}-r{recent_reply}");
+                        let old = message(
+                            &format!("{id}-old"),
+                            &id,
+                            "2000-01-01T00:00:00Z",
+                            "old body",
+                        );
+                        let mut messages = vec![old];
+                        if recent_reply {
+                            messages.push(message(
+                                &format!("{id}-new"),
+                                &id,
+                                &Utc::now().to_rfc3339(),
+                                "new body",
+                            ));
+                        }
+                        database
+                            .upsert_thread("work@example.com", &messages)
+                            .unwrap();
+                        let thread_id = format!("work@example.com:{id}");
+                        for mutation in [
+                            ThreadMutation::Archive {
+                                thread_id: thread_id.clone(),
+                                value: archived,
+                            },
+                            ThreadMutation::Trash {
+                                thread_id: thread_id.clone(),
+                                value: trashed,
+                            },
+                            ThreadMutation::Star {
+                                thread_id,
+                                value: starred,
+                            },
+                        ] {
+                            database.mutate_thread(&mutation).unwrap();
+                        }
+                        if retention.is_some() && !recent_reply && (!starred || trashed) {
+                            expected_removed += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(database.prune_expired_threads().unwrap(), expected_removed);
+
+        let connection = database.connection().unwrap();
+        for archived in [false, true] {
+            for trashed in [false, true] {
+                for starred in [false, true] {
+                    for recent_reply in [false, true] {
+                        let thread_id = format!(
+                            "work@example.com:a{archived}-t{trashed}-s{starred}-r{recent_reply}"
+                        );
+                        let removed = retention.is_some() && !recent_reply && (!starred || trashed);
+                        for table in ["threads", "messages", "thread_search"] {
+                            let column = if table == "threads" {
+                                "id"
+                            } else {
+                                "thread_id"
+                            };
+                            let count: i64 = connection
+                                .query_row(
+                                    &format!("SELECT COUNT(*) FROM {table} WHERE {column}=?1"),
+                                    [&thread_id],
+                                    |row| row.get(0),
+                                )
+                                .unwrap();
+                            let expected = if removed {
+                                0
+                            } else if table == "messages" && recent_reply {
+                                2
+                            } else {
+                                1
+                            };
+                            assert_eq!(
+                                count, expected,
+                                "{table}: {thread_id}, retention {retention:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        drop(connection);
+        assert_eq!(database.prune_expired_threads().unwrap(), 0);
+    }
 }
 
 #[test]

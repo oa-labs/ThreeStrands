@@ -13,7 +13,7 @@
 //!
 //! Entirely inert unless [`Database::replicated_sync_active`] is true (the
 //! Settings beta toggle, or the `THREESTRANDS_REPLICATED_SYNC` environment
-//! override). Mutation commands in `lib.rs` reach the replica through
+//! override). Mutation commands in `commands/` reach the replica through
 //! `Database::record_local_entity_write` and
 //! `Database::record_local_entity_deletion` in `sync_projection.rs`.
 
@@ -40,6 +40,7 @@ use threestrands_sync_transport::{
 
 use crate::{
     backoff::retry_at,
+    error::{AppError, AppResult},
     db::{Database, DatabaseError, DbResult},
     error_text::display,
     s3_transport::{S3Config, S3Credentials, S3ProbeReport, S3Transport},
@@ -253,12 +254,12 @@ impl Database {
                 }
             }
         }
-        // Unset retention is the unlimited default, not a choice this device
-        // made. Seeding it would assert "forever" as a concurrent write the
-        // moment a fresh device joins, conflicting with whatever the space
-        // already agreed on. An explicit choice — including switching back
+        // An untouched installation default is not a choice this device
+        // made. Seeding it would assert a concurrent write the moment a fresh
+        // device joins, conflicting with whatever the space already agreed
+        // on. An explicit choice — including switching back
         // to unlimited — is recorded by the `set_retention_days` command.
-        if let Some(days) = self.retention_days()? {
+        if let Some(days) = self.chosen_retention_days()? {
             if self.reconcile_one_entity(EntityType::Retention, "mail", json!({ "days": days }))? {
                 repaired += 1;
             }
@@ -1834,8 +1835,8 @@ impl ReplicatedSync {
     /// the permission checklist, plus — when the key can list and read —
     /// whether the bucket and prefix already hold a sync group. `Err` only
     /// when the config or credentials are invalid before any request.
-    pub async fn probe_s3(&self, config: &S3Config, credentials: &S3Credentials) -> Result<S3ConnectionTest, String> {
-        let transport = S3Transport::new("probe", config, credentials).map_err(|error| error.to_string())?;
+    pub async fn probe_s3(&self, config: &S3Config, credentials: &S3Credentials) -> AppResult<S3ConnectionTest> {
+        let transport = S3Transport::new("probe", config, credentials)?;
         let checks = transport.probe().await;
         let space_presence = if checks.can_list && checks.can_read {
             let transports: Vec<Arc<dyn SyncTransport>> = vec![Arc::new(transport)];
@@ -1988,11 +1989,11 @@ impl ReplicatedSync {
     /// recovery phrase, shown to the user exactly once. Refused when a
     /// configured transport already holds a space, unless the user
     /// explicitly chose to start a separate one.
-    pub async fn begin_genesis(&self, allow_existing_space: bool) -> Result<String, String> {
+    pub async fn begin_genesis(&self, allow_existing_space: bool) -> AppResult<String> {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let transports = build_configured_transports(&self.database).await;
-        crate::enrollment::begin_genesis(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, &transports, allow_existing_space).await.map_err(String::from)
+        crate::enrollment::begin_genesis(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, &transports, allow_existing_space).await.map_err(AppError::from)
     }
 
     /// Whether the configured transports already hold a sync space, so
@@ -2004,58 +2005,59 @@ impl ReplicatedSync {
 
     /// Publishes a signed enrollment request for this (new) device and
     /// returns its fingerprint for display.
-    pub async fn request_enrollment(&self) -> Result<String, String> {
+    pub async fn request_enrollment(&self) -> AppResult<String> {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let transports = build_configured_transports(&self.database).await;
-        crate::enrollment::publish_enrollment_request(&self.database, &identity, &transports).await.map_err(String::from)
+        crate::enrollment::publish_enrollment_request(&self.database, &identity, &transports).await.map_err(AppError::from)
     }
 
     /// Approves a pending incoming request, publishing a grant.
-    pub async fn approve_enrollment_request(&self, request_id_hex: &str) -> Result<(), String> {
+    pub async fn approve_enrollment_request(&self, request_id_hex: &str) -> AppResult<()> {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let keys = self.database.local_replicated_keys()?;
         let transports = build_configured_transports(&self.database).await;
-        crate::enrollment::approve_enrollment_request(&self.database, &identity, &keys, request_id_hex, &transports).await.map_err(String::from)
+        crate::enrollment::approve_enrollment_request(&self.database, &identity, &keys, request_id_hex, &transports).await.map_err(AppError::from)
     }
 
     /// Rejects an incoming request and publishes the signed group-wide
     /// decision to every configured connector.
-    pub async fn reject_enrollment_request(&self, request_id_hex: &str) -> Result<(), String> {
+    pub async fn reject_enrollment_request(&self, request_id_hex: &str) -> AppResult<()> {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let transports = build_configured_transports(&self.database).await;
-        crate::enrollment::reject_enrollment_request(&self.database, &identity, request_id_hex, &transports).await.map_err(String::from)
+        crate::enrollment::reject_enrollment_request(&self.database, &identity, request_id_hex, &transports).await.map_err(AppError::from)
     }
 
     /// Imports a staged grant after the user confirms its fingerprint.
-    pub async fn confirm_enrollment(&self, request_id_hex: &str) -> Result<(), String> {
+    pub async fn confirm_enrollment(&self, request_id_hex: &str) -> AppResult<()> {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
-        crate::enrollment::confirm_and_import_grant(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, request_id_hex).await.map_err(String::from)
+        crate::enrollment::confirm_and_import_grant(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, request_id_hex).await.map_err(AppError::from)
     }
 
     /// Rotates the active epoch, optionally revoking a device. This and the
     /// other commands that change enrollment or keys hold the sync gate, so
     /// they never interleave with a cycle that has already loaded the
     /// current epoch's keys (or with that cycle's own rotations).
-    pub async fn rotate_epoch(&self, revoke_device_id_hex: Option<&str>) -> Result<(), String> {
+    pub async fn rotate_epoch(&self, revoke_device_id_hex: Option<&str>) -> AppResult<()> {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let keys = self.database.local_replicated_keys()?;
         let transports = build_configured_transports(&self.database).await;
-        crate::enrollment::rotate_epoch(&self.database, &identity, &keys, &crate::enrollment::KeychainEpochKeyStore, &transports, revoke_device_id_hex).await.map_err(String::from)
+        crate::enrollment::rotate_epoch(&self.database, &identity, &keys, &crate::enrollment::KeychainEpochKeyStore, &transports, revoke_device_id_hex).await.map_err(AppError::from)
     }
 
     /// Leaves the sync space on this device only; see
     /// [`Database::leave_sync_space`]. Holds the sync gate so a cycle in
     /// flight finishes before the log it is using disappears.
-    pub async fn leave_sync_space(&self) -> Result<(), String> {
+    pub async fn leave_sync_space(&self) -> AppResult<()> {
         let _guard = self.gate.lock().await;
         let highest_epoch = self.database.leave_sync_space()?;
-        forget_sync_space_keys(highest_epoch)
-            .map_err(|error| format!("Left the sync group, but some keys could not be removed from the keychain: {error}"))
+        forget_sync_space_keys(highest_epoch).map_err(|error| {
+            AppError::message(format!("Left the sync group, but some keys could not be removed from the keychain: {error}"))
+        })
     }
 
     /// Creates a join code for the chosen connectors. Requires this device
@@ -2064,7 +2066,7 @@ impl ReplicatedSync {
         &self,
         connectors: &[crate::enrollment::JoinCodeConnectorChoice],
         expires_in_hours: u32,
-    ) -> Result<String, String> {
+    ) -> AppResult<String> {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let keys = self
@@ -2082,12 +2084,12 @@ impl ReplicatedSync {
             Utc::now().timestamp_millis(),
         )
         .await
-        .map_err(String::from)
+        .map_err(AppError::from)
     }
 
     /// Cancels an open join code and rotates keys. Holds the sync gate so
     /// the rotation never races a cycle's own.
-    pub async fn cancel_join_code(&self, invitation_cid: &str) -> Result<(), String> {
+    pub async fn cancel_join_code(&self, invitation_cid: &str) -> AppResult<()> {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let keys = self.database.local_replicated_keys()?;
@@ -2101,7 +2103,7 @@ impl ReplicatedSync {
             invitation_cid,
         )
         .await
-        .map_err(String::from)
+        .map_err(AppError::from)
     }
 
     /// Joins a sync group with a pasted join code, setting up its
@@ -2111,7 +2113,7 @@ impl ReplicatedSync {
         code: &str,
         folders: &[crate::enrollment::JoinFolderChoice],
         credentials: Vec<crate::enrollment::JoinCredentialsChoice>,
-    ) -> Result<(), String> {
+    ) -> AppResult<()> {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         crate::enrollment::join_with_code(
@@ -2124,15 +2126,15 @@ impl ReplicatedSync {
             Utc::now().timestamp_millis(),
         )
         .await
-        .map_err(String::from)
+        .map_err(AppError::from)
     }
 
     /// Joins an existing sync space using only a recovery phrase.
-    pub async fn join_with_recovery_phrase(&self, phrase: &str) -> Result<(), String> {
+    pub async fn join_with_recovery_phrase(&self, phrase: &str) -> AppResult<()> {
         let _guard = self.gate.lock().await;
         let identity = self.database.local_device_identity()?;
         let transports = build_configured_transports(&self.database).await;
-        crate::enrollment::join_with_recovery_phrase(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, phrase, &transports).await.map_err(String::from)
+        crate::enrollment::join_with_recovery_phrase(&self.database, &identity, &crate::enrollment::KeychainEpochKeyStore, phrase, &transports).await.map_err(AppError::from)
     }
 
     /// Spawns the periodic push/pull loop. Only ever does real work when
@@ -3639,7 +3641,10 @@ mod config_tests {
             .probe_s3(&config, &FakeS3Server::credentials())
             .await
             .unwrap_err();
-        assert!(error.contains("path-style"), "{error}");
+        // The transport's own error reaches the command typed, with its
+        // sentence unchanged for Settings.
+        assert!(matches!(error, AppError::Transport(_)), "{error:?}");
+        assert!(error.to_string().contains("path-style"), "{error}");
         assert_eq!(server.state().faults.requests, 0);
     }
 
@@ -3786,7 +3791,7 @@ mod reconciliation_tests {
         // The v35/v36 protocol-reset migrations that populated these tables
         // were removed with the historical chain (migrate() now refuses a
         // pre-baseline database). The RUNTIME surface that reads them is still
-        // wired into the app (see lib.rs replicated_sync_*_protocol_reset_*),
+        // wired into the app (see commands/replicated_sync.rs replicated_sync_*_protocol_reset_*),
         // so exercise it directly: a notice and a pending keychain-cleanup row
         // are read, and the notice can be dismissed.
         let database = Database::open_memory();
@@ -3952,11 +3957,28 @@ mod reconciliation_tests {
     }
 
     #[test]
-    fn does_not_seed_the_unlimited_retention_default() {
+    fn does_not_seed_an_untouched_retention_default() {
         // A freshly joining device has never chosen a retention period.
-        // Seeding its unset default would enter the graph as a concurrent
-        // "forever" write and conflict with the space's agreed value.
+        // Seeding its installation default would enter the graph as a
+        // concurrent write and conflict with the space's agreed value.
         let database = Database::open_memory();
+        assert_eq!(database.retention_days().unwrap(), Some(90));
+        database.reconcile_replicated_sync_backlog().unwrap();
+        assert_eq!(retention_operation_count(&database), 0);
+    }
+
+    #[test]
+    fn does_not_seed_legacy_unlimited_retention() {
+        let database = Database::open_memory();
+        // Older installations represented Forever with no setting at all.
+        database
+            .connection()
+            .unwrap()
+            .execute(
+                "DELETE FROM compose_settings WHERE key='retention_days_default'",
+                [],
+            )
+            .unwrap();
         assert_eq!(database.retention_days().unwrap(), None);
         database.reconcile_replicated_sync_backlog().unwrap();
         assert_eq!(retention_operation_count(&database), 0);

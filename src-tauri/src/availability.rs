@@ -16,8 +16,29 @@ fn parse_clock(value: &str) -> Result<NaiveTime, String> {
 
 /// Most working-hour windows across the week: four per day.
 pub(crate) const MAX_WORKING_WINDOWS: usize = 28;
+pub(crate) const MAX_DRIVE_TIME_BUFFER_MINUTES: u32 = 120;
+
+pub(crate) fn validate_drive_time_buffer(minutes: u32) -> Result<(), String> {
+    if minutes > MAX_DRIVE_TIME_BUFFER_MINUTES {
+        return Err(format!("Drive time buffer must be between 0 and {MAX_DRIVE_TIME_BUFFER_MINUTES} minutes"));
+    }
+    Ok(())
+}
+
+/// Include events outside the requested range whose drive time reaches it.
+pub(crate) fn buffered_range(start: &str, end: &str, minutes: u32) -> Result<(String, String), String> {
+    validate_drive_time_buffer(minutes)?;
+    let start = parse_range(start)?;
+    let end = parse_range(end)?;
+    if end <= start { return Err("Availability range must end after it starts".into()); }
+    let buffer = Duration::minutes(i64::from(minutes));
+    let start = start.checked_sub_signed(buffer).ok_or("Availability range is out of bounds")?;
+    let end = end.checked_add_signed(buffer).ok_or("Availability range is out of bounds")?;
+    Ok((start.to_rfc3339(), end.to_rfc3339()))
+}
 
 pub(crate) fn validate_preferences(preferences: &AvailabilityPreferences) -> Result<Tz, String> {
+    validate_drive_time_buffer(preferences.drive_time_buffer_minutes)?;
     let zone = preferences
         .time_zone
         .parse::<Tz>()
@@ -186,7 +207,24 @@ mod tests {
             working_windows: vec![AvailabilityWindow { weekday: 1, start: "09:00".to_string(), end: "12:00".to_string() }],
             default_duration_minutes: 30,
             slot_increment_minutes: 30,
+            drive_time_buffer_minutes: 0,
         }
+    }
+
+    #[test]
+    fn drive_time_limits_and_cross_day_search_ranges() {
+        for minutes in [0, MAX_DRIVE_TIME_BUFFER_MINUTES - 1, MAX_DRIVE_TIME_BUFFER_MINUTES] {
+            let mut prefs = preferences();
+            prefs.drive_time_buffer_minutes = minutes;
+            assert!(validate_preferences(&prefs).is_ok());
+        }
+        let mut prefs = preferences();
+        prefs.drive_time_buffer_minutes = MAX_DRIVE_TIME_BUFFER_MINUTES + 1;
+        assert!(validate_preferences(&prefs).is_err());
+        assert!(buffered_range("invalid", "2099-09-21T00:00:00Z", 30).is_err());
+        assert!(buffered_range("2099-09-21T01:00:00Z", "2099-09-21T00:00:00Z", 30).is_err());
+        assert_eq!(buffered_range("2099-09-21T00:00:00Z", "2099-09-21T23:45:00Z", 30).unwrap(),
+            ("2099-09-20T23:30:00+00:00".into(), "2099-09-22T00:15:00+00:00".into()));
     }
 
     #[test]

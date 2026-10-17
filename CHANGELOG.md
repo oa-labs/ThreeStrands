@@ -5,6 +5,27 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ## Unreleased
 
 ### New
+- The search box now suggests as you type, the way Gmail does: type `from:` or `to:` to pick someone from your contacts, `label:` or `in:` to pick a label or folder, or `after:` to pick a date like **Past month**. An empty search box lists your recent searches. Choosing someone with several email addresses searches all of them.
+- Use keyboard shortcuts to attach files, refresh mail, create calendar events and contacts, save contacts, and open, save, or star files. **Keyboard Shortcuts** now also lists snippets, recipient-field focus, and calendar navigation.
+
+### Improved
+- Search now looks through all your mail, including archived conversations, without clicking **Search All Mail** first. Results still in your inbox are marked **Inbox**, **Inbox Only** narrows a search to your inbox, and Trash and Spam stay out unless you search with `in:trash` or `in:spam`. The server is searched automatically once you stop typing.
+- Search understands a minus to leave things out (`invoice -from:billing@example.com`) and `OR` or braces for either-or (`from:ana OR from:bo`), in the results on this computer as well as on the server.
+- Mail shortcuts now act on checked conversations together, and Select All selects the conversations visible through your filters. Undo also handles pending sends and task completion, and search stays in **Files** or **Contacts** when you’re working there.
+- New installations keep mail locally for 90 days by default; existing retention settings stay as they are. You can change this in **Settings → Privacy → Keep Mail on This Device For**.
+
+### Fixed
+- In replies, the trash icon now lines up with **Review** above it.
+- When one part of the window runs into a problem, only that part shows **Something went wrong** with **Try Again**, and the rest of the window keeps working instead of going blank. Choosing another conversation or mailbox also brings it back.
+- Up and down arrow keys keep switching Settings sections after you click a section with the mouse.
+- Keyboard navigation in the mail list now clears the gray hover highlight until you move or click the pointer, keeping the selected conversation clear.
+- Searching for `to:` someone now also finds mail where they were on Cc or Bcc, as it does in Gmail.
+- Trashed conversations now follow your local mail retention setting, even when starred. Other starred conversations stay on your device, and local cleanup leaves mail on the server.
+
+## 0.141.0 — 2026-10-16
+
+### New
+- Set a **Drive Time Buffer** at the bottom of **Settings → Availability** to reserve time before and after calendar events with a location. Meeting suggestions and conflict checks leave that time free for travel.
 - In **Settings → Signatures**, **Import from Gmail…** brings in a signature from a connected Gmail account for preview, naming, and optional use as the account’s default for new messages. You can edit its plain-text alternative separately or regenerate it from the visual signature.
 - The **Trust** section in the side panel now spots common email tricks using only what's on your computer: a familiar name sent from a new address, an address or link that imitates a domain you write to, links that hide where they go, and risky attachments from people you haven't written to. It says **Be careful** when something looks wrong, shows **Known sender** for people you write to, and **Show link** scrolls to the link in question. Sender checks, linked sites, and tracking images are under **Details**. **Known sender** also appears when a forwarding or filtering service left out the usual sender check, as long as the email is confirmed to come from the sender's own domain.
 - When your inbox is empty, the side panel now shows what's next: your open tasks, people you're due to reconnect with from **Keep in Touch**, and today's agenda when you have a calendar connected. Click any item to open it.
@@ -14,7 +35,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - **Find Times** and **Get Brief** now sit together as one row of buttons at the top of the side panel, and each opens below when it has something to show. **Find Times** works while you're reading a conversation, too: pick the times you want and **Draft Reply With These Times** starts your reply.
 - **Upcoming meetings** in the side panel show short dates like **Today**, **Tomorrow**, or **Fri**, so long meeting names wrap onto a second line instead of being cut off. Hover a date for the full day.
 - The side panel no longer lists other people at the same company. Grouping by email domain mixed in unrelated people at large companies and shared mail providers.
-- **Draft Review** now opens below your message from **Review** in reply and new-message windows. In replies, **Draft Reply** and **Review** sit beside the quoted-conversation toggle, with a single divider above **Send** and the trash icon’s right edge aligned with **Review**.
+- **Draft Review** now opens below your message from **Review** in reply and new-message windows. In replies, **Draft Reply** and **Review** sit beside the quoted-conversation toggle, with a single divider above **Send**.
 - Replies now hide the signature picker when no signature is applied. Your signature’s hosted images appear automatically while composing, without image removal or resize controls over the logo.
 - **Settings → Signatures** now uses a visual editor with a compact formatting toolbar, font and color pickers, and image editing when you click a logo. **Import…** is under **More**, and your imported layouts, hosted images, and separate plain-text alternative are preserved.
 - Messages sent to a long list of people now show the first 20 recipients followed by "and N more". Click it to see everyone.
@@ -25,7 +46,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ### Fixed
 - The **Trust** section in the side panel no longer warns about links in the quoted earlier emails that are folded away in a reply. Those links are often rewritten by someone else's mail system, so their text and destination differ without anything being wrong.
-- In **Settings → Signatures**, dialogs now scroll so you can reach the plain-text field and import controls, previews show logos on a white default background, and **Load Images** lets you see hosted logos while editing. Editing plain text during Gmail import now responds without reprocessing the whole signature, formatted phone numbers are no longer repeated, and the **Choose File** button and its label are centered in the file field.
+- In **Settings → Signatures**, dialogs now scroll so you can reach the plain-text field and import controls, previews show logos on a white default background, and **Load Images** lets you see hosted logos while editing. Editing plain text during Gmail import now responds without reprocessing the whole signature, formatted phone numbers are no longer repeated, and the **Choose File** button and its label are centered in the file field. Divider lines in a signature, such as a vertical line beside a logo or a rule above a tagline, now stay in the preview and in the messages you send.
 
 ## 0.133.2 — 2026-10-15
 

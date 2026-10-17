@@ -1,3 +1,4 @@
+import { useWorkspaceCommands } from "./workspaceCommands";
 import { WorkspaceContextRail } from "./WorkspaceContextRail";
 import { WorkspaceRelatedContext } from "./WorkspaceRelatedContext";
 import { ContextSectionHeader } from "./ContextSections";
@@ -354,6 +355,8 @@ export function CalendarWeekView({
     setNewEventRange({ start: range.start, end: range.end });
   }, [anchor, now]);
 
+  useWorkspaceCommands({ "calendar.new": newEventAtAnchor, "calendar.goToday": goToToday }, active);
+
   const finishSelection = (day: Date, dayIndex: number, column: HTMLElement, clientY: number, pointerId: number) => {
     const drag = dragRef.current;
     if (!drag || drag.dayIndex !== dayIndex || drag.pointerId !== pointerId) return;
@@ -415,12 +418,12 @@ export function CalendarWeekView({
           <div className="calendar-week-controls">
             <div className="segmented" role="group" aria-label="Calendar Range">{CALENDAR_RANGES.map((item) => <button key={item.value} type="button" className="segment" aria-pressed={mode === item.value} onClick={() => { setMode(item.value); try { localStorage.setItem(CALENDAR_RANGE_KEY,item.value); } catch { /* Session preference still applies. */ } }}>{item.label}</button>)}</div>
             <button type="button" className="btn" aria-expanded={navigationOpen} onClick={() => setNavigationOpen((value) => !value)}><CalendarDays size={ICON_SIZE.sm} />Calendars</button>
-            <button type="button" className="btn" onClick={goToToday}>Today</button>
+            <button type="button" className="btn" title="Today (t)" aria-keyshortcuts="t" onClick={goToToday}>Today</button>
             <div className="calendar-week-nav">
               <HoverTooltip title={`Previous ${mode === "week" || mode === "workweek" ? "week" : "range"} (-)`}><button type="button" className="btn-icon" aria-label={`Previous ${mode === "week" || mode === "workweek" ? "week" : "range"} (-)`} onClick={() => moveWeek(-1)}><ChevronLeft size={ICON_SIZE.lg} /></button></HoverTooltip>
               <HoverTooltip title={`Next ${mode === "week" || mode === "workweek" ? "week" : "range"} (=)`}><button type="button" className="btn-icon" aria-label={`Next ${mode === "week" || mode === "workweek" ? "week" : "range"} (=)`} onClick={() => moveWeek(1)}><ChevronRight size={ICON_SIZE.lg} /></button></HoverTooltip>
             </div>
-            <button type="button" className="btn" onClick={newEventAtAnchor}><Plus size={ICON_SIZE.md} />New Event</button>
+            <button type="button" className="btn" title="New Event (Shift+N)" aria-keyshortcuts="Shift+N" onClick={newEventAtAnchor}><Plus size={ICON_SIZE.md} />New Event</button>
           </div>
         </header>
         {error ? (

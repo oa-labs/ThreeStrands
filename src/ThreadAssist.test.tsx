@@ -85,7 +85,7 @@ function props(overrides: Partial<Omit<ThreadAssistProps, "summary" | "suggestio
     },
     scheduling: {
       calendarConnected: false,
-      preferences: { timeZone: "America/New_York", workingWindows: [], defaultDurationMinutes: 30, slotIncrementMinutes: 30 },
+      preferences: { timeZone: "America/New_York", workingWindows: [], defaultDurationMinutes: 30, slotIncrementMinutes: 30, driveTimeBufferMinutes: 0 },
       onAddToCalendar: vi.fn(),
       onReplyWithTimes: vi.fn(),
       onConfirmTime: vi.fn(),

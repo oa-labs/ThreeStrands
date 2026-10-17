@@ -45,14 +45,27 @@ and message rendering each have their own document in this folder.
   desktop resume.
 - Sanitized HTML rendering in a sandboxed iframe; see the
   [email rendering policy](email-rendering-policy.md).
+- Newsletter sender history with unsubscribe, archive, mute, and Split Inbox
+  controls. Muted senders can follow you through encrypted sync.
+- Local Trust checks explain suspicious sender names, lookalike domains,
+  misleading links, and risky attachments. Show link reveals the link in the
+  message; sender verification, linked sites, and tracking images are in Details.
+- Inbox zero shows the account’s last-check status, open tasks, due Keep in Touch
+  reminders, and today’s agenda when a calendar is connected.
 - Opt-in crash reporting; see the [crash reporting policy](crash-reporting.md).
 
 ## Correspondence
 
 - New message, reply, reply-all, and forward, with To/Cc/Bcc, subject,
-  plain-text body, and quoted source content.
-- Drafts and Outbox views. Drafts are local to this installation and are not
-  synchronized with Gmail Drafts.
+  rich-text and plain-text bodies, and quoted source content.
+- Formatted signatures with logos, a visual editor, Gmail import, and separate
+  defaults for new messages and replies or forwards. The plain-text alternative
+  can be edited independently. See the [writing guide](../site/docs/compose.md).
+- Sent shows outgoing conversations across devices. Edit as New copies the
+  subject, body, and attachments to a fresh message without recipients.
+- Drafts and Outbox views. Outbox contains only mail that has not finished
+  sending. Drafts are local to this installation and are not synchronized with
+  Gmail Drafts.
 - SQLite draft persistence with revision checks, 300 ms debounced autosave,
   visible save status, and save-before-close. Unsaved edits remain visible if a
   write fails. An abrupt crash can lose the unsaved interval.
@@ -169,6 +182,11 @@ composing another message.
 - Calendar offers Day, 3-day, Workweek (default), and Week. Calendar navigation
   and selections are available from the Calendars control. Opening a weekend
   event temporarily uses Day when the saved preference is Workweek.
+- Find Times searches beside the conversation, with optional Draft Assist to
+  interpret date requests. Select times to insert into a draft or start a reply.
+  Working hours can have multiple blocks per day, and Drive Time Buffer reserves
+  travel time around timed events with a location. Events support all-day dates
+  and locations; briefs and chat can suggest each event announced in an email.
 - Tasks and meetings surface related conversations and attachments from local
   mail without requiring AI. Direct sources come first; meeting suggestions
   require topic evidence and, when attendees are known, participant overlap.
@@ -178,6 +196,8 @@ composing another message.
 - Attachment stars are independent of email stars, persist on this device, and
   appear in Mail, Files, and contextual file rows. They are not synchronized or
   included in settings exports. Starring does not retain a separate offline copy.
+- On macOS, Files previews safe documents and pictures. Risky attachments show
+  warnings and are never previewed. Mark Spam removes the email’s files, with Undo.
 - Files show known local availability and use the existing native open/download
   actions. Source-email navigation supports returning to the workspace selection
   and filters. Files cover mail synchronized on this device.
