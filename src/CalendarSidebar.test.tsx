@@ -478,7 +478,7 @@ describe("calendar sidebar", () => {
     fireEvent.keyDown(window, { key: "?" });
 
     const dialog = await screen.findByRole("dialog", { name: "Keyboard Shortcuts" });
-    const title = within(dialog).getByText("Toggle Today’s Schedule", { selector: "dt" });
+    const title = within(dialog).getByText("Today in Calendar / Toggle Today’s Schedule", { selector: "dt" });
     expect(title.nextElementSibling?.querySelector("kbd")?.textContent).toBe("t");
   });
 

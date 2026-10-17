@@ -1,3 +1,5 @@
+import { installTestShortcuts } from "./test/commandContext";
+import { runWorkspaceCommand } from "./workspaceCommands";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FilesWorkspace, type FilesWorkspaceSnapshot } from "./FilesWorkspace";
@@ -10,6 +12,37 @@ const invite: WorkspaceFile = {...report,messageId:"files-invite",threadId:"invi
 const copy: WorkspaceFile = {...report,messageId:"files-copy",threadId:"copy-thread",attachment:{...report.attachment,id:"copy"}};
 describe("Files workspace", () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); clearFilePreviewCache(); });
+  it("searches, opens, saves, and stars the keyboard-selected file without claiming editing or modal keys", async () => {
+    vi.spyOn(mailClient, "listFiles").mockResolvedValue({ files: [report, copy], total: 2 });
+    const open = vi.spyOn(mailClient, "openAttachment").mockResolvedValue();
+    const save = vi.spyOn(mailClient, "saveAttachment").mockResolvedValue();
+    const star = vi.spyOn(mailClient, "setFileStar").mockResolvedValue();
+    render(<FilesWorkspace accountId={report.accountId} accountIds={[report.accountId]} onOpenThread={vi.fn()} />);
+    installTestShortcuts({ focusedPane: "files", focusSearch: () => runWorkspaceCommand("files.search") });
+    const rows = within(screen.getByRole("list", { name: "Mail attachments" }));
+    await waitFor(() => expect(rows.getAllByRole("listitem")).toHaveLength(2));
+    fireEvent.keyDown(document.body, { key: "/" });
+    const search = screen.getByRole("searchbox", { name: "Search Files" });
+    await waitFor(() => expect(search).toHaveFocus());
+    fireEvent.keyDown(search, { key: "o" });
+    fireEvent.keyDown(search, { key: "s", metaKey: true, shiftKey: true });
+    expect(open).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+    const first = rows.getAllByRole("button", { name: /^forecast\.pdf/ })[0];
+    first.focus();
+    fireEvent.keyDown(first, { key: "j" });
+    fireEvent.keyDown(document.activeElement!, { key: "o" });
+    fireEvent.keyDown(document.activeElement!, { key: "S", ctrlKey: true, shiftKey: true });
+    fireEvent.keyDown(document.activeElement!, { key: "s" });
+    await waitFor(() => expect(star).toHaveBeenCalledWith(copy.accountId, copy.messageId, copy.attachment.id, true));
+    expect(open).toHaveBeenCalledWith(copy.messageId, copy.attachment.id);
+    expect(save).toHaveBeenCalledWith(copy.messageId, copy.attachment.id);
+    const modal = document.createElement("div"); modal.dataset.shortcutScope = "modal"; document.body.append(modal);
+    for (const extra of [{ repeat: true }, { isComposing: true }]) fireEvent.keyDown(document.body, { key: "o", ...extra });
+    fireEvent.keyDown(modal, { key: "o" });
+    expect(open).toHaveBeenCalledTimes(1);
+    modal.remove();
+  });
   it("automatically lists distinct attachment occurrences and routes open, download and source actions", async () => {
     vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[report,copy],total:2});
     const open=vi.spyOn(mailClient,"openAttachment").mockResolvedValue();

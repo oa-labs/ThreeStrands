@@ -1,3 +1,4 @@
+import { runWorkspaceCommand } from "./workspaceCommands";
 import { useMemo, type Dispatch, type SetStateAction } from "react";
 import type { CommandContext, CommandResult, MailboxKind } from "./commands";
 import type { Message } from "./domain";
@@ -87,7 +88,9 @@ export function useAppCommandContext({
     accountSplitInboxes, returnStep, goBack, goToInboxTab, openMailView, goToSplitTab,
     goToNextSplitTab, goToPreviousSplitTab, openFolder, switchAccount,
   } = navigation;
-  const { selected, selectedIndex, visibleThreads, toggleChecked, toggleMessageFilter } = selection;
+  const { selected, selectedIndex, visibleThreads, toggleChecked, toggleMessageFilter, checkedIds, setCheckedIds } = selection;
+  const targetIds = useMemo(() => checkedIds.size > 0 ? [...checkedIds] : selected ? [selected.id] : [], [checkedIds, selected]);
+  const targetThreads = useMemo(() => mailboxThreads.threads.filter((thread) => targetIds.includes(thread.id)), [mailboxThreads.threads, targetIds]);
   const { taskWorkspaceRef, taskLayout, selectedTaskStatus, selectedTaskHasThread, newTask } = tasks;
   const { canUndoAction, canUndoArchive, undoLastAction } = undo;
   const { includeArchived, setSearchOpen } = mailboxThreads;
@@ -109,6 +112,8 @@ export function useAppCommandContext({
     },
     mailbox,
     selectedId,
+    checkedCount: checkedIds.size,
+    selectAllConversations: () => setCheckedIds(new Set(visibleThreads.map((thread) => thread.id))),
     selectedArchived: selected?.archived ?? false,
     selectedTrashed: selected?.trashed ?? false,
     canUnsubscribe,
@@ -162,12 +167,12 @@ export function useAppCommandContext({
     calendarWeekActive: rightWorkspace === "week",
     selectedTaskStatus,
     selectedTaskHasThread,
-    archiveSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "archive", value: true }),
+    archiveSelected: () => mutateIds(targetIds, { kind: "archive", value: true }),
     markNotDoneSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "archive", value: false }),
     unsubscribeSelected: () => {
       if (latestMessage?.unsubscribe?.methods.length) setUnsubscribeMessageId(latestMessage.id);
     },
-    trashSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "trash", value: true }),
+    trashSelected: () => mutateIds(targetIds, { kind: "trash", value: true }),
     restoreSelected: async () => {
       if (!selected) return {};
       // Matches Gmail: restoring from Trash always lands back in the Inbox,
@@ -177,13 +182,13 @@ export function useAppCommandContext({
       if (wasArchived) await mutateIds([selected.id], { kind: "archive", value: false });
       return result;
     },
-    markSpamSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "spam", value: true }),
+    markSpamSelected: () => mutateIds(targetIds, { kind: "spam", value: true }),
     setLabelSelected: (labelId, labelName, value) =>
       mutateIds(labelTargetIds ?? [], { kind: "label", labelId, labelName, value }),
     toggleReadSelected: () =>
-      mutateIds(selected ? [selected.id] : [], { kind: "read", value: selected?.unread ?? false }),
+      mutateIds(targetIds, { kind: "read", value: targetThreads.some((thread) => thread.unread) }),
     toggleStarSelected: () =>
-      mutateIds(selected ? [selected.id] : [], { kind: "star", value: !(selected?.starred ?? true) }),
+      mutateIds(targetIds, { kind: "star", value: !targetThreads.every((thread) => thread.starred) }),
     reply: () => {
       if (selected) {
         recordTriageEvent({
@@ -257,6 +262,8 @@ export function useAppCommandContext({
       return {};
     },
     focusSearch: () => {
+      if (rightWorkspace === "files") { runWorkspaceCommand("files.search"); return; }
+      if (rightWorkspace === "contacts") { runWorkspaceCommand("contacts.search"); return; }
       setRightWorkspace(null);
       if (!isTabbedMailbox) {
         correspondence.context.openInbox();
@@ -267,7 +274,7 @@ export function useAppCommandContext({
       setSearchOpen(true);
     },
     refresh: refreshMail,
-    openLabels: () => setLabelTargetIds(selected ? [selected.id] : null),
+    openLabels: () => setLabelTargetIds(targetIds.length ? targetIds : null),
     openPalette: () => setPaletteOpen(true),
     openShortcutHelp: () => setShortcutHelpOpen(true),
     openGettingStarted: () => setGettingStartedOpen(true),
@@ -288,12 +295,15 @@ export function useAppCommandContext({
     decreaseFontSize: () => adjustFontScale(-1),
     canUndoAction,
     canUndoArchive,
-    undoLastAction: () => { void undoLastAction(); },
+    undoLastAction: () => {
+      if (correspondence.context.canUndoSend && (!canUndoAction || correspondence.pendingUndoOrder >= undo.lastUndoOrder)) correspondence.context.undoSend();
+      else void undoLastAction();
+    },
     switchAccount,
     showAllAccounts: () => switchAccount(null),
     toggleMessageFilter,
   }), [
-    correspondence.context, toggleContextPanelFocus, interactionScope, rightWorkspace, mailbox,
+    correspondence.context, correspondence.pendingUndoOrder, undo.lastUndoOrder, checkedIds, setCheckedIds, targetIds, targetThreads, toggleContextPanelFocus, interactionScope, rightWorkspace, mailbox,
     selectedId, selected, canUnsubscribe, returnStep, goBack, displayedMessages,
     composerBelongsToVisibleThread, outboxSelection, outboxEditSource, goToInboxTab, accountSplitInboxes.length, goToNextSplitTab,
     goToPreviousSplitTab, goToSplitTab, taskLayout, selectedTaskStatus, selectedTaskHasThread,

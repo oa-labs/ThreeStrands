@@ -1,3 +1,4 @@
+import { installTestShortcuts } from "./test/commandContext";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
@@ -67,6 +68,25 @@ describe("CalendarWeekView", () => {
     resetCalendarColorsForTests();
   });
 
+  it("returns to today with t and opens a new event with Shift+N, leaving dialogs and editing fields alone", async () => {
+    const onCreated = vi.fn();
+    renderWeek({ onCreated });
+    const openToday = vi.fn();
+    installTestShortcuts({ focusedPane: "calendar", calendarWeekActive: true, openToday });
+    fireEvent.keyDown(document.body, { key: "=" });
+    fireEvent.keyDown(document.body, { key: "t" });
+    expect(openToday).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "September 2026", level: 1 })).toBeInTheDocument();
+    fireEvent.keyDown(document.body, { key: "N", shiftKey: true });
+    const dialog = screen.getByRole("dialog", { name: "New event" });
+    const title = within(dialog).getByRole("textbox", { name: "Title" });
+    fireEvent.change(title, { target: { value: "Meeting" } });
+    fireEvent.keyDown(title, { key: "N", shiftKey: true });
+    fireEvent.keyDown(title, { key: "t" });
+    expect(title).toHaveValue("Meeting");
+    expect(screen.getAllByRole("dialog", { name: "New event" })).toHaveLength(1);
+    await waitFor(() => expect(onCreated).not.toHaveBeenCalled());
+  });
   it("shows today's full agenda in shared context rows, with all-day events before chronological meetings", async () => {
     vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [
       event("late", "2026-09-22T15:00:00", "2026-09-22T16:00:00", "Afternoon review"),

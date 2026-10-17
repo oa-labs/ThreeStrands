@@ -100,8 +100,9 @@ export function useThreadSelection({ threads, selectedId, setSelectedId, query, 
   }, []);
   useEffect(() => {
     if (!selectAllRef.current) return;
-    selectAllRef.current.indeterminate = checkedIds.size > 0 && checkedIds.size < threads.length;
-  }, [checkedIds, threads.length]);
+    const visibleChecked = visibleThreads.filter((thread) => checkedIds.has(thread.id)).length;
+    selectAllRef.current.indeterminate = visibleChecked > 0 && visibleChecked < visibleThreads.length;
+  }, [checkedIds, visibleThreads]);
 
   useEffect(() => {
     selectedThreadRowRef.current?.scrollIntoView?.({ block: "nearest" });

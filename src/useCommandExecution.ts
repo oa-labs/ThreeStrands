@@ -1,3 +1,4 @@
+import { nextUndoOrder } from "./undoOrder";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
   accountCommand,
@@ -17,6 +18,7 @@ import { useShortcutHandler } from "./useShortcutHandler";
 
 export function useCommandUndo(setNotice: (notice: Notice | null) => void) {
   const lastUndo = useRef<{ command: Command; result: CommandResult } | null>(null);
+  const [lastUndoOrder, setLastUndoOrder] = useState(0);
   const [canUndoAction, setCanUndoAction] = useState(false);
   const [canUndoArchive, setCanUndoArchive] = useState(false);
   const undoLastAction = useCallback(async () => {
@@ -33,13 +35,21 @@ export function useCommandUndo(setNotice: (notice: Notice | null) => void) {
     }
   }, [setNotice]);
 
-  const rememberUndo = useCallback((command: Command, result: CommandResult) => {
+  const rememberUndo = useCallback((command: Command, result: CommandResult, showNotice = true) => {
     lastUndo.current = { command, result };
+    setLastUndoOrder(nextUndoOrder());
     setCanUndoAction(true);
     setCanUndoArchive(result.undoKind === "archive");
-    setNotice({ message: result.message ?? command.title, undo: () => { void undoLastAction(); } });
+    const undoThisAction = () => {
+      if (lastUndo.current?.result === result) { void undoLastAction(); return; }
+      // A still-visible task toast refers to its own action, even after another
+      // action becomes the global Undo target.
+      void command.undo?.(result).catch(() => setNotice({ message: "Undo could not be saved" }));
+    };
+    if (showNotice) setNotice({ message: result.message ?? command.title, undo: undoThisAction });
+    return undoThisAction;
   }, [setNotice, undoLastAction]);
-  return { canUndoAction, canUndoArchive, undoLastAction, rememberUndo };
+  return { canUndoAction, canUndoArchive, undoLastAction, rememberUndo, lastUndoOrder };
 }
 
 type Options = {

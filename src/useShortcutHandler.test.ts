@@ -1,113 +1,9 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { CommandContext } from "./commands";
+import { commandContext as context } from "./test/commandContext";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { useShortcutHandler } from "./useShortcutHandler";
 
-const context = (overrides: Partial<CommandContext> = {}): CommandContext => ({
-  interactionScope: "read",
-  focusedPane: "mail",
-  mailbox: "inbox",
-  selectedId: null,
-  selectedArchived: false,
-  selectedTrashed: false,
-  canUnsubscribe: false,
-  canNavigateMessages: false,
-  canSendAndMarkDone: false,
-  composerActive: false,
-  canUndoSend: false,
-  canGoBack: false,
-  goBack: vi.fn(),
-  splitInboxCount: 0,
-  aiSummaryAvailable: false,
-  aiBriefEnabled: true,
-  aiChatEnabled: true,
-  aiReplyAssistEnabled: true,
-  canUndoAction: false,
-  canUndoArchive: false,
-  compose: vi.fn(),
-  reply: vi.fn(),
-  replyAll: vi.fn(),
-  forward: vi.fn(),
-  canEditAsNew: false,
-  editAsNew: vi.fn(),
-  openInbox: vi.fn(),
-  openAllMail: vi.fn(),
-  openSent: vi.fn(),
-  openTrash: vi.fn(),
-  openDrafts: vi.fn(),
-  openOutbox: vi.fn(),
-  openTasks: vi.fn(),
-  openMailView: vi.fn(),
-  openTasksView: vi.fn(),
-  openContactsView: vi.fn(),
-  openKeepInTouchView: vi.fn(),
-  openContactGroupsView: vi.fn(),
-  openCalendarView: vi.fn(),
-  getSuggestions: vi.fn(),
-  openThreadChat: vi.fn(),
-  newTask: vi.fn(),
-  openSplitInbox: vi.fn(),
-  goToNextSplitTab: vi.fn(),
-  goToPreviousSplitTab: vi.fn(),
-  sendDraft: vi.fn(),
-  sendAndMarkDone: vi.fn(),
-  attachFiles: vi.fn(),
-  discardDraft: vi.fn(),
-  draftReplyWithAI: vi.fn(),
-  toggleContextPanelFocus: vi.fn(),
-  undoSend: vi.fn(),
-  selectNext: vi.fn(),
-  selectPrevious: vi.fn(),
-  selectNextTask: vi.fn(),
-  selectPreviousTask: vi.fn(),
-  openSelectedTask: vi.fn(),
-  openTaskDetails: vi.fn(),
-  focusGoals: vi.fn(),
-  linkTaskToGoal: vi.fn(),
-  completeSelectedTask: vi.fn(),
-  reopenSelectedTask: vi.fn(),
-  selectedTaskStatus: null,
-  moveSelectedTask: vi.fn(),
-  selectAdjacentTaskColumn: vi.fn(),
-  toggleTaskLayout: vi.fn(),
-  cycleTaskView: vi.fn(),
-  cycleContactsView: vi.fn(),
-  taskBoardActive: false,
-  calendarWeekActive: false,
-  selectedTaskHasThread: false,
-  selectNextMessage: vi.fn(),
-  selectPreviousMessage: vi.fn(),
-  archiveSelected: vi.fn(async () => ({})),
-  markNotDoneSelected: vi.fn(async () => ({})),
-  unsubscribeSelected: vi.fn(),
-  trashSelected: vi.fn(async () => ({})),
-  restoreSelected: vi.fn(async () => ({})),
-  markSpamSelected: vi.fn(async () => ({})),
-  setLabelSelected: vi.fn(async () => ({})),
-  toggleReadSelected: vi.fn(async () => ({})),
-  toggleStarSelected: vi.fn(async () => ({})),
-  toggleCheckedSelected: vi.fn(),
-  toggleOlderMessagesExpanded: vi.fn(),
-  pageMessageDown: vi.fn(),
-  pageMessageUp: vi.fn(),
-  summarizeSelected: vi.fn(async () => ({})),
-  focusSearch: vi.fn(),
-  refresh: vi.fn(),
-  openLabels: vi.fn(),
-  openPalette: vi.fn(),
-  openShortcutHelp: vi.fn(),
-  openGettingStarted: vi.fn(),
-  openSettings: vi.fn(),
-  openToday: vi.fn(),
-  increaseFontSize: vi.fn(),
-  decreaseFontSize: vi.fn(),
-  undoLastAction: vi.fn(),
-  showAllAccounts: vi.fn(),
-  switchAccount: vi.fn(),
-  toggleMessageFilter: vi.fn(),
-  ...overrides,
-});
 
 afterEach(() => {
   vi.useRealTimers();
@@ -116,6 +12,55 @@ afterEach(() => {
 });
 
 describe("useShortcutHandler", () => {
+  it("attaches files from compose fields with either modifier, suppressing overlays, IME, and held keys", () => {
+    const execute = vi.fn();
+    renderHook(() => useShortcutHandler(context({ composerActive: true, interactionScope: "compose" }), execute));
+    const composer = document.createElement("div"); composer.className = "composer"; composer.dataset.shortcutScope = "compose";
+    const field = document.createElement("textarea"); composer.append(field); document.body.append(composer);
+    for (const modifier of [{ metaKey: true }, { ctrlKey: true }]) field.dispatchEvent(new KeyboardEvent("keydown", { key: "A", shiftKey: true, bubbles: true, ...modifier }));
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenLastCalledWith(expect.objectContaining({ id: "draft.attach" }));
+    for (const extra of [{ repeat: true }, { isComposing: true }, { altKey: true }]) field.dispatchEvent(new KeyboardEvent("keydown", { key: "A", shiftKey: true, metaKey: true, bubbles: true, ...extra }));
+    field.dataset.shortcutScope = "modal";
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "A", shiftKey: true, metaKey: true, bubbles: true }));
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("saves Contacts from inputs and focused buttons but preserves modal and editor Undo", () => {
+    const execute = vi.fn();
+    renderHook(() => useShortcutHandler(context({ focusedPane: "contacts", canUndoAction: true, canUndoSend: true }), execute));
+    const field = document.createElement("input"); const button = document.createElement("button"); document.body.append(field, button);
+    for (const target of [field, button]) target.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }));
+    expect(execute.mock.calls.map(([command]) => command.id)).toEqual(["contacts.save", "contacts.save"]);
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "z", metaKey: true, bubbles: true }));
+    field.dataset.shortcutScope = "modal";
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }));
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("selects all from the mail list and body, preserving text selection in readers and editing fields", () => {
+    const execute = vi.fn();
+    renderHook(() => useShortcutHandler(context({}), execute));
+    const list = document.createElement("div"); list.className = "thread-list";
+    const row = document.createElement("button"); list.append(row);
+    const reader = document.createElement("div"); reader.className = "message-card";
+    const field = document.createElement("input"); document.body.append(list, reader, field);
+    for (const target of [document.body, row]) target.dispatchEvent(new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true }));
+    for (const target of [reader, field, window]) target.dispatchEvent(new KeyboardEvent("keydown", { key: "a", metaKey: true, bubbles: true }));
+    expect(execute.mock.calls.map(([command]) => command.id)).toEqual(["selection.all", "selection.all"]);
+  });
+
+  it("refreshes mail only outside editing, search, and modal contexts", () => {
+    const execute = vi.fn();
+    renderHook(() => useShortcutHandler(context({}), execute));
+    const field = document.createElement("input"); document.body.append(field);
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "r", ctrlKey: true, bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "r", metaKey: true }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "r", metaKey: true, repeat: true }));
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ id: "mail.refresh" }));
+  });
+
   it("opens Send later from compose fields with Mod+Shift+L and respects overlays, IME, and repeats", () => {
     const current = context({ interactionScope: "compose", composerActive: true });
     const execute = vi.fn();

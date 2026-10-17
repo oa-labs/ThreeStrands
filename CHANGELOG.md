@@ -4,7 +4,11 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### New
+- Use keyboard shortcuts to attach files, refresh mail, create calendar events and contacts, save contacts, and open, save, or star files. **Keyboard Shortcuts** now also lists snippets, recipient-field focus, and calendar navigation.
+
 ### Improved
+- Mail shortcuts now act on checked conversations together, and Select All selects the conversations visible through your filters. Undo also handles pending sends and task completion, and search stays in **Files** or **Contacts** when you’re working there.
 - New installations keep mail locally for 90 days by default; existing retention settings stay as they are. You can change this in **Settings → Privacy → Keep Mail on This Device For**.
 
 ### Fixed

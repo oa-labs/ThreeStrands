@@ -775,3 +775,49 @@ test("keeps the theme toggle on screen with a long email", async ({ page }) => {
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await expect(page.locator(".message-stack")).toHaveJSProperty("scrollTop", 0);
 });
+
+
+test("batch shortcuts act on checked mail and Select All preserves email text selection", async ({ page }) => {
+  await page.goto("/");
+  const rows = threadOptions(page);
+  await expect(rows).toHaveCount(3);
+  await page.keyboard.press("x");
+  await page.keyboard.press("j");
+  await page.keyboard.press("x");
+  await page.keyboard.press("j");
+  await expect(page.getByText("2 selected", { exact: true })).toBeVisible();
+  await page.keyboard.press("e");
+  await expect(rows).toHaveCount(1);
+  await page.keyboard.press("z");
+  await expect(rows).toHaveCount(3);
+  await page.keyboard.press("ControlOrMeta+a");
+  await expect(page.getByText("3 selected", { exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("toolbar", { name: "Batch actions" })).toHaveCount(0);
+  const email = page.frameLocator(".message-body").locator("body");
+  await email.click();
+  await email.press("ControlOrMeta+a");
+  await expect.poll(() => email.evaluate(() => window.getSelection()?.toString().length ?? 0)).toBeGreaterThan(0);
+  await expect(page.getByRole("toolbar", { name: "Batch actions" })).toHaveCount(0);
+});
+
+test("calendar and contacts creation shortcuts stay in their current workspace", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Calendar (2)" }).click();
+  await expect(page.getByRole("button", { name: "New Event", exact: true })).toBeVisible();
+  await page.keyboard.press("Shift+n");
+  const event = page.getByRole("dialog", { name: "New event" });
+  await expect(event).toBeVisible();
+  await event.getByRole("textbox", { name: "Title" }).fill("Keyboard meeting");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Contacts (4)" }).click();
+  await expect(page.getByRole("button", { name: "New Contact", exact: true })).toBeVisible();
+  await page.keyboard.press("Shift+n");
+  const name = page.getByRole("textbox", { name: "Name", exact: true });
+  await name.fill("Keyboard Contact");
+  await name.press("ControlOrMeta+Enter");
+  await expect(page.getByRole("region", { name: "Save changes" })).toHaveCount(0);
+  await page.getByRole("button", { name: "New Group", exact: true }).focus();
+  await page.keyboard.press("Shift+g");
+  await expect(page.getByRole("textbox", { name: "New Group Name" })).toBeFocused();
+});

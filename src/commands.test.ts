@@ -171,7 +171,11 @@ describe("command registry", () => {
       arrowup: ["thread.previous", "tasks.previous"],
       e: ["tasks.completeSelected", "thread.archive"],
       "shift+e": ["tasks.reopenSelected", "thread.unarchive"],
-      o: ["tasks.openSelected", "thread.toggleOlderMessages"],
+      o: ["files.open", "tasks.openSelected", "thread.toggleOlderMessages"],
+      s: ["files.star", "thread.star"],
+      "shift+n": ["calendar.new", "contacts.new"],
+      "shift+g": ["contacts.newGroup", "tasks.linkGoal"],
+      "mod+enter": ["contacts.save", "draft.send"],
       "#": ["draft.discard", "thread.trash"],
       arrowright: ["tasks.nextColumn", "message.next"],
       arrowleft: ["tasks.previousColumn", "message.previous"],
@@ -180,7 +184,7 @@ describe("command registry", () => {
       "shift+tab": ["mailbox.previousSplit", "contacts.previousView", "tasks.previousView"],
     });
 
-    for (const focusedPane of ["mail", "tasks", "contacts"] as const) {
+    for (const focusedPane of ["mail", "tasks", "contacts", "files", "calendar"] as const) {
       for (const selectedTaskStatus of ["open", "in_progress", "completed", "cancelled"] as const) {
         for (const [selectedArchived, taskBoardActive] of [[false, false], [true, false], [false, true], [true, true]] as const) {
           for (const mailbox of ["inbox", "drafts"] as const) {

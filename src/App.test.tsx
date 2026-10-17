@@ -1,3 +1,4 @@
+import type { Draft, OutboxItem } from "./correspondence";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountSwitcher, App, NOTICE_TIMEOUT_MS } from "./App";
@@ -1242,6 +1243,93 @@ describe("trash and batch actions", () => {
 
   afterEach(cleanup);
 
+  it.each([
+    { key: "e", kind: "archive" },
+    { key: "#", kind: "trash" },
+    { key: "!", kind: "spam" },
+    { key: "u", kind: "read" },
+    { key: "s", kind: "star" },
+  ])("applies $kind to checked conversations rather than the highlighted conversation", async ({ key, kind }) => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.keyDown(document.body, { key: "x" });
+    fireEvent.keyDown(document.body, { key: "j" });
+    fireEvent.keyDown(document.body, { key: "x" });
+    fireEvent.keyDown(document.body, { key: "j" });
+    expect(screen.getByText("2 selected")).toBeInTheDocument();
+    const mutate = vi.spyOn(mailClient, "mutateThreads");
+    try {
+      fireEvent.keyDown(document.body, { key });
+      await waitFor(() => expect(mutate).toHaveBeenCalledWith(expect.arrayContaining([
+        expect.objectContaining({ threadId: "welcome", kind }),
+        expect.objectContaining({ threadId: "roadmap", kind }),
+      ])));
+      expect(mutate.mock.calls.find(([items]) => items.some((item) => item.kind === kind))![0]).toHaveLength(2);
+    } finally { mutate.mockRestore(); }
+  });
+
+  it("toggles mixed batches to a consistent read and starred state", async () => {
+    localStorage.setItem("threestrands.settings.autoReadDelaySeconds", "60");
+    await mailClient.mutateThread({ kind: "read", threadId: "welcome", value: false });
+    await mailClient.mutateThread({ kind: "read", threadId: "roadmap", value: true });
+    await mailClient.mutateThread({ kind: "star", threadId: "welcome", value: true });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.keyDown(document.body, { key: "x" });
+    fireEvent.keyDown(document.body, { key: "j" });
+    fireEvent.keyDown(document.body, { key: "x" });
+    const mutate = vi.spyOn(mailClient, "mutateThreads");
+    try {
+      for (const [key, kind, value] of [["u", "read", true], ["u", "read", false], ["s", "star", true], ["s", "star", false]] as const) {
+        mutate.mockClear();
+        fireEvent.keyDown(document.body, { key });
+        await waitFor(() => expect(mutate).toHaveBeenCalledWith([
+          { kind, threadId: "welcome", value }, { kind, threadId: "roadmap", value },
+        ]));
+        await waitFor(async () => {
+          const thread = await mailClient.getThread("roadmap");
+          expect(kind === "read" ? !thread.thread.unread : thread.thread.starred).toBe(value);
+        });
+      }
+    } finally { mutate.mockRestore(); localStorage.removeItem("threestrands.settings.autoReadDelaySeconds"); }
+  });
+
+  it("labels checked conversations, selects all visible conversations, and clears selection with Escape", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.keyDown(document.body, { key: "x" });
+    fireEvent.keyDown(document.body, { key: "j" });
+    fireEvent.keyDown(document.body, { key: "x" });
+    fireEvent.keyDown(document.body, { key: "j" });
+    fireEvent.keyDown(document.body, { key: "l" });
+    const labels = await screen.findByRole("dialog", { name: "Manage Labels" });
+    const mutate = vi.spyOn(mailClient, "mutateThreads");
+    try {
+      fireEvent.click(within(labels).getByRole("option", { name: "Work" }));
+      await waitFor(() => expect(mutate).toHaveBeenCalledWith(expect.arrayContaining([
+        expect.objectContaining({ threadId: "welcome", kind: "label", labelId: "work" }),
+        expect.objectContaining({ threadId: "roadmap", kind: "label", labelId: "work" }),
+      ])));
+      fireEvent.keyDown(within(labels).getByRole("button", { name: "Close" }), { key: "Escape" });
+      expect(screen.getByText("2 selected")).toBeInTheDocument();
+      fireEvent.keyDown(document.body, { key: "a", metaKey: true });
+      expect(screen.getByText("3 selected")).toBeInTheDocument();
+      fireEvent.keyDown(document.body, { key: "Escape" });
+      expect(screen.queryByRole("toolbar", { name: "Batch actions" })).not.toBeInTheDocument();
+    } finally { mutate.mockRestore(); }
+  });
+
+  it("selects only the conversations visible through the active filters", async () => {
+    await mailClient.mutateThread({ kind: "star", threadId: "roadmap", value: true });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.keyDown(document.body, { key: "S", shiftKey: true });
+    fireEvent.keyDown(document.body, { key: "a", ctrlKey: true });
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select All Conversations" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select All Conversations" })).not.toBePartiallyChecked();
+  });
+
   it("moves the open conversation to trash and can undo it", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
@@ -1357,6 +1445,69 @@ describe("trash and batch actions", () => {
     expect(within(starredToolbar).getByText("1 selected")).toBeInTheDocument();
     expect(within(starredToolbar).getByRole("button", { name: "Unstar" })).toBeInTheDocument();
     expect(within(starredToolbar).getAllByRole("button", { name: /star/i })).toHaveLength(1);
+  });
+});
+
+describe("contextual undo shortcuts", () => {
+  useConversationFixture();
+
+  it("undoes a newer mail action before an older pending send, then cancels that send", async () => {
+    const draft: Draft = { id: "undo-draft", revision: 1, account: "you@example.com", mode: "new", sourceId: null, threadId: null, replyId: null, references: [], to: "jane@example.com", cc: "", bcc: "", subject: "Queued message", body: "Hello", attachments: [], updatedAt: Date.now() };
+    let pending: OutboxItem[] = [{ id: "undo-send", draft, state: "undo_pending", deadline: Date.now() + 60000, error: null }];
+    vi.spyOn(mailClient, "listOutbox").mockImplementation(async () => pending);
+    const cancel = vi.spyOn(mailClient, "cancelSend").mockImplementation(async () => { pending = []; return draft; });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    await screen.findByRole("button", { name: "Undo Send" });
+    await archiveSelected();
+    fireEvent.keyDown(document.body, { key: "z" });
+    await screen.findByRole("option", { name: /Welcome to ThreeStrands/ });
+    expect(cancel).not.toHaveBeenCalled();
+    fireEvent.keyDown(document.body, { key: "z", ctrlKey: true });
+    const composer = await screen.findByRole("dialog", { name: "New Message" });
+    expect(cancel).toHaveBeenCalledExactlyOnceWith("undo-send");
+    const subject = within(composer).getByRole("textbox", { name: "Subject" });
+    expect(subject).toHaveValue("Queued message");
+    fireEvent.keyDown(subject, { key: "z", metaKey: true });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives a newly pending send priority over an earlier mail action", async () => {
+    const draft: Draft = { id: "newer-draft", revision: 1, account: "you@example.com", mode: "new", sourceId: null, threadId: null, replyId: null, references: [], to: "jane@example.com", cc: "", bcc: "", subject: "New send", body: "Hello", attachments: [], updatedAt: Date.now() };
+    let pending: OutboxItem[] = [];
+    vi.spyOn(mailClient, "listOutbox").mockImplementation(async () => pending);
+    const cancel = vi.spyOn(mailClient, "cancelSend").mockImplementation(async () => { pending = []; return draft; });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    await archiveSelected();
+    pending = [{ id: "newer-send", draft, state: "undo_pending", deadline: Date.now() + 60000, error: null }];
+    await advance(5000);
+    await screen.findByRole("button", { name: "Undo Send" });
+    fireEvent.keyDown(document.body, { key: "z", metaKey: true });
+    await screen.findByRole("dialog", { name: "New Message" });
+    expect(cancel).toHaveBeenCalledExactlyOnceWith("newer-send");
+    expect(screen.queryByRole("option", { name: /Welcome to ThreeStrands/ })).not.toBeInTheDocument();
+  });
+
+  it.each(["keyboard", "toast"])("undoes task completion through %s and consumes the shared undo once", async (method) => {
+    localStorage.setItem("threestrands.tasks.view", "All");
+    localStorage.setItem("threestrands.tasks.layout", "board");
+    const task: ThreadTask = { id: "undo-task", accountId: "you@example.com", threadId: null, subjectSnapshot: null, title: "Undo task", kind: "action", dueKind: "none", status: "in_progress", createdAt: "2026-09-01T00:00:00Z", updatedAt: "2026-09-01T00:00:00Z" };
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([task]);
+    const status = vi.spyOn(mailClient, "setTaskStatus").mockImplementation(async (_id, state) => ({ ...task, status: state }));
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.keyDown(document.body, { key: "3" });
+    await screen.findByText("Undo task", { selector: "strong" });
+    fireEvent.click(screen.getByRole("button", { name: "Move Undo task to Done" }));
+    const undo = await screen.findByRole("button", { name: "Undo" });
+    if (method === "toast") fireEvent.click(undo);
+    else fireEvent.keyDown(document.body, { key: "z" });
+    await waitFor(() => expect(status).toHaveBeenLastCalledWith(task.id, "in_progress"));
+    expect(status).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+    fireEvent.keyDown(document.body, { key: "z" });
+    expect(status).toHaveBeenCalledTimes(2);
   });
 });
 

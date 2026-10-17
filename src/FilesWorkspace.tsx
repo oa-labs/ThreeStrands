@@ -1,3 +1,4 @@
+import { useWorkspaceCommands } from "./workspaceCommands";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Download, ExternalLink, Info, MessageSquareText, ShieldAlert, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
 import { mailClient } from "./data/client";
@@ -72,6 +73,8 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
   const sessionKey=accountId ?? "all";
   const restored=useRef(sessions?.current.get(sessionKey));
   const main=useRef<HTMLDivElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
+  const starButton = useRef<HTMLSpanElement>(null);
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [total, setTotal] = useState(0);
   const [hiddenCalendar, setHiddenCalendar] = useState(0);
@@ -149,6 +152,13 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
   const file = files.find((item) => keyFor(item)===selected);
   const risk = file ? attachmentRisk(file.attachment.filename, file.attachment.mimeType) : null;
   const action = (operation: Promise<void>) => { void operation.catch((reason) => setError(errorMessage(reason))); };
+  useWorkspaceCommands({
+    "files.search": () => requestAnimationFrame(() => searchInput.current?.focus()),
+    "files.open": () => { if (file) action(mailClient.openAttachment(file.messageId, file.attachment.id)); },
+    "files.save": () => { if (file) action(mailClient.saveAttachment(file.messageId, file.attachment.id)); },
+    // Reuse the button’s optimistic update, pending guard, and error recovery.
+    "files.star": () => starButton.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.click(),
+  });
   return <section className="files-workspace" aria-label="Files" onKeyDown={(event) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || isEditableTarget(event.target)) return;
     if (["j","k","ArrowDown","ArrowUp"].includes(event.key)) {
@@ -164,7 +174,7 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
     <div className="files-workspace-body">
       <div ref={main} className="files-main">
         <div className="files-toolbar">
-          <label className="files-search"><span className="sr-only">Search Files</span><input type="search" {...SEARCH_INPUT_ATTRIBUTES} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search filenames" /></label>
+          <label className="files-search"><span className="sr-only">Search Files</span><input ref={searchInput} type="search" {...SEARCH_INPUT_ATTRIBUTES} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search filenames" /></label><kbd aria-hidden="true">/</kbd>
           <button ref={filtersButton} type="button" className="btn" aria-expanded={filtersOpen} aria-controls="file-filter-controls" onClick={() => setFiltersOpen((value) => !value)}><SlidersHorizontal size={ICON_SIZE.sm} />Filters{filterChips.length ? <span className="context-count">{filterChips.length}</span> : null}</button>
           <details className="files-help" onKeyDown={(event) => {
             if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); }
@@ -226,7 +236,7 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
             </dl>
             {risk ? <p className="file-detail-risk" role="note"><TriangleAlert size={ICON_SIZE.sm} aria-hidden="true" />{risk.reason}</p> : null}
             {file.availability === "offline" ? <p className="file-detail-meta">Available offline</p> : !online ? <p className="file-detail-meta" role="status">{file.availability === "download" ? "Connect to the internet to open this file." : "This file may need an internet connection."}</p> : null}
-            <div className="file-detail-actions"><button type="button" className="btn btn-primary" onClick={() => action(mailClient.openAttachment(file.messageId,file.attachment.id))}><ExternalLink size={ICON_SIZE.sm} />Open</button><button type="button" className="btn" onClick={() => action(mailClient.saveAttachment(file.messageId,file.attachment.id))}><Download size={ICON_SIZE.sm} />Save as…</button><FileStarButton accountId={file.accountId} messageId={file.messageId} attachmentId={file.attachment.id} filename={file.attachment.filename} starred={file.starred} labeled /></div>
+            <div className="file-detail-actions"><button type="button" className="btn btn-primary" title="Open (o)" aria-keyshortcuts="o" onClick={() => action(mailClient.openAttachment(file.messageId,file.attachment.id))}><ExternalLink size={ICON_SIZE.sm} />Open</button><button type="button" className="btn" title="Save as… (⌘/Ctrl+Shift+S)" aria-keyshortcuts="Meta+Shift+S Control+Shift+S" onClick={() => action(mailClient.saveAttachment(file.messageId,file.attachment.id))}><Download size={ICON_SIZE.sm} />Save as…</button><span ref={starButton} title="Star / unstar (s)"><FileStarButton accountId={file.accountId} messageId={file.messageId} attachmentId={file.attachment.id} filename={file.attachment.filename} starred={file.starred} labeled /></span></div>
           </div>
           <ContextSection id="file-source" title="Source conversation" rows={[<ContextRow key="source" icon={<MessageSquareText size={ICON_SIZE.sm} />} title={file.subject} wrapTitle onActivate={() => onOpenThread(file.threadId)} />]}
             footer={onReportSpam && file.direction === "received" ? <div className="file-source-actions"><button type="button" className="btn btn-sm btn-danger" onClick={() => onReportSpam(file.threadId)}><ShieldAlert size={ICON_SIZE.sm} />Mark Spam</button></div> : null} />

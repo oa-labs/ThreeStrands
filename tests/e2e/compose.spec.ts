@@ -505,7 +505,7 @@ test("attachment selection and removal survive autosave; invalid recipients keep
   const composer = page.getByRole("dialog", { name: "New Message" });
   await composer.getByRole("textbox", { name: "Subject" }).fill("Files");
   const picker = page.waitForEvent("filechooser");
-  await composer.getByRole("button", { name: "Attach Files" }).click();
+  await composer.getByRole("textbox", { name: "Subject" }).press("ControlOrMeta+Shift+a");
   await (await picker).setFiles({ name: "résumé.txt", mimeType: "text/plain", buffer: Buffer.from("attachment bytes") });
   await expect(composer.getByText("résumé.txt", { exact: false })).toBeVisible();
   await composer.getByRole("button", { name: "Remove résumé.txt" }).click();

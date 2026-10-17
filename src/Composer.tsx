@@ -433,7 +433,7 @@ export const Composer = forwardRef<ComposerHandle, {
       {!isReply ? writingTools : null}
       <footer>
         <ComposeSendActions busy={busy} onSend={() => send()} onSchedule={() => setScheduleOpen(true)} onSendAndArchive={onSendAndArchive} />
-        <button className="btn-icon" onClick={attach} disabled={busy} aria-label="Attach Files"><Paperclip size={ICON_SIZE.lg} /></button>
+        <button className="btn-icon" onClick={attach} disabled={busy} aria-label="Attach Files" title={`Attach Files (${composeKeyLabel("Mod+Shift+a")})`} aria-keyshortcuts="Meta+Shift+A Control+Shift+A"><Paperclip size={ICON_SIZE.lg} /></button>
         <div className="compose-draft-status">
           <span className="save-status" role="status">{status}</span>
           <button className="btn-icon" disabled={busy} aria-label="Discard Draft" onClick={discard}><Trash size={ICON_SIZE.lg} /></button>
