@@ -13,10 +13,10 @@ use tauri::State;
 
 use super::accounts::NOT_SYNC_ENROLLED;
 use crate::{auth, availability, calendar, limits, models};
-use crate::{authorize_interactively, database_result, record_synced_value, AppState};
+use crate::{authorize_interactively, database_result, record_synced_value, AppError, AppResult, AppState};
 
 #[tauri::command(async)]
-pub(crate) fn list_calendar_accounts(state: State<'_, AppState>) -> Result<Vec<CalendarAccount>, String> {
+pub(crate) fn list_calendar_accounts(state: State<'_, AppState>) -> AppResult<Vec<CalendarAccount>> {
     let config = state.auth_config.google().ok();
     let mut accounts = state.database.list_calendar_accounts()?;
     for account in &mut accounts {
@@ -28,7 +28,7 @@ pub(crate) fn list_calendar_accounts(state: State<'_, AppState>) -> Result<Vec<C
 }
 
 #[tauri::command]
-pub(crate) async fn add_calendar_account(state: State<'_, AppState>) -> Result<CalendarAccount, String> {
+pub(crate) async fn add_calendar_account(state: State<'_, AppState>) -> AppResult<CalendarAccount> {
     let config = state.auth_config.google()?;
     let auth = config.pending_calendar_account();
     let email = authorize_interactively(&state, &auth).await?;
@@ -47,7 +47,7 @@ pub(crate) async fn add_calendar_account(state: State<'_, AppState>) -> Result<C
 pub(crate) async fn reconnect_calendar_account(
     email: String,
     state: State<'_, AppState>,
-) -> Result<CalendarAccount, String> {
+) -> AppResult<CalendarAccount> {
     let config = state.auth_config.google()?;
     let auth = config.calendar_account(&email);
     authorize_interactively(&state, &auth).await?;
@@ -66,7 +66,7 @@ async fn calendar_options_for_account(
     config: &auth::OAuthApp,
     database: &Database,
     email: &str,
-) -> Result<Vec<CalendarOption>, String> {
+) -> AppResult<Vec<CalendarOption>> {
     let mut options =
         calendar::list_calendar_options(config.calendar_account(email), email).await?;
     let selected = match database.calendar_selection(email)? {
@@ -92,7 +92,7 @@ async fn selected_calendar_ids(
     config: &auth::OAuthApp,
     database: &Database,
     email: &str,
-) -> Result<Vec<String>, String> {
+) -> AppResult<Vec<String>> {
     match database.calendar_selection(email)? {
         Some(selected) => Ok(selected),
         None => Ok(calendar_options_for_account(config, database, email)
@@ -110,7 +110,7 @@ async fn freebusy_coverage(
     time_zone: &str,
     drive_time_buffer_minutes: u32,
     state: &AppState,
-) -> Result<(Vec<BusyInterval>, usize, usize, Vec<String>), String> {
+) -> AppResult<(Vec<BusyInterval>, usize, usize, Vec<String>)> {
     let Ok(config) = state.auth_config.google() else {
         return Ok((Vec::new(), 0, 0, Vec::new()));
     };
@@ -159,7 +159,7 @@ async fn freebusy_coverage(
 #[tauri::command]
 pub(crate) async fn list_calendar_options(
     state: State<'_, AppState>,
-) -> Result<Vec<CalendarOption>, String> {
+) -> AppResult<Vec<CalendarOption>> {
     let config = state.auth_config.google()?;
     let mut options = Vec::new();
     for account in state.database.list_calendar_accounts()? {
@@ -170,14 +170,14 @@ pub(crate) async fn list_calendar_options(
     Ok(options)
 }
 
-fn validate_calendar_event_request(request: &CreateCalendarEventRequest) -> Result<(), String> {
+fn validate_calendar_event_request(request: &CreateCalendarEventRequest) -> AppResult<()> {
     if request.location.len() > 4096 {
         return Err("Event location is too long".into());
     }
     validate_calendar_event_fields(&request.title, &request.description, &request.start, &request.end, request.all_day, &request.attendees)
 }
 
-fn validate_calendar_event_update(request: &UpdateCalendarEventRequest) -> Result<(), String> {
+fn validate_calendar_event_update(request: &UpdateCalendarEventRequest) -> AppResult<()> {
     if request.location.len() > 4096 {
         return Err("Event location is too long".into());
     }
@@ -192,7 +192,7 @@ fn validate_calendar_event_fields(
     end: &str,
     all_day: bool,
     attendees: &[String],
-) -> Result<(), String> {
+) -> AppResult<()> {
     if title.trim().is_empty() || title.len() > 1024 {
         return Err("Enter an event title of at most 1024 characters".into());
     }
@@ -325,7 +325,7 @@ mod calendar_event_request_tests {
 pub(crate) async fn create_calendar_event(
     request: CreateCalendarEventRequest,
     state: State<'_, AppState>,
-) -> Result<ScheduleEvent, String> {
+) -> AppResult<ScheduleEvent> {
     validate_calendar_event_request(&request)?;
     let account = state.database.list_calendar_accounts()?.into_iter()
         .find(|account| account.email == request.account_id && account.status == "connected")
@@ -336,6 +336,7 @@ pub(crate) async fn create_calendar_event(
         return Err("Choose a calendar where you can create events".into());
     }
     calendar::create_event(config.calendar_account(&account.email), &request).await
+        .map_err(AppError::from)
 }
 
 /// Finds the connected account for an edit and confirms it can still write to
@@ -344,7 +345,7 @@ async fn writable_calendar_account(
     state: &State<'_, AppState>,
     account_id: &str,
     calendar_id: &str,
-) -> Result<String, String> {
+) -> AppResult<String> {
     let account = state.database.list_calendar_accounts()?.into_iter()
         .find(|account| account.email == account_id && account.status == "connected")
         .ok_or_else(|| "Connect this calendar account in Settings first".to_string())?;
@@ -360,11 +361,12 @@ async fn writable_calendar_account(
 pub(crate) async fn update_calendar_event(
     request: UpdateCalendarEventRequest,
     state: State<'_, AppState>,
-) -> Result<ScheduleEvent, String> {
+) -> AppResult<ScheduleEvent> {
     validate_calendar_event_update(&request)?;
     let email = writable_calendar_account(&state, &request.account_id, &request.calendar_id).await?;
     let config = state.auth_config.google()?;
     calendar::update_event(config.calendar_account(&email), &request).await
+        .map_err(AppError::from)
 }
 
 #[tauri::command]
@@ -373,10 +375,11 @@ pub(crate) async fn delete_calendar_event(
     calendar_id: String,
     event_id: String,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let email = writable_calendar_account(&state, &account_id, &calendar_id).await?;
     let config = state.auth_config.google()?;
     calendar::delete_event(config.calendar_account(&email), &calendar_id, &event_id).await
+        .map_err(AppError::from)
 }
 
 #[tauri::command]
@@ -384,7 +387,7 @@ pub(crate) async fn set_calendar_selection(
     account_id: String,
     calendar_ids: Vec<String>,
     state: State<'_, AppState>,
-) -> Result<Vec<CalendarOption>, String> {
+) -> AppResult<Vec<CalendarOption>> {
     let config = state.auth_config.google()?;
     let mut available =
         calendar::list_calendar_options(config.calendar_account(&account_id), &account_id).await?;
@@ -398,7 +401,7 @@ pub(crate) async fn set_calendar_selection(
             .iter()
             .any(|calendar_id| !available_ids.contains(calendar_id.as_str()))
     {
-        return Err("Calendar selection contained an unknown or duplicate calendar".to_string());
+        return Err("Calendar selection contained an unknown or duplicate calendar".into());
     }
     state
         .database
@@ -417,7 +420,7 @@ pub(crate) async fn set_calendar_selection(
 }
 
 #[tauri::command]
-pub(crate) async fn remove_calendar_account(email: String, state: State<'_, AppState>) -> Result<(), String> {
+pub(crate) async fn remove_calendar_account(email: String, state: State<'_, AppState>) -> AppResult<()> {
     let config = state.auth_config.google()?;
     let enrolled = state.database.cross_device_sync_enrolled()?;
     // Removing it from this device only keeps the grant other devices rely
@@ -437,7 +440,7 @@ pub(crate) async fn remove_calendar_account(email: String, state: State<'_, AppS
 }
 
 #[tauri::command]
-pub(crate) async fn remove_synced_calendar_account(email: String, state: State<'_, AppState>) -> Result<(), String> {
+pub(crate) async fn remove_synced_calendar_account(email: String, state: State<'_, AppState>) -> AppResult<()> {
     if !state.database.cross_device_sync_enrolled()? {
         return Err(NOT_SYNC_ENROLLED.into());
     }
@@ -458,11 +461,11 @@ pub(crate) async fn list_schedule_events(
     time_max: String,
     time_zone: String,
     state: State<'_, AppState>,
-) -> Result<ScheduleResult, String> {
+) -> AppResult<ScheduleResult> {
     let config = state.auth_config.google()?;
     let accounts = state.database.list_calendar_accounts()?;
     if accounts.is_empty() {
-        return Err("Connect a Google Calendar account in Settings first.".to_string());
+        return Err("Connect a Google Calendar account in Settings first.".into());
     }
     let mut merged = Vec::new();
     let mut errors = Vec::new();
@@ -520,7 +523,7 @@ pub(crate) async fn update_calendar_response(
     event_id: String,
     response_status: String,
     state: State<'_, AppState>,
-) -> Result<models::ScheduleEvent, String> {
+) -> AppResult<models::ScheduleEvent> {
     let config = state.auth_config.google()?;
     if !state.database.list_calendar_accounts()?.iter().any(|account| account.email == account_id) {
         return Err("Calendar account is not connected".into());
@@ -531,7 +534,9 @@ pub(crate) async fn update_calendar_response(
         &calendar_id,
         &event_id,
         &response_status,
-    ).await
+    )
+    .await
+    .map_err(AppError::from)
 }
 
 /// Finds an opened invitation on the connected calendars by its iCalendar
@@ -541,7 +546,7 @@ pub(crate) async fn update_calendar_response(
 pub(crate) async fn find_calendar_invitation(
     uid: String,
     state: State<'_, AppState>,
-) -> Result<Option<models::ScheduleEvent>, String> {
+) -> AppResult<Option<models::ScheduleEvent>> {
     let uid = uid.trim();
     if uid.is_empty() || uid.len() > limits::MAX_CALENDAR_UID_BYTES {
         return Err("This invitation has no usable event ID".into());
@@ -558,7 +563,7 @@ pub(crate) async fn find_calendar_invitation(
     if errors.is_empty() {
         Ok(None)
     } else {
-        Err(errors.join("; "))
+        Err(errors.join("; ").into())
     }
 }
 
@@ -566,7 +571,7 @@ pub(crate) async fn find_calendar_invitation(
 pub(crate) async fn find_availability(
     request: FindAvailabilityRequest,
     state: State<'_, AppState>,
-) -> Result<models::AvailabilityResult, String> {
+) -> AppResult<models::AvailabilityResult> {
     availability::validate_preferences(&request.preferences)?;
     availability::buffered_range(&request.range_start, &request.range_end, request.preferences.drive_time_buffer_minutes)?;
     let (busy, checked, total, errors) = freebusy_coverage(
@@ -598,9 +603,9 @@ pub(crate) async fn find_availability(
 pub(crate) async fn check_proposed_time(
     request: CheckProposedTimeRequest,
     state: State<'_, AppState>,
-) -> Result<ProposedTimeCheck, String> {
+) -> AppResult<ProposedTimeCheck> {
     if request.time_zone.parse::<chrono_tz::Tz>().is_err() {
-        return Err(format!("Unknown IANA timezone: {}", request.time_zone));
+        return Err(format!("Unknown IANA timezone: {}", request.time_zone).into());
     }
     availability::buffered_range(&request.start, &request.end, request.drive_time_buffer_minutes)?;
     let (busy, checked, total, errors) = freebusy_coverage(

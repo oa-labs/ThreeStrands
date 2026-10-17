@@ -1334,7 +1334,9 @@ impl Correspondence {
     async fn authorize_schedule_async(&self, id: &str) -> Result<String, String> {
         let service = self.clone();
         let id = id.to_string();
-        crate::run_database_task(move || service.authorize_schedule(&id)).await
+        crate::run_database_task(move || service.authorize_schedule(&id))
+            .await
+            .map_err(String::from)
     }
     fn listed_outbox(&self) -> Result<serde_json::Value, String> {
         let owner = self.schedule_owner(false).ok();
@@ -1440,14 +1442,18 @@ impl Correspondence {
         match &request {
             ListOutbox => {
                 let service = self.clone();
-                return crate::run_database_task(move || service.listed_outbox()).await;
+                return crate::run_database_task(move || service.listed_outbox())
+                    .await
+                    .map_err(String::from);
             }
             ListDrafts | ListScheduledSummaries => {
                 let database = self.database.clone();
                 return crate::run_database_task(move || match request {
                     ListDrafts => serde_json::to_value(database.drafts()?).map_err(error),
                     _ => serde_json::to_value(database.scheduled_summaries()?).map_err(error),
-                }).await;
+                })
+                .await
+                .map_err(String::from);
             }
             Reconcile { id } => {
                 self.reconcile(id).await?;

@@ -8,17 +8,17 @@ use tauri::State;
 use crate::db;
 use crate::{
     combined_sync_status, database_result, log_failure, resolve_account, run_database_task,
-    AppState,
+    AppError, AppResult, AppState,
 };
 
 #[tauri::command]
-pub(crate) async fn sync_status(state: State<'_, AppState>) -> Result<SyncStatus, String> {
+pub(crate) async fn sync_status(state: State<'_, AppState>) -> AppResult<SyncStatus> {
     let database = state.database.clone();
     run_database_task(move || combined_sync_status(database.as_ref())).await
 }
 
 #[tauri::command]
-pub(crate) async fn retry_failed_mutations(state: State<'_, AppState>) -> Result<SyncStatus, String> {
+pub(crate) async fn retry_failed_mutations(state: State<'_, AppState>) -> AppResult<SyncStatus> {
     let database = state.database.clone();
     run_database_task(move || {
         database_result(database.retry_failed_mutations())?;
@@ -28,7 +28,7 @@ pub(crate) async fn retry_failed_mutations(state: State<'_, AppState>) -> Result
 }
 
 #[tauri::command]
-pub(crate) async fn dismiss_sync_problems(state: State<'_, AppState>) -> Result<SyncStatus, String> {
+pub(crate) async fn dismiss_sync_problems(state: State<'_, AppState>) -> AppResult<SyncStatus> {
     let database = state.database.clone();
     run_database_task(move || {
         database_result(database.dismiss_sync_problems())?;
@@ -47,7 +47,7 @@ pub(crate) fn recovery_status(state: State<'_, AppState>) -> Option<db::Recovery
 }
 
 #[tauri::command]
-pub(crate) async fn sync_account(state: State<'_, AppState>) -> Result<SyncStatus, String> {
+pub(crate) async fn sync_account(state: State<'_, AppState>) -> AppResult<SyncStatus> {
     log_failure(
         "refreshing account identity",
         state.correspondence.refresh_identity().await,
@@ -64,7 +64,7 @@ pub(crate) async fn sync_account(state: State<'_, AppState>) -> Result<SyncStatu
             .collect::<Vec<_>>()
     };
     if services.is_empty() {
-        return Err("No connected Google accounts are available to sync".to_string());
+        return Err("No connected Google accounts are available to sync".into());
     }
 
     // Accounts are independent Gmail sessions. Run them concurrently so a
@@ -98,10 +98,10 @@ pub(crate) async fn sync_account(state: State<'_, AppState>) -> Result<SyncStatu
 }
 
 #[tauri::command]
-pub(crate) async fn flush_pending_mutations(state: State<'_, AppState>) -> Result<SyncStatus, String> {
+pub(crate) async fn flush_pending_mutations(state: State<'_, AppState>) -> AppResult<SyncStatus> {
     let primary = state.database.primary_account_id();
     match resolve_account(&state, Some(&primary), |account| account.sync.clone()).await {
-        Ok(service) => service.flush_pending().await,
+        Ok(service) => service.flush_pending().await.map_err(AppError::from),
         Err(_) => database_result(state.database.sync_status(&primary)),
     }
 }

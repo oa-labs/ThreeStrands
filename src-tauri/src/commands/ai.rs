@@ -12,7 +12,7 @@ use tauri::State;
 
 use super::attachments::load_attachment;
 use crate::{ai, attachment_text, db};
-use crate::{database_result, run_database_task, AppState};
+use crate::{database_result, run_database_task, AppError, AppResult, AppState};
 
 #[tauri::command]
 pub(crate) fn ai_api_key_configured() -> bool {
@@ -20,8 +20,8 @@ pub(crate) fn ai_api_key_configured() -> bool {
 }
 
 #[tauri::command]
-pub(crate) fn set_ai_api_key(key: String) -> Result<(), String> {
-    ai::set(&key)
+pub(crate) fn set_ai_api_key(key: String) -> AppResult<()> {
+    ai::set(&key).map_err(AppError::from)
 }
 
 #[tauri::command]
@@ -29,9 +29,11 @@ pub(crate) async fn ai_test_connection(
     provider: ai::AiProvider,
     model: String,
     endpoint: Option<String>,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
-    ai::test_connection(provider, &model, endpoint.as_deref(), &api_key).await
+    ai::test_connection(provider, &model, endpoint.as_deref(), &api_key)
+        .await
+        .map_err(AppError::from)
 }
 
 #[tauri::command]
@@ -42,7 +44,7 @@ pub(crate) async fn ai_summarize_thread(
     endpoint: Option<String>,
     reasoning: Option<ai::Reasoning>,
     state: State<'_, AppState>,
-) -> Result<SummaryResult, String> {
+) -> AppResult<SummaryResult> {
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
     let detail = state.database.get_thread(&thread_id)?;
     let revision = detail.thread.last_message_at.clone();
@@ -74,7 +76,7 @@ fn save_thread_summary(
     thread_id: &str,
     summary: String,
     revision: &str,
-) -> Result<SummaryResult, String> {
+) -> AppResult<SummaryResult> {
     let generated_at = Utc::now().to_rfc3339();
     if !state.database.set_thread_summary(thread_id, &summary, &generated_at, revision)? {
         if let Ok(detail) = state.database.get_thread(thread_id) {
@@ -103,12 +105,12 @@ async fn thread_analysis_request(
     model: String,
     endpoint: Option<String>,
     state: &AppState,
-) -> Result<(String, ai::AnalyzeRequest), String> {
+) -> AppResult<(String, ai::AnalyzeRequest)> {
     if user_time_zone.parse::<chrono_tz::Tz>().is_err() {
-        return Err(format!("Unknown IANA timezone: {user_time_zone}"));
+        return Err(format!("Unknown IANA timezone: {user_time_zone}").into());
     }
     if user_time_zone.chars().count() > 100 {
-        return Err("Timezone value is too long".to_string());
+        return Err("Timezone value is too long".into());
     }
     let database = state.database.clone();
     let database_thread_id = thread_id.to_string();
@@ -156,7 +158,7 @@ fn cache_thread_analysis(
     revision: &str,
     analysis: ActionAnalysis,
     replace_same_revision: bool,
-) -> Result<ActionAnalysis, String> {
+) -> AppResult<ActionAnalysis> {
     let saved = database_result(state.database.save_thread_analysis(
         thread_id,
         revision,
@@ -178,7 +180,7 @@ pub(crate) async fn ai_analyze_thread(
     model: String,
     endpoint: Option<String>,
     state: State<'_, AppState>,
-) -> Result<ActionAnalysis, String> {
+) -> AppResult<ActionAnalysis> {
     let (revision, request) = thread_analysis_request(
         &thread_id,
         user_time_zone,
@@ -200,7 +202,7 @@ pub(crate) async fn ai_analyze_thread(
         Ok(analysis) => analysis,
         Err(error) => {
             log::error!(target: "ai_analyze_thread", "analysis failed for thread {thread_id}: {error}");
-            return Err(error);
+            return Err(error.into());
         }
     };
     log::info!(
@@ -220,7 +222,7 @@ pub(crate) async fn remove_thread_suggestion(
     revision: String,
     proposal: ActionProposal,
     state: State<'_, AppState>,
-) -> Result<bool, String> {
+) -> AppResult<bool> {
     let database = state.database.clone();
     run_database_task(move || database.remove_thread_suggestion(&thread_id, &revision, &proposal)).await
 }
@@ -238,7 +240,7 @@ fn chat_task_line(task: &ThreadTask) -> String {
 fn chat_attachment_refs(
     requested: &[ChatAttachmentRef],
     thread_message_ids: &[&str],
-) -> Result<Vec<ChatAttachmentRef>, String> {
+) -> AppResult<Vec<ChatAttachmentRef>> {
     let mut unique: Vec<ChatAttachmentRef> = Vec::new();
     for reference in requested {
         if !unique.contains(reference) {
@@ -249,10 +251,11 @@ fn chat_attachment_refs(
         return Err(format!(
             "Share up to {} attachments at a time",
             attachment_text::MAX_CHAT_ATTACHMENTS
-        ));
+        )
+        .into());
     }
     if unique.iter().any(|reference| !thread_message_ids.contains(&reference.message_id.as_str())) {
-        return Err("That attachment isn't in this conversation".to_string());
+        return Err("That attachment isn't in this conversation".into());
     }
     Ok(unique)
 }
@@ -264,7 +267,7 @@ async fn extract_chat_attachment(
     mime_type: &str,
     bytes: Vec<u8>,
     timeout: std::time::Duration,
-) -> Result<attachment_text::ExtractedText, String> {
+) -> AppResult<attachment_text::ExtractedText> {
     let kind = attachment_text::kind_for(filename, mime_type).ok_or_else(|| {
         format!("Thread Chat can't read {filename}; it reads text, PDF, Word, Excel, and PowerPoint files")
     })?;
@@ -275,7 +278,7 @@ async fn run_attachment_extraction(
     filename: &str,
     timeout: std::time::Duration,
     job: impl FnOnce() -> Result<attachment_text::ExtractedText, String> + Send + 'static,
-) -> Result<attachment_text::ExtractedText, String> {
+) -> AppResult<attachment_text::ExtractedText> {
     let task = tokio::task::spawn_blocking(job);
     let reason = match tokio::time::timeout(timeout, task).await {
         Ok(Ok(Ok(text))) => return Ok(text),
@@ -283,14 +286,14 @@ async fn run_attachment_extraction(
         Ok(Err(_)) => "it isn't a readable file".to_string(),
         Err(_) => "it took too long to read".to_string(),
     };
-    Err(format!("Couldn't read {filename}: {reason}"))
+    Err(format!("Couldn't read {filename}: {reason}").into())
 }
 
 /// Loads and extracts the shared attachments, reusing recent extractions.
 async fn chat_attachments(
     references: Vec<ChatAttachmentRef>,
     state: &AppState,
-) -> Result<(Vec<ChatAttachmentSource>, Vec<ai::ChatAttachmentInput>), String> {
+) -> AppResult<(Vec<ChatAttachmentSource>, Vec<ai::ChatAttachmentInput>)> {
     let mut sources = Vec::new();
     let mut inputs = Vec::new();
     for reference in references {
@@ -337,7 +340,7 @@ mod chat_attachment_tests {
         let shared = chat_attachment_refs(&[reference("m1", "a"), reference("m2", "b"), reference("m1", "a")], &ids).unwrap();
         assert_eq!(shared, vec![reference("m1", "a"), reference("m2", "b")]);
         assert_eq!(
-            chat_attachment_refs(&[reference("m1", "a"), reference("elsewhere", "a")], &ids).unwrap_err(),
+            chat_attachment_refs(&[reference("m1", "a"), reference("elsewhere", "a")], &ids).unwrap_err().to_string(),
             "That attachment isn't in this conversation"
         );
         assert!(chat_attachment_refs(&[], &ids).unwrap().is_empty());
@@ -350,7 +353,7 @@ mod chat_attachment_tests {
         assert_eq!(chat_attachment_refs(&refs[..attachment_text::MAX_CHAT_ATTACHMENTS - 1], &ids).unwrap().len(), attachment_text::MAX_CHAT_ATTACHMENTS - 1);
         assert_eq!(chat_attachment_refs(&refs[..attachment_text::MAX_CHAT_ATTACHMENTS], &ids).unwrap().len(), attachment_text::MAX_CHAT_ATTACHMENTS);
         assert_eq!(
-            chat_attachment_refs(&refs, &ids).unwrap_err(),
+            chat_attachment_refs(&refs, &ids).unwrap_err().to_string(),
             format!("Share up to {} attachments at a time", attachment_text::MAX_CHAT_ATTACHMENTS)
         );
     }
@@ -360,11 +363,11 @@ mod chat_attachment_tests {
         let text = extract_chat_attachment("notes.txt", "text/plain", b"Ship Friday".to_vec(), Duration::from_secs(5)).await.unwrap();
         assert_eq!(text.text, "Ship Friday");
         assert_eq!(
-            extract_chat_attachment("photo.jpg", "image/jpeg", vec![1, 2, 3], Duration::from_secs(5)).await.unwrap_err(),
+            extract_chat_attachment("photo.jpg", "image/jpeg", vec![1, 2, 3], Duration::from_secs(5)).await.unwrap_err().to_string(),
             "Thread Chat can't read photo.jpg; it reads text, PDF, Word, Excel, and PowerPoint files"
         );
         assert_eq!(
-            extract_chat_attachment("contract.docx", "", b"not a zip".to_vec(), Duration::from_secs(5)).await.unwrap_err(),
+            extract_chat_attachment("contract.docx", "", b"not a zip".to_vec(), Duration::from_secs(5)).await.unwrap_err().to_string(),
             "Couldn't read contract.docx: it isn't a readable Office file"
         );
     }
@@ -376,10 +379,10 @@ mod chat_attachment_tests {
             Ok(attachment_text::ExtractedText { text: "late".into(), truncated: false })
         })
         .await;
-        assert_eq!(slow.unwrap_err(), "Couldn't read slow.pdf: it took too long to read");
+        assert_eq!(slow.unwrap_err().to_string(), "Couldn't read slow.pdf: it took too long to read");
 
         let panicked = run_attachment_extraction("bad.pdf", Duration::from_secs(5), || panic!("hostile file")).await;
-        assert_eq!(panicked.unwrap_err(), "Couldn't read bad.pdf: it isn't a readable file");
+        assert_eq!(panicked.unwrap_err().to_string(), "Couldn't read bad.pdf: it isn't a readable file");
     }
 }
 
@@ -395,13 +398,13 @@ pub(crate) async fn ai_thread_chat(
     model: String,
     endpoint: Option<String>,
     state: State<'_, AppState>,
-) -> Result<ThreadChatReply, String> {
+) -> AppResult<ThreadChatReply> {
     let question = request.question.trim().to_string();
     if question.is_empty() {
-        return Err("Ask a question first".to_string());
+        return Err("Ask a question first".into());
     }
     if question.chars().count() > ai::MAX_CHAT_TURN_CHARS {
-        return Err(format!("Questions can be up to {} characters", ai::MAX_CHAT_TURN_CHARS));
+        return Err(format!("Questions can be up to {} characters", ai::MAX_CHAT_TURN_CHARS).into());
     }
     let thread_id = request.thread_id.clone();
     let (_revision, analysis_request) = thread_analysis_request(
@@ -494,7 +497,7 @@ pub(crate) async fn ai_thread_chat(
         Ok(answer) => answer,
         Err(error) => {
             log::error!(target: "ai_thread_chat", "chat failed for thread {thread_id}: {error}");
-            return Err(error);
+            return Err(error.into());
         }
     };
     let sources = answer
@@ -518,9 +521,9 @@ const MAX_AI_USAGE_SUMMARY_DAYS: u32 = 31;
 
 /// AI provider usage for the last `days` local days, including today.
 #[tauri::command(async)]
-pub(crate) fn ai_usage_summary(days: u32, state: State<'_, AppState>) -> Result<Vec<AiUsageDay>, String> {
+pub(crate) fn ai_usage_summary(days: u32, state: State<'_, AppState>) -> AppResult<Vec<AiUsageDay>> {
     if days == 0 || days > MAX_AI_USAGE_SUMMARY_DAYS {
-        return Err(format!("Usage can be shown for 1 to {MAX_AI_USAGE_SUMMARY_DAYS} days"));
+        return Err(format!("Usage can be shown for 1 to {MAX_AI_USAGE_SUMMARY_DAYS} days").into());
     }
     let since = chrono::Local::now().date_naive() - chrono::Days::new(u64::from(days - 1));
     database_result(state.database.ai_usage_since(&since.format("%Y-%m-%d").to_string()))
@@ -537,7 +540,7 @@ pub(crate) async fn ai_brief_thread(
     model: String,
     endpoint: Option<String>,
     state: State<'_, AppState>,
-) -> Result<ThreadBriefResult, String> {
+) -> AppResult<ThreadBriefResult> {
     let (revision, request) = thread_analysis_request(
         &thread_id,
         user_time_zone,
@@ -556,7 +559,7 @@ pub(crate) async fn ai_brief_thread(
         Ok(brief) => brief,
         Err(error) => {
             log::error!(target: "ai_analyze_thread", "brief failed for thread {thread_id}: {error}");
-            return Err(error);
+            return Err(error.into());
         }
     };
     log::info!(
@@ -581,7 +584,7 @@ pub(crate) async fn ai_enrich_contact(
     account_id: Option<String>,
     reasoning: Option<ai::Reasoning>,
     state: State<'_, AppState>,
-) -> Result<ai::ContactEnrichmentResult, String> {
+) -> AppResult<ai::ContactEnrichmentResult> {
     let profile = state
         .database
         .get_contact_profile(&id)?
@@ -635,16 +638,17 @@ pub(crate) async fn ai_enrich_contact(
         &api_key,
     )
     .await
+    .map_err(AppError::from)
 }
 
 #[tauri::command(async)]
 pub(crate) fn ai_reply_assist_context(
     draft_id: String,
     state: State<'_, AppState>,
-) -> Result<ReplyAssistContext, String> {
+) -> AppResult<ReplyAssistContext> {
     let draft = state.correspondence.database.draft(&draft_id)?;
     if !matches!(draft.mode.as_str(), "reply" | "replyAll") {
-        return Err("Reply Assist is only available for reply drafts".to_string());
+        return Err("Reply Assist is only available for reply drafts".into());
     }
     let source_id = draft
         .source_id
@@ -687,14 +691,14 @@ pub(crate) async fn ai_find_times(
     model: String,
     endpoint: Option<String>,
     state: State<'_, AppState>,
-) -> Result<ai::find_times::TimeSearch, String> {
+) -> AppResult<ai::find_times::TimeSearch> {
     let zone = (request.user_time_zone.chars().count() <= 100)
         .then(|| request.user_time_zone.parse::<chrono_tz::Tz>().ok())
         .flatten()
         .ok_or_else(|| format!("Unknown IANA timezone: {}", request.user_time_zone))?;
     let instruction = ai::find_times::validate_instruction(request.instruction.as_deref())?;
     if instruction.is_some() != request.current.is_some() {
-        return Err("An adjustment needs the search it changes".to_string());
+        return Err("An adjustment needs the search it changes".into());
     }
     let (subject, messages) = match request.source_message_id {
         Some(source_id) => {
@@ -733,6 +737,7 @@ pub(crate) async fn ai_find_times(
     )
     .await
     .inspect_err(|error| log::error!(target: "ai_find_times", "find times failed: {error}"))
+    .map_err(AppError::from)
 }
 
 #[tauri::command]
@@ -741,9 +746,11 @@ pub(crate) async fn ai_review_draft(
     provider: ai::AiProvider,
     model: String,
     endpoint: Option<String>,
-) -> Result<ai::DraftReviewResult, String> {
+) -> AppResult<ai::DraftReviewResult> {
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
-    ai::review_draft(request, provider, &model, endpoint.as_deref(), &api_key).await
+    ai::review_draft(request, provider, &model, endpoint.as_deref(), &api_key)
+        .await
+        .map_err(AppError::from)
 }
 
 #[tauri::command]
@@ -754,7 +761,7 @@ pub(crate) async fn ai_generate_reply(
     model: String,
     endpoint: Option<String>,
     reasoning: Option<ai::Reasoning>,
-) -> Result<ReplyAssistResult, String> {
+) -> AppResult<ReplyAssistResult> {
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
     // Re-apply the native bounds even though normal callers received this
     // context from `ai_reply_assist_context`; the webview is not trusted to

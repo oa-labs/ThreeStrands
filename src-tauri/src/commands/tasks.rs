@@ -5,27 +5,27 @@ use crate::models::{
 };
 use tauri::State;
 
-use crate::{kick_replicated_sync, record_synced_value, run_database_task, AppState};
+use crate::{kick_replicated_sync, record_synced_value, run_database_task, AppResult, AppState};
 
 #[tauri::command]
 pub(crate) async fn list_tasks(
     account_id: Option<String>,
     status: Option<String>,
     state: State<'_, AppState>,
-) -> Result<Vec<ThreadTask>, String> {
+) -> AppResult<Vec<ThreadTask>> {
     let database = state.database.clone();
     run_database_task(move || database.list_tasks(account_id.as_deref(), status.as_deref())).await
 }
 
 #[tauri::command(async)]
-pub(crate) fn create_task(request: CreateTaskRequest, state: State<'_, AppState>) -> Result<ThreadTask, String> {
+pub(crate) fn create_task(request: CreateTaskRequest, state: State<'_, AppState>) -> AppResult<ThreadTask> {
     let task = state.database.create_task(&request)?;
     record_synced_value(&state, threestrands_sync_protocol::EntityType::Task, &task.id, &task, None)?;
     Ok(task)
 }
 
 #[tauri::command(async)]
-pub(crate) fn update_task(request: UpdateTaskRequest, state: State<'_, AppState>) -> Result<ThreadTask, String> {
+pub(crate) fn update_task(request: UpdateTaskRequest, state: State<'_, AppState>) -> AppResult<ThreadTask> {
     let mut fields = std::collections::BTreeSet::new();
     if request.title.is_some() { fields.insert("title".to_string()); }
     if request.notes.is_some() { fields.insert("notes".to_string()); }
@@ -42,20 +42,20 @@ pub(crate) fn update_task(request: UpdateTaskRequest, state: State<'_, AppState>
 }
 
 #[tauri::command]
-pub(crate) async fn list_goals(account_id: Option<String>, state: State<'_, AppState>) -> Result<Vec<Goal>, String> {
+pub(crate) async fn list_goals(account_id: Option<String>, state: State<'_, AppState>) -> AppResult<Vec<Goal>> {
     let database = state.database.clone();
     run_database_task(move || database.list_goals(account_id.as_deref())).await
 }
 
 #[tauri::command(async)]
-pub(crate) fn create_goal(request: CreateGoalRequest, state: State<'_, AppState>) -> Result<Goal, String> {
+pub(crate) fn create_goal(request: CreateGoalRequest, state: State<'_, AppState>) -> AppResult<Goal> {
     let goal = state.database.create_goal(&request)?;
     record_synced_value(&state, threestrands_sync_protocol::EntityType::Goal, &goal.id, &goal, None)?;
     Ok(goal)
 }
 
 #[tauri::command(async)]
-pub(crate) fn update_goal(request: UpdateGoalRequest, state: State<'_, AppState>) -> Result<Goal, String> {
+pub(crate) fn update_goal(request: UpdateGoalRequest, state: State<'_, AppState>) -> AppResult<Goal> {
     let mut fields = std::collections::BTreeSet::from(["updatedAt".to_string()]);
     if request.title.is_some() { fields.insert("title".to_string()); }
     if request.notes.is_some() { fields.insert("notes".to_string()); }
@@ -69,7 +69,7 @@ pub(crate) fn update_goal(request: UpdateGoalRequest, state: State<'_, AppState>
 }
 
 #[tauri::command(async)]
-pub(crate) fn delete_goal(id: String, state: State<'_, AppState>) -> Result<(), String> {
+pub(crate) fn delete_goal(id: String, state: State<'_, AppState>) -> AppResult<()> {
     let deletion = state.database.delete_goal(&id)?;
     state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::Goal, &id)?;
     for task in &deletion.tasks {
@@ -90,7 +90,7 @@ pub(crate) fn set_task_status(
     status: String,
     source: String,
     state: State<'_, AppState>,
-) -> Result<ThreadTask, String> {
+) -> AppResult<ThreadTask> {
     let task = state.database.set_task_status(&id, &status, &source)?;
     record_synced_value(&state, threestrands_sync_protocol::EntityType::Task, &task.id, &task,
         Some(std::collections::BTreeSet::from(["status".to_string(), "completionSource".to_string(), "completedAt".to_string(), "updatedAt".to_string()])))?;
@@ -98,7 +98,7 @@ pub(crate) fn set_task_status(
 }
 
 #[tauri::command(async)]
-pub(crate) fn record_follow_up(id: String, state: State<'_, AppState>) -> Result<ThreadTask, String> {
+pub(crate) fn record_follow_up(id: String, state: State<'_, AppState>) -> AppResult<ThreadTask> {
     let task = state.database.record_follow_up(&id)?;
     record_synced_value(&state, threestrands_sync_protocol::EntityType::Task, &task.id, &task,
         Some(std::collections::BTreeSet::from(["dueValue".to_string(), "waitAfter".to_string(), "completionSource".to_string(), "completedAt".to_string(), "updatedAt".to_string()])))?;
@@ -106,7 +106,7 @@ pub(crate) fn record_follow_up(id: String, state: State<'_, AppState>) -> Result
 }
 
 #[tauri::command(async)]
-pub(crate) fn reconcile_tasks(state: State<'_, AppState>) -> Result<usize, String> {
+pub(crate) fn reconcile_tasks(state: State<'_, AppState>) -> AppResult<usize> {
     let count = state.database.reconcile_waiting_tasks()?;
     if count > 0 {
         for task in state.database.list_tasks(None, None)? {

@@ -20,6 +20,7 @@ mod db;
 mod default_apps;
 mod endpoint_origin;
 mod enrollment;
+mod error;
 mod error_text;
 mod http_client;
 mod image_format;
@@ -55,6 +56,7 @@ use std::sync::Arc;
 
 use auth::{AccountAuth, AuthConfig};
 use db::Database;
+pub(crate) use error::{AppError, AppResult};
 use models::{MailProviderKind, SyncStatus};
 use sync::SyncService;
 use tauri::{async_runtime::JoinHandle, Manager, State};
@@ -220,20 +222,20 @@ struct AppState {
 /// SQLite and the mutex guarding its connection are synchronous. Run database
 /// work reached from async code on Tokio's blocking pool so contention or a
 /// slow query cannot stall an async worker.
-async fn run_database_task<T, E, F>(operation: F) -> Result<T, String>
+async fn run_database_task<T, E, F>(operation: F) -> AppResult<T>
 where
     T: Send + 'static,
-    E: Into<String> + Send + 'static,
+    E: Into<AppError> + Send + 'static,
     F: FnOnce() -> Result<T, E> + Send + 'static,
 {
     tokio::task::spawn_blocking(operation)
         .await
-        .map_err(|error| format!("Database task stopped unexpectedly: {error}"))?
+        .map_err(|error| AppError::message(format!("Database task stopped unexpectedly: {error}")))?
         .map_err(Into::into)
 }
 
-fn database_result<T>(result: db::DbResult<T>) -> Result<T, String> {
-    result.map_err(String::from)
+fn database_result<T>(result: db::DbResult<T>) -> AppResult<T> {
+    result.map_err(AppError::from)
 }
 
 #[cfg(test)]
@@ -776,7 +778,7 @@ mod combined_sync_status_tests {
 /// Diagnostics and refresh state represent every configured account. Once an
 /// account catalog exists, never fall back to the pre-connect `default` row:
 /// after an in-process settings import that row is not a real mailbox.
-fn combined_sync_status(database: &Database) -> Result<SyncStatus, String> {
+fn combined_sync_status(database: &Database) -> AppResult<SyncStatus> {
     let accounts = database.list_accounts()?;
     if accounts.is_empty() {
         return database_result(database.sync_status(auth::LEGACY_KEY));
@@ -912,11 +914,11 @@ fn record_synced_value<T: serde::Serialize>(
     entity_id: &str,
     value: &T,
     fields: Option<std::collections::BTreeSet<String>>,
-) -> Result<(), String> {
+) -> AppResult<()> {
     state.database.record_local_entity_write(
         entity_type,
         entity_id,
-        serde_json::to_value(value).map_err(|error| error.to_string())?,
+        serde_json::to_value(value).map_err(AppError::message)?,
         fields,
     )?;
     kick_replicated_sync(state);

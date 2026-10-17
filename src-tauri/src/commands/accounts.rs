@@ -14,11 +14,11 @@ use crate::provider::imap::ImapSession as _;
 use crate::auth;
 use crate::{
     authorize_interactively, catalogued_mail_provider, log_failure, record_synced_value,
-    resolve_account, run_database_task, spawn_synced_account, AccountRegistry, AppState,
+    resolve_account, run_database_task, spawn_synced_account, AccountRegistry, AppError, AppResult, AppState,
     ConnectedAccount,
 };
 
-fn record_mail_account(state: &State<'_, AppState>, account: &Account) -> Result<(), String> {
+fn record_mail_account(state: &State<'_, AppState>, account: &Account) -> AppResult<()> {
     record_synced_value(
         state,
         threestrands_sync_protocol::EntityType::MailAccount,
@@ -36,7 +36,7 @@ fn record_mail_account(state: &State<'_, AppState>, account: &Account) -> Result
 }
 
 #[tauri::command]
-pub(crate) async fn google_auth_status(state: State<'_, AppState>) -> Result<AuthStatus, String> {
+pub(crate) async fn google_auth_status(state: State<'_, AppState>) -> AppResult<AuthStatus> {
     let primary = state.database.primary_account_id();
     let auth = resolve_account(&state, Some(&primary), |account| account.auth.clone()).await;
     Ok(AuthStatus {
@@ -46,7 +46,7 @@ pub(crate) async fn google_auth_status(state: State<'_, AppState>) -> Result<Aut
 }
 
 #[tauri::command]
-pub(crate) async fn connect_google(state: State<'_, AppState>) -> Result<SyncStatus, String> {
+pub(crate) async fn connect_google(state: State<'_, AppState>) -> AppResult<SyncStatus> {
     let primary = state.database.primary_account_id();
     let (auth, service) = resolve_account(&state, Some(&primary), |account| {
         (account.auth.clone(), account.sync.clone())
@@ -61,16 +61,17 @@ pub(crate) async fn connect_google(state: State<'_, AppState>) -> Result<SyncSta
         state.correspondence.refresh_identity().await,
     );
     service.sync().await
+        .map_err(AppError::from)
 }
 
 #[tauri::command]
-pub(crate) async fn disconnect_google(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<(), String> {
+pub(crate) async fn disconnect_google(state: State<'_, AppState>, app: tauri::AppHandle) -> AppResult<()> {
     let primary = state.database.primary_account_id();
     remove_account(primary, state, app).await
 }
 
 #[tauri::command]
-pub(crate) async fn list_accounts(state: State<'_, AppState>) -> Result<Vec<Account>, String> {
+pub(crate) async fn list_accounts(state: State<'_, AppState>) -> AppResult<Vec<Account>> {
     let database = state.database.clone();
     run_database_task(move || database.list_accounts()).await
 }
@@ -83,7 +84,7 @@ pub(crate) async fn add_account(
     provider: Option<MailProviderKind>,
     state: State<'_, AppState>,
     app: tauri::AppHandle,
-) -> Result<Account, String> {
+) -> AppResult<Account> {
     let provider = provider.unwrap_or(MailProviderKind::Gmail);
     let auth = state.auth_config.pending_mail_account(provider)?;
     let email = authorize_interactively(&state, auth.require_oauth_credential()?).await?;
@@ -103,10 +104,10 @@ pub(crate) async fn add_account(
 #[tauri::command]
 pub(crate) async fn discover_imap_settings(
     email: String,
-) -> Result<Option<imap::DiscoveryResult>, String> {
+) -> AppResult<Option<imap::DiscoveryResult>> {
     imap::discover(&email)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(AppError::from)
 }
 
 /// Probe a user-entered IMAP server's certificate WITHOUT logging in, for the
@@ -119,11 +120,11 @@ pub(crate) async fn probe_imap_certificate(
     host: String,
     port: u16,
     security: imap::SecurityMode,
-) -> Result<imap::CertificateProbe, String> {
+) -> AppResult<imap::CertificateProbe> {
     imap::probe_imap_certificate(&host, port, security)
         .await
         .map(|probe| probe) // CertificateProbe is Serialize
-        .map_err(|error| imap::plain_language(&error))
+        .map_err(|error| AppError::message(imap::plain_language(&error)))
 }
 
 #[tauri::command]
@@ -131,10 +132,10 @@ pub(crate) async fn probe_smtp_certificate(
     host: String,
     port: u16,
     security: imap::SecurityMode,
-) -> Result<imap::CertificateProbe, String> {
+) -> AppResult<imap::CertificateProbe> {
     imap::probe_smtp_certificate(&host, port, security)
         .await
-        .map_err(|error| imap::plain_language(&error))
+        .map_err(|error| AppError::message(imap::plain_language(&error)))
 }
 
 /// The payload the IMAP setup form sends for "test and save".
@@ -178,7 +179,7 @@ pub(crate) struct ImapSetupRequest {
 pub(crate) async fn test_and_save_imap_account(
     request: ImapSetupRequest,
     state: State<'_, AppState>,
-) -> Result<Account, String> {
+) -> AppResult<Account> {
     let imap_pinned = match &request.imap_pinned_fingerprint {
         Some(hex) => Some(imap::parse_sha256_fingerprint(hex)?),
         None => None,
@@ -202,7 +203,7 @@ pub(crate) async fn test_and_save_imap_account(
         &request.imap_password,
     )
     .await
-    .map_err(|error| imap::plain_language(&error))?;
+    .map_err(|error| AppError::message(imap::plain_language(&error)))?;
 
     // 2. Test SMTP: EHLO / AUTH dry-run (no mail sent).
     imap::test_smtp(
@@ -214,7 +215,7 @@ pub(crate) async fn test_and_save_imap_account(
         &smtp_password,
     )
     .await
-    .map_err(|error| imap::plain_language(&error))?;
+    .map_err(|error| AppError::message(imap::plain_language(&error)))?;
 
     let _report = imap::TestReport {
         imap_capabilities: capabilities,
@@ -232,7 +233,7 @@ pub(crate) async fn test_and_save_imap_account(
         .auth_config
         .mail_account(MailProviderKind::Imap, &request.email)?;
     let AccountAuth::Imap(credential) = &auth else {
-        return Err("expected an IMAP credential for an IMAP account".to_string());
+        return Err("expected an IMAP credential for an IMAP account".into());
     };
     credential.save(&crate::credentials::ImapPassword {
         imap: request.imap_password.clone(),
@@ -264,7 +265,7 @@ fn save_tested_imap_settings(
     request: &ImapSetupRequest,
     imap_pinned: Option<imap::Sha256Fingerprint>,
     smtp_pinned: Option<imap::Sha256Fingerprint>,
-) -> Result<Account, String> {
+) -> AppResult<Account> {
     let mut pinned_fingerprints = std::collections::BTreeMap::new();
     if let Some(fp) = imap_pinned {
         pinned_fingerprints.insert(
@@ -315,7 +316,7 @@ fn save_tested_imap_settings(
 pub(crate) async fn discover_imap_mailboxes(
     email: String,
     state: State<'_, AppState>,
-) -> Result<imap::MailboxMapping, String> {
+) -> AppResult<imap::MailboxMapping> {
     let settings = state
         .database
         .imap_account_settings(&email)?
@@ -326,11 +327,11 @@ pub(crate) async fn discover_imap_mailboxes(
         .imap;
     let mut session = imap::connect_with_settings(&settings, &password)
         .await
-        .map_err(|error| imap::plain_language(&error))?;
+        .map_err(|error| AppError::message(imap::plain_language(&error)))?;
     let store = imap::ImapStateStore::new(state.database.clone(), email.clone());
     let mapping = imap::discover_and_persist(&mut session, &store)
         .await
-        .map_err(|error| imap::plain_language(&error));
+        .map_err(|error| AppError::message(imap::plain_language(&error)));
     let _ = session.logout().await;
     mapping
 }
@@ -356,12 +357,12 @@ pub(crate) struct ImapMailboxMappingCommit {
 }
 
 impl ImapMailboxMappingCommit {
-    fn archive_choice(&self) -> Result<&str, String> {
+    fn archive_choice(&self) -> AppResult<&str> {
         self.create_archive
             .as_deref()
             .filter(|name| !name.is_empty())
             .or(self.archive.as_deref().filter(|name| !name.is_empty()))
-            .ok_or_else(|| "Choose an Archive mailbox or create one.".to_string())
+            .ok_or_else(|| AppError::message("Choose an Archive mailbox or create one."))
     }
 }
 
@@ -369,7 +370,7 @@ fn save_imap_mailbox_mapping(
     database: &Database,
     mut settings: imap::ImapAccountSettings,
     commit: ImapMailboxMappingCommit,
-) -> Result<(), String> {
+) -> AppResult<()> {
     // Mailbox names are opaque server identifiers. Only the empty string is
     // a cleared choice; whitespace can be part of an existing mailbox name.
     settings.archive_mailbox = Some(commit.archive_choice()?.to_string());
@@ -395,7 +396,7 @@ fn save_imap_mailbox_mapping(
 pub(crate) async fn commit_imap_mailbox_mapping(
     commit: ImapMailboxMappingCommit,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let settings = state
         .database
         .imap_account_settings(&commit.email)?
@@ -414,10 +415,10 @@ pub(crate) async fn commit_imap_mailbox_mapping(
             .imap;
         let mut session = imap::connect_with_settings(&settings, &password)
             .await
-            .map_err(|error| imap::plain_language(&error))?;
+            .map_err(|error| AppError::message(imap::plain_language(&error)))?;
         let created = imap::create_mailbox_tolerant(&mut session, archive)
             .await
-            .map_err(|error| imap::plain_language(&error));
+            .map_err(|error| AppError::message(imap::plain_language(&error)));
         let _ = session.logout().await;
         created?;
     }
@@ -432,7 +433,7 @@ pub(crate) async fn finish_imap_account_setup(
     email: String,
     state: State<'_, AppState>,
     app: tauri::AppHandle,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let provider = catalogued_mail_provider(&state.database, &email)?;
     if provider != MailProviderKind::Imap {
         return Err("This account is not an IMAP account.".into());
@@ -493,10 +494,14 @@ pub(crate) struct SendingIdentityInput {
 fn imap_settings_or_reject(
     database: &Database,
     account: &str,
-) -> Result<imap::ImapAccountSettings, String> {
+) -> AppResult<imap::ImapAccountSettings> {
     database
         .imap_account_settings(account)?
-        .ok_or_else(|| format!("{account} is not an IMAP account, so it has no sending settings."))
+        .ok_or_else(|| {
+            AppError::message(format!(
+                "{account} is not an IMAP account, so it has no sending settings."
+            ))
+        })
 }
 
 /// Read an IMAP account's sending options for the Settings panel. Refuses a
@@ -505,7 +510,7 @@ fn imap_settings_or_reject(
 pub(crate) fn get_imap_sending_options(
     account: String,
     state: State<'_, AppState>,
-) -> Result<ImapSendingOptions, String> {
+) -> AppResult<ImapSendingOptions> {
     let settings = imap_settings_or_reject(&state.database, &account)?;
     let identities = state.database.account_sending_identities(&account)?;
     let store = imap::ImapStateStore::new(state.database.clone(), account.clone());
@@ -530,7 +535,7 @@ pub(crate) fn set_imap_identities(
     account: String,
     identities: Vec<SendingIdentityInput>,
     state: State<'_, AppState>,
-) -> Result<Vec<crate::provider::SendingIdentity>, String> {
+) -> AppResult<Vec<crate::provider::SendingIdentity>> {
     let mut settings = imap_settings_or_reject(&state.database, &account)?;
     let submitted: Vec<imap::Identity> = identities
         .into_iter()
@@ -555,7 +560,7 @@ pub(crate) fn set_imap_server_saves_sent(
     account: String,
     enabled: bool,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let mut settings = imap_settings_or_reject(&state.database, &account)?;
     settings.server_saves_sent = enabled;
     state.database.save_imap_account_settings(&account, &settings)?;
@@ -569,7 +574,7 @@ pub(crate) fn set_imap_server_saves_sent(
 pub(crate) fn reset_imap_sent_copy_detection(
     account: String,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> AppResult<()> {
     // Reject a non-IMAP/unknown account before touching local state.
     imap_settings_or_reject(&state.database, &account)?;
     let store = imap::ImapStateStore::new(state.database.clone(), account);
@@ -622,7 +627,7 @@ impl From<&imap::ImapAccountSettings> for ImapConnectionSettings {
 pub(crate) fn get_imap_connection_settings(
     account: String,
     state: State<'_, AppState>,
-) -> Result<ImapConnectionSettings, String> {
+) -> AppResult<ImapConnectionSettings> {
     let settings = imap_settings_or_reject(&state.database, &account)?;
     Ok(ImapConnectionSettings::from(&settings))
 }
@@ -658,7 +663,7 @@ fn resolve_connection_pin(
     host: &str,
     port: u16,
     trusted: Option<&str>,
-) -> Result<Option<imap::Sha256Fingerprint>, String> {
+) -> AppResult<Option<imap::Sha256Fingerprint>> {
     match trusted.filter(|hex| !hex.is_empty()) {
         Some(hex) => Ok(Some(imap::parse_sha256_fingerprint(hex)?)),
         None => Ok(settings.pinned_for(host, port)),
@@ -708,7 +713,7 @@ pub(crate) async fn update_imap_connection(
     update: ImapConnectionUpdate,
     state: State<'_, AppState>,
     app: tauri::AppHandle,
-) -> Result<Account, String> {
+) -> AppResult<Account> {
     let email = update.email.clone();
     let previous = imap_settings_or_reject(&state.database, &email)?;
     let imap_pin = resolve_connection_pin(
@@ -746,7 +751,7 @@ pub(crate) async fn update_imap_connection(
         &password.imap,
     )
     .await
-    .map_err(|error| imap::plain_language(&error))?;
+    .map_err(|error| AppError::message(imap::plain_language(&error)))?;
     imap::test_smtp(
         &update.smtp_host,
         update.smtp_port,
@@ -756,7 +761,7 @@ pub(crate) async fn update_imap_connection(
         &smtp_password,
     )
     .await
-    .map_err(|error| imap::plain_language(&error))?;
+    .map_err(|error| AppError::message(imap::plain_language(&error)))?;
 
     let settings = merge_imap_connection_update(previous.clone(), &update, imap_pin, smtp_pin);
     let auth = state
@@ -772,7 +777,7 @@ pub(crate) async fn update_imap_connection(
     if let Some(service) = &service {
         service.retire().await;
     }
-    let persisted = (|| -> Result<Account, String> {
+    let persisted = (|| -> AppResult<Account> {
         // Write credentials first: a keychain failure must not invalidate the
         // old server's cache. Roll back credentials if the DB transaction fails.
         if new_password.is_some() {
@@ -792,7 +797,7 @@ pub(crate) async fn update_imap_connection(
                     }
                 }
             }
-            return Err(error.to_string());
+            return Err(error.into());
         }
         Ok(state
             .database
@@ -820,7 +825,7 @@ pub(crate) async fn remove_account(
     email: String,
     state: State<'_, AppState>,
     app: tauri::AppHandle,
-) -> Result<(), String> {
+) -> AppResult<()> {
     remove_account_internal(email, state, app, false).await
 }
 
@@ -829,7 +834,7 @@ async fn remove_account_internal(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
     remove_catalog: bool,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let _guard = state.correspondence.gate.lock().await;
     // Resolved before any local data is purged, so an unconfigured provider
     // fails the removal while the account is still intact.
@@ -859,7 +864,7 @@ async fn remove_account_internal(
     // its credentials are still live, so the caller can safely retry rather
     // than being left with a still-listed account whose credentials are
     // already gone.
-    let purged = (|| -> Result<(), String> {
+    let purged = (|| -> AppResult<()> {
         if !remove_catalog && state.database.cross_device_sync_enrolled()? {
             state.database.disconnect_account_locally(&email)?;
         } else {
@@ -886,7 +891,7 @@ async fn remove_account_internal(
     if state.database.list_accounts()?.is_empty() {
         ensure_placeholder_account(&state, app).await;
     }
-    result
+    result.map_err(AppError::from)
 }
 
 /// Why "remove everywhere" is refused on a device that does not replicate.
@@ -897,7 +902,7 @@ pub(crate) async fn remove_synced_mail_account(
     email: String,
     state: State<'_, AppState>,
     app: tauri::AppHandle,
-) -> Result<(), String> {
+) -> AppResult<()> {
     if !state.database.cross_device_sync_enrolled()? {
         return Err(NOT_SYNC_ENROLLED.into());
     }
@@ -943,7 +948,7 @@ pub(crate) async fn reconnect_account(
     email: String,
     state: State<'_, AppState>,
     app: tauri::AppHandle,
-) -> Result<Account, String> {
+) -> AppResult<Account> {
     let fallback = state
         .auth_config
         .mail_account(catalogued_mail_provider(&state.database, &email)?, &email)?;
@@ -986,7 +991,7 @@ pub(crate) fn set_account_color(
     email: String,
     color: String,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> AppResult<()> {
     state.database.set_account_color(&email, &color)?;
     let account = state.database.get_account(&email)?.ok_or_else(|| "Account not found".to_string())?;
     record_synced_value(&state, threestrands_sync_protocol::EntityType::MailAccount, &email.to_ascii_lowercase(),
@@ -999,7 +1004,7 @@ pub(crate) fn set_account_display_name(
     email: String,
     display_name: Option<String>,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> AppResult<()> {
     state
         .database
         .set_account_display_name(&email, display_name.as_deref())?;
@@ -1014,7 +1019,7 @@ pub(crate) fn set_account_nickname(
     email: String,
     nickname: Option<String>,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> AppResult<()> {
     state.database.set_account_nickname(&email, nickname.as_deref())?;
     let account = state.database.get_account(&email)?.ok_or_else(|| "Account not found".to_string())?;
     record_synced_value(&state, threestrands_sync_protocol::EntityType::MailAccount, &email.to_ascii_lowercase(),
@@ -1023,7 +1028,7 @@ pub(crate) fn set_account_nickname(
 }
 
 #[tauri::command(async)]
-pub(crate) fn reorder_accounts(emails: Vec<String>, state: State<'_, AppState>) -> Result<(), String> {
+pub(crate) fn reorder_accounts(emails: Vec<String>, state: State<'_, AppState>) -> AppResult<()> {
     state.database.reorder_accounts(&emails)?;
     for account in state.database.list_accounts()? {
         record_synced_value(&state, threestrands_sync_protocol::EntityType::MailAccount, &account.email.to_ascii_lowercase(),

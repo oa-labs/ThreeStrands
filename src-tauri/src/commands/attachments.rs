@@ -3,21 +3,23 @@
 use tauri::State;
 
 use crate::{attachment_security, calendar, file_preview, image_format, image_proxy, mime, models};
-use crate::{run_database_task, AppState};
+use crate::{run_database_task, AppError, AppResult, AppState};
 
 /// Fetches a remote image referenced by message HTML and returns it as a
 /// `data:` URI, so the message iframe never contacts the sender's (or a
 /// spoofed) host directly. See `image_proxy` for the validation this does.
 #[tauri::command]
-pub(crate) async fn fetch_remote_image(url: String, state: State<'_, AppState>) -> Result<String, String> {
-    image_proxy::fetch(&url, &state.image_cache).await
+pub(crate) async fn fetch_remote_image(url: String, state: State<'_, AppState>) -> AppResult<String> {
+    image_proxy::fetch(&url, &state.image_cache)
+        .await
+        .map_err(AppError::from)
 }
 
 pub(super) async fn load_attachment(
     message_id: &str,
     attachment_id: &str,
     state: &AppState,
-) -> Result<(String, String, Vec<u8>), String> {
+) -> AppResult<(String, String, Vec<u8>)> {
     let database = state.database.clone();
     let stored_message_id = message_id.to_string();
     let stored_attachment_id = attachment_id.to_string();
@@ -68,7 +70,7 @@ pub(crate) async fn fetch_attachment_image(
     message_id: String,
     attachment_id: String,
     state: State<'_, AppState>,
-) -> Result<String, String> {
+) -> AppResult<String> {
     use base64::Engine;
 
     let (_, mime_type, bytes) = load_attachment(&message_id, &attachment_id, &state).await?;
@@ -90,12 +92,14 @@ pub(crate) async fn file_preview(
     message_id: String,
     attachment_id: String,
     state: State<'_, AppState>,
-) -> Result<Option<String>, String> {
+) -> AppResult<Option<String>> {
     if !cfg!(target_os = "macos") {
         return Ok(None);
     }
     let (filename, _, bytes) = load_attachment(&message_id, &attachment_id, &state).await?;
-    file_preview::preview_data_uri(&state.file_previews, &filename, &bytes).await
+    file_preview::preview_data_uri(&state.file_previews, &filename, &bytes)
+        .await
+        .map_err(AppError::from)
 }
 
 #[tauri::command]
@@ -103,7 +107,7 @@ pub(crate) async fn preview_calendar_attachment(
     message_id: String,
     attachment_id: String,
     state: State<'_, AppState>,
-) -> Result<calendar::CalendarPreview, String> {
+) -> AppResult<calendar::CalendarPreview> {
     let (filename, mime_type, bytes) = load_attachment(&message_id, &attachment_id, &state).await?;
     let is_calendar = mime_type
         .split(';')
@@ -113,7 +117,7 @@ pub(crate) async fn preview_calendar_attachment(
     if !is_calendar {
         return Err("Attachment is not a calendar invitation".into());
     }
-    calendar::parse(&bytes)
+    calendar::parse(&bytes).map_err(AppError::from)
 }
 
 #[tauri::command]
@@ -122,7 +126,7 @@ pub(crate) async fn open_attachment(
     attachment_id: String,
     window: tauri::Window,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let (filename, _, bytes) = load_attachment(&message_id, &attachment_id, &state).await?;
     if let Some(description) = attachment_security::opening_confirmation(&filename, &bytes) {
         let confirmed = rfd::AsyncMessageDialog::new()
@@ -144,7 +148,7 @@ pub(crate) async fn open_attachment(
         .attachment_reader
         .write(&filename, &bytes)
         .map_err(|error| format!("Unable to prepare attachment: {error}"))?;
-    open::that(path).map_err(|error| format!("Unable to open attachment: {error}"))
+    open::that(path).map_err(|error| AppError::message(format!("Unable to open attachment: {error}")))
 }
 
 #[tauri::command]
@@ -152,7 +156,7 @@ pub(crate) async fn save_attachment(
     message_id: String,
     attachment_id: String,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let (filename, _, bytes) = load_attachment(&message_id, &attachment_id, &state).await?;
     let Some(destination) = rfd::AsyncFileDialog::new()
         .set_file_name(&filename)
@@ -165,31 +169,31 @@ pub(crate) async fn save_attachment(
         .map_err(|error| format!("Unable to save attachment: {error}"))?;
     if let Err(error) = attachment_security::quarantine(destination.path()) {
         return match std::fs::remove_file(destination.path()) {
-            Ok(()) => Err(format!(
+            Ok(()) => Err(AppError::message(format!(
                 "Unable to save attachment safely because quarantine metadata could not be applied: {error}"
-            )),
-            Err(remove_error) => Err(format!(
+            ))),
+            Err(remove_error) => Err(AppError::message(format!(
                 "Quarantine metadata could not be applied to the saved attachment ({error}), and the unsafe copy could not be removed ({remove_error})"
-            )),
+            ))),
         };
     }
     Ok(())
 }
 
 #[tauri::command]
-pub(crate) async fn list_files(query: models::FileQuery, state: State<'_, AppState>) -> Result<models::FilePage, String> {
+pub(crate) async fn list_files(query: models::FileQuery, state: State<'_, AppState>) -> AppResult<models::FilePage> {
     let database = state.database.clone();
     run_database_task(move || database.list_files(&query)).await
 }
 
 #[tauri::command]
-pub(crate) async fn file_stars(message_ids: Vec<String>, state: State<'_, AppState>) -> Result<Vec<(String,String)>, String> {
+pub(crate) async fn file_stars(message_ids: Vec<String>, state: State<'_, AppState>) -> AppResult<Vec<(String,String)>> {
     let database = state.database.clone();
     run_database_task(move || database.file_stars(&message_ids)).await
 }
 
 #[tauri::command]
-pub(crate) async fn set_file_star(account_id: Option<String>, message_id: String, attachment_id: String, starred: bool, state: State<'_, AppState>) -> Result<(), String> {
+pub(crate) async fn set_file_star(account_id: Option<String>, message_id: String, attachment_id: String, starred: bool, state: State<'_, AppState>) -> AppResult<()> {
     let database = state.database.clone();
     run_database_task(move || {
         // Surfaces that show one message's attachments name no account; the message's own thread decides.
