@@ -85,7 +85,7 @@ import { TaskEditorDialog } from "./TaskEditorDialog";
 import { TaskSidebar, type TaskWorkspaceSnapshot } from "./TaskSidebar";
 import { THREAD_ASSIST_ID, ThreadAssist } from "./ThreadAssist";
 import { sharedChatAttachments, ThreadChat } from "./ThreadChat";
-import { ThreadRow } from "./ThreadList";
+import { ThreadList, ThreadRow } from "./ThreadList";
 import { ThreadTasks } from "./ThreadTasks";
 import { threadTextIndex } from "./threadTextIndex";
 import { UnsubscribeConfirm } from "./UnsubscribeConfirm";
@@ -812,7 +812,7 @@ export function App() {
             />
           </div>
         ) : null}
-        <div className="thread-list" role={isThreadMailbox || mailbox === "outbox" ? "listbox" : "list"} aria-label={mailboxTitle}>
+        <ThreadList role={isThreadMailbox || mailbox === "outbox" ? "listbox" : "list"} aria-label={mailboxTitle}>
           {mailbox === "drafts" ? (
             <DraftsList drafts={correspondence.drafts} onOpen={correspondence.openDraft} onDiscard={correspondence.discardListedDraft} />
           ) : mailbox === "outbox" ? (
@@ -877,7 +877,7 @@ export function App() {
           ) : null}
             </>
           )}
-        </div>
+        </ThreadList>
       </section>
 
       <section className="reader" aria-label="Conversation">

@@ -749,6 +749,25 @@ describe("read state and auto-read", () => {
 describe("conversation shortcuts", () => {
   useConversationFixture();
 
+  it("switches from pointer hover to keyboard navigation after clicking a conversation", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const list = screen.getByRole("listbox", { name: "Inbox" });
+    const rows = within(list).getAllByRole("option");
+    fireEvent.pointerDown(rows[0]!);
+    fireEvent.click(rows[0]!);
+    expect(list).toHaveAttribute("data-input-mode", "pointer");
+
+    fireEvent.keyDown(window, { key: "j" });
+    expect(list).toHaveAttribute("data-input-mode", "keyboard");
+    expect(rows[0]).toHaveAttribute("aria-selected", "false");
+    expect(rows[1]).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.pointerMove(rows[0]!);
+    expect(list).toHaveAttribute("data-input-mode", "pointer");
+    expect(rows[1]).toHaveAttribute("aria-selected", "true");
+  });
+
   it("marks an archived conversation not done with Shift+e", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });

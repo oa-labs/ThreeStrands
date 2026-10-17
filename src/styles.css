@@ -1000,7 +1000,7 @@ kbd {
 .thread-attachment { flex: 0 0 auto; color: var(--muted); }
 .thread-task-indicator { flex: 0 0 auto; color: var(--accent); }
 .row-check:hover, .row-check.checked { color: var(--accent); }
-.thread-row:hover .row-check,
+:where(.thread-list:not([data-input-mode="keyboard"])) .thread-row:hover .row-check,
 .thread-row:focus-within .row-check,
 .row-check.checked { opacity: 1; }
 .thread-list:has(.row-check.checked) .row-check { opacity: 1; }
@@ -1030,7 +1030,8 @@ kbd {
   content-visibility: auto;
   contain-intrinsic-size: 72px;
 }
-.thread-row:hover { background: var(--hover); }
+/* A parked pointer must not compete with the keyboard selection. */
+:where(.thread-list:not([data-input-mode="keyboard"])) .thread-row:hover { background: var(--hover); }
 .thread-row.selected { background: var(--selected); box-shadow: inset 2px 0 var(--accent); }
 .unread-dot { width: var(--dot-size); height: var(--dot-size); flex: 0 0 auto; margin-top: var(--space-1-5); border-radius: var(--radius-circle); }
 .unread-dot.visible { background: var(--unread); }

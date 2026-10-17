@@ -12,6 +12,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - New installations keep mail locally for 90 days by default; existing retention settings stay as they are. You can change this in **Settings → Privacy → Keep Mail on This Device For**.
 
 ### Fixed
+- Keyboard navigation in the mail list now clears the gray hover highlight until you move or click the pointer, keeping the selected conversation clear.
 - Trashed conversations now follow your local mail retention setting, even when starred. Other starred conversations stay on your device, and local cleanup leaves mail on the server.
 
 ## 0.141.0 — 2026-10-16

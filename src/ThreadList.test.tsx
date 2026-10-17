@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
+import postcss from "postcss";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "./domain";
-import { HighlightedSnippet, ThreadRow } from "./ThreadList";
+import { HighlightedSnippet, ThreadList, ThreadRow } from "./ThreadList";
 
 afterEach(cleanup);
 
@@ -27,6 +29,52 @@ const thread: Thread = {
 };
 
 describe("ThreadList", () => {
+  it("suppresses a parked pointer's hover background during keyboard use and restores it on pointer input", () => {
+    // Resolve the real background rules with a simulated hover state; jsdom
+    // does not provide a physical pointer for the :hover pseudo-class.
+    const css = postcss.parse(readFileSync("src/styles.css", "utf8"));
+    const background = (row: HTMLElement) => {
+      let value = "";
+      css.walkRules((rule) => {
+        if (!rule.selector.includes(".thread-row")) return;
+        if (rule.selectors.some((selector) => row.matches(selector.replaceAll(":hover", ".simulated-hover")))) {
+          rule.walkDecls("background", (declaration) => { value = declaration.value; });
+        }
+      });
+      return value;
+    };
+    render(
+      <ThreadList role="listbox" aria-label="Inbox">
+        <button className="thread-row simulated-hover">Parked pointer</button>
+        <button className="thread-row selected simulated-hover" aria-selected="true">Current conversation</button>
+      </ThreadList>,
+    );
+    const hovered = screen.getByRole("button", { name: "Parked pointer" });
+    const selected = screen.getByRole("button", { name: "Current conversation" });
+    expect(background(hovered)).toBe("var(--hover)");
+
+    for (const key of ["j", "k", "ArrowDown", "ArrowUp", "Tab"]) {
+      fireEvent.keyDown(window, { key });
+      expect(background(hovered)).toBe("transparent");
+      expect(background(selected)).toBe("var(--selected)");
+      expect(selected).toHaveAttribute("aria-selected", "true");
+      // Enter/leave can happen when keyboard scrolling moves rows beneath
+      // the stationary pointer. Only movement or a press restores hover.
+      fireEvent.pointerOver(hovered);
+      expect(background(hovered)).toBe("transparent");
+      fireEvent.pointerMove(hovered);
+      expect(background(hovered)).toBe("var(--hover)");
+    }
+    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.pointerDown(hovered);
+    expect(background(hovered)).toBe("var(--hover)");
+    expect(background(selected)).toBe("var(--selected)");
+
+    fireEvent.keyDown(window, { key: "Shift" });
+    fireEvent.keyDown(window, { key: "j", isComposing: true });
+    expect(background(hovered)).toBe("var(--hover)");
+  });
+
   it("renders highlighted search snippets without treating them as markup", () => {
     const { rerender } = render(<HighlightedSnippet thread={thread} />);
     expect(screen.getByText("matched")).toBeInTheDocument();
