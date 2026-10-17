@@ -15,6 +15,7 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
+  Signature,
   TextQuote,
   type LucideIcon,
 } from "lucide-react";
@@ -73,7 +74,7 @@ const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   { id: "availability", label: "Availability", group: "Workflow", description: "Set your timezone, working hours, and meeting defaults.", keywords: "timezone working hours duration slots meetings", icon: Clock, autosaves: true },
   { id: "splitInboxes", label: "Split Inboxes", group: "Workflow", description: "Create focused inbox views for the messages that matter.", keywords: "filtered inbox domain label address pattern", icon: Inbox },
   { id: "mutedSenders", label: "Muted Senders", group: "Workflow", description: "Review senders whose new mail skips the Inbox.", keywords: "mute muted sender newsletter archive automatically skip inbox unmute rule", icon: BellOff },
-  { id: "signatures", label: "Signatures", group: "Workflow", description: "Create signatures and choose defaults for each sending address.", keywords: "signature sign-off logo alias footer compose", icon: TextQuote },
+  { id: "signatures", label: "Signatures", group: "Workflow", description: "Create signatures and choose defaults for each sending address.", keywords: "signature sign-off logo alias footer compose", icon: Signature },
   { id: "snippets", label: "Snippets", group: "Workflow", description: "Manage reusable text for faster replies.", keywords: "canned text reply templates compose", icon: TextQuote },
   { id: "ai", label: "AI Provider", group: "Integrations", description: "Connect an AI provider and choose which features may use it.", keywords: "api key model endpoint draft summary actions", icon: Sparkles },
   { id: "replicatedSync", label: "Replicated Sync", group: "Integrations", description: "Configure end-to-end encrypted replication transports.", keywords: "folder ipfs rpc encrypted", icon: Network },

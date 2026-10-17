@@ -12,6 +12,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Search now looks through all your mail, including archived conversations, without clicking **Search All Mail** first. Results still in your inbox are marked **Inbox**, **Inbox Only** narrows a search to your inbox, and Trash and Spam stay out unless you search with `in:trash` or `in:spam`. The server is searched automatically once you stop typing.
 - Search understands a minus to leave things out (`invoice -from:billing@example.com`) and `OR` or braces for either-or (`from:ana OR from:bo`), in the results on this computer as well as on the server.
 - Mail shortcuts now act on checked conversations together, and Select All selects the conversations visible through your filters. Undo also handles pending sends and task completion, and search stays in **Files** or **Contacts** when you’re working there.
+- **Settings → Signatures** now lists your default signatures first, one compact row per address with its email, and shows any alias that uses its own signature right under its account. Each signature shows its first few lines as written and which addresses use it, and deleting one tells you which addresses will lose it.
 - New installations keep mail locally for 90 days by default; existing retention settings stay as they are. You can change this in **Settings → Privacy → Keep Mail on This Device For**.
 
 ### Fixed
