@@ -255,6 +255,58 @@ describe("signature settings", () => {
     expect(within(dialog).getByLabelText("New Messages")).toHaveValue("work");
     expect(state.saveDefaults).toHaveBeenCalledWith(expect.objectContaining({ newSignatureId: "work", replySignatureId: null }));
   });
+
+  it("lists defaults before the library and shows each address, its alias overrides and where signatures are used", () => {
+    const short: Signature = { id: "short", name: "Short", html: "<p>A</p>", text: "A" };
+    const base = { id: signatureDefaultsKey(account.email), account: account.email, address: "", newSignatureId: signature.id, replySignatureId: null };
+    const alias = { ...base, id: signatureDefaultsKey(account.email, "alias@example.com"), address: "alias@example.com", newSignatureId: short.id, replySignatureId: short.id };
+    const personal = { email: "home@example.com" } as Account;
+    const { container } = render(<SignaturesSettings library={library({ signatures: [signature, short], defaults: [base, alias] })} accounts={[account, personal]} />);
+    expect(Array.from(container.querySelectorAll("h3"), (h) => h.textContent)).toEqual(["Default Signatures", "Signatures"]);
+    const rows = Array.from(container.querySelectorAll(".signature-default-row")) as HTMLElement[];
+    expect(rows.map((row) => row.querySelector(".signature-default-identity")!.textContent)).toEqual(["Workme@example.com", "alias@example.comOverrides Work", "home@example.com"]);
+    expect(within(rows[0]).getByText("New messages").nextElementSibling).toHaveTextContent("Work");
+    expect(within(rows[0]).getByText("Replies and forwards").nextElementSibling).toHaveTextContent("None");
+    expect(within(rows[1]).getByText("Replies and forwards").nextElementSibling).toHaveTextContent("Short");
+    expect(within(rows[2]).getAllByText("None")).toHaveLength(2);
+    expect(screen.getByText("Used by Work (new messages)")).toBeInTheDocument();
+    expect(screen.getByText("Used by alias@example.com (all messages)")).toBeInTheDocument();
+    expect(container.querySelector("input,select,textarea,[contenteditable]")).toBeNull();
+  });
+
+  it("keeps the signature's own line breaks in its card and says when no address uses it", () => {
+    render(<SignaturesSettings library={library({ signatures: [{ ...signature, text: "Alex Doe\nCEO\n(c) 555-0100" }] })} accounts={[account]} />);
+    const text = document.querySelector(".signature-card-text")!;
+    expect(text.textContent).toBe("Alex Doe\nCEO\n(c) 555-0100");
+    expect(screen.getByText("Not used by any address")).toBeInTheDocument();
+  });
+
+  it("names the addresses that lose a signature before deleting it", () => {
+    const base = { id: signatureDefaultsKey(account.email), account: account.email, address: "", newSignatureId: null, replySignatureId: signature.id };
+    render(<SignaturesSettings library={library({ defaults: [base] })} accounts={[account]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(screen.getByRole("dialog", { name: "Delete Signature" })).toHaveTextContent("Work (replies and forwards) will have no signature.");
+  });
+
+  it("opens an alias override directly, even before the provider lists the alias, and saves only after submission", async () => {
+    vi.spyOn(mailClient, "listIdentities").mockResolvedValue([{ address: account.email }]);
+    const base = { id: signatureDefaultsKey(account.email), account: account.email, address: "", newSignatureId: signature.id, replySignatureId: signature.id };
+    const alias = { ...base, id: signatureDefaultsKey(account.email, "alias@example.com"), address: "alias@example.com", newSignatureId: null };
+    const state = library({ defaults: [base, alias] });
+    render(<SignaturesSettings library={state} accounts={[account]} />);
+    const trigger = screen.getByRole("button", { name: "Edit Override for alias@example.com" }); trigger.focus(); fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "Default Signatures" });
+    await waitFor(() => expect(mailClient.listIdentities).toHaveBeenCalled());
+    expect(within(dialog).getByLabelText("Sending Address")).toHaveValue("alias@example.com");
+    expect(within(dialog).getByLabelText("Use Account Defaults")).not.toBeChecked();
+    expect(within(dialog).getByLabelText("New Messages")).toHaveValue("");
+    expect(within(dialog).getByLabelText("Replies and Forwards")).toHaveValue("work");
+    fireEvent.change(within(dialog).getByLabelText("New Messages"), { target: { value: "work" } });
+    expect(state.saveDefaults).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(state.saveDefaults).toHaveBeenCalledWith({ ...alias, newSignatureId: "work" }));
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
 });
 
 describe("signature import", () => {
@@ -399,6 +451,7 @@ describe("Gmail signature import", () => {
   it("limits import to Gmail accounts on this device and keeps settings read-only", () => {
     const { container } = render(<SignaturesSettings library={library()} accounts={[{ ...gmail, provider: "imap" }, { ...gmail, email: "elsewhere@example.com", onThisDevice: false }]} />);
     expect(screen.getByRole("button", { name: "Import from Gmail…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Import from Gmail…" })).toHaveAttribute("title", "Connect a Gmail account on this device to import its signatures.");
     expect(container.querySelector("input,select,textarea,[contenteditable]")).toBeNull();
   });
 
