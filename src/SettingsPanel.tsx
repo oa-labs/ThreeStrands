@@ -195,7 +195,10 @@ export function Settings({
                       className={`settings-nav-item${item.id === section ? " active" : ""}`}
                       aria-current={item.id === section ? "true" : undefined}
                       ref={item.id === section ? selectedSectionButtonRef : undefined}
-                      onClick={() => onSectionChange(item.id)}
+                      onClick={(event) => {
+                        event.currentTarget.focus();
+                        onSectionChange(item.id);
+                      }}
                     >
                       <item.icon size={ICON_SIZE.sm} aria-hidden="true" />
                       {item.label}
