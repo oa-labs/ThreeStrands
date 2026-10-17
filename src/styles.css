@@ -2900,9 +2900,19 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .settings-panel > .accounts-manager { padding: 0; }
 .settings-connection-status { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--error); font-size: var(--text-secondary); }
 .settings-connection-status.configured { color: var(--secondary); }
-.model-suggestions { display: flex; flex-wrap: wrap; gap: var(--space-1-5); width: 100%; }
-.model-suggestion { max-width: 100%; overflow: hidden; padding: var(--space-1) var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--secondary); background: var(--input); font-family: var(--font-mono); font-size: var(--text-meta); text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-.model-suggestion:hover, .model-suggestion.selected { border-color: var(--accent); color: var(--text); background: var(--selected); }
+/* Searchable model picker: a text input that filters a fetched list and still
+   accepts a value the list omits. The list is positioned over following rows,
+   so the container is the positioning context. */
+.model-combobox { position: relative; width: 100%; max-width: 420px; }
+.model-combobox > input { width: 100%; font-family: var(--font-mono); }
+.model-combobox-list { position: absolute; z-index: var(--z-popover); top: calc(100% + var(--space-1)); left: 0; right: 0; margin: 0; padding: var(--space-1); list-style: none; max-height: 15rem; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input); color: var(--text); box-shadow: var(--shadow-popover); }
+.model-combobox-option { display: flex; flex-direction: column; gap: var(--space-0-5); padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); cursor: pointer; }
+.model-combobox-option.active, .model-combobox-option:hover { background: var(--selected); }
+.model-combobox-option.selected { color: var(--accent); }
+.model-combobox-id { font-family: var(--font-mono); font-size: var(--text-meta); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-combobox-label { color: var(--secondary); font-size: var(--text-meta); }
+.ai-model-list-status { display: flex; flex-direction: column; gap: var(--space-1); }
+.ai-model-list-status .btn-link { align-self: flex-start; display: inline-flex; align-items: center; gap: var(--space-1); }
 .ai-connection-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2-5); }
 /* Label-left form rows: a fixed label column keeps every control in a section
    aligned, and .settings-field-detail indents hints and secondary controls

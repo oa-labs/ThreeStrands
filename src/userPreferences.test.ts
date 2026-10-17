@@ -114,6 +114,22 @@ describe("exportable preferences", () => {
     expect(readExportablePreferences().calendarColors).toEqual({ "person@example.com": { primary: "teal" } });
   });
 
+  it("keeps a custom provider and its endpoint through import and re-export", () => {
+    // Settings sync and export read the provider back through readAiProvider,
+    // so a custom selection must stay `custom` there; mapping it to anything
+    // else would overwrite working endpoints on every synced device.
+    applyExportablePreferences({
+      ...nativeContractFixture,
+      aiProvider: "custom",
+      aiModel: "local-llama",
+      aiEndpoint: "https://api.example.test/v1",
+    });
+    const read = readExportablePreferences();
+    expect(read.aiProvider).toBe("custom");
+    expect(read.aiEndpoint).toBe("https://api.example.test/v1");
+    expect(read.aiModel).toBe("local-llama");
+  });
+
   it("does not collect secrets or transient storage", () => {
     localStorage.setItem("threestrands.settings.ai.apiKey", "do-not-export");
     localStorage.setItem("threestrands.crashReports", "private diagnostics");

@@ -9,6 +9,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Use keyboard shortcuts to attach files, refresh mail, create calendar events and contacts, save contacts, and open, save, or star files. **Keyboard Shortcuts** now also lists snippets, recipient-field focus, and calendar navigation.
 
 ### Improved
+- In **Settings → AI Provider**, the **Reasoning Model** and **Fast Model** fields now show a searchable list of the models your provider offers, so you can type to filter and pick one instead of remembering the exact name. You can still type a model name the list doesn't include. After you switch providers, **Refresh model list** loads the new provider's models with your saved key.
 - Search now looks through all your mail, including archived conversations, without clicking **Search All Mail** first. Results still in your inbox are marked **Inbox**, **Inbox Only** narrows a search to your inbox, and Trash and Spam stay out unless you search with `in:trash` or `in:spam`. The server is searched automatically once you stop typing.
 - Search understands a minus to leave things out (`invoice -from:billing@example.com`) and `OR` or braces for either-or (`from:ana OR from:bo`), in the results on this computer as well as on the server.
 - Mail shortcuts now act on checked conversations together, and Select All selects the conversations visible through your filters. Undo also handles pending sends and task completion, and search stays in **Files** or **Contacts** when you’re working there.

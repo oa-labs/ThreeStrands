@@ -1459,6 +1459,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::ai::ai_api_key_configured,
         commands::ai::set_ai_api_key,
         commands::ai::ai_test_connection,
+        commands::ai::ai_list_models,
         commands::ai::ai_summarize_thread,
         commands::ai::ai_analyze_thread,
         commands::ai::remove_thread_suggestion,
