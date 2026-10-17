@@ -8,6 +8,9 @@ import { mailClient } from "./data/client";
 import { readSignatureEditor, sanitizeSignatureHtml, signatureDefaultsKey, type Signature, type SignatureState } from "./signatures";
 import type { Account } from "./domain";
 import DOMPurify from "dompurify";
+import postcss from "postcss";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import * as signatureImport from "./signatureImport";
 import { loadSignatureEditorImages } from "./signatureEditorImages";
 import { EMAIL_IMAGE_LIMITS, SIGNATURE_LIMITS } from "./emailRenderingPolicy";
@@ -263,6 +266,7 @@ describe("signature settings", () => {
     const personal = { email: "home@example.com" } as Account;
     const { container } = render(<SignaturesSettings library={library({ signatures: [signature, short], defaults: [base, alias] })} accounts={[account, personal]} />);
     expect(Array.from(container.querySelectorAll("h3"), (h) => h.textContent)).toEqual(["Default Signatures", "Signatures"]);
+    expect(container.querySelector(".signature-defaults-columns")).toHaveAttribute("aria-hidden", "true");
     const rows = Array.from(container.querySelectorAll(".signature-default-row")) as HTMLElement[];
     expect(rows.map((row) => row.querySelector(".signature-default-identity")!.textContent)).toEqual(["Workme@example.com", "alias@example.comOverrides Work", "home@example.com"]);
     expect(within(rows[0]).getByText("New messages").nextElementSibling).toHaveTextContent("Work");
@@ -272,6 +276,15 @@ describe("signature settings", () => {
     expect(screen.getByText("Used by Work (new messages)")).toBeInTheDocument();
     expect(screen.getByText("Used by alias@example.com (all messages)")).toBeInTheDocument();
     expect(container.querySelector("input,select,textarea,[contenteditable]")).toBeNull();
+  });
+
+  it("stretches both groups across the panel instead of the settings section's content-sized default", () => {
+    const rules: Record<string, string>[] = [];
+    postcss.parse(readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8")).walkRules((rule) => {
+      if (rule.selector !== ".signatures-settings.settings-section") return;
+      const declarations: Record<string, string> = {}; rule.walkDecls((decl) => { declarations[decl.prop] = decl.value; }); rules.push(declarations);
+    });
+    expect(rules).toEqual([expect.objectContaining({ "align-items": "stretch", gap: "var(--space-6)" })]);
   });
 
   it("keeps the signature's own line breaks in its card and says when no address uses it", () => {
