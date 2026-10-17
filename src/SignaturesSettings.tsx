@@ -50,7 +50,7 @@ export function SignaturesSettings({ library, accounts }: { library: SignatureSt
   return <section className="settings-section accounts-manager signatures-settings" aria-label="Signatures">
     <div className="signatures-settings-group">
       <div className="accounts-manager-header"><div><h3>Default Signatures</h3><p className="settings-hint">Choose a signature for each sending address. Replies and forwards can use a shorter one.</p></div></div>
-      {accounts.length ? <ul className="signature-defaults-list">{accounts.flatMap((account) => {
+      {accounts.length ? <div className="signature-defaults"><div className="signature-defaults-columns" aria-hidden="true"><span>Address</span><span>New messages</span><span>Replies and forwards</span></div><ul className="signature-defaults-list">{accounts.flatMap((account) => {
         const defaults = library.defaults.find((d) => signatureDefaultsKey(d.account, d.address) === signatureDefaultsKey(account.email));
         const aliases = library.defaults.filter((d) => d.address && signatureDefaultsKey(d.account) === signatureDefaultsKey(account.email)).sort((a, b) => a.address.localeCompare(b.address));
         const name = account.nickname || account.email;
@@ -60,7 +60,7 @@ export function SignaturesSettings({ library, accounts }: { library: SignatureSt
           ...aliases.map((alias) => defaultsRow(alias.id, <><span className="signature-default-email">{alias.address}</span><span className="signature-default-note">Overrides {name}</span></>, alias,
             <button className="btn btn-sm btn-ghost" type="button" aria-label={`Edit Override for ${alias.address}`} onClick={() => setDefaultsTarget({ account: account.email, address: alias.address })}>Edit…</button>, true)),
         ];
-      })}</ul> : <p className="settings-hint">Connect a mail account to choose default signatures.</p>}
+      })}</ul></div> : <p className="settings-hint">Connect a mail account to choose default signatures.</p>}
     </div>
     <div className="signatures-settings-group">
       <div className="accounts-manager-header"><div><h3>Signatures</h3></div><span className="accounts-list-actions"><button className="btn" type="button" disabled={!gmailAccounts.length} title={gmailAccounts.length ? undefined : "Connect a Gmail account on this device to import its signatures."} onClick={() => setGmailImport(true)}>Import from Gmail…</button><button className="btn btn-primary" type="button" onClick={() => setEditor("new")}>Add Signature</button></span></div>
