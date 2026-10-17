@@ -3,6 +3,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { mailClient } from "./data/client";
 import type { SearchReport } from "./domain";
+import { REMOTE_SEARCH_DELAY_MS } from "./useMailboxThreads";
+
+// Server search starts only after the query holds still, so waits for it
+// allow for the typing debounce plus that pause.
+const SERVER_SEARCH_WAIT = { timeout: REMOTE_SEARCH_DELAY_MS + 2000 };
 
 function selectFolder(name: string) {
   fireEvent.click(screen.getByRole("button", { name: /Choose folder, current folder/ }));
@@ -128,8 +133,10 @@ describe("split inbox search shortcuts", () => {
       expect.objectContaining({ query: "roadmap" }),
       "demo@example.com",
     ));
-    fireEvent.click(screen.getByRole("button", { name: "Include archived or trashed mail in search" }));
-    await waitFor(() => expect(backfillSearchThreads).toHaveBeenCalledWith("roadmap", "demo@example.com"));
+    await waitFor(
+      () => expect(backfillSearchThreads).toHaveBeenCalledWith("roadmap", "demo@example.com"),
+      SERVER_SEARCH_WAIT,
+    );
 
     fireEvent.keyDown(search, { key: "Tab" });
     await waitFor(() => expect(screen.getByRole("tab", { name: /^Main/ })).toHaveAttribute("aria-selected", "true"));
@@ -287,6 +294,52 @@ describe("split inbox search shortcuts", () => {
     }
   });
 
+  it("searches all mail by default and only the inbox when narrowed", async () => {
+    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
+    const searchThreads = vi.spyOn(mailClient, "searchThreads");
+    const backfill = vi.spyOn(mailClient, "backfillSearchThreads");
+    render(<App />);
+    fireEvent.keyDown(window, { key: "/" });
+    const search = await screen.findByRole("textbox", { name: "Search Mail" });
+    fireEvent.change(search, { target: { value: "roadmap" } });
+    await waitFor(() => expect(searchThreads).toHaveBeenCalledWith(
+      expect.objectContaining({ query: "roadmap", includeArchived: true }),
+      "demo@example.com",
+    ));
+    await waitFor(() => expect(backfill).toHaveBeenCalledWith("roadmap", "demo@example.com"), SERVER_SEARCH_WAIT);
+
+    searchThreads.mockClear();
+    backfill.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Search only the Inbox" }));
+    await waitFor(() => expect(searchThreads).toHaveBeenCalledWith(
+      expect.objectContaining({ query: "roadmap", includeArchived: false }),
+      "demo@example.com",
+    ));
+    await new Promise((resolve) => window.setTimeout(resolve, REMOTE_SEARCH_DELAY_MS + 100));
+    expect(backfill).not.toHaveBeenCalled();
+  });
+
+  it("waits for the query to hold still before searching the server", async () => {
+    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
+    const searchThreads = vi.spyOn(mailClient, "searchThreads");
+    const backfill = vi.spyOn(mailClient, "backfillSearchThreads");
+    render(<App />);
+    fireEvent.keyDown(window, { key: "/" });
+    const search = await screen.findByRole("textbox", { name: "Search Mail" });
+    fireEvent.change(search, { target: { value: "road" } });
+    // The local search for the first query lands right away...
+    await waitFor(() => expect(searchThreads).toHaveBeenCalledWith(
+      expect.objectContaining({ query: "road" }),
+      "demo@example.com",
+    ));
+    expect(backfill).not.toHaveBeenCalled();
+    // ...but the user keeps typing before the pause ends, so only the final
+    // query reaches the server.
+    fireEvent.change(search, { target: { value: "roadmap" } });
+    await waitFor(() => expect(backfill).toHaveBeenCalledWith("roadmap", "demo@example.com"), SERVER_SEARCH_WAIT);
+    expect(backfill).toHaveBeenCalledTimes(1);
+  });
+
   it("shows when the Gmail backfill is still running", async () => {
     localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
     let finishBackfill!: () => void;
@@ -300,9 +353,8 @@ describe("split inbox search shortcuts", () => {
     fireEvent.keyDown(window, { key: "/" });
     const search = await screen.findByRole("textbox", { name: "Search Mail" });
     fireEvent.change(search, { target: { value: "126" } });
-    fireEvent.click(await screen.findByRole("button", { name: "Include archived or trashed mail in search" }));
 
-    await waitFor(() => expect(backfillSearchThreads).toHaveBeenCalledWith("126", "demo@example.com"));
+    await waitFor(() => expect(backfillSearchThreads).toHaveBeenCalledWith("126", "demo@example.com"), SERVER_SEARCH_WAIT);
     expect(await screen.findByText("Searching mail on the server…")).toBeVisible();
     finishBackfill();
     await waitFor(() => expect(screen.queryByText("Searching mail on the server…")).not.toBeInTheDocument());
@@ -316,9 +368,8 @@ describe("split inbox search shortcuts", () => {
     fireEvent.keyDown(window, { key: "/" });
     const search = await screen.findByRole("textbox", { name: "Search Mail" });
     fireEvent.change(search, { target: { value: "126" } });
-    fireEvent.click(await screen.findByRole("button", { name: "Include archived or trashed mail in search" }));
 
-    expect(await screen.findByText("Server search unavailable. Showing mail on this device.")).toBeVisible();
+    expect(await screen.findByText("Server search unavailable. Showing mail on this device.", undefined, SERVER_SEARCH_WAIT)).toBeVisible();
   });
 });
 
@@ -340,9 +391,8 @@ describe("server-search status toast (Phase 5 run 5)", () => {
     fireEvent.keyDown(window, { key: "/" });
     const search = await screen.findByRole("textbox", { name: "Search Mail" });
     fireEvent.change(search, { target: { value: query } });
-    const toggle = await screen.findByRole("button", { name: "Include archived or trashed mail in search" });
-    fireEvent.click(toggle);
-    await waitFor(() => expect(backfill).toHaveBeenCalledWith(query, "demo@example.com"));
+    const toggle = await screen.findByRole("button", { name: "Search only the Inbox" });
+    await waitFor(() => expect(backfill).toHaveBeenCalledWith(query, "demo@example.com"), SERVER_SEARCH_WAIT);
     return { search, toggle };
   }
 
@@ -379,20 +429,20 @@ describe("server-search status toast (Phase 5 run 5)", () => {
     fireEvent.keyDown(window, { key: "/" });
     const search = await screen.findByRole("textbox", { name: "Search Mail" });
     fireEvent.change(search, { target: { value: "roadmap" } });
-    fireEvent.click(await screen.findByRole("button", { name: "Include archived or trashed mail in search" }));
-    await waitFor(() => expect(backfill).toHaveBeenCalledWith("roadmap", "demo@example.com"));
+    await waitFor(() => expect(backfill).toHaveBeenCalledWith("roadmap", "demo@example.com"), SERVER_SEARCH_WAIT);
     expect(await screen.findByText(/only mail already on this device is shown/)).toBeVisible();
 
     fireEvent.change(search, { target: { value: "something else" } });
     await waitFor(() => expect(screen.queryByText(/only mail already on this device is shown/)).not.toBeInTheDocument());
   });
 
-  it("clears the status line when 'include archived' is toggled off", async () => {
+  it("clears the status line when the search is narrowed to the inbox", async () => {
     const { toggle } = await searchWithReport(skipped);
     expect(await screen.findByText(/only mail already on this device is shown/)).toBeVisible();
-    // The toggle keeps its accessible name; aria-pressed flips. Toggling off
-    // clears the status and runs no further server search.
+    // The toggle keeps its accessible name; aria-pressed flips. Narrowing to
+    // the inbox clears the status and runs no further server search.
     fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
     await waitFor(() => expect(screen.queryByText(/only mail already on this device is shown/)).not.toBeInTheDocument());
   });
 
@@ -416,12 +466,11 @@ describe("server-search status toast (Phase 5 run 5)", () => {
     fireEvent.keyDown(window, { key: "/" });
     const search = await screen.findByRole("textbox", { name: "Search Mail" });
     fireEvent.change(search, { target: { value: "first" } });
-    fireEvent.click(await screen.findByRole("button", { name: "Include archived or trashed mail in search" }));
-    await waitFor(() => expect(backfill).toHaveBeenCalledWith("first", "demo@example.com"));
+    await waitFor(() => expect(backfill).toHaveBeenCalledWith("first", "demo@example.com"), SERVER_SEARCH_WAIT);
 
     // Switch to a second query; its backfill resolves with a partial.
     fireEvent.change(search, { target: { value: "second" } });
-    await waitFor(() => expect(backfill).toHaveBeenCalledWith("second", "demo@example.com"));
+    await waitFor(() => expect(backfill).toHaveBeenCalledWith("second", "demo@example.com"), SERVER_SEARCH_WAIT);
     expect(await screen.findByText("Some folders took too long to search. Showing what was found.")).toBeVisible();
 
     // Now the FIRST query's backfill finally resolves with a skipped report.

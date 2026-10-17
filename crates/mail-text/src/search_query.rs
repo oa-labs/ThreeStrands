@@ -413,56 +413,63 @@ pub fn utc_day_start_rfc3339(date: NaiveDate) -> String {
     chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(start, chrono::Utc).to_rfc3339()
 }
 
-/// Which halves of the default archived/trashed exclusion a structured query
-/// applies. The everyday inbox view hides archived and trashed mail; a search
-/// that names a LOCATION is explicit intent to look outside the inbox, so the
-/// structured path relaxes the default per [`default_archived_trashed_filter`].
+/// Which parts of the default archived/trashed/spam exclusion a structured
+/// query applies. The everyday inbox view hides archived and trashed mail; a
+/// search that names a LOCATION is explicit intent to look outside the inbox,
+/// so the structured path relaxes the default per
+/// [`default_archived_trashed_filter`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DefaultFilter {
     /// Apply `t.archived = 0` (hide archived threads).
     pub exclude_archived: bool,
     /// Apply `t.trashed = 0` (hide trashed threads).
     pub exclude_trashed: bool,
+    /// Hide threads carrying the `SPAM` system label. Only needed once the
+    /// archived half is dropped by the all-mail scope: spam is never in the
+    /// inbox, so `exclude_archived` already hides it otherwise.
+    pub exclude_spam: bool,
 }
 
-/// Decide which halves of the default `archived = 0 AND trashed = 0` filter a
-/// structured query keeps, from its parsed terms and the `include_archived`
-/// toggle. Pure, so it is table-tested directly.
+/// Decide which parts of the default exclusion a structured query keeps, from
+/// its parsed terms and the `include_archived` (all-mail scope) flag. Pure, so
+/// it is table-tested directly.
 ///
-/// Rules (run 2b-2):
-/// - `include_archived == true` keeps today's meaning: BOTH halves are
-///   dropped (the user asked to see everything).
+/// Rules:
+/// - `include_archived == true` is the all-mail scope, matching Gmail's
+///   default search: the `archived = 0` half is dropped, but trashed and spam
+///   threads stay hidden unless the query names them (`in:trash`,
+///   `in:spam`/`in:junk`, or `in:anywhere`).
 /// - Otherwise, if the query contains ANY `label:` or `in:` term, the
 ///   `archived = 0` half is dropped: naming a location is explicit intent, and
 ///   sent mail and folder mail are "archived" by the data model's definition
-///   (archived == no `INBOX` label).
+///   (archived == no `INBOX` label). Spam is not separately excluded here.
 /// - The `trashed = 0` half is kept UNLESS the query has `in:trash` or
 ///   `in:anywhere`. `in:spam`/`in:junk` do NOT waive it.
-/// - A query with no `label:`/`in:` term keeps BOTH halves (today's default).
+/// - A query with no `label:`/`in:` term and no all-mail scope keeps the
+///   archived and trashed halves (the inbox-only scope).
 pub fn default_archived_trashed_filter(
     terms: &[QueryTerm],
     include_archived: bool,
 ) -> DefaultFilter {
-    if include_archived {
-        return DefaultFilter {
-            exclude_archived: false,
-            exclude_trashed: false,
-        };
-    }
     let has_label_or_in = terms
         .iter()
         .any(|term| matches!(term, QueryTerm::Label(_) | QueryTerm::In(_)));
+    // Compared ASCII-case-insensitively, matching the resolution path.
+    let names_location = |words: &[&str]| {
+        terms.iter().any(|term| match term {
+            QueryTerm::In(value) => words.iter().any(|word| value.eq_ignore_ascii_case(word)),
+            _ => false,
+        })
+    };
     // `in:trash` and `in:anywhere` are the only locations that reach trashed
-    // mail. Compared ASCII-case-insensitively, matching the resolution path.
-    let waives_trashed = terms.iter().any(|term| match term {
-        QueryTerm::In(value) => {
-            value.eq_ignore_ascii_case("trash") || value.eq_ignore_ascii_case("anywhere")
-        }
-        _ => false,
-    });
+    // mail; `in:spam`/`in:junk` and `in:anywhere` the only ones that reach
+    // spam in the all-mail scope.
+    let waives_trashed = names_location(&["trash", "anywhere"]);
+    let waives_spam = names_location(&["spam", "junk", "anywhere"]);
     DefaultFilter {
-        exclude_archived: !has_label_or_in,
+        exclude_archived: !include_archived && !has_label_or_in,
         exclude_trashed: !waives_trashed,
+        exclude_spam: include_archived && !waives_spam,
     }
 }
 
@@ -1208,7 +1215,8 @@ mod tests {
             default_archived_trashed_filter(&terms, false),
             DefaultFilter {
                 exclude_archived: true,
-                exclude_trashed: true
+                exclude_trashed: true,
+                exclude_spam: false
             }
         );
     }
@@ -1221,7 +1229,8 @@ mod tests {
                 default_archived_trashed_filter(&terms, false),
                 DefaultFilter {
                     exclude_archived: false,
-                    exclude_trashed: true
+                    exclude_trashed: true,
+                    exclude_spam: false
                 },
                 "{input:?}"
             );
@@ -1236,7 +1245,8 @@ mod tests {
                 default_archived_trashed_filter(&terms, false),
                 DefaultFilter {
                     exclude_archived: false,
-                    exclude_trashed: false
+                    exclude_trashed: false,
+                    exclude_spam: false
                 },
                 "{input:?}"
             );
@@ -1247,20 +1257,45 @@ mod tests {
             default_archived_trashed_filter(&terms, false),
             DefaultFilter {
                 exclude_archived: false,
-                exclude_trashed: false
+                exclude_trashed: false,
+                exclude_spam: false
             }
         );
     }
 
     #[test]
-    fn default_filter_include_archived_drops_both_halves_regardless() {
-        for input in ["from:alice", "label:work", "in:spam"] {
+    fn default_filter_all_mail_scope_keeps_trash_and_spam_hidden() {
+        for input in ["from:alice", "label:work", "in:inbox", "roadmap"] {
             let terms = SearchQuery::parse(input).terms;
             assert_eq!(
                 default_archived_trashed_filter(&terms, true),
                 DefaultFilter {
                     exclude_archived: false,
-                    exclude_trashed: false
+                    exclude_trashed: true,
+                    exclude_spam: true
+                },
+                "{input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn default_filter_all_mail_scope_reaches_trash_and_spam_only_when_named() {
+        let cases = [
+            ("in:trash", false, true),
+            ("in:TRASH", false, true),
+            ("in:spam", true, false),
+            ("in:junk", true, false),
+            ("in:anywhere", false, false),
+        ];
+        for (input, exclude_trashed, exclude_spam) in cases {
+            let terms = SearchQuery::parse(input).terms;
+            assert_eq!(
+                default_archived_trashed_filter(&terms, true),
+                DefaultFilter {
+                    exclude_archived: false,
+                    exclude_trashed,
+                    exclude_spam
                 },
                 "{input:?}"
             );

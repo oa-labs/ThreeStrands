@@ -57,7 +57,7 @@ Press <kbd>Tab</kbd> and <kbd>Shift + Tab</kbd> to move between tabs. Each split
 
 ## Search
 
-Press <kbd>/</kbd> to search. Search looks through your inbox on this computer first; turn on **Search All Mail** to include archived and trashed mail and ask the server too.
+Press <kbd>/</kbd> to search. Search looks through all your mail, including archived conversations, and shows results from this computer right away. When you stop typing, it also asks the server for older mail. Results still in your inbox are marked **Inbox**. Click **Inbox Only** to search just your inbox. Trash and Spam are left out unless you add `in:trash`, `in:spam`, or `in:anywhere`.
 
 You can narrow a search with `from:`, `to:`, `subject:`, `before:` and `after:` (YYYY/MM/DD), `is:unread`, `is:starred`, `label:`, `in:`, and `has:attachment`.
 

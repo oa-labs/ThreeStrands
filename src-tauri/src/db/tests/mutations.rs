@@ -210,10 +210,25 @@ fn trashing_a_thread_hides_it_from_the_inbox_and_search() {
         .unwrap();
     assert!(hidden.is_empty());
 
-    let shown = database
+    // Searching all mail still leaves Trash out, as Gmail does...
+    let all_mail = database
         .search_threads(
             &SearchThreadsRequest {
                 query: "keyboard".into(),
+                limit: None,
+                offset: None,
+                include_archived: Some(true),
+            },
+            None,
+        )
+        .unwrap();
+    assert!(all_mail.is_empty());
+
+    // ...until the query asks for it.
+    let shown = database
+        .search_threads(
+            &SearchThreadsRequest {
+                query: "keyboard in:trash".into(),
                 limit: None,
                 offset: None,
                 include_archived: Some(true),

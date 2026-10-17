@@ -31,6 +31,7 @@ async function resetDemoThreads({ labels = false }: { labels?: boolean } = {}) {
   for (const threadId of demoThreadIds) {
     await mailClient.mutateThread({ kind: "archive", threadId, value: false });
     await mailClient.mutateThread({ kind: "spam", threadId, value: false });
+    await mailClient.mutateThread({ kind: "trash", threadId, value: false });
     if (labels) await mailClient.mutateThread({ kind: "label", threadId, labelId: "work", value: false });
   }
 }
@@ -748,6 +749,28 @@ describe("read state and auto-read", () => {
 describe("conversation shortcuts", () => {
   useConversationFixture();
 
+  it("keeps an archived result in an all-mail search but drops a trashed one", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "/" }));
+    });
+    const search = await screen.findByRole("textbox", { name: "Search Mail" });
+    fireEvent.change(search, { target: { value: "Welcome" } });
+    const list = screen.getByRole("listbox");
+    const welcomeRow = () => within(list).queryByRole("option", { name: /Welcome to ThreeStrands/ });
+    await waitFor(() => expect(within(welcomeRow()!).getByText("Inbox")).toBeInTheDocument());
+
+    await archiveSelected();
+    expect(welcomeRow()).toBeInTheDocument();
+    await waitFor(() => expect(within(welcomeRow()!).queryByText("Inbox")).not.toBeInTheDocument());
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Trash (#)" }).click();
+    });
+    await waitFor(() => expect(welcomeRow()).not.toBeInTheDocument());
+  });
+
   it("marks an archived conversation not done with Shift+e", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
@@ -758,12 +781,10 @@ describe("conversation shortcuts", () => {
     });
     const search = await screen.findByRole("textbox", { name: "Search Mail" });
     fireEvent.change(search, { target: { value: "Welcome" } });
-    const includeArchived = await screen.findByRole("button", { name: "Include archived or trashed mail in search" });
-    await act(async () => {
-      includeArchived.click();
-    });
-    expect(includeArchived).toHaveTextContent("Archived + Trash");
-    expect(includeArchived).toHaveAttribute("aria-pressed", "true");
+    // Search covers all mail by default, so the archived thread is found
+    // without narrowing or widening anything.
+    const inboxOnly = await screen.findByRole("button", { name: "Search only the Inbox" });
+    expect(inboxOnly).toHaveAttribute("aria-pressed", "false");
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     await act(async () => {

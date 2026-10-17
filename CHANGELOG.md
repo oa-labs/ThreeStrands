@@ -5,6 +5,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ## Unreleased
 
 ### Improved
+- Search now looks through all your mail, including archived conversations, without clicking **Search All Mail** first. Results still in your inbox are marked **Inbox**, **Inbox Only** narrows a search to your inbox, and Trash and Spam stay out unless you search with `in:trash` or `in:spam`. The server is searched automatically once you stop typing.
 - New installations keep mail locally for 90 days by default; existing retention settings stay as they are. You can change this in **Settings → Privacy → Keep Mail on This Device For**.
 
 ### Fixed

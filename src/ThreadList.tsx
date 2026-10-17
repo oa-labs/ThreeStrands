@@ -41,6 +41,7 @@ export const ThreadRow = memo(function ThreadRow({
   onSelectionGesture,
   rowRef,
   hasTask = false,
+  showLocation = false,
 }: {
   thread: Thread;
   selected: boolean;
@@ -52,6 +53,8 @@ export const ThreadRow = memo(function ThreadRow({
   onSelectionGesture?(id: string, gesture: SelectionGesture): void;
   rowRef?: RefObject<HTMLButtonElement | null>;
   hasTask?: boolean;
+  /** Marks threads still in the inbox, for result lists that span all mail. */
+  showLocation?: boolean;
 }) {
   return (
     <button
@@ -95,6 +98,7 @@ export const ThreadRow = memo(function ThreadRow({
           </span>
           <span className="thread-meta-trailing">
             {showAccount ? <span className="account-dot" aria-hidden="true" style={{ background: accountColor }} /> : null}
+            {showLocation && !thread.archived && !thread.trashed ? <span className="thread-location-tag">Inbox</span> : null}
             {hasTask ? <SquareCheckBig className="thread-task-indicator" size={ICON_SIZE.xs} aria-label="Has open task" /> : null}
             <time>{formatMailTimestamp(thread.lastMessageAt)}</time>
           </span>

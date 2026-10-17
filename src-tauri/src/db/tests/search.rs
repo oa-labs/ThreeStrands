@@ -2006,16 +2006,11 @@ fn in_anywhere_shows_both_archived_and_trashed() {
     assert_eq!(got, want);
 }
 
-#[test]
-fn include_archived_true_drops_both_halves_unchanged() {
-    let database = database();
-    label_in_fixture(&database);
-    // With include_archived, label:Work returns the archived AND trashed Work
-    // threads, same meaning as before this run for the archived/trashed toggle.
-    let mut got = database
+fn ids_all_mail(database: &Database, query: &str) -> Vec<String> {
+    let mut ids = database
         .search_threads(
             &SearchThreadsRequest {
-                query: "label:Work".into(),
+                query: query.into(),
                 limit: None,
                 offset: None,
                 include_archived: Some(true),
@@ -2026,10 +2021,55 @@ fn include_archived_true_drops_both_halves_unchanged() {
         .into_iter()
         .map(|t| t.id)
         .collect::<Vec<_>>();
-    got.sort();
-    let mut want = vec![tid("gmail", "g-work"), tid("gmail", "g-trash"), tid("imap", "i-work")];
-    want.sort();
-    assert_eq!(got, want);
+    ids.sort();
+    ids
+}
+
+fn sorted(mut ids: Vec<String>) -> Vec<String> {
+    ids.sort();
+    ids
+}
+
+#[test]
+fn all_mail_scope_reaches_archived_mail_but_not_trash_or_spam() {
+    let database = database();
+    label_in_fixture(&database);
+    // Structured path: the archived Work threads, but not the trashed one
+    // that also carries the Work label.
+    assert_eq!(
+        ids_all_mail(&database, "label:Work"),
+        sorted(vec![tid("gmail", "g-work"), tid("imap", "i-work")])
+    );
+    // Legacy free-text path: every thread whose body says "body", except
+    // the trashed and spam ones.
+    assert_eq!(
+        ids_all_mail(&database, "body"),
+        sorted(vec![
+            tid("imap", "i-inbox"),
+            tid("imap", "i-work"),
+            tid("imap", "i-acme"),
+            tid("gmail", "g-sent"),
+        ])
+    );
+}
+
+#[test]
+fn all_mail_scope_reaches_trash_and_spam_when_the_query_names_them() {
+    let database = database();
+    label_in_fixture(&database);
+    assert_eq!(ids_all_mail(&database, "in:trash"), vec![tid("gmail", "g-trash")]);
+    assert_eq!(ids_all_mail(&database, "in:spam"), vec![tid("gmail", "g-spam")]);
+    assert_eq!(
+        ids_all_mail(&database, "body in:anywhere"),
+        sorted(vec![
+            tid("imap", "i-inbox"),
+            tid("imap", "i-work"),
+            tid("imap", "i-acme"),
+            tid("gmail", "g-sent"),
+            tid("gmail", "g-trash"),
+            tid("gmail", "g-spam"),
+        ])
+    );
 }
 
 #[test]
@@ -2287,50 +2327,59 @@ fn default_filter_rules_table() {
     // No label:/in: term: both halves apply (today's default).
     assert_eq!(
         f("from:alice", false),
-        DefaultFilter { exclude_archived: true, exclude_trashed: true }
+        DefaultFilter { exclude_archived: true, exclude_trashed: true, exclude_spam: false }
     );
     // A label: term drops the archived half, keeps trashed.
     assert_eq!(
         f("label:work", false),
-        DefaultFilter { exclude_archived: false, exclude_trashed: true }
+        DefaultFilter { exclude_archived: false, exclude_trashed: true, exclude_spam: false }
     );
     // Any in: term drops the archived half, keeps trashed...
     assert_eq!(
         f("in:inbox", false),
-        DefaultFilter { exclude_archived: false, exclude_trashed: true }
+        DefaultFilter { exclude_archived: false, exclude_trashed: true, exclude_spam: false }
     );
     // ...except in:trash, which also drops the trashed half.
     assert_eq!(
         f("in:trash", false),
-        DefaultFilter { exclude_archived: false, exclude_trashed: false }
+        DefaultFilter { exclude_archived: false, exclude_trashed: false, exclude_spam: false }
     );
     // in:anywhere drops both halves.
     assert_eq!(
         f("in:anywhere", false),
-        DefaultFilter { exclude_archived: false, exclude_trashed: false }
+        DefaultFilter { exclude_archived: false, exclude_trashed: false, exclude_spam: false }
     );
     // in:spam / in:junk do NOT waive the trashed exclusion.
     assert_eq!(
         f("in:spam", false),
-        DefaultFilter { exclude_archived: false, exclude_trashed: true }
+        DefaultFilter { exclude_archived: false, exclude_trashed: true, exclude_spam: false }
     );
     assert_eq!(
         f("in:junk", false),
-        DefaultFilter { exclude_archived: false, exclude_trashed: true }
+        DefaultFilter { exclude_archived: false, exclude_trashed: true, exclude_spam: false }
     );
-    // include_archived: true drops BOTH halves regardless of the terms.
+    // include_archived: true (the all-mail scope) drops the archived half but
+    // keeps trash and spam hidden unless the query names them.
     assert_eq!(
         f("from:alice", true),
-        DefaultFilter { exclude_archived: false, exclude_trashed: false }
+        DefaultFilter { exclude_archived: false, exclude_trashed: true, exclude_spam: true }
     );
     assert_eq!(
         f("label:work", true),
-        DefaultFilter { exclude_archived: false, exclude_trashed: false }
+        DefaultFilter { exclude_archived: false, exclude_trashed: true, exclude_spam: true }
+    );
+    assert_eq!(
+        f("in:trash", true),
+        DefaultFilter { exclude_archived: false, exclude_trashed: false, exclude_spam: true }
+    );
+    assert_eq!(
+        f("in:spam", true),
+        DefaultFilter { exclude_archived: false, exclude_trashed: true, exclude_spam: false }
     );
     // A mix: label: present AND in:trash present -> archived dropped, trashed
     // dropped (by in:trash).
     assert_eq!(
         f("label:work in:trash", false),
-        DefaultFilter { exclude_archived: false, exclude_trashed: false }
+        DefaultFilter { exclude_archived: false, exclude_trashed: false, exclude_spam: false }
     );
 }

@@ -10,8 +10,8 @@ function renderField(query = "", overrides: Partial<Parameters<typeof SearchFiel
     onCommit: vi.fn(),
     onInput: vi.fn(),
     onEscape: vi.fn(),
-    includeArchived: false,
-    onToggleIncludeArchived: vi.fn(),
+    inboxOnly: false,
+    onToggleInboxOnly: vi.fn(),
     ...overrides,
   };
   const view = render(<SearchField {...props} />);
@@ -74,11 +74,19 @@ describe("SearchField", () => {
     expect(input).toHaveAttribute("spellcheck", "false");
   });
 
-  it("offers the archived toggle as soon as there is text to search", () => {
+  it("offers the Inbox Only filter as soon as there is text to search", () => {
     const { input, props } = renderField();
-    expect(screen.queryByRole("button", { name: /archived/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Search only the Inbox" })).not.toBeInTheDocument();
     fireEvent.change(input, { target: { value: "r" } });
-    fireEvent.click(screen.getByRole("button", { name: "Include archived or trashed mail in search" }));
-    expect(props.onToggleIncludeArchived).toHaveBeenCalledTimes(1);
+    const toggle = screen.getByRole("button", { name: "Search only the Inbox" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(toggle).toHaveTextContent("Inbox Only");
+    fireEvent.click(toggle);
+    expect(props.onToggleInboxOnly).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the Inbox Only filter as pressed while the search is narrowed", () => {
+    renderField("roadmap", { inboxOnly: true });
+    expect(screen.getByRole("button", { name: "Search only the Inbox" })).toHaveAttribute("aria-pressed", "true");
   });
 });

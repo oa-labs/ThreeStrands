@@ -1,4 +1,4 @@
-import { Archive, Search } from "lucide-react";
+import { Inbox, Search } from "lucide-react";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { ICON_SIZE } from "./iconSizes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
@@ -14,8 +14,9 @@ type SearchFieldProps = {
   /** Runs on every keystroke, before the debounced commit. */
   onInput: () => void;
   onEscape: () => void;
-  includeArchived: boolean;
-  onToggleIncludeArchived: () => void;
+  /** Narrows the search from all mail (the default) to the inbox. */
+  inboxOnly: boolean;
+  onToggleInboxOnly: () => void;
 };
 
 /**
@@ -30,8 +31,8 @@ export function SearchField({
   onCommit,
   onInput,
   onEscape,
-  includeArchived,
-  onToggleIncludeArchived,
+  inboxOnly,
+  onToggleInboxOnly,
 }: SearchFieldProps) {
   const [draft, setDraft] = useState(query);
   const committedRef = useRef(query);
@@ -79,14 +80,14 @@ export function SearchField({
       {draft.trim() ? (
         <button
           type="button"
-          className={`search-toggle ${includeArchived ? "active" : ""}`}
-          aria-pressed={includeArchived}
-          aria-label={includeArchived ? "Exclude archived and trashed mail from search" : "Include archived or trashed mail in search"}
-          title={includeArchived ? "Exclude archived and trashed mail from search" : "Include archived or trashed mail in search"}
-          onClick={onToggleIncludeArchived}
+          className={`search-toggle ${inboxOnly ? "active" : ""}`}
+          aria-pressed={inboxOnly}
+          aria-label="Search only the Inbox"
+          title={inboxOnly ? "Searching only the Inbox. Click to search all mail." : "Searching all mail. Click to search only the Inbox."}
+          onClick={onToggleInboxOnly}
         >
-          <Archive size={ICON_SIZE.sm} />
-          <span>{includeArchived ? "Archived + Trash" : "Search All Mail"}</span>
+          <Inbox size={ICON_SIZE.sm} />
+          <span>Inbox Only</span>
         </button>
       ) : null}
       <kbd>/</kbd>

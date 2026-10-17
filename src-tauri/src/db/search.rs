@@ -55,11 +55,12 @@ impl Database {
             if query.trim().is_empty() {
                 return Ok(Vec::new());
             }
-            // Trashed threads are hidden alongside archived ones by default; the
-            // same "include archived" search toggle reveals both, since neither
-            // belongs in the everyday inbox view.
+            // The inbox-only scope hides archived and trashed threads. The
+            // all-mail scope (`include_archived`) reveals archived mail but,
+            // like Gmail's default search, still hides Trash and Spam; this
+            // free-text path has no `in:` term that could name them.
             let archived_filter = if request.include_archived.unwrap_or(false) {
-                ""
+                ALL_MAIL_LEGACY_FILTER
             } else {
                 "AND t.archived = 0 AND t.trashed = 0"
             };
@@ -232,6 +233,7 @@ impl Database {
             let DefaultFilter {
                 exclude_archived,
                 exclude_trashed,
+                exclude_spam,
             } = default_archived_trashed_filter(
                 &plan.terms,
                 request.include_archived.unwrap_or(false),
@@ -241,6 +243,9 @@ impl Database {
             }
             if exclude_trashed {
                 predicates.push("t.trashed = 0".to_string());
+            }
+            if exclude_spam {
+                predicates.push(format!("NOT {}", thread_has_system_id("SPAM")));
             }
             if let Some(id) = account_id {
                 binds.push(Value::Text(id.to_string()));
@@ -424,6 +429,11 @@ fn label_name_sql() -> String {
 /// Matches a thread whose `labels_json` holds the system label id `id`. `id`
 /// is a hard-coded CONSTANT (never user text), so it is safe to inline into
 /// the SQL — it binds no parameter and is not a `LIKE` pattern.
+/// The legacy free-text path's all-mail scope: archived mail is searched,
+/// Trash and Spam are not.
+const ALL_MAIL_LEGACY_FILTER: &str = "AND t.trashed = 0 \
+    AND NOT EXISTS (SELECT 1 FROM json_each(t.labels_json) j WHERE j.value = 'SPAM')";
+
 fn thread_has_system_id(id: &str) -> String {
     format!("EXISTS (SELECT 1 FROM json_each(t.labels_json) j WHERE j.value = '{id}')")
 }
