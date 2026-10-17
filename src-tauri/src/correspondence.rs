@@ -436,13 +436,26 @@ impl Database {
             .map_err(error)
     }
     /// How long locally cached mail is kept before `prune_expired_threads`
-    /// removes it. `None` means unlimited (the default, so nobody's mail
-    /// silently disappears the first time this ships).
+    /// removes it. New installations default to 90 days; existing unset
+    /// settings and an explicit Forever choice remain unlimited (`None`).
     pub fn retention_days(&self) -> DbResult<Option<i64>> {
+        self.read_retention_days(true)
+    }
+
+    /// Only chosen values belong in sync reconciliation, not a new device's
+    /// untouched installation default. Explicit Forever writes are recorded
+    /// by the command, as before.
+    pub(crate) fn chosen_retention_days(&self) -> DbResult<Option<i64>> {
+        self.read_retention_days(false)
+    }
+
+    fn read_retention_days(&self, include_default: bool) -> DbResult<Option<i64>> {
         self.connection()?
             .query_row(
-                "SELECT value FROM compose_settings WHERE key='retention_days'",
-                [],
+                "SELECT value FROM compose_settings
+                 WHERE key='retention_days' OR (?1 AND key='retention_days_default')
+                 ORDER BY CASE key WHEN 'retention_days' THEN 0 ELSE 1 END LIMIT 1",
+                [include_default],
                 |r| r.get::<_, String>(0),
             )
             .optional()?
@@ -451,15 +464,17 @@ impl Database {
     }
     pub fn set_retention_days(&self, days: Option<i64>) -> DbResult<()> {
         validate_retention_days(days).map_err(DatabaseError::Validation)?;
-        let connection = self.connection()?;
-        match days {
-            Some(days) => connection.execute(
-                "INSERT INTO compose_settings VALUES ('retention_days',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                params![days.to_string()],
-            ),
-            None => connection.execute("DELETE FROM compose_settings WHERE key='retention_days'", []),
-        }?;
-        Ok(())
+        self.with_transaction(|transaction| {
+            transaction.execute("DELETE FROM compose_settings WHERE key='retention_days_default'", [])?;
+            match days {
+                Some(days) => transaction.execute(
+                    "INSERT INTO compose_settings VALUES ('retention_days',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    params![days.to_string()],
+                ),
+                None => transaction.execute("DELETE FROM compose_settings WHERE key='retention_days'", []),
+            }?;
+            Ok(())
+        })
     }
     pub fn drafts(&self) -> Result<Vec<Draft>, String> {
         let c = self.connection()?;
@@ -2670,13 +2685,34 @@ mod tests {
         assert!(!permanent.contains("retry"));
     }
     #[test]
-    fn retention_days_defaults_to_unlimited_and_round_trips() {
+    fn retention_days_defaults_to_90_days_and_round_trips() {
         let db = database();
-        assert_eq!(db.retention_days().unwrap(), None);
-        db.set_retention_days(Some(90)).unwrap();
         assert_eq!(db.retention_days().unwrap(), Some(90));
+        assert_eq!(db.chosen_retention_days().unwrap(), None);
+        db.set_retention_days(Some(30)).unwrap();
+        assert_eq!(db.retention_days().unwrap(), Some(30));
+        assert_eq!(db.chosen_retention_days().unwrap(), Some(30));
         db.set_retention_days(None).unwrap();
         assert_eq!(db.retention_days().unwrap(), None);
+    }
+
+    #[test]
+    fn retention_default_and_choices_survive_reopening() {
+        let temp = crate::db::test_support::TempDbPath::new();
+        let db = Database::open(&temp.path).unwrap();
+        assert_eq!(db.retention_days().unwrap(), Some(90));
+        drop(db);
+        let db = Database::open(&temp.path).unwrap();
+        assert_eq!(db.retention_days().unwrap(), Some(90));
+        drop(db);
+
+        for choice in [None, Some(30), Some(90), Some(365), None] {
+            let db = Database::open(&temp.path).unwrap();
+            db.set_retention_days(choice).unwrap();
+            drop(db);
+            let db = Database::open(&temp.path).unwrap();
+            assert_eq!(db.retention_days().unwrap(), choice);
+        }
     }
 
     #[test]

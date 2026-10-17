@@ -815,6 +815,16 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
     if version < 76 {
         tx.execute_batch("CREATE TABLE signatures(id TEXT PRIMARY KEY, payload TEXT NOT NULL); CREATE TABLE signature_defaults(id TEXT PRIMARY KEY, payload TEXT NOT NULL);").map_err(error)?;
     }
+    if stored == 0 {
+        // Only new installations get the 90-day default. Existing databases
+        // without a retention setting still mean Forever. Keep the default
+        // separate from a chosen value so joining sync cannot publish it as
+        // a concurrent settings change.
+        tx.execute(
+            "INSERT OR IGNORE INTO compose_settings(key, value) VALUES ('retention_days_default', '90')",
+            [],
+        ).map_err(error)?;
+    }
     if version < LATEST_VERSION || stored == 0 {
         tx.pragma_update(None, "user_version", LATEST_VERSION)
             .map_err(error)?;
@@ -1007,6 +1017,65 @@ mod tests {
             super::LATEST_VERSION,
             "migrate() must stamp a fresh database to the current baseline"
         );
+    }
+
+    #[test]
+    fn retention_default_preserves_existing_installations_and_choices() {
+        use rusqlite::OptionalExtension;
+
+        for version in [super::BASELINE_VERSION, super::LATEST_VERSION] {
+            for choice in [None, Some(30), Some(90), Some(365)] {
+                let mut connection = Connection::open_in_memory().unwrap();
+                connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
+                if version == super::LATEST_VERSION {
+                    super::migrate(&mut connection).unwrap();
+                    connection
+                        .execute(
+                            "DELETE FROM compose_settings WHERE key='retention_days_default'",
+                            [],
+                        )
+                        .unwrap();
+                } else {
+                    connection
+                        .pragma_update(None, "user_version", version)
+                        .unwrap();
+                }
+                if let Some(days) = choice {
+                    connection
+                        .execute(
+                            "INSERT INTO compose_settings(key, value) VALUES ('retention_days', ?1)",
+                            [days.to_string()],
+                        )
+                        .unwrap();
+                }
+
+                // An upgrade and subsequent opens must preserve both finite
+                // choices and the absence that historically means Forever.
+                for _ in 0..2 {
+                    super::migrate(&mut connection).unwrap();
+                    let chosen: Option<String> = connection
+                        .query_row(
+                            "SELECT value FROM compose_settings WHERE key='retention_days'",
+                            [],
+                            |row| row.get(0),
+                        )
+                        .optional()
+                        .unwrap();
+                    assert_eq!(chosen, choice.map(|days| days.to_string()));
+                    let defaults: i64 = connection
+                        .query_row(
+                            "SELECT COUNT(*) FROM compose_settings WHERE key='retention_days_default'",
+                            [],
+                            |row| row.get(0),
+                        )
+                        .unwrap();
+                    assert_eq!(
+                        defaults, 0,
+                        "existing v{version} must not acquire a new default"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

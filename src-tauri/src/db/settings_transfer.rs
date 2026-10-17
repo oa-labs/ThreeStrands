@@ -169,6 +169,9 @@ impl Database {
                 }
             }
 
+            // Imports replace retention, including older exports' Forever
+            // value; an installation default must not reappear underneath it.
+            transaction.execute("DELETE FROM compose_settings WHERE key='retention_days_default'", [])?;
             match retention_days {
                 Some(days) => transaction
                     .execute(

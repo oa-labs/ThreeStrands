@@ -14,7 +14,7 @@ function isTauri(): boolean {
 
 // Outside Tauri (browser preview, tests) there's no local database, so this
 // only lives in memory for the session.
-let demoRetentionDays: number | null = null;
+let demoRetentionDays: number | null = 90;
 
 export async function getRetentionDays(): Promise<number | null> {
   if (!isTauri()) return demoRetentionDays;

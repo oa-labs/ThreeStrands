@@ -253,12 +253,12 @@ impl Database {
                 }
             }
         }
-        // Unset retention is the unlimited default, not a choice this device
-        // made. Seeding it would assert "forever" as a concurrent write the
-        // moment a fresh device joins, conflicting with whatever the space
-        // already agreed on. An explicit choice — including switching back
+        // An untouched installation default is not a choice this device
+        // made. Seeding it would assert a concurrent write the moment a fresh
+        // device joins, conflicting with whatever the space already agreed
+        // on. An explicit choice — including switching back
         // to unlimited — is recorded by the `set_retention_days` command.
-        if let Some(days) = self.retention_days()? {
+        if let Some(days) = self.chosen_retention_days()? {
             if self.reconcile_one_entity(EntityType::Retention, "mail", json!({ "days": days }))? {
                 repaired += 1;
             }
@@ -3952,11 +3952,28 @@ mod reconciliation_tests {
     }
 
     #[test]
-    fn does_not_seed_the_unlimited_retention_default() {
+    fn does_not_seed_an_untouched_retention_default() {
         // A freshly joining device has never chosen a retention period.
-        // Seeding its unset default would enter the graph as a concurrent
-        // "forever" write and conflict with the space's agreed value.
+        // Seeding its installation default would enter the graph as a
+        // concurrent write and conflict with the space's agreed value.
         let database = Database::open_memory();
+        assert_eq!(database.retention_days().unwrap(), Some(90));
+        database.reconcile_replicated_sync_backlog().unwrap();
+        assert_eq!(retention_operation_count(&database), 0);
+    }
+
+    #[test]
+    fn does_not_seed_legacy_unlimited_retention() {
+        let database = Database::open_memory();
+        // Older installations represented Forever with no setting at all.
+        database
+            .connection()
+            .unwrap()
+            .execute(
+                "DELETE FROM compose_settings WHERE key='retention_days_default'",
+                [],
+            )
+            .unwrap();
         assert_eq!(database.retention_days().unwrap(), None);
         database.reconcile_replicated_sync_backlog().unwrap();
         assert_eq!(retention_operation_count(&database), 0);

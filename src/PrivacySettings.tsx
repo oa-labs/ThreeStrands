@@ -35,8 +35,9 @@ export function PrivacySettings({
         </select>
       </label>
       <span className="settings-hint settings-field-detail">
-        Mail older than this is removed from ThreeStrands's local cache to keep the
-        database from growing without bound. It stays on the server.
+        Conversations whose newest message is older than this are removed from
+        ThreeStrands's local cache, including Trash. Starred conversations are
+        kept unless they are in Trash. Mail stays on the server.
       </span>
 
       <h3>Message Images</h3>

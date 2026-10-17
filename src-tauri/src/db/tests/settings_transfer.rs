@@ -84,6 +84,22 @@ fn import_transfer_preserves_local_credentials_and_marks_new_accounts_for_connec
 }
 
 #[test]
+fn importing_retention_replaces_a_new_installations_default_including_forever() {
+    for choice in [None, Some(30), Some(90), Some(365)] {
+        let database = Database::open_memory();
+        assert_eq!(database.retention_days().unwrap(), Some(90));
+        assert_eq!(database.chosen_retention_days().unwrap(), None);
+        database
+            .import_transfer_data(
+                &[], &Default::default(), &[], &[], &[], None, None, choice, None,
+            )
+            .unwrap();
+        assert_eq!(database.retention_days().unwrap(), choice);
+        assert_eq!(database.chosen_retention_days().unwrap(), choice);
+    }
+}
+
+#[test]
 fn import_sets_up_only_the_chosen_accounts_and_never_disconnects_one() {
     let database = database();
     database.adopt_account("connected@example.com").unwrap();
