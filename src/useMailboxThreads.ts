@@ -12,6 +12,10 @@ const SEARCH_PAGE_SIZE = 50;
 // local search at this cadence rather than waiting for the whole scan to
 // finish before a match becomes visible.
 const REMOTE_SEARCH_POLL_MS = 1200;
+// Local search already runs on SearchField's short typing debounce. A server
+// search costs a provider round trip per query, so it waits for a longer
+// pause after the local results land instead of firing on every word.
+export const REMOTE_SEARCH_DELAY_MS = 600;
 
 type Options = {
   activeAccountId: string | null;
@@ -32,7 +36,11 @@ export function useMailboxThreads({
   const queryRef = useRef(query);
   queryRef.current = query;
   const [searchOpen, setSearchOpen] = useState(false);
-  const [includeArchived, setIncludeArchived] = useState(false);
+  // Search covers all mail (minus Trash and Spam) unless the user narrows it
+  // to the inbox. `includeArchived` is derived so an empty search box still
+  // reads as the plain inbox to triage and mutation code.
+  const [inboxOnly, setInboxOnly] = useState(false);
+  const includeArchived = Boolean(query.trim()) && !inboxOnly;
   const [remoteSearchState, setRemoteSearchState] = useState<"idle" | "searching" | "error">("idle");
   // Phase 5 run 5: the ONE quiet status line for the current search (a partial,
   // skipped, or no-matches outcome worded in `searchStatusCopy`), or null when
@@ -50,6 +58,17 @@ export function useMailboxThreads({
   const remoteSearchRequestRef = useRef(0);
   const remoteSearchPromiseRef = useRef<Promise<SearchReport> | null>(null);
   const remoteSearchInFlightRef = useRef(false);
+  const remoteSearchTimerRef = useRef<number | null>(null);
+  const cancelRemoteSearch = useCallback(() => {
+    if (remoteSearchTimerRef.current !== null) window.clearTimeout(remoteSearchTimerRef.current);
+    remoteSearchTimerRef.current = null;
+    remoteSearchKeyRef.current = null;
+    remoteSearchRequestRef.current += 1;
+    remoteSearchPromiseRef.current = null;
+    remoteSearchInFlightRef.current = false;
+    setRemoteSearchState("idle");
+    setSearchStatus(null);
+  }, []);
   const fetchMailboxPage = useCallback((box: MailboxKind, accountId: string | undefined, offset: number) => {
     if (box === "allMail") return mailClient.listAllMailPage(accountId, offset, SEARCH_PAGE_SIZE);
     if (box === "sent") return mailClient.listSentPage(accountId, offset, SEARCH_PAGE_SIZE);
@@ -74,14 +93,8 @@ export function useMailboxThreads({
     const trimmed = search.trim();
     const accountId = (accountOverride !== undefined ? accountOverride : activeAccountId) ?? undefined;
     const searchableMailbox = box === "inbox" || box === "split";
-    if (!searchableMailbox || !trimmed || !includeArchived) {
-      remoteSearchKeyRef.current = null;
-      remoteSearchRequestRef.current += 1;
-      remoteSearchPromiseRef.current = null;
-      remoteSearchInFlightRef.current = false;
-      setRemoteSearchState("idle");
-      setSearchStatus(null);
-    }
+    const searchAllMail = !inboxOnly;
+    if (!searchableMailbox || !trimmed || !searchAllMail) cancelRemoteSearch();
     const commitPage = (page: { threads: Thread[]; hasMore: boolean }) => {
       if (requestId !== threadsRequest.current) return false;
       setMailboxError("");
@@ -101,19 +114,19 @@ export function useMailboxThreads({
         const searchRequest = {
           query: trimmed,
           limit: SEARCH_PAGE_SIZE,
-          includeArchived,
+          includeArchived: searchAllMail,
         };
         const localThreads = await mailClient.searchThreads(searchRequest, accountId);
         if (!commitPage({ threads: localThreads, hasMore: localThreads.length === SEARCH_PAGE_SIZE })) return;
 
         const remoteSearchKey = `${accountId ?? "all"}\u0000${trimmed}`;
-        if (includeArchived && remoteSearchKeyRef.current !== remoteSearchKey) {
+        if (searchAllMail && remoteSearchKeyRef.current !== remoteSearchKey) {
+          if (remoteSearchTimerRef.current !== null) window.clearTimeout(remoteSearchTimerRef.current);
           remoteSearchKeyRef.current = remoteSearchKey;
           const remoteRequestId = ++remoteSearchRequestRef.current;
           remoteSearchInFlightRef.current = true;
           setRemoteSearchState("searching");
-          const backfillPromise = mailClient.backfillSearchThreads(trimmed, accountId);
-          remoteSearchPromiseRef.current = backfillPromise;
+          let pollInterval: number | undefined;
           const pollForRemoteMatches = () => {
             if (remoteRequestId !== remoteSearchRequestRef.current) return;
             void mailClient.searchThreads(searchRequest, accountId).then((polled) => {
@@ -121,7 +134,19 @@ export function useMailboxThreads({
               commitPage({ threads: polled, hasMore: polled.length === SEARCH_PAGE_SIZE });
             });
           };
-          const pollInterval = window.setInterval(pollForRemoteMatches, REMOTE_SEARCH_POLL_MS);
+          // The promise is published now so a reload during the pause (a sync
+          // landing, say) attaches to it below; the provider request itself
+          // starts only once the query has held still. A superseded query's
+          // promise simply never settles.
+          const backfillPromise = new Promise<SearchReport>((resolve, reject) => {
+            remoteSearchTimerRef.current = window.setTimeout(() => {
+              remoteSearchTimerRef.current = null;
+              if (remoteRequestId !== remoteSearchRequestRef.current) return;
+              pollInterval = window.setInterval(pollForRemoteMatches, REMOTE_SEARCH_POLL_MS);
+              mailClient.backfillSearchThreads(trimmed, accountId).then(resolve, reject);
+            }, REMOTE_SEARCH_DELAY_MS);
+          });
+          remoteSearchPromiseRef.current = backfillPromise;
           void backfillPromise
             .then(async (report) => {
               window.clearInterval(pollInterval);
@@ -149,7 +174,7 @@ export function useMailboxThreads({
                 setSearchStatus(null);
               }
             });
-        } else if (includeArchived && remoteSearchKeyRef.current === remoteSearchKey && remoteSearchInFlightRef.current) {
+        } else if (searchAllMail && remoteSearchKeyRef.current === remoteSearchKey && remoteSearchInFlightRef.current) {
           const remoteRequestId = remoteSearchRequestRef.current;
           const remotePromise = remoteSearchPromiseRef.current;
           if (remotePromise) {
@@ -174,8 +199,8 @@ export function useMailboxThreads({
       setMailboxError(errorMessage(error));
     }
   }, [
-    mailbox, activeSplitInboxId, activeAccountId, includeArchived, setSelectedId,
-    refreshUnreadCounts, refreshMailboxUnreadCounts, fetchMailboxPage,
+    mailbox, activeSplitInboxId, activeAccountId, inboxOnly, setSelectedId,
+    refreshUnreadCounts, refreshMailboxUnreadCounts, fetchMailboxPage, cancelRemoteSearch,
   ]);
 
   // Sync round trips can outlive a mailbox/split-inbox switch. Reading
@@ -253,25 +278,21 @@ export function useMailboxThreads({
 
   useEffect(() => {
     // The toggle itself is only reachable while searching; reset it with the
-    // search box so a stale "include archived" flag can't linger over into
-    // the plain inbox view, where the backend always excludes archived mail.
-    if (!query.trim()) setIncludeArchived(false);
+    // search box so the next search starts from all mail again.
+    if (!query.trim()) setInboxOnly(false);
   }, [query]);
 
   useEffect(() => {
-    if (!includeArchived) {
-      remoteSearchKeyRef.current = null;
-      remoteSearchRequestRef.current += 1;
-      remoteSearchPromiseRef.current = null;
-      remoteSearchInFlightRef.current = false;
-      setRemoteSearchState("idle");
-      setSearchStatus(null);
-    }
-  }, [includeArchived]);
+    if (!includeArchived) cancelRemoteSearch();
+  }, [includeArchived, cancelRemoteSearch]);
+
+  useEffect(() => () => {
+    if (remoteSearchTimerRef.current !== null) window.clearTimeout(remoteSearchTimerRef.current);
+  }, []);
 
   return {
     threads, setThreads, query, setQuery, queryRef, searchOpen, setSearchOpen, includeArchived,
-    setIncludeArchived, remoteSearchState, searchStatus, setSearchStatus, hasMoreResults, loading,
+    inboxOnly, setInboxOnly, remoteSearchState, searchStatus, setSearchStatus, hasMoreResults, loading,
     mailboxError, loadingMoreState,
     loadThreads, loadThreadsRef, loadMoreResults, contextOpenedThreadRef,
   };

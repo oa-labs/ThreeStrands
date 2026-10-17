@@ -612,6 +612,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       const pool = includeArchived
         ? [...threads]
             .filter((thread) => !accountId || accountId === "all" || thread.accountId === accountId)
+            .filter((thread) => !thread.trashed && !thread.labels.includes("SPAM"))
             .sort((a, b) => b.lastReceivedAt.localeCompare(a.lastReceivedAt))
         : visible(accountId);
       return structuredClone(

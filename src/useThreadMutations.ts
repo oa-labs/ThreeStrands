@@ -101,9 +101,11 @@ export function useThreadMutations({
       ? template.kind === "trash" && !template.value
       : mailbox === "allMail" || mailbox === "sent"
         ? template.kind === "trash" && template.value
-        : (template.kind === "archive" || template.kind === "trash" || template.kind === "spam")
-            && template.value
-            && !includeArchived;
+        // An all-mail search keeps archived results but, like the backend,
+        // never shows Trash or Spam.
+        : template.value
+            && (template.kind === "trash" || template.kind === "spam"
+              || (template.kind === "archive" && !includeArchived));
 
     setThreads((current) => {
       const mapped = current.map((thread) =>

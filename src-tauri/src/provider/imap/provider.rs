@@ -10597,14 +10597,14 @@ mod tests {
         async fn a_skipped_query_makes_no_network_call_and_returns_empty() {
             let mailbox = Arc::new(Mutex::new(multi_mailbox()));
             let (provider, _store, opens) = counting_provider(mailbox);
-            // `-from:alice` is a negation -> Raw -> Skipped by the renderer.
-            let result = provider.search_detailed("-from:alice", None).await.unwrap();
+            // `category:promotions` is an unknown operator -> Raw -> Skipped by the renderer.
+            let result = provider.search_detailed("category:promotions", None).await.unwrap();
             assert!(result.thread_ids.is_empty());
             assert!(result.skipped.is_some(), "carries the skip reason for the UI");
             assert_eq!(result.partial, None);
             assert_eq!(opens.load(Ordering::SeqCst), 0, "no session opened for a Skipped render");
             // The MailSync wrapper returns the same empty page, next: None.
-            let page = provider.search("-from:alice", None).await.unwrap();
+            let page = provider.search("category:promotions", None).await.unwrap();
             assert!(page.thread_ids.is_empty());
             assert!(page.next.is_none());
         }
@@ -10840,14 +10840,14 @@ mod tests {
                 );
             }
 
-            /// `-from:alice` (a negation -> Raw -> Skipped) reports `Skipped`
+            /// `category:promotions` (unknown operator -> Raw -> Skipped) reports `Skipped`
             /// with the one user-facing `Unsupported` code — never the query.
             #[tokio::test]
             async fn a_skipped_render_reports_skipped_unsupported() {
                 let mailbox = Arc::new(Mutex::new(multi_mailbox()));
                 let (provider, _store, opens) = counting_provider(mailbox);
                 let (page, report) = provider
-                    .search_with_report("-from:alice", None)
+                    .search_with_report("category:promotions", None)
                     .await
                     .unwrap();
                 assert!(page.thread_ids.is_empty());
@@ -10979,7 +10979,7 @@ mod tests {
                     db.as_ref(),
                     "me@example.com",
                     &provider,
-                    "-from:alice",
+                    "category:promotions",
                     50,
                 )
                 .await

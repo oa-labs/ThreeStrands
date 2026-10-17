@@ -49,11 +49,15 @@ pub enum MessageState {
 
 /// One term of a parsed search query.
 ///
-/// The AST stays flat: the surface language is a conjunction of terms
-/// (space-separated, implicitly ANDed), matching what both Gmail and IMAP
-/// `SEARCH` accept without parentheses. Matches should list every variant
-/// rather than use a `_` arm, so a new term fails to compile until each
-/// renderer decides what to do with it.
+/// A query is a conjunction of terms (space-separated, implicitly ANDed).
+/// Boolean structure is kept shallow on purpose: a term can be negated
+/// ([`QueryTerm::Not`]) or be one of several alternatives
+/// ([`QueryTerm::AnyOf`]), and both only ever wrap SIMPLE terms (see
+/// [`QueryTerm::is_simple`]), so every renderer handles at most
+/// `NOT simple` and `simple OR NOT simple OR …`. Deeper nesting stays
+/// [`QueryTerm::Raw`]. Matches should list every variant rather than use a
+/// `_` arm, so a new term fails to compile until each renderer decides what to
+/// do with it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum QueryTerm {
     /// Literal text the user is looking for: a bare word, or a double-quoted
@@ -78,12 +82,39 @@ pub enum QueryTerm {
     /// `has:attachment`. IMAP cannot express this server-side, so it becomes a
     /// local post-filter there (left unimplemented in this slice).
     HasAttachment,
-    /// Query syntax this AST doesn't model, kept verbatim: negation
-    /// (`-in:trash`), `OR`/`AND`, parentheses and braces, unknown operators
-    /// (`category:promotions`), unknown `is:`/`has:` values, empty operator
-    /// values and unparseable dates. Gmail receives it unchanged. It is never
-    /// literal text, so the IMAP renderer must not send it as a `TEXT` search.
+    /// `-term`: mail that does NOT match a simple term. Also produced from a
+    /// negated group by De Morgan (`-{a b}` is `-a -b`).
+    Not(Box<QueryTerm>),
+    /// Mail matching ANY of two or more alternatives, each a simple term or a
+    /// negated simple term: `a OR b`, `{a b}`, `(a OR b)` and
+    /// `from:(a OR b)` all parse to this, and it renders back as `{a b}`.
+    AnyOf(Vec<QueryTerm>),
+    /// Query syntax this AST doesn't model, kept verbatim: nested or mixed
+    /// grouping (`(a b OR c)`), an `OR` with nothing to join, unbalanced
+    /// brackets, unknown operators (`category:promotions`), unknown
+    /// `is:`/`has:` values, empty operator values and unparseable dates.
+    /// Gmail receives it unchanged. It is never literal text, so the IMAP
+    /// renderer must not send it as a `TEXT` search.
     Raw(String),
+}
+
+impl QueryTerm {
+    /// A term with no boolean structure: anything but `Not`, `AnyOf` and
+    /// `Raw`. Only simple terms may be negated or offered as alternatives.
+    pub fn is_simple(&self) -> bool {
+        !matches!(self, QueryTerm::Not(_) | QueryTerm::AnyOf(_) | QueryTerm::Raw(_))
+    }
+
+    /// Every simple (or raw) term inside this one, with whether it is
+    /// negated. A plain term yields itself; `Not(t)` yields `t` negated; an
+    /// `AnyOf` yields each alternative.
+    pub fn leaves(&self) -> Vec<(&QueryTerm, bool)> {
+        match self {
+            QueryTerm::Not(inner) => vec![(inner.as_ref(), true)],
+            QueryTerm::AnyOf(alternatives) => alternatives.iter().flat_map(QueryTerm::leaves).collect(),
+            term => vec![(term, false)],
+        }
+    }
 }
 
 /// A parsed, provider-neutral search query: a conjunction of [`QueryTerm`]s in
@@ -105,13 +136,19 @@ impl SearchQuery {
     /// token, and they can open at the start of a token or right after a
     /// `field:` prefix. A quote that is never closed runs to the end of the
     /// input and is treated as closed there. Field names and `is:`/`has:`
-    /// values are case-insensitive. Nothing a user types is silently dropped.
+    /// values are case-insensitive.
+    ///
+    /// Boolean syntax follows Gmail: a leading `-` negates a term, an
+    /// uppercase `OR` between two terms makes them alternatives (binding
+    /// tighter than the implicit AND, so `a b OR c` is `a (b OR c)`), `{a b}`
+    /// is `a OR b`, `(a b)` groups an AND and `(a OR b)` an OR, and
+    /// `field:(a OR b)` applies the field to each alternative. An uppercase
+    /// `AND` is the implicit AND spelled out and adds no term. Anything
+    /// deeper than one level of grouping stays `Raw`; nothing else a user
+    /// types is silently dropped.
     pub fn parse(input: &str) -> Self {
         SearchQuery {
-            terms: tokenize(input)
-                .iter()
-                .map(|token| parse_token(token))
-                .collect(),
+            terms: parse_terms(&tokenize(input)),
         }
     }
 
@@ -129,31 +166,7 @@ impl SearchQuery {
     pub fn render_gmail(&self) -> String {
         self.terms
             .iter()
-            .map(|term| match term {
-                QueryTerm::FreeText { text, quoted } => {
-                    if *quoted || !renders_as(text, term) {
-                        format!("\"{text}\"")
-                    } else {
-                        text.clone()
-                    }
-                }
-                QueryTerm::From(value) => render_field("from", value, term),
-                QueryTerm::To(value) => render_field("to", value, term),
-                QueryTerm::Subject(value) => render_field("subject", value, term),
-                QueryTerm::Date { bound, date } => {
-                    let key = match bound {
-                        DateBound::Before => "before",
-                        DateBound::After => "after",
-                    };
-                    format!("{key}:{}", date.format("%Y/%m/%d"))
-                }
-                QueryTerm::State(MessageState::Unread) => "is:unread".to_string(),
-                QueryTerm::State(MessageState::Starred) => "is:starred".to_string(),
-                QueryTerm::Label(value) => render_field("label", value, term),
-                QueryTerm::In(value) => render_field("in", value, term),
-                QueryTerm::HasAttachment => "has:attachment".to_string(),
-                QueryTerm::Raw(token) => token.clone(),
-            })
+            .map(render_gmail_term)
             .collect::<Vec<_>>()
             .join(" ")
     }
@@ -267,16 +280,16 @@ pub enum LocalSearchPlan {
 impl LocalSearchPlan {
     /// Decide the plan from an already-parsed query.
     pub fn from_query(query: &SearchQuery) -> Self {
-        // `Raw` is the ONLY blocker as of run 2b-2: a negation (`-label:work`,
-        // `-in:trash`), `OR`/`AND`, parentheses, an unknown operator or an
-        // empty `label:`/`in:` value parses to a `Raw` term and keeps the whole
-        // query on the legacy path, byte-identical to before. `Label`/`In`
-        // became locally evaluable in run 2b-2 (resolved in SQL against the
-        // `account_labels` cache), so they no longer block.
+        // `Raw` is the ONLY blocker: unmodelled syntax (an unknown operator,
+        // an empty `label:`/`in:` value, nested grouping) parses to a `Raw`
+        // term and keeps the whole query on the legacy path. Negation and
+        // `OR` are modelled (`Not`/`AnyOf`) and run on the structured path,
+        // since the legacy FTS path would read them as words.
         let has_blocker = query
             .terms
             .iter()
-            .any(|term| matches!(term, QueryTerm::Raw(_)));
+            .flat_map(QueryTerm::leaves)
+            .any(|(term, _)| matches!(term, QueryTerm::Raw(_)));
         if has_blocker {
             return LocalSearchPlan::Legacy;
         }
@@ -291,6 +304,8 @@ impl LocalSearchPlan {
                     | QueryTerm::HasAttachment
                     | QueryTerm::Label(_)
                     | QueryTerm::In(_)
+                    | QueryTerm::Not(_)
+                    | QueryTerm::AnyOf(_)
             )
         });
         if !has_operator {
@@ -317,9 +332,10 @@ pub struct StructuredLocalSearch {
 }
 
 impl StructuredLocalSearch {
-    /// How many terms the structured path acts on (all of them).
+    /// How many terms the structured path acts on: every simple term,
+    /// including each alternative of an `AnyOf`.
     pub fn term_count(&self) -> usize {
-        self.terms.len()
+        self.terms.iter().map(|term| term.leaves().len()).sum()
     }
 
     /// The free user text, rebuilt exactly as the legacy FTS path would see
@@ -351,7 +367,8 @@ impl StructuredLocalSearch {
     pub fn text_values(&self) -> Vec<&str> {
         self.terms
             .iter()
-            .filter_map(|term| match term {
+            .flat_map(QueryTerm::leaves)
+            .filter_map(|(term, _)| match term {
                 QueryTerm::From(v)
                 | QueryTerm::To(v)
                 | QueryTerm::Subject(v)
@@ -359,6 +376,9 @@ impl StructuredLocalSearch {
                 | QueryTerm::In(v)
                 | QueryTerm::FreeText { text: v, .. } => Some(v.as_str()),
                 QueryTerm::Date { .. } | QueryTerm::State(_) | QueryTerm::HasAttachment => None,
+                // `leaves` never yields these; listed so a new variant forces
+                // a decision here.
+                QueryTerm::Not(_) | QueryTerm::AnyOf(_) => None,
                 // Unreachable for a structured plan (a `Raw` term routes to
                 // legacy), but handled so a new variant forces a compile error
                 // rather than a silent skip.
@@ -413,56 +433,102 @@ pub fn utc_day_start_rfc3339(date: NaiveDate) -> String {
     chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(start, chrono::Utc).to_rfc3339()
 }
 
-/// Which halves of the default archived/trashed exclusion a structured query
-/// applies. The everyday inbox view hides archived and trashed mail; a search
-/// that names a LOCATION is explicit intent to look outside the inbox, so the
-/// structured path relaxes the default per [`default_archived_trashed_filter`].
+/// Which parts of the default archived/trashed/spam exclusion a structured
+/// query applies. The everyday inbox view hides archived and trashed mail; a
+/// search that names a LOCATION is explicit intent to look outside the inbox,
+/// so the structured path relaxes the default per
+/// [`default_archived_trashed_filter`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DefaultFilter {
     /// Apply `t.archived = 0` (hide archived threads).
     pub exclude_archived: bool,
     /// Apply `t.trashed = 0` (hide trashed threads).
     pub exclude_trashed: bool,
+    /// Hide threads carrying the `SPAM` system label. Only needed once the
+    /// archived half is dropped by the all-mail scope: spam is never in the
+    /// inbox, so `exclude_archived` already hides it otherwise.
+    pub exclude_spam: bool,
 }
 
-/// Decide which halves of the default `archived = 0 AND trashed = 0` filter a
-/// structured query keeps, from its parsed terms and the `include_archived`
-/// toggle. Pure, so it is table-tested directly.
+/// Decide which parts of the default exclusion a structured query keeps, from
+/// its parsed terms and the `include_archived` (all-mail scope) flag. Pure, so
+/// it is table-tested directly.
 ///
-/// Rules (run 2b-2):
-/// - `include_archived == true` keeps today's meaning: BOTH halves are
-///   dropped (the user asked to see everything).
+/// Rules:
+/// - `include_archived == true` is the all-mail scope, matching Gmail's
+///   default search: the `archived = 0` half is dropped, but trashed and spam
+///   threads stay hidden unless the query names them (`in:trash`,
+///   `in:spam`/`in:junk`, or `in:anywhere`).
 /// - Otherwise, if the query contains ANY `label:` or `in:` term, the
 ///   `archived = 0` half is dropped: naming a location is explicit intent, and
 ///   sent mail and folder mail are "archived" by the data model's definition
-///   (archived == no `INBOX` label).
+///   (archived == no `INBOX` label). Spam is not separately excluded here.
 /// - The `trashed = 0` half is kept UNLESS the query has `in:trash` or
 ///   `in:anywhere`. `in:spam`/`in:junk` do NOT waive it.
-/// - A query with no `label:`/`in:` term keeps BOTH halves (today's default).
+/// - A query with no `label:`/`in:` term and no all-mail scope keeps the
+///   archived and trashed halves (the inbox-only scope).
 pub fn default_archived_trashed_filter(
     terms: &[QueryTerm],
     include_archived: bool,
 ) -> DefaultFilter {
-    if include_archived {
-        return DefaultFilter {
-            exclude_archived: false,
-            exclude_trashed: false,
-        };
-    }
-    let has_label_or_in = terms
+    let leaves: Vec<(&QueryTerm, bool)> = terms.iter().flat_map(QueryTerm::leaves).collect();
+    // Naming a location at all, even to exclude it (`-in:inbox`), is intent
+    // to look beyond the inbox.
+    let has_label_or_in = leaves
         .iter()
-        .any(|term| matches!(term, QueryTerm::Label(_) | QueryTerm::In(_)));
+        .any(|(term, _)| matches!(term, QueryTerm::Label(_) | QueryTerm::In(_)));
+    // Only a POSITIVE location reaches excluded mail: `-in:trash` asks for
+    // less, not more. Compared ASCII-case-insensitively, matching the
+    // resolution path.
+    let names_location = |words: &[&str]| {
+        leaves.iter().any(|(term, negated)| match term {
+            QueryTerm::In(value) if !negated => words.iter().any(|word| value.eq_ignore_ascii_case(word)),
+            _ => false,
+        })
+    };
     // `in:trash` and `in:anywhere` are the only locations that reach trashed
-    // mail. Compared ASCII-case-insensitively, matching the resolution path.
-    let waives_trashed = terms.iter().any(|term| match term {
-        QueryTerm::In(value) => {
-            value.eq_ignore_ascii_case("trash") || value.eq_ignore_ascii_case("anywhere")
-        }
-        _ => false,
-    });
+    // mail; `in:spam`/`in:junk` and `in:anywhere` the only ones that reach
+    // spam in the all-mail scope.
+    let waives_trashed = names_location(&["trash", "anywhere"]);
+    let waives_spam = names_location(&["spam", "junk", "anywhere"]);
     DefaultFilter {
-        exclude_archived: !has_label_or_in,
+        exclude_archived: !include_archived && !has_label_or_in,
         exclude_trashed: !waives_trashed,
+        exclude_spam: include_archived && !waives_spam,
+    }
+}
+
+/// Render one term in Gmail syntax so that it parses back to the same term.
+pub fn render_gmail_term(term: &QueryTerm) -> String {
+    match term {
+        QueryTerm::FreeText { text, quoted } => {
+            if *quoted || !renders_as(text, term) {
+                format!("\"{text}\"")
+            } else {
+                text.clone()
+            }
+        }
+        QueryTerm::From(value) => render_field("from", value, term),
+        QueryTerm::To(value) => render_field("to", value, term),
+        QueryTerm::Subject(value) => render_field("subject", value, term),
+        QueryTerm::Date { bound, date } => {
+            let key = match bound {
+                DateBound::Before => "before",
+                DateBound::After => "after",
+            };
+            format!("{key}:{}", date.format("%Y/%m/%d"))
+        }
+        QueryTerm::State(MessageState::Unread) => "is:unread".to_string(),
+        QueryTerm::State(MessageState::Starred) => "is:starred".to_string(),
+        QueryTerm::Label(value) => render_field("label", value, term),
+        QueryTerm::In(value) => render_field("in", value, term),
+        QueryTerm::HasAttachment => "has:attachment".to_string(),
+        QueryTerm::Not(inner) => format!("-{}", render_gmail_term(inner)),
+        QueryTerm::AnyOf(alternatives) => format!(
+            "{{{}}}",
+            alternatives.iter().map(render_gmail_term).collect::<Vec<_>>().join(" ")
+        ),
+        QueryTerm::Raw(token) => token.clone(),
     }
 }
 
@@ -513,6 +579,230 @@ fn tokenize(input: &str) -> Vec<String> {
         tokens.push(current);
     }
     tokens
+}
+
+/// One parsed piece of the query before `OR` is resolved: either the terms a
+/// token or group produced, or an `OR` keyword awaiting its operands.
+enum Piece {
+    /// `alternative` is set when the piece is exactly one term that may stand
+    /// on either side of an `OR` (a simple term, a negated one, or an
+    /// `AnyOf`). An AND group flattened into several terms is not.
+    Terms { terms: Vec<QueryTerm>, alternative: bool },
+    Or(String),
+}
+
+impl Piece {
+    fn single(term: QueryTerm) -> Self {
+        let alternative = is_alternative(&term) || matches!(term, QueryTerm::AnyOf(_));
+        Piece::Terms { terms: vec![term], alternative }
+    }
+}
+
+/// A term that can be one alternative of an [`QueryTerm::AnyOf`].
+fn is_alternative(term: &QueryTerm) -> bool {
+    match term {
+        QueryTerm::Not(inner) => inner.is_simple(),
+        term => term.is_simple(),
+    }
+}
+
+/// `NOT term`, cancelling a double negation.
+fn negate(term: QueryTerm) -> QueryTerm {
+    match term {
+        QueryTerm::Not(inner) => *inner,
+        term => QueryTerm::Not(Box::new(term)),
+    }
+}
+
+/// Join alternatives into one [`QueryTerm::AnyOf`], flattening nested ones.
+fn any_of(alternatives: Vec<QueryTerm>) -> QueryTerm {
+    let mut flat = Vec::new();
+    for alternative in alternatives {
+        match alternative {
+            QueryTerm::AnyOf(inner) => flat.extend(inner),
+            other => flat.push(other),
+        }
+    }
+    if flat.len() == 1 {
+        flat.pop().expect("one alternative")
+    } else {
+        QueryTerm::AnyOf(flat)
+    }
+}
+
+/// Net bracket depth change of a token, ignoring brackets inside quotes.
+fn bracket_delta(token: &str) -> i32 {
+    let mut depth = 0;
+    let mut in_quotes = false;
+    for ch in token.chars() {
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            '(' | '{' if !in_quotes => depth += 1,
+            ')' | '}' if !in_quotes => depth -= 1,
+            _ => {}
+        }
+    }
+    depth
+}
+
+/// Where a group starts in a token: `(…`, `{…`, `-(…`, `-{…`, or
+/// `field:(…` / `field:{…`. Returns `(negated, field, rest from the opening
+/// bracket)`.
+fn group_start(token: &str) -> Option<(bool, Option<String>, &str)> {
+    let (negated, body) = match token.strip_prefix('-') {
+        Some(rest) if !rest.is_empty() => (true, rest),
+        _ => (false, token),
+    };
+    if body.starts_with(['(', '{']) {
+        return Some((negated, None, body));
+    }
+    let (field, value) = split_field(body)?;
+    value
+        .starts_with(['(', '{'])
+        .then(|| (negated, Some(field), value))
+}
+
+/// Parse one token that is not part of a group: a term, or `-term`.
+fn parse_single(token: &str) -> QueryTerm {
+    if let Some(rest) = token.strip_prefix('-').filter(|rest| !rest.is_empty()) {
+        let inner = parse_token(rest);
+        return if inner.is_simple() {
+            QueryTerm::Not(Box::new(inner))
+        } else {
+            QueryTerm::Raw(token.to_string())
+        };
+    }
+    parse_token(token)
+}
+
+/// Parse a bracketed group. `text` runs from the opening bracket to the
+/// matching closing one. A group must hold only simple or negated terms, be
+/// all-OR or all-AND, and match its closing bracket; otherwise the whole
+/// group is kept as one `Raw` term.
+fn parse_group(original: &str, negated: bool, field: Option<&str>, text: &str) -> Piece {
+    let raw = || Piece::single(QueryTerm::Raw(original.to_string()));
+    let open = text.chars().next().expect("a group starts with a bracket");
+    let close = if open == '(' { ')' } else { '}' };
+    let Some(inner) = text[1..].strip_suffix(close) else {
+        return raw();
+    };
+    let tokens = tokenize(inner);
+    if tokens.iter().any(|token| token.contains(['(', ')', '{', '}'])) {
+        return raw();
+    }
+    let ors = tokens.iter().filter(|token| *token == "OR").count();
+    let operands: Vec<&String> = tokens.iter().filter(|token| *token != "OR" && *token != "AND").collect();
+    if operands.is_empty() {
+        return raw();
+    }
+    // In parentheses, `OR` must separate every pair of operands or none.
+    let is_or = open == '{' || ors > 0;
+    if open == '(' && ors > 0 {
+        let alternating = tokens.len() == operands.len() * 2 - 1
+            && tokens.iter().enumerate().all(|(index, token)| (index % 2 == 1) == (token == "OR"));
+        if !alternating {
+            return raw();
+        }
+    }
+    let mut terms = Vec::with_capacity(operands.len());
+    for operand in operands {
+        let term = match field {
+            Some(field) => match operand.strip_prefix('-').filter(|rest| !rest.is_empty()) {
+                Some(rest) => parse_single(&format!("-{field}:{rest}")),
+                None => parse_single(&format!("{field}:{operand}")),
+            },
+            None => parse_single(operand),
+        };
+        if !is_alternative(&term) {
+            return raw();
+        }
+        terms.push(term);
+    }
+    match (is_or, negated) {
+        // a OR b
+        (true, false) => Piece::single(any_of(terms)),
+        // NOT (a OR b) = NOT a AND NOT b
+        (true, true) => Piece::Terms { terms: terms.into_iter().map(negate).collect(), alternative: false },
+        // (a b)
+        (false, false) if terms.len() == 1 => Piece::single(terms.pop().expect("one term")),
+        (false, false) => Piece::Terms { terms, alternative: false },
+        // NOT (a AND b) = NOT a OR NOT b
+        (false, true) => Piece::single(any_of(terms.into_iter().map(negate).collect())),
+    }
+}
+
+/// Group tokens into pieces, then resolve each `OR` against its neighbours.
+fn parse_terms(tokens: &[String]) -> Vec<QueryTerm> {
+    let mut pieces = Vec::new();
+    let mut index = 0;
+    while index < tokens.len() {
+        let token = &tokens[index];
+        if token == "OR" {
+            pieces.push(Piece::Or(token.clone()));
+            index += 1;
+            continue;
+        }
+        if token == "AND" {
+            index += 1;
+            continue;
+        }
+        if let Some((negated, field, _)) = group_start(token) {
+            // Collect tokens until the brackets balance.
+            let mut depth = 0;
+            let mut end = index;
+            while end < tokens.len() {
+                depth += bracket_delta(&tokens[end]);
+                end += 1;
+                if depth <= 0 {
+                    break;
+                }
+            }
+            let original = tokens[index..end].join(" ");
+            let piece = if depth == 0 {
+                let (_, _, text) = group_start(&original).expect("the group still starts here");
+                parse_group(&original, negated, field.as_deref(), text)
+            } else {
+                Piece::single(QueryTerm::Raw(original))
+            };
+            pieces.push(piece);
+            index = end;
+            continue;
+        }
+        pieces.push(Piece::single(parse_single(token)));
+        index += 1;
+    }
+
+    // `OR` binds tighter than the implicit AND: it joins the single term
+    // just before it with the single term just after it.
+    let mut terms: Vec<QueryTerm> = Vec::new();
+    let mut last_is_alternative = false;
+    let mut pieces = pieces.into_iter().peekable();
+    while let Some(piece) = pieces.next() {
+        match piece {
+            Piece::Or(token) => {
+                let next_is_alternative = matches!(
+                    pieces.peek(),
+                    Some(Piece::Terms { alternative: true, .. })
+                );
+                if last_is_alternative && next_is_alternative {
+                    let Some(Piece::Terms { terms: mut right, .. }) = pieces.next() else {
+                        unreachable!("peeked an alternative");
+                    };
+                    let left = terms.pop().expect("an alternative precedes OR");
+                    terms.push(any_of(vec![left, right.pop().expect("one term")]));
+                    last_is_alternative = true;
+                } else {
+                    terms.push(QueryTerm::Raw(token));
+                    last_is_alternative = false;
+                }
+            }
+            Piece::Terms { terms: piece_terms, alternative } => {
+                terms.extend(piece_terms);
+                last_is_alternative = alternative;
+            }
+        }
+    }
+    terms
 }
 
 /// Turn one token into a [`QueryTerm`].
@@ -769,20 +1059,97 @@ mod tests {
         assert_eq!(parse("subject:\"\""), vec![raw("subject:\"\"")]);
     }
 
+    fn not(term: QueryTerm) -> QueryTerm {
+        QueryTerm::Not(Box::new(term))
+    }
+
+    fn any(terms: Vec<QueryTerm>) -> QueryTerm {
+        QueryTerm::AnyOf(terms)
+    }
+
+    fn from(value: &str) -> QueryTerm {
+        QueryTerm::From(value.into())
+    }
+
     #[test]
-    fn negation_boolean_operators_and_grouping_are_raw() {
-        assert_eq!(parse("-in:trash"), vec![raw("-in:trash")]);
-        assert_eq!(parse("-meeting"), vec![raw("-meeting")]);
+    fn parses_negation() {
+        assert_eq!(parse("-in:trash"), vec![not(QueryTerm::In("trash".into()))]);
+        assert_eq!(parse("-meeting"), vec![not(word("meeting"))]);
+        assert_eq!(parse("-\"weekly sync\""), vec![not(phrase("weekly sync"))]);
+        // Negating something that isn't a simple term stays raw.
+        assert_eq!(parse("-category:x"), vec![raw("-category:x")]);
+        assert_eq!(parse("-from:"), vec![raw("-from:")]);
+    }
+
+    #[test]
+    fn or_joins_its_neighbours_and_binds_tighter_than_and() {
+        assert_eq!(parse("from:a OR from:b"), vec![any(vec![from("a"), from("b")])]);
         assert_eq!(
-            parse("from:a OR from:b"),
+            parse("budget from:a OR from:b OR -is:unread"),
+            vec![word("budget"), any(vec![from("a"), from("b"), not(QueryTerm::State(MessageState::Unread))])]
+        );
+        // An OR with a missing side stays raw; the rest still parses.
+        assert_eq!(parse("OR budget"), vec![raw("OR"), word("budget")]);
+        assert_eq!(parse("budget OR"), vec![word("budget"), raw("OR")]);
+        assert_eq!(parse("a OR OR b"), vec![word("a"), raw("OR"), raw("OR"), word("b")]);
+        // AND is the implicit conjunction spelled out.
+        assert_eq!(parse("a AND b"), vec![word("a"), word("b")]);
+    }
+
+    #[test]
+    fn braces_and_parentheses_group_terms() {
+        assert_eq!(parse("{x y}"), vec![any(vec![word("x"), word("y")])]);
+        assert_eq!(parse("(x OR y)"), vec![any(vec![word("x"), word("y")])]);
+        assert_eq!(parse("(x y)"), vec![word("x"), word("y")]);
+        assert_eq!(parse("(555)"), vec![word("555")]);
+        // An AND group can't be one side of an OR.
+        assert_eq!(parse("(x y) OR z"), vec![word("x"), word("y"), raw("OR"), word("z")]);
+        // A group joins an OR like any single term.
+        assert_eq!(parse("{x y} OR z"), vec![any(vec![word("x"), word("y"), word("z")])]);
+    }
+
+    #[test]
+    fn a_field_group_applies_the_field_to_each_value() {
+        assert_eq!(parse("from:(a OR b)"), vec![any(vec![from("a"), from("b")])]);
+        assert_eq!(parse("from:{a b}"), vec![any(vec![from("a"), from("b")])]);
+        assert_eq!(parse("from:(a b)"), vec![from("a"), from("b")]);
+        assert_eq!(parse("from:(a -b)"), vec![from("a"), not(from("b"))]);
+        assert_eq!(parse("to:{\"Ana Diaz\" bo}"), vec![any(vec![QueryTerm::To("Ana Diaz".into()), QueryTerm::To("bo".into())])]);
+    }
+
+    #[test]
+    fn a_negated_group_follows_de_morgan() {
+        assert_eq!(parse("-{a b}"), vec![not(word("a")), not(word("b"))]);
+        assert_eq!(parse("-from:(a OR b)"), vec![not(from("a")), not(from("b"))]);
+        assert_eq!(parse("-(a b)"), vec![any(vec![not(word("a")), not(word("b"))])]);
+        // Double negation cancels.
+        assert_eq!(parse("-{-a b}"), vec![word("a"), not(word("b"))]);
+    }
+
+    #[test]
+    fn unmodelled_grouping_stays_raw_as_one_term() {
+        assert_eq!(parse("(a b OR c)"), vec![raw("(a b OR c)")]);
+        assert_eq!(parse("(a OR (b c))"), vec![raw("(a OR (b c))")]);
+        assert_eq!(parse("{a category:x}"), vec![raw("{a category:x}")]);
+        assert_eq!(parse("{a b"), vec![raw("{a b")]);
+        assert_eq!(parse("a)"), vec![raw("a)")]);
+        assert_eq!(parse("{}"), vec![raw("{}")]);
+        // A bracket inside quotes is text, not grouping.
+        assert_eq!(parse("\"(a\" b"), vec![phrase("(a"), word("b")]);
+    }
+
+    #[test]
+    fn leaves_report_negation() {
+        let terms = parse("-from:a {to:b -is:unread}");
+        let leaves: Vec<_> = terms.iter().flat_map(QueryTerm::leaves).collect();
+        assert_eq!(
+            leaves,
             vec![
-                QueryTerm::From("a".into()),
-                raw("OR"),
-                QueryTerm::From("b".into())
+                (&from("a"), true),
+                (&QueryTerm::To("b".into()), false),
+                (&QueryTerm::State(MessageState::Unread), true),
             ]
         );
-        assert_eq!(parse("from:(a b)"), vec![raw("from:(a"), raw("b)")]);
-        assert_eq!(parse("{x y}"), vec![raw("{x"), raw("y}")]);
     }
 
     #[test]
@@ -971,22 +1338,38 @@ mod tests {
         assert_eq!(SearchQuery::default().render_gmail(), "");
     }
 
-    /// The hard-coded sent-backfill query uses negation, which this AST keeps
-    /// as raw syntax rather than modelling. It still renders back verbatim, so
-    /// Gmail would receive the same string.
+    /// The hard-coded sent-backfill query uses negation. It parses to `Not`
+    /// terms and still renders back verbatim, so Gmail would receive the same
+    /// string.
     #[test]
-    fn sent_backfill_query_keeps_negation_as_raw_and_renders_verbatim() {
+    fn sent_backfill_query_parses_negation_and_renders_verbatim() {
         let input = "in:sent -in:trash -in:spam";
         let parsed = SearchQuery::parse(input);
         assert_eq!(
             parsed.terms,
             vec![
                 QueryTerm::In("sent".into()),
-                raw("-in:trash"),
-                raw("-in:spam"),
+                not(QueryTerm::In("trash".into())),
+                not(QueryTerm::In("spam".into())),
             ]
         );
         assert_eq!(parsed.render_gmail(), input);
+    }
+
+    #[test]
+    fn boolean_terms_round_trip_through_gmail_syntax() {
+        for input in [
+            "-from:alice",
+            "{from:a from:b}",
+            "budget {to:a -is:unread}",
+            "-\"weekly sync\"",
+            "{\"OR\" x}",
+        ] {
+            assert_round_trip(input);
+        }
+        // Equivalent spellings render to the brace form.
+        assert_eq!(SearchQuery::parse("from:(a OR b)").render_gmail(), "{from:a from:b}");
+        assert_eq!(SearchQuery::parse("a OR b").render_gmail(), "{a b}");
     }
 
     // --- Phase 5 run 2a: local-search routing, limits, date & escaping ----
@@ -1021,6 +1404,11 @@ mod tests {
             "in:inbox",                    // 2b-2: In is now structured
             "from:alice label:work",       // 2b-2: operator + Label => Structured
             "in:Clients/Acme",             // 2b-2: non-system in: via the cache
+            "-in:trash",                   // negation is modelled
+            "-meeting",                    // even a negated word alone
+            "from:alice OR from:bob",      // OR is modelled
+            "{budget invoice}",            // so is a brace group of words
+            "from:(a b)",                  // a field group flattens
         ] {
             assert!(
                 matches!(plan(input), LocalSearchPlan::Structured(_)),
@@ -1040,14 +1428,12 @@ mod tests {
             "foo:bar",                // unknown operator => Raw
             "10:30",                  // not an operator (field must be letters)
             "Re: meeting",            // "Re:" empty value => Raw, "meeting" free text
-            "-in:trash",              // negation => Raw (2b-2: still legacy)
-            "-label:work",            // negation => Raw (2b-2: still legacy)
-            "from:alice OR from:bob", // contains Raw ("OR")
             "category:promotions",    // unknown operator => Raw
-            "from:alice -in:trash",   // operator + Raw => legacy
+            "from:alice category:x",  // operator + Raw => legacy
             "label:",                 // empty value => Raw => legacy
             "in:",                    // empty value => Raw => legacy
-            "from:(a b)",             // grouped => two Raw terms
+            "(a b OR c)",             // mixed grouping => Raw
+            "-from:",                 // negated empty value => Raw
             "from:",                  // empty value => Raw
             "",                       // nothing => legacy
         ] {
@@ -1208,7 +1594,8 @@ mod tests {
             default_archived_trashed_filter(&terms, false),
             DefaultFilter {
                 exclude_archived: true,
-                exclude_trashed: true
+                exclude_trashed: true,
+                exclude_spam: false
             }
         );
     }
@@ -1221,7 +1608,8 @@ mod tests {
                 default_archived_trashed_filter(&terms, false),
                 DefaultFilter {
                     exclude_archived: false,
-                    exclude_trashed: true
+                    exclude_trashed: true,
+                    exclude_spam: false
                 },
                 "{input:?}"
             );
@@ -1236,7 +1624,8 @@ mod tests {
                 default_archived_trashed_filter(&terms, false),
                 DefaultFilter {
                     exclude_archived: false,
-                    exclude_trashed: false
+                    exclude_trashed: false,
+                    exclude_spam: false
                 },
                 "{input:?}"
             );
@@ -1247,20 +1636,45 @@ mod tests {
             default_archived_trashed_filter(&terms, false),
             DefaultFilter {
                 exclude_archived: false,
-                exclude_trashed: false
+                exclude_trashed: false,
+                exclude_spam: false
             }
         );
     }
 
     #[test]
-    fn default_filter_include_archived_drops_both_halves_regardless() {
-        for input in ["from:alice", "label:work", "in:spam"] {
+    fn default_filter_all_mail_scope_keeps_trash_and_spam_hidden() {
+        for input in ["from:alice", "label:work", "in:inbox", "roadmap"] {
             let terms = SearchQuery::parse(input).terms;
             assert_eq!(
                 default_archived_trashed_filter(&terms, true),
                 DefaultFilter {
                     exclude_archived: false,
-                    exclude_trashed: false
+                    exclude_trashed: true,
+                    exclude_spam: true
+                },
+                "{input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn default_filter_all_mail_scope_reaches_trash_and_spam_only_when_named() {
+        let cases = [
+            ("in:trash", false, true),
+            ("in:TRASH", false, true),
+            ("in:spam", true, false),
+            ("in:junk", true, false),
+            ("in:anywhere", false, false),
+        ];
+        for (input, exclude_trashed, exclude_spam) in cases {
+            let terms = SearchQuery::parse(input).terms;
+            assert_eq!(
+                default_archived_trashed_filter(&terms, true),
+                DefaultFilter {
+                    exclude_archived: false,
+                    exclude_trashed,
+                    exclude_spam
                 },
                 "{input:?}"
             );

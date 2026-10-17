@@ -118,6 +118,30 @@ describe("ThreadList", () => {
     expect(onSelect).toHaveBeenCalledWith("thread-1");
   });
 
+  it("marks only threads still in the inbox when showing locations", () => {
+    const row = (overrides: Partial<typeof thread>, showLocation: boolean) => render(
+      <ThreadRow
+        thread={{ ...thread, ...overrides }}
+        selected={false}
+        checked={false}
+        showAccount={false}
+        onSelect={vi.fn()}
+        onToggleCheck={vi.fn()}
+        showLocation={showLocation}
+      />,
+    );
+    const inbox = row({ archived: false, trashed: false }, true);
+    expect(screen.getByText("Inbox", { selector: ".thread-location-tag" })).toBeInTheDocument();
+    inbox.unmount();
+
+    const archived = row({ archived: true }, true);
+    expect(screen.queryByText("Inbox", { selector: ".thread-location-tag" })).not.toBeInTheDocument();
+    archived.unmount();
+
+    row({ archived: false, trashed: false }, false);
+    expect(screen.queryByText("Inbox", { selector: ".thread-location-tag" })).not.toBeInTheDocument();
+  });
+
   it("routes modifier clicks to multi-select gestures instead of opening the row", () => {
     const onSelect = vi.fn();
     const onSelectionGesture = vi.fn();

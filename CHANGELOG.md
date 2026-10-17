@@ -5,14 +5,18 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ## Unreleased
 
 ### New
+- The search box now suggests as you type, the way Gmail does: type `from:` or `to:` to pick someone from your contacts, `label:` or `in:` to pick a label or folder, or `after:` to pick a date like **Past month**. An empty search box lists your recent searches. Choosing someone with several email addresses searches all of them.
 - Use keyboard shortcuts to attach files, refresh mail, create calendar events and contacts, save contacts, and open, save, or star files. **Keyboard Shortcuts** now also lists snippets, recipient-field focus, and calendar navigation.
 
 ### Improved
+- Search now looks through all your mail, including archived conversations, without clicking **Search All Mail** first. Results still in your inbox are marked **Inbox**, **Inbox Only** narrows a search to your inbox, and Trash and Spam stay out unless you search with `in:trash` or `in:spam`. The server is searched automatically once you stop typing.
+- Search understands a minus to leave things out (`invoice -from:billing@example.com`) and `OR` or braces for either-or (`from:ana OR from:bo`), in the results on this computer as well as on the server.
 - Mail shortcuts now act on checked conversations together, and Select All selects the conversations visible through your filters. Undo also handles pending sends and task completion, and search stays in **Files** or **Contacts** when you’re working there.
 - New installations keep mail locally for 90 days by default; existing retention settings stay as they are. You can change this in **Settings → Privacy → Keep Mail on This Device For**.
 
 ### Fixed
 - Keyboard navigation in the mail list now clears the gray hover highlight until you move or click the pointer, keeping the selected conversation clear.
+- Searching for `to:` someone now also finds mail where they were on Cc or Bcc, as it does in Gmail.
 - Trashed conversations now follow your local mail retention setting, even when starred. Other starred conversations stay on your device, and local cleanup leaves mail on the server.
 
 ## 0.141.0 — 2026-10-16

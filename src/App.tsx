@@ -103,6 +103,7 @@ import { useCommandExecution, useCommandUndo } from "./useCommandExecution";
 import { DraftsList, OutboxDetail, OutboxList, useCorrespondence } from "./useCorrespondence";
 import { useOutboxSelection } from "./useOutboxSelection";
 import { useLabelCatalog } from "./useLabelCatalog";
+import { loadSearchContacts } from "./searchContacts";
 import { useMailboxThreads } from "./useMailboxThreads";
 import { useMailNavigation } from "./useMailNavigation";
 import { useMailRefresh, useUnreadCounts } from "./useMailRefresh";
@@ -188,7 +189,7 @@ export function App() {
   });
   const {
     threads, setThreads, query, setQuery, queryRef, searchOpen, setSearchOpen, includeArchived,
-    setIncludeArchived, remoteSearchState, searchStatus, setSearchStatus, hasMoreResults, loading,
+    inboxOnly, setInboxOnly, remoteSearchState, searchStatus, setSearchStatus, hasMoreResults, loading,
     mailboxError, loadingMoreState,
     loadThreads, loadThreadsRef, loadMoreResults, contextOpenedThreadRef,
   } = mailboxThreads;
@@ -549,7 +550,22 @@ export function App() {
     setSearchOpen(false);
     selectedThreadRowRef.current?.focus();
   }, [selectedThreadRowRef, setQuery, setSearchOpen]);
-  const toggleIncludeArchived = useCallback(() => setIncludeArchived((current) => !current), [setIncludeArchived]);
+  const toggleInboxOnly = useCallback(() => setInboxOnly((current) => !current), [setInboxOnly]);
+  // Search suggestions draw on the account(s) being searched: the active one,
+  // or every account in the merged view.
+  const searchAccountIds = useMemo(
+    () => (activeAccountId ? [activeAccountId] : accounts.map((account) => account.email)),
+    [activeAccountId, accounts],
+  );
+  const searchLabelNames = useMemo(
+    () => searchAccountIds.flatMap((accountId) =>
+      (labelsByAccount[accountId] ?? []).filter((label) => label.kind === "user").map((label) => label.name)),
+    [searchAccountIds, labelsByAccount],
+  );
+  const loadSearchSuggestionContacts = useCallback(
+    (contactQuery: string) => loadSearchContacts(searchAccountIds, contactQuery),
+    [searchAccountIds],
+  );
 
   const showNoticeMessage = useCallback((message: string) => setNotice({ message }), [setNotice]);
 
@@ -807,8 +823,10 @@ export function App() {
               onCommit={setQuery}
               onInput={clearContextOpenedThread}
               onEscape={closeSearch}
-              includeArchived={includeArchived}
-              onToggleIncludeArchived={toggleIncludeArchived}
+              inboxOnly={inboxOnly}
+              onToggleInboxOnly={toggleInboxOnly}
+              labels={searchLabelNames}
+              loadContacts={loadSearchSuggestionContacts}
             />
           </div>
         ) : null}
@@ -868,6 +886,7 @@ export function App() {
               onSelectionGesture={applyThreadSelectionGesture}
               rowRef={thread.id === selectedId ? selectedThreadRowRef : undefined}
               hasTask={openTaskThreadIds.has(thread.id)}
+              showLocation={isTabbedMailbox && includeArchived}
             />
           ))}
           {hasMoreResults ? (
