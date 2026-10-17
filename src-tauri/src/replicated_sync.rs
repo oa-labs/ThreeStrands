@@ -13,7 +13,7 @@
 //!
 //! Entirely inert unless [`Database::replicated_sync_active`] is true (the
 //! Settings beta toggle, or the `THREESTRANDS_REPLICATED_SYNC` environment
-//! override). Mutation commands in `lib.rs` reach the replica through
+//! override). Mutation commands in `commands/` reach the replica through
 //! `Database::record_local_entity_write` and
 //! `Database::record_local_entity_deletion` in `sync_projection.rs`.
 
@@ -3786,7 +3786,7 @@ mod reconciliation_tests {
         // The v35/v36 protocol-reset migrations that populated these tables
         // were removed with the historical chain (migrate() now refuses a
         // pre-baseline database). The RUNTIME surface that reads them is still
-        // wired into the app (see lib.rs replicated_sync_*_protocol_reset_*),
+        // wired into the app (see commands/replicated_sync.rs replicated_sync_*_protocol_reset_*),
         // so exercise it directly: a notice and a pending keychain-cleanup row
         // are read, and the notice can be dismissed.
         let database = Database::open_memory();

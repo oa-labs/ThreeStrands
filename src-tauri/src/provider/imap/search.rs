@@ -1418,7 +1418,7 @@ mod tests {
 //
 // Compiles ALWAYS; runs only when THREESTRANDS_IMAP_IT=1 AND the Dovecot
 // container's fingerprint is in DOVECOT_TEST_FP, exactly like the live tests in
-// `provider.rs` / `fetch.rs`. It creates a SCRATCH mailbox it also deletes
+// `provider/tests/live.rs` / `fetch.rs`. It creates a SCRATCH mailbox it also deletes
 // (the harness's seed messages are never touched), APPENDs a handful of known
 // messages, then renders each case through `render_imap` and runs the REAL
 // criteria with `ImapSession::uid_search`, asserting the exact UID set. This

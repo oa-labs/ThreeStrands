@@ -172,7 +172,7 @@ impl SyncWindowClass {
     /// synced it is never evicted when newer sent mail pushes it past 5,000, so
     /// the address book never loses history. Deletions in Sent come only from
     /// UIDs the server itself no longer has. (Run 3 syncs Sent in chunked,
-    /// non-evicting background rounds; see `provider.rs`.)
+    /// non-evicting background rounds; see `provider/refresh.rs`.)
     ///
     /// `NotSynced` is not applicable — nothing is ever in its window.
     pub const fn evicts_beyond_window(self) -> bool {
@@ -1188,7 +1188,7 @@ pub fn check_search_target_mailboxes(count: usize) -> Result<usize, ProviderErro
 /// against [`MAX_SEARCH_PINS`]. This caps that per-search cost. Set equal to
 /// `sync::REMOTE_SEARCH_SCAN_LIMIT` (50) so the IMAP server-search backfill
 /// acquires the same depth the engine's `search_and_ingest_missing` scans in
-/// one pass — the two must not drift, so a test in `provider.rs` pins the
+/// one pass — the two must not drift, so a test in `provider/tests/search_exec.rs` pins the
 /// value. Over the budget the extra hits are left unacquired (a page/refine
 /// away), never silently dropped.
 pub const MAX_SEARCH_ACQUIRE: usize = 50;

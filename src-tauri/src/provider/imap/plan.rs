@@ -99,7 +99,7 @@ impl PlanEntry {
 
 /// The whole plan: the ordered mailbox entries. Order places INBOX first, then
 /// the other synced mailboxes (Trash, Junk, Sent, then Archive), then the rest.
-/// The per-poll SCHEDULER (provider.rs, Slice 5b-2) is what actually bounds and
+/// The per-poll SCHEDULER (provider/refresh.rs, Slice 5b-2) is what actually bounds and
 /// fairly orders the walk; this stable plan order is its deterministic input.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SyncPlan {
@@ -367,7 +367,7 @@ pub fn build_plan(
             // Sent: synced THIS run (run 3), Sent class, SENT label.
             // Its 5,000 is a non-evicting ACQUISITION bound (see
             // SyncWindowClass::Sent / SyncLimits::sent), filled in chunked
-            // background rounds after INBOX; see provider.rs.
+            // background rounds after INBOX; see provider/refresh.rs.
             Some(role @ MailboxRole::Sent) => (
                 SyncWindowClass::Sent,
                 LabelKind::SystemRole,
@@ -426,7 +426,7 @@ pub fn build_plan(
     // so its (potentially long, chunked) backfill never starves the cheap
     // Trash/Junk rounds within one poll's folder budget; user/label folders
     // (role_order 4) sort after every system role. The per-poll SCHEDULER
-    // (provider.rs) is what actually bounds and fairly orders the walk.
+    // (provider/refresh.rs) is what actually bounds and fairly orders the walk.
     synced.sort_by(|a, b| {
         role_order(a.role)
             .cmp(&role_order(b.role))
@@ -442,7 +442,7 @@ pub fn build_plan(
 
 /// A stable ordering key for the synced-mailbox walk: Trash, Junk, Sent, then
 /// Archive. Sent precedes Archive but both sort after the cheap Trash/Junk
-/// rounds; the per-poll SCHEDULER (provider.rs) is what actually bounds and
+/// rounds; the per-poll SCHEDULER (provider/refresh.rs) is what actually bounds and
 /// fairly orders the walk, but a deterministic plan order keeps that input
 /// stable.
 fn role_order(role: Option<MailboxRole>) -> u8 {
