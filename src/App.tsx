@@ -124,6 +124,7 @@ import { useThreadMutations } from "./useThreadMutations";
 import { useThreadSelection } from "./useThreadSelection";
 import { useTriageSession } from "./useTriageSession";
 import { useWorkspaces } from "./useWorkspaces";
+import { ErrorBoundary } from "./ErrorBoundary";
 export { AccountSwitcher } from "./AccountSwitcher";
 export { messagesWithQueuedReplies } from "./queuedReplies";
 export { NOTICE_TIMEOUT_MS } from "./useNotice";
@@ -661,6 +662,7 @@ export function App() {
       {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" && rightWorkspace !== "files" ? <>
       <section id="inbox-panel" className="thread-column" aria-label="Inbox">
         <PanelResizeHandle {...inboxSize} label="Resize Inbox" controlsId="inbox-panel" title="Drag to resize inbox. Use arrow keys to adjust; double-click to reset." />
+        <ErrorBoundary area="the inbox" resetKey={`${activeAccountId ?? "all"}:${mailbox}`}>
         <header className="thread-header">
           {isThreadMailbox && checkedIds.size > 0 ? (
             <div className="batch-toolbar" role="toolbar" aria-label="Batch actions">
@@ -897,9 +899,11 @@ export function App() {
             </>
           )}
         </ThreadList>
+        </ErrorBoundary>
       </section>
 
       <section className="reader" aria-label="Conversation">
+        <ErrorBoundary area="this conversation" resetKey={`${mailbox}:${selectedId ?? ""}:${correspondence.activeDraft?.id ?? ""}`}>
         {visibleDetail && (!correspondence.activeDraft || composerBelongsToVisibleThread) ? (
           <>
             <header className="reader-header">
@@ -1110,10 +1114,12 @@ export function App() {
             </p>
           </div>
         )}
+        </ErrorBoundary>
       </section>
       </> : null}
 
       {rightWorkspace === "week" ? (
+        <ErrorBoundary area="the calendar" variant="side">
         <Suspense fallback={null}>
           <CalendarWeekView
             session={calendarSession}
@@ -1144,8 +1150,10 @@ export function App() {
             onCreated={() => void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"))}
           />
         </Suspense>
+        </ErrorBoundary>
       ) : null}
       {rightWorkspace === "calendar" ? (
+        <ErrorBoundary area="the calendar" variant="side">
         <CalendarSidebar
           key={calendarSidebarStart?.key ?? 0}
           initialDate={calendarSidebarStart?.date}
@@ -1156,8 +1164,10 @@ export function App() {
             openSettingsAt("calendarAccounts");
           }}
         />
+        </ErrorBoundary>
       ) : null}
       {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" && rightWorkspace !== "files" && composingApart && correspondence.liveDraft ? (
+        <ErrorBoundary area="this draft's context" variant="side" resetKey={correspondence.liveDraft.id}>
         <ComposeContext
           key={correspondence.liveDraft.id}
           draft={correspondence.liveDraft}
@@ -1180,8 +1190,10 @@ export function App() {
           onDraftFollowUp={(task) => void draftFollowUp(task)}
           onTasksChanged={() => { setTaskRevision((current) => current + 1); void refreshTaskIndicators(); }}
         />
+        </ErrorBoundary>
       ) : null}
       {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" && rightWorkspace !== "files" && !composingApart ? (
+        <ErrorBoundary area="the context panel" variant="side" resetKey={selectedId}>
         <ContextPanel
           detail={visibleDetail}
           idle={inboxZero ? (
@@ -1323,10 +1335,12 @@ export function App() {
             ) : null}
           </> : null}
         />
+        </ErrorBoundary>
       ) : null}
-      {rightWorkspace === "files" ? <Suspense fallback={null}><FilesWorkspace refreshKey={syncStatus?.lastSuccessfulSync ?? ""} key={activeAccountId ?? "all"} sessions={fileSessions} accountId={activeAccountId} accountIds={accounts.map((account) => account.email)} onOpenThread={jumpToThread} onOpenContact={contactCardActions.onOpenContact} onReportSpam={markFileSourceSpam} /></Suspense> : null}
-      {rightWorkspace === "contacts" ? <Suspense fallback={null}><ContactsWorkspace key={`${activeAccountId ?? "all"}:${contactAddressBookTarget ?? ""}`} accountId={activeAccountId} onOpenThread={jumpToThread} onCompose={(to) => { setRightWorkspace(null); correspondence.composeMailto({ to, cc: "", bcc: "", subject: "", body: "" }); }} onSaved={() => { setNotice({ message: "Contact saved" }); void refreshKeepInTouchCount(); }} initialContactId={contactAddressBookTarget} view={contactsView} onViewChange={setContactsView} onKeepInTouchChanged={() => void refreshKeepInTouchCount()} onOpenAiSettings={() => { setRightWorkspace(null); openSettingsAt("ai"); }} /></Suspense> : null}
+      {rightWorkspace === "files" ? <ErrorBoundary area="Files" variant="side" resetKey={activeAccountId}><Suspense fallback={null}><FilesWorkspace refreshKey={syncStatus?.lastSuccessfulSync ?? ""} key={activeAccountId ?? "all"} sessions={fileSessions} accountId={activeAccountId} accountIds={accounts.map((account) => account.email)} onOpenThread={jumpToThread} onOpenContact={contactCardActions.onOpenContact} onReportSpam={markFileSourceSpam} /></Suspense></ErrorBoundary> : null}
+      {rightWorkspace === "contacts" ? <ErrorBoundary area="Contacts" variant="side" resetKey={activeAccountId}><Suspense fallback={null}><ContactsWorkspace key={`${activeAccountId ?? "all"}:${contactAddressBookTarget ?? ""}`} accountId={activeAccountId} onOpenThread={jumpToThread} onCompose={(to) => { setRightWorkspace(null); correspondence.composeMailto({ to, cc: "", bcc: "", subject: "", body: "" }); }} onSaved={() => { setNotice({ message: "Contact saved" }); void refreshKeepInTouchCount(); }} initialContactId={contactAddressBookTarget} view={contactsView} onViewChange={setContactsView} onKeepInTouchChanged={() => void refreshKeepInTouchCount()} onOpenAiSettings={() => { setRightWorkspace(null); openSettingsAt("ai"); }} /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "tasks" ? (
+        <ErrorBoundary area="Tasks" variant="side" resetKey={activeAccountId}>
         <TaskSidebar
           key={activeAccountId ?? "all"}
           sessions={taskSessions}
@@ -1348,6 +1362,7 @@ export function App() {
             setSelectedTaskHasThread(Boolean(task?.threadId));
           }}
         />
+        </ErrorBoundary>
       ) : null}
 
       {correspondence.overlay}
@@ -1478,6 +1493,7 @@ export function App() {
         />
       ) : null}
       {settingsOpen ? (
+        <ErrorBoundary area="Settings" variant="floating" onDismiss={() => setSettingsOpen(false)}>
         <Suspense fallback={null}>
           <Settings
             section={settingsSection}
@@ -1498,6 +1514,7 @@ export function App() {
             onSettingsImported={async (result) => { await applyImportedSettings(result); await signatureLibrary.refresh(); }}
           />
         </Suspense>
+        </ErrorBoundary>
       ) : null}
       <EnrollmentRequestNotice
         suppressed={settingsOpen && settingsSection === "replicatedSync"}

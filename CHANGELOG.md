@@ -15,6 +15,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - New installations keep mail locally for 90 days by default; existing retention settings stay as they are. You can change this in **Settings → Privacy → Keep Mail on This Device For**.
 
 ### Fixed
+- When one part of the window runs into a problem, only that part shows **Something went wrong** with **Try Again**, and the rest of the window keeps working instead of going blank. Choosing another conversation or mailbox also brings it back.
 - Up and down arrow keys keep switching Settings sections after you click a section with the mouse.
 - Keyboard navigation in the mail list now clears the gray hover highlight until you move or click the pointer, keeping the selected conversation clear.
 - Searching for `to:` someone now also finds mail where they were on Cc or Bcc, as it does in Gmail.
