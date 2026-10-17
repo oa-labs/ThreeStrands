@@ -59,7 +59,7 @@ Press <kbd>Tab</kbd> and <kbd>Shift + Tab</kbd> to move between tabs. Each split
 
 Press <kbd>/</kbd> to search. Search looks through all your mail, including archived conversations, and shows results from this computer right away. When you stop typing, it also asks the server for older mail. Results still in your inbox are marked **Inbox**. Click **Inbox Only** to search just your inbox. Trash and Spam are left out unless you add `in:trash`, `in:spam`, or `in:anywhere`.
 
-You can narrow a search with `from:`, `to:`, `subject:`, `before:` and `after:` (YYYY/MM/DD), `is:unread`, `is:starred`, `label:`, `in:`, and `has:attachment`.
+You can narrow a search with `from:`, `to:`, `subject:`, `before:` and `after:` (YYYY/MM/DD), `is:unread`, `is:starred`, `label:`, `in:`, and `has:attachment`. As you type, suggestions appear below the search box: operator names, people from your contacts after `from:` or `to:`, your labels after `label:` or `in:`, and dates like **Past month** after `after:` or `before:`. Use the arrow keys and <kbd>Enter</kbd>, or click, to choose one. <kbd>Escape</kbd> closes the suggestions, and a second <kbd>Escape</kbd> clears the search. Click the empty search box to see your recent searches, which stay on this computer.
 
 ## Moving Around
 

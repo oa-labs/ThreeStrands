@@ -340,6 +340,37 @@ describe("split inbox search shortcuts", () => {
     expect(backfill).toHaveBeenCalledTimes(1);
   });
 
+  it("autocompletes contacts and labels from the account being searched", async () => {
+    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
+    vi.spyOn(mailClient, "listLabels").mockResolvedValue([
+      { id: "INBOX", name: "INBOX", kind: "system" },
+      { id: "Label_9", name: "Receipts", kind: "user" },
+    ]);
+    const contacts = vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([
+      { email: "ana@example.com", displayName: "Ana Diaz", sentCount: 4, receivedCount: 2, lastInteractedAt: "", pinned: false },
+    ]);
+    const searchThreads = vi.spyOn(mailClient, "searchThreads");
+    render(<App />);
+    fireEvent.keyDown(window, { key: "/" });
+    const search = await screen.findByRole("textbox", { name: "Search Mail" });
+
+    fireEvent.change(search, { target: { value: "from:an" } });
+    fireEvent.click(await screen.findByRole("option", { name: /Ana Diaz/ }));
+    expect(contacts).toHaveBeenCalledWith("demo@example.com", "an", 8);
+    expect(search).toHaveValue("from:ana@example.com ");
+
+    fireEvent.change(search, { target: { value: "from:ana@example.com label:" } });
+    // System labels are not offered; the account's own labels are.
+    expect(await screen.findByRole("option", { name: "Receipts" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "INBOX" })).not.toBeInTheDocument();
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(search).toHaveValue("from:ana@example.com label:Receipts ");
+    await waitFor(() => expect(searchThreads).toHaveBeenCalledWith(
+      expect.objectContaining({ query: "from:ana@example.com label:Receipts" }),
+      "demo@example.com",
+    ));
+  });
+
   it("shows when the Gmail backfill is still running", async () => {
     localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
     let finishBackfill!: () => void;

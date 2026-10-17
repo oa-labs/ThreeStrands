@@ -103,6 +103,7 @@ import { useCommandExecution, useCommandUndo } from "./useCommandExecution";
 import { DraftsList, OutboxDetail, OutboxList, useCorrespondence } from "./useCorrespondence";
 import { useOutboxSelection } from "./useOutboxSelection";
 import { useLabelCatalog } from "./useLabelCatalog";
+import { loadSearchContacts } from "./searchContacts";
 import { useMailboxThreads } from "./useMailboxThreads";
 import { useMailNavigation } from "./useMailNavigation";
 import { useMailRefresh, useUnreadCounts } from "./useMailRefresh";
@@ -550,6 +551,21 @@ export function App() {
     selectedThreadRowRef.current?.focus();
   }, [selectedThreadRowRef, setQuery, setSearchOpen]);
   const toggleInboxOnly = useCallback(() => setInboxOnly((current) => !current), [setInboxOnly]);
+  // Search suggestions draw on the account(s) being searched: the active one,
+  // or every account in the merged view.
+  const searchAccountIds = useMemo(
+    () => (activeAccountId ? [activeAccountId] : accounts.map((account) => account.email)),
+    [activeAccountId, accounts],
+  );
+  const searchLabelNames = useMemo(
+    () => searchAccountIds.flatMap((accountId) =>
+      (labelsByAccount[accountId] ?? []).filter((label) => label.kind === "user").map((label) => label.name)),
+    [searchAccountIds, labelsByAccount],
+  );
+  const loadSearchSuggestionContacts = useCallback(
+    (contactQuery: string) => loadSearchContacts(searchAccountIds, contactQuery),
+    [searchAccountIds],
+  );
 
   const showNoticeMessage = useCallback((message: string) => setNotice({ message }), [setNotice]);
 
@@ -809,6 +825,8 @@ export function App() {
               onEscape={closeSearch}
               inboxOnly={inboxOnly}
               onToggleInboxOnly={toggleInboxOnly}
+              labels={searchLabelNames}
+              loadContacts={loadSearchSuggestionContacts}
             />
           </div>
         ) : null}
