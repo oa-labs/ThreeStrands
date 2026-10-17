@@ -638,6 +638,7 @@ fn search_supports_offset_pagination() {
                     subject: "Pagination test".into(),
                     from: "sender@example.com".into(),
                     to: vec!["recipient@example.com".into()],
+                    cc_bcc: Vec::new(),
                     date: date.into(),
                     body_html: String::new(),
                     body_text: "unique-pagination-term".into(),
@@ -817,6 +818,7 @@ fn alice_thread(database: &Database) -> String {
                 subject: "Quarterly planning".into(),
                 from: "alice@example.com".into(),
                 to: vec!["bob@example.com".into()],
+                cc_bcc: Vec::new(),
                 date: "2024-06-15T09:00:00Z".into(),
                 body_html: String::new(),
                 body_text: "budget review".into(),
@@ -885,6 +887,7 @@ fn op_message(
         subject: subject.into(),
         from: from.into(),
         to: to.into_iter().map(Into::into).collect(),
+        cc_bcc: Vec::new(),
         date: date.into(),
         body_html: String::new(),
         body_text: body.into(),
@@ -2382,4 +2385,112 @@ fn default_filter_rules_table() {
         f("label:work in:trash", false),
         DefaultFilter { exclude_archived: false, exclude_trashed: false, exclude_spam: false }
     );
+}
+
+// --- Negation, OR, and Cc/Bcc ------------------------------------------------
+
+#[test]
+fn negation_excludes_matches_on_the_structured_path() {
+    let database = database();
+    label_in_fixture(&database);
+    // Every non-trash, non-spam thread whose body says "body", minus the
+    // ones from the IMAP sender.
+    assert_eq!(ids_all_mail(&database, "body -from:b@example.com"), vec![tid("gmail", "g-sent")]);
+    // A negated word on its own: the threads that never say "body".
+    assert_eq!(
+        ids_all_mail(&database, "-body"),
+        sorted(vec![tid("gmail", "g-inbox"), tid("gmail", "g-work"), tid("gmail", "g-acme")])
+    );
+    // A negated location reaches beyond the inbox but still not Trash.
+    let outside_inbox = ids_scoped(&database, "-in:inbox", None);
+    assert!(outside_inbox.contains(&tid("gmail", "g-work")));
+    assert!(!outside_inbox.contains(&tid("gmail", "g-inbox")));
+    assert!(!outside_inbox.contains(&tid("gmail", "g-trash")));
+}
+
+#[test]
+fn alternatives_match_any_of_their_terms() {
+    let database = database();
+    label_in_fixture(&database);
+    assert_eq!(
+        ids_all_mail(&database, "from:you@example.com OR in:inbox"),
+        sorted(vec![tid("gmail", "g-sent"), tid("gmail", "g-inbox"), tid("imap", "i-inbox")])
+    );
+    // Free-text alternatives search the index for each word.
+    assert_eq!(
+        ids_all_mail(&database, "{nested acme}"),
+        sorted(vec![tid("gmail", "g-acme"), tid("imap", "i-acme")])
+    );
+    // Gmail's field group spelling means the same.
+    assert_eq!(
+        ids_all_mail(&database, "from:(a@example.com OR you@example.com) -in:inbox"),
+        sorted(vec![tid("gmail", "g-work"), tid("gmail", "g-acme"), tid("gmail", "g-sent")])
+    );
+    // `-{a b}` excludes both.
+    assert_eq!(
+        ids_all_mail(&database, "body -{from:b@example.com from:you@example.com}"),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn to_matches_cc_and_bcc_recipients() {
+    let database = database();
+    let mut copied = op_message(
+        "cc1", "cc-thread", "Planning", "a@example.com",
+        vec!["first@example.com"], "2024-06-01T00:00:00Z", "plan body",
+        vec!["INBOX"], vec![],
+    );
+    copied.cc_bcc = vec!["Carol <carol@example.com>".into(), "dave@example.com".into()];
+    database.upsert_thread("default", &[copied]).unwrap();
+    let thread = tid("default", "cc-thread");
+    assert_eq!(ids_scoped(&database, "to:carol", None), vec![thread.clone()]);
+    assert_eq!(ids_scoped(&database, "to:dave@example.com", None), vec![thread.clone()]);
+    assert_eq!(ids_scoped(&database, "to:first@example.com", None), vec![thread]);
+    assert!(ids_scoped(&database, "to:nobody", None).is_empty());
+}
+
+#[test]
+fn the_reindex_queue_fills_in_cc_and_bcc_for_mail_stored_before_them() {
+    use crate::mime::{normalize, MimeBody, MimeHeader, MimePart, RawMessage};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+
+    let header = |name: &str, value: &str| MimeHeader { name: name.into(), value: value.into() };
+    let raw = RawMessage {
+        id: "sent-cc".into(),
+        thread_id: "sent-cc".into(),
+        internal_date: "0".into(),
+        label_ids: vec!["SENT".into()],
+        snippet: String::new(),
+        payload: MimePart {
+            mime_type: "text/plain".into(),
+            headers: vec![
+                header("From", "you@example.com"),
+                header("To", "first@example.com"),
+                header("Cc", "Carol <carol@example.com>"),
+                header("Bcc", "dave@example.com"),
+            ],
+            body: MimeBody { data: Some(URL_SAFE_NO_PAD.encode("hello")), ..Default::default() },
+            ..Default::default()
+        },
+    };
+    let normalized = normalize(&raw).unwrap();
+    assert_eq!(normalized.cc_bcc, vec!["Carol <carol@example.com>", "dave@example.com"]);
+
+    let database = database();
+    database.upsert_thread("you@example.com", &[normalized]).unwrap();
+    let thread_id = local_thread_id("you@example.com", "sent-cc");
+    // Simulate mail stored before the column existed, then queued by the
+    // schema migration.
+    let connection = database.connection().unwrap();
+    connection.execute("UPDATE messages SET cc_bcc_json = '[]'", []).unwrap();
+    connection
+        .execute("INSERT INTO pending_search_reindex(thread_id) VALUES (?1)", [&thread_id])
+        .unwrap();
+    drop(connection);
+    assert!(ids_all_mail(&database, "to:carol").is_empty());
+
+    assert_eq!(database.reindex_next_search_batch(10).unwrap(), 1);
+    assert_eq!(ids_all_mail(&database, "to:carol"), vec![thread_id.clone()]);
+    assert_eq!(ids_all_mail(&database, "to:dave"), vec![thread_id]);
 }

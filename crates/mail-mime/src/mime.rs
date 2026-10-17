@@ -103,6 +103,9 @@ pub struct NormalizedMessage {
     pub subject: String,
     pub from: String,
     pub to: Vec<String>,
+    /// Cc and Bcc addresses together (Bcc is only present on mail you sent).
+    /// Search's `to:` matches these as well as `to`, as Gmail's does.
+    pub cc_bcc: Vec<String>,
     pub date: String,
     pub body_html: String,
     pub body_text: String,
@@ -175,6 +178,10 @@ pub fn normalize(message: &RawMessage) -> Result<NormalizedMessage, String> {
             .unwrap_or_default()
             .to_string(),
         to: split_addresses(header(&message.payload, "To").unwrap_or_default()),
+        cc_bcc: ["Cc", "Bcc"]
+            .into_iter()
+            .flat_map(|name| split_addresses(header(&message.payload, name).unwrap_or_default()))
+            .collect(),
         date: millis_to_rfc3339(&message.internal_date)
             .or_else(|| header(&message.payload, "Date").and_then(normalize_date))
             .unwrap_or_default(),
@@ -203,6 +210,7 @@ pub fn normalized_size(message: &NormalizedMessage) -> Option<usize> {
     fixed_lengths
         .into_iter()
         .chain(message.to.iter().map(String::len))
+        .chain(message.cc_bcc.iter().map(String::len))
         .chain(message.labels.iter().map(String::len))
         .chain(message.attachments.iter().flat_map(|attachment| {
             [

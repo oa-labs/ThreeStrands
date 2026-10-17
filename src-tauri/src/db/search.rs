@@ -138,92 +138,8 @@ impl Database {
             }
 
             for term in &plan.terms {
-                match term {
-                    QueryTerm::FreeText { .. } => {} // handled by the MATCH above
-                    QueryTerm::From(value) => {
-                        binds.push(Value::Text(crate::search_query::like_contains_pattern(value)));
-                        predicates.push(
-                            "EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id \
-                             AND m.sender LIKE ? ESCAPE '\\')"
-                                .to_string(),
-                        );
-                    }
-                    QueryTerm::To(value) => {
-                        binds.push(Value::Text(crate::search_query::like_contains_pattern(value)));
-                        // Matched against the stored recipients (the To header
-                        // only; see the module note and the report's Cc/Bcc
-                        // finding). `recipients_json` is a JSON array string, so
-                        // each element is matched through `json_each`: a LIKE
-                        // over the raw text would also match the brackets,
-                        // quotes and commas of the encoding.
-                        predicates.push(
-                            "EXISTS (SELECT 1 FROM messages m, json_each(m.recipients_json) r \
-                             WHERE m.thread_id = t.id AND r.value LIKE ? ESCAPE '\\')"
-                                .to_string(),
-                        );
-                    }
-                    QueryTerm::Subject(value) => {
-                        binds.push(Value::Text(crate::search_query::like_contains_pattern(value)));
-                        predicates.push("t.subject LIKE ? ESCAPE '\\'".to_string());
-                    }
-                    QueryTerm::Date { bound, date } => {
-                        let day = crate::search_query::utc_day_start_rfc3339(*date);
-                        binds.push(Value::Text(day));
-                        let op = match bound {
-                            // `after:d` = on or after the start of day d (UTC).
-                            DateBound::After => ">=",
-                            // `before:d` = strictly before the start of day d.
-                            DateBound::Before => "<",
-                        };
-                        // Compare INSTANTS, not strings: `sent_at` is RFC 3339
-                        // in whatever offset the message carried (a `Date:`
-                        // header fallback keeps the sender's offset), so a
-                        // lexicographic compare against a UTC bound is wrong by
-                        // the offset. `datetime()` normalises both to UTC and
-                        // yields NULL (so no match) for an unparseable value.
-                        predicates.push(format!(
-                            "EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id \
-                             AND datetime(m.sent_at) {op} datetime(?))"
-                        ));
-                    }
-                    QueryTerm::State(MessageState::Unread) => {
-                        predicates.push("t.unread = 1".to_string());
-                    }
-                    QueryTerm::State(MessageState::Starred) => {
-                        predicates.push("t.starred = 1".to_string());
-                    }
-                    QueryTerm::HasAttachment => {
-                        predicates.push("t.has_attachments = 1".to_string());
-                    }
-                    QueryTerm::Label(value) => {
-                        // Resolve a label NAME to the ids in `t.labels_json`
-                        // through the per-account cache. See `label_name_sql`.
-                        // The fragment has TWO placeholders (exact name and
-                        // hyphen-folded name), so NAME is bound twice.
-                        binds.push(Value::Text(value.clone()));
-                        binds.push(Value::Text(value.clone()));
-                        predicates.push(label_name_sql());
-                    }
-                    QueryTerm::In(value) => {
-                        // A fixed set of system LOCATION words resolves without
-                        // the cache (system ids are provider-neutral); any
-                        // other value resolves exactly like a label NAME.
-                        match system_location_predicate(value) {
-                            Some(predicate) => predicates.push(predicate),
-                            None => {
-                                binds.push(Value::Text(value.clone()));
-                                binds.push(Value::Text(value.clone()));
-                                predicates.push(label_name_sql());
-                            }
-                        }
-                    }
-                    // Unreachable: a Raw term would have routed to legacy.
-                    // Listed so a new term fails to compile here.
-                    QueryTerm::Raw(_) => {
-                        return Err(DatabaseError::invalid(
-                            "internal: non-structured term reached the structured path",
-                        ));
-                    }
+                if let Some(predicate) = term_predicate(term, &mut binds, false)? {
+                    predicates.push(predicate);
                 }
             }
 
@@ -315,7 +231,7 @@ impl Database {
                     )
                     .optional()?;
                 if let Some(rowid) = rowid {
-                    let messages: Vec<(String, String, String)> = transaction
+                    let messages: Vec<(String, String, String, Option<Vec<String>>)> = transaction
                         .prepare(
                             "SELECT m.id, m.body_text, m.body_text_z,
                                     COALESCE(mm.payload, ''), mm.payload_z
@@ -325,19 +241,29 @@ impl Database {
                         .query_map([thread_id], |row| {
                             let stored = resolve_body(1, row.get(1)?, row.get(2)?)?;
                             let metadata = resolve_body(3, row.get(3)?, row.get(4)?)?;
-                            let corrected = serde_json::from_str::<RawMessage>(&metadata)
+                            let normalized = serde_json::from_str::<RawMessage>(&metadata)
                                 .ok()
-                                .and_then(|raw| normalize(&raw).ok())
+                                .and_then(|raw| normalize(&raw).ok());
+                            let cc_bcc = normalized.as_ref().map(|message| message.cc_bcc.clone());
+                            let corrected = normalized
                                 .map(|message| message.body_text)
                                 .unwrap_or_else(|| readable_body_text(stored.clone()));
-                            Ok((row.get(0)?, stored, corrected))
+                            Ok((row.get(0)?, stored, corrected, cc_bcc))
                         })?
                         .collect::<Result<_, _>>()?;
-                    for (id, stored, corrected) in &messages {
+                    for (id, stored, corrected, cc_bcc) in &messages {
                         if stored != corrected {
                             transaction.execute(
                                 "UPDATE messages SET body_text = '', body_text_z = ?1 WHERE id = ?2",
                                 params![compress_body(corrected), id],
+                            )?;
+                        }
+                        // Fills in Cc/Bcc for mail stored before they were
+                        // kept; a message without a stored payload keeps `[]`.
+                        if let Some(cc_bcc) = cc_bcc {
+                            transaction.execute(
+                                "UPDATE messages SET cc_bcc_json = ?1 WHERE id = ?2",
+                                params![serde_json::to_string(cc_bcc).unwrap_or_else(|_| "[]".into()), id],
                             )?;
                         }
                     }
@@ -349,7 +275,7 @@ impl Database {
                         |row| row.get(0),
                     )?;
                     let text = crate::quoted_history::searchable_thread_text(
-                        messages.iter().map(|(_, _, text)| text.as_str()),
+                        messages.iter().map(|(_, _, text, _)| text.as_str()),
                     );
                     transaction.execute(
                         "UPDATE thread_search SET body = ?1, snippet = ?2 WHERE rowid = ?3",
@@ -426,14 +352,120 @@ fn label_name_sql() -> String {
         .to_string()
 }
 
-/// Matches a thread whose `labels_json` holds the system label id `id`. `id`
-/// is a hard-coded CONSTANT (never user text), so it is safe to inline into
-/// the SQL — it binds no parameter and is not a `LIKE` pattern.
+/// The SQL predicate for one structured term, appending its bound values to
+/// `binds` in placeholder order. Top-level free text returns `None`: it is
+/// matched once by the query's own `MATCH`, which also supplies the rank and
+/// snippet. Free text inside `Not`/`AnyOf` (`nested`) becomes a subquery on
+/// the same index. User text is always bound, never interpolated.
+fn term_predicate(term: &QueryTerm, binds: &mut Vec<Value>, nested: bool) -> DbResult<Option<String>> {
+    let predicate = match term {
+        QueryTerm::FreeText { .. } if !nested => return Ok(None),
+        QueryTerm::FreeText { text, quoted } => {
+            let fts = fts_query(&if *quoted { format!("\"{text}\"") } else { text.clone() });
+            if fts.trim().is_empty() {
+                // Nothing searchable (punctuation only): matches nothing, as
+                // the top-level path returns no results for it.
+                "0".to_string()
+            } else {
+                binds.push(Value::Text(fts));
+                "t.id IN (SELECT thread_id FROM thread_search WHERE thread_search MATCH ?)".to_string()
+            }
+        }
+        QueryTerm::From(value) => {
+            binds.push(Value::Text(crate::search_query::like_contains_pattern(value)));
+            "EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id \
+             AND m.sender LIKE ? ESCAPE '\\')"
+                .to_string()
+        }
+        QueryTerm::To(value) => {
+            binds.push(Value::Text(crate::search_query::like_contains_pattern(value)));
+            // Like Gmail, `to:` covers To, Cc and Bcc. Both columns are JSON
+            // arrays, so each element is matched through `json_each`: a LIKE
+            // over the raw text would also match the brackets, quotes and
+            // commas of the encoding.
+            "EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id AND EXISTS ( \
+             SELECT 1 FROM (SELECT value FROM json_each(m.recipients_json) \
+                            UNION ALL SELECT value FROM json_each(m.cc_bcc_json)) r \
+             WHERE r.value LIKE ? ESCAPE '\\'))"
+                .to_string()
+        }
+        QueryTerm::Subject(value) => {
+            binds.push(Value::Text(crate::search_query::like_contains_pattern(value)));
+            "t.subject LIKE ? ESCAPE '\\'".to_string()
+        }
+        QueryTerm::Date { bound, date } => {
+            binds.push(Value::Text(crate::search_query::utc_day_start_rfc3339(*date)));
+            let op = match bound {
+                // `after:d` = on or after the start of day d (UTC).
+                DateBound::After => ">=",
+                // `before:d` = strictly before the start of day d.
+                DateBound::Before => "<",
+            };
+            // Compare INSTANTS, not strings: `sent_at` is RFC 3339 in
+            // whatever offset the message carried (a `Date:` header fallback
+            // keeps the sender's offset), so a lexicographic compare against a
+            // UTC bound is wrong by the offset. `datetime()` normalises both
+            // to UTC and yields NULL (so no match) for an unparseable value.
+            format!(
+                "EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id \
+                 AND datetime(m.sent_at) {op} datetime(?))"
+            )
+        }
+        QueryTerm::State(MessageState::Unread) => "t.unread = 1".to_string(),
+        QueryTerm::State(MessageState::Starred) => "t.starred = 1".to_string(),
+        QueryTerm::HasAttachment => "t.has_attachments = 1".to_string(),
+        QueryTerm::Label(value) => {
+            // Resolve a label NAME to the ids in `t.labels_json` through the
+            // per-account cache. See `label_name_sql`. The fragment has TWO
+            // placeholders (exact name and hyphen-folded name), so NAME is
+            // bound twice.
+            binds.push(Value::Text(value.clone()));
+            binds.push(Value::Text(value.clone()));
+            label_name_sql()
+        }
+        QueryTerm::In(value) => {
+            // A fixed set of system LOCATION words resolves without the cache
+            // (system ids are provider-neutral); any other value resolves
+            // exactly like a label NAME.
+            match system_location_predicate(value) {
+                Some(predicate) => predicate,
+                None => {
+                    binds.push(Value::Text(value.clone()));
+                    binds.push(Value::Text(value.clone()));
+                    label_name_sql()
+                }
+            }
+        }
+        QueryTerm::Not(inner) => {
+            let inner = term_predicate(inner, binds, true)?.unwrap_or_else(|| "1".to_string());
+            format!("NOT ({inner})")
+        }
+        QueryTerm::AnyOf(alternatives) => {
+            let mut parts = Vec::with_capacity(alternatives.len());
+            for alternative in alternatives {
+                parts.push(term_predicate(alternative, binds, true)?.unwrap_or_else(|| "1".to_string()));
+            }
+            format!("(({}))", parts.join(") OR ("))
+        }
+        // Unreachable: a Raw term would have routed to legacy. Listed so a
+        // new term fails to compile here.
+        QueryTerm::Raw(_) => {
+            return Err(DatabaseError::invalid(
+                "internal: non-structured term reached the structured path",
+            ));
+        }
+    };
+    Ok(Some(predicate))
+}
+
 /// The legacy free-text path's all-mail scope: archived mail is searched,
 /// Trash and Spam are not.
 const ALL_MAIL_LEGACY_FILTER: &str = "AND t.trashed = 0 \
     AND NOT EXISTS (SELECT 1 FROM json_each(t.labels_json) j WHERE j.value = 'SPAM')";
 
+/// Matches a thread whose `labels_json` holds the system label id `id`. `id`
+/// is a hard-coded CONSTANT (never user text), so it is safe to inline into
+/// the SQL — it binds no parameter and is not a `LIKE` pattern.
 fn thread_has_system_id(id: &str) -> String {
     format!("EXISTS (SELECT 1 FROM json_each(t.labels_json) j WHERE j.value = '{id}')")
 }

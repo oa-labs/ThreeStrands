@@ -13,6 +13,8 @@ export type SearchToken = {
   /** Offsets of the token in the query; `end` is exclusive. */
   start: number;
   end: number;
+  /** A leading `-`: the term is excluded, and suggestions keep the `-`. */
+  negated: boolean;
   /** The lowercased operator name before `:`, or null for a bare word. */
   operator: string | null;
   /** The text after `operator:` with quotes removed, or the bare word. */
@@ -32,7 +34,11 @@ export type SearchSuggestion = {
   complete: boolean;
 };
 
-export type SuggestionContact = { email: string; name: string | null };
+/**
+ * A person to search for. `addresses` lists every address to match (the
+ * suggested one first); a contact with several becomes `{from:a from:b}`.
+ */
+export type SuggestionContact = { email: string; name: string | null; addresses?: readonly string[] };
 
 export type SuggestionSources = {
   /** User label names the active account(s) know about. */
@@ -91,11 +97,13 @@ export function tokenAt(query: string, caret: number): SearchToken {
     else if (!inQuotes && /\s/.test(char)) break;
   }
   const text = query.slice(start, end);
-  const match = /^([a-z]+):(.*)$/i.exec(text);
+  const negated = text.length > 1 && text.startsWith("-");
+  const term = negated ? text.slice(1) : text;
+  const match = /^([a-z]+):(.*)$/i.exec(term);
   if (match && KNOWN_OPERATORS.has(match[1].toLowerCase())) {
-    return { start, end, operator: match[1].toLowerCase(), value: match[2].replaceAll("\"", "") };
+    return { start, end, negated, operator: match[1].toLowerCase(), value: match[2].replaceAll("\"", "") };
   }
-  return { start, end, operator: null, value: text };
+  return { start, end, negated, operator: null, value: term };
 }
 
 /** An operator value, quoted when it holds whitespace so it stays one term. */
@@ -167,12 +175,13 @@ export function searchSuggestions(query: string, token: SearchToken, sources: Su
   }
 
   const suggestions: SearchSuggestion[] = [];
+  const prefix = token.negated ? "-" : "";
   const valueSuggestion = (kind: SearchSuggestionKind, value: string, label: string, detail?: string): SearchSuggestion => ({
     key: `${kind}:${token.operator}:${value}`,
     kind,
     label,
     detail,
-    replacement: `${token.operator}:${formatOperatorValue(value)}`,
+    replacement: `${prefix}${token.operator}:${formatOperatorValue(value)}`,
     complete: true,
   });
 
@@ -186,7 +195,7 @@ export function searchSuggestions(query: string, token: SearchToken, sources: Su
             kind: "operator",
             label: operator.text,
             detail: operator.detail,
-            replacement: operator.text,
+            replacement: `${prefix}${operator.text}`,
             complete: operator.complete,
           });
         }
@@ -196,7 +205,21 @@ export function searchSuggestions(query: string, token: SearchToken, sources: Su
     case "from":
     case "to":
       for (const contact of sources.contacts) {
-        suggestions.push(valueSuggestion("contact", contact.email, contact.name || contact.email, contact.name ? contact.email : undefined));
+        const addresses = contact.addresses?.length ? contact.addresses : [contact.email];
+        if (addresses.length === 1) {
+          suggestions.push(valueSuggestion("contact", contact.email, contact.name || contact.email, contact.name ? contact.email : undefined));
+          continue;
+        }
+        // Every address the person uses, as alternatives: `{from:a from:b}`.
+        // Negated, the query parser reads `-{…}` as "none of them".
+        suggestions.push({
+          key: `contact:${token.operator}:${addresses.join(",")}`,
+          kind: "contact",
+          label: contact.name || contact.email,
+          detail: `${addresses[0]} +${addresses.length - 1}`,
+          replacement: `${prefix}{${addresses.map((address) => `${token.operator}:${formatOperatorValue(address)}`).join(" ")}}`,
+          complete: true,
+        });
       }
       break;
     case "label":

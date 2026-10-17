@@ -24,20 +24,25 @@ function suggest(query: string, overrides: Partial<SuggestionSources> = {}, care
 
 describe("tokenAt", () => {
   it("finds the operator and value under the caret", () => {
-    expect(tokenAt("roadmap from:ali", 16)).toEqual({ start: 8, end: 16, operator: "from", value: "ali" });
-    expect(tokenAt("FROM:Ali", 8)).toEqual({ start: 0, end: 8, operator: "from", value: "Ali" });
+    expect(tokenAt("roadmap from:ali", 16)).toEqual({ start: 8, end: 16, negated: false, operator: "from", value: "ali" });
+    expect(tokenAt("FROM:Ali", 8)).toEqual({ start: 0, end: 8, negated: false, operator: "from", value: "Ali" });
   });
 
   it("treats a word in the middle of the query as the token when the caret is inside it", () => {
-    expect(tokenAt("from:ali roadmap", 3)).toEqual({ start: 0, end: 8, operator: "from", value: "ali" });
+    expect(tokenAt("from:ali roadmap", 3)).toEqual({ start: 0, end: 8, negated: false, operator: "from", value: "ali" });
   });
 
   it("keeps a quoted value with spaces as one token", () => {
-    expect(tokenAt("label:\"My Lab", 13)).toEqual({ start: 0, end: 13, operator: "label", value: "My Lab" });
+    expect(tokenAt("label:\"My Lab", 13)).toEqual({ start: 0, end: 13, negated: false, operator: "label", value: "My Lab" });
   });
 
   it("returns an empty bare token after a space", () => {
-    expect(tokenAt("from:ali ", 9)).toEqual({ start: 9, end: 9, operator: null, value: "" });
+    expect(tokenAt("from:ali ", 9)).toEqual({ start: 9, end: 9, negated: false, operator: null, value: "" });
+  });
+
+  it("notes a leading minus and reads the term after it", () => {
+    expect(tokenAt("budget -from:an", 15)).toEqual({ start: 7, end: 15, negated: true, operator: "from", value: "an" });
+    expect(tokenAt("-", 1)).toEqual({ start: 0, end: 1, negated: false, operator: null, value: "-" });
   });
 
   it("leaves unknown operators as bare words", () => {
@@ -66,6 +71,19 @@ describe("searchSuggestions", () => {
     ]);
     expect(contactQueryFor(tokenAt("to:a", 4))).toBe("a");
     expect(contactQueryFor(tokenAt("subject:a", 9))).toBeNull();
+  });
+
+  it("keeps a leading minus on what it completes", () => {
+    expect(suggest("-is:u").map((item) => item.replacement)).toEqual(["-is:unread"]);
+    expect(suggest("-f").map((item) => item.replacement)).toEqual(["-from:"]);
+  });
+
+  it("expands a contact with several addresses into alternatives", () => {
+    const contacts = [{ email: "ana@work.test", name: "Ana Diaz", addresses: ["ana@work.test", "ana@home.test"] }];
+    const [ana] = suggest("from:an", { contacts });
+    expect(ana).toMatchObject({ label: "Ana Diaz", detail: "ana@work.test +1", replacement: "{from:ana@work.test from:ana@home.test}" });
+    // Excluding the person excludes every address.
+    expect(suggest("-from:an", { contacts })[0].replacement).toBe("-{from:ana@work.test from:ana@home.test}");
   });
 
   it("offers user labels after label:, quoting names with spaces", () => {
