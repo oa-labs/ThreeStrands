@@ -93,7 +93,6 @@ pub(crate) async fn replicated_sync_probe_s3(
         return Err("Replicated sync is not enabled in this build".into());
     }
     state.replicated_sync.probe_s3(&config, &credentials).await
-        .map_err(AppError::from)
 }
 
 #[tauri::command]
@@ -138,7 +137,6 @@ pub(crate) async fn replicated_sync_create_join_code(
         return Err("Replicated sync is not enabled in this build".into());
     }
     state.replicated_sync.create_join_code(&connectors, expires_in_hours).await
-        .map_err(AppError::from)
 }
 
 #[tauri::command]
@@ -153,7 +151,6 @@ pub(crate) async fn replicated_sync_cancel_join_code(invitation_cid: String, sta
         return Err("Replicated sync is not enabled in this build".into());
     }
     state.replicated_sync.cancel_join_code(&invitation_cid).await
-        .map_err(AppError::from)
 }
 
 /// Parses pasted join code text without saving or contacting anything.
@@ -279,7 +276,6 @@ pub(crate) async fn replicated_sync_confirm_enrollment(request_id: String, state
 #[tauri::command]
 pub(crate) async fn replicated_sync_rotate_epoch(revoke_device_id: Option<String>, state: State<'_, AppState>) -> AppResult<()> {
     state.replicated_sync.rotate_epoch(revoke_device_id.as_deref()).await
-        .map_err(AppError::from)
 }
 
 #[tauri::command(async)]
@@ -292,7 +288,6 @@ pub(crate) fn replicated_sync_set_device_label(device_id: String, label: String,
 #[tauri::command]
 pub(crate) async fn replicated_sync_leave(state: State<'_, AppState>) -> AppResult<()> {
     state.replicated_sync.leave_sync_space().await
-        .map_err(AppError::from)
 }
 
 #[tauri::command]
@@ -303,7 +298,6 @@ pub(crate) fn replicated_sync_check_recovery_phrase(phrase: String) -> threestra
 #[tauri::command]
 pub(crate) async fn replicated_sync_join_with_recovery_phrase(phrase: String, state: State<'_, AppState>) -> AppResult<()> {
     state.replicated_sync.join_with_recovery_phrase(&phrase).await
-        .map_err(AppError::from)
 }
 
 #[tauri::command]

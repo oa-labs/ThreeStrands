@@ -16,14 +16,20 @@
 //!
 //! ## Migration status
 //!
-//! Only the command layer has moved so far. Today a failure keeps its
-//! category to the boundary only when it is a [`DatabaseError`] reached
-//! through `?` or `database_result`. Most internal modules (replicated sync,
-//! correspondence, auth, AI) still return `Result<_, String>`, so their
-//! enrollment, transport, and provider failures are already text by the time
-//! a command sees them and arrive as [`AppError::Message`]. The `Provider`,
-//! `Enrollment`, and `Transport` variants are in place for those modules to
-//! adopt as they move to typed results; nothing produces them yet.
+//! A failure keeps its category to the boundary when it is:
+//!
+//! - a [`DatabaseError`] reached through `?` or `database_result`;
+//! - an [`EnrollmentError`] from replicated sync's enrollment, rotation,
+//!   join-code, and recovery commands (`ReplicatedSync` returns
+//!   [`AppResult`] for those);
+//! - a [`TransportError`] from the S3 connection test.
+//!
+//! Other internal modules (correspondence, auth, AI, and replicated sync's
+//! connector and status plumbing, which sits on `sync_connectors`' string
+//! results) still return `Result<_, String>`. Their failures are already
+//! text by the time a command sees them and arrive as
+//! [`AppError::Message`]. Nothing produces the `Provider` variant yet; it is
+//! in place for those modules to adopt as they move to typed results.
 //!
 //! ## Wire contract is unchanged
 //!
@@ -150,6 +156,13 @@ mod tests {
 
         let transport: AppError = TransportError::NotFound.into();
         assert!(matches!(transport, AppError::Transport(_)));
+
+        // Replicated sync's enrollment commands keep the variant, so a caller
+        // can tell "try again" (EpochChanged) from a rejected credential,
+        // while Settings still shows the same sentence as before.
+        let enrollment: AppError = EnrollmentError::EpochChanged.into();
+        assert!(matches!(enrollment, AppError::Enrollment(EnrollmentError::EpochChanged)));
+        assert_eq!(enrollment.to_string(), String::from(EnrollmentError::EpochChanged));
     }
 
     #[test]
