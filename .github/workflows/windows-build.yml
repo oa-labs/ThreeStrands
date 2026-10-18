@@ -1,0 +1,79 @@
+name: Windows build
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Require and embed the configured Google OAuth client
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x86_64:
+    name: Windows x86-64 installer
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.0
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run JavaScript tests
+        run: pnpm test
+
+      - name: Run Rust tests
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Run shared crate tests
+        run: cargo test --locked --workspace
+
+      # Phase 1 ships an unsigned NSIS installer. Code signing and the updater
+      # signature arrive in phase 2, so this build produces an installer that
+      # SmartScreen will warn on and that the updater cannot yet verify.
+      - name: Build Windows installer
+        env:
+          THREESTRANDS_GOOGLE_CLIENT_ID: ${{ inputs.release == true && secrets.THREESTRANDS_GOOGLE_CLIENT_ID || '' }}
+          THREESTRANDS_GOOGLE_CLIENT_SECRET: ${{ inputs.release == true && secrets.THREESTRANDS_GOOGLE_CLIENT_SECRET || '' }}
+        run: pnpm tauri build --target x86_64-pc-windows-msvc --config src-tauri/tauri.windows.conf.json
+
+      - name: Verify the installer exists
+        shell: pwsh
+        run: |
+          $bundle = "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis"
+          $installers = @(Get-ChildItem -Path $bundle -Filter *.exe -ErrorAction SilentlyContinue)
+          if ($installers.Count -ne 1) {
+            Write-Error "expected exactly one NSIS installer in $bundle; found $($installers.Count)"
+            exit 1
+          }
+          if ($installers[0].Length -eq 0) {
+            Write-Error "NSIS installer is empty"
+            exit 1
+          }
+          Write-Host "Built $($installers[0].Name) ($([math]::Round($installers[0].Length / 1MB, 1)) MB)"
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v6
+        with:
+          name: threestrands-windows-x86_64
+          path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          if-no-files-found: error

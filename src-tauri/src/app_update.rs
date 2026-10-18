@@ -55,7 +55,13 @@ fn install_mode(bundle: Option<BundleType>, executable: &Path) -> InstallMode {
         } else {
             InstallMode::InPlace
         }
-    } else if bundle == Some(BundleType::AppImage) {
+    } else if matches!(
+        bundle,
+        // The Linux AppImage replaces itself in place. On Windows the NSIS and
+        // MSI installers register an install the updater can download over and
+        // relaunch; a portable .exe (no bundle type) cannot be replaced.
+        Some(BundleType::AppImage | BundleType::Nsis | BundleType::Msi)
+    ) {
         InstallMode::InPlace
     } else {
         InstallMode::Download
@@ -238,6 +244,16 @@ mod tests {
         assert_eq!(install_mode(Some(BundleType::AppImage), path), InstallMode::InPlace);
         assert_eq!(install_mode(Some(BundleType::Deb), path), InstallMode::Download);
         assert_eq!(install_mode(Some(BundleType::Rpm), path), InstallMode::Download);
+        assert_eq!(install_mode(None, path), InstallMode::Download);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_installs_nsis_and_msi_in_place_but_not_portable() {
+        let path = Path::new(r"C:\Program Files\ThreeStrands\threestrands.exe");
+        assert_eq!(install_mode(Some(BundleType::Nsis), path), InstallMode::InPlace);
+        assert_eq!(install_mode(Some(BundleType::Msi), path), InstallMode::InPlace);
+        // A portable .exe has no bundle type and cannot replace itself.
         assert_eq!(install_mode(None, path), InstallMode::Download);
     }
 }
