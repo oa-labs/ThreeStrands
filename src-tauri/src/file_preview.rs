@@ -1,9 +1,12 @@
 //! Pictures of attachments for the Files details panel. On macOS, Quick Look
 //! draws them: it parses the file in its own sandboxed thumbnail extension
-//! process, so this app never parses PDFs or Office documents itself. What
-//! comes back is a PNG, which goes through the same raster validator as image
-//! thumbnails before it reaches the page as a data URI. Files that the opening
-//! check considers risky get no preview, and other platforms get none yet.
+//! process, so this app never parses PDFs or Office documents itself. On
+//! Windows the Shell thumbnail provider (`IShellItemImageFactory`) does the
+//! same out of process, and the HBITMAP it returns is read back with GDI and
+//! re-encoded as PNG. What reaches the page is always a PNG, which goes through
+//! the same raster validator as image thumbnails before it becomes a data URI.
+//! Files that the opening check considers risky get no preview, and platforms
+//! without a thumbnail backend get none.
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -106,9 +109,23 @@ async fn render(source: &Path, output: &Path) -> bool {
     )
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 async fn render(_source: &Path, _output: &Path) -> bool {
     false
+}
+
+#[cfg(target_os = "windows")]
+async fn render(source: &Path, output: &Path) -> bool {
+    let source = source.to_path_buf();
+    let output = output.to_path_buf();
+    // The Shell thumbnail call is blocking COM work; keep it off the async
+    // runtime, and abandon it on the same deadline macOS uses for Quick Look.
+    let drawn = tokio::time::timeout(
+        PREVIEW_TIMEOUT,
+        tokio::task::spawn_blocking(move || windows_shell::render_png(&source, &output)),
+    )
+    .await;
+    matches!(drawn, Ok(Ok(true)))
 }
 
 #[cfg(target_os = "macos")]
@@ -168,6 +185,188 @@ mod macos {
                 );
         }
         Some(receiver)
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod windows_shell {
+    use super::{PREVIEW_SCALE, PREVIEW_SIZE_POINTS};
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::Path;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::SIZE;
+    use windows::Win32::Graphics::Gdi::{
+        DeleteObject, GetDC, GetDIBits, ReleaseDC, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+        DIB_RGB_COLORS, HBITMAP, HGDIOBJ,
+    };
+    use windows::Win32::System::Com::{
+        CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::UI::Shell::{
+        IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_THUMBNAILONLY,
+    };
+
+    /// The thumbnail edge in pixels: the same points × scale macOS renders to,
+    /// so both platforms emit an image of the same physical size (640 px).
+    const EDGE: i32 = (PREVIEW_SIZE_POINTS * PREVIEW_SCALE) as i32;
+
+    /// COM apartment held for one thumbnail request and uninitialised on drop,
+    /// even if a later step returns early. One `CoInitializeEx`/`CoUninitialize`
+    /// pair per call keeps this independent of whatever the host thread has done.
+    struct ComApartment;
+
+    impl ComApartment {
+        fn enter() -> windows::core::Result<Self> {
+            // S_FALSE ("already initialised on this thread") is success; only a
+            // real failure HRESULT should abort. `ok()` maps any failure code.
+            unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()? };
+            Ok(Self)
+        }
+    }
+
+    impl Drop for ComApartment {
+        fn drop(&mut self) {
+            unsafe { CoUninitialize() };
+        }
+    }
+
+    /// An owned GDI bitmap handle, deleted on drop so the out-of-process
+    /// thumbnail the Shell handed back never leaks.
+    struct OwnedBitmap(HBITMAP);
+
+    impl Drop for OwnedBitmap {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = DeleteObject(HGDIOBJ(self.0 .0));
+            }
+        }
+    }
+
+    /// Draws a real thumbnail of `source` through the Shell and writes it to
+    /// `output` as PNG. Returns `Ok(false)` when the Shell produced no
+    /// thumbnail (we ask `THUMBNAILONLY`, so a generic file icon is declined,
+    /// matching macOS), and `Err` on an unexpected API failure.
+    pub(super) fn render_png(source: &Path, output: &Path) -> windows::core::Result<bool> {
+        let _com = ComApartment::enter()?;
+
+        let mut wide: Vec<u16> = source.as_os_str().encode_wide().collect();
+        wide.push(0);
+        let factory: IShellItemImageFactory =
+            unsafe { SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None)? };
+
+        let size = SIZE { cx: EDGE, cy: EDGE };
+        // THUMBNAILONLY: never fall back to an icon. A missing thumbnail comes
+        // back as an error we translate to Ok(false), so the panel keeps its
+        // own icon rather than showing a generic file glyph.
+        let bitmap = match unsafe { factory.GetImage(size, SIIGBF_THUMBNAILONLY) } {
+            Ok(handle) => OwnedBitmap(handle),
+            Err(_) => return Ok(false),
+        };
+
+        let Some(png) = encode_bitmap_as_png(bitmap.0) else {
+            return Ok(false);
+        };
+        std::fs::write(output, png).map_err(|error| {
+            windows::core::Error::from_hresult(windows::core::HRESULT(
+                error.raw_os_error().unwrap_or(-1),
+            ))
+        })?;
+        Ok(true)
+    }
+
+    /// Reads the bitmap's pixels with GDI as 32-bit top-down BGRA and encodes
+    /// them as an RGBA PNG. Returns `None` if the bitmap has no pixels or GDI
+    /// refuses the read.
+    fn encode_bitmap_as_png(bitmap: HBITMAP) -> Option<Vec<u8>> {
+        // A bottom-up DIB would arrive upside down; a negative height asks GDI
+        // for top-down rows so row 0 is the top of the image.
+        let mut info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let screen = unsafe { GetDC(None) };
+        if screen.is_invalid() {
+            return None;
+        }
+        // Restore the device context no matter which branch returns.
+        struct Dc(windows::Win32::Graphics::Gdi::HDC);
+        impl Drop for Dc {
+            fn drop(&mut self) {
+                unsafe { ReleaseDC(None, self.0) };
+            }
+        }
+        let dc = Dc(screen);
+
+        // First pass with a null buffer fills in the real width/height.
+        if unsafe {
+            GetDIBits(
+                dc.0,
+                bitmap,
+                0,
+                0,
+                None,
+                &mut info,
+                DIB_RGB_COLORS,
+            )
+        } == 0
+        {
+            return None;
+        }
+
+        let width = info.bmiHeader.biWidth;
+        let height = info.bmiHeader.biHeight.abs();
+        if width <= 0 || height == 0 {
+            return None;
+        }
+        // Clamp to the raster validator's dimension ceiling; a Shell thumbnail
+        // never approaches it, but never trust a size blindly.
+        if width > 8_192 || height > 8_192 {
+            return None;
+        }
+        info.bmiHeader.biHeight = -height; // top-down
+        info.bmiHeader.biCompression = BI_RGB.0;
+
+        let pixel_count = (width as usize) * (height as usize);
+        let mut buffer = vec![0u8; pixel_count * 4];
+        if unsafe {
+            GetDIBits(
+                dc.0,
+                bitmap,
+                0,
+                height as u32,
+                Some(buffer.as_mut_ptr() as *mut _),
+                &mut info,
+                DIB_RGB_COLORS,
+            )
+        } == 0
+        {
+            return None;
+        }
+
+        // GDI gives BGRA (pre-swizzle to RGBA) with the alpha byte unset for
+        // opaque sources; force it opaque so the PNG is not fully transparent.
+        for pixel in buffer.chunks_exact_mut(4) {
+            pixel.swap(0, 2); // B <-> R
+            pixel[3] = 0xff;
+        }
+
+        let mut png = Vec::new();
+        {
+            let mut encoder =
+                png::Encoder::new(&mut png, width as u32, height as u32);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().ok()?;
+            writer.write_image_data(&buffer).ok()?;
+        }
+        Some(png)
     }
 }
 
@@ -288,6 +487,27 @@ mod tests {
             let scratch = root.scratch().unwrap();
             fs::write(scratch.0.join("copy.pdf"), b"%PDF").unwrap();
             assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+        }
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    /// Exercises the real Shell -> HBITMAP -> GDI -> PNG pipeline on Windows.
+    /// A PNG source is used because image thumbnailing is present on every
+    /// Windows runner, where PDF/Office handlers may not be. The Shell may
+    /// still decline a thumbnail for a 1x1 image (THUMBNAILONLY), so a `None`
+    /// result is acceptable; what must always hold is that the call does not
+    /// error, any PNG it returns is valid, and the scratch tree is left empty.
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn draws_an_image_through_the_shell_and_cleans_up() {
+        let directory = std::env::temp_dir().join(format!("preview-test-{}", uuid::Uuid::new_v4()));
+        let root = PreviewRoot::new(directory.clone()).unwrap();
+        let result = preview_data_uri(&root, "photo.png", PNG_1X1)
+            .await
+            .expect("the pipeline must not error");
+        if let Some(uri) = result {
+            assert!(uri.starts_with("data:image/png;base64,"));
         }
         assert_eq!(fs::read_dir(&directory).unwrap().count(), 0);
         let _ = fs::remove_dir_all(directory);
