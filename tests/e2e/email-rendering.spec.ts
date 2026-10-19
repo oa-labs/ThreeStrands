@@ -239,6 +239,32 @@ test.describe("email rendering fixtures", () => {
     });
   }
 
+  for (const { fixture, width } of [
+    { fixture: "centeredHybridColumn", width: 600 },
+    { fixture: "centeredStyledTable", width: 480 },
+  ] as const) {
+    test(`${fixture} centers its column in a wide pane and fills a narrow one`, async ({ page }) => {
+      const gaps = () => page.locator("iframe.message-body").contentFrame().locator(".centered").evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        const parent = element.parentElement!.getBoundingClientRect();
+        return { width: Math.round(box.width), left: Math.round(box.left - parent.left), right: Math.round(parent.right - box.right) };
+      });
+      await page.setViewportSize({ width: 1400, height: 900 });
+      await page.goto(`/tests/email-rendering.html?theme=light&fixture=${fixture}`);
+      await expect.poll(async () => (await gaps()).width).toBe(width);
+      const wide = await gaps();
+      expect(wide.left).toBeGreaterThan(0);
+      expect(Math.abs(wide.left - wide.right)).toBeLessThanOrEqual(1);
+
+      if (fixture === "centeredHybridColumn") {
+        // max-width, not width: a pane narrower than the column fills it.
+        await page.setViewportSize({ width: 390, height: 900 });
+        await expect.poll(async () => (await gaps()).left).toBe(0);
+        expect((await gaps()).right).toBe(0);
+      }
+    });
+  }
+
   for (const { fixture, columnWidths, text } of [
     { fixture: "colWidthZeroWidthTable", columnWidths: [158, 601, 150], text: "300 USD" },
     { fixture: "colgroupWidthFixedTable", columnWidths: [160, 80, 240], text: "Ships next week" },

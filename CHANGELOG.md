@@ -25,6 +25,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Searching for `to:` someone now also finds mail where they were on Cc or Bcc, as it does in Gmail.
 - Trashed conversations now follow your local mail retention setting, even when starred. Other starred conversations stay on your device, and local cleanup leaves mail on the server.
 - With **Load remote images** on, images now load in emails from senders whose image servers turn away anything that doesn't look like a web browser. Images are still fetched through ThreeStrands, so senders still don't see your browser, cookies, or which message you're reading from.
+- Newsletters and other emails that center their content in a column now appear centered, as they do in Gmail, instead of hugging the left edge of the reading pane.
 
 ## 0.141.0 — 2026-10-16
 
