@@ -43,6 +43,20 @@ fn adopting_the_same_account_twice_does_not_duplicate_it() {
 }
 
 #[test]
+fn the_catalogued_spelling_of_an_address_is_found_without_regard_to_case() {
+    let database = database();
+    database.adopt_account("Joel@Proton.me").unwrap();
+    assert_eq!(database.catalogued_account_email("joel@proton.me").unwrap().as_deref(), Some("Joel@Proton.me"));
+    assert_eq!(database.catalogued_account_email("JOEL@PROTON.ME").unwrap().as_deref(), Some("Joel@Proton.me"));
+    assert_eq!(database.catalogued_account_email("someone@proton.me").unwrap(), None);
+
+    // Two rows differing only in case: the exact spelling wins.
+    database.adopt_account("joel@proton.me").unwrap();
+    assert_eq!(database.catalogued_account_email("joel@proton.me").unwrap().as_deref(), Some("joel@proton.me"));
+    assert_eq!(database.catalogued_account_email("Joel@Proton.me").unwrap().as_deref(), Some("Joel@Proton.me"));
+}
+
+#[test]
 fn account_label_model_reflects_provider_and_imap_label_storage() {
     use crate::models::MailProviderKind;
     use crate::provider::LabelModel;

@@ -232,6 +232,23 @@ impl Database {
         })
     }
 
+    /// The catalog's spelling of `email`, matched without regard to ASCII
+    /// case. Synchronized mail-account ids are lowercased, while an IMAP
+    /// address keeps the case it was typed with, so a synced deletion must
+    /// resolve the stored spelling before it can remove the account's rows.
+    pub fn catalogued_account_email(&self, email: &str) -> DbResult<Option<String>> {
+        self.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT email FROM accounts WHERE lower(email) = lower(?1)
+                     ORDER BY email = ?1 DESC LIMIT 1",
+                    [email],
+                    |row| row.get(0),
+                )
+                .optional()?)
+        })
+    }
+
     /// Atomically records that an account's OAuth grant is unusable and
     /// releases any in-flight mutations back to the durable queue. Claiming
     /// is status-gated, so those mutations remain paused until reconnecting

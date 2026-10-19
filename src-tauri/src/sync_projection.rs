@@ -91,12 +91,9 @@ impl Database {
                     self.delete_goal(entity_id)?;
                 }
                 EntityType::ContactGroup => self.delete_contact_group(entity_id)?,
-                EntityType::MailAccount => {
-                    clear_provider_credential("app.threestrands.mail", entity_id)?;
-                    if self.get_account(entity_id)?.is_some() {
-                        self.remove_account(entity_id)?;
-                    }
-                }
+                EntityType::MailAccount => self.remove_synced_mail_account(entity_id, |key| {
+                    clear_provider_credential("app.threestrands.mail", key)
+                })?,
                 EntityType::CalendarAccount => {
                     clear_provider_credential("app.threestrands.calendar", entity_id)?;
                     if let Err(error) = self.remove_calendar_account(entity_id) {
@@ -392,6 +389,26 @@ impl Database {
         })
         .map_err(String::from)
     }
+
+    /// Applies a synchronized mail-account deletion. The id is lowercased,
+    /// while the local row and its credential keep the address's typed case
+    /// (see `catalogued_account_email`), so both spellings are cleared.
+    /// Credentials go first: a failure leaves the row for the retry to find.
+    fn remove_synced_mail_account(
+        &self,
+        entity_id: &str,
+        clear_credential: impl Fn(&str) -> DbResult<()>,
+    ) -> DbResult<()> {
+        let stored = self.catalogued_account_email(entity_id)?;
+        clear_credential(entity_id)?;
+        if let Some(email) = stored {
+            if email != entity_id {
+                clear_credential(&email)?;
+            }
+            self.remove_account(&email)?;
+        }
+        Ok(())
+    }
 }
 
 fn clear_provider_credential(service: &str, key: &str) -> DbResult<()> {
@@ -415,6 +432,61 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap()
+    }
+
+    #[test]
+    fn a_synced_mail_account_deletion_removes_an_address_typed_with_capitals() {
+        let db = Database::open_memory();
+        db.adopt_account("Joel@Proton.me").unwrap();
+        db.create_split_inbox("Mine", "domain", "acme.com", "Joel@Proton.me").unwrap();
+        db.adopt_account("other@proton.me").unwrap();
+        let cleared = std::cell::RefCell::new(Vec::new());
+
+        // The synced id is the lowercased address.
+        db.remove_synced_mail_account("joel@proton.me", |key| {
+            cleared.borrow_mut().push(key.to_string());
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(cleared.into_inner(), ["joel@proton.me", "Joel@Proton.me"]);
+        let left = db.list_accounts().unwrap().into_iter().map(|account| account.email).collect::<Vec<_>>();
+        assert_eq!(left, ["other@proton.me"]);
+        assert!(db.list_split_inboxes().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_synced_mail_account_deletion_clears_the_credential_once_for_a_lowercase_address() {
+        let db = Database::open_memory();
+        db.adopt_account("you@example.com").unwrap();
+        let cleared = std::cell::RefCell::new(Vec::new());
+        db.remove_synced_mail_account("you@example.com", |key| {
+            cleared.borrow_mut().push(key.to_string());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(cleared.into_inner(), ["you@example.com"]);
+        assert!(db.get_account("you@example.com").unwrap().is_none());
+
+        // An account this device never had still clears its credential.
+        let cleared = std::cell::RefCell::new(Vec::new());
+        db.remove_synced_mail_account("gone@example.com", |key| {
+            cleared.borrow_mut().push(key.to_string());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(cleared.into_inner(), ["gone@example.com"]);
+    }
+
+    #[test]
+    fn a_failed_credential_clear_keeps_the_account_for_the_retry() {
+        let db = Database::open_memory();
+        db.adopt_account("Joel@Proton.me").unwrap();
+        let result = db.remove_synced_mail_account("joel@proton.me", |key| {
+            if key == "Joel@Proton.me" { Err(DatabaseError::Keychain("locked".into())) } else { Ok(()) }
+        });
+        assert!(result.is_err());
+        assert!(db.get_account("Joel@Proton.me").unwrap().is_some());
     }
 
     #[test]
