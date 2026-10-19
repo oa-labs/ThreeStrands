@@ -50,6 +50,11 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
   const closeRightWorkspace = useCallback(() => setRightWorkspace(null), []);
   const calendar = useCalendarAccounts({ onLastAccountRemoved: closeRightWorkspace });
   const { refreshAccounts: refreshCalendarAccounts, refreshCalendars: refreshCalendarOptions } = calendar;
+  // Replicated sync can add or remove calendar accounts while the app runs,
+  // so re-read them each time Settings opens, as mail accounts are.
+  useEffect(() => {
+    if (settingsOpen) void refreshCalendarAccounts().catch(logBackgroundFailure("Calendar account listing"));
+  }, [refreshCalendarAccounts, settingsOpen]);
   useEffect(() => {
     if (settingsOpen && settingsSection === "calendarAccounts" && calendar.accounts.length > 0) {
       void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"));

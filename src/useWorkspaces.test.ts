@@ -1,7 +1,8 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ThreadDetail } from "./domain";
 import { useWorkspaces } from "./useWorkspaces";
+import { mailClient } from "./data/client";
 
 vi.mock("./data/client", () => ({ mailClient: {
   listKeepInTouch: vi.fn().mockResolvedValue([]),
@@ -45,5 +46,27 @@ describe("the person picked for the context panel", () => {
 
     hook.rerender({ detail: thread("t2"), reading: "m2" });
     expect(hook.result.current.contextPersonEmail).toBeNull();
+  });
+});
+
+describe("calendar accounts", () => {
+  it("re-reads them when Settings opens, so an account synced from another device appears", async () => {
+    const listCalendarAccounts = vi.mocked(mailClient.listCalendarAccounts);
+    const hook = renderHook((props: { settingsOpen: boolean }) => useWorkspaces({
+      settingsOpen: props.settingsOpen,
+      settingsSection: "calendarAccounts",
+      visibleDetail: null,
+      readingMessageId: null,
+      readingMessageIdRef: { current: null },
+      openSettingsAt: vi.fn(),
+      setNotice: vi.fn(),
+    }), { initialProps: { settingsOpen: false } });
+    await waitFor(() => expect(listCalendarAccounts).toHaveBeenCalled());
+    const synced = { email: "synced@example.com", connectedAt: "2026-10-19T00:00:00Z", status: "needs_reauth" as const };
+    listCalendarAccounts.mockResolvedValueOnce([synced]);
+
+    hook.rerender({ settingsOpen: true });
+
+    await waitFor(() => expect(hook.result.current.calendar.accounts).toEqual([synced]));
   });
 });

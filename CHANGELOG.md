@@ -9,6 +9,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - **Remove on all devices** now removes an account from your other devices even when its address was typed with capital letters.
 - Pictures in some newsletters and announcements now appear when **Load remote images** is on. Previously they stayed blank if the sender's server didn't label them as images.
 - Event details in the calendar side panel now show attendees and the description in the same text size as the rest of the panel, and a single guest reads "1 attendee".
+- Calendars on your other accounts keep loading when a calendar account you connected on another device syncs to this one. Previously **Settings → Calendar Accounts** said every account's calendars couldn't be loaded until you disconnected that account here. A newly synced account now also appears there without restarting.
 
 ## 0.145.2 — 2026-10-19
 
