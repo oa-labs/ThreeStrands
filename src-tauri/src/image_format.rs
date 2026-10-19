@@ -17,6 +17,38 @@ pub(crate) fn is_supported_raster_mime(mime_type: &str) -> bool {
     )
 }
 
+/// Types a server sends when it doesn't know (or doesn't say) what the bytes
+/// are. Only these may be identified by sniffing; any other declared type,
+/// including `image/svg+xml` and `text/html`, is taken at its word.
+pub(crate) fn is_generic_binary_mime(mime_type: &str) -> bool {
+    matches!(
+        mime_type,
+        "" | "application/octet-stream" | "binary/octet-stream"
+    )
+}
+
+/// Identifies a supported raster format from its file signature. Only the
+/// formats `is_supported_raster_mime` accepts are recognized, so text formats
+/// such as SVG or HTML can never be promoted to an image type.
+pub(crate) fn sniff_raster_mime(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("image/jpeg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else if bytes.len() >= 12
+        && &bytes[4..8] == b"ftyp"
+        && matches!(&bytes[8..12], b"avif" | b"avis")
+    {
+        Some("image/avif")
+    } else {
+        None
+    }
+}
+
 pub(crate) fn validate_raster(bytes: &[u8]) -> Result<(), String> {
     if bytes.len() > MAX_RASTER_BYTES {
         return Err("Image exceeds the maximum allowed size".to_string());
@@ -69,6 +101,49 @@ mod tests {
             "",
         ] {
             assert!(!is_supported_raster_mime(mime_type), "{mime_type}");
+        }
+    }
+
+    #[test]
+    fn only_unlabelled_binary_types_are_eligible_for_sniffing() {
+        for mime_type in ["", "application/octet-stream", "binary/octet-stream"] {
+            assert!(is_generic_binary_mime(mime_type), "{mime_type}");
+        }
+        for mime_type in ["image/svg+xml", "text/html", "text/plain", "application/xml"] {
+            assert!(!is_generic_binary_mime(mime_type), "{mime_type}");
+        }
+    }
+
+    #[test]
+    fn sniffs_each_supported_raster_signature() {
+        let cases: [(&[u8], &str); 7] = [
+            (b"\x89PNG\r\n\x1a\nrest", "image/png"),
+            (&[0xff, 0xd8, 0xff, 0xe0, 0, 0x10], "image/jpeg"),
+            (b"GIF87a....", "image/gif"),
+            (b"GIF89a....", "image/gif"),
+            (b"RIFF\x00\x00\x00\x00WEBPVP8 ", "image/webp"),
+            (b"\x00\x00\x00\x1cftypavif\x00\x00", "image/avif"),
+            (b"\x00\x00\x00\x1cftypavis\x00\x00", "image/avif"),
+        ];
+        for (bytes, expected) in cases {
+            let sniffed = sniff_raster_mime(bytes);
+            assert_eq!(sniffed, Some(expected), "{bytes:?}");
+            assert!(is_supported_raster_mime(sniffed.unwrap()));
+        }
+    }
+
+    #[test]
+    fn never_sniffs_active_or_truncated_content_as_an_image() {
+        for bytes in [
+            &b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>"[..],
+            b"<?xml version=\"1.0\"?><svg/>",
+            b"<!DOCTYPE html><img src=x onerror=alert(1)>",
+            b"\x89PNG",
+            b"RIFF\x00\x00\x00\x00WAVE",
+            b"\x00\x00\x00\x1cftypheic",
+            b"",
+        ] {
+            assert_eq!(sniff_raster_mime(bytes), None, "{bytes:?}");
         }
     }
 

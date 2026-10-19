@@ -167,6 +167,13 @@ pub(crate) async fn fetch(url: &str, cache: &ImageCache) -> Result<String, Strin
     }
 
     let parsed = validate_public_image_url(url)?;
+    let data_uri = download(parsed, cache).await?;
+    cache.insert(url.to_string(), data_uri.clone()).await;
+    Ok(data_uri)
+}
+
+/// Downloads an already-validated URL and returns it as a raster data URI.
+async fn download(parsed: Url, cache: &ImageCache) -> Result<String, String> {
     let _request_slot = cache
         .request_slots
         .acquire()
@@ -197,7 +204,11 @@ pub(crate) async fn fetch(url: &str, cache: &ImageCache) -> Result<String, Strin
         .unwrap_or("")
         .trim()
         .to_ascii_lowercase();
-    if !crate::image_format::is_supported_raster_mime(&content_type) {
+    // Some CDNs label real images as generic binary; those are identified
+    // from their bytes below. Every other non-raster type is refused here.
+    if !crate::image_format::is_supported_raster_mime(&content_type)
+        && !crate::image_format::is_generic_binary_mime(&content_type)
+    {
         return Err(format!(
             "Refusing unsupported image content-type: {content_type}"
         ));
@@ -225,11 +236,16 @@ pub(crate) async fn fetch(url: &str, cache: &ImageCache) -> Result<String, Strin
         append_bounded(&mut bytes, &chunk)?;
     }
 
+    let mime_type = if crate::image_format::is_supported_raster_mime(&content_type) {
+        content_type.as_str()
+    } else {
+        crate::image_format::sniff_raster_mime(&bytes).ok_or_else(|| {
+            format!("Refusing unrecognized image data labelled as content-type: {content_type}")
+        })?
+    };
     crate::image_format::validate_raster(&bytes)?;
 
-    let data_uri = format!("data:{content_type};base64,{}", STANDARD.encode(&bytes));
-    cache.insert(url.to_string(), data_uri.clone()).await;
-    Ok(data_uri)
+    Ok(format!("data:{mime_type};base64,{}", STANDARD.encode(&bytes)))
 }
 
 #[cfg(test)]
@@ -386,6 +402,74 @@ mod tests {
             .unwrap();
         server.join().unwrap();
         assert_eq!(&body[..], b"decoded image bytes");
+    }
+
+    /// A 2×3 PNG header: enough for the signature sniff and dimension check.
+    const TINY_PNG: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\
+        \x00\x00\x00\x02\x00\x00\x00\x03\x08\x06\x00\x00\x00\x00\x00\x00\x00";
+    /// A JFIF APP0 segment followed by a 3×2 baseline SOF0 frame header.
+    const TINY_JPEG: &[u8] = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\
+        \xff\xc0\x00\x11\x08\x00\x02\x00\x03\x03\x01\x11\x00\x02\x11\x01\x03\x11\x01\xff\xd9";
+
+    async fn download_served(content_type: Option<&str>, body: &[u8]) -> Result<String, String> {
+        let header = content_type
+            .map(|value| format!("Content-Type: {value}\r\n"))
+            .unwrap_or_default();
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\n{header}Content-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        response.extend_from_slice(body);
+        let (port, server) = serve_once(response);
+        let cache = ImageCache::new().unwrap();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/image")).unwrap();
+        let result = download(url, &cache).await;
+        server.join().unwrap();
+        result
+    }
+
+    #[tokio::test]
+    async fn identifies_rasters_served_with_a_generic_binary_type() {
+        let png = download_served(Some("application/octet-stream"), TINY_PNG)
+            .await
+            .unwrap();
+        assert!(png.starts_with("data:image/png;base64,"), "{png}");
+
+        let jpeg = download_served(None, TINY_JPEG).await.unwrap();
+        assert!(jpeg.starts_with("data:image/jpeg;base64,"), "{jpeg}");
+    }
+
+    #[tokio::test]
+    async fn keeps_a_declared_raster_type() {
+        let png = download_served(Some("image/png"), TINY_PNG).await.unwrap();
+        assert!(png.starts_with("data:image/png;base64,"), "{png}");
+    }
+
+    #[tokio::test]
+    async fn refuses_generic_binary_that_is_not_a_supported_raster() {
+        for body in [
+            &b"<svg xmlns=\"http://www.w3.org/2000/svg\" onload=\"alert(1)\"/>"[..],
+            b"<!DOCTYPE html><script>alert(1)</script>",
+        ] {
+            let error = download_served(Some("application/octet-stream"), body)
+                .await
+                .unwrap_err();
+            assert!(error.starts_with("Refusing unrecognized image data"), "{error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn never_sniffs_an_explicitly_non_raster_type() {
+        for content_type in ["image/svg+xml", "text/html"] {
+            let error = download_served(Some(content_type), TINY_PNG)
+                .await
+                .unwrap_err();
+            assert!(
+                error.starts_with("Refusing unsupported image content-type"),
+                "{content_type}: {error}"
+            );
+        }
     }
 
     #[test]
