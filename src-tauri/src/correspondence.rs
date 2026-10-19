@@ -1101,6 +1101,28 @@ impl Database {
         }
         Ok(())
     }
+    /// Fails every queued or scheduled send whose account is gone from the
+    /// catalog, whatever its due time. Removing an account on another device
+    /// purges it here without touching this device's outbox, and a send left
+    /// waiting would otherwise go out unasked once the account is added again.
+    pub fn fail_sends_for_removed_accounts(&self, owner: &str) -> Result<(), String> {
+        let accounts: Vec<String> = {
+            let c = self.connection()?;
+            let mut q = c
+                .prepare(
+                    "SELECT DISTINCT account FROM outbox_messages
+                 WHERE state IN ('undo_pending','ready','scheduled','overdue')
+                   AND lower(account) NOT IN (SELECT lower(email) FROM accounts)",
+                )
+                .map_err(error)?;
+            let rows = q.query_map([], |r| r.get(0)).map_err(error)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(error)?
+        };
+        for account in accounts {
+            self.pause_ready_sends_for_owned(&account, owner)?;
+        }
+        Ok(())
+    }
 }
 
 pub(crate) fn build_mime(
@@ -1924,6 +1946,7 @@ impl Correspondence {
         let owner=crate::run_database_task(move || service.schedule_owner(false)).await.ok();
         self.database.overdue_schedules_owned(now(),false,owner.as_deref().unwrap_or(""))?;
         if let Some(owner)=&owner { self.database.refresh_schedule_reports(owner,now())?; }
+        self.database.fail_sends_for_removed_accounts(owner.as_deref().unwrap_or(""))?;
         let items = self.database.outbox()?;
         // Process due Sent-copy jobs FIRST, every tick — before the
         // no-sendable-items early return below. A job is created when a send is
@@ -2904,6 +2927,44 @@ mod tests {
         let state_of = |id: &str| outbox.iter().find(|o| o.id == id).unwrap().state.clone();
         assert_eq!(state_of(&item_a.id), "failed");
         assert_eq!(state_of(&item_b.id), "undo_pending");
+    }
+    #[tokio::test]
+    async fn a_tick_fails_sends_whose_account_was_removed_on_another_device() {
+        let service = service();
+        let db = &service.database;
+        let queue = |db: &Database| {
+            let d = saved(db);
+            db.queue(&d.id, d.revision, false, &[], None, Path::new("/unused")).unwrap()
+        };
+        let kept = queue(db);
+        // The catalog stores `you@example.com`; a differently cased sender
+        // address is still that account.
+        db.set_compose_identity("You@Example.com").unwrap();
+        let kept_cased = queue(db);
+        // `gone@example.com` is not in the catalog, as after a synced removal.
+        db.set_compose_identity("gone@example.com").unwrap();
+        let gone_ready = queue(db);
+        let gone_scheduled = queue(db);
+        // Due next month: only the removal check, not the send loop, reaches it now.
+        db.connection().unwrap().execute(
+            "UPDATE outbox_messages SET state='scheduled', deadline=?2 WHERE id=?1",
+            params![gone_scheduled.id, now() + 30 * 24 * 60 * 60 * 1000],
+        ).unwrap();
+
+        service.tick().await.unwrap();
+
+        let outbox = db.outbox().unwrap();
+        let state_of = |id: &str| outbox.iter().find(|o| o.id == id).unwrap().state.clone();
+        assert_eq!(state_of(&gone_ready.id), "failed");
+        assert_eq!(state_of(&gone_scheduled.id), "failed");
+        assert_eq!(state_of(&kept.id), "undo_pending");
+        assert_eq!(state_of(&kept_cased.id), "undo_pending");
+
+        // Adding the account back must not revive the failed sends.
+        db.adopt_account("gone@example.com").unwrap();
+        service.tick().await.unwrap();
+        let outbox = db.outbox().unwrap();
+        assert_eq!(outbox.iter().find(|o| o.id == gone_scheduled.id).unwrap().state, "failed");
     }
     #[test]
     fn restart_keeps_drafts_and_never_retries_an_interrupted_send() {
