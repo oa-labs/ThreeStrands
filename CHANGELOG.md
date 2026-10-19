@@ -8,6 +8,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - **Remove on all devices** now also cancels messages waiting to send from that account on your other devices, so adding the account back later never sends them unexpectedly. They stay in the **Outbox** marked as failed, where you can restore them.
 - **Remove on all devices** now removes an account from your other devices even when its address was typed with capital letters.
 - Pictures in some newsletters and announcements now appear when **Load remote images** is on. Previously they stayed blank if the sender's server didn't label them as images.
+- Event details in the calendar side panel now show attendees and the description in the same text size as the rest of the panel, and a single guest reads "1 attendee".
 
 ## 0.145.2 — 2026-10-19
 

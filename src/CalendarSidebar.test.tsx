@@ -314,6 +314,7 @@ describe("calendar sidebar", () => {
           end: "2026-09-18T11:00:00-07:00",
           allDay: false,
           location: "Room 4B",
+          attendees: ["jane@example.com"],
           description: "Review the fall roadmap.<br/>Phone: +1 262-735-5488, PIN: 812868058",
           conferenceUrl: "https://meet.google.com/abc-defg-hij",
         },
@@ -327,6 +328,7 @@ describe("calendar sidebar", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Product planning/ }));
     const viewer = await screen.findByRole("dialog", { name: "Product planning details" });
     expect(viewer).toHaveTextContent("Room 4B");
+    expect(within(viewer).getByText("1 attendee")).toBeInTheDocument();
     expect(viewer).toHaveTextContent("Review the fall roadmap.");
     expect(viewer).toHaveTextContent("Phone: +1 262-735-5488, PIN: 812868058");
     expect(viewer).not.toHaveTextContent("<br");

@@ -568,18 +568,15 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn opening_refuses_a_symlinked_selection() {
         let real_folder = TempFolder::new();
         let link_path = std::env::temp_dir().join(format!("threestrands-sync-folder-symlink-{}", Uuid::new_v4()));
-        #[cfg(unix)]
         tokio::fs::symlink(&real_folder.path, &link_path).await.unwrap();
-        #[cfg(unix)]
-        {
-            let result = SyncFolderTransport::open("a", &link_path).await;
-            assert!(result.is_err());
-            let _ = tokio::fs::remove_file(&link_path).await;
-        }
+        let result = SyncFolderTransport::open("a", &link_path).await;
+        assert!(result.is_err());
+        let _ = tokio::fs::remove_file(&link_path).await;
     }
 
     #[tokio::test]

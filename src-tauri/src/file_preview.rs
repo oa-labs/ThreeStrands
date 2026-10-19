@@ -125,7 +125,8 @@ async fn render(source: &Path, output: &Path) -> bool {
         tokio::task::spawn_blocking(move || windows_shell::render_png(&source, &output)),
     )
     .await;
-    matches!(drawn, Ok(Ok(true)))
+    // Timeout, then the blocking task's join, then the Shell call itself.
+    matches!(drawn, Ok(Ok(Ok(true))))
 }
 
 #[cfg(target_os = "macos")]

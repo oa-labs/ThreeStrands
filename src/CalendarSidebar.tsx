@@ -221,7 +221,7 @@ export function EventViewer({ event, onDismiss, onUpdated, embedded = false }: {
         {event.location ? <p><MapPin size={ICON_SIZE.lg} /><span><EventLocation location={event.location} /></span></p> : null}
         <p><CalendarDays size={ICON_SIZE.lg} /><span>{event.accountId}</span></p>
         <CalendarResponseControls event={event} onUpdated={onUpdated} />
-        {event.attendees?.length ? <details><summary>{event.attendees.length} attendees</summary><ul>{event.attendees.map((email) => <li key={email}>{email}</li>)}</ul></details> : null}
+        {event.attendees?.length ? <details><summary>{event.attendees.length === 1 ? "1 attendee" : `${event.attendees.length} attendees`}</summary><ul>{event.attendees.map((email) => <li key={email}>{email}</li>)}</ul></details> : null}
         {event.description ? embedded ? <details className="calendar-event-viewer-description"><summary>Description</summary><p>{calendarDescriptionText(event.description)}</p></details> : <p className="calendar-event-viewer-description"><TextAlignStart size={ICON_SIZE.lg} /><span>{calendarDescriptionText(event.description)}</span></p> : null}
       </div>
       {editing ? <EditCalendarEventDialog
