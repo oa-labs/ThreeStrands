@@ -4,6 +4,8 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+## 0.145.2 — 2026-10-19
+
 ### New
 - The search box now suggests as you type, the way Gmail does: type `from:` or `to:` to pick someone from your contacts, `label:` or `in:` to pick a label or folder, or `after:` to pick a date like **Past month**. An empty search box lists your recent searches. Choosing someone with several email addresses searches all of them.
 - The **Trust** section now says **Be careful** when a subject line disguises its words with look-alike characters, such as a lowercase l in place of a capital I ("REVlEW"), a zero in place of an O, a letter from another alphabet, or an invisible character, and it names each disguised word.
