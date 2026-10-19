@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.145.0"
+version = "0.145.1"
 description = "A local-first, keyboard-driven email client"
 authors = ["OpenArc LLC"]
 license-file = "../LICENSE"
@@ -45,7 +45,7 @@ percent-encoding = "2.3.2"
 pdf-extract = "0.12"
 quick-xml = "0.42"
 rand = "0.10"
-reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "query", "rustls-no-provider"] }
+reqwest = { version = "0.13", default-features = false, features = ["brotli", "deflate", "gzip", "json", "multipart", "query", "rustls-no-provider"] }
 # reqwest's `rustls-no-provider` leaves the TLS crypto backend to the app:
 # `http_client::builder` installs ring, matching tauri-plugin-updater.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

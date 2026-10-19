@@ -4,8 +4,8 @@
 //!
 //! This closes two gaps a same-scheme-only `img-src` policy leaves open:
 //! senders don't receive the reader's browser context, cookies, referrer, or
-//! browser User-Agent (though the image host still sees the device's public
-//! network egress IP), and a malicious `src` can't be used to probe
+//! own User-Agent — the proxy sends a fixed one — (though the image host still
+//! sees the device's public network egress IP), and a malicious `src` can't be used to probe
 //! internal/private-network addresses reachable from the user's machine —
 //! see [`crate::net_safety`].
 //! It also lets the iframe's CSP drop `img-src https:` down to `data:`
@@ -26,10 +26,25 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_CACHE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_CONCURRENT_REQUESTS: usize = 4;
-// Some CDNs and bot filters reject requests that carry no User-Agent at all.
-// A fixed, versionless value identifies the proxy without exposing the
-// reader's browser, OS, or app version, and is identical for every reader.
-const IMAGE_PROXY_USER_AGENT: &str = "ThreeStrands-ImageProxy";
+// CDN bot filters (Akamai, for one) answer 403 to image requests that don't
+// look like a browser's: a non-browser User-Agent, or a browser one missing
+// the Accept, Accept-Language, Accept-Encoding, and Sec-Fetch-* headers a
+// real <img> load sends. The proxy therefore sends one fixed, browser-like
+// header set. It is a constant, never derived from the reader's webview,
+// OS, locale, or app version, so every reader's requests look identical and
+// none of the reader's own browser context reaches the sender.
+const IMAGE_PROXY_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
+     AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
+const IMAGE_PROXY_HEADERS: [(&str, &str); 5] = [
+    (
+        "accept",
+        "image/webp,image/avif,image/png,image/jpeg,image/gif,image/*;q=0.8",
+    ),
+    ("accept-language", "en-US,en;q=0.9"),
+    ("sec-fetch-dest", "image"),
+    ("sec-fetch-mode", "no-cors"),
+    ("sec-fetch-site", "cross-site"),
+];
 
 #[derive(Clone)]
 pub(crate) struct ImageCache {
@@ -54,10 +69,21 @@ struct ImageCacheInner {
 
 impl ImageCache {
     pub(crate) fn new() -> Result<Self, String> {
+        let mut headers = reqwest::header::HeaderMap::new();
+        for (name, value) in IMAGE_PROXY_HEADERS {
+            headers.insert(name, reqwest::header::HeaderValue::from_static(value));
+        }
         let client = crate::http_client::builder()
             .dns_resolver(net_safety::dns_resolver())
             .redirect(Policy::limited(5))
             .user_agent(IMAGE_PROXY_USER_AGENT)
+            .default_headers(headers)
+            // Bot filters also expect Accept-Encoding. Turning decoding on
+            // makes reqwest send it and decode the body, so the streamed
+            // byte limit below applies to the decoded image.
+            .gzip(true)
+            .brotli(true)
+            .deflate(true)
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
             .build()
@@ -257,13 +283,13 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn requests_carry_a_fixed_proxy_user_agent() {
+    /// Serves one canned response on a loopback port and returns the
+    /// lowercased request it received. The guarded resolver isn't consulted
+    /// for IP literals and `validate_public_image_url` is bypassed here, so
+    /// the shared client can talk to the listener directly.
+    fn serve_once(response: Vec<u8>) -> (u16, std::thread::JoinHandle<String>) {
         use std::io::{Read, Write};
 
-        // The guarded resolver isn't consulted for IP literals and
-        // `validate_public_image_url` is bypassed here, so the shared client
-        // can talk to a loopback listener that records the request.
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let server = std::thread::spawn(move || {
@@ -277,11 +303,16 @@ mod tests {
                 }
                 request.extend_from_slice(&buffer[..read]);
             }
-            stream
-                .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
-                .unwrap();
+            stream.write_all(&response).unwrap();
             String::from_utf8(request).unwrap().to_ascii_lowercase()
         });
+        (port, server)
+    }
+
+    #[tokio::test]
+    async fn requests_carry_a_fixed_browser_like_header_set() {
+        let (port, server) =
+            serve_once(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n".to_vec());
 
         let cache = ImageCache::new().unwrap();
         cache
@@ -298,8 +329,63 @@ mod tests {
             )),
             "{request}"
         );
+        for (name, value) in IMAGE_PROXY_HEADERS {
+            assert!(
+                request.contains(&format!("\r\n{name}: {}\r\n", value.to_ascii_lowercase())),
+                "missing {name}: {request}"
+            );
+        }
+        let accept_encoding = request
+            .lines()
+            .find_map(|line| line.strip_prefix("accept-encoding: "))
+            .unwrap_or_else(|| panic!("missing accept-encoding: {request}"));
+        for encoding in ["gzip", "br", "deflate"] {
+            assert!(accept_encoding.contains(encoding), "{request}");
+        }
         assert!(!request.contains("cookie:"), "{request}");
         assert!(!request.contains("referer:"), "{request}");
+        assert!(!request.contains("origin:"), "{request}");
+    }
+
+    #[test]
+    fn proxy_headers_are_constants_not_reader_context() {
+        // The header set must be identical for every reader: a fixed
+        // browser identity, never the reader's real OS, app version, or
+        // locale. Guard against anyone splicing runtime values in.
+        assert!(!IMAGE_PROXY_USER_AGENT.contains(env!("CARGO_PKG_VERSION")));
+        assert!(!IMAGE_PROXY_USER_AGENT.contains("ThreeStrands"));
+        assert!(IMAGE_PROXY_USER_AGENT.starts_with("Mozilla/5.0 "));
+    }
+
+    #[tokio::test]
+    async fn decodes_compressed_image_responses() {
+        // gzip of b"decoded image bytes"
+        const GZIPPED: [u8; 39] = [
+            0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x4b, 0x49, 0x4d, 0xce,
+            0x4f, 0x49, 0x4d, 0x51, 0xc8, 0xcc, 0x4d, 0x4c, 0x4f, 0x55, 0x48, 0xaa, 0x2c, 0x49,
+            0x2d, 0x06, 0x00, 0x5a, 0x72, 0x61, 0xed, 0x13, 0x00, 0x00, 0x00,
+        ];
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Encoding: gzip\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n",
+            GZIPPED.len()
+        )
+        .into_bytes();
+        response.extend_from_slice(&GZIPPED);
+        let (port, server) = serve_once(response);
+
+        let cache = ImageCache::new().unwrap();
+        let body = cache
+            .client
+            .get(format!("http://127.0.0.1:{port}/icon.png"))
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(&body[..], b"decoded image bytes");
     }
 
     #[test]
