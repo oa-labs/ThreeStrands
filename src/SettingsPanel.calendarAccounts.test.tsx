@@ -118,6 +118,13 @@ describe("calendar account picker", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Disconnect…" }));
     fireEvent.click(within(screen.getByRole("group", { name: "Disconnect calendar account confirmation" })).getByRole("button", { name: scope }));
+    if (scope === "Remove on all devices") {
+      // The broadest scope is gated behind a second "are you sure?" step, so the
+      // first click only reveals the confirmation and calls nothing yet.
+      expect(onRemoveEverywhere).not.toHaveBeenCalled();
+      const sure = screen.getByRole("group", { name: "Remove calendar account on all devices confirmation" });
+      fireEvent.click(within(sure).getByRole("button", { name: "Yes, remove everywhere" }));
+    }
     const selected = scope === "Disconnect this device" ? onRemove : onRemoveEverywhere;
     const other = scope === "Disconnect this device" ? onRemoveEverywhere : onRemove;
     await waitFor(() => expect(selected).toHaveBeenCalledWith(account.email));

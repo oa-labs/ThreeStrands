@@ -343,7 +343,17 @@ describe("settings section keyboard navigation", () => {
     const confirm = within(dialog).getByRole("group", { name: "Disconnect mail account confirmation" });
     expect(within(confirm).getByRole("button", { name: "Disconnect this device" })).toBeInTheDocument();
     expect(within(confirm).getByRole("button", { name: "Remove on all devices" })).toBeInTheDocument();
-    fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+
+    // "Remove on all devices" opens a second "are you sure?" step rather than
+    // acting immediately, since it affects every device.
+    fireEvent.click(within(confirm).getByRole("button", { name: "Remove on all devices" }));
+    const sure = within(dialog).getByRole("group", { name: "Remove mail account on all devices confirmation" });
+    expect(within(sure).getByRole("button", { name: "Yes, remove everywhere" })).toBeInTheDocument();
+    // Backing out of the second step returns to the first confirmation.
+    fireEvent.click(within(sure).getByRole("button", { name: "Keep connected" }));
+    const back = within(dialog).getByRole("group", { name: "Disconnect mail account confirmation" });
+
+    fireEvent.click(within(back).getByRole("button", { name: "Cancel" }));
     expect(within(dialog).queryByRole("group", { name: "Disconnect mail account confirmation" })).not.toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Disconnect…" })).toBeInTheDocument();
   });
