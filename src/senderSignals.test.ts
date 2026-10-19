@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Message, MessageAttachment, MessageTrust, SenderFamiliarity, SenderRule, SplitInbox, ThreadDetail } from "./domain";
 import { buildThreadTextIndex } from "./quotedHistory";
-import { analyzeLinks, bulkMessage, latestInbound, matchingRule, matchingSplit, siteOf, trustReport, TRUST_ATTACHMENT_LIMIT, TRUST_MISMATCH_LIMIT, type LinkAnalysis, type TrustInput } from "./senderSignals";
+import { analyzeLinks, bulkMessage, latestInbound, matchingRule, matchingSplit, siteOf, trustReport, TRUST_ATTACHMENT_LIMIT, TRUST_MISMATCH_LIMIT, TRUST_SUBJECT_WORD_LIMIT, type LinkAnalysis, type TrustInput } from "./senderSignals";
 
 const own = new Set(["you@example.com"]);
 
@@ -160,7 +160,7 @@ describe("trust findings", () => {
   const verdicts = (spf: string | null, dkim: string | null, dmarc: string | null, dkimDomains: string[] = [], spfDomains: string[] = []) =>
     ({ spf, dkim, dmarc, dkimDomains, spfDomains });
   const report = (value: MessageTrust | null, links = noLinks) =>
-    trustReport({ trust: value, links, familiarity: null, sender: "Launch <news@launch.example>", attachments: [], bulk: true });
+    trustReport({ trust: value, links, familiarity: null, sender: "Launch <news@launch.example>", subject: "Launch news", attachments: [], bulk: true });
   const first = (value: MessageTrust | null) => {
     const { rows, details } = report(value);
     return [...rows, ...details].find((finding) => finding.kind === "authentication");
@@ -243,6 +243,7 @@ describe("trust signals from the user's own history", () => {
     links: analyzeLinks(""),
     familiarity: stranger,
     sender: "Jane Rivera <jane@partner.example>",
+    subject: "Studio schedule",
     attachments: [],
     bulk: false,
     ...overrides,
@@ -293,6 +294,31 @@ describe("trust signals from the user's own history", () => {
     });
     // Someone the user writes to at this address is the person, not an impostor.
     expect(warnings({ ...value, familiarity: { ...stranger, sentCount: 1, nameMatches: ["jane@partner.example"] } })).toEqual([]);
+  });
+
+  it("warns when the subject writes words with look-alike letters, naming each trick once", () => {
+    const report = trustReport(input({ subject: "Payouts Paused - COMPLETE REVlEW TO REClEVE PAYOUTS" }));
+    expect(report.summary).toBe("careful");
+    expect(report.rows[0]).toMatchObject({
+      tone: "warning", kind: "subject", title: "Subject uses look-alike letters",
+      detail: "“REVlEW” and “REClEVE” use a lowercase l in place of I",
+    });
+    expect(warnings(input({ subject: "Your pаypal ACC0UNT is on hold" }))[0]).toMatchObject({
+      detail: "“pаypal” uses a Cyrillic letter in place of a Latin one; “ACC0UNT” uses the digit 0 in place of O",
+    });
+  });
+
+  it("names a few disguised subject words and counts the rest", () => {
+    const detail = warnings(input({ subject: "VERlFY ACCOUNT ClAIM PRlZE NOW BEFORE lT FAlLS TODAY" }))[0].detail;
+    expect(detail).toBe(`“VERlFY”, “ClAIM”, and “PRlZE” use a lowercase l in place of I (and 1 more)`);
+    expect(TRUST_SUBJECT_WORD_LIMIT).toBe(3);
+  });
+
+  it("says nothing about ordinary subjects, even from someone the user writes to", () => {
+    for (const subject of ["Q3 OKRs and the iPhone launch", "Re: COVID-19 update", "Москва: встреча в среду", "", "Fwd: MP3s from Win10Pro"]) {
+      expect(warnings(input({ subject })), subject).toEqual([]);
+    }
+    expect(warnings(input({ subject: "PLEASE REVlEW", familiarity: { ...stranger, sentCount: 4 } }))).toHaveLength(1);
   });
 
   it("warns when a display name spells out another organization's address or domain", () => {

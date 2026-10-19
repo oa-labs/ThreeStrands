@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { knownSites, LOOKALIKE_MIN_TYPO_LENGTH, lookalikeOf, mixesScripts, skeleton, spelledOutSite, unicodeHost } from "./lookalike";
+import { DISGUISED_WORD_MIN_LETTERS, disguisedWords, knownSites, LOOKALIKE_MIN_TYPO_LENGTH, lookalikeOf, mixesScripts, skeleton, spelledOutSite, unicodeHost } from "./lookalike";
 
 /** The ASCII form the platform's own URL parser gives a host. */
 const ascii = (host: string) => new URL(`http://${host}`).hostname;
@@ -60,5 +60,57 @@ describe("look-alike sites", () => {
     expect(spelledOutSite("partner.example.login.other.test", "other.test", known)).toBe("partner.example");
     expect(spelledOutSite("www.partner.example", "partner.example", known)).toBeNull();
     expect(spelledOutSite("partner.other.test", "other.test", known)).toBeNull();
+  });
+});
+
+describe("look-alike words in text", () => {
+  const tricks = (text: string) => disguisedWords(text).map(({ word, trick }) => `${word}: ${trick}`);
+
+  it("finds a lowercase l hidden among capitals, between them or at the end", () => {
+    expect(tricks("COMPLETE REVlEW TO REClEVE PAYOUTS")).toEqual(["REVlEW: a lowercase l in place of I", "REClEVE: a lowercase l in place of I"]);
+    expect(tricks("Your PAYPAl account")).toEqual(["PAYPAl: a lowercase l in place of I"]);
+  });
+
+  it("finds a capital I closing a small-letter word", () => {
+    expect(tricks("Update your paypaI details")).toEqual(["paypaI: a capital I in place of l"]);
+  });
+
+  it("finds digits drawn like letters between letters, in the word's own case", () => {
+    expect(tricks("Verify your ACC0UNT")).toEqual(["ACC0UNT: the digit 0 in place of O"]);
+    expect(tricks("Micr0soft notice")).toEqual(["Micr0soft: the digit 0 in place of o"]);
+    expect(tricks("B1LLING problem")).toEqual([]);
+    expect(tricks("BlLLING problem")).toEqual(["BlLLING: a lowercase l in place of I"]);
+    expect(tricks("Your 5ecurity c0de")).toEqual([]);
+  });
+
+  it("finds letters from another alphabet mixed into a word", () => {
+    expect(tricks("Your pаypal invoice")).toEqual(["pаypal: a Cyrillic letter in place of a Latin one"]);
+    expect(tricks("Ѕесurity alert")).toEqual(["Ѕесurity: Cyrillic letters in place of Latin ones"]);
+    expect(tricks("Rеvіеw")).toEqual(["Rеvіеw: Cyrillic letters in place of Latin ones"]);
+    expect(tricks("Αccount locked")).toEqual(["Αccount: a Greek letter in place of a Latin one"]);
+  });
+
+  it("finds invisible characters that split a word, and shows the word without them", () => {
+    expect(tricks("Pay\u200Bpal refund")).toEqual(["Paypal: an invisible character between letters"]);
+    expect(tricks("Re\u00ADfund ready")).toEqual(["Refund: an invisible character between letters"]);
+    expect(tricks("We\u2060lcome")).toEqual(["Welcome: an invisible character between letters"]);
+  });
+
+  it("leaves ordinary subjects alone across languages, brands, codes, and versions", () => {
+    const ordinary = [
+      "Your iPhone order has shipped", "McDonald's receipt", "Mr. McIntosh's visit", "Q3 OKRs", "COVID-19 update",
+      "Windows 10 and Office365", "H1N1 and B2B webinar", "PDFs and APIs attached", "Re: IPv6 rollout", "Fix isInitialized bug",
+      "Day1 kickoff, Step 1", "x86 and S3 builds", "Log4j advisory", "Win10Pro licenses", "ΔT readings", "AB12CD order", "Hello WORLD",
+      "Москва: встреча в среду", "Ελληνικά νέα", "Straße und naïve café", "日本語の件名", "मित्र\u200Dता", "می\u200Cخواهم", "👩\u200D💻 update",
+      "lOL", "URLs, SKUs, and MBs",
+    ];
+    for (const subject of ordinary) expect(tricks(subject), subject).toEqual([]);
+  });
+
+  it("judges capitals only in words of at least the minimum length", () => {
+    expect(DISGUISED_WORD_MIN_LETTERS).toBe(4);
+    expect(tricks("ABlC")).toEqual(["ABlC: a lowercase l in place of I"]);
+    expect(tricks("AlC")).toEqual([]);
+    expect(tricks("ABlCD")).toEqual(["ABlCD: a lowercase l in place of I"]);
   });
 });

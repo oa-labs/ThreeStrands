@@ -1,7 +1,7 @@
 import { attachmentRisk } from "./attachmentRisk";
 import type { Message, MessageAttachment, MessageTrust, SenderFamiliarity, SenderRule, SplitInbox, ThreadDetail } from "./domain";
 import { parseAddress } from "./emailAddress";
-import { knownSites, lookalikeOf, mixesScripts, spelledOutSite, unicodeHost, type KnownSites } from "./lookalike";
+import { disguisedWords, knownSites, lookalikeOf, mixesScripts, spelledOutSite, unicodeHost, type KnownSites } from "./lookalike";
 import { foldQuotedHistoryHtml, type PriorThreadText } from "./quotedHistory";
 import { sanitizeMessageHtml } from "./SafeMessage";
 
@@ -15,6 +15,8 @@ export const TRUST_MISMATCH_LIMIT = 3;
 export const TRUST_ATTACHMENT_LIMIT = 3;
 /** Distinct links read from one message. */
 export const TRUST_LINK_LIMIT = 500;
+/** Disguised subject words the Trust section names before counting the rest. */
+export const TRUST_SUBJECT_WORD_LIMIT = 3;
 
 /** The newest message in a conversation that someone else sent. */
 export function latestInbound(detail: ThreadDetail, ownEmails: Set<string>): Message | null {
@@ -191,7 +193,7 @@ export type TrustFinding = {
   key: string;
   /** Warnings come first and bring the section into any conversation. */
   tone: "warning" | "verified" | "info";
-  kind: "authentication" | "replyTo" | "mismatch" | "sites" | "tracking" | "impersonation" | "lookalike" | "link" | "attachment" | "history";
+  kind: "authentication" | "replyTo" | "mismatch" | "sites" | "tracking" | "impersonation" | "lookalike" | "subject" | "link" | "attachment" | "history";
   title: string;
   detail: string;
   /** The link a link finding is about, so the reader can show it. */
@@ -215,6 +217,8 @@ export type TrustInput = {
   familiarity: SenderFamiliarity | null;
   /** The From header as stored. */
   sender: string;
+  /** The conversation's subject line. */
+  subject: string;
   attachments: readonly MessageAttachment[];
   bulk: boolean;
 };
@@ -310,6 +314,18 @@ function claimedInName(name: string, email: string): string | null {
   return registrableName(siteOf(shown.toLocaleLowerCase())) === senderName ? null : shown;
 }
 
+/** How a subject disguises its words, words with the same trick together: “REVlEW” and “REClEVE” use a lowercase l in place of I. */
+function subjectDisguises(subject: string): string | null {
+  const found = disguisedWords(subject);
+  if (found.length === 0) return null;
+  const listed = found.slice(0, TRUST_SUBJECT_WORD_LIMIT);
+  const tricks = new Map<string, string[]>();
+  for (const { word, trick } of listed) tricks.set(trick, [...(tricks.get(trick) ?? []), `“${word}”`]);
+  const extra = found.length - listed.length;
+  const described = [...tricks].map(([trick, words]) => `${joinNames(words)} ${words.length === 1 ? "uses" : "use"} ${trick}`).join("; ");
+  return extra > 0 ? `${described} (and ${extra} more)` : described;
+}
+
 function monthYear(iso: string): string {
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString(undefined, { month: "short", year: "numeric" });
@@ -341,12 +357,13 @@ function linkTrick(fact: LinkFact, known: KnownSites | null): Omit<TrustFinding,
  * What the Trust section shows, warnings first: the receiving server's
  * verdict on the sender; a display name that belongs to someone the user
  * knows at another address, or that spells out another organization; a
- * From domain or link that imitates one the user corresponds with; links
+ * From domain or link that imitates one the user corresponds with; subject
+ * words written with look-alike characters; links
  * whose text or address hides where they go; risky attachments; and a
  * Reply-To at another organization. The sender's history with the user
  * follows. The sites links open and tracking images sit in the details.
  */
-export function trustReport({ trust, links, familiarity, sender, attachments, bulk }: TrustInput): TrustReport {
+export function trustReport({ trust, links, familiarity, sender, subject, attachments, bulk }: TrustInput): TrustReport {
   const from = parseAddress(sender);
   const email = from.email.toLocaleLowerCase();
   const domain = email.split("@")[1] ?? "";
@@ -379,6 +396,9 @@ export function trustReport({ trust, links, familiarity, sender, attachments, bu
   } else if (domain && unicodeHost(asciiHost(domain)).split(".").some(mixesScripts)) {
     warn({ key: "lookalike", kind: "lookalike", title: "Address uses look-alike letters", detail: `Sent from ${describeHost(domain)}` });
   }
+
+  const disguised = subjectDisguises(subject);
+  if (disguised) warn({ key: "subject", kind: "subject", title: "Subject uses look-alike letters", detail: disguised });
 
   if (trust?.replyTo) {
     const replyDomain = trust.replyTo.split("@")[1]?.toLocaleLowerCase() ?? "";

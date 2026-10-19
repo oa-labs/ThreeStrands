@@ -108,6 +108,7 @@ export function skeleton(value: string): string {
 }
 
 const SCRIPTS = [/\p{Script=Latin}/u, /\p{Script=Cyrillic}/u, /\p{Script=Greek}/u, /\p{Script=Armenian}/u, /\p{Script=Cherokee}/u];
+const SCRIPT_NAMES = ["Latin", "Cyrillic", "Greek", "Armenian", "Cherokee"];
 
 /**
  * Whether a label mixes letters from more than one of the alphabets that
@@ -116,6 +117,100 @@ const SCRIPTS = [/\p{Script=Latin}/u, /\p{Script=Cyrillic}/u, /\p{Script=Greek}/
  */
 export function mixesScripts(label: string): boolean {
   return SCRIPTS.filter((script) => script.test(label)).length > 1;
+}
+
+/** Letters in a word before its capitals or digits are judged; shorter words are often initials or codes. */
+export const DISGUISED_WORD_MIN_LETTERS = 4;
+
+/** Characters that draw nothing, used to split a word so filters miss it. */
+const INVISIBLE = "\u00AD\u200B-\u200D\u2060\uFEFF";
+const INVISIBLE_ANY = new RegExp(`[${INVISIBLE}]`, "gu");
+const INVISIBLE_INSIDE = new RegExp(`(\\p{L})[${INVISIBLE}]+(?=(\\p{L}))`, "gu");
+const WORD = new RegExp(`[\\p{L}\\p{N}\\p{M}${INVISIBLE}]+`, "gu");
+const LETTER = /\p{L}/u;
+/** Digits drawn like letters, with the capital and small letter each stands for. */
+const DIGIT_LETTERS: Record<string, [string, string]> = { "0": ["O", "o"], "1": ["I", "l"], "3": ["E", "e"], "5": ["S", "s"] };
+
+/** A word written with look-alike characters, and how: "a lowercase l in place of I". */
+export type DisguisedWord = { word: string; trick: string };
+
+const isUpper = (character: string) => character !== character.toLocaleLowerCase();
+const isLower = (character: string) => character !== character.toLocaleUpperCase();
+const isLetter = (character: string | undefined) => character !== undefined && LETTER.test(character);
+const scriptOf = (character: string) => SCRIPTS.findIndex((script) => script.test(character));
+
+function scriptTrick(word: string): string | null {
+  if (!mixesScripts(word)) return null;
+  const letters = [...word].filter((character) => scriptOf(character) >= 0);
+  const counts = SCRIPTS.map((_, index) => letters.filter((character) => scriptOf(character) === index).length);
+  const main = counts.indexOf(Math.max(...counts));
+  const foreign = letters.filter((character) => scriptOf(character) !== main);
+  // Only letters drawn like the word's own alphabet disguise it; a symbol
+  // such as Greek Δ beside Latin letters reads as what it is.
+  const lookalike = foreign.filter((character) => CONFUSABLE[character.toLocaleLowerCase()] !== undefined && !/\d/.test(character));
+  if (lookalike.length === 0) return null;
+  const shown = SCRIPT_NAMES[scriptOf(lookalike[0])];
+  return foreign.length === 1
+    ? `a ${shown} letter in place of a ${SCRIPT_NAMES[main]} one`
+    : `${shown} letters in place of ${SCRIPT_NAMES[main]} ones`;
+}
+
+function caseTrick(word: string): string | null {
+  const characters = [...word];
+  const letters = characters.filter(isLetter);
+  if (letters.length < DISGUISED_WORD_MIN_LETTERS || letters.length !== characters.length) return null;
+  const lower = letters.filter(isLower);
+  const upper = letters.filter(isUpper);
+  // A capitals word with a small l between capitals, or at its end: REVlEW, PAYPAl.
+  if (lower.length > 0 && lower.every((character) => character === "l") && upper.length >= DISGUISED_WORD_MIN_LETTERS - 1) {
+    const hidden = characters.some((character, index) => character === "l" && isUpper(characters[index - 1] ?? "")
+      && (index === characters.length - 1 || isUpper(characters[index + 1])));
+    if (hidden) return "a lowercase l in place of I";
+  }
+  // A small-letter word ending in a capital I: paypaI. Inside a word a capital
+  // I usually starts the next part of a compound name, so only the end counts.
+  if (upper.length === 1 && characters.at(-1) === "I" && lower.length >= DISGUISED_WORD_MIN_LETTERS - 1) {
+    return "a capital I in place of l";
+  }
+  return null;
+}
+
+function digitTrick(word: string): string | null {
+  const characters = [...word];
+  const letters = characters.filter(isLetter);
+  if (letters.length < DISGUISED_WORD_MIN_LETTERS) return null;
+  const digits = characters.filter((character) => /\p{N}/u.test(character));
+  // Codes and versions use any digit; a disguise only those drawn like letters.
+  if (digits.length === 0 || digits.some((digit) => !DIGIT_LETTERS[digit])) return null;
+  const capitals = letters.every(isUpper);
+  // A disguised word keeps one style: ACC0UNT, Micr0soft, acc0unt.
+  if (!capitals && !letters.slice(1).every(isLower)) return null;
+  const index = characters.findIndex((character, at) => DIGIT_LETTERS[character]
+    && isLetter(characters[at - 1]) && isLetter(characters[at - 2]) && isLetter(characters[at + 1]) && isLetter(characters[at + 2]));
+  if (index < 0) return null;
+  const digit = characters[index];
+  return `the digit ${digit} in place of ${DIGIT_LETTERS[digit][capitals ? 0 : 1]}`;
+}
+
+/**
+ * Words in `text`, such as a subject line, written with characters that
+ * look like other letters so a reader sees a word a filter does not: an
+ * invisible character inside a word, a letter from another alphabet, a
+ * lowercase l among capitals, a capital I closing a small-letter word, or a
+ * digit drawn like a letter between letters. Judged without a dictionary,
+ * so it works the same in every language.
+ */
+export function disguisedWords(text: string): DisguisedWord[] {
+  const found: DisguisedWord[] = [];
+  for (const [raw] of text.matchAll(WORD)) {
+    const word = raw.replace(INVISIBLE_ANY, "");
+    // Joiners shape letters in scripts such as Arabic or Devanagari; between
+    // the look-alike alphabets they only hide a word.
+    const hidden = [...raw.matchAll(INVISIBLE_INSIDE)].some(([, before, after]) => scriptOf(before) >= 0 && scriptOf(after) >= 0);
+    const trick = hidden ? "an invisible character between letters" : scriptTrick(word) ?? caseTrick(word) ?? digitTrick(word);
+    if (trick) found.push({ word, trick });
+  }
+  return found;
 }
 
 /** Whether `left` becomes `right` by adding, removing, or swapping two adjacent characters once. */

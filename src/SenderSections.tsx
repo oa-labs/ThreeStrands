@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Eye, Globe, Link2, Paperclip, Reply, Shield, ShieldCheck, TriangleAlert, UserCheck, UserRound } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, Globe, Link2, Mail, Paperclip, Reply, Shield, ShieldCheck, TriangleAlert, UserCheck, UserRound } from "lucide-react";
 import type { Message, MessageTrust, SenderFamiliarity, SenderHistory, SenderRule, SplitInbox } from "./domain";
 import { parseAddress } from "./emailAddress";
 import { mailClient } from "./data/client";
@@ -102,6 +102,7 @@ const FINDING_ICONS: Record<TrustFinding["kind"], typeof Shield> = {
   tracking: Eye,
   impersonation: UserRound,
   lookalike: Globe,
+  subject: Mail,
   attachment: Paperclip,
   history: UserRound,
 };
@@ -160,7 +161,7 @@ type TrustReads = { id: string; trust: MessageTrust | null; familiarity: SenderF
  * heads the section: Be careful when anything warns, Known sender for
  * someone the user writes to or saved whose mail was verified. Rows give the
  * concrete tricks, such as a display name borrowed from a contact, a
- * look-alike domain, a link that hides where it goes, or a risky attachment,
+ * look-alike domain or subject word, a link that hides where it goes, or a risky attachment,
  * and then the sender's history with the user; link rows can show their
  * link in the message. Sender checks, the sites links open, and tracking
  * images fold under Details. Bulk mail always shows the section; other
@@ -168,8 +169,9 @@ type TrustReads = { id: string; trust: MessageTrust | null; familiarity: SenderF
  * before folded quoted history; `prior` is the conversation text before the
  * message, as the reader folds it.
  */
-export function TrustSection({ message, bulk, prior, onShowLink }: {
+export function TrustSection({ message, subject, bulk, prior, onShowLink }: {
   message: Message;
+  subject: string;
   bulk: boolean;
   prior?: PriorThreadText;
   onShowLink?(link: TrustLink): void;
@@ -191,7 +193,7 @@ export function TrustSection({ message, bulk, prior, onShowLink }: {
   const links = useMemo(() => analyzeLinks(message.bodyHtml, prior), [message.bodyHtml, prior]);
   // Wait for both reads so the section does not appear and then reorder.
   if (reads?.id !== message.id) return null;
-  const report = trustReport({ trust: reads.trust, links, familiarity: reads.familiarity, sender: message.sender, attachments: message.attachments ?? [], bulk });
+  const report = trustReport({ trust: reads.trust, links, familiarity: reads.familiarity, sender: message.sender, subject, attachments: message.attachments ?? [], bulk });
   if (report.rows.length === 0 && report.details.length === 0) return null;
   if (!bulk && !report.summary) return null;
   const summary = report.summary === "careful"

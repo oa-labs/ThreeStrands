@@ -275,7 +275,7 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, readingMe
       {detail ? null : idle}
       {detail ? <div className="context-ai-row">{bulk && !reply ? null : availability}{assist}</div> : null}
       {detail && related ? related(person, [...meetingPeople.values()]) : null}
-      {inbound ? <TrustSection key={inbound.id} message={inbound} bulk={Boolean(bulk)} prior={inboundPrior}
+      {inbound ? <TrustSection key={inbound.id} message={inbound} subject={detail?.thread.subject ?? ""} bulk={Boolean(bulk)} prior={inboundPrior}
         onShowLink={onShowLink && detail ? (link) => onShowLink(detail.thread.id, inbound.id, link) : undefined} /> : null}
       {detail ? <ThreadOutlineSection detail={detail} accounts={accounts} onShowMessage={showMessage} /> : null}
       {detail ? (
