@@ -47,9 +47,10 @@ jobs:
       - name: Run shared crate tests
         run: cargo test --locked --workspace
 
-      # Phase 1 ships an unsigned NSIS installer. Code signing and the updater
-      # signature arrive in phase 2, so this build produces an installer that
-      # SmartScreen will warn on and that the updater cannot yet verify.
+      # This PR check always builds an UNSIGNED installer to prove the Windows
+      # bundle compiles; it carries no signing or updater secrets. Authenticode
+      # signing and the updater signature are wired in release.yml's windows
+      # job, which runs on tag pushes and signs when the Azure secrets exist.
       - name: Build Windows installer
         env:
           THREESTRANDS_GOOGLE_CLIENT_ID: ${{ inputs.release == true && secrets.THREESTRANDS_GOOGLE_CLIENT_ID || '' }}

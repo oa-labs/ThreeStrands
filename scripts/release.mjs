@@ -102,7 +102,9 @@ const installers = [
   ["linux-amd64", ".deb"],
   ["linux-amd64", ".rpm"],
   ["linux-amd64", ".AppImage"],
-  // In-place update packages. The AppImage is its own update package.
+  ["windows-x86_64", ".exe"],
+  // In-place update packages. The AppImage is its own update package, and on
+  // Windows the NSIS .exe is both the installer and the update package.
   ["macos-aarch64", ".app.tar.gz"],
   ["macos-x86_64", ".app.tar.gz"],
 ];
@@ -114,6 +116,7 @@ const updatePlatforms = [
   ["darwin-aarch64", "macos-aarch64", ".app.tar.gz"],
   ["darwin-x86_64", "macos-x86_64", ".app.tar.gz"],
   ["linux-x86_64", "linux-amd64", ".AppImage"],
+  ["windows-x86_64", "windows-x86_64", ".exe"],
 ];
 
 export const UPDATE_MANIFEST = "latest.json";

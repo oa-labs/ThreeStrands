@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "windows": {
+      "signCommand": {
+        "cmd": "artifact-signing-cli",
+        "args": ["-e", "AZURE_SIGNING_ENDPOINT_PLACEHOLDER", "%1"]
+      }
+    }
+  }
+}

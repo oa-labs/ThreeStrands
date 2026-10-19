@@ -196,9 +196,114 @@ jobs:
           path: artifacts/linux-amd64/
           if-no-files-found: error
 
+  windows:
+    name: Windows x86-64 installer
+    needs: validate
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.0
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+          targets: x86_64-pc-windows-msvc
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run JavaScript tests
+        run: pnpm test
+      - name: Run Rust tests
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Run shared crate tests
+        run: cargo test --locked --workspace
+      # Authenticode signing is wired for Azure Trusted Signing but stays OFF
+      # until the four AZURE_SIGNING_* secrets are present. With them, this
+      # step installs the signer and rewrites the signed-config fragment with
+      # the account's endpoint so `tauri build` signs each bundled binary; a
+      # released build with no secrets ships unsigned and SmartScreen warns.
+      - name: Prepare Authenticode signing (only when configured)
+        id: signing
+        shell: pwsh
+        env:
+          AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+        run: |
+          $required = 'AZURE_SIGNING_ENDPOINT', 'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET'
+          $present = @($required | Where-Object { [string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($_)) }).Count -eq 0
+          if ($present) {
+            cargo install artifact-signing-cli --version '>=0.5, <0.6' --locked
+            if ($LASTEXITCODE -ne 0) { Write-Error 'failed to install artifact-signing-cli'; exit 1 }
+            $fragment = 'src-tauri/tauri.windows.signed.conf.json'
+            (Get-Content $fragment -Raw).Replace('AZURE_SIGNING_ENDPOINT_PLACEHOLDER', $env:AZURE_SIGNING_ENDPOINT) |
+              Set-Content $fragment -NoNewline
+            "config=--config src-tauri/tauri.windows.signed.conf.json" | Out-File $env:GITHUB_OUTPUT -Append
+            Write-Host 'Authenticode signing ENABLED via Azure Trusted Signing.'
+          } else {
+            "config=" | Out-File $env:GITHUB_OUTPUT -Append
+            Write-Warning 'Azure signing secrets absent; building an UNSIGNED installer (SmartScreen will warn).'
+          }
+      # tauri.updater.conf.json makes the NSIS bundler emit the .exe update
+      # package and its minisign .sig, signed with the same updater key the
+      # macOS and Linux jobs use. That updater signature is independent of
+      # Authenticode: updates verify even while the installer is unsigned.
+      - name: Build Windows installer
+        env:
+          THREESTRANDS_GOOGLE_CLIENT_ID: ${{ secrets.THREESTRANDS_GOOGLE_CLIENT_ID }}
+          THREESTRANDS_GOOGLE_CLIENT_SECRET: ${{ secrets.THREESTRANDS_GOOGLE_CLIENT_SECRET }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+          AZURE_ARTIFACT_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE: ${{ secrets.AZURE_SIGNING_CERT_PROFILE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in THREESTRANDS_GOOGLE_CLIENT_ID THREESTRANDS_GOOGLE_CLIENT_SECRET TAURI_SIGNING_PRIVATE_KEY; do
+            if [[ -z "${!name}" ]]; then
+              echo "error: repository secret $name is required" >&2
+              exit 1
+            fi
+          done
+          pnpm tauri build --target x86_64-pc-windows-msvc \
+            --config src-tauri/tauri.windows.conf.json \
+            --config src-tauri/tauri.updater.conf.json \
+            ${{ steps.signing.outputs.config }}
+      - name: Verify the installer and updater artifacts
+        shell: pwsh
+        run: |
+          $bundle = "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis"
+          $installers = @(Get-ChildItem -Path $bundle -Filter *.exe -ErrorAction SilentlyContinue)
+          if ($installers.Count -ne 1) {
+            Write-Error "expected exactly one NSIS installer in $bundle; found $($installers.Count)"
+            exit 1
+          }
+          if ($installers[0].Length -eq 0) { Write-Error "NSIS installer is empty"; exit 1 }
+          $sig = Get-ChildItem -Path $bundle -Filter *.exe.sig -ErrorAction SilentlyContinue
+          if ($sig.Count -ne 1 -or $sig[0].Length -eq 0) {
+            Write-Error "expected exactly one non-empty updater signature (.exe.sig) in $bundle"
+            exit 1
+          }
+          New-Item -ItemType Directory -Force -Path artifacts/windows-x86_64 | Out-Null
+          Copy-Item $installers[0].FullName, $sig[0].FullName artifacts/windows-x86_64/
+          Write-Host "Built $($installers[0].Name) ($([math]::Round($installers[0].Length / 1MB, 1)) MB) + updater signature"
+      - name: Upload verified installer
+        uses: actions/upload-artifact@v6
+        with:
+          name: threestrands-release-windows-x86_64
+          path: artifacts/windows-x86_64/
+          if-no-files-found: error
+
   release:
     name: Create draft GitHub Release
-    needs: [validate, macos, linux]
+    needs: [validate, macos, linux, windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Only this job can write repository contents. It has no signing secrets.

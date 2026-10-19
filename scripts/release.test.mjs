@@ -308,6 +308,44 @@ if (action === process.env.RELEASE_TEST_FAIL_AT) process.exit(7);
   };
 }
 
+describe("Windows release build", () => {
+  it("adds a Windows job that the release job collects, building updater artifacts", async () => {
+    const workflow = await readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+    const jobBlock = workflow.split("\n  windows:\n")[1]?.split(/\n  [\w-]+:\n/)[0];
+    assert.ok(jobBlock, "Missing windows job");
+    assert.match(jobBlock, /^ {4}runs-on: windows-latest$/m);
+    assert.match(jobBlock, /^ {4}needs: validate$/m);
+    // The release job must wait for and gather the Windows artifact.
+    assert.match(workflow, /^ {4}needs: \[validate, macos, linux, windows\]$/m);
+    assert.match(jobBlock, /name: threestrands-release-windows-x86_64/);
+    // The NSIS .exe is both installer and update package, so the updater
+    // config must be applied for the build to emit the .exe.sig.
+    assert.match(jobBlock, /--config src-tauri\/tauri\.updater\.conf\.json/);
+    // The updater key signs the update package even when unsigned on disk.
+    assert.match(jobBlock, /TAURI_SIGNING_PRIVATE_KEY: \$\{\{ secrets\.TAURI_SIGNING_PRIVATE_KEY \}\}/);
+    // The verify step must assert the updater signature exists.
+    assert.match(jobBlock, /\*\.exe\.sig/);
+  });
+
+  it("gates Authenticode signing on the Azure secrets so a missing key ships unsigned", async () => {
+    const workflow = await readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+    const jobBlock = workflow.split("\n  windows:\n")[1]?.split(/\n  [\w-]+:\n/)[0];
+    const signingStep = jobBlock?.split(/\n {6}- /).find((step) => /id: signing/.test(step));
+    assert.ok(signingStep, "Missing the signing-preparation step");
+    // All four Azure inputs must be required before signing turns on.
+    for (const secret of ["AZURE_SIGNING_ENDPOINT", "AZURE_SIGNING_TENANT_ID", "AZURE_SIGNING_CLIENT_ID", "AZURE_SIGNING_CLIENT_SECRET"]) {
+      assert.match(signingStep, new RegExp(`secrets\\.${secret}`), `${secret} must feed the signing gate`);
+    }
+    // Absent secrets must warn and emit an empty config, not fail the build.
+    assert.match(signingStep, /building an UNSIGNED installer/);
+    // The signed-config fragment carries only the signer, applied on demand.
+    const fragment = JSON.parse(await readFile(new URL("../src-tauri/tauri.windows.signed.conf.json", import.meta.url), "utf8"));
+    assert.equal(fragment.bundle.windows.signCommand.cmd, "artifact-signing-cli");
+    assert.ok(fragment.bundle.windows.signCommand.args.includes("%1"), "signCommand must pass the binary path placeholder");
+    assert.deepEqual(Object.keys(fragment.bundle), ["windows"], "the signed fragment must change nothing but signing");
+  });
+});
+
 describe("marketing site refresh", () => {
   it("redeploys the site from master only after a stable release is built", async () => {
     const workflow = await readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
@@ -415,7 +453,7 @@ describe("pnpm release command", () => {
   });
 });
 
-const signedUpdates = [["macos-aarch64", "ThreeStrands.app.tar.gz"], ["macos-x86_64", "ThreeStrands.app.tar.gz"], ["linux-amd64", "app.AppImage"]];
+const signedUpdates = [["macos-aarch64", "ThreeStrands.app.tar.gz"], ["macos-x86_64", "ThreeStrands.app.tar.gz"], ["linux-amd64", "app.AppImage"], ["windows-x86_64", "ThreeStrands_setup.exe"]];
 
 async function artifacts(t, { signFile = releaseKey.signFile } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "threestrands-release-test-"));
@@ -423,6 +461,7 @@ async function artifacts(t, { signFile = releaseKey.signFile } = {}) {
   const files = [
     ["macos-aarch64", "arm.dmg"], ["macos-x86_64", "intel.dmg"],
     ["linux-amd64", "app.deb"], ["linux-amd64", "app.rpm"], ["linux-amd64", "app.AppImage"],
+    ["windows-x86_64", "ThreeStrands_setup.exe"],
     ["macos-aarch64", "ThreeStrands.app.tar.gz"], ["macos-x86_64", "ThreeStrands.app.tar.gz"],
   ];
   for (const [platform, name] of files) {
@@ -451,6 +490,7 @@ describe("release installer collection", () => {
       "ThreeStrands_0.56.0-beta.1_macos_aarch64.dmg", "ThreeStrands_0.56.0-beta.1_macos_x86_64.dmg",
       "ThreeStrands_0.56.0-beta.1_linux_amd64.deb", "ThreeStrands_0.56.0-beta.1_linux_amd64.rpm",
       "ThreeStrands_0.56.0-beta.1_linux_amd64.AppImage",
+      "ThreeStrands_0.56.0-beta.1_windows_x86_64.exe",
       "ThreeStrands_0.56.0-beta.1_macos_aarch64.app.tar.gz", "ThreeStrands_0.56.0-beta.1_macos_x86_64.app.tar.gz",
     ];
     assert.deepEqual(names, [...packages, "latest.json"]);
@@ -476,6 +516,7 @@ describe("release installer collection", () => {
         "darwin-aarch64": { signature: await signature("macos-aarch64", "ThreeStrands.app.tar.gz"), url: `${download}/ThreeStrands_0.56.0_macos_aarch64.app.tar.gz` },
         "darwin-x86_64": { signature: await signature("macos-x86_64", "ThreeStrands.app.tar.gz"), url: `${download}/ThreeStrands_0.56.0_macos_x86_64.app.tar.gz` },
         "linux-x86_64": { signature: await signature("linux-amd64", "app.AppImage"), url: `${download}/ThreeStrands_0.56.0_linux_amd64.AppImage` },
+        "windows-x86_64": { signature: await signature("windows-x86_64", "ThreeStrands_setup.exe"), url: `${download}/ThreeStrands_0.56.0_windows_x86_64.exe` },
       },
     });
   });
