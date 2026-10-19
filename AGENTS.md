@@ -7,6 +7,11 @@ Do every task that changes files in its own git worktree on a new branch from
 developer's primary checkout. Other agents and the developer may be editing the
 primary checkout at the same time.
 
+Exception: documentation-only changes and small bug fixes may be made directly
+in the primary checkout. Touch only the files the change needs, check the
+checkout's status first, and leave any other agent's uncommitted edits alone.
+The rules below still apply, including no `git stash`, `checkout`, or `reset`.
+
 - Do not run `git stash`, `git checkout`, `git reset`, or other commands that
   rewrite files in the primary checkout.
 - Run tests, the version bump, and changelog edits inside the worktree.

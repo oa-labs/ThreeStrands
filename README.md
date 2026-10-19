@@ -1,26 +1,51 @@
 # ThreeStrands
 
-ThreeStrands is a source-available, keyboard-first, local-first email client inspired
-by some of the best email clients available. It is designed for people who
-spend significant time in email and want to process important conversations
-quickly without losing follow-ups, context, or control of their data.
+ThreeStrands is a keyboard-first, local-first desktop email client for people
+who spend much of their day in email. It brings three strands of work together
+in one app (mail, tasks, and your calendar) so follow-ups and scheduling stay
+beside the conversation instead of slipping between apps.
 
-The core experience combines:
+ThreeStrands works with Gmail and IMAP/SMTP accounts on macOS and Linux,
+including Proton Mail through Proton Mail Bridge. It connects directly to your
+providers: there is no ThreeStrands account or server, sign-in credentials stay
+in your operating system's keychain, and your messages and search index stay on
+your computer.
 
-- instant keyboard navigation and a discoverable command palette;
-- focused inbox triage, local full-text search, and optimistic actions;
-- reliable archive, read, star, label, and eventual follow-up workflows;
-- offline access backed by a local SQLite cache; and
-- a privacy-conscious desktop architecture that connects directly to mail
-  providers without requiring a ThreeStrands backend in the free, signed-out mode.
+**Website and docs:** [www.threestrands.app](https://www.threestrands.app)
 
-ThreeStrands connects Gmail and IMAP/SMTP accounts in a desktop application for
-macOS and Linux, including Proton Mail through Proton Mail Bridge. Sign-in
-credentials are kept in your operating system's keychain, your messages and
-search index stay on your computer, and actions you take offline are synced to
-your provider when you reconnect.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="site/src/assets/screenshots/dark/inbox-1440.webp">
+  <img alt="The ThreeStrands inbox, shown with a fictional sample mailbox." src="site/src/assets/screenshots/light/inbox-1440.webp">
+</picture>
 
-NOTE: Only the macOS app is frequently used/tested currently.
+> **Early release.** Only the macOS app is used and tested regularly right now.
+
+## Mail, tasks, and calendar in one place
+
+- **Mail.** Every common action has a shortcut, and a command palette (⌘K) has
+  the rest. Triage in batches with undo, split newsletters and other high-volume
+  mail into their own tabs, and search all your mail locally, even offline.
+  Actions you take offline sync when you reconnect.
+- **Tasks.** Turn a conversation into an action, a follow-up, or a
+  waiting-for, and link it to a quarterly or yearly goal. A linked follow-up
+  completes on its own when the reply arrives.
+- **Calendar.** See your day or week from Google Calendar next to your mail,
+  answer invitations, and use Find Times to put open slots, based on your
+  working hours, into a reply.
+
+Around those three, ThreeStrands also includes:
+
+- **Contacts** with groups, birthdays, and Keep in Touch reminders for people
+  you don't want to lose touch with.
+- **Files** for browsing every attachment you've sent or received.
+- **Trust checks**, run on your computer, that explain suspicious senders,
+  links, and attachments.
+- **Optional AI** for summaries, reply drafts, thread chat, and draft review.
+  It's off until you turn it on, and then it uses your own provider and API key
+  with no ThreeStrands server in between.
+
+See [features, keyboard shortcuts, and known limitations](docs/features.md) for
+the full list.
 
 ## Install
 
@@ -32,26 +57,6 @@ Download the latest installer from
 
 Launch ThreeStrands and add a Gmail account with Google sign-in, or connect an
 IMAP/SMTP account in **Settings → Mail Accounts**.
-
-## Status
-
-Reading, triage, and correspondence are available for Gmail and IMAP/SMTP.
-Compose with rich text, snippets, formatted signatures, and attachments; undo or
-schedule sends, browse Sent, and reuse a sent message with Edit as New.
-Newsletter controls include unsubscribe, mute, and Split Inboxes, while local
-Trust checks explain suspicious senders, links, and attachments. See
-[features, keyboard shortcuts, and known limitations](docs/features.md).
-
-Google Calendar connects separately from mail. Find Times offers available slots
-beside a conversation, using working-hour blocks and optional travel buffers.
-Optional AI assistance can interpret requests such as “next week”; calendar
-searches also work without AI. At Inbox zero, open tasks, Keep in Touch reminders,
-and today’s agenda give you a next step.
-
-Contacts include profiles with linked addresses, groups, birthdays, Keep in Touch
-reminders, CSV/vCard import and export, explicit profile merging, and reversible
-recipient-suggestion suppression. See [contact management](docs/address-book.md)
-for workflows, export limits, and sync behavior.
 
 ## Product principles
 
