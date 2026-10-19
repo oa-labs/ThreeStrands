@@ -329,6 +329,27 @@ Second line: no further action is required from you unless an export fails, in w
       <p style="margin:0;font-size:16px">Your workspace is ready.</p>
     </div>
   `,
+  // A max-width column centered with longhand auto margins. Keep both the
+  // hybrid flow layout (an Outlook-only table hidden in a conditional
+  // comment, a div column for everyone else) and a stylesheet-centered table
+  // with no align attribute covered.
+  centeredHybridColumn: `
+    <div style="background:#ffffeb">
+      <!--[if true]><table role="none" align="left" style="width:100%"><tr><td></td><td style="width:600px"><![endif]-->
+      <!--[if !true]><! --><div class="centered" style="max-width:600px;margin-left:auto;margin-right:auto"><!-- <![endif]-->
+        <div style="padding:40px 30px 0;overflow:auto"><p style="margin:0">Dark mode is now available on desktop.</p></div>
+      <!--[if !true]><! --></div><!-- <![endif]-->
+      <!--[if true]></td><td></td></tr></table><![endif]-->
+    </div>
+  `,
+  centeredStyledTable: `
+    <style>
+      .centered { width:480px; margin-left:auto !important; margin-right:auto !important; }
+    </style>
+    <table role="presentation" class="centered" cellpadding="0" cellspacing="0">
+      <tr><td style="padding:24px;background-color:#f4f4f4">Your order has shipped.</td></tr>
+    </table>
+  `,
   malformed: `
     <div style="position:fixed;top:0;left:0;z-index:99;animation:spin 1s;cursor:pointer">No overlay</div>
     <img src="javascript:alert(1)"><form action="https://example.com"><input value="bad"></form>

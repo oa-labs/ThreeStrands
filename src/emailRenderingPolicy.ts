@@ -327,10 +327,14 @@ const validators: Record<string, Validator> = {
   "max-height": (value) => /^(none|auto)$/.test(value.trim().toLowerCase()) ? value.trim().toLowerCase() : boundedLength(value, { allowPercentage: true }),
   "margin": (value) => value.trim().toLowerCase().split(/\s+/).every((part) => /^(auto|0)$/.test(part) || boundedLength(part, { allowNegative: true, allowPercentage: true }) !== null) ? value.trim().toLowerCase() : null,
   padding: (value) => value.trim().toLowerCase().split(/\s+/).length <= 4 && value.trim().toLowerCase().split(/\s+/).every((part) => boundedLength(part, { allowPercentage: true }) !== null) ? value.trim().toLowerCase() : null,
-  "margin-top": layoutLength({ allowNegative: true, allowPercentage: true }),
-  "margin-right": layoutLength({ allowNegative: true, allowPercentage: true }),
-  "margin-bottom": layoutLength({ allowNegative: true, allowPercentage: true }),
-  "margin-left": layoutLength({ allowNegative: true, allowPercentage: true }),
+  // Longhands accept `auto` like the shorthand above: `margin-left: auto;
+  // margin-right: auto` is how a max-width column centers itself. `auto` is
+  // a box-model keyword; it fetches nothing and can't move a box outside the
+  // flow it already sits in.
+  "margin-top": autoOr(layoutLength({ allowNegative: true, allowPercentage: true })),
+  "margin-right": autoOr(layoutLength({ allowNegative: true, allowPercentage: true })),
+  "margin-bottom": autoOr(layoutLength({ allowNegative: true, allowPercentage: true })),
+  "margin-left": autoOr(layoutLength({ allowNegative: true, allowPercentage: true })),
   "padding-top": layoutLength({ allowPercentage: true }),
   "padding-right": layoutLength({ allowPercentage: true }),
   "padding-bottom": layoutLength({ allowPercentage: true }),

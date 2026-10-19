@@ -151,6 +151,19 @@ describe("email rendering numeric policy", () => {
     expect(sanitizeCssDeclaration("left", "-101%")).toBeNull();
   });
 
+  it("accepts auto on margin longhands as the shorthand does, and nothing else new", () => {
+    for (const side of ["top", "right", "bottom", "left"]) {
+      expect(sanitizeCssDeclaration(`margin-${side}`, "auto")).toBe("auto");
+      expect(sanitizeCssDeclaration(`margin-${side}`, " AUTO ")).toBe("auto");
+      expect(sanitizeCssDeclaration(`margin-${side}`, "auto auto")).toBeNull();
+      expect(sanitizeCssDeclaration(`margin-${side}`, "calc(100% - 10px)")).toBeNull();
+      expect(sanitizeCssDeclaration(`margin-${side}`, "url(https://tracker.invalid/x.gif)")).toBeNull();
+      expect(sanitizeCssDeclaration(`margin-${side}`, "expression(alert(1))")).toBeNull();
+      expect(sanitizeCssDeclaration(`margin-${side}`, "-101%")).toBeNull();
+    }
+    expect(sanitizeCssDeclaration("margin", "0 auto")).toBe("0 auto");
+  });
+
   it("bounds companion flex factors and cosmetic opacity values", () => {
     expect(sanitizeCssDeclaration("flex-grow", "16")).toBe("16");
     expect(sanitizeCssDeclaration("flex-grow", "17")).toBeNull();

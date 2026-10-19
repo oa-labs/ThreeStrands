@@ -288,6 +288,29 @@ describe("SafeMessage", () => {
     expect(sanitized).not.toContain("<img");
   });
 
+  it("keeps auto side margins that center a max-width column, inline or from a stylesheet", () => {
+    // Inline fixture: a div column sized by max-width and centered with
+    // longhand auto margins, the non-Outlook branch of a hybrid template.
+    const inline = sanitizeMessageHtml(`
+      <div style="max-width: 600px; margin-left: auto; margin-right: auto;">
+        <div style="overflow: auto;"><p>Centered column</p></div>
+      </div>
+    `);
+    const doc = new DOMParser().parseFromString(inline, "text/html");
+    const column = doc.querySelector<HTMLElement>("div")!;
+    expect(column.style.maxWidth).toBe("600px");
+    expect(column.style.marginLeft).toBe("auto");
+    expect(column.style.marginRight).toBe("auto");
+
+    // Stylesheet fixture: a fixed-width table wrapper centered by a class
+    // rule, with no align attribute to fall back on.
+    const css = extractSafeStyleSheet("<style>.wrapper { width: 480px; margin-left: auto !important; margin-right: auto !important; }</style>");
+    expect(css).toContain("margin-left: auto !important");
+    expect(css).toContain("margin-right: auto !important");
+    const table = sanitizeMessageHtml('<table class="wrapper"><tr><td>Centered table</td></tr></table>');
+    expect(table).toContain('class="wrapper"');
+  });
+
   it("preserves harmless empty elements and sender-authored spacing", () => {
     const sanitized = sanitizeMessageHtml(`
       <div style="padding:40px 0"></div>
