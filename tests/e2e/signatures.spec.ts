@@ -116,7 +116,12 @@ test("imports a Gmail signature after review and applies it to new messages", as
   await importer.getByLabel("Use as Account Default for New Messages").check();
   await submit.focus(); await page.keyboard.press("Enter");
   await expect(importer).toHaveCount(0);
-  await expect(settings.getByText("Gmail Copy", { exact: true })).toBeVisible();
+  // The name shows twice by design: on its signature card and as the
+  // account's New messages default. Replies keep their own default.
+  await expect(settings.locator(".signature-card").getByText("Gmail Copy", { exact: true })).toBeVisible();
+  const defaults = settings.getByRole("definition").filter({ hasText: "Gmail Copy" });
+  await expect(defaults).toHaveCount(1);
+  await expect(defaults.locator("xpath=preceding-sibling::dt")).toHaveText("New messages");
   await settings.getByRole("button", { name: "Close", exact: true }).click();
   await page.reload();
   await page.getByRole("button", { name: "New Message (c)" }).click();
