@@ -14,7 +14,7 @@ pub(crate) const BASELINE_VERSION: i64 = 74;
 
 /// The current schema version. A new schema change adds an
 /// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 79;
+pub(crate) const LATEST_VERSION: i64 = 80;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -862,6 +862,16 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
                  due_at INTEGER NOT NULL,
                  attempts INTEGER NOT NULL DEFAULT 0
              );",
+        )
+        .map_err(error)?;
+    }
+    if version < 80 {
+        // Server drafts, pull: the version of the server copy this device last
+        // wrote or read, to tell edits made elsewhere from its own, and the
+        // server's version held back when both sides changed the draft.
+        tx.execute_batch(
+            "ALTER TABLE draft_server_links ADD COLUMN server_version TEXT;
+             ALTER TABLE draft_server_links ADD COLUMN conflict TEXT;",
         )
         .map_err(error)?;
     }

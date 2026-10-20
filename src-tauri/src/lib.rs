@@ -18,8 +18,8 @@ mod contact_interchange;
 mod credentials;
 mod db;
 mod default_apps;
+mod draft_pull;
 mod draft_push;
-mod draft_sync;
 mod endpoint_origin;
 mod enrollment;
 mod error;
@@ -1021,11 +1021,15 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         draft_pushes: Arc::new(tokio::sync::Mutex::new(())),
         draft_events: {
             let handle = app.handle().clone();
-            Arc::new(move |event: &draft_push::ServerDraftEvent| {
+            Arc::new(move |event: draft_push::DraftEvent| {
                 use tauri::Emitter;
-                let _ = handle.emit("draft-server-status", event);
+                let _ = match event {
+                    draft_push::DraftEvent::Status(status) => handle.emit("draft-server-status", status),
+                    draft_push::DraftEvent::ListChanged => handle.emit("drafts-changed", ()),
+                };
             })
         },
+        draft_pull_requested: Arc::default(),
     };
     tauri::async_runtime::spawn(correspondence.clone().run_draft_pushes());
     let worker = correspondence.clone();
@@ -1536,6 +1540,9 @@ fn handle_run_event(handle: &tauri::AppHandle, event: tauri::RunEvent) {
             ..
         } => {
             if *focused {
+                if let Some(state) = handle.try_state::<AppState>() {
+                    state.correspondence.request_draft_pull();
+                }
                 spawn_foreground_sync(handle);
             } else {
                 spawn_pending_flush(handle);

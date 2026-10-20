@@ -187,9 +187,9 @@ describe("useCorrespondence", () => {
     await waitFor(() => expect(createDraft).toHaveBeenLastCalledWith("reply", "message-1", "account@example.com"));
   });
 
-  it("reloads drafts after each sync and reopens the open draft on a version saved elsewhere", async () => {
+  it("reloads drafts after each pull and reopens the open draft on a version saved elsewhere", async () => {
     let onSync: () => void = () => {};
-    listenMock.mockImplementation(async (event: string, handler: () => void) => { if (event === "replicated-sync-status") onSync = handler; return () => {}; });
+    listenMock.mockImplementation(async (event: string, handler: () => void) => { if (event === "drafts-changed") onSync = handler; return () => {}; });
     Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {}, configurable: true });
     try {
       const opened = { ...draft, subject: "Plans", body: "Started here" };
@@ -205,7 +205,7 @@ describe("useCorrespondence", () => {
         </>;
       }
       render(<Harness />);
-      await waitFor(() => expect(listenMock).toHaveBeenCalledWith("replicated-sync-status", expect.any(Function)));
+      await waitFor(() => expect(listenMock).toHaveBeenCalledWith("drafts-changed", expect.any(Function)));
       fireEvent.click(screen.getByRole("button", { name: "Open" }));
       expect(screen.getByRole("textbox", { name: "Subject" })).toHaveValue("Plans");
 

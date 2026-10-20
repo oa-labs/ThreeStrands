@@ -154,12 +154,13 @@ export function useCorrespondence(
     return pending;
   }, [setDrafts, setOutbox, setSummaries]);
   useEffect(() => { void refresh().catch((e) => setError(String(e))); }, [refresh]);
-  // Drafts sync between devices; each sync cycle may have changed them.
+  // Drafts arrive from the account's server drafts; each pull that changed
+  // them says so.
   useEffect(() => {
     if (!("__TAURI_INTERNALS__" in window)) return;
     let listening = true;
     let stop: (() => void) | undefined;
-    void listen("replicated-sync-status", () => void refresh().catch(logBackgroundFailure("Draft sync refresh")))
+    void listen("drafts-changed", () => void refresh().catch(logBackgroundFailure("Draft sync refresh")))
       .then((unlisten) => { if (listening) stop = unlisten; else unlisten(); })
       .catch(logBackgroundFailure("Draft sync listener"));
     return () => { listening = false; stop?.(); };

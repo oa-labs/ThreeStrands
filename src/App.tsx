@@ -100,6 +100,7 @@ import { useAiAvailability } from "./useAiAvailability";
 import { useAppCommandContext } from "./useAppCommandContext";
 import { useAppPreferences } from "./useAppPreferences";
 import { useCommandExecution, useCommandUndo } from "./useCommandExecution";
+import { ThreadDrafts, threadDrafts } from "./ThreadDrafts";
 import { DraftsList, OutboxDetail, OutboxList, useCorrespondence } from "./useCorrespondence";
 import { useOutboxSelection } from "./useOutboxSelection";
 import { useLabelCatalog } from "./useLabelCatalog";
@@ -216,7 +217,9 @@ export function App() {
   const composerBelongsToVisibleThread = Boolean(
     correspondence.activeDraft
     && correspondence.activeDraft.mode !== "new"
-    && visibleDetail?.messages.some((message) => message.id === correspondence.activeDraft?.sourceId),
+    && (visibleDetail?.messages.some((message) => message.id === correspondence.activeDraft?.sourceId)
+      // A reply written in another app knows its conversation, not its message.
+      || (visibleDetail && !correspondence.activeDraft.sourceId && threadDrafts([correspondence.activeDraft], visibleDetail.thread).length > 0)),
   );
   // A new message, a forward, or a draft opened from the list: the reader
   // shows only the composer, so the context panel follows the draft instead.
@@ -1042,6 +1045,9 @@ export function App() {
                   />
                 );
             }) : null}
+            {visibleDetail && !correspondence.activeDraft ? (
+              <ThreadDrafts drafts={threadDrafts(correspondence.drafts, visibleDetail.thread)} onOpen={correspondence.openDraft} />
+            ) : null}
             {correspondence.renderComposer(context.canSendAndMarkDone ? context.sendAndMarkDone : undefined, {
               enabled: aiDraftFeatureEnabled, available: aiDraftAvailable, onOpenSettings: () => openSettingsAt("ai"),
             })}

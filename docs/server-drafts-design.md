@@ -1,13 +1,14 @@
 # Server drafts design
 
-Status: accepted (2026-10-20). Phase 1, Gmail push, is implemented in 0.148.0.
-Replaces the draft content sync that shipped in 0.147.0 through Replicated
-Sync.
+Status: accepted (2026-10-20). Phases 1–3 (Gmail push, Gmail pull, and
+retiring Replicated Sync draft content) are implemented in 0.149.0. IMAP
+(phase 4) and the optional metadata entity (phase 5) remain. Replaces the
+draft content sync that shipped in 0.147.0 through Replicated Sync.
 
 ## Why change
 
 0.147.0 syncs compose drafts between ThreeStrands devices as Replicated Sync
-entities (`EntityType::Draft`, [draft_sync.rs](../src-tauri/src/draft_sync.rs)).
+entities (`EntityType::Draft`, in a `draft_sync.rs` module since removed).
 That works only between ThreeStrands devices and has real limits:
 
 - Attachment files stay on the device that added them. Only their metadata
@@ -60,8 +61,8 @@ remains the composer's source of truth for the open draft. Its job is to hold
 work that has not reached the server yet, not to sync it.
 
 Each local draft's server link lives in the device-local
-`draft_server_links` table, never in the draft payload (which Replicated Sync
-carries) and never in headers that could leave the device:
+`draft_server_links` table, never in the draft payload and never in headers
+that could leave the device:
 
 | Column | Meaning |
 | --- | --- |
@@ -69,11 +70,12 @@ carries) and never in headers that could leave the device:
 | `pushed_revision` | Latest local revision the server has confirmed. |
 | `pending_since`, `due_at` | When the oldest unpushed edit was saved, and when the next push or retry runs. |
 | `state`, `error`, `attempts` | `pending`, `retrying`, `failed`, or `saved`, with the reason and the backoff count. |
+| `server_version` | The server copy's version this device last wrote or read (Gmail's message ID, which changes on every edit). A different version means an edit made elsewhere. |
+| `conflict` | The server's version, held as a draft, when both sides changed. Pushes stop until the user picks one. |
 
 The `Message-ID` isn't stored: it is `draft-<draft id>@<domain>`, the same on
-every device. Phase 2 adds what pull needs, such as the server's version of
-the copy, to detect edits made elsewhere. Server copies waiting to be deleted
-are rows in `draft_server_deletions`.
+every device, so a pulled copy carrying it maps back to the same local draft.
+Server copies waiting to be deleted are rows in `draft_server_deletions`.
 
 A draft is "synced" when `pushed_revision == revision`.
 
@@ -114,15 +116,20 @@ that builds a draft rather than a send:
 
 ### Gmail
 
+- **Conversations:** mail sync drops `DRAFT`-labelled messages from every
+  conversation it stores, and a conversation holding only drafts isn't
+  stored. Drafts reach the app only through pull, and each one shows at the
+  end of its conversation as a draft with **Resume Draft**.
 - **Push:** `drafts.create` on first push, then `drafts.update` with the stored
   draft ID. Pass `threadId` for replies so the draft sits inside its
   conversation. The existing `gmail.modify` scope covers both.
 - **Delete:** `drafts.delete`. Sending keeps the current send path and then
   deletes the server draft. Using `drafts.send` would change send undo,
   scheduling, and Outbox behavior, so it stays out of scope.
-- **Pull:** mail sync already sees `DRAFT`-labelled messages through history.
-  Draft changes drive an import step (below) instead of showing up as thread
-  messages. `drafts.list` repairs state on first run and after a history gap.
+- **Pull:** `drafts.list` every minute per account, and right away when the
+  window comes to the front. Only drafts whose version changed are fetched,
+  with `format=raw`. Before each push, a `format=minimal` read checks the
+  version, so an edit made since the last pull is never overwritten.
 
 ### IMAP
 
@@ -187,12 +194,14 @@ full fidelity. Without it, they get the "imported" column above.
 - Stop writing `EntityType::Draft` records and stop materializing them.
 - Keep the entity type and its payload validation, so records from 0.147.x
   devices are accepted and ignored instead of reported as errors.
-- On upgrade, delete this device's draft records from the sync log; local
-  drafts are untouched and get pushed to the server like any other.
+- Existing draft records in this device's sync log are left alone, and no
+  deletions are published: a deletion would make a 0.147.x device drop drafts
+  it has saved nowhere else. Local drafts are untouched and reach the server
+  on their next edit.
 - 0.147.x devices that are still running keep exchanging draft records with
   each other. That's harmless, and it ends once they update.
 - The settings export does not contain drafts, so the settings-transfer format
-  is unchanged. Confirm this with a test before shipping.
+  is unchanged; a transfer test guards it.
 
 ## Privacy
 

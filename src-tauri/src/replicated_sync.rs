@@ -206,20 +206,6 @@ impl Database {
         for item in library.defaults {
             if self.reconcile_one_entity(EntityType::SignatureDefaults, &item.id, serde_json::to_value(&item).map_err(display)?)? { repaired += 1; }
         }
-        // A draft whose remote removal has not applied yet must not be
-        // recorded again, or a sent draft would come back.
-        let pending: BTreeSet<String> = self
-            .pending_entity_materializations()?
-            .into_iter()
-            .filter(|(entity_type, _)| *entity_type == EntityType::Draft)
-            .map(|(_, id)| id)
-            .collect();
-        for draft in self.drafts()?.into_iter().filter(|draft| !pending.contains(&draft.id)) {
-            if !self.entity_recorded(EntityType::Draft, &draft.id)? {
-                // The same size budget as a local save applies.
-                repaired += usize::from(self.with_transaction(|tx| crate::draft_sync::record_draft_write(tx, &draft)).map_err(display)?);
-            }
-        }
         for snippet in self.list_snippets()? {
             if self.reconcile_one_entity(EntityType::Snippet, &snippet.id, serde_json::to_value(&snippet).map_err(display)?)? {
                 repaired += 1;
@@ -1332,7 +1318,6 @@ impl Database {
         let payload = Value::Object(payload);
         let payload = match entity_type {
             EntityType::Signature => crate::signatures::selected_signature_payload(&payload)?,
-            EntityType::Draft => crate::draft_sync::selected_draft_payload(&payload)?,
             _ => payload,
         };
         let readiness = self.check_projection_readiness(entity_type, &payload)?;
@@ -2919,90 +2904,58 @@ mod replicator_tests {
     }
 
     #[tokio::test]
-    async fn drafts_follow_the_user_between_devices_until_sent_or_discarded() {
+    async fn drafts_reach_other_devices_through_server_drafts_not_replicated_sync() {
         let (a, b) = (draft_device(), draft_device());
         let (ka, kb) = (test_keys(&a), test_keys(&b));
         trust(&a, &kb); trust(&b, &ka);
         let transports = fake("draft-shared");
         let mut draft = a.create_draft("new", None, "you@example.com", &[]).unwrap();
-        draft.to = "Jane <jane@example.com>".into();
         draft.subject = "Plans".into();
-        draft.body = format!("Started on A {}", "é".repeat(40_000));
         let draft = a.save_draft(draft).unwrap();
         push_local_state(&a, &ka, &transports).await.unwrap();
         pull_from_transports(&b, &kb, &transports).await.unwrap();
-        let mut on_b = b.draft(&draft.id).unwrap();
-        assert_eq!((on_b.subject.as_str(), on_b.body.as_str(), on_b.to.as_str()), ("Plans", draft.body.as_str(), "Jane <jane@example.com>"));
-
-        on_b.body = "Finished on B".into();
-        b.save_draft(on_b).unwrap();
-        push_local_state(&b, &kb, &transports).await.unwrap();
-        let revision_before = a.draft(&draft.id).unwrap().revision;
-        pull_from_transports(&a, &ka, &transports).await.unwrap();
-        let on_a = a.draft(&draft.id).unwrap();
-        assert_eq!(on_a.body, "Finished on B");
-        assert!(on_a.revision > revision_before, "an open composer on A can tell the draft changed");
-        assert!(a.list_frontier_conflicts().unwrap().is_empty());
-
-        // A's own state coming back from B must not look like a new edit.
-        push_local_state(&a, &ka, &transports).await.unwrap();
-        pull_from_transports(&b, &kb, &transports).await.unwrap();
-        pull_from_transports(&a, &ka, &transports).await.unwrap();
-        assert_eq!(a.draft(&draft.id).unwrap().revision, on_a.revision);
-
-        a.queue(&draft.id, on_a.revision, false, &[], None, std::path::Path::new("/unused")).unwrap();
-        push_local_state(&a, &ka, &transports).await.unwrap();
-        pull_from_transports(&b, &kb, &transports).await.unwrap();
-        assert!(b.drafts().unwrap().is_empty(), "a sent draft leaves every device");
-        assert!(b.outbox().unwrap().is_empty(), "sending stays with the device that sent");
-        b.reconcile_replicated_sync_backlog().unwrap();
-        a.reconcile_replicated_sync_backlog().unwrap();
         assert!(!a.entity_recorded(EntityType::Draft, &draft.id).unwrap());
+        assert!(b.drafts().unwrap().is_empty());
+        a.reconcile_replicated_sync_backlog().unwrap();
+        assert!(!a.entity_recorded(EntityType::Draft, &draft.id).unwrap(), "reconciling never records drafts");
+        a.discard_draft(&draft.id).unwrap();
+        assert!(!a.entity_recorded(EntityType::Draft, &draft.id).unwrap());
+    }
 
-        let second = a.create_draft("new", None, "you@example.com", &[]).unwrap();
-        push_local_state(&a, &ka, &transports).await.unwrap();
-        pull_from_transports(&b, &kb, &transports).await.unwrap();
-        assert_eq!(b.drafts().unwrap().len(), 1);
-        b.discard_draft(&second.id).unwrap();
-        push_local_state(&b, &kb, &transports).await.unwrap();
-        pull_from_transports(&a, &ka, &transports).await.unwrap();
-        assert!(a.drafts().unwrap().is_empty(), "a discarded draft leaves every device");
+    /// Records `draft` the way 0.147 devices did.
+    fn record_draft_like_0_147(database: &Database, draft: &crate::correspondence::Draft) {
+        let content = serde_json::to_string(draft).unwrap();
+        let hash = crate::signatures::sha256_hex(content.as_bytes());
+        let payload = serde_json::json!({ "id": draft.id, "contentHash": hash, format!("content:{hash}:0"): content });
+        EntityType::Draft.validate_payload(&payload).unwrap();
+        let fields: BTreeSet<String> = payload.as_object().unwrap().keys().cloned().collect();
+        database
+            .with_transaction(|tx| crate::sync_state::record_replicated_write_in_transaction(tx, EntityType::Draft, &draft.id, &fields, &payload))
+            .unwrap();
     }
 
     #[tokio::test]
-    async fn concurrent_edits_to_one_draft_converge_on_one_whole_version() {
-        let (a, b) = (draft_device(), draft_device());
-        let (ka, kb) = (test_keys(&a), test_keys(&b));
-        trust(&a, &kb); trust(&b, &ka);
-        let transports = fake("draft-conflict");
-        let draft = a.create_draft("new", None, "you@example.com", &[]).unwrap();
-        push_local_state(&a, &ka, &transports).await.unwrap();
-        pull_from_transports(&b, &kb, &transports).await.unwrap();
+    async fn draft_records_from_earlier_versions_are_ignored() {
+        let (old, new) = (draft_device(), draft_device());
+        let (ko, kn) = (test_keys(&old), test_keys(&new));
+        trust(&old, &kn); trust(&new, &ko);
+        let transports = fake("draft-legacy");
+        let mut draft = old.create_draft("new", None, "you@example.com", &[]).unwrap();
+        draft.subject = "From 0.147".into();
+        record_draft_like_0_147(&old, &draft);
+        // This device has its own draft with the same id, which a legacy
+        // deletion must not remove.
+        let mine = new.create_draft("new", None, "you@example.com", &[]).unwrap();
+        record_draft_like_0_147(&old, &mine);
+        push_local_state(&old, &ko, &transports).await.unwrap();
+        pull_from_transports(&new, &kn, &transports).await.unwrap();
+        assert_eq!(new.drafts().unwrap().iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), [mine.id.as_str()]);
 
-        let mut on_a = a.draft(&draft.id).unwrap();
-        on_a.subject = "Subject from A".into();
-        on_a.body = "Body from A".into();
-        a.save_draft(on_a).unwrap();
-        let mut on_b = b.draft(&draft.id).unwrap();
-        on_b.subject = "Subject from B".into();
-        on_b.body = "Body from B".into();
-        b.save_draft(on_b).unwrap();
-        push_local_state(&a, &ka, &transports).await.unwrap();
-        push_local_state(&b, &kb, &transports).await.unwrap();
-        pull_from_transports(&a, &ka, &transports).await.unwrap();
-        pull_from_transports(&b, &kb, &transports).await.unwrap();
-        let (left, right) = (a.draft(&draft.id).unwrap(), b.draft(&draft.id).unwrap());
-        assert_eq!((left.subject.as_str(), left.body.as_str()), (right.subject.as_str(), right.body.as_str()));
-        assert_eq!(left.subject.replace("Subject", "Body"), left.body, "one device's whole version wins; fields never mix");
-
-        // The next edit replaces both versions everywhere.
-        let mut resolved = left.clone();
-        resolved.body = "Merged by hand".into();
-        a.save_draft(resolved).unwrap();
-        push_local_state(&a, &ka, &transports).await.unwrap();
-        pull_from_transports(&b, &kb, &transports).await.unwrap();
-        assert_eq!(b.draft(&draft.id).unwrap().body, "Merged by hand");
-        assert!(a.list_frontier_conflicts().unwrap().is_empty());
+        old.with_transaction(|tx| crate::sync_state::record_replicated_deletion_in_transaction(tx, EntityType::Draft, &mine.id)).unwrap();
+        push_local_state(&old, &ko, &transports).await.unwrap();
+        pull_from_transports(&new, &kn, &transports).await.unwrap();
+        assert_eq!(new.drafts().unwrap().len(), 1, "a legacy deletion leaves local drafts alone");
+        assert!(new.list_frontier_conflicts().unwrap().is_empty());
     }
 
     #[tokio::test]

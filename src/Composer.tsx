@@ -72,7 +72,7 @@ export const Composer = forwardRef<ComposerHandle, {
   const bodyEditor = useRef<ComposeBodyEditorHandle>(null);
   const captureChanges = useCallback(() => bodyEditor.current?.captureChanges() ?? null, []);
   const [error, setError] = useState("");
-  const { draft, latest, status, edit, markChanged, captureBody, flush, replaceDraft, settled, hasUnsavedChanges, overwrite } = useDraftAutosave(initial, captureChanges, setError);
+  const { draft, latest, status, edit, markChanged, captureBody, flush, replaceDraft, adopt, settled, hasUnsavedChanges, overwrite } = useDraftAutosave(initial, captureChanges, setError);
   const [remote, setRemote] = useState<{ kind: "edited"; draft: Draft } | { kind: "removed" } | null>(null);
   const showSignaturePicker = Boolean(signatures && (draft.mode !== "reply" && draft.mode !== "replyAll" || draft.signature?.html));
   const [signaturesOpen, setSignaturesOpen] = useState(false);
@@ -455,13 +455,26 @@ export const Composer = forwardRef<ComposerHandle, {
         {draft.attachments.some((attachment) => !attachment.inline) && <ul className="attachment-list">{draft.attachments.filter((attachment) => !attachment.inline).map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : a.messageId ? "Download required" : "Attached on another device · Attach it again here"}</small></span>{!a.ready && a.messageId && <button className="btn btn-sm" disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); replaceDraft(next); })}>Download</button>}<button className="btn-icon btn-icon-sm" aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); replaceDraft(next); })}><X size={ICON_SIZE.sm} /></button></li>)}</ul>}
         {remote?.kind === "edited" ? (
           <div className="notice compose-remote" role="alert">
-            <span>This draft was edited on another device.</span>
+            <span>This draft was edited on another device or in another app.</span>
             <button className="btn btn-sm" onClick={() => { setRemote(null); onRemoteVersion?.(remote.draft); }}>Use Other Version</button>
             <button className="btn btn-sm" onClick={() => { setRemote(null); setError(""); overwrite(remote.draft.revision); }}>Keep This Version</button>
           </div>
+        ) : status.conflict ? (
+          <div className="notice compose-remote" role="alert">
+            <span>This draft was also changed in another app.</span>
+            <button className="btn btn-sm" disabled={busy} onClick={() => void run(async () => {
+              await settled();
+              const other = await mailClient.resolveDraftConflict(draft.id, true);
+              if (onRemoteVersion) onRemoteVersion(other); else adopt(other);
+            })}>Use Other Version</button>
+            <button className="btn btn-sm" disabled={busy} onClick={() => void run(async () => {
+              await flush();
+              adopt(await mailClient.resolveDraftConflict(draft.id, false));
+            })}>Keep This Version</button>
+          </div>
         ) : remote?.kind === "removed" ? (
           <div className="notice compose-remote" role="alert">
-            <span>This draft was sent or discarded on another device. Changes here can't be saved.</span>
+            <span>This draft was sent or discarded on another device or in another app. Changes here can't be saved.</span>
             <button className="btn btn-sm" onClick={onClose}>Close</button>
           </div>
         ) : null}

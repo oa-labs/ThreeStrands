@@ -20,14 +20,12 @@ export type Draft = {
   signature?: import("./signatures").DraftSignature | null;
   forwardedContent?: { html: string; text: string } | null;
   followUpTaskId?: string | null;
-  /** Set on a saved draft while sync is on but the draft is too large to reach other devices. */
-  tooLargeToSync?: boolean;
   /** Set on a saved draft whose account keeps drafts on the server: where its server copy stands. */
   serverDraft?: ServerDraftStatus | null;
   attachments: Attachment[]; updatedAt: number;
 };
-/** `pending` waits for the push delay, `retrying` follows a temporary failure, `failed` needs the user. */
-export type ServerDraftStatus = { state: "pending" | "retrying" | "failed" | "saved"; error?: string };
+/** `pending` waits for the push delay, `retrying` follows a temporary failure, `failed` needs the user, `conflict` means the draft also changed elsewhere and the user picks a version. */
+export type ServerDraftStatus = { state: "pending" | "retrying" | "failed" | "conflict" | "saved"; error?: string };
 /** Emitted as `draft-server-status` when a push finishes or fails; `revision` is the draft revision it describes. */
 export type ServerDraftEvent = { id: string; revision: number; status: ServerDraftStatus };
 /** The run-4b Sent-copy job state surfaced on an outbox item; `null` for Gmail, legacy rows, and servers that save their own copy. */
@@ -65,6 +63,8 @@ export interface CorrespondenceClient {
   discardDraft(id: string): Promise<void>;
   /** Pushes the draft to its account's server drafts without waiting for the push delay. */
   pushDraft(id: string): Promise<void>;
+  /** Settles a draft changed here and elsewhere: `keepServer` adopts the other version, otherwise this one replaces it. */
+  resolveDraftConflict(id: string, keepServer: boolean): Promise<Draft>;
   queueDraft(id: string, revision: number, archiveOnSend?: boolean): Promise<OutboxItem>;
   listOutbox(): Promise<OutboxItem[]>;
   cancelSend(id: string): Promise<Draft>;
@@ -80,7 +80,7 @@ export interface CorrespondenceClient {
 type CorrespondenceOperation =
   | "schedulingInfo" | "scheduleChoices" | "schedule" | "reschedule" | "sendScheduledNow" | "listScheduledSummaries"
   | "identity" | "create" | "createFromSent" | "setAccount" | "identities" | "setFrom" | "save" | "listDrafts"
-  | "discard" | "pushDraft" | "queue" | "listOutbox" | "cancel" | "recover"
+  | "discard" | "pushDraft" | "resolveConflict" | "queue" | "listOutbox" | "cancel" | "recover"
   | "reconcile" | "attach" | "attachInline" | "readInline"
   | "removeAttachment" | "fetchAttachment";
 
@@ -101,6 +101,7 @@ const OPERATION_POLICY: Record<CorrespondenceOperation, InvokePolicy> = {
   listDrafts: BOUNDED_LOCAL_READ,
   discard: WAIT_FOR_NATIVE_COMPLETION,
   pushDraft: WAIT_FOR_NATIVE_COMPLETION,
+  resolveConflict: WAIT_FOR_NATIVE_COMPLETION,
   queue: WAIT_FOR_NATIVE_COMPLETION,
   listOutbox: BOUNDED_LOCAL_READ,
   cancel: WAIT_FOR_NATIVE_COMPLETION,
@@ -136,6 +137,7 @@ export const nativeCorrespondence: CorrespondenceClient = {
   listDrafts: () => request("listDrafts"),
   discardDraft: (id) => request("discard", { id }),
   pushDraft: (id) => request("pushDraft", { id }),
+  resolveDraftConflict: (id, keepServer) => request("resolveConflict", { id, keepServer }),
   queueDraft: (id, revision, archiveOnSend) => request("queue", { id, revision, archiveOnSend: archiveOnSend ?? false }),
   listOutbox: () => request("listOutbox"),
   cancelSend: (id) => request("cancel", { id }),

@@ -15,14 +15,17 @@ const draft: Draft = {
 
 describe("savedStatus", () => {
   it("says Draft saved when the draft stays on this device or the server has it", () => {
-    expect(savedStatus({}).text).toBe("Draft saved");
-    expect(savedStatus({}, { state: "saved" }).text).toBe("Draft saved");
-    expect(savedStatus({ tooLargeToSync: true }, null).text).toBe("Draft saved · Too large to sync");
+    expect(savedStatus().text).toBe("Draft saved");
+    expect(savedStatus(null).text).toBe("Draft saved");
+    expect(savedStatus({ state: "saved" }).text).toBe("Draft saved");
   });
   it("never says Draft saved before the server confirms", () => {
-    expect(savedStatus({}, { state: "pending" }).text).toBe("Saving…");
-    expect(savedStatus({}, { state: "retrying", error: "offline" })).toEqual({ text: "Saved on this device · Will sync when online", detail: "offline" });
-    expect(savedStatus({}, { state: "failed", error: "Reconnect" })).toEqual({ text: "Saved on this device · Couldn't save to server", detail: "Reconnect" });
+    expect(savedStatus({ state: "pending" }).text).toBe("Saving…");
+    expect(savedStatus({ state: "retrying", error: "offline" })).toEqual({ text: "Saved on this device · Will sync when online", detail: "offline" });
+    expect(savedStatus({ state: "failed", error: "Reconnect" })).toEqual({ text: "Saved on this device · Couldn't save to server", detail: "Reconnect" });
+  });
+  it("flags a draft changed both here and in another app", () => {
+    expect(savedStatus({ state: "conflict" })).toEqual({ text: "Saved on this device · Also changed in another app", conflict: true });
   });
 });
 
@@ -54,6 +57,17 @@ describe("useDraftAutosave server status", () => {
     const { hook, emit } = await savedPending();
     emit({ id: "draft-1", revision: 2, status: { state: "retrying", error: "The server couldn't be reached." } });
     expect(hook.result.current.status).toEqual({ text: "Saved on this device · Will sync when online", detail: "The server couldn't be reached." });
+  });
+
+  it("starts from the opened draft's server status", () => {
+    const hook = renderHook(() => useDraftAutosave({ ...draft, serverDraft: { state: "conflict" } }, () => null, () => {}));
+    expect(hook.result.current.status.conflict).toBe(true);
+  });
+
+  it("follows a conflict reported while the draft is open", async () => {
+    const { hook, emit } = await savedPending();
+    emit({ id: "draft-1", revision: 2, status: { state: "conflict" } });
+    expect(hook.result.current.status.conflict).toBe(true);
   });
 
   it("leaves unsaved edits alone and stops listening on unmount", async () => {

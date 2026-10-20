@@ -162,6 +162,7 @@ export function demoCorrespondence(getSourceThread: (messageId: string) => Promi
     async discardDraft(id) { const store = read(); store.drafts = store.drafts.filter((d) => d.id !== id); write(store); },
     // The preview has no mail server; drafts stay in the browser.
     async pushDraft() {},
+    async resolveDraftConflict(id) { return draft(read(), id); },
     async queueDraft(id, revision, _archiveOnSend) {
       const store = read(); const queued = store.outbox.find((o) => o.draft.id === id && o.draft.revision === revision);
       if (queued) return queued;

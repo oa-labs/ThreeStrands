@@ -153,10 +153,6 @@ pub struct Draft {
     pub follow_up_task_id: Option<String>,
     pub attachments: Vec<Attachment>,
     pub updated_at: i64,
-    /// Set on a draft a save returns, never stored or synced: sync is on but
-    /// this draft is too large to reach other devices.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub too_large_to_sync: bool,
     /// Set on a draft a save returns, never stored or synced: where its copy
     /// in the account's server drafts stands. `None` when the draft stays on
     /// this device.
@@ -273,6 +269,12 @@ pub enum Request {
     /// because the composer closed.
     PushDraft {
         id: String,
+    },
+    /// Settles a draft changed both here and on the server: `keepServer`
+    /// adopts the server's version, otherwise this one replaces it.
+    ResolveConflict {
+        id: String,
+        keep_server: bool,
     },
     Queue {
         id: String,
@@ -546,7 +548,6 @@ impl Database {
             follow_up_task_id: None,
             attachments: vec![],
             updated_at: now(),
-            too_large_to_sync: false,
             server_draft: None,
         };
         if mode != "new" {
@@ -560,6 +561,25 @@ impl Database {
                         .to_string()
                 })?;
             let source: RawMessage = serde_json::from_str(&raw).map_err(error)?;
+            // A reply written in another app arrives with its conversation
+            // but not the message it answers. Replying in that conversation
+            // reopens it rather than starting a second reply.
+            if mode != "forward" {
+                let imported = self.drafts()?.into_iter().find(|d| {
+                    d.account == account
+                        && d.source_id.is_none()
+                        && matches!(d.mode.as_str(), "reply" | "replyAll")
+                        && d.thread_id.as_deref() == Some(source.thread_id.as_str())
+                });
+                if let Some(mut existing) = imported {
+                    existing.source_id = Some(source_id.clone());
+                    let expected = existing.revision;
+                    existing.revision += 1;
+                    if self.update_draft_without_push(&mut existing, expected)? == 1 {
+                        return Ok(existing);
+                    }
+                }
+            }
             let normalized = crate::mime::normalize(&source)?;
             let part = &source.payload;
             let from = header(part, "From");
@@ -746,7 +766,6 @@ impl Database {
             follow_up_task_id: None,
             attachments: forward_attachments(&source, &normalized)?,
             updated_at: now(),
-            too_large_to_sync: false,
             server_draft: None,
         };
         self.write_draft(&mut d, false, |tx, d, payload| {
@@ -874,41 +893,47 @@ impl Database {
         Ok(d)
     }
     pub fn discard_draft(&self, id: &str) -> Result<(), String> {
-        let sync = self.draft_sync_enabled()?;
         self.with_transaction(|tx| {
-            if tx.execute("DELETE FROM drafts WHERE id=?1", [id])? == 1 && sync {
-                crate::draft_sync::record_draft_deletion(tx, id)?;
-            }
+            tx.execute("DELETE FROM drafts WHERE id=?1", [id])?;
             Self::draft_left_drafts(tx, id, now())?;
             Ok(())
         })?;
         Ok(())
     }
-    /// Writes one draft row and, while sync is on, records the draft for
-    /// other devices in the same transaction. `push` marks an edit that the
-    /// account's server drafts need. Returns the rows `write` changed;
-    /// nothing is recorded when it changed none.
+    /// Writes one draft row. `push` marks an edit that the account's server
+    /// drafts need, in the same transaction. Returns the rows `write` changed.
     fn write_draft(
         &self,
         d: &mut Draft,
         push: bool,
         write: impl FnOnce(&rusqlite::Transaction, &Draft, &str) -> rusqlite::Result<usize>,
     ) -> Result<usize, String> {
-        let sync = self.draft_sync_enabled()?;
-        d.too_large_to_sync = false;
         d.server_draft = None;
         let payload = json(d)?;
         let draft = &*d;
-        let (changed, synced) = self.with_transaction(|tx| {
+        let changed = self.with_transaction(|tx| {
             let changed = write(tx, draft, &payload)?;
-            let synced = changed != 1 || !sync || crate::draft_sync::record_draft_write(tx, draft)?;
             if changed == 1 && push {
                 Self::mark_draft_push_pending(tx, draft, now())?;
             }
-            Ok((changed, synced))
+            Ok(changed)
         })?;
-        d.too_large_to_sync = !synced;
         Ok(changed)
+    }
+    /// For a change the server copy doesn't carry, such as which local
+    /// message a reply answers. A server copy that was current stays current.
+    fn update_draft_without_push(&self, d: &mut Draft, expected: i64) -> Result<usize, String> {
+        self.write_draft(d, false, |tx, d, payload| {
+            let changed = tx.execute(
+                "UPDATE drafts SET revision=?1,payload=?2 WHERE id=?3 AND revision=?4",
+                params![d.revision, payload, d.id, expected],
+            )?;
+            tx.execute(
+                "UPDATE draft_server_links SET pushed_revision=?2 WHERE draft_id=?1 AND pushed_revision=?3",
+                params![d.id, d.revision, expected],
+            )?;
+            Ok(changed)
+        })
     }
     fn update_draft(&self, d: &mut Draft, expected: i64) -> Result<usize, String> {
         self.write_draft(d, true, |tx, d, payload| {
@@ -1049,7 +1074,6 @@ impl Database {
             schedule: None,
             sent_copy: None,
         };
-        let sync = self.draft_sync_enabled()?;
         let mut c = self.connection()?;
         let tx = c.transaction().map_err(error)?;
         let removed = tx
@@ -1060,9 +1084,6 @@ impl Database {
             .map_err(error)?;
         if removed != 1 {
             return Err("Draft changed while preparing send".into());
-        }
-        if sync {
-            crate::draft_sync::record_draft_deletion(&tx, id)?;
         }
         Self::draft_left_drafts(&tx, id, now())?;
         tx.execute("INSERT INTO outbox_messages(id,draft_id,revision,account,state,deadline,payload,raw,archive_on_send) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![item.id,id,revision,d.account,item.state,item.deadline,json(&d)?,raw,item.archive_on_send]).map_err(error)?;
@@ -1088,7 +1109,6 @@ impl Database {
         }
         let mut d = item.draft;
         d.revision += 1;
-        let sync = self.draft_sync_enabled()?;
         let mut c = self.connection()?;
         let tx = c.transaction().map_err(error)?;
         let count = tx
@@ -1105,9 +1125,6 @@ impl Database {
             params![d.id, d.revision, json(&d)?],
         )
         .map_err(error)?;
-        if sync {
-            crate::draft_sync::record_draft_write(&tx, &d)?;
-        }
         Self::mark_draft_push_pending(&tx, &d, now())?;
         if let Some(schedule) = &item.schedule { crate::scheduled_send::record(&tx,id,&schedule.report.owner_installation_id,now()).map_err(error)?; }
         tx.commit().map_err(error)?;
@@ -1394,8 +1411,11 @@ pub struct Correspondence {
     pub scheduling: Arc<tokio::sync::Mutex<()>>,
     /// Serializes server draft pushes and deletions.
     pub draft_pushes: Arc<tokio::sync::Mutex<()>>,
-    /// Tells the frontend when a draft's server copy changes state.
-    pub draft_events: Arc<dyn Fn(&crate::draft_push::ServerDraftEvent) + Send + Sync>,
+    /// Tells the frontend when a draft's server copy changes state, or when
+    /// a pull changed local drafts.
+    pub draft_events: Arc<dyn Fn(crate::draft_push::DraftEvent) + Send + Sync>,
+    /// Set to pull server drafts on the worker's next round.
+    pub draft_pull_requested: Arc<std::sync::atomic::AtomicBool>,
 }
 impl Correspondence {
     pub fn resume_schedules(&self) -> Result<(),String> {
@@ -1540,7 +1560,13 @@ impl Correspondence {
             ListDrafts | ListScheduledSummaries => {
                 let database = self.database.clone();
                 return crate::run_database_task(move || match request {
-                    ListDrafts => serde_json::to_value(database.drafts()?).map_err(error),
+                    ListDrafts => {
+                        let mut drafts = database.drafts()?;
+                        for draft in &mut drafts {
+                            draft.server_draft = database.server_draft_status(draft)?;
+                        }
+                        serde_json::to_value(drafts).map_err(error)
+                    }
                     _ => serde_json::to_value(database.scheduled_summaries()?).map_err(error),
                 })
                 .await
@@ -1690,6 +1716,9 @@ impl Correspondence {
                 let mut saved = self.database.save_draft(draft)?;
                 saved.server_draft = self.database.server_draft_status(&saved)?;
                 Ok(serde_json::to_value(saved).map_err(error)?)
+            }
+            ResolveConflict { id, keep_server } => {
+                Ok(serde_json::to_value(self.database.resolve_draft_conflict(&id, keep_server)?).map_err(error)?)
             }
             Discard { id } => {
                 self.database.discard_draft(&id)?;
@@ -2699,7 +2728,6 @@ mod tests {
             follow_up_task_id: None,
             attachments: vec![],
             updated_at: now(),
-            too_large_to_sync: false,
             server_draft: None,
         };
         db.connection()
@@ -5048,6 +5076,7 @@ mod tests {
             scheduling: Arc::new(tokio::sync::Mutex::new(())),
             draft_pushes: Arc::new(tokio::sync::Mutex::new(())),
             draft_events: Arc::new(|_| {}),
+            draft_pull_requested: Arc::default(),
         }
     }
     #[tokio::test]

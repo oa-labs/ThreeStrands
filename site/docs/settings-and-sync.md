@@ -16,7 +16,7 @@ The file includes your preferences, account list, Split Inboxes, retention setti
 
 ## Replicated Sync
 
-Replicated Sync keeps drafts, tasks, goals, saved contacts and groups, snippets, signatures and their defaults, muted senders, Split Inboxes, account details, and preferences the same across your computers. Attachment files stay on the computer where you added them. It is end-to-end encrypted, and it uses storage you choose rather than a ThreeStrands server.
+Replicated Sync keeps tasks, goals, saved contacts and groups, snippets, signatures and their defaults, muted senders, Split Inboxes, account details, and preferences the same across your computers. Drafts on Gmail accounts reach your other computers through Gmail **Drafts** instead. It is end-to-end encrypted, and it uses storage you choose rather than a ThreeStrands server.
 
 1. Open **Settings → Replicated Sync** and check **Enable replicated sync**.
 2. **Add a connector** — choose where encrypted data is kept:

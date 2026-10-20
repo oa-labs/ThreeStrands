@@ -59,11 +59,22 @@ pub(crate) fn kind_keeps_server_drafts(kind: MailProviderKind) -> bool {
 #[serde(rename_all = "camelCase")]
 pub struct ServerDraftStatus {
     /// `pending` (waiting for the push delay), `retrying` (a temporary
-    /// failure), `failed` (needs the user), or `saved` (the server has this
+    /// failure), `failed` (needs the user), `conflict` (changed here and on
+    /// the server; the user picks a version), or `saved` (the server has this
     /// revision).
     pub state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+/// What the push and pull worker tells the frontend.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DraftEvent {
+    /// A draft's server copy changed state.
+    Status(ServerDraftEvent),
+    /// Local drafts changed because of the server; the Drafts list should
+    /// reload, and an open composer may need to follow.
+    ListChanged,
 }
 
 /// Sent to the frontend whenever a push finishes or fails.
@@ -76,12 +87,13 @@ pub struct ServerDraftEvent {
     pub status: ServerDraftStatus,
 }
 
-struct Link {
-    draft_id: String,
-    account: String,
-    server_id: Option<String>,
-    pushed_revision: i64,
-    attempts: u32,
+pub(crate) struct Link {
+    pub(crate) draft_id: String,
+    pub(crate) account: String,
+    pub(crate) server_id: Option<String>,
+    pub(crate) server_version: Option<String>,
+    pub(crate) pushed_revision: i64,
+    pub(crate) attempts: u32,
 }
 
 struct Deletion {
@@ -97,7 +109,7 @@ fn retry_at(attempts: u32, at: i64) -> i64 {
 }
 
 impl Database {
-    fn keeps_server_drafts(tx: &Transaction, account: &str) -> DbResult<bool> {
+    pub(crate) fn keeps_server_drafts(tx: &Transaction, account: &str) -> DbResult<bool> {
         let provider: Option<String> = tx
             .query_row(
                 "SELECT provider FROM accounts WHERE email=?1 AND on_this_device=1",
@@ -192,15 +204,17 @@ impl Database {
     /// draft stays on this device.
     pub(crate) fn server_draft_status(&self, draft: &Draft) -> DbResult<Option<ServerDraftStatus>> {
         self.with_connection(|connection| {
-            let row: Option<(i64, String, Option<String>)> = connection
+            let row: Option<(i64, String, Option<String>, bool)> = connection
                 .query_row(
-                    "SELECT pushed_revision, state, error FROM draft_server_links WHERE draft_id=?1 AND account=?2",
+                    "SELECT pushed_revision, state, error, conflict IS NOT NULL FROM draft_server_links WHERE draft_id=?1 AND account=?2",
                     params![draft.id, draft.account],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
                 )
                 .optional()?;
-            Ok(row.map(|(pushed, state, error)| {
-                if pushed >= draft.revision {
+            Ok(row.map(|(pushed, state, error, conflict)| {
+                if conflict {
+                    ServerDraftStatus { state: "conflict".into(), error: None }
+                } else if pushed >= draft.revision {
                     ServerDraftStatus { state: "saved".into(), error: None }
                 } else if state == "saved" {
                     ServerDraftStatus { state: "pending".into(), error: None }
@@ -235,18 +249,21 @@ impl Database {
 
     fn due_draft_links(&self, at: i64) -> DbResult<Vec<Link>> {
         self.with_connection(|connection| {
+            // A conflict waits for the user, not the clock.
             let mut query = connection.prepare(
-                "SELECT draft_id, account, server_id, pushed_revision, attempts FROM draft_server_links WHERE due_at IS NOT NULL AND due_at<=?1 ORDER BY due_at",
+                "SELECT draft_id, account, server_id, server_version, pushed_revision, attempts FROM draft_server_links WHERE due_at IS NOT NULL AND due_at<=?1 AND conflict IS NULL ORDER BY due_at",
             )?;
-            let rows = query.query_map([at], |row| {
-                Ok(Link {
-                    draft_id: row.get(0)?,
-                    account: row.get(1)?,
-                    server_id: row.get(2)?,
-                    pushed_revision: row.get(3)?,
-                    attempts: row.get(4)?,
-                })
-            })?;
+            let rows = query.query_map([at], link_from_row)?;
+            Ok(rows.collect::<Result<_, _>>()?)
+        })
+    }
+
+    pub(crate) fn account_draft_links(&self, account: &str) -> DbResult<Vec<Link>> {
+        self.with_connection(|connection| {
+            let mut query = connection.prepare(
+                "SELECT draft_id, account, server_id, server_version, pushed_revision, attempts FROM draft_server_links WHERE account=?1",
+            )?;
+            let rows = query.query_map([account], link_from_row)?;
             Ok(rows.collect::<Result<_, _>>()?)
         })
     }
@@ -269,7 +286,7 @@ impl Database {
         })
     }
 
-    fn local_draft(&self, id: &str) -> DbResult<Option<Draft>> {
+    pub(crate) fn local_draft(&self, id: &str) -> DbResult<Option<Draft>> {
         self.with_connection(|connection| {
             let payload: Option<String> = connection
                 .query_row("SELECT payload FROM drafts WHERE id=?1", [id], |row| row.get(0))
@@ -320,19 +337,19 @@ impl Database {
 
     /// Records a confirmed push of `revision`. The link stays pending when
     /// the draft changed again meanwhile.
-    fn record_draft_pushed(&self, draft_id: &str, server: &ServerDraft, revision: i64) -> DbResult<i64> {
+    pub(crate) fn record_draft_pushed(&self, draft_id: &str, server: &ServerDraft, revision: i64) -> DbResult<i64> {
         self.with_transaction(|tx| {
             let current: Option<i64> = tx
                 .query_row("SELECT revision FROM drafts WHERE id=?1", [draft_id], |row| row.get(0))
                 .optional()?;
             let newer = current.is_some_and(|current| current > revision);
             tx.execute(
-                "UPDATE draft_server_links SET server_id=?2, pushed_revision=MAX(pushed_revision, ?3), attempts=0, error=NULL,
+                "UPDATE draft_server_links SET server_id=?2, server_version=COALESCE(?5, server_version), pushed_revision=MAX(pushed_revision, ?3), attempts=0, error=NULL,
                      state=CASE WHEN ?4 THEN 'pending' ELSE 'saved' END,
                      pending_since=CASE WHEN ?4 THEN pending_since ELSE NULL END,
                      due_at=CASE WHEN ?4 THEN due_at ELSE NULL END
                  WHERE draft_id=?1",
-                params![draft_id, server.id, revision, newer],
+                params![draft_id, server.id, revision, newer, server.version],
             )?;
             Ok(current.unwrap_or(revision))
         })
@@ -373,6 +390,17 @@ impl Database {
     }
 }
 
+fn link_from_row(row: &rusqlite::Row) -> rusqlite::Result<Link> {
+    Ok(Link {
+        draft_id: row.get(0)?,
+        account: row.get(1)?,
+        server_id: row.get(2)?,
+        server_version: row.get(3)?,
+        pushed_revision: row.get(4)?,
+        attempts: row.get(5)?,
+    })
+}
+
 enum RemovedDraft {
     Delete,
     Wait,
@@ -391,10 +419,11 @@ fn classify_push_error(error: &ProviderError, account: &str) -> (&'static str, S
 }
 
 impl Correspondence {
-    /// Pushes and deletes server drafts as they come due, forever.
+    /// Pushes, deletes, and pulls server drafts as they come due, forever.
     pub async fn run_draft_pushes(self) {
+        let mut last_pulled = HashMap::new();
         loop {
-            if let Err(error) = self.push_due_drafts(now()).await {
+            if let Err(error) = self.run_draft_round(now(), &mut last_pulled).await {
                 log::warn!(target: "drafts", "server draft push failed: {error}");
             }
             tokio::time::sleep(PUSH_POLL_INTERVAL).await;
@@ -413,13 +442,36 @@ impl Correspondence {
 
     pub(crate) async fn push_due_drafts(&self, at: i64) -> Result<(), String> {
         let _guard = self.draft_pushes.lock().await;
+        let providers = self.draft_providers(self.database.due_draft_accounts(at)?).await;
+        self.push_due_drafts_with(at, &providers).await
+    }
+
+    /// Asks the worker to pull every account's server drafts on its next
+    /// round, as when the window comes to the front.
+    pub fn request_draft_pull(&self) {
+        self.draft_pull_requested.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    async fn run_draft_round(&self, at: i64, last_pulled: &mut HashMap<String, i64>) -> Result<(), String> {
+        let _guard = self.draft_pushes.lock().await;
+        let mut accounts: Vec<String> = self.accounts.lock().await.keys().cloned().collect();
+        accounts.extend(self.database.due_draft_accounts(at)?);
+        accounts.sort();
+        accounts.dedup();
+        let providers = self.draft_providers(accounts).await;
+        let force = self.draft_pull_requested.swap(false, std::sync::atomic::Ordering::SeqCst);
+        self.push_due_drafts_with(at, &providers).await?;
+        self.pull_due_accounts(at, &providers, last_pulled, force).await
+    }
+
+    async fn draft_providers(&self, accounts: Vec<String>) -> HashMap<String, Arc<dyn MailProvider>> {
         let mut providers = HashMap::new();
-        for account in self.database.due_draft_accounts(at)? {
+        for account in accounts {
             if let Ok(provider) = self.provider_for(&account).await {
                 providers.insert(account, provider);
             }
         }
-        self.push_due_drafts_with(at, &providers).await
+        providers
     }
 
     /// Does the due work with the connected accounts' providers. An account
@@ -457,7 +509,7 @@ impl Correspondence {
             return Ok(());
         }
         if let Some(server_id) = link.server_id.as_ref().filter(|_| link.pushed_revision >= draft.revision) {
-            let server = ServerDraft { id: server_id.clone() };
+            let server = ServerDraft { id: server_id.clone(), version: None };
             self.database.record_draft_pushed(&draft.id, &server, draft.revision)?;
             return Ok(());
         }
@@ -475,8 +527,12 @@ impl Correspondence {
             self.database.forget_server_draft_link(&draft.id)?;
             return Ok(());
         }
-        match self.push_to_provider(provider.as_ref(), &draft, link.server_id.as_deref()).await {
-            Ok(server) => {
+        match self.push_to_provider(provider.as_ref(), &draft, link).await {
+            Ok(None) => {
+                // Changed on the server too: the user picks a version first.
+                self.notify_draft(&draft, "conflict", None);
+            }
+            Ok(Some(server)) => {
                 let current = self.database.record_draft_pushed(&draft.id, &server, draft.revision)?;
                 if current <= draft.revision {
                     self.notify_draft(&draft, "saved", None);
@@ -497,12 +553,27 @@ impl Correspondence {
         Ok(())
     }
 
+    /// Pushes `draft`, or returns `None` after recording a conflict because
+    /// the server copy changed since this device last saw it.
     async fn push_to_provider(
         &self,
         provider: &dyn MailProvider,
         draft: &Draft,
-        server_id: Option<&str>,
-    ) -> Result<ServerDraft, PushError> {
+        link: &Link,
+    ) -> Result<Option<ServerDraft>, PushError> {
+        let server_id = link.server_id.as_deref();
+        let mut server_id = server_id.map(str::to_string);
+        if let (Some(id), Some(seen)) = (&server_id, &link.server_version) {
+            match provider.server_draft_version(id).await.map_err(PushError::Provider)? {
+                None => server_id = None,
+                Some(current) if current != *seen => {
+                    self.hold_server_conflict(provider, draft, id).await.map_err(PushError::Provider)?;
+                    return Ok(None);
+                }
+                Some(_) => {}
+            }
+        }
+        let server_id = server_id.as_deref();
         let identities = provider.identities(&draft.account).await.map_err(PushError::Provider)?;
         let domain = provider
             .message_id_domain(draft.from_address())
@@ -527,10 +598,10 @@ impl Correspondence {
             match provider.update_server_draft(&id, &raw, thread).await {
                 // Deleted on the server: keep the user's work by creating it again.
                 Err(ProviderError::NotFound) => {}
-                result => return result.map_err(PushError::Provider),
+                result => return result.map(Some).map_err(PushError::Provider),
             }
         }
-        provider.create_server_draft(&raw, thread).await.map_err(PushError::Provider)
+        provider.create_server_draft(&raw, thread).await.map(Some).map_err(PushError::Provider)
     }
 
     async fn delete_server_copy(
@@ -578,11 +649,11 @@ impl Correspondence {
     }
 
     fn notify_draft(&self, draft: &Draft, state: &str, error: Option<String>) {
-        (self.draft_events)(&ServerDraftEvent {
+        (self.draft_events)(DraftEvent::Status(ServerDraftEvent {
             id: draft.id.clone(),
             revision: draft.revision,
             status: ServerDraftStatus { state: state.into(), error },
-        });
+        }));
     }
 }
 
@@ -593,11 +664,12 @@ enum PushError {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::{
         path::PathBuf,
         sync::{Mutex as StdMutex, MutexGuard},
     };
+
 
     use super::*;
     use crate::{
@@ -609,14 +681,18 @@ mod tests {
         },
     };
 
-    const ACCOUNT: &str = "you@example.com";
+    pub(crate) const ACCOUNT: &str = "you@example.com";
+
+    /// One draft held by [`FakeDrafts`]: raw message, thread, version.
+    pub(crate) type FakeDraft = (String, Option<String>, String);
 
     /// An in-memory stand-in for an account's server drafts.
     #[derive(Default)]
-    struct FakeDrafts {
+    pub(crate) struct FakeDrafts {
         supported: bool,
-        /// Server draft id -> (raw message, thread).
-        drafts: StdMutex<HashMap<String, (String, Option<String>)>>,
+        /// Server draft id -> its content.
+        drafts: StdMutex<HashMap<String, FakeDraft>>,
+        versions: StdMutex<usize>,
         calls: StdMutex<Vec<String>>,
         /// Returned, once, by the next create or update.
         fail_next: StdMutex<Option<ProviderError>>,
@@ -624,13 +700,23 @@ mod tests {
     }
 
     impl FakeDrafts {
-        fn new() -> Arc<Self> {
+        pub(crate) fn new() -> Arc<Self> {
             Arc::new(Self { supported: true, ..Self::default() })
         }
-        fn drafts(&self) -> MutexGuard<'_, HashMap<String, (String, Option<String>)>> {
+        pub(crate) fn drafts(&self) -> MutexGuard<'_, HashMap<String, FakeDraft>> {
             self.drafts.lock().unwrap()
         }
-        fn calls(&self) -> Vec<String> {
+        fn next_version(&self) -> String {
+            let mut versions = self.versions.lock().unwrap();
+            *versions += 1;
+            format!("v{versions}")
+        }
+        /// Stores `raw` as another app would: a new draft, or an edit to `id`.
+        pub(crate) fn write_elsewhere(&self, id: &str, raw: &str, thread: Option<&str>) {
+            let version = self.next_version();
+            self.drafts().insert(id.into(), (raw.into(), thread.map(str::to_string), version));
+        }
+        pub(crate) fn calls(&self) -> Vec<String> {
             self.calls.lock().unwrap().clone()
         }
         fn fail_next(&self, error: ProviderError) {
@@ -664,8 +750,8 @@ mod tests {
             Ok(self
                 .drafts()
                 .iter()
-                .find(|(_, (raw, _))| raw.contains(&header))
-                .map(|(id, _)| ServerDraft { id: id.clone() }))
+                .find(|(_, (raw, ..))| raw.contains(&header))
+                .map(|(id, (.., version))| ServerDraft { id: id.clone(), version: Some(version.clone()) }))
         }
         async fn create_server_draft(&self, raw: &[u8], thread: Option<&str>) -> ProviderResult<ServerDraft> {
             self.calls.lock().unwrap().push("create".into());
@@ -673,25 +759,51 @@ mod tests {
             let mut created = self.created.lock().unwrap();
             *created += 1;
             let id = format!("server-{created}");
+            drop(created);
+            let version = self.next_version();
             self.drafts().insert(
                 id.clone(),
-                (String::from_utf8_lossy(raw).into_owned(), thread.map(str::to_string)),
+                (String::from_utf8_lossy(raw).into_owned(), thread.map(str::to_string), version.clone()),
             );
-            Ok(ServerDraft { id })
+            Ok(ServerDraft { id, version: Some(version) })
         }
         async fn update_server_draft(&self, id: &str, raw: &[u8], thread: Option<&str>) -> ProviderResult<ServerDraft> {
             self.calls.lock().unwrap().push(format!("update {id}"));
             self.take_failure()?;
-            let mut drafts = self.drafts();
-            let Some(entry) = drafts.get_mut(id) else {
+            if !self.drafts().contains_key(id) {
                 return Err(ProviderError::NotFound);
-            };
-            *entry = (String::from_utf8_lossy(raw).into_owned(), thread.map(str::to_string));
-            Ok(ServerDraft { id: id.into() })
+            }
+            let version = self.next_version();
+            self.drafts().insert(
+                id.into(),
+                (String::from_utf8_lossy(raw).into_owned(), thread.map(str::to_string), version.clone()),
+            );
+            Ok(ServerDraft { id: id.into(), version: Some(version) })
         }
         async fn delete_server_draft(&self, id: &str) -> ProviderResult<()> {
             self.calls.lock().unwrap().push(format!("delete {id}"));
             self.drafts().remove(id).map(|_| ()).ok_or(ProviderError::NotFound)
+        }
+        async fn list_server_drafts(&self) -> ProviderResult<Vec<ServerDraft>> {
+            self.calls.lock().unwrap().push("list".into());
+            Ok(self
+                .drafts()
+                .iter()
+                .map(|(id, (.., version))| ServerDraft { id: id.clone(), version: Some(version.clone()) })
+                .collect())
+        }
+        async fn fetch_server_draft(&self, id: &str) -> ProviderResult<crate::provider::FetchedServerDraft> {
+            self.calls.lock().unwrap().push(format!("fetch {id}"));
+            let (raw, thread, version) = self.drafts().get(id).cloned().ok_or(ProviderError::NotFound)?;
+            Ok(crate::provider::FetchedServerDraft {
+                draft: ServerDraft { id: id.into(), version: Some(version) },
+                thread_id: thread,
+                raw: raw.into_bytes(),
+            })
+        }
+        async fn server_draft_version(&self, id: &str) -> ProviderResult<Option<String>> {
+            self.calls.lock().unwrap().push(format!("version {id}"));
+            Ok(self.drafts().get(id).map(|(.., version)| version.clone()))
         }
     }
 
@@ -756,60 +868,78 @@ mod tests {
         }
     }
 
-    struct Harness {
-        service: Correspondence,
-        server: Arc<FakeDrafts>,
-        events: Arc<StdMutex<Vec<ServerDraftEvent>>>,
+    pub(crate) struct Harness {
+        pub(crate) service: Correspondence,
+        pub(crate) server: Arc<FakeDrafts>,
+        pub(crate) events: Arc<StdMutex<Vec<DraftEvent>>>,
+        pub(crate) root: TempRoot,
+    }
+
+    /// An attachment root removed when the test ends.
+    pub(crate) struct TempRoot(pub(crate) PathBuf);
+
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     impl Harness {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             Self::with_server(FakeDrafts::new())
         }
-        fn with_server(server: Arc<FakeDrafts>) -> Self {
+        pub(crate) fn with_server(server: Arc<FakeDrafts>) -> Self {
             let database = Database::open_memory();
             database.set_compose_identity(ACCOUNT).unwrap();
             database.adopt_account(ACCOUNT).unwrap();
             let events = Arc::new(StdMutex::new(Vec::new()));
             let recorded = events.clone();
+            let root = TempRoot(std::env::temp_dir().join(format!("drafts-{}", uuid::Uuid::new_v4())));
+            std::fs::create_dir_all(&root.0).unwrap();
             let service = Correspondence {
                 sending_identity: Arc::new(|_| Ok("00000000-0000-4000-8000-000000000001".into())),
                 database: Arc::new(database),
                 accounts: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-                root: PathBuf::from("/unused"),
+                root: root.0.clone(),
                 gate: Arc::new(tokio::sync::Mutex::new(())),
                 edits: Arc::new(tokio::sync::Mutex::new(())),
                 scheduling: Arc::new(tokio::sync::Mutex::new(())),
                 draft_pushes: Arc::new(tokio::sync::Mutex::new(())),
-                draft_events: Arc::new(move |event| recorded.lock().unwrap().push(event.clone())),
+                draft_events: Arc::new(move |event| recorded.lock().unwrap().push(event)),
+                draft_pull_requested: Arc::default(),
             };
-            Self { service, server, events }
+            Self { service, server, events, root }
         }
-        fn db(&self) -> &Database {
+        pub(crate) fn db(&self) -> &Database {
             &self.service.database
         }
-        fn new_draft(&self) -> Draft {
+        pub(crate) fn providers(&self) -> HashMap<String, Arc<dyn MailProvider>> {
+            HashMap::from([(ACCOUNT.to_string(), self.server.clone() as Arc<dyn MailProvider>)])
+        }
+        pub(crate) fn new_draft(&self) -> Draft {
             self.db().create_draft("new", None, ACCOUNT, &[]).unwrap()
         }
-        fn edit(&self, mut draft: Draft, body: &str) -> Draft {
+        pub(crate) fn edit(&self, mut draft: Draft, body: &str) -> Draft {
             draft.subject = "Plans".into();
             draft.body = body.into();
             self.db().save_draft(draft).unwrap()
         }
         /// Runs the worker as if `delay_ms` had passed since now.
-        async fn run_after(&self, delay_ms: i64) {
-            let providers: HashMap<String, Arc<dyn MailProvider>> =
-                HashMap::from([(ACCOUNT.to_string(), self.server.clone() as Arc<dyn MailProvider>)]);
-            self.service.push_due_drafts_with(now() + delay_ms, &providers).await.unwrap();
+        pub(crate) async fn run_after(&self, delay_ms: i64) {
+            self.service.push_due_drafts_with(now() + delay_ms, &self.providers()).await.unwrap();
+        }
+        /// Pulls the account's server drafts.
+        pub(crate) async fn pull(&self) -> bool {
+            self.service.pull_server_drafts(ACCOUNT, self.server.as_ref()).await.unwrap()
         }
         async fn run_disconnected(&self, delay_ms: i64) {
             self.service.push_due_drafts_with(now() + delay_ms, &HashMap::new()).await.unwrap();
         }
-        fn status(&self, draft: &Draft) -> Option<ServerDraftStatus> {
+        pub(crate) fn status(&self, draft: &Draft) -> Option<ServerDraftStatus> {
             let current = self.db().draft(&draft.id).unwrap();
             self.db().server_draft_status(&current).unwrap()
         }
-        fn state(&self, draft: &Draft) -> String {
+        pub(crate) fn state(&self, draft: &Draft) -> String {
             self.status(draft).unwrap().state
         }
         fn link_due(&self, draft: &Draft) -> Option<i64> {
@@ -819,14 +949,14 @@ mod tests {
                 .query_row("SELECT due_at FROM draft_server_links WHERE draft_id=?1", [&draft.id], |row| row.get(0))
                 .unwrap()
         }
-        fn only_server_body(&self) -> String {
+        pub(crate) fn only_server_body(&self) -> String {
             let drafts = self.server.drafts();
             assert_eq!(drafts.len(), 1, "expected exactly one server draft");
             drafts.values().next().unwrap().0.clone()
         }
     }
 
-    const PAST_DELAY: i64 = DRAFT_PUSH_DELAY_MS + 1;
+    pub(crate) const PAST_DELAY: i64 = DRAFT_PUSH_DELAY_MS + 1;
 
     #[tokio::test]
     async fn a_saved_draft_waits_for_the_push_delay_then_reaches_the_server() {
@@ -834,15 +964,17 @@ mod tests {
         let draft = harness.edit(harness.new_draft(), "First version");
         assert_eq!(harness.state(&draft), "pending");
 
-        harness.run_after(DRAFT_PUSH_DELAY_MS - 1).await;
+        // Well inside the delay, so the time the test itself takes can't cross it.
+        harness.run_after(DRAFT_PUSH_DELAY_MS - 1_000).await;
         assert!(harness.server.calls().is_empty(), "nothing is pushed before the delay");
 
         harness.run_after(DRAFT_PUSH_DELAY_MS).await;
         assert!(harness.only_server_body().contains("First version"));
         assert_eq!(harness.state(&draft), "saved");
         let events = harness.events.lock().unwrap().clone();
-        assert_eq!(events.last().unwrap().status.state, "saved");
-        assert_eq!(events.last().unwrap().revision, draft.revision);
+        let Some(DraftEvent::Status(last)) = events.last() else { panic!("expected a status event") };
+        assert_eq!(last.status.state, "saved");
+        assert_eq!(last.revision, draft.revision);
     }
 
     #[tokio::test]
@@ -874,7 +1006,7 @@ mod tests {
         assert_eq!(harness.state(&draft), "pending");
         harness.run_after(PAST_DELAY).await;
         assert!(harness.only_server_body().contains("Two"));
-        assert_eq!(harness.server.calls()[2], "update server-1");
+        assert_eq!(harness.server.calls()[2..], ["version server-1", "update server-1"], "checks for edits made elsewhere first");
         assert_eq!(harness.state(&draft), "saved");
     }
 

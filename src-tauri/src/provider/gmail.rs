@@ -18,7 +18,8 @@ use crate::{
     models::Label,
     provider::{
         Delivery, DeliveryReceipt, LabelModel, MailFetch, MailMutate, MailProvider, MailSend,
-        MailSync, ProviderCapabilities, ProviderError, ProviderResult, ServerDraft, SyncBatch,
+        FetchedServerDraft, MailSync, ProviderCapabilities, ProviderError, ProviderResult,
+        ServerDraft, SyncBatch,
         SyncCursor, ThreadPage,
     },
 };
@@ -1337,7 +1338,12 @@ mod tests {
                     "/drafts",
                     get(|State(stub): State<Stub>, Query(query): Query<HashMap<String, String>>| async move {
                         stub.seen.lock().unwrap().push(("GET".into(), "/drafts".into(), serde_json::json!(query)));
-                        (stub.next_status(), Json(serde_json::json!({"drafts": [{"id": "d-7", "message": {"id": "m-7"}}]})))
+                        let page = if query.get("pageToken").map(String::as_str) == Some("p2") {
+                            serde_json::json!({"drafts": [{"id": "d-8", "message": {"id": "m-8"}}]})
+                        } else {
+                            serde_json::json!({"drafts": [{"id": "d-7", "message": {"id": "m-7"}}], "nextPageToken": "p2"})
+                        };
+                        (stub.next_status(), Json(page))
                     })
                     .post(|State(stub): State<Stub>, Json(body): Json<serde_json::Value>| async move {
                         stub.seen.lock().unwrap().push(("POST".into(), "/drafts".into(), body));
@@ -1346,10 +1352,12 @@ mod tests {
                 )
                 .route(
                     "/drafts/{id}",
-                    any(|State(stub): State<Stub>, method: HttpMethod, Path(id): Path<String>, body: String| async move {
-                        let body = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+                    any(|State(stub): State<Stub>, method: HttpMethod, Path(id): Path<String>, Query(query): Query<HashMap<String, String>>, body: String| async move {
+                        let body = serde_json::from_str(&body).unwrap_or(serde_json::json!(query));
                         stub.seen.lock().unwrap().push((method.to_string(), format!("/drafts/{id}"), body));
-                        (stub.next_status(), Json(serde_json::json!({"id": id, "message": {"id": "m-2"}})))
+                        use base64::Engine;
+                        let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"Subject: Hi\r\n\r\nBody");
+                        (stub.next_status(), Json(serde_json::json!({"id": id, "message": {"id": "m-2", "threadId": "t-3", "raw": raw}})))
                     }),
                 )
                 .with_state(stub);
@@ -1384,9 +1392,9 @@ mod tests {
             let stub = Stub::default();
             let gmail = client(&serve(stub.clone()).await);
             let created = gmail.create_server_draft(b"Subject: Hi\r\n\r\nBody", Some("t-9")).await.unwrap();
-            assert_eq!(created, ServerDraft { id: "d-1".into() });
+            assert_eq!(created, ServerDraft { id: "d-1".into(), version: Some("m-1".into()) });
             let updated = gmail.update_server_draft("d-1", b"Subject: Hi\r\n\r\nEdited", None).await.unwrap();
-            assert_eq!(updated, ServerDraft { id: "d-1".into() });
+            assert_eq!(updated, ServerDraft { id: "d-1".into(), version: Some("m-2".into()) });
 
             let seen = stub.seen.lock().unwrap().clone();
             assert_eq!((seen[0].0.as_str(), seen[0].1.as_str()), ("POST", "/drafts"));
@@ -1420,11 +1428,48 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn listing_follows_every_page_and_reports_versions() {
+            let stub = Stub::default();
+            let gmail = client(&serve(stub.clone()).await);
+            let listed = gmail.list_server_drafts().await.unwrap();
+            assert_eq!(
+                listed,
+                [
+                    ServerDraft { id: "d-7".into(), version: Some("m-7".into()) },
+                    ServerDraft { id: "d-8".into(), version: Some("m-8".into()) },
+                ]
+            );
+            let seen = stub.seen.lock().unwrap().clone();
+            assert_eq!(seen[1].2["pageToken"], "p2");
+        }
+
+        #[tokio::test]
+        async fn fetching_returns_the_raw_message_and_thread() {
+            let stub = Stub::default();
+            let gmail = client(&serve(stub.clone()).await);
+            let fetched = gmail.fetch_server_draft("d-1").await.unwrap();
+            assert_eq!(fetched.raw, b"Subject: Hi\r\n\r\nBody");
+            assert_eq!(fetched.thread_id.as_deref(), Some("t-3"));
+            assert_eq!(fetched.draft, ServerDraft { id: "d-1".into(), version: Some("m-2".into()) });
+            assert_eq!(stub.seen.lock().unwrap()[0].2["format"], "raw");
+        }
+
+        #[tokio::test]
+        async fn the_version_check_reads_no_content_and_reports_a_deleted_draft() {
+            let stub = Stub::default();
+            let gmail = client(&serve(stub.clone()).await);
+            assert_eq!(gmail.server_draft_version("d-1").await.unwrap().as_deref(), Some("m-2"));
+            assert_eq!(stub.seen.lock().unwrap()[0].2["format"], "minimal");
+            stub.statuses.lock().unwrap().push(404);
+            assert_eq!(gmail.server_draft_version("gone").await.unwrap(), None);
+        }
+
+        #[tokio::test]
         async fn find_searches_drafts_by_exact_message_id() {
             let stub = Stub::default();
             let gmail = client(&serve(stub.clone()).await);
             let found = gmail.find_server_draft("draft-1@threestrands.local").await.unwrap();
-            assert_eq!(found, Some(ServerDraft { id: "d-7".into() }));
+            assert_eq!(found, Some(ServerDraft { id: "d-7".into(), version: Some("m-7".into()) }));
             let seen = stub.seen.lock().unwrap().clone();
             assert_eq!(seen[0].2["q"], "rfc822msgid:draft-1@threestrands.local");
         }
@@ -1623,22 +1668,84 @@ impl MailSend for GmailClient {
         self.send(request, false).await?;
         Ok(())
     }
+
+    async fn list_server_drafts(&self) -> ProviderResult<Vec<ServerDraft>> {
+        let mut drafts = Vec::new();
+        let mut page: Option<String> = None;
+        loop {
+            let mut request = self
+                .request(Method::GET, format!("{}/drafts", self.api))
+                .await?
+                .query(&[("maxResults", "500"), ("fields", "drafts(id,message(id)),nextPageToken")]);
+            if let Some(page) = &page {
+                request = request.query(&[("pageToken", page)]);
+            }
+            let listed: DraftList = self.json(request, false).await?;
+            drafts.extend(listed.drafts.into_iter().map(ServerDraft::from));
+            match listed.next_page_token {
+                Some(next) => page = Some(next),
+                None => return Ok(drafts),
+            }
+        }
+    }
+
+    async fn fetch_server_draft(&self, id: &str) -> ProviderResult<FetchedServerDraft> {
+        let request = self
+            .request(Method::GET, format!("{}/drafts/{id}", self.api))
+            .await?
+            .query(&[("format", "raw")]);
+        let fetched: DraftRef = self.json(request, false).await?;
+        let raw = fetched
+            .message
+            .as_ref()
+            .and_then(|message| message.raw.as_deref())
+            .ok_or_else(|| ProviderError::RetryableServer("Gmail returned a draft without its content".into()))?;
+        let raw = crate::mime::decode_attachment_data(raw).map_err(ProviderError::Other)?;
+        let thread_id = fetched.message.as_ref().and_then(|message| message.thread_id.clone());
+        Ok(FetchedServerDraft { draft: fetched.into(), thread_id, raw })
+    }
+
+    async fn server_draft_version(&self, id: &str) -> ProviderResult<Option<String>> {
+        let request = self
+            .request(Method::GET, format!("{}/drafts/{id}", self.api))
+            .await?
+            .query(&[("format", "minimal"), ("fields", "id,message(id)")]);
+        match self.json::<DraftRef>(request, false).await {
+            Ok(found) => Ok(ServerDraft::from(found).version),
+            Err(ProviderError::NotFound) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct DraftList {
     #[serde(default)]
     drafts: Vec<DraftRef>,
+    next_page_token: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct DraftRef {
     id: String,
+    #[serde(default)]
+    message: Option<DraftMessage>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DraftMessage {
+    id: String,
+    #[serde(default)]
+    thread_id: Option<String>,
+    #[serde(default)]
+    raw: Option<String>,
 }
 
 impl From<DraftRef> for ServerDraft {
     fn from(value: DraftRef) -> Self {
-        Self { id: value.id }
+        Self { id: value.id, version: value.message.map(|message| message.id) }
     }
 }
 

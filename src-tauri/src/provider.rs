@@ -387,6 +387,20 @@ pub struct ServerDraft {
     /// The provider's id for the draft, stable across updates (Gmail's
     /// draft id).
     pub id: String,
+    /// Changes whenever the draft's content changes, from any client (Gmail's
+    /// message id), so a device can tell an edit made elsewhere from its own.
+    /// `None` when the provider didn't say.
+    pub version: Option<String>,
+}
+
+/// A server draft's content, as [`MailSend::fetch_server_draft`] returns it.
+#[derive(Debug, Clone)]
+pub struct FetchedServerDraft {
+    pub draft: ServerDraft,
+    /// The provider's conversation id, when the draft is a reply.
+    pub thread_id: Option<String>,
+    /// The draft as an RFC 5322 message.
+    pub raw: Vec<u8>,
 }
 
 /// Which phase of the Sent-copy job the engine is driving when it calls
@@ -672,6 +686,23 @@ pub trait MailSend: Send + Sync {
 
     /// Deletes draft `id`. [`ProviderError::NotFound`] means it is already gone.
     async fn delete_server_draft(&self, _id: &str) -> ProviderResult<()> {
+        Err(ProviderError::InvalidOperation("Server drafts are not supported".into()))
+    }
+
+    /// Every server draft, with its current version.
+    async fn list_server_drafts(&self) -> ProviderResult<Vec<ServerDraft>> {
+        Err(ProviderError::InvalidOperation("Server drafts are not supported".into()))
+    }
+
+    /// Draft `id`'s current content. [`ProviderError::NotFound`] means it was
+    /// deleted on the server.
+    async fn fetch_server_draft(&self, _id: &str) -> ProviderResult<FetchedServerDraft> {
+        Err(ProviderError::InvalidOperation("Server drafts are not supported".into()))
+    }
+
+    /// Draft `id`'s current version without its content, or `None` when it
+    /// was deleted on the server. Checked before a push overwrites the draft.
+    async fn server_draft_version(&self, _id: &str) -> ProviderResult<Option<String>> {
         Err(ProviderError::InvalidOperation("Server drafts are not supported".into()))
     }
 }

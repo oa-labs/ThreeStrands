@@ -9,15 +9,16 @@ import { logBackgroundFailure } from "./errors";
 const AUTOSAVE_DEBOUNCE_MS = 300;
 const AUTOSAVE_INTERVAL_MS = 3_000;
 
-export type DraftSaveStatus = { text: string; detail?: string };
+export type DraftSaveStatus = { text: string; detail?: string; conflict?: boolean };
 
 /** What the composer says once a revision is saved locally. */
-export function savedStatus(saved: Pick<Draft, "tooLargeToSync">, server?: ServerDraftStatus | null): DraftSaveStatus {
+export function savedStatus(server?: ServerDraftStatus | null): DraftSaveStatus {
   switch (server?.state) {
     case "pending": return { text: "Saving…" };
     case "retrying": return { text: "Saved on this device · Will sync when online", detail: server.error };
     case "failed": return { text: "Saved on this device · Couldn't save to server", detail: server.error };
-    default: return { text: saved.tooLargeToSync ? "Draft saved · Too large to sync" : "Draft saved" };
+    case "conflict": return { text: "Saved on this device · Also changed in another app", conflict: true };
+    default: return { text: "Draft saved" };
   }
 }
 
@@ -34,7 +35,7 @@ export function useDraftAutosave(
   const pending = useRef<Promise<Draft> | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
-  const [status, setStatusValue] = useState<DraftSaveStatus>({ text: "Draft saved" });
+  const [status, setStatusValue] = useState<DraftSaveStatus>(() => savedStatus(initial.serverDraft));
   const setStatus = useCallback((next: string | DraftSaveStatus) => setStatusValue(typeof next === "string" ? { text: next } : next), []);
 
   const captureBody = useCallback(() => {
@@ -60,7 +61,7 @@ export function useDraftAutosave(
       latest.current = { ...latest.current, revision: saved.revision, updatedAt: saved.updatedAt };
       if (mounted.current) {
         setDraft(latest.current);
-        setStatus(generation.current === version ? savedStatus(saved, saved.serverDraft) : "Unsaved changes");
+        setStatus(generation.current === version ? savedStatus(saved.serverDraft) : "Unsaved changes");
       }
       return latest.current;
     }).catch((reason) => {
@@ -92,7 +93,7 @@ export function useDraftAutosave(
       if (!mounted.current || payload.id !== id || pending.current || generation.current !== savedGeneration.current) return;
       // A confirmation of an older revision says nothing about this one.
       if (payload.status.state === "saved" && payload.revision < latest.current.revision) return;
-      setStatus(savedStatus(latest.current, payload.status));
+      setStatus(savedStatus(payload.status));
     })
       .then((unlisten) => { if (listening) stop = unlisten; else unlisten(); })
       .catch(logBackgroundFailure("Draft server status listener"));
@@ -110,6 +111,11 @@ export function useDraftAutosave(
     latest.current = next;
     setDraft(next);
   }, []);
+  /** Takes a draft the native side settled, with its server status. */
+  const adopt = useCallback((next: Draft) => {
+    replaceDraft(next);
+    setStatus(savedStatus(next.serverDraft));
+  }, [replaceDraft, setStatus]);
 
   /** Resolves once no save is running; a failed save still counts as finished. */
   const settled = useCallback(async () => {
@@ -140,5 +146,5 @@ export function useDraftAutosave(
     };
   }, [flush]);
 
-  return { draft, latest, status, edit, markChanged, captureBody, flush, replaceDraft, settled, hasUnsavedChanges, overwrite };
+  return { draft, latest, status, edit, markChanged, captureBody, flush, replaceDraft, adopt, settled, hasUnsavedChanges, overwrite };
 }

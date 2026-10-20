@@ -1001,6 +1001,15 @@ async fn ingest_threads(
                 break;
             }
         };
+        // Unsent drafts are not part of the conversation. ThreeStrands reads
+        // them through the account's server drafts instead
+        // (`docs/server-drafts-design.md`), and shows each as a draft.
+        let had_messages = !messages.is_empty();
+        let messages: Vec<_> = messages.into_iter().filter(|message| !is_draft_message(message)).collect();
+        if had_messages && messages.is_empty() {
+            deleted.push(id);
+            continue;
+        }
         let (normalized, quarantined) = normalize_thread(&messages);
         ingested_threads.push((id, normalized, quarantined));
         if ingested_threads.len() >= INGEST_FLUSH_BATCH_SIZE {
@@ -1030,6 +1039,11 @@ async fn ingest_threads(
         return Err(error);
     }
     Ok(())
+}
+
+/// A message the provider still holds as an unsent draft.
+fn is_draft_message(message: &crate::mime::RawMessage) -> bool {
+    message.label_ids.iter().any(|label| label == "DRAFT")
 }
 
 fn normalize_thread(
@@ -1954,6 +1968,41 @@ mod tests {
             .unwrap()
             .quarantined_messages
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn unsent_drafts_never_become_conversation_messages() {
+        let database = Database::open_memory();
+        let sent = ContractProvider::message();
+        let mut draft = ContractProvider::message();
+        draft.id = "draft-message".into();
+        draft.label_ids = vec!["DRAFT".into()];
+        let conversation = |database: &Database| {
+            database
+                .list_threads(None)
+                .unwrap()
+                .into_iter()
+                .find(|thread| thread.provider_thread_id == sent.thread_id)
+        };
+        let provider = ContractProvider {
+            thread_messages: Some(vec![sent.clone(), draft.clone()]),
+            ..ContractProvider::normal()
+        };
+        ingest_threads(&database, "default", &provider, vec![sent.thread_id.clone()])
+            .await
+            .unwrap();
+        let detail = database.get_thread(&conversation(&database).unwrap().id).unwrap();
+        assert_eq!(detail.messages.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), [sent.id.as_str()]);
+
+        // A conversation holding only a draft is not a conversation.
+        let draft_only = ContractProvider {
+            thread_messages: Some(vec![draft]),
+            ..ContractProvider::normal()
+        };
+        ingest_threads(&database, "default", &draft_only, vec![sent.thread_id.clone()])
+            .await
+            .unwrap();
+        assert!(conversation(&database).is_none());
     }
 
     #[test]

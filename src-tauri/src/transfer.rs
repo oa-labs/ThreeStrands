@@ -882,6 +882,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn drafts_and_their_server_links_never_enter_the_settings_export() {
+        let db = Database::open_memory();
+        db.adopt_account("you@example.com").unwrap();
+        let mut draft = db.create_draft("new", None, "you@example.com", &[]).unwrap();
+        draft.subject = "Private draft subject".into();
+        draft.body = "Private draft body".into();
+        db.save_draft(draft).unwrap();
+        let exported = serde_json::to_string(&build_export_payload(&db, payload().preferences).unwrap()).unwrap();
+        assert!(!exported.contains("Private draft"));
+        assert!(!exported.contains("draft_server") && !exported.contains("serverDraft"));
+    }
+
+    #[test]
     fn export_size_validation_matches_the_import_limit() {
         assert!(validate_export_size(0).is_ok());
         assert!(validate_export_size(MAX_FILE_BYTES).is_ok());

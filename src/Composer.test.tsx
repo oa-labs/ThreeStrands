@@ -1041,12 +1041,12 @@ describe("Composer drafts synced from other devices", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "Plans, revised" } });
     await expect(ref.current!.flush()).rejects.toThrow("changed elsewhere");
     act(() => { ref.current!.remoteChanged(elsewhere); });
-    const notice = await screen.findByText("This draft was edited on another device.");
+    const notice = await screen.findByText("This draft was edited on another device or in another app.");
     expect(onRemoteVersion).not.toHaveBeenCalled();
     expect(screen.queryByText(/Retry Save/)).not.toBeInTheDocument();
     fireEvent.click(within(notice.parentElement!).getByRole("button", { name: "Keep This Version" }));
     await waitFor(() => expect(saveDraft).toHaveBeenLastCalledWith(expect.objectContaining({ revision: 4, subject: "Plans, revised" })));
-    expect(screen.queryByText("This draft was edited on another device.")).not.toBeInTheDocument();
+    expect(screen.queryByText("This draft was edited on another device or in another app.")).not.toBeInTheDocument();
   });
 
   it("can switch to the other version instead", async () => {
@@ -1085,13 +1085,41 @@ describe("Composer drafts synced from other devices", () => {
     expect(fetchAttachment).not.toHaveBeenCalled();
   });
 
-  it("tells the user when a saved draft is too large to sync", async () => {
-    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1, tooLargeToSync: true }));
+  it("opens a draft written in another app without its unsafe markup", () => {
+    const imported = { ...saved, body: "Hello", bodyHtml: '<p onclick="parent.compromised=true">Hello <b>there</b></p><img src="x" onerror="parent.compromised=true"><script>parent.compromised=true</script><iframe src="https://tracker.invalid"></iframe><a href="javascript:alert(1)">link</a>' };
+    render(<Composer draft={imported} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    const editor = screen.getByRole("textbox", { name: "Message Body" });
+    expect(editor).toHaveTextContent("Hello there");
+    expect(editor.querySelector("b")).not.toBeNull();
+    expect(editor.querySelector("script, iframe, [onclick], [onerror], a[href^='javascript']")).toBeNull();
+  });
+  it("no longer mentions a device sync size limit", async () => {
+    // Drafts now reach other devices through the account's server drafts.
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1, tooLargeToSync: true } as Draft));
     const ref = createRef<ComposerHandle>();
     render(<Composer ref={ref} draft={saved} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
     fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "Huge" } });
     await act(async () => { await ref.current!.flush(); });
-    expect(screen.getByRole("status")).toHaveTextContent("Draft saved · Too large to sync");
+    expect(screen.getByRole("status")).toHaveTextContent(/^Draft saved$/);
+  });
+  it("asks which version to keep when the draft also changed in another app", async () => {
+    const onRemoteVersion = vi.fn();
+    const other = { ...saved, revision: 9, body: "Edited on my phone", serverDraft: { state: "saved" as const } };
+    const resolve = vi.spyOn(mailClient, "resolveDraftConflict").mockResolvedValue(other);
+    render(<Composer draft={{ ...saved, serverDraft: { state: "conflict" } }} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} onRemoteVersion={onRemoteVersion} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Saved on this device · Also changed in another app");
+    expect(screen.getByText("This draft was also changed in another app.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Use Other Version" }));
+    await waitFor(() => expect(onRemoteVersion).toHaveBeenCalledWith(other));
+    expect(resolve).toHaveBeenCalledWith(saved.id, true);
+  });
+  it("keeps this version and saves it over the other one", async () => {
+    const resolve = vi.spyOn(mailClient, "resolveDraftConflict").mockResolvedValue({ ...saved, serverDraft: { state: "pending" } });
+    render(<Composer draft={{ ...saved, serverDraft: { state: "conflict" } }} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Keep This Version" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Saving…"));
+    expect(resolve).toHaveBeenCalledWith(saved.id, false);
+    expect(screen.queryByText("This draft was also changed in another app.")).not.toBeInTheDocument();
   });
   it.each([
     [{ state: "pending" as const }, "Saving…", null],
