@@ -1525,6 +1525,7 @@ name = "threestrands-mail-text"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "mail-parser",
 ]
 
 [[package]]

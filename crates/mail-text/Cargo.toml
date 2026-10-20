@@ -7,3 +7,4 @@ edition = "2021"
 # detection, and preview text. No database, network, file system, or Tauri.
 [dependencies]
 chrono = "0.4"
+mail-parser = "0.11"

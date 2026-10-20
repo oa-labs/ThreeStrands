@@ -12,6 +12,53 @@ pub fn readable_preview(text: &str) -> String {
         .join("\n")
 }
 
+/// Replaces named and numeric HTML entity references (`&amp;`, `&#847;`,
+/// `&#x2007;`) with their characters; an unknown name, a bare `&`, or a
+/// reference without its closing `;` stays as written. Senders' plain-text
+/// parts often carry them, like `&zwnj;&nbsp;` preheader padding.
+pub fn decode_entity_references(text: &str) -> String {
+    let mut decoded = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find('&') {
+        decoded.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let reference_len = rest[1..]
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '#'))
+            .filter(|&end| end > 0 && rest[1 + end..].starts_with(';'))
+            .map(|end| end + 2);
+        match reference_len {
+            Some(len) => {
+                mail_parser::decoders::html::add_html_token(&mut decoded, rest[..len].as_bytes(), false);
+                rest = &rest[len..];
+            }
+            None => {
+                decoded.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    decoded.push_str(rest);
+    decoded
+}
+
+/// Characters that draw nothing on their own. Senders repeat them between
+/// spaces as preheader padding so inbox previews stop early.
+fn is_invisible(c: char) -> bool {
+    matches!(c, '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}' | '\u{034F}' | '\u{00AD}')
+}
+
+/// `text` on one line: whitespace runs (non-breaking spaces included) become
+/// one space, and invisible characters at a word's edges are dropped, so a
+/// run of padding disappears. Inside a word they stay, where joiners shape
+/// emoji sequences and scripts like Persian.
+pub fn collapse_preview(text: &str) -> String {
+    text.split_whitespace()
+        .map(|word| word.trim_matches(is_invisible))
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn strip_heading(line: &str) -> &str {
     let trimmed = line.trim_start();
     let hashes = trimmed.len() - trimmed.trim_start_matches('#').len();
@@ -139,7 +186,7 @@ fn tidy(line: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::readable_preview;
+    use super::{collapse_preview, decode_entity_references, readable_preview};
 
     fn preview(text: &str) -> String {
         readable_preview(text).split_whitespace().collect::<Vec<_>>().join(" ")
@@ -177,6 +224,26 @@ mod tests {
             "The https-only rule applies",
         ] {
             assert_eq!(preview(text), text);
+        }
+    }
+
+    #[test]
+    fn entity_references_decode_and_incomplete_ones_stay_as_written() {
+        assert_eq!(
+            decode_entity_references("R&amp;D at AT&T &#x2014; &#847;&nbsp;&bogus; & &#; &zwnj"),
+            "R&D at AT&T \u{2014} \u{34F}\u{A0}&bogus; & &#; &zwnj"
+        );
+    }
+
+    #[test]
+    fn padding_runs_collapse_away_and_joiners_inside_words_stay() {
+        assert_eq!(
+            collapse_preview("Shutterstock \u{200C}\u{A0}\u{200C}\u{A0} \u{34F} \u{200B}\u{FEFF}\u{AD} Free images"),
+            "Shutterstock Free images"
+        );
+        assert_eq!(collapse_preview("\u{200C}Hello\u{2060}"), "Hello");
+        for text in ["family \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467} photo", "\u{645}\u{6CC}\u{200C}\u{62E}\u{648}\u{627}\u{647}\u{645}"] {
+            assert_eq!(collapse_preview(text), text);
         }
     }
 }

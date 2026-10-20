@@ -14,7 +14,7 @@ pub(crate) const BASELINE_VERSION: i64 = 74;
 
 /// The current schema version. A new schema change adds an
 /// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 77;
+pub(crate) const LATEST_VERSION: i64 = 78;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -826,6 +826,17 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 78 {
+        // Inbox previews now decode entity references before collapsing and
+        // capping, so padding like `&zwnj;&nbsp;` disappears instead of
+        // leaving blank space and a cut-off reference. Queue every thread so
+        // the bounded search-reindex batch rebuilds its preview.
+        tx.execute_batch(
+            "INSERT OR IGNORE INTO pending_search_reindex(thread_id)
+                 SELECT id FROM threads;",
+        )
+        .map_err(error)?;
+    }
     if stored == 0 {
         // Only new installations get the 90-day default. Existing databases
         // without a retention setting still mean Forever. Keep the default
@@ -1185,6 +1196,38 @@ mod tests {
                 [],
             )
             .is_err(), "only address and domain rules are stored");
+    }
+
+    #[test]
+    fn a_v77_database_queues_every_thread_to_rebuild_its_preview() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(crate::schema::INITIAL_SCHEMA)
+            .unwrap();
+        connection.execute_batch("ALTER TABLE messages ADD COLUMN cc_bcc_json TEXT NOT NULL DEFAULT '[]';").unwrap();
+        connection.pragma_update(None, "user_version", 77).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO threads(id, provider_thread_id, subject, snippet, participants_json, last_message_at, labels_json, account_id)
+                 VALUES ('thread-a', 'a', 'A', 'Shutterstock &amp;zwnj', '[]', '2026-01-01T00:00:00Z', '[]', 'you@example.com'),
+                        ('thread-b', 'b', 'B', 'Hello', '[]', '2026-01-02T00:00:00Z', '[]', 'you@example.com');",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let queued: Vec<String> = connection
+            .prepare("SELECT thread_id FROM pending_search_reindex ORDER BY thread_id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(queued, vec!["thread-a", "thread-b"]);
+        assert_eq!(
+            connection
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            super::LATEST_VERSION
+        );
     }
 
     #[test]

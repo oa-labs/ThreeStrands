@@ -62,6 +62,28 @@ pub(crate) async fn reconnect_calendar_account(
     Ok(account)
 }
 
+/// The calendar accounts this device can query. Replicated sync materializes
+/// an account another device connected, and "Disconnect" on an enrolled
+/// device keeps the row, so a row can exist without a credential here.
+/// Reads that span every account skip those rows rather than letting one
+/// account this device never authorized fail the rest; Settings lists them
+/// with Reconnect.
+fn connected_calendar_accounts(config: &auth::OAuthApp, database: &Database) -> AppResult<Vec<CalendarAccount>> {
+    Ok(usable_calendar_accounts(database.list_calendar_accounts()?, |email| {
+        config.calendar_account(email).available()
+    }))
+}
+
+fn usable_calendar_accounts(
+    accounts: Vec<CalendarAccount>,
+    has_credential: impl Fn(&str) -> bool,
+) -> Vec<CalendarAccount> {
+    accounts
+        .into_iter()
+        .filter(|account| account.status == "connected" && has_credential(&account.email))
+        .collect()
+}
+
 async fn calendar_options_for_account(
     config: &auth::OAuthApp,
     database: &Database,
@@ -118,7 +140,7 @@ async fn freebusy_coverage(
     let mut checked = 0;
     let mut total = 0;
     let mut errors = Vec::new();
-    for account in state.database.list_calendar_accounts()? {
+    for account in connected_calendar_accounts(config, &state.database)? {
         let calendar_ids = match selected_calendar_ids(config, &state.database, &account.email).await {
             Ok(ids) => ids,
             Err(error) => {
@@ -162,7 +184,7 @@ pub(crate) async fn list_calendar_options(
 ) -> AppResult<Vec<CalendarOption>> {
     let config = state.auth_config.google()?;
     let mut options = Vec::new();
-    for account in state.database.list_calendar_accounts()? {
+    for account in connected_calendar_accounts(config, &state.database)? {
         options.extend(
             calendar_options_for_account(config, &state.database, &account.email).await?,
         );
@@ -463,7 +485,7 @@ pub(crate) async fn list_schedule_events(
     state: State<'_, AppState>,
 ) -> AppResult<ScheduleResult> {
     let config = state.auth_config.google()?;
-    let accounts = state.database.list_calendar_accounts()?;
+    let accounts = connected_calendar_accounts(config, &state.database)?;
     if accounts.is_empty() {
         return Err("Connect a Google Calendar account in Settings first.".into());
     }
@@ -553,7 +575,7 @@ pub(crate) async fn find_calendar_invitation(
     }
     let config = state.auth_config.google()?;
     let mut errors = Vec::new();
-    for account in state.database.list_calendar_accounts()? {
+    for account in connected_calendar_accounts(config, &state.database)? {
         match calendar::find_invitation(config.calendar_account(&account.email), &account.email, uid).await {
             Ok(Some(event)) => return Ok(Some(event)),
             Ok(None) => {}
@@ -638,4 +660,34 @@ pub(crate) async fn check_proposed_time(
         total_calendar_count: total,
         errors,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn account(email: &str, status: &str) -> CalendarAccount {
+        CalendarAccount { email: email.into(), connected_at: "2026-10-19T00:00:00Z".into(), status: status.into() }
+    }
+
+    #[test]
+    fn multi_account_reads_skip_accounts_without_a_credential_on_this_device() {
+        let accounts = vec![
+            account("work@example.com", "connected"),
+            // Materialized from another device; never authorized here.
+            account("synced@example.com", "needs_reauth"),
+            // Marked connected, but its keychain entry is missing.
+            account("lost@example.com", "connected"),
+            account("home@example.com", "connected"),
+        ];
+        let usable = usable_calendar_accounts(accounts, |email| email != "lost@example.com" && email != "synced@example.com");
+        let emails = usable.iter().map(|account| account.email.as_str()).collect::<Vec<_>>();
+        assert_eq!(emails, ["work@example.com", "home@example.com"]);
+    }
+
+    #[test]
+    fn locally_disconnected_account_is_skipped_even_if_a_credential_lingers() {
+        let usable = usable_calendar_accounts(vec![account("left@example.com", "needs_reauth")], |_| true);
+        assert!(usable.is_empty());
+    }
 }

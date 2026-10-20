@@ -562,10 +562,9 @@ pub(super) fn search_preview(
 /// The inbox preview (`threads.snippet`): the latest message before any
 /// quoted history, HTML-entity-encoded like the provider snippets the reader
 /// decodes for display, or the provider's snippet when that message has no
-/// body text. Entity references already in the text (senders' text/plain
-/// parts often carry them, like `&#847;` preheader padding) are decoded
-/// first, as the reader does for plain-text bodies, so they don't show
-/// literally.
+/// body text. The latest message's preview arrives with its own entity
+/// references already decoded (see `searchable_thread_text`), so encoding it
+/// once shows them as characters, not literally.
 pub(super) fn list_preview(
     text: &crate::quoted_history::ThreadSearchText,
     provider_snippet: &str,
@@ -576,9 +575,8 @@ pub(super) fn list_preview(
             .unwrap_or(provider_snippet)
             .to_string();
     }
-    let decoded = decode_entity_references(&text.latest_preview);
-    let mut encoded = String::with_capacity(decoded.len());
-    for character in decoded.chars() {
+    let mut encoded = String::with_capacity(text.latest_preview.len());
+    for character in text.latest_preview.chars() {
         match character {
             '&' => encoded.push_str("&amp;"),
             '<' => encoded.push_str("&lt;"),
@@ -589,38 +587,6 @@ pub(super) fn list_preview(
         }
     }
     encoded
-}
-
-/// Replaces named and numeric HTML entity references (`&amp;`, `&#847;`,
-/// `&#x2007;`) with their characters; an unknown name or a bare `&` stays as
-/// written.
-fn decode_entity_references(text: &str) -> String {
-    let mut decoded = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(start) = rest.find('&') {
-        decoded.push_str(&rest[..start]);
-        rest = &rest[start..];
-        let reference_len = rest[1..]
-            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '#'))
-            .filter(|&end| end > 0 && rest[1 + end..].starts_with(';'))
-            .map(|end| end + 2);
-        match reference_len {
-            Some(len) => {
-                mail_parser::decoders::html::add_html_token(
-                    &mut decoded,
-                    rest[..len].as_bytes(),
-                    false,
-                );
-                rest = &rest[len..];
-            }
-            None => {
-                decoded.push('&');
-                rest = &rest[1..];
-            }
-        }
-    }
-    decoded.push_str(rest);
-    decoded
 }
 
 #[cfg(test)]
