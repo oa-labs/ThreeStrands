@@ -203,7 +203,21 @@ installation can send or manage the message. Other devices show a read-only
 summary; an elapsed time without a new report does not prove delivery failed.
 Message bodies, recipients, attachments, and sending authority stay local.
 
-Cached mail and bodies, attachments, drafts, queued mail payloads,
+Compose drafts sync from 0.147.0; an earlier device stops receiving changes
+once a draft is in a snapshot, until it is updated. A draft syncs as one
+encrypted, hash-addressed value, so edits made on two devices at once conflict
+as whole drafts: the newest version wins everywhere and the next edit clears
+the other. Sending, scheduling or discarding a draft removes it from every
+device; the send itself stays with the device that queued it. Attachment
+files stay on the device that added them. Other devices list them as
+attached elsewhere, and sending there needs the file attached again, except
+a forwarded attachment, which downloads from the account. A draft over
+512 KB, or one that would take synced drafts past 8 MB together, stays on
+its own device and says so beside the save status. When a draft open in the
+composer changes elsewhere, the composer follows it if nothing here is
+unsaved and otherwise asks which version to keep.
+
+Cached mail and bodies, attachment files, queued mail payloads,
 provider mutations, OAuth tokens, AI API keys, crash reports, telemetry
 consent, and device navigation state never leave the device. Storage
 providers see only ciphertext.

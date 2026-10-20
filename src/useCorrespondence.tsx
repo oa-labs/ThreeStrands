@@ -114,6 +114,8 @@ export function useCorrespondence(
   signatures?: SignatureState,
 ) {
   const [active, setActive] = useState<Draft | null>(null);
+  // Bumped to reopen the composer on a version another device saved.
+  const [activeVersion, setActiveVersion] = useState(0);
   const [selectedQuoteDraftId, setSelectedQuoteDraftId] = useState<string | null>(null);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [activeAvailabilityText, setActiveAvailabilityText] = useState<string | null>(null);
@@ -152,6 +154,20 @@ export function useCorrespondence(
     return pending;
   }, [setDrafts, setOutbox, setSummaries]);
   useEffect(() => { void refresh().catch((e) => setError(String(e))); }, [refresh]);
+  // Drafts sync between devices; each sync cycle may have changed them.
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let listening = true;
+    let stop: (() => void) | undefined;
+    void listen("replicated-sync-status", () => void refresh().catch(logBackgroundFailure("Draft sync refresh")))
+      .then((unlisten) => { if (listening) stop = unlisten; else unlisten(); })
+      .catch(logBackgroundFailure("Draft sync listener"));
+    return () => { listening = false; stop?.(); };
+  }, [refresh]);
+  const activeId = active?.id;
+  useEffect(() => {
+    if (activeId) editor.current?.remoteChanged(drafts.find((draft) => draft.id === activeId) ?? null);
+  }, [activeId, drafts]);
   useEffect(() => {
     if (!("__TAURI_INTERNALS__" in window)) return;
     const listener = listen("compose-before-exit", async () => {
@@ -332,7 +348,7 @@ export function useCorrespondence(
   }, [active?.id, refresh]);
   const renderComposer = (onSendAndArchive?: () => void, review?: DraftReviewAvailability) => active ? (
     <Composer
-      key={active.id}
+      key={`${active.id}:${activeVersion}`}
       ref={editor}
       draft={active}
       expandQuotedText={active.id === selectedQuoteDraftId}
@@ -346,6 +362,7 @@ export function useCorrespondence(
       availabilityText={activeAvailabilityText}
       replyAssistInstruction={activeReplyAssistInstruction}
       onDraftChange={setLiveDraft}
+      onRemoteVersion={(next) => { setActive(next); setActiveVersion((version) => version + 1); }}
       onSendAndArchive={onSendAndArchive}
       review={review}
       onClose={() => { setActive(null); setActiveThreadId(null); setActiveAvailabilityText(null); setActiveReplyAssistInstruction(null); setActiveFollowUpTaskId(null); void refresh(); }}

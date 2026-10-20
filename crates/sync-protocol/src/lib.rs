@@ -1,8 +1,9 @@
 //! The synchronized entity vocabulary shared by every replicated-sync crate:
 //! which application-owned entity types may cross a device boundary, and the
-//! payload contract each one must satisfy. Mail bodies, credentials, and
-//! other device-only data have no entity type here, so no sync path can
-//! carry them.
+//! payload contract each one must satisfy. Compose drafts are the one kind
+//! of authored mail that syncs. Received mail, credentials, attachment
+//! bytes and other device-only data have no entity type here, so no sync
+//! path can carry them.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -11,6 +12,12 @@ pub const MAX_SIGNATURE_HTML_BYTES: usize = 180_000;
 pub const MAX_SIGNATURE_TEXT_BYTES: usize = 32_000;
 
 pub const MAX_PAYLOAD_BYTES: usize = 256 * 1024;
+/// Most serialized content one synchronized draft may carry. A larger draft
+/// stays on its own device.
+pub const MAX_SYNCED_DRAFT_BYTES: usize = 512 * 1024;
+/// Most serialized content all synchronized drafts together may carry, so
+/// drafts leave room for everything else in one snapshot.
+pub const MAX_SYNCED_DRAFTS_TOTAL_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -33,6 +40,9 @@ pub enum EntityType {
     SenderRule,
     Signature,
     SignatureDefaults,
+    /// A compose draft. Added in 0.147.0; an earlier build cannot open a
+    /// snapshot that holds one.
+    Draft,
 }
 
 /// Most members one synchronized contact group may list.
@@ -59,6 +69,7 @@ impl EntityType {
             Self::SenderRule => "sender_rule",
             Self::Signature => "signature",
             Self::SignatureDefaults => "signature_defaults",
+            Self::Draft => "draft",
         }
     }
 
@@ -66,7 +77,8 @@ impl EntityType {
         let object = payload
             .as_object()
             .ok_or_else(|| "A synchronized record must be a JSON object".to_string())?;
-        if serde_json::to_vec(payload).map_err(display)?.len() > MAX_PAYLOAD_BYTES {
+        let limit = if self == Self::Draft { MAX_SYNCED_DRAFT_BYTES + 64 * 1024 } else { MAX_PAYLOAD_BYTES };
+        if serde_json::to_vec(payload).map_err(display)?.len() > limit {
             return Err("The synchronized record is too large".to_string());
         }
         match self {
@@ -109,6 +121,9 @@ impl EntityType {
                     // and an explicit JSON null mean No Signature.
                     if !matches!(object.get(field), None | Some(Value::Null)) { required_string(object, field, 128)?; }
                 }
+            }
+            Self::Draft => {
+                draft_content(payload)?;
             }
             Self::SenderRule => {
                 required_string(object, "id", 128)?;
@@ -246,6 +261,37 @@ pub fn signature_content(payload: &Value) -> Result<(String, String), String> {
     Ok((join(html)?, join(text)?))
 }
 
+/// A synchronized draft is `id`, a `contentHash`, and hash-addressed
+/// `content:<hash>:<index>` chunks of the draft's JSON. Every field lives in
+/// the one content value, so concurrent edits conflict as whole drafts and
+/// never mix one device's subject with another's body. Returns the joined
+/// content after checking its identity, bounds and hash shape; callers check
+/// the hash itself and parse the draft.
+pub fn draft_content(payload: &Value) -> Result<String, String> {
+    let object = payload.as_object().ok_or("Invalid draft")?;
+    required_string(object, "id", 128)?;
+    let hash = object.get("contentHash").and_then(Value::as_str).ok_or("Missing draft content hash")?;
+    if hash.len() != 64 || !hash.bytes().all(|ch| ch.is_ascii_hexdigit()) { return Err("Invalid draft content hash".into()); }
+    let mut chunks = std::collections::BTreeMap::new();
+    for (key, value) in object {
+        if ["id", "contentHash"].contains(&key.as_str()) { continue; }
+        let mut parts = key.split(':');
+        let (kind, version, index) = (parts.next().unwrap_or_default(), parts.next().unwrap_or_default(), parts.next().unwrap_or_default());
+        let number: usize = index.parse().map_err(|_| "Invalid draft chunk index")?;
+        if kind != "content" || version != hash || index != number.to_string() || parts.next().is_some() { return Err("Unknown draft field".into()); }
+        chunks.insert(number, value.as_str().ok_or("Invalid draft chunk")?);
+    }
+    if chunks.is_empty() { return Err("Missing draft content".into()); }
+    let mut content = String::new();
+    for (expected, (index, chunk)) in chunks.into_iter().enumerate() {
+        if expected != index { return Err("Missing draft content chunk".into()); }
+        content.push_str(chunk);
+    }
+    if content.len() > MAX_SYNCED_DRAFT_BYTES { return Err("The draft is too large to sync".into()); }
+    if !serde_json::from_str::<Value>(&content).map_err(display)?.is_object() { return Err("Invalid draft content".into()); }
+    Ok(content)
+}
+
 impl std::str::FromStr for EntityType {
     type Err = String;
 
@@ -266,6 +312,7 @@ impl std::str::FromStr for EntityType {
             "sender_rule" => Ok(Self::SenderRule),
             "signature" => Ok(Self::Signature),
             "signature_defaults" => Ok(Self::SignatureDefaults),
+            "draft" => Ok(Self::Draft),
             _ => Err("Unknown synchronized entity type".to_string()),
         }
     }
@@ -383,6 +430,38 @@ mod tests {
     }
 
     #[test]
+    fn draft_payloads_are_hash_addressed_bounded_chunks() {
+        let hash = "a".repeat(64);
+        let draft = |content: &str| json!({"id": "draft-1", "contentHash": hash, format!("content:{hash}:0"): content});
+        assert_eq!(draft_content(&draft("{\"subject\":\"Hi\"}")).unwrap(), "{\"subject\":\"Hi\"}");
+        assert!(EntityType::Draft.validate_payload(&draft("{}")).is_ok());
+        let mut split = json!({"id": "draft-1", "contentHash": hash});
+        split[format!("content:{hash}:0")] = json!("{\"a\":");
+        split[format!("content:{hash}:1")] = json!("1}");
+        assert_eq!(draft_content(&split).unwrap(), "{\"a\":1}");
+        let mut gap = split.clone(); gap.as_object_mut().unwrap().remove(&format!("content:{hash}:0"));
+        assert!(draft_content(&gap).is_err());
+        let mut other_version = split.clone(); other_version[format!("content:{}:0", "b".repeat(64))] = json!("x");
+        assert!(draft_content(&other_version).is_err(), "only the named version's chunks are read");
+        let mut extra = draft("{}"); extra["body"] = json!("must live in content");
+        assert!(EntityType::Draft.validate_payload(&extra).is_err());
+        assert!(EntityType::Draft.validate_payload(&draft("[]")).is_err());
+        assert!(EntityType::Draft.validate_payload(&draft("not json")).is_err());
+        let mut short = draft("{}"); short["contentHash"] = json!("abc");
+        assert!(EntityType::Draft.validate_payload(&short).is_err());
+        for length in [MAX_SYNCED_DRAFT_BYTES - 1, MAX_SYNCED_DRAFT_BYTES, MAX_SYNCED_DRAFT_BYTES + 1] {
+            let body = "x".repeat(length - "{\"b\":\"\"}".len());
+            let content = format!("{{\"b\":\"{body}\"}}");
+            assert_eq!(content.len(), length);
+            let mut value = json!({"id": "draft-1", "contentHash": hash});
+            for (index, chunk) in content.as_bytes().chunks(60_000).enumerate() {
+                value[format!("content:{hash}:{index}")] = json!(std::str::from_utf8(chunk).unwrap());
+            }
+            assert_eq!(EntityType::Draft.validate_payload(&value).is_ok(), length <= MAX_SYNCED_DRAFT_BYTES, "{length}");
+        }
+    }
+
+    #[test]
     fn every_entity_type_parses_back_from_its_stored_name() {
         // Adding a variant fails to compile here until it is listed below.
         let listed = |entity_type: EntityType| match entity_type {
@@ -400,7 +479,8 @@ mod tests {
             | EntityType::ScheduledSendSummary
             | EntityType::SenderRule
             | EntityType::Signature
-            | EntityType::SignatureDefaults => entity_type,
+            | EntityType::SignatureDefaults
+            | EntityType::Draft => entity_type,
         };
         for entity_type in [
             EntityType::Task,
@@ -418,6 +498,7 @@ mod tests {
             EntityType::SenderRule,
             EntityType::Signature,
             EntityType::SignatureDefaults,
+            EntityType::Draft,
         ] {
             let entity_type = listed(entity_type);
             assert_eq!(entity_type.as_str().parse::<EntityType>(), Ok(entity_type));

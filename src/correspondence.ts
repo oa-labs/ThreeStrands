@@ -20,6 +20,8 @@ export type Draft = {
   signature?: import("./signatures").DraftSignature | null;
   forwardedContent?: { html: string; text: string } | null;
   followUpTaskId?: string | null;
+  /** Set on a saved draft while sync is on but the draft is too large to reach other devices. */
+  tooLargeToSync?: boolean;
   attachments: Attachment[]; updatedAt: number;
 };
 /** The run-4b Sent-copy job state surfaced on an outbox item; `null` for Gmail, legacy rows, and servers that save their own copy. */

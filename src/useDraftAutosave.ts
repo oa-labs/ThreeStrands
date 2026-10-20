@@ -8,6 +8,10 @@ import { logBackgroundFailure } from "./errors";
 const AUTOSAVE_DEBOUNCE_MS = 300;
 const AUTOSAVE_INTERVAL_MS = 3_000;
 
+function savedStatus(saved: Draft): string {
+  return saved.tooLargeToSync ? "Saved on this device · Too large to sync" : "Saved on this device";
+}
+
 /** Owns draft persistence; the editor supplies body changes only at a save boundary. */
 export function useDraftAutosave(
   initial: Draft,
@@ -46,7 +50,7 @@ export function useDraftAutosave(
       latest.current = { ...latest.current, revision: saved.revision, updatedAt: saved.updatedAt };
       if (mounted.current) {
         setDraft(latest.current);
-        setStatus(generation.current === version ? "Saved on this device" : "Unsaved changes");
+        setStatus(generation.current === version ? savedStatus(saved) : "Unsaved changes");
       }
       return latest.current;
     }).catch((reason) => {
@@ -79,6 +83,17 @@ export function useDraftAutosave(
     setDraft(next);
   }, []);
 
+  /** Resolves once no save is running; a failed save still counts as finished. */
+  const settled = useCallback(async () => {
+    while (pending.current) await pending.current.catch(() => undefined);
+  }, []);
+  const hasUnsavedChanges = useCallback(() => generation.current !== savedGeneration.current, []);
+  /** Saves these edits over the newer revision another device wrote. */
+  const overwrite = useCallback((revision: number) => {
+    latest.current = { ...latest.current, revision };
+    markChanged();
+  }, [markChanged]);
+
   useEffect(() => {
     mounted.current = true;
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -97,5 +112,5 @@ export function useDraftAutosave(
     };
   }, [flush]);
 
-  return { draft, latest, status, edit, markChanged, captureBody, flush, replaceDraft };
+  return { draft, latest, status, edit, markChanged, captureBody, flush, replaceDraft, settled, hasUnsavedChanges, overwrite };
 }

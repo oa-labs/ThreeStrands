@@ -225,6 +225,7 @@ impl Database {
             &operation_id,
             root,
         )?;
+        let sync = self.draft_sync_enabled()?;
         let mut c = self.connection()?;
         let tx = c.transaction().map_err(|e| e.to_string())?;
         let visibility_group_id = group(&tx).map_err(|e| e.to_string())?;
@@ -280,6 +281,9 @@ impl Database {
             != 1
         {
             return Err("Draft changed while preparing send".into());
+        }
+        if sync {
+            crate::draft_sync::record_draft_deletion(&tx, id).map_err(|e| e.to_string())?;
         }
         tx.execute("INSERT INTO outbox_messages(id,draft_id,revision,account,state,deadline,payload,raw,schedule_json) VALUES(?1,?2,?3,?4,'scheduled',?5,?6,?7,?8)", params![operation_id,id,revision,draft.account,scheduled_at,serde_json::to_string(&draft).map_err(|e|e.to_string())?,raw,serde_json::to_string(&schedule).map_err(|e|e.to_string())?]).map_err(|e|e.to_string())?;
         record(&tx, &operation_id, owner, at).map_err(|e| e.to_string())?;

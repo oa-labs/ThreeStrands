@@ -153,6 +153,10 @@ pub struct Draft {
     pub follow_up_task_id: Option<String>,
     pub attachments: Vec<Attachment>,
     pub updated_at: i64,
+    /// Set on a draft a save returns, never stored or synced: sync is on but
+    /// this draft is too large to reach other devices.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub too_large_to_sync: bool,
 }
 impl Draft {
     /// The address this draft sends FROM: the chosen identity `from` when set,
@@ -532,6 +536,7 @@ impl Database {
             follow_up_task_id: None,
             attachments: vec![],
             updated_at: now(),
+            too_large_to_sync: false,
         };
         if mode != "new" {
             let source_id = source_id.ok_or("Select a source message")?;
@@ -663,12 +668,9 @@ impl Database {
             }
         }
         d.signature = self.default_draft_signature(&d.account, d.from_address(), &d.mode)?;
-        self.connection()?
-            .execute(
-                "INSERT INTO drafts VALUES (?1,?2,?3)",
-                params![d.id, d.revision, json(&d)?],
-            )
-            .map_err(error)?;
+        self.write_draft(&mut d, |tx, d, payload| {
+            tx.execute("INSERT INTO drafts VALUES (?1,?2,?3)", params![d.id, d.revision, payload])
+        })?;
         Ok(d)
     }
     /// "Edit as New": an unaddressed new message that starts from the
@@ -710,7 +712,7 @@ impl Database {
             .position(|identity| crate::provider::imap::identity_normalized(identity) == sender)
             .filter(|&index| index != 0)
             .map(|index| identities[index].address.clone());
-        let d = Draft {
+        let mut d = Draft {
             id: Uuid::new_v4().to_string(),
             revision: 0,
             account: account.to_string(),
@@ -733,13 +735,11 @@ impl Database {
             follow_up_task_id: None,
             attachments: forward_attachments(&source, &normalized)?,
             updated_at: now(),
+            too_large_to_sync: false,
         };
-        self.connection()?
-            .execute(
-                "INSERT INTO drafts VALUES (?1,?2,?3)",
-                params![d.id, d.revision, json(&d)?],
-            )
-            .map_err(error)?;
+        self.write_draft(&mut d, |tx, d, payload| {
+            tx.execute("INSERT INTO drafts VALUES (?1,?2,?3)", params![d.id, d.revision, payload])
+        })?;
         Ok(d)
     }
     pub fn save_draft(&self, mut draft: Draft) -> Result<Draft, String> {
@@ -774,13 +774,7 @@ impl Database {
         let expected = draft.revision;
         draft.revision += 1;
         draft.updated_at = now();
-        let changed = self
-            .connection()?
-            .execute(
-                "UPDATE drafts SET revision=?1,payload=?2 WHERE id=?3 AND revision=?4",
-                params![draft.revision, json(&draft)?, draft.id, expected],
-            )
-            .map_err(error)?;
+        let changed = self.update_draft(&mut draft, expected)?;
         if changed != 1 {
             return Err("Draft changed elsewhere. Reopen it before editing.".into());
         }
@@ -805,13 +799,7 @@ impl Database {
         let expected = d.revision;
         d.revision += 1;
         d.updated_at = now();
-        let changed = self
-            .connection()?
-            .execute(
-                "UPDATE drafts SET revision=?1,payload=?2 WHERE id=?3 AND revision=?4",
-                params![d.revision, json(&d)?, d.id, expected],
-            )
-            .map_err(error)?;
+        let changed = self.update_draft(&mut d, expected)?;
         if changed != 1 {
             return Err("Draft changed elsewhere. Reopen it before editing.".into());
         }
@@ -867,36 +855,55 @@ impl Database {
         let expected = d.revision;
         d.revision += 1;
         d.updated_at = now();
-        let changed = self
-            .connection()?
-            .execute(
-                "UPDATE drafts SET revision=?1,payload=?2 WHERE id=?3 AND revision=?4",
-                params![d.revision, json(&d)?, d.id, expected],
-            )
-            .map_err(error)?;
+        let changed = self.update_draft(&mut d, expected)?;
         if changed != 1 {
             return Err("Draft changed elsewhere. Reopen it before editing.".into());
         }
         Ok(d)
     }
     pub fn discard_draft(&self, id: &str) -> Result<(), String> {
-        self.connection()?
-            .execute("DELETE FROM drafts WHERE id=?1", [id])
-            .map_err(error)?;
+        let sync = self.draft_sync_enabled()?;
+        self.with_transaction(|tx| {
+            if tx.execute("DELETE FROM drafts WHERE id=?1", [id])? == 1 && sync {
+                crate::draft_sync::record_draft_deletion(tx, id)?;
+            }
+            Ok(())
+        })?;
         Ok(())
+    }
+    /// Writes one draft row and, while sync is on, records the draft for
+    /// other devices in the same transaction. Returns the rows `write`
+    /// changed; nothing is recorded when it changed none.
+    fn write_draft(
+        &self,
+        d: &mut Draft,
+        write: impl FnOnce(&rusqlite::Transaction, &Draft, &str) -> rusqlite::Result<usize>,
+    ) -> Result<usize, String> {
+        let sync = self.draft_sync_enabled()?;
+        d.too_large_to_sync = false;
+        let payload = json(d)?;
+        let draft = &*d;
+        let (changed, synced) = self.with_transaction(|tx| {
+            let changed = write(tx, draft, &payload)?;
+            let synced = changed != 1 || !sync || crate::draft_sync::record_draft_write(tx, draft)?;
+            Ok((changed, synced))
+        })?;
+        d.too_large_to_sync = !synced;
+        Ok(changed)
+    }
+    fn update_draft(&self, d: &mut Draft, expected: i64) -> Result<usize, String> {
+        self.write_draft(d, |tx, d, payload| {
+            tx.execute(
+                "UPDATE drafts SET revision=?1,payload=?2 WHERE id=?3 AND revision=?4",
+                params![d.revision, payload, d.id, expected],
+            )
+        })
     }
     fn save_attachment_draft(&self, mut d: Draft) -> Result<Draft, String> {
         let expected = d.revision;
         d.revision += 1;
         d.updated_at = now();
-        let count = self
-            .connection()?
-            .execute(
-                "UPDATE drafts SET revision=?1,payload=?2 WHERE id=?3 AND revision=?4",
-                params![d.revision, json(&d)?, d.id, expected],
-            )
-            .map_err(error)?;
-        if count != 1 {
+        if self.update_draft(&mut d, expected)? != 1 {
             return Err("Draft changed while preparing attachment; retry".into());
         }
         Ok(d)
@@ -1023,6 +1030,7 @@ impl Database {
             schedule: None,
             sent_copy: None,
         };
+        let sync = self.draft_sync_enabled()?;
         let mut c = self.connection()?;
         let tx = c.transaction().map_err(error)?;
         let removed = tx
@@ -1033,6 +1041,9 @@ impl Database {
             .map_err(error)?;
         if removed != 1 {
             return Err("Draft changed while preparing send".into());
+        }
+        if sync {
+            crate::draft_sync::record_draft_deletion(&tx, id)?;
         }
         tx.execute("INSERT INTO outbox_messages(id,draft_id,revision,account,state,deadline,payload,raw,archive_on_send) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![item.id,id,revision,d.account,item.state,item.deadline,json(&d)?,raw,item.archive_on_send]).map_err(error)?;
         tx.commit().map_err(error)?;
@@ -1057,6 +1068,7 @@ impl Database {
         }
         let mut d = item.draft;
         d.revision += 1;
+        let sync = self.draft_sync_enabled()?;
         let mut c = self.connection()?;
         let tx = c.transaction().map_err(error)?;
         let count = tx
@@ -1073,6 +1085,9 @@ impl Database {
             params![d.id, d.revision, json(&d)?],
         )
         .map_err(error)?;
+        if sync {
+            crate::draft_sync::record_draft_write(&tx, &d)?;
+        }
         if let Some(schedule) = &item.schedule { crate::scheduled_send::record(&tx,id,&schedule.report.owner_installation_id,now()).map_err(error)?; }
         tx.commit().map_err(error)?;
         Ok(d)
@@ -1279,10 +1294,12 @@ pub(crate) fn build_mime(
     }
     for attachment in &d.attachments {
         if !attachment.ready {
-            return Err(format!(
-                "Download or remove {} before sending",
-                attachment.name
-            ));
+            return Err(if attachment.message_id.is_some() {
+                format!("Download or remove {} before sending", attachment.name)
+            } else {
+                // Attachment bytes stay on the device that added them.
+                format!("{} was attached on another device. Attach it again here, or remove it, before sending", attachment.name)
+            });
         }
         if Uuid::parse_str(&attachment.id).is_err() {
             return Err("Invalid attachment ID".into());
@@ -2619,6 +2636,7 @@ mod tests {
             follow_up_task_id: None,
             attachments: vec![],
             updated_at: now(),
+            too_large_to_sync: false,
         };
         db.connection()
             .unwrap()

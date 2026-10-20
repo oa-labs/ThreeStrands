@@ -619,28 +619,35 @@ pub(crate) fn signature_sync_payload(item: &Signature) -> Result<serde_json::Val
     let hash = signature_content_hash(&item.html, &item.text)?;
     let mut value = json!({"id": item.id, "name": item.name, "contentHash": hash});
     for (kind, content) in [("html", &item.html), ("text", &item.text)] {
-        let mut chunk = String::new();
-        let mut size = 2; // JSON's surrounding quotes.
-        let mut index = 0;
-        for ch in content.chars() {
-            let cost = match ch {
-                '"' | '\\' | '\n' | '\r' | '\t' | '\x08' | '\x0c' => 2,
-                ch if ch <= '\x1f' => 6,
-                ch => ch.len_utf8(),
-            };
-            if size + cost > threestrands_sync_envelope::limits::MAX_VALUE_BYTES {
-                value[format!("{kind}:{hash}:{index}")] = json!(chunk);
-                index += 1;
-                chunk = String::new();
-                size = 2;
-            }
-            chunk.push(ch);
-            size += cost;
+        for (index, chunk) in value_sized_chunks(content).into_iter().enumerate() {
+            value[format!("{kind}:{hash}:{index}")] = json!(chunk);
         }
-        value[format!("{kind}:{hash}:{index}")] = json!(chunk);
     }
     EntityType::Signature.validate_payload(&value)?;
     Ok(value)
+}
+
+/// Splits `content` into pieces whose JSON string encoding each fits the
+/// envelope's per-value budget. Always returns at least one piece.
+pub(crate) fn value_sized_chunks(content: &str) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut chunk = String::new();
+    let mut size = 2; // JSON's surrounding quotes.
+    for ch in content.chars() {
+        let cost = match ch {
+            '"' | '\\' | '\n' | '\r' | '\t' | '\x08' | '\x0c' => 2,
+            ch if ch <= '\x1f' => 6,
+            ch => ch.len_utf8(),
+        };
+        if size + cost > threestrands_sync_envelope::limits::MAX_VALUE_BYTES {
+            chunks.push(std::mem::take(&mut chunk));
+            size = 2;
+        }
+        chunk.push(ch);
+        size += cost;
+    }
+    chunks.push(chunk);
+    chunks
 }
 
 /// Inactive concurrent chunks remain in the replica until the next local
@@ -734,7 +741,7 @@ pub(crate) fn record_signature_write(
     Ok(())
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     Sha256::digest(bytes)
         .iter()

@@ -4,6 +4,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### New
+- Drafts now follow you between your computers with **Replicated Sync**: start a message on one and finish it on another. Sending or discarding a draft removes it everywhere. Attached files stay on the computer where you added them, so attach them again before sending from another one. If the draft you have open changes on another computer, the composer switches to that version, or asks which to keep when you have unsaved edits.
+
 ### Improved
 - **Settings → AI Provider** is simpler. Once you choose a provider, AI appears in reading, writing, and contacts, and it still sends a conversation only when you click a button marked with sparkles. Under **Show AI In**, switch off any area you don't want. **Automatic Briefs** is now one choice: **Never**, **People I've Emailed**, or **All Conversations**. Model choices and usage are under **Models and Usage**.
 

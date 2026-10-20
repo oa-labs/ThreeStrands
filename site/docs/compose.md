@@ -8,7 +8,7 @@ summary: Write with rich text and snippets, keep context beside your draft, catc
 
 Press <kbd>c</kbd> for a new message, or <kbd>r</kbd>, <kbd>a</kbd>, or <kbd>f</kbd> to reply, reply all, or forward. Click the **To** label to show Cc and Bcc. With several accounts, choose the sender in **From**.
 
-Drafts save automatically on this computer. Press <kbd>Escape</kbd> to close the composer and keep the draft in **Drafts** (<kbd>g</kbd> then <kbd>d</kbd>).
+Drafts save automatically on this computer and, with Replicated Sync, appear on your other computers too. Attached files stay on the computer where you added them; attach them again there before sending. Press <kbd>Escape</kbd> to close the composer and keep the draft in **Drafts** (<kbd>g</kbd> then <kbd>d</kbd>).
 
 <ts-shot scene="reply" alt="Replying to a conversation, with recipient history and related tasks in the panel beside the draft."></ts-shot>
 

@@ -206,6 +206,20 @@ impl Database {
         for item in library.defaults {
             if self.reconcile_one_entity(EntityType::SignatureDefaults, &item.id, serde_json::to_value(&item).map_err(display)?)? { repaired += 1; }
         }
+        // A draft whose remote removal has not applied yet must not be
+        // recorded again, or a sent draft would come back.
+        let pending: BTreeSet<String> = self
+            .pending_entity_materializations()?
+            .into_iter()
+            .filter(|(entity_type, _)| *entity_type == EntityType::Draft)
+            .map(|(_, id)| id)
+            .collect();
+        for draft in self.drafts()?.into_iter().filter(|draft| !pending.contains(&draft.id)) {
+            if !self.entity_recorded(EntityType::Draft, &draft.id)? {
+                // The same size budget as a local save applies.
+                repaired += usize::from(self.with_transaction(|tx| crate::draft_sync::record_draft_write(tx, &draft)).map_err(display)?);
+            }
+        }
         for snippet in self.list_snippets()? {
             if self.reconcile_one_entity(EntityType::Snippet, &snippet.id, serde_json::to_value(&snippet).map_err(display)?)? {
                 repaired += 1;
@@ -1316,7 +1330,11 @@ impl Database {
             }
         }
         let payload = Value::Object(payload);
-        let payload = if entity_type == EntityType::Signature { crate::signatures::selected_signature_payload(&payload)? } else { payload };
+        let payload = match entity_type {
+            EntityType::Signature => crate::signatures::selected_signature_payload(&payload)?,
+            EntityType::Draft => crate::draft_sync::selected_draft_payload(&payload)?,
+            _ => payload,
+        };
         let readiness = self.check_projection_readiness(entity_type, &payload)?;
         if readiness == ProjectionReadiness::Ready {
             self.materialize_entity(entity_type, entity_id, Some(&payload), false)?;
@@ -2890,6 +2908,101 @@ mod replicator_tests {
             )
             .unwrap();
         assert_eq!(observed_foreign_heads, 0);
+    }
+
+    fn draft_device() -> Database {
+        let database = Database::open_memory();
+        database.set_beta_features_enabled(true).unwrap();
+        database.set_compose_identity("you@example.com").unwrap();
+        database.adopt_account("you@example.com").unwrap();
+        database
+    }
+
+    #[tokio::test]
+    async fn drafts_follow_the_user_between_devices_until_sent_or_discarded() {
+        let (a, b) = (draft_device(), draft_device());
+        let (ka, kb) = (test_keys(&a), test_keys(&b));
+        trust(&a, &kb); trust(&b, &ka);
+        let transports = fake("draft-shared");
+        let mut draft = a.create_draft("new", None, "you@example.com", &[]).unwrap();
+        draft.to = "Jane <jane@example.com>".into();
+        draft.subject = "Plans".into();
+        draft.body = format!("Started on A {}", "é".repeat(40_000));
+        let draft = a.save_draft(draft).unwrap();
+        push_local_state(&a, &ka, &transports).await.unwrap();
+        pull_from_transports(&b, &kb, &transports).await.unwrap();
+        let mut on_b = b.draft(&draft.id).unwrap();
+        assert_eq!((on_b.subject.as_str(), on_b.body.as_str(), on_b.to.as_str()), ("Plans", draft.body.as_str(), "Jane <jane@example.com>"));
+
+        on_b.body = "Finished on B".into();
+        b.save_draft(on_b).unwrap();
+        push_local_state(&b, &kb, &transports).await.unwrap();
+        let revision_before = a.draft(&draft.id).unwrap().revision;
+        pull_from_transports(&a, &ka, &transports).await.unwrap();
+        let on_a = a.draft(&draft.id).unwrap();
+        assert_eq!(on_a.body, "Finished on B");
+        assert!(on_a.revision > revision_before, "an open composer on A can tell the draft changed");
+        assert!(a.list_frontier_conflicts().unwrap().is_empty());
+
+        // A's own state coming back from B must not look like a new edit.
+        push_local_state(&a, &ka, &transports).await.unwrap();
+        pull_from_transports(&b, &kb, &transports).await.unwrap();
+        pull_from_transports(&a, &ka, &transports).await.unwrap();
+        assert_eq!(a.draft(&draft.id).unwrap().revision, on_a.revision);
+
+        a.queue(&draft.id, on_a.revision, false, &[], None, std::path::Path::new("/unused")).unwrap();
+        push_local_state(&a, &ka, &transports).await.unwrap();
+        pull_from_transports(&b, &kb, &transports).await.unwrap();
+        assert!(b.drafts().unwrap().is_empty(), "a sent draft leaves every device");
+        assert!(b.outbox().unwrap().is_empty(), "sending stays with the device that sent");
+        b.reconcile_replicated_sync_backlog().unwrap();
+        a.reconcile_replicated_sync_backlog().unwrap();
+        assert!(!a.entity_recorded(EntityType::Draft, &draft.id).unwrap());
+
+        let second = a.create_draft("new", None, "you@example.com", &[]).unwrap();
+        push_local_state(&a, &ka, &transports).await.unwrap();
+        pull_from_transports(&b, &kb, &transports).await.unwrap();
+        assert_eq!(b.drafts().unwrap().len(), 1);
+        b.discard_draft(&second.id).unwrap();
+        push_local_state(&b, &kb, &transports).await.unwrap();
+        pull_from_transports(&a, &ka, &transports).await.unwrap();
+        assert!(a.drafts().unwrap().is_empty(), "a discarded draft leaves every device");
+    }
+
+    #[tokio::test]
+    async fn concurrent_edits_to_one_draft_converge_on_one_whole_version() {
+        let (a, b) = (draft_device(), draft_device());
+        let (ka, kb) = (test_keys(&a), test_keys(&b));
+        trust(&a, &kb); trust(&b, &ka);
+        let transports = fake("draft-conflict");
+        let draft = a.create_draft("new", None, "you@example.com", &[]).unwrap();
+        push_local_state(&a, &ka, &transports).await.unwrap();
+        pull_from_transports(&b, &kb, &transports).await.unwrap();
+
+        let mut on_a = a.draft(&draft.id).unwrap();
+        on_a.subject = "Subject from A".into();
+        on_a.body = "Body from A".into();
+        a.save_draft(on_a).unwrap();
+        let mut on_b = b.draft(&draft.id).unwrap();
+        on_b.subject = "Subject from B".into();
+        on_b.body = "Body from B".into();
+        b.save_draft(on_b).unwrap();
+        push_local_state(&a, &ka, &transports).await.unwrap();
+        push_local_state(&b, &kb, &transports).await.unwrap();
+        pull_from_transports(&a, &ka, &transports).await.unwrap();
+        pull_from_transports(&b, &kb, &transports).await.unwrap();
+        let (left, right) = (a.draft(&draft.id).unwrap(), b.draft(&draft.id).unwrap());
+        assert_eq!((left.subject.as_str(), left.body.as_str()), (right.subject.as_str(), right.body.as_str()));
+        assert_eq!(left.subject.replace("Subject", "Body"), left.body, "one device's whole version wins; fields never mix");
+
+        // The next edit replaces both versions everywhere.
+        let mut resolved = left.clone();
+        resolved.body = "Merged by hand".into();
+        a.save_draft(resolved).unwrap();
+        push_local_state(&a, &ka, &transports).await.unwrap();
+        pull_from_transports(&b, &kb, &transports).await.unwrap();
+        assert_eq!(b.draft(&draft.id).unwrap().body, "Merged by hand");
+        assert!(a.list_frontier_conflicts().unwrap().is_empty());
     }
 
     #[tokio::test]

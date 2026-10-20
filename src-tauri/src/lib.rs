@@ -18,6 +18,7 @@ mod contact_interchange;
 mod credentials;
 mod db;
 mod default_apps;
+mod draft_sync;
 mod endpoint_origin;
 mod enrollment;
 mod error;

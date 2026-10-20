@@ -215,9 +215,11 @@ A connector holds about one snapshot per device, plus control objects.
   needs its own fix, for example a deterministic tie-break plus a follow-up
   rotation.
 - **Whole-state republishing:** every change reseals and re-uploads the whole
-  snapshot. That is fine for kilobytes to a few megabytes. A much larger
-  synchronized data set, such as drafts, would need snapshots split by entity
-  type, or sent as deltas.
+  snapshot. That is fine for kilobytes to a few megabytes. Drafts are capped
+  at 512 KB each and 8 MB together (`MAX_SYNCED_DRAFT_BYTES`,
+  `MAX_SYNCED_DRAFTS_TOTAL_BYTES`) to stay inside that. A much larger
+  synchronized data set, such as attachment files, would need snapshots split
+  by entity type, or sent as deltas.
 - **Snapshot size:** one message holds at most 32 MB decompressed (4 MB
   compressed) and `MAX_SNAPSHOT_FIELDS` fields.
 - **Control objects accumulate:** enrollment requests, grants, rotations and

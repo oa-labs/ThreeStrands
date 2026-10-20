@@ -6,6 +6,9 @@ import type { Snippet } from "./domain";
 import { OutboxDetail, OutboxList, outboxStateLabel, useCorrespondence } from "./useCorrespondence";
 import { outboxEntries, type OutboxEntry } from "./outboxView";
 
+const listenMock = vi.hoisted(() => vi.fn(async (_event: string, _handler: () => void) => () => {}));
+vi.mock("@tauri-apps/api/event", () => ({ listen: listenMock }));
+
 const draft: Draft = {
   id: "draft-1",
   revision: 2,
@@ -182,6 +185,37 @@ describe("useCorrespondence", () => {
     await waitFor(() => expect(result.current.activeDraft).toBeNull());
     act(() => result.current.context.reply());
     await waitFor(() => expect(createDraft).toHaveBeenLastCalledWith("reply", "message-1", "account@example.com"));
+  });
+
+  it("reloads drafts after each sync and reopens the open draft on a version saved elsewhere", async () => {
+    let onSync: () => void = () => {};
+    listenMock.mockImplementation(async (event: string, handler: () => void) => { if (event === "replicated-sync-status") onSync = handler; return () => {}; });
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {}, configurable: true });
+    try {
+      const opened = { ...draft, subject: "Plans", body: "Started here" };
+      const listDrafts = vi.spyOn(mailClient, "listDrafts").mockResolvedValue([opened]);
+      vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);
+      vi.spyOn(mailClient, "listScheduledSummaries").mockResolvedValue([]);
+      vi.spyOn(mailClient, "listIdentities").mockResolvedValue([]);
+      function Harness() {
+        const state = useCorrespondence([], undefined, undefined, ...snippetArgs, null);
+        return <>
+          <button onClick={() => state.openDraft(opened)}>Open</button>
+          {state.renderComposer()}
+        </>;
+      }
+      render(<Harness />);
+      await waitFor(() => expect(listenMock).toHaveBeenCalledWith("replicated-sync-status", expect.any(Function)));
+      fireEvent.click(screen.getByRole("button", { name: "Open" }));
+      expect(screen.getByRole("textbox", { name: "Subject" })).toHaveValue("Plans");
+
+      listDrafts.mockResolvedValue([{ ...opened, revision: opened.revision + 1, subject: "Plans from the laptop", updatedAt: 5 }]);
+      await act(async () => { onSync(); });
+      await waitFor(() => expect(screen.getByRole("textbox", { name: "Subject" })).toHaveValue("Plans from the laptop"));
+    } finally {
+      Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+      cleanup();
+    }
   });
 
   it.each(["reply", "replyAll"] as const)("starts a %s to the selected message with only the selected quote", async (mode) => {

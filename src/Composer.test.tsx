@@ -985,6 +985,88 @@ describe("Composer forwarded content and attachments", () => {
   });
 });
 
+describe("Composer drafts synced from other devices", () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+  const saved = { ...draft, revision: 3, subject: "Plans", body: "Typed here" };
+  const elsewhere = { ...saved, revision: 4, body: "Typed on the laptop" };
+
+  it("follows a newer version when nothing here is unsaved", async () => {
+    const onRemoteVersion = vi.fn();
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={saved} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} onRemoteVersion={onRemoteVersion} />);
+    act(() => { ref.current!.remoteChanged(saved); });
+    act(() => { ref.current!.remoteChanged({ ...saved, revision: 2 }); });
+    await act(async () => {});
+    expect(onRemoteVersion).not.toHaveBeenCalled();
+    act(() => { ref.current!.remoteChanged(elsewhere); });
+    await waitFor(() => expect(onRemoteVersion).toHaveBeenCalledWith(elsewhere));
+    expect(screen.queryByText(/edited on another device/)).not.toBeInTheDocument();
+  });
+
+  it("asks before replacing unsaved edits, and can keep them over the other version", async () => {
+    const saveDraft = vi.spyOn(mailClient, "saveDraft")
+      .mockRejectedValueOnce(new Error("Draft changed elsewhere. Reopen it before editing."))
+      .mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    const onRemoteVersion = vi.fn();
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={saved} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} onRemoteVersion={onRemoteVersion} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "Plans, revised" } });
+    await expect(ref.current!.flush()).rejects.toThrow("changed elsewhere");
+    act(() => { ref.current!.remoteChanged(elsewhere); });
+    const notice = await screen.findByText("This draft was edited on another device.");
+    expect(onRemoteVersion).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Retry Save/)).not.toBeInTheDocument();
+    fireEvent.click(within(notice.parentElement!).getByRole("button", { name: "Keep This Version" }));
+    await waitFor(() => expect(saveDraft).toHaveBeenLastCalledWith(expect.objectContaining({ revision: 4, subject: "Plans, revised" })));
+    expect(screen.queryByText("This draft was edited on another device.")).not.toBeInTheDocument();
+  });
+
+  it("can switch to the other version instead", async () => {
+    vi.spyOn(mailClient, "saveDraft").mockRejectedValue(new Error("Draft changed elsewhere. Reopen it before editing."));
+    const onRemoteVersion = vi.fn();
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={saved} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} onRemoteVersion={onRemoteVersion} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "Mine" } });
+    act(() => { ref.current!.remoteChanged(elsewhere); });
+    fireEvent.click(await screen.findByRole("button", { name: "Use Other Version" }));
+    expect(onRemoteVersion).toHaveBeenCalledWith(elsewhere);
+  });
+
+  it("says so when the draft was sent or discarded elsewhere, after checking a fresh list", async () => {
+    const listDrafts = vi.spyOn(mailClient, "listDrafts").mockResolvedValueOnce([saved]).mockResolvedValue([]);
+    const onClose = vi.fn();
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={saved} accounts={accounts} {...snippetProps} onClose={onClose} onQueued={vi.fn()} onRemoteVersion={vi.fn()} />);
+    act(() => { ref.current!.remoteChanged(null); });
+    await waitFor(() => expect(listDrafts).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/on another device/)).not.toBeInTheDocument();
+    act(() => { ref.current!.remoteChanged(null); });
+    fireEvent.click(await screen.findByRole("button", { name: "Close" }));
+    expect(screen.getByText(/sent or discarded on another device/)).toBeInTheDocument();
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("asks for a file attached on another device instead of downloading it", async () => {
+    const fetchAttachment = vi.spyOn(mailClient, "fetchAttachment");
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    const file = { id: "file", name: "plan.pdf", mime: "application/pdf", size: 2048, ready: false, messageId: null, providerId: null };
+    render(<Composer draft={{ ...saved, attachments: [file] }} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    expect(screen.getByText(/Attached on another device · Attach it again here/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Download" })).not.toBeInTheDocument();
+    await act(async () => {});
+    expect(fetchAttachment).not.toHaveBeenCalled();
+  });
+
+  it("tells the user when a saved draft is too large to sync", async () => {
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1, tooLargeToSync: true }));
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={saved} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "Huge" } });
+    await act(async () => { await ref.current!.flush(); });
+    expect(screen.getByRole("status")).toHaveTextContent("Saved on this device · Too large to sync");
+  });
+});
+
 describe("Composer Reply Assist", () => {
   const replyDraft: Draft = {
     ...draft,

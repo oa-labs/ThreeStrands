@@ -82,6 +82,7 @@ impl Database {
                 EntityType::Task => self.delete_synced_row("DELETE FROM tasks WHERE id=?1", entity_id)?,
                 EntityType::Signature => self.delete_signature(entity_id)?,
                 EntityType::SignatureDefaults => self.delete_signature_defaults(entity_id)?,
+                EntityType::Draft => self.delete_synced_row("DELETE FROM drafts WHERE id=?1", entity_id)?,
                 EntityType::Snippet => self.delete_synced_row("DELETE FROM snippets WHERE id=?1", entity_id)?,
                 EntityType::SplitInbox => self.delete_synced_row("DELETE FROM split_inboxes WHERE id=?1", entity_id)?,
                 EntityType::SenderRule => self.delete_synced_row("DELETE FROM sender_rules WHERE id=?1", entity_id)?,
@@ -126,6 +127,7 @@ impl Database {
                     if item.id != entity_id { return Err(DatabaseError::invalid("Signature defaults identity mismatch")); }
                     self.store_signature_defaults(&item)?;
                 }
+                EntityType::Draft => self.materialize_synced_draft(entity_id, payload)?,
                 EntityType::Snippet => {
                     self.upsert_synced_snippet(serde_json::from_value(payload.clone()).map_err(serialization_error)?)?
                 }

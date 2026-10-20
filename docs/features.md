@@ -64,7 +64,8 @@ and message rendering each have their own document in this folder.
 - Sent shows outgoing conversations across devices. Edit as New copies the
   subject, body, and attachments to a fresh message without recipients.
 - Drafts and Outbox views. Outbox contains only mail that has not finished
-  sending. Drafts are local to this installation and are not synchronized with
+  sending. Drafts follow you to your other devices through Replicated Sync
+  (attachment files stay where they were added) and are not synchronized with
   Gmail Drafts.
 - SQLite draft persistence with revision checks, 300 ms debounced autosave,
   visible save status, and save-before-close. Unsaved edits remain visible if a

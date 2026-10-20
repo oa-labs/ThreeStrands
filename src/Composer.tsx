@@ -39,6 +39,8 @@ export type ComposerHandle = {
   moveRecipientsToBcc(emails: string[]): void;
   /** Focuses the body with the caret back where it was before the body lost focus. */
   focusBody(): void;
+  /** Reports this draft as the native store now has it after sync, or `null` once it is gone. */
+  remoteChanged(stored: Draft | null): void;
 };
 
 export const Composer = forwardRef<ComposerHandle, {
@@ -58,17 +60,20 @@ export const Composer = forwardRef<ComposerHandle, {
   replyAssistInstruction?: string | null;
   /** Called with the draft as edits are made; body text arrives at each autosave. */
   onDraftChange?(draft: Draft): void;
+  /** Reopens the composer on the version another device saved. */
+  onRemoteVersion?(draft: Draft): void;
   /**
    * Draft Review, offered for anything but a forward: shown once Draft Assist
    * is on with a provider chosen, and able to send once an API key is set.
    * Follows AI settings while the draft is open.
    */
   review?: DraftReviewAvailability;
-}>(function Composer({ draft: initial, accounts, messageAppearance, signatures, snippets, onCreateSnippet, onUpdateSnippet, onDeleteSnippet, onClose, onQueued, onSendAndArchive, availabilityText = null, expandQuotedText = false, replyAssistInstruction = null, onDraftChange, review }, ref) {
+}>(function Composer({ draft: initial, accounts, messageAppearance, signatures, snippets, onCreateSnippet, onUpdateSnippet, onDeleteSnippet, onClose, onQueued, onSendAndArchive, availabilityText = null, expandQuotedText = false, replyAssistInstruction = null, onDraftChange, onRemoteVersion, review }, ref) {
   const bodyEditor = useRef<ComposeBodyEditorHandle>(null);
   const captureChanges = useCallback(() => bodyEditor.current?.captureChanges() ?? null, []);
   const [error, setError] = useState("");
-  const { draft, latest, status, edit, markChanged, captureBody, flush, replaceDraft } = useDraftAutosave(initial, captureChanges, setError);
+  const { draft, latest, status, edit, markChanged, captureBody, flush, replaceDraft, settled, hasUnsavedChanges, overwrite } = useDraftAutosave(initial, captureChanges, setError);
+  const [remote, setRemote] = useState<{ kind: "edited"; draft: Draft } | { kind: "removed" } | null>(null);
   const showSignaturePicker = Boolean(signatures && (draft.mode !== "reply" && draft.mode !== "replyAll" || draft.signature?.html));
   const [signaturesOpen, setSignaturesOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -285,7 +290,28 @@ export const Composer = forwardRef<ComposerHandle, {
       return readReviewDraft();
     },
   };
-  useImperativeHandle(ref, () => ({ draftReview, flush, send, schedule: () => setScheduleOpen(true), attach, close, discard, draftReplyWithAI, insertText, replaceRecipient, moveRecipientsToBcc, switchAccount: changeAccount, focusBody, prepareExit: async () => {
+  // Another device's save moves the stored revision past this composer's.
+  // Untouched drafts follow it; local edits ask first. A removal is checked
+  // against a fresh list, since a list read just before this draft was
+  // created would not hold it yet.
+  function remoteChanged(stored: Draft | null) {
+    void (async () => {
+      if (busyRef.current) return;
+      await settled();
+      if (!mounted.current || busyRef.current) return;
+      if (!stored) {
+        // Only existence is read here: a save started since could make this
+        // list's revision look like another device's.
+        const exists = (await mailClient.listDrafts()).some((candidate) => candidate.id === latest.current.id);
+        if (mounted.current && !busyRef.current && !exists) setRemote({ kind: "removed" });
+        return;
+      }
+      if (stored.revision <= latest.current.revision) return;
+      if (hasUnsavedChanges() || !onRemoteVersion) setRemote({ kind: "edited", draft: stored });
+      else onRemoteVersion(stored);
+    })().catch(logBackgroundFailure("Draft sync check"));
+  }
+  useImperativeHandle(ref, () => ({ draftReview, flush, send, remoteChanged, schedule: () => setScheduleOpen(true), attach, close, discard, draftReplyWithAI, insertText, replaceRecipient, moveRecipientsToBcc, switchAccount: changeAccount, focusBody, prepareExit: async () => {
     if (busyRef.current) throw new Error("Finish the current composer action before closing.");
     busyRef.current = true; setBusy(true);
     try { await flush(); }
@@ -296,10 +322,11 @@ export const Composer = forwardRef<ComposerHandle, {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     panel.current?.querySelector<HTMLElement>(initial.mode === "new" || initial.mode === "forward" ? '[name="to"]' : '[contenteditable="true"]')?.focus();
     // Forwards and Edit as New copies carry the source message's files.
-    if (initial.attachments.some((attachment) => !attachment.ready)) {
+    // A file attached on another device has no source here to download from.
+    if (initial.attachments.some((attachment) => !attachment.ready && attachment.messageId)) {
       void run(async () => {
         let next = await flush();
-        for (const attachment of next.attachments.filter((candidate) => !candidate.ready)) {
+        for (const attachment of next.attachments.filter((candidate) => !candidate.ready && candidate.messageId)) {
           next = await mailClient.fetchAttachment(next.id, attachment.id);
           if (mounted.current) replaceDraft(next);
         }
@@ -424,8 +451,20 @@ export const Composer = forwardRef<ComposerHandle, {
         {replyAssistInstruction && !replyAssistAvailable ? (
           <p className="reply-assist-task-context"><strong>Task-derived instruction:</strong> {replyAssistInstruction}{replyAssistEnabled ? " Set up an AI provider and API key in AI settings to generate a suggestion." : null}</p>
         ) : null}
-        {draft.attachments.some((attachment) => !attachment.inline) && <ul className="attachment-list">{draft.attachments.filter((attachment) => !attachment.inline).map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : "Download required"}</small></span>{!a.ready && <button className="btn btn-sm" disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); replaceDraft(next); })}>Download</button>}<button className="btn-icon btn-icon-sm" aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); replaceDraft(next); })}><X size={ICON_SIZE.sm} /></button></li>)}</ul>}
-        {error && <div className="notice compose-error" role="alert">{error} <button className="btn btn-sm" onClick={() => void run(async () => { await flush(); })}>Retry Save</button></div>}
+        {draft.attachments.some((attachment) => !attachment.inline) && <ul className="attachment-list">{draft.attachments.filter((attachment) => !attachment.inline).map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : a.messageId ? "Download required" : "Attached on another device · Attach it again here"}</small></span>{!a.ready && a.messageId && <button className="btn btn-sm" disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); replaceDraft(next); })}>Download</button>}<button className="btn-icon btn-icon-sm" aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); replaceDraft(next); })}><X size={ICON_SIZE.sm} /></button></li>)}</ul>}
+        {remote?.kind === "edited" ? (
+          <div className="notice compose-remote" role="alert">
+            <span>This draft was edited on another device.</span>
+            <button className="btn btn-sm" onClick={() => { setRemote(null); onRemoteVersion?.(remote.draft); }}>Use Other Version</button>
+            <button className="btn btn-sm" onClick={() => { setRemote(null); setError(""); overwrite(remote.draft.revision); }}>Keep This Version</button>
+          </div>
+        ) : remote?.kind === "removed" ? (
+          <div className="notice compose-remote" role="alert">
+            <span>This draft was sent or discarded on another device. Changes here can't be saved.</span>
+            <button className="btn btn-sm" onClick={onClose}>Close</button>
+          </div>
+        ) : null}
+        {error && !remote && <div className="notice compose-error" role="alert">{error} <button className="btn btn-sm" onClick={() => void run(async () => { await flush(); })}>Retry Save</button></div>}
         {reviewEnabled && reviewOpen ? (
           <DraftReviewSection actions={draftReview} enabled available={Boolean(review?.available)} onOpenSettings={review?.onOpenSettings} onClose={() => setReviewOpen(false)} />
         ) : null}
