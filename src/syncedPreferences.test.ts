@@ -186,14 +186,15 @@ describe("synced preferences data boundary", () => {
     vi.mocked(invoke).mockImplementation(() => new Promise((resolve) => { resolvePreferences = resolve; }));
 
     const pulling = pullSyncedPreferences();
-    saveAiFeatures({ ...DEFAULT_AI_FEATURES, contactEnrichment: true });
+    // Contact Enrichment starts on, so switching it off is the local change.
+    saveAiFeatures({ ...DEFAULT_AI_FEATURES, contactEnrichment: false });
     resolvePreferences({
       fontScale: 120,
-      aiFeatures: { ...DEFAULT_AI_FEATURES, contactEnrichment: false },
+      aiFeatures: { ...DEFAULT_AI_FEATURES, contactEnrichment: true },
     });
 
     expect(await pulling).toBe(true);
-    expect(readAiFeatures().contactEnrichment).toBe(true);
+    expect(readAiFeatures().contactEnrichment).toBe(false);
     expect(localStorage.getItem("threestrands.fontScale")).toBe("120");
   });
 

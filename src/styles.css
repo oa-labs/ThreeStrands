@@ -2956,11 +2956,10 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .settings-toggle-list > .settings-toggle + .settings-toggle { border-top: 1px solid var(--border); }
 .settings-toggle { align-items: flex-start; }
 .settings-toggle input { margin-top: var(--space-0-5); }
-.settings-toggle.nested { padding-left: var(--space-6); }
-.settings-toggle.disabled { cursor: default; }
-.settings-toggle.disabled .settings-toggle-label { color: var(--muted); }
 .settings-toggle-text { display: flex; min-width: 0; flex-direction: column; gap: var(--space-1); }
 .settings-toggle-description { max-width: 560px; color: var(--muted); font-size: var(--text-secondary); line-height: var(--leading-normal); }
+.ai-advanced { margin-top: var(--space-4); }
+.ai-advanced > .settings-disclosure-body { align-items: stretch; }
 .imap-setup, .imap-mailbox-mapping { display: grid; gap: var(--space-3); width: 100%; min-width: 0; padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); }
 .imap-setup h2, .imap-mailbox-mapping h2 { margin: 0; font-size: var(--text-card-title); }
 .imap-setup-fields, .imap-server-settings { display: grid; gap: var(--space-2); min-width: 0; width: 100%; margin: 0; padding: 0; border: 0; }

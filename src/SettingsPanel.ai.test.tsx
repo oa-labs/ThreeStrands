@@ -22,8 +22,8 @@ describe("AI provider feature settings", () => {
     render(<AiProviderSettings onChange={queuePortablePreferences} />);
 
     act(() => {
-      fireEvent.click(screen.getByRole("checkbox", { name: "Draft Assist" }));
-      fireEvent.click(screen.getByRole("checkbox", { name: "Contact Enrichment" }));
+      fireEvent.click(screen.getByRole("checkbox", { name: "Writing" }));
+      fireEvent.click(screen.getByRole("checkbox", { name: "Contacts" }));
     });
 
     await waitFor(() => expect(vi.mocked(invoke).mock.calls
@@ -33,10 +33,10 @@ describe("AI provider feature settings", () => {
     expect(queued).toHaveLength(2);
     expect(queued[1][1]).toEqual({
       preferences: expect.objectContaining({
-        aiFeatures: expect.objectContaining({ draftAssist: true, contactEnrichment: true }),
+        aiFeatures: expect.objectContaining({ draftAssist: false, contactEnrichment: false }),
       }),
     });
-    expect(readAiFeatures()).toMatchObject({ draftAssist: true, contactEnrichment: true });
+    expect(readAiFeatures()).toMatchObject({ draftAssist: false, contactEnrichment: false });
   });
 
   it("queues every model and endpoint edit for sync so a later pull cannot revert it", async () => {
@@ -169,43 +169,62 @@ describe("AI provider feature settings", () => {
     expect(screen.getByRole("group", { name: "Prices for example/reasoning" })).toBeInTheDocument();
   });
 
-  it("groups the page and attaches each feature's explanation to its switch", () => {
+  it("groups the page by where AI shows and keeps models under a disclosure", () => {
     render(<AiProviderSettings />);
-    for (const name of ["Connection", "Models", "Features"]) {
+    for (const name of ["Connection", "Show AI In", "Automatic Briefs"]) {
       expect(screen.getByRole("heading", { name })).toBeInTheDocument();
     }
-    expect(screen.getByRole("checkbox", { name: "Contact Enrichment" }))
-      .toHaveAccessibleDescription(/starts with three local emails/i);
-    expect(screen.getByRole("checkbox", { name: "Proactive Suggestions" }))
-      .toHaveAccessibleDescription(/Turn on Thread Summaries or Suggestions first/);
+    expect(screen.queryByRole("heading", { name: "Features" })).not.toBeInTheDocument();
+    expect(screen.getByText("Models and Usage").closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByRole("checkbox", { name: "Contacts" }))
+      .toHaveAccessibleDescription(/Enhance With AI suggests profile details/);
+    expect(screen.getByRole("checkbox", { name: "Writing" }))
+      .toHaveAccessibleDescription(/Draft Reply.*Draft Review.*Find Times/);
     // No key is saved, so there is nothing to remove yet.
     expect(screen.getByRole("status")).toHaveTextContent("API key required");
     expect(screen.queryByRole("button", { name: "Remove Key" })).not.toBeInTheDocument();
   });
 
-  it("saves the Thread Chat switch and explains how to enter and leave it", () => {
+  it("opens the models disclosure for a custom endpoint without a model, since it has no default", () => {
     render(<AiProviderSettings />);
-    fireEvent.click(screen.getByRole("checkbox", { name: "Thread Chat" }));
-    expect(readAiFeatures().threadChat).toBe(true);
-    expect(screen.getByText(/Press q or ⌘J to ask; Escape returns to shortcuts/)).toBeInTheDocument();
+    const advanced = screen.getByText("Models and Usage").closest("details");
+    expect(advanced).not.toHaveAttribute("open");
+    fireEvent.change(screen.getByRole("combobox", { name: "Provider" }), { target: { value: "custom" } });
+    expect(advanced).toHaveAttribute("open");
   });
 
-  it("offers proactive suggestions only once a brief feature is on, and the sender filter only once proactive is on", () => {
+  it("offers every on-demand area once a provider is chosen, and keeps automatic briefs off", () => {
     render(<AiProviderSettings />);
-    const proactive = screen.getByRole("checkbox", { name: "Proactive Suggestions" });
-    const knownOnly = screen.getByRole("checkbox", { name: "Only for People I’ve Emailed" });
-    expect(proactive).toBeDisabled();
-    expect(knownOnly).toBeDisabled();
+    for (const name of ["Reading", "Writing", "Contacts"]) {
+      expect(screen.getByRole("checkbox", { name })).toBeChecked();
+    }
+    expect(screen.getByRole("radio", { name: "Never" })).toBeChecked();
+    expect(readAiFeatures()).toMatchObject({ proactiveBriefs: false, proactiveKnownSendersOnly: false });
+  });
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "Suggestions" }));
-    expect(proactive).toBeEnabled();
-    expect(knownOnly).toBeDisabled();
+  it("turns the whole Reading area off together and explains how to enter and leave chat", () => {
+    render(<AiProviderSettings />);
+    expect(screen.getByText(/press q or ⌘J to ask, and Escape returns to shortcuts/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Reading" }));
+    expect(readAiFeatures()).toMatchObject({ summarize: false, actionExtraction: false, threadChat: false });
+  });
 
-    fireEvent.click(proactive);
-    expect(knownOnly).toBeEnabled();
-    fireEvent.click(knownOnly);
-    expect(readAiFeatures()).toMatchObject({ actionExtraction: true, proactiveBriefs: true, proactiveKnownSendersOnly: true });
-    expect(screen.getByText(/at least 3 seconds/)).toBeInTheDocument();
+  it("saves automatic briefs as one choice and needs Reading for it", () => {
+    render(<AiProviderSettings />);
+    const group = screen.getByRole("radiogroup", { name: "Automatic briefs" });
+    expect(group).toHaveAccessibleDescription(/at least 3 seconds/);
+
+    fireEvent.click(screen.getByRole("radio", { name: "People I’ve Emailed" }));
+    expect(readAiFeatures()).toMatchObject({ proactiveBriefs: true, proactiveKnownSendersOnly: true });
+    fireEvent.click(screen.getByRole("radio", { name: "All Conversations" }));
+    expect(readAiFeatures()).toMatchObject({ proactiveBriefs: true, proactiveKnownSendersOnly: false });
+
+    // Without Reading there is no brief to prepare, so the choice resets to Never.
+    fireEvent.click(screen.getByRole("checkbox", { name: "Reading" }));
+    expect(screen.getByRole("radio", { name: "Never" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "All Conversations" })).toBeDisabled();
+    expect(group).toHaveAccessibleDescription(/Turn on Reading to use automatic briefs/);
+    expect(readAiFeatures()).toMatchObject({ proactiveBriefs: false, proactiveKnownSendersOnly: false });
     expect(screen.getByRole("region", { name: "AI usage" })).toBeInTheDocument();
   });
 });

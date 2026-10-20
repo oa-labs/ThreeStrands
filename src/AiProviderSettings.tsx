@@ -4,6 +4,8 @@ import {
   AI_MODEL_PLACEHOLDERS,
   AI_MODEL_SUGGESTIONS,
   AI_PROVIDER_OPTIONS,
+  aiAreaEnabled,
+  aiAutomaticBriefs,
   canListAiModels,
   clearAiApiKey,
   isAiApiKeyConfigured,
@@ -22,6 +24,10 @@ import {
   saveAiProvider,
   setAiApiKey,
   testAiConnection,
+  withAiArea,
+  withAiAutomaticBriefs,
+  type AiArea,
+  type AiAutomaticBriefs,
   type AiFeatureFlags,
   type AiModelInfo,
   type AiProvider,
@@ -112,15 +118,19 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
       ? chatModels
       : AI_MODEL_SUGGESTIONS[provider].map((id) => ({ id, label: null }));
 
-  const updateFeature = (flag: keyof AiFeatureFlags, value: boolean) => {
-    const next = { ...featuresRef.current, [flag]: value };
+  const updateFeatures = (change: (current: AiFeatureFlags) => AiFeatureFlags) => {
+    const next = change(featuresRef.current);
     featuresRef.current = next;
     saveAiFeatures(next);
     setFeatures(next);
     onChange?.();
   };
-
-  const brief = features.summarize || features.actionExtraction;
+  const updateArea = (area: AiArea, on: boolean) => updateFeatures((current) => withAiArea(current, area, on));
+  const reading = aiAreaEnabled(features, "reading");
+  const automatic = aiAutomaticBriefs(features);
+  // A custom endpoint has no default model, so its required field starts visible.
+  const [advancedOpen, setAdvancedOpen] = useState(() => provider === "custom" && !model.trim());
+  const automaticHintId = useId();
   const testDisabled = busy || testingConnection || !keyConfigured || !resolveAiModel(provider, model)
     || (provider === "custom" && !endpoint.trim());
   const hasCatalog = provider !== "none" && provider !== "custom";
@@ -128,8 +138,9 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
   return (
     <section className="settings-section ai-settings" aria-label="AI provider">
       <p className="settings-hint">
-        Disabled by default. ThreeStrands only sends thread content to your chosen
-        provider for the features you turn on below, using your own API key.
+        Off until you choose a provider. After that, ThreeStrands sends a conversation
+        to your provider, with your own API key, only when you click a button marked
+        with sparkles, unless you turn on automatic briefs.
       </p>
 
       <h3>Connection</h3>
@@ -149,6 +160,7 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
             // waits for Refresh model list or a newly saved key.
             if (next === "openrouter") loadModels(next, keyConfigured);
             else clearModels();
+            if (next === "custom" && !model.trim()) setAdvancedOpen(true);
           }}
         >
           {AI_PROVIDER_OPTIONS.map((option) => (
@@ -261,122 +273,129 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
           </div>
           {configurationError ? <p className="form-error settings-field-detail" role="alert">{configurationError}</p> : null}
 
-          <h3>Models</h3>
-          <label className="settings-field settings-field-row">
-            <span>Reasoning Model</span>
-            <ModelCombobox
-              value={model}
-              models={pickerModels}
-              ariaLabel="Reasoning model"
-              placeholder={AI_MODEL_PLACEHOLDERS[provider]}
-              onCommit={(next) => {
-                setModel(next);
-                setConnectionTested(false);
-                saveAiModel(next);
-                onChange?.();
-              }}
-            />
-          </label>
-          <div className="settings-field-detail ai-model-list-status">
-            {hasCatalog ? (
-              <button
-                type="button"
-                className="btn-link"
-                disabled={modelsLoading || !canListAiModels(provider, keyConfigured)}
-                onClick={() => loadModels(provider, keyConfigured)}
-              >
-                <RefreshCw size={ICON_SIZE.xs} aria-hidden="true" />
-                {modelsLoading ? "Loading models…" : "Refresh model list"}
-              </button>
-            ) : null}
-            {hasCatalog && provider !== "openrouter" && keyConfigured === false ? (
-              <span className="settings-hint">Save your API key to load available models.</span>
-            ) : null}
-            {modelsError ? (
-              <span className="settings-hint">
-                Couldn’t load the model list ({modelsError}). You can still type a model name.
-              </span>
-            ) : null}
-            <p className="settings-hint">
-              Used for suggestions, briefs, and conversation chat, where working through
-              dates and multi-step questions pays off.
-            </p>
-          </div>
-
-          <label className="settings-field settings-field-row">
-            <span>Fast Model</span>
-            <ModelCombobox
-              value={fastModel}
-              models={pickerModels}
-              ariaLabel="Fast model"
-              placeholder="Same as reasoning model"
-              onCommit={(next) => {
-                setFastModel(next);
-                saveAiFastModel(next);
-                onChange?.();
-              }}
-            />
-          </label>
-          <p className="settings-hint settings-field-detail">
-            Optional. Used for summaries, reply drafts, and contact enrichment, which mostly
-            read and copy text. Leave blank to use the reasoning model for everything.
-          </p>
-
-          <h3>Features</h3>
+          <h3>Show AI In</h3>
           <div className="settings-toggle-list">
             <SettingsToggle
-              label="Draft Assist"
-              description="Reviews your drafts, drafts replies from a short instruction, and reads the conversation when you click Find Times."
-              checked={features.draftAssist}
-              onChange={(value) => updateFeature("draftAssist", value)}
+              label="Reading"
+              description="Get Brief summarizes the open conversation and suggests tasks and meetings. Ask About This Conversation answers questions; press q or ⌘J to ask, and Escape returns to shortcuts. Other emails are shared only for a question where you choose Search all mail."
+              checked={reading}
+              onChange={(value) => updateArea("reading", value)}
             />
             <SettingsToggle
-              label="Thread Summaries"
-              description="Summarizes the open conversation."
-              checked={features.summarize}
-              onChange={(value) => updateFeature("summarize", value)}
+              label="Writing"
+              description="Draft Reply writes a reply from a short instruction, Draft Review gives feedback on your draft, and Find Times reads the conversation for when to meet."
+              checked={aiAreaEnabled(features, "writing")}
+              onChange={(value) => updateArea("writing", value)}
             />
             <SettingsToggle
-              label="Suggestions"
-              description="Suggests next steps, such as tasks and meetings, for the open conversation."
-              checked={features.actionExtraction}
-              onChange={(value) => updateFeature("actionExtraction", value)}
-            />
-            <SettingsToggle
-              label="Proactive Suggestions"
-              description={`Prepares the brief once you stay on a conversation for the mark-read delay, at least ${MIN_PROACTIVE_DWELL_SECONDS} seconds. They skip mailing lists and conversations with no one else in them, and read each conversation again only when a new message arrives.${brief ? "" : " Turn on Thread Summaries or Suggestions first."}`}
-              checked={features.proactiveBriefs}
-              disabled={!brief}
-              onChange={(value) => updateFeature("proactiveBriefs", value)}
-            />
-            <SettingsToggle
-              label="Only for People I’ve Emailed"
-              description="Limits proactive suggestions to senders you have written to."
-              checked={features.proactiveKnownSendersOnly}
-              disabled={!features.proactiveBriefs || !brief}
-              nested
-              onChange={(value) => updateFeature("proactiveKnownSendersOnly", value)}
-            />
-            <SettingsToggle
-              label="Thread Chat"
-              description="Answers questions about the open conversation. Press q or ⌘J to ask; Escape returns to shortcuts. It shares other emails only for a question where you choose Search all mail."
-              checked={features.threadChat}
-              onChange={(value) => updateFeature("threadChat", value)}
-            />
-            <SettingsToggle
-              label="Contact Enrichment"
-              description="Starts with three local emails. If they yield no supported suggestions, it checks up to nine more. You can choose to search more emails when the first three yield suggestions."
-              checked={features.contactEnrichment}
-              onChange={(value) => updateFeature("contactEnrichment", value)}
+              label="Contacts"
+              description="Enhance With AI suggests profile details from your email for you to accept."
+              checked={aiAreaEnabled(features, "contacts")}
+              onChange={(value) => updateArea("contacts", value)}
             />
           </div>
 
-          <AiUsageSummary provider={provider} model={resolveAiModel(provider, model)} fastModel={fastModel} />
+          <h3>Automatic Briefs</h3>
+          <p className="settings-hint" id={automaticHintId}>
+            {`Prepares a brief without a click once you stay on a conversation for the mark-read delay, at least ${MIN_PROACTIVE_DWELL_SECONDS} seconds. Skips mailing lists and conversations with no one else in them, and reads a conversation again only when a new message arrives.`}
+            {reading ? "" : " Turn on Reading to use automatic briefs."}
+          </p>
+          <div className="settings-radio-row" role="radiogroup" aria-label="Automatic briefs" aria-describedby={automaticHintId}>
+            {AUTOMATIC_BRIEF_OPTIONS.map((option) => (
+              <label key={option.value}>
+                <input
+                  type="radio"
+                  name="ai-automatic-briefs"
+                  checked={automatic === option.value}
+                  disabled={!reading && option.value !== "never"}
+                  onChange={() => updateFeatures((current) => withAiAutomaticBriefs(current, option.value))}
+                />
+                {option.label}
+              </label>
+            ))}
+          </div>
+
+          <details
+            className="settings-disclosure ai-advanced"
+            open={advancedOpen}
+            onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
+          >
+            <summary>Models and Usage</summary>
+            <div className="settings-disclosure-body">
+              <label className="settings-field settings-field-row">
+                <span>Reasoning Model</span>
+                <ModelCombobox
+                  value={model}
+                  models={pickerModels}
+                  ariaLabel="Reasoning model"
+                  placeholder={AI_MODEL_PLACEHOLDERS[provider]}
+                  onCommit={(next) => {
+                    setModel(next);
+                    setConnectionTested(false);
+                    saveAiModel(next);
+                    onChange?.();
+                  }}
+                />
+              </label>
+              <div className="settings-field-detail ai-model-list-status">
+                {hasCatalog ? (
+                  <button
+                    type="button"
+                    className="btn-link"
+                    disabled={modelsLoading || !canListAiModels(provider, keyConfigured)}
+                    onClick={() => loadModels(provider, keyConfigured)}
+                  >
+                    <RefreshCw size={ICON_SIZE.xs} aria-hidden="true" />
+                    {modelsLoading ? "Loading models…" : "Refresh model list"}
+                  </button>
+                ) : null}
+                {hasCatalog && provider !== "openrouter" && keyConfigured === false ? (
+                  <span className="settings-hint">Save your API key to load available models.</span>
+                ) : null}
+                {modelsError ? (
+                  <span className="settings-hint">
+                    Couldn’t load the model list ({modelsError}). You can still type a model name.
+                  </span>
+                ) : null}
+                <p className="settings-hint">
+                  Used for suggestions, briefs, and conversation chat, where working through
+                  dates and multi-step questions pays off.
+                </p>
+              </div>
+
+              <label className="settings-field settings-field-row">
+                <span>Fast Model</span>
+                <ModelCombobox
+                  value={fastModel}
+                  models={pickerModels}
+                  ariaLabel="Fast model"
+                  placeholder="Same as reasoning model"
+                  onCommit={(next) => {
+                    setFastModel(next);
+                    saveAiFastModel(next);
+                    onChange?.();
+                  }}
+                />
+              </label>
+              <p className="settings-hint settings-field-detail">
+                Optional. Used for summaries, reply drafts, and contact enrichment, which mostly
+                read and copy text. Leave blank to use the reasoning model for everything.
+              </p>
+
+              <AiUsageSummary provider={provider} model={resolveAiModel(provider, model)} fastModel={fastModel} />
+            </div>
+          </details>
         </>
       ) : null}
     </section>
   );
 }
+
+const AUTOMATIC_BRIEF_OPTIONS: { value: AiAutomaticBriefs; label: string }[] = [
+  { value: "never", label: "Never" },
+  { value: "knownSenders", label: "People I’ve Emailed" },
+  { value: "all", label: "All Conversations" },
+];
 
 /** A switch whose accessible name stays the short label while its longer
  * explanation is attached as a description, so the row reads as one unit
@@ -385,20 +404,16 @@ function SettingsToggle({
   label,
   description,
   checked,
-  disabled = false,
-  nested = false,
   onChange,
 }: {
   label: string;
   description?: string;
   checked: boolean;
-  disabled?: boolean;
-  nested?: boolean;
   onChange(value: boolean): void;
 }) {
   const descriptionId = useId();
   return (
-    <label className={`settings-switch settings-toggle${nested ? " nested" : ""}${disabled ? " disabled" : ""}`}>
+    <label className="settings-switch settings-toggle">
       <span className="settings-toggle-text">
         <span className="settings-toggle-label">{label}</span>
         {description ? <span className="settings-toggle-description" id={descriptionId}>{description}</span> : null}
@@ -408,7 +423,6 @@ function SettingsToggle({
         aria-label={label}
         aria-describedby={description ? descriptionId : undefined}
         checked={checked}
-        disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
       />
     </label>

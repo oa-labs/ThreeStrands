@@ -202,9 +202,13 @@ describe("conversation brief", () => {
     analysis: { proposals: [], hiddenCount: 0 },
   };
 
+  // Only the named features, so each test states exactly what it relies on.
+  const NO_AI_FEATURES: AiFeatureFlags = Object.fromEntries(
+    Object.keys(DEFAULT_AI_FEATURES).map((flag) => [flag, false])) as AiFeatureFlags;
+
   async function enableAi(features: Partial<AiFeatureFlags>) {
     saveAiProvider("openai");
-    saveAiFeatures({ ...DEFAULT_AI_FEATURES, ...features });
+    saveAiFeatures({ ...NO_AI_FEATURES, ...features });
     await setAiApiKey("test-key");
   }
 

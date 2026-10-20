@@ -46,7 +46,7 @@ async function waitForThumbnail(page: Page, filename: string) {
 }
 
 /** Browser-only demo key: no credentials or provider requests are involved. */
-async function configureDemoAi(page: Page, features: string[]) {
+async function configureDemoAi(page: Page, areas: string[]) {
   await page.getByRole("button", { name: /^Settings/ }).click();
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   await settings.getByRole("button", { name: "AI Provider", exact: true }).click();
@@ -54,7 +54,10 @@ async function configureDemoAi(page: Page, features: string[]) {
   await settings.getByLabel("API Key", { exact: true }).fill("fictional-showcase-key");
   await settings.getByRole("button", { name: "Save Key", exact: true }).click();
   await expect(settings.getByText("API key configured", { exact: true })).toBeVisible();
-  for (const feature of features) await settings.getByRole("checkbox", { name: feature, exact: true }).check();
+  // Areas start on with a provider, so each scene shows only the ones it names.
+  for (const area of ["Reading", "Writing", "Contacts"]) {
+    await settings.getByRole("checkbox", { name: area, exact: true }).setChecked(areas.includes(area));
+  }
   await page.keyboard.press("Escape");
   await expect(settings).toBeHidden();
 }
@@ -106,7 +109,7 @@ const scenes: Scene[] = [
   {
     name: "find-times",
     capture: async (page) => {
-      await configureDemoAi(page, ["Draft Assist"]);
+      await configureDemoAi(page, ["Writing"]);
       await openThread(page, /Contract renewal — Brightwater Co-op/);
       await page.getByRole("button", { name: "Find Times", exact: true }).click();
       const availability = page.getByRole("region", { name: "Availability", exact: true });
@@ -152,7 +155,7 @@ const scenes: Scene[] = [
   {
     name: "reply",
     capture: async (page) => {
-      await configureDemoAi(page, ["Draft Assist"]);
+      await configureDemoAi(page, ["Writing"]);
       await openThread(page, /Q4 launch plan — final review/);
       await waitForThumbnail(page, "regional-rollout.png");
       await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
@@ -206,7 +209,7 @@ const scenes: Scene[] = [
   {
     name: "thread-assist",
     capture: async (page) => {
-      await configureDemoAi(page, ["Thread Summaries", "Suggestions"]);
+      await configureDemoAi(page, ["Reading"]);
       await openThread(page, /Contract renewal — Brightwater Co-op/);
       const brief = page.getByRole("region", { name: "Brief", exact: true });
       await page.getByRole("button", { name: "Get Brief", exact: true }).click();
@@ -222,7 +225,7 @@ const scenes: Scene[] = [
   {
     name: "thread-chat",
     capture: async (page) => {
-      await configureDemoAi(page, ["Thread Chat"]);
+      await configureDemoAi(page, ["Reading"]);
       await openThread(page, /Q4 launch plan — final review/);
       await waitForThumbnail(page, "regional-rollout.png");
       await page.keyboard.press("q");

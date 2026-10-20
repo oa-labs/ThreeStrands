@@ -94,7 +94,7 @@ test.describe("feature claims", () => {
       await expect(newsletter).toContainText(claim);
     }
     const times = page.locator('[data-step="find-times"]');
-    for (const claim of ["optional Draft Assist", "next week", "lunch gap", "Drive Time Buffer"]) {
+    for (const claim of ["optional AI", "next week", "lunch gap", "Drive Time Buffer"]) {
       await expect(times).toContainText(claim);
     }
     const zero = page.locator('[data-step="inbox-zero"]');
@@ -685,7 +685,7 @@ test.describe("docs", () => {
     await expect(writing).not.toContainText("Send & Mark Done");
     await page.goto("./docs/calendar.html");
     const calendar = page.locator(".docs-body");
-    for (const claim of ["Drive Time Buffer", "Draft Reply With These Times", "also work without Draft Assist", "All day"]) {
+    for (const claim of ["Drive Time Buffer", "Draft Reply With These Times", "also work without AI", "All day"]) {
       await expect(calendar).toContainText(claim);
     }
     await page.goto("./docs/triage.html");

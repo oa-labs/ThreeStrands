@@ -4,6 +4,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### Improved
+- **Settings → AI Provider** is simpler. Once you choose a provider, AI appears in reading, writing, and contacts, and it still sends a conversation only when you click a button marked with sparkles. Under **Show AI In**, switch off any area you don't want. **Automatic Briefs** is now one choice: **Never**, **People I've Emailed**, or **All Conversations**. Model choices and usage are under **Models and Usage**.
+
 ### Fixed
 - **Remove on all devices** now also cancels messages waiting to send from that account on your other devices, so adding the account back later never sends them unexpectedly. They stay in the **Outbox** marked as failed, where you can restore them.
 - **Remove on all devices** now removes an account from your other devices even when its address was typed with capital letters.

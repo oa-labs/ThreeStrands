@@ -30,15 +30,64 @@ export type AiFeatureFlags = {
 export const AI_PROVIDER_OPTIONS: { value: AiProvider; label: string }[] =
   AI_PROVIDERS.map(({ id, label }) => ({ value: id, label }));
 
+/**
+ * On-demand features only send mail when the user clicks a sparkle button, so
+ * choosing a provider is enough to offer them. Automatic briefs send without a
+ * click, so they stay off until the user picks them.
+ */
 export const DEFAULT_AI_FEATURES: AiFeatureFlags = {
-  draftAssist: false,
-  summarize: false,
-  actionExtraction: false,
-  contactEnrichment: false,
+  draftAssist: true,
+  summarize: true,
+  actionExtraction: true,
+  contactEnrichment: true,
   proactiveBriefs: false,
   proactiveKnownSendersOnly: false,
-  threadChat: false,
+  threadChat: true,
 };
+
+/**
+ * The parts of the app the settings page lets the user show AI in. Each area
+ * owns some feature flags; the flags stay the stored and exported shape.
+ */
+export type AiArea = "reading" | "writing" | "contacts";
+
+const AI_AREA_FLAGS: Record<AiArea, readonly (keyof AiFeatureFlags)[]> = {
+  reading: ["summarize", "actionExtraction", "threadChat"],
+  writing: ["draftAssist"],
+  contacts: ["contactEnrichment"],
+};
+
+/** When the app prepares a brief without being asked. */
+export type AiAutomaticBriefs = "never" | "knownSenders" | "all";
+
+/**
+ * An area shows as on when any of its flags is. Settings saved before the
+ * areas existed may turn on only part of one, such as summaries without chat;
+ * those keep exactly what the user chose until they switch the area itself.
+ */
+export function aiAreaEnabled(flags: AiFeatureFlags, area: AiArea): boolean {
+  return AI_AREA_FLAGS[area].some((flag) => flags[flag]);
+}
+
+/** Turns an area on or off; turning Reading off also stops automatic briefs. */
+export function withAiArea(flags: AiFeatureFlags, area: AiArea, on: boolean): AiFeatureFlags {
+  const next = { ...flags };
+  for (const flag of AI_AREA_FLAGS[area]) next[flag] = on;
+  if (area === "reading" && !on) {
+    next.proactiveBriefs = false;
+    next.proactiveKnownSendersOnly = false;
+  }
+  return next;
+}
+
+export function aiAutomaticBriefs(flags: AiFeatureFlags): AiAutomaticBriefs {
+  if (!flags.proactiveBriefs) return "never";
+  return flags.proactiveKnownSendersOnly ? "knownSenders" : "all";
+}
+
+export function withAiAutomaticBriefs(flags: AiFeatureFlags, choice: AiAutomaticBriefs): AiFeatureFlags {
+  return { ...flags, proactiveBriefs: choice !== "never", proactiveKnownSendersOnly: choice === "knownSenders" };
+}
 
 export const AI_MODEL_PLACEHOLDERS = Object.fromEntries(
   AI_PROVIDERS.map(({ id, modelPlaceholder }) => [id, modelPlaceholder]),
@@ -210,6 +259,8 @@ export function readAiFeatures(): AiFeatureFlags {
   try {
     const saved = JSON.parse(localStorage.getItem(FEATURES_KEY) ?? "null") as Partial<AiFeatureFlags> | null;
     if (saved && typeof saved === "object") {
+      // A flag missing from a saved value stays off: it predates that feature,
+      // and the user never chose it.
       return {
         draftAssist: saved.draftAssist === true,
         summarize: saved.summarize === true,

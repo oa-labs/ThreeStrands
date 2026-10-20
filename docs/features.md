@@ -182,7 +182,7 @@ composing another message.
 - Calendar offers Day, 3-day, Workweek (default), and Week. Calendar navigation
   and selections are available from the Calendars control. Opening a weekend
   event temporarily uses Day when the saved preference is Workweek.
-- Find Times searches beside the conversation, with optional Draft Assist to
+- Find Times searches beside the conversation, with optional AI writing help to
   interpret date requests. Select times to insert into a draft or start a reply.
   Working hours can have multiple blocks per day, and Drive Time Buffer reserves
   travel time around timed events with a location. Events support all-day dates

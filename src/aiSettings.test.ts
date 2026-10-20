@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearAiApiKey,
   DEFAULT_AI_FEATURES,
+  aiAreaEnabled,
+  aiAutomaticBriefs,
+  withAiArea,
+  withAiAutomaticBriefs,
   AI_MODEL_SUGGESTIONS,
   canListAiModels,
   isAiApiKeyConfigured,
@@ -153,10 +157,42 @@ describe("AI provider preferences", () => {
     expect(() => readAiRequestConfig("getting a brief", "brief")).toThrow("Set a model in AI settings before getting a brief.");
   });
 
-  it("defaults every feature flag to off and merges a partial saved value", () => {
+  it("defaults on-demand features on and automatic briefs off", () => {
     expect(readAiFeatures()).toEqual(DEFAULT_AI_FEATURES);
-    saveAiFeatures({ ...DEFAULT_AI_FEATURES, summarize: true });
-    expect(readAiFeatures()).toEqual({ ...DEFAULT_AI_FEATURES, summarize: true });
+    expect(DEFAULT_AI_FEATURES).toMatchObject({
+      draftAssist: true, summarize: true, actionExtraction: true, threadChat: true, contactEnrichment: true,
+      proactiveBriefs: false, proactiveKnownSendersOnly: false,
+    });
+  });
+
+  it("keeps older per-feature settings exactly as saved and shows a partly-on area as on", () => {
+    // Summaries without suggestions or chat, from before the areas existed.
+    const legacy = {
+      draftAssist: false, summarize: true, actionExtraction: false, contactEnrichment: false,
+      proactiveBriefs: true, proactiveKnownSendersOnly: true, threadChat: false,
+    };
+    localStorage.setItem("threestrands.settings.ai.features", JSON.stringify(legacy));
+    const features = readAiFeatures();
+    expect(features).toEqual(legacy);
+    expect(aiAreaEnabled(features, "reading")).toBe(true);
+    expect(aiAreaEnabled(features, "writing")).toBe(false);
+    expect(aiAutomaticBriefs(features)).toBe("knownSenders");
+    // Switching the area sets every feature in it together.
+    expect(withAiArea(features, "reading", true)).toMatchObject({ summarize: true, actionExtraction: true, threadChat: true });
+  });
+
+  it("switches an area's flags together and maps the automatic brief choice to its flags", () => {
+    const off = withAiArea(DEFAULT_AI_FEATURES, "writing", false);
+    expect(off.draftAssist).toBe(false);
+    expect(aiAreaEnabled(off, "reading")).toBe(true);
+    const known = withAiAutomaticBriefs(DEFAULT_AI_FEATURES, "knownSenders");
+    expect(known).toMatchObject({ proactiveBriefs: true, proactiveKnownSendersOnly: true });
+    expect(withAiAutomaticBriefs(known, "all")).toMatchObject({ proactiveBriefs: true, proactiveKnownSendersOnly: false });
+    expect(withAiArea(known, "reading", false)).toMatchObject({
+      summarize: false, actionExtraction: false, threadChat: false, proactiveBriefs: false, proactiveKnownSendersOnly: false,
+    });
+    saveAiFeatures(withAiArea(DEFAULT_AI_FEATURES, "contacts", false));
+    expect(readAiFeatures().contactEnrichment).toBe(false);
   });
 
   it("keeps contact enrichment disabled when restoring older feature settings",()=>{
