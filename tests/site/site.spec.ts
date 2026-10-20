@@ -197,10 +197,12 @@ test.describe("feature claims", () => {
     for (const title of ["Encrypted Settings Export", "Encrypted Sync"]) {
       const stamp = stamps.locator("li").filter({ has: page.getByRole("heading", { name: new RegExp(title) }) });
       await expect(stamp).toContainText("saved contacts");
-      await expect(stamp).toContainText("Mail, drafts, queued send");
     }
+    const exportStamp = stamps.locator("li").filter({ has: page.getByRole("heading", { name: "Encrypted Settings Export", exact: true }) });
+    await expect(exportStamp).toContainText("Mail, drafts, queued sends, and credentials stay behind");
     const sync = stamps.locator("li").filter({ has: page.getByRole("heading", { name: "Encrypted Sync", exact: true }) });
-    await expect(sync).toContainText("tasks, goals, saved contacts");
+    await expect(sync).toContainText("Sync drafts, tasks, goals, saved contacts");
+    await expect(sync).toContainText("Mail, attachment files, queued send payloads");
     await expect(sync).toContainText("Scheduled-send summaries share the account, subject, timing, sending computer, and last reported status");
     await expect(sync).toContainText("queued send payloads, and provider credentials stay on each device");
     await expect(sync).toContainText("Scheduled bodies, recipients, and attachments never sync");
