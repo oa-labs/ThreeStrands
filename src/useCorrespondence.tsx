@@ -443,7 +443,7 @@ export function DraftsList({ drafts, onOpen, onDiscard }: { drafts: Draft[]; onO
     >
       <strong>{d.subject || "(no subject)"}</strong>
       <span>{d.to || "No recipients"}</span>
-      <small>{new Date(d.updatedAt).toLocaleString()} · Saved on this device</small>
+      <small>{new Date(d.updatedAt).toLocaleString()}</small>
     </button>
   ))}</>;
 }

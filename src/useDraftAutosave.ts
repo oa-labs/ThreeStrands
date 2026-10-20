@@ -9,7 +9,7 @@ const AUTOSAVE_DEBOUNCE_MS = 300;
 const AUTOSAVE_INTERVAL_MS = 3_000;
 
 function savedStatus(saved: Draft): string {
-  return saved.tooLargeToSync ? "Saved on this device · Too large to sync" : "Saved on this device";
+  return saved.tooLargeToSync ? "Draft saved · Too large to sync" : "Draft saved";
 }
 
 /** Owns draft persistence; the editor supplies body changes only at a save boundary. */
@@ -25,7 +25,7 @@ export function useDraftAutosave(
   const pending = useRef<Promise<Draft> | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
-  const [status, setStatus] = useState("Saved on this device");
+  const [status, setStatus] = useState("Draft saved");
 
   const captureBody = useCallback(() => {
     const changes = captureChanges();

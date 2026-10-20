@@ -679,7 +679,7 @@ describe("Composer body input responsiveness", () => {
     await act(async () => { second.resolve({ ...saveDraft.mock.calls[1][0], revision: 2, updatedAt: 20 }); });
     const results = await Promise.all([firstFlush, secondFlush, thirdFlush]);
     expect(results.every((saved) => saved.revision === 2 && saved.body === "Latest version")).toBe(true);
-    expect(screen.getByRole("status")).toHaveTextContent("Saved on this device");
+    expect(screen.getByRole("status")).toHaveTextContent("Draft saved");
     await ref.current!.flush();
     expect(saveDraft).toHaveBeenCalledTimes(2);
   });
@@ -1063,7 +1063,7 @@ describe("Composer drafts synced from other devices", () => {
     render(<Composer ref={ref} draft={saved} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
     fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "Huge" } });
     await act(async () => { await ref.current!.flush(); });
-    expect(screen.getByRole("status")).toHaveTextContent("Saved on this device · Too large to sync");
+    expect(screen.getByRole("status")).toHaveTextContent("Draft saved · Too large to sync");
   });
 });
 

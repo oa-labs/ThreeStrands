@@ -4,6 +4,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### Fixed
+- The composer now says **Draft saved** instead of "Saved on this device", since drafts follow you to your other computers with **Replicated Sync**. The **Drafts** list no longer says "Saved on this device" either.
+
 ## 0.147.0 — 2026-10-20
 
 ### New
