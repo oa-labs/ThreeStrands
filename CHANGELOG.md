@@ -4,6 +4,8 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+## 0.147.0 — 2026-10-20
+
 ### New
 - Drafts now follow you between your computers with **Replicated Sync**: start a message on one and finish it on another. Sending or discarding a draft removes it everywhere. Attached files stay on the computer where you added them, so attach them again before sending from another one. If the draft you have open changes on another computer, the composer switches to that version, or asks which to keep when you have unsaved edits.
 
