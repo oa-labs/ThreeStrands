@@ -18,8 +18,8 @@ use crate::{
     models::Label,
     provider::{
         Delivery, DeliveryReceipt, LabelModel, MailFetch, MailMutate, MailProvider, MailSend,
-        MailSync, ProviderCapabilities, ProviderError, ProviderResult, SyncBatch, SyncCursor,
-        ThreadPage,
+        MailSync, ProviderCapabilities, ProviderError, ProviderResult, ServerDraft, SyncBatch,
+        SyncCursor, ThreadPage,
     },
 };
 
@@ -127,18 +127,37 @@ impl GmailClient {
 
     async fn send(
         &self,
-        mut request: RequestBuilder,
+        request: RequestBuilder,
         history: bool,
     ) -> ProviderResult<reqwest::Response> {
+        self.send_with_retries(request, history, 4).await
+    }
+
+    /// Like [`send`](Self::send), but never replays a request Gmail may
+    /// already have applied. A rejected token is still replayed once, because
+    /// Gmail refuses those before doing anything. For creates, which would
+    /// otherwise be duplicated.
+    async fn send_without_replay(&self, request: RequestBuilder) -> ProviderResult<reqwest::Response> {
+        self.send_with_retries(request, false, 0).await
+    }
+
+    async fn send_with_retries(
+        &self,
+        mut request: RequestBuilder,
+        history: bool,
+        retries: u32,
+    ) -> ProviderResult<reqwest::Response> {
         let mut reauthorized = false;
-        for attempt in 0..=4 {
+        let mut attempt = 0;
+        while attempt <= retries {
             let cloned = request.try_clone().ok_or_else(|| {
                 ProviderError::InvalidOperation("Unable to retry Gmail request".into())
             })?;
             let response = match cloned.send().await {
                 Ok(response) => response,
-                Err(_) if attempt < 4 => {
+                Err(_) if attempt < retries => {
                     sleep(retry_delay(attempt, false) + jitter()).await;
+                    attempt += 1;
                     continue;
                 }
                 Err(error) => {
@@ -172,11 +191,12 @@ impl GmailClient {
                 || status == StatusCode::SERVICE_UNAVAILABLE
                 || status.is_server_error()
             {
-                if attempt == 4 {
+                if attempt == retries {
                     return Err(ProviderError::RetryableServer(format!("{status}: {body}")));
                 }
                 let delay = retry_after.unwrap_or_else(|| retry_delay(attempt, quota_limited));
                 sleep(delay + jitter()).await;
+                attempt += 1;
                 continue;
             }
             let detail = format!("{status}: {body}");
@@ -1279,6 +1299,137 @@ mod tests {
             .ends_with("/messages/message-1/modify"));
     }
 
+    mod server_drafts {
+        use std::{
+            collections::HashMap,
+            sync::{Arc, Mutex as StdMutex},
+        };
+
+        use axum::{
+            extract::{Path, Query, State},
+            http::{Method as HttpMethod, StatusCode as HttpStatus},
+            routing::{any, get},
+            Json, Router,
+        };
+
+        use super::*;
+        use crate::auth::Tokens;
+
+        #[derive(Clone, Default)]
+        struct Stub {
+            /// (method, path, query or JSON body) per request.
+            seen: Arc<StdMutex<Vec<(String, String, serde_json::Value)>>>,
+            /// Status for the next responses, in order; 200 once exhausted.
+            statuses: Arc<StdMutex<Vec<u16>>>,
+        }
+
+        impl Stub {
+            fn next_status(&self) -> HttpStatus {
+                let mut statuses = self.statuses.lock().unwrap();
+                let status = if statuses.is_empty() { 200 } else { statuses.remove(0) };
+                HttpStatus::from_u16(status).unwrap()
+            }
+        }
+
+        async fn serve(stub: Stub) -> String {
+            let router = Router::new()
+                .route(
+                    "/drafts",
+                    get(|State(stub): State<Stub>, Query(query): Query<HashMap<String, String>>| async move {
+                        stub.seen.lock().unwrap().push(("GET".into(), "/drafts".into(), serde_json::json!(query)));
+                        (stub.next_status(), Json(serde_json::json!({"drafts": [{"id": "d-7", "message": {"id": "m-7"}}]})))
+                    })
+                    .post(|State(stub): State<Stub>, Json(body): Json<serde_json::Value>| async move {
+                        stub.seen.lock().unwrap().push(("POST".into(), "/drafts".into(), body));
+                        (stub.next_status(), Json(serde_json::json!({"id": "d-1", "message": {"id": "m-1"}})))
+                    }),
+                )
+                .route(
+                    "/drafts/{id}",
+                    any(|State(stub): State<Stub>, method: HttpMethod, Path(id): Path<String>, body: String| async move {
+                        let body = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+                        stub.seen.lock().unwrap().push((method.to_string(), format!("/drafts/{id}"), body));
+                        (stub.next_status(), Json(serde_json::json!({"id": id, "message": {"id": "m-2"}})))
+                    }),
+                )
+                .with_state(stub);
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let address = listener.local_addr().unwrap();
+            tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            format!("http://{address}")
+        }
+
+        fn client(base: &str) -> GmailClient {
+            GmailClient::new(OAuthCredential::in_memory_for_test(
+                &format!("{base}/token"),
+                Tokens { access_token: "token".into(), refresh_token: Some("refresh".into()), expires_at: u64::MAX },
+            ))
+            .with_api_base(base)
+        }
+
+        fn raw_of(body: &serde_json::Value) -> Vec<u8> {
+            use base64::Engine;
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(body["message"]["raw"].as_str().unwrap())
+                .unwrap()
+        }
+
+        #[tokio::test]
+        async fn gmail_keeps_server_drafts() {
+            assert!(client("http://127.0.0.1:9").server_drafts());
+        }
+
+        #[tokio::test]
+        async fn create_and_update_send_the_raw_message_in_its_thread() {
+            let stub = Stub::default();
+            let gmail = client(&serve(stub.clone()).await);
+            let created = gmail.create_server_draft(b"Subject: Hi\r\n\r\nBody", Some("t-9")).await.unwrap();
+            assert_eq!(created, ServerDraft { id: "d-1".into() });
+            let updated = gmail.update_server_draft("d-1", b"Subject: Hi\r\n\r\nEdited", None).await.unwrap();
+            assert_eq!(updated, ServerDraft { id: "d-1".into() });
+
+            let seen = stub.seen.lock().unwrap().clone();
+            assert_eq!((seen[0].0.as_str(), seen[0].1.as_str()), ("POST", "/drafts"));
+            assert_eq!(raw_of(&seen[0].2), b"Subject: Hi\r\n\r\nBody");
+            assert_eq!(seen[0].2["message"]["threadId"], "t-9");
+            assert_eq!((seen[1].0.as_str(), seen[1].1.as_str()), ("PUT", "/drafts/d-1"));
+            assert_eq!(seen[1].2["id"], "d-1");
+            assert_eq!(raw_of(&seen[1].2), b"Subject: Hi\r\n\r\nEdited");
+            assert!(seen[1].2["message"].get("threadId").is_none());
+        }
+
+        #[tokio::test]
+        async fn a_failed_create_is_never_replayed() {
+            let stub = Stub::default();
+            stub.statuses.lock().unwrap().push(503);
+            let gmail = client(&serve(stub.clone()).await);
+            let result = gmail.create_server_draft(b"raw", None).await;
+            assert!(matches!(result, Err(ProviderError::RetryableServer(_))), "{result:?}");
+            assert_eq!(stub.seen.lock().unwrap().len(), 1, "a replayed create could leave two drafts");
+        }
+
+        #[tokio::test]
+        async fn updates_and_deletes_report_a_draft_deleted_on_the_server() {
+            let stub = Stub::default();
+            stub.statuses.lock().unwrap().extend([404, 404]);
+            let gmail = client(&serve(stub.clone()).await);
+            assert!(matches!(gmail.update_server_draft("gone", b"raw", None).await, Err(ProviderError::NotFound)));
+            assert!(matches!(gmail.delete_server_draft("gone").await, Err(ProviderError::NotFound)));
+            let seen = stub.seen.lock().unwrap().clone();
+            assert_eq!((seen[1].0.as_str(), seen[1].1.as_str()), ("DELETE", "/drafts/gone"));
+        }
+
+        #[tokio::test]
+        async fn find_searches_drafts_by_exact_message_id() {
+            let stub = Stub::default();
+            let gmail = client(&serve(stub.clone()).await);
+            let found = gmail.find_server_draft("draft-1@threestrands.local").await.unwrap();
+            assert_eq!(found, Some(ServerDraft { id: "d-7".into() }));
+            let seen = stub.seen.lock().unwrap().clone();
+            assert_eq!(seen[0].2["q"], "rfc822msgid:draft-1@threestrands.local");
+        }
+    }
+
     #[test]
     fn empty_message_batch_has_no_modify_url() {
         assert_eq!(message_modify_url(API, &[]), None);
@@ -1419,6 +1570,90 @@ impl MailSend for GmailClient {
         }
         Ok(None)
     }
+
+    fn server_drafts(&self) -> bool {
+        true
+    }
+
+    async fn find_server_draft(&self, message_id: &str) -> ProviderResult<Option<ServerDraft>> {
+        let request = self
+            .request(Method::GET, format!("{}/drafts", self.api))
+            .await?
+            .query(&[("q", format!("rfc822msgid:{message_id}")), ("maxResults", "1".into())]);
+        let found: DraftList = self.json(request, false).await?;
+        Ok(found.drafts.into_iter().next().map(Into::into))
+    }
+
+    async fn create_server_draft(
+        &self,
+        raw: &[u8],
+        thread: Option<&str>,
+    ) -> ProviderResult<ServerDraft> {
+        let request = self
+            .request(Method::POST, format!("{}/drafts", self.api))
+            .await?
+            .json(&draft_body(None, raw, thread));
+        // A replayed create would leave a second draft behind.
+        let response = self.send_without_replay(request).await?;
+        let created: DraftRef = response
+            .json()
+            .await
+            .map_err(|error| ProviderError::RetryableServer(error.to_string()))?;
+        Ok(created.into())
+    }
+
+    async fn update_server_draft(
+        &self,
+        id: &str,
+        raw: &[u8],
+        thread: Option<&str>,
+    ) -> ProviderResult<ServerDraft> {
+        let request = self
+            .request(Method::PUT, format!("{}/drafts/{id}", self.api))
+            .await?
+            .json(&draft_body(Some(id), raw, thread));
+        let updated: DraftRef = self.json(request, false).await?;
+        Ok(updated.into())
+    }
+
+    async fn delete_server_draft(&self, id: &str) -> ProviderResult<()> {
+        let request = self
+            .request(Method::DELETE, format!("{}/drafts/{id}", self.api))
+            .await?;
+        self.send(request, false).await?;
+        Ok(())
+    }
+}
+
+#[derive(Deserialize)]
+struct DraftList {
+    #[serde(default)]
+    drafts: Vec<DraftRef>,
+}
+
+#[derive(Deserialize)]
+struct DraftRef {
+    id: String,
+}
+
+impl From<DraftRef> for ServerDraft {
+    fn from(value: DraftRef) -> Self {
+        Self { id: value.id }
+    }
+}
+
+fn draft_body(id: Option<&str>, raw: &[u8], thread: Option<&str>) -> serde_json::Value {
+    use base64::Engine;
+    let mut message =
+        serde_json::json!({"raw": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw)});
+    if let Some(thread) = thread {
+        message["threadId"] = thread.into();
+    }
+    let mut body = serde_json::json!({"message": message});
+    if let Some(id) = id {
+        body["id"] = id.into();
+    }
+    body
 }
 
 impl MailProvider for GmailClient {

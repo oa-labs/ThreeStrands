@@ -22,8 +22,14 @@ export type Draft = {
   followUpTaskId?: string | null;
   /** Set on a saved draft while sync is on but the draft is too large to reach other devices. */
   tooLargeToSync?: boolean;
+  /** Set on a saved draft whose account keeps drafts on the server: where its server copy stands. */
+  serverDraft?: ServerDraftStatus | null;
   attachments: Attachment[]; updatedAt: number;
 };
+/** `pending` waits for the push delay, `retrying` follows a temporary failure, `failed` needs the user. */
+export type ServerDraftStatus = { state: "pending" | "retrying" | "failed" | "saved"; error?: string };
+/** Emitted as `draft-server-status` when a push finishes or fails; `revision` is the draft revision it describes. */
+export type ServerDraftEvent = { id: string; revision: number; status: ServerDraftStatus };
 /** The run-4b Sent-copy job state surfaced on an outbox item; `null` for Gmail, legacy rows, and servers that save their own copy. */
 export type SentCopyStatus = { state: "pending" | "verify" | "done" | "abandoned"; error?: string | null };
 export type OutboxItem = { id: string; draft: Draft; state: "scheduled" | "overdue" | "undo_pending" | "ready" | "sending" | "sent" | "failed" | "uncertain" | "unverifiable" | "canceled"; deadline: number; error: string | null; providerId?: string | null; schedule?: ScheduledSend | null; sentCopy?: SentCopyStatus | null };
@@ -57,6 +63,8 @@ export interface CorrespondenceClient {
   saveDraft(draft: Draft): Promise<Draft>;
   listDrafts(): Promise<Draft[]>;
   discardDraft(id: string): Promise<void>;
+  /** Pushes the draft to its account's server drafts without waiting for the push delay. */
+  pushDraft(id: string): Promise<void>;
   queueDraft(id: string, revision: number, archiveOnSend?: boolean): Promise<OutboxItem>;
   listOutbox(): Promise<OutboxItem[]>;
   cancelSend(id: string): Promise<Draft>;
@@ -72,7 +80,7 @@ export interface CorrespondenceClient {
 type CorrespondenceOperation =
   | "schedulingInfo" | "scheduleChoices" | "schedule" | "reschedule" | "sendScheduledNow" | "listScheduledSummaries"
   | "identity" | "create" | "createFromSent" | "setAccount" | "identities" | "setFrom" | "save" | "listDrafts"
-  | "discard" | "queue" | "listOutbox" | "cancel" | "recover"
+  | "discard" | "pushDraft" | "queue" | "listOutbox" | "cancel" | "recover"
   | "reconcile" | "attach" | "attachInline" | "readInline"
   | "removeAttachment" | "fetchAttachment";
 
@@ -92,6 +100,7 @@ const OPERATION_POLICY: Record<CorrespondenceOperation, InvokePolicy> = {
   save: WAIT_FOR_NATIVE_COMPLETION,
   listDrafts: BOUNDED_LOCAL_READ,
   discard: WAIT_FOR_NATIVE_COMPLETION,
+  pushDraft: WAIT_FOR_NATIVE_COMPLETION,
   queue: WAIT_FOR_NATIVE_COMPLETION,
   listOutbox: BOUNDED_LOCAL_READ,
   cancel: WAIT_FOR_NATIVE_COMPLETION,
@@ -126,6 +135,7 @@ export const nativeCorrespondence: CorrespondenceClient = {
   saveDraft: (draft) => request("save", { draft }),
   listDrafts: () => request("listDrafts"),
   discardDraft: (id) => request("discard", { id }),
+  pushDraft: (id) => request("pushDraft", { id }),
   queueDraft: (id, revision, archiveOnSend) => request("queue", { id, revision, archiveOnSend: archiveOnSend ?? false }),
   listOutbox: () => request("listOutbox"),
   cancelSend: (id) => request("cancel", { id }),

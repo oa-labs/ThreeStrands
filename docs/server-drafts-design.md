@@ -1,7 +1,8 @@
 # Server drafts design
 
-Status: proposed (2026-10-20). Replaces the draft content sync that shipped in
-0.147.0 through Replicated Sync.
+Status: accepted (2026-10-20). Phase 1, Gmail push, is implemented in 0.148.0.
+Replaces the draft content sync that shipped in 0.147.0 through Replicated
+Sync.
 
 ## Why change
 
@@ -31,6 +32,7 @@ email can't hold.
   reaches the server after a short pause, when the composer closes, and before
   the app quits.
 - The save status tells the truth:
+  - **Saving…** while the revision waits for the push delay.
   - **Draft saved** only once the server has confirmed the current revision.
   - **Saved on this device · Will sync when online** while a revision is waiting
     for the network or the account is offline.
@@ -38,7 +40,8 @@ email can't hold.
     with the reason available, and the draft kept locally.
 - Drafts created or edited in another app appear in **Drafts** and can be
   opened, edited, sent, and discarded from ThreeStrands.
-- Sending, scheduling, or discarding a draft removes it from the server.
+- Sending or discarding a draft removes it from the server. A message waiting
+  to send or scheduled keeps its server copy until it has been sent.
 - A draft for an account that is not set up on this device does not appear on
   this device. Drafts follow accounts, not sync groups.
 
@@ -56,18 +59,23 @@ The existing `drafts` table and `useDraftAutosave` stay as they are. SQLite
 remains the composer's source of truth for the open draft. Its job is to hold
 work that has not reached the server yet, not to sync it.
 
-Each local draft gains server-link fields stored natively, never in headers
-that could leave the device:
+Each local draft's server link lives in the device-local
+`draft_server_links` table, never in the draft payload (which Replicated Sync
+carries) and never in headers that could leave the device:
 
-| Field | Meaning |
+| Column | Meaning |
 | --- | --- |
-| `serverId` | Gmail draft ID, or `null` before the first push. IMAP stores the mailbox UID of the current copy. |
-| `serverMessageId` | Stable RFC `Message-ID` reused for every server copy of this draft. |
-| `pushedRevision` | Latest local revision the server has confirmed. |
-| `serverVersion` | What the server reported for the copy we last wrote or read: Gmail message ID, or IMAP UID plus `UIDVALIDITY`. Used to detect edits made elsewhere. |
-| `pushState` | `idle`, `pending`, `pushing`, `blocked` (with typed error). |
+| `server_id` | Gmail draft ID, or `NULL` before the first push. IMAP will store the mailbox UID of the current copy. |
+| `pushed_revision` | Latest local revision the server has confirmed. |
+| `pending_since`, `due_at` | When the oldest unpushed edit was saved, and when the next push or retry runs. |
+| `state`, `error`, `attempts` | `pending`, `retrying`, `failed`, or `saved`, with the reason and the backoff count. |
 
-A draft is "synced" when `pushedRevision == revision`.
+The `Message-ID` isn't stored: it is `draft-<draft id>@<domain>`, the same on
+every device. Phase 2 adds what pull needs, such as the server's version of
+the copy, to detect edits made elsewhere. Server copies waiting to be deleted
+are rows in `draft_server_deletions`.
+
+A draft is "synced" when `pushed_revision == revision`.
 
 ### Push queue
 
@@ -82,9 +90,11 @@ local revisions to the provider:
   rule.
 - **Retries** use the shared `backoff.rs` schedule. Authentication errors block
   the account's pushes until it is reconnected; they don't spin.
-- **Delete:** sending or discarding enqueues a server delete with the last
-  known `serverId`/`serverMessageId`. The local row goes immediately, so the
-  UI never waits for the network.
+- **Delete:** discarding deletes the server copy. Sending deletes it only once
+  the send has completed (`sent` or `unverifiable`); while a message waits in
+  the undo window, is scheduled, is sending, or has failed, the server copy
+  stays, so **Undo** and **Restore** bring back the same draft. The local row
+  goes immediately, so the UI never waits for the network.
 
 ### Server message
 

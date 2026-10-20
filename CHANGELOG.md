@@ -4,6 +4,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### New
+- Drafts on Gmail accounts now save to your Gmail **Drafts**, so you can pick them up in Gmail on your phone or the web. ThreeStrands saves a few seconds after you stop typing, and right away when you close the message. The composer says **Draft saved** once Gmail has it, or tells you when it's waiting to reconnect. Sending or discarding the draft removes it from Gmail.
+
 ### Fixed
 - The composer now says **Draft saved** instead of "Saved on this device", since drafts follow you to your other computers with **Replicated Sync**. The **Drafts** list no longer says "Saved on this device" either.
 

@@ -82,7 +82,11 @@ impl Database {
                 EntityType::Task => self.delete_synced_row("DELETE FROM tasks WHERE id=?1", entity_id)?,
                 EntityType::Signature => self.delete_signature(entity_id)?,
                 EntityType::SignatureDefaults => self.delete_signature_defaults(entity_id)?,
-                EntityType::Draft => self.delete_synced_row("DELETE FROM drafts WHERE id=?1", entity_id)?,
+                // The removing device deletes the server copy itself.
+                EntityType::Draft => {
+                    self.delete_synced_row("DELETE FROM drafts WHERE id=?1", entity_id)?;
+                    self.forget_server_draft_link(entity_id)?;
+                }
                 EntityType::Snippet => self.delete_synced_row("DELETE FROM snippets WHERE id=?1", entity_id)?,
                 EntityType::SplitInbox => self.delete_synced_row("DELETE FROM split_inboxes WHERE id=?1", entity_id)?,
                 EntityType::SenderRule => self.delete_synced_row("DELETE FROM sender_rules WHERE id=?1", entity_id)?,

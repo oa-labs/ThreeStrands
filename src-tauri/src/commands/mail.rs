@@ -37,6 +37,8 @@ pub(crate) async fn finish_exit(app: tauri::AppHandle, state: State<'_, AppState
     while state.database.pending_undo()? {
         tokio::time::sleep(EXIT_UNDO_POLL_INTERVAL).await;
     }
+    // Give drafts a bounded chance to reach the server; they stay saved here.
+    state.correspondence.push_drafts_before_exit().await;
     // Do not terminate while a provider request is awaiting acknowledgement.
     let _send_guard = state.correspondence.gate.lock().await;
     state

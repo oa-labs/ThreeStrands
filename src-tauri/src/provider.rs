@@ -381,6 +381,14 @@ pub struct DeliveryReceipt {
     pub thread_id: Option<String>,
 }
 
+/// A draft stored in the account's server drafts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerDraft {
+    /// The provider's id for the draft, stable across updates (Gmail's
+    /// draft id).
+    pub id: String,
+}
+
 /// Which phase of the Sent-copy job the engine is driving when it calls
 /// [`MailSend::save_sent_copy`]. The provider holds NO per-send state (an
 /// [`ImapProvider`](crate::provider::imap) is built per call), so the engine's
@@ -625,6 +633,46 @@ pub trait MailSend: Send + Sync {
     /// capability and the request's `phase`/`append_attempted` carry everything.
     async fn save_sent_copy(&self, _request: &SentCopyRequest) -> ProviderResult<SentCopyStep> {
         Ok(SentCopyStep::Done)
+    }
+
+    /// Whether this account keeps drafts on the server through the methods
+    /// below. The default is `false`, and every other draft method then
+    /// refuses; the engine keeps such drafts on this device only
+    /// (`docs/server-drafts-design.md`).
+    fn server_drafts(&self) -> bool {
+        false
+    }
+
+    /// The server draft whose `Message-ID` is `message_id`, if any. Finds a
+    /// draft another device already created, or one created just before a
+    /// crash lost its id, so a push updates it instead of duplicating it.
+    async fn find_server_draft(&self, _message_id: &str) -> ProviderResult<Option<ServerDraft>> {
+        Err(ProviderError::InvalidOperation("Server drafts are not supported".into()))
+    }
+
+    /// Stores `raw` as a new server draft, inside `thread` when given.
+    async fn create_server_draft(
+        &self,
+        _raw: &[u8],
+        _thread: Option<&str>,
+    ) -> ProviderResult<ServerDraft> {
+        Err(ProviderError::InvalidOperation("Server drafts are not supported".into()))
+    }
+
+    /// Replaces draft `id` with `raw`. [`ProviderError::NotFound`] means the
+    /// draft was deleted on the server.
+    async fn update_server_draft(
+        &self,
+        _id: &str,
+        _raw: &[u8],
+        _thread: Option<&str>,
+    ) -> ProviderResult<ServerDraft> {
+        Err(ProviderError::InvalidOperation("Server drafts are not supported".into()))
+    }
+
+    /// Deletes draft `id`. [`ProviderError::NotFound`] means it is already gone.
+    async fn delete_server_draft(&self, _id: &str) -> ProviderResult<()> {
+        Err(ProviderError::InvalidOperation("Server drafts are not supported".into()))
     }
 }
 

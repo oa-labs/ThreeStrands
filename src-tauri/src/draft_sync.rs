@@ -20,7 +20,7 @@ use crate::{
 };
 
 /// Draft fields that describe this device's copy and never leave it.
-const DEVICE_FIELDS: [&str; 2] = ["revision", "tooLargeToSync"];
+const DEVICE_FIELDS: [&str; 3] = ["revision", "tooLargeToSync", "serverDraft"];
 const CONTENT_PREFIX: &str = "content:";
 
 fn draft_sync_content(draft: &Draft) -> Result<String, String> {

@@ -65,8 +65,9 @@ and message rendering each have their own document in this folder.
   subject, body, and attachments to a fresh message without recipients.
 - Drafts and Outbox views. Outbox contains only mail that has not finished
   sending. Drafts follow you to your other devices through Replicated Sync
-  (attachment files stay where they were added) and are not synchronized with
-  Gmail Drafts.
+  (attachment files stay where they were added). Drafts on Gmail accounts are
+  also pushed to Gmail Drafts after a 5-second pause, on composer close, and
+  before quitting; drafts edited in Gmail are not imported yet.
 - SQLite draft persistence with revision checks, 300 ms debounced autosave,
   visible save status, and save-before-close. Unsaved edits remain visible if a
   write fails. An abrupt crash can lose the unsaved interval.

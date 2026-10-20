@@ -105,7 +105,7 @@ test("reviews a new email in the composer, applies and undoes without sending, a
   await panel.getByRole("button", { name: "Get Feedback" }).click();
   await panel.getByRole("button", { name: "Apply Revision" }).click();
   await expect(body).toContainText("Would you be open to a brief conversation?");
-  await expect(composer.locator(".save-status")).toHaveText("Saved on this device");
+  await expect(composer.locator(".save-status")).toHaveText("Draft saved");
   await panel.getByRole("button", { name: "Undo Revision" }).click();
   await expect(body).toHaveText("I help teams improve their workflow.");
   await composer.getByRole("button", { name: "Save and Close Draft" }).click();
@@ -144,7 +144,7 @@ test("saves an offline draft, restores after reload, sends once, and undoes", as
   await composer.getByRole("textbox", { name: "To", exact: true }).fill("friend@example.com");
   await composer.getByRole("textbox", { name: "Subject" }).fill("Offline draft");
   await composer.getByRole("textbox", { name: "Message Body" }).fill("Hello j k e r a f — these are text, not inbox actions.");
-  await expect(composer.getByRole("status")).toHaveText("Saved on this device");
+  await expect(composer.getByRole("status")).toHaveText("Draft saved");
   await composer.getByRole("button", { name: "Save and Close Draft" }).click();
   await context.setOffline(false);
   await page.reload();
@@ -183,7 +183,7 @@ for (const paste of [
     await expect(body.locator("a")).toHaveAttribute("href", "https://example.com/docs");
     await expect(body.locator("a")).toHaveText(paste.linkedText);
     await expect(body.locator("img, script")).toHaveCount(0);
-    await expect(composer.getByRole("status")).toHaveText("Saved on this device");
+    await expect(composer.getByRole("status")).toHaveText("Draft saved");
 
     await body.press("ControlOrMeta+z");
     await expect(body).toHaveText("Read the docs");
@@ -191,7 +191,7 @@ for (const paste of [
     await body.press("ControlOrMeta+Shift+z");
     await expect(body).toHaveText(paste.expected);
     await expect(body.locator("a")).toHaveAttribute("href", "https://example.com/docs");
-    await expect(composer.getByRole("status")).toHaveText("Saved on this device");
+    await expect(composer.getByRole("status")).toHaveText("Draft saved");
 
     await composer.getByRole("button", { name: "Save and Close Draft" }).click();
     await expect(composer).not.toBeVisible();
@@ -606,7 +606,7 @@ for (const theme of ["light", "dark"] as const) {
     await page.getByRole("button", { name: "To", exact: true }).click();
     await expect(page.getByRole("button", { name: "Send", exact: true })).toBeInViewport();
     await expect(page.getByRole("button", { name: "Save and Close Draft" })).toBeInViewport();
-    await expect(page.getByRole("dialog").getByRole("status")).toHaveText("Saved on this device");
+    await expect(page.getByRole("dialog").getByRole("status")).toHaveText("Draft saved");
     await page.screenshot({ path: testInfo.outputPath(`composer-${theme}.png`) });
   });
 }

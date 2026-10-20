@@ -18,6 +18,7 @@ mod contact_interchange;
 mod credentials;
 mod db;
 mod default_apps;
+mod draft_push;
 mod draft_sync;
 mod endpoint_origin;
 mod enrollment;
@@ -1017,7 +1018,16 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         gate: Arc::new(tokio::sync::Mutex::new(())),
         edits: Arc::new(tokio::sync::Mutex::new(())),
         scheduling: Arc::new(tokio::sync::Mutex::new(())),
+        draft_pushes: Arc::new(tokio::sync::Mutex::new(())),
+        draft_events: {
+            let handle = app.handle().clone();
+            Arc::new(move |event: &draft_push::ServerDraftEvent| {
+                use tauri::Emitter;
+                let _ = handle.emit("draft-server-status", event);
+            })
+        },
     };
+    tauri::async_runtime::spawn(correspondence.clone().run_draft_pushes());
     let worker = correspondence.clone();
     tauri::async_runtime::spawn(async move {
         if worker.is_connected().await {

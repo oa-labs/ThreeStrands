@@ -14,7 +14,7 @@ pub(crate) const BASELINE_VERSION: i64 = 74;
 
 /// The current schema version. A new schema change adds an
 /// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 78;
+pub(crate) const LATEST_VERSION: i64 = 79;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -837,6 +837,34 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 79 {
+        // Server drafts: each local draft's link to its copy in the account's
+        // server drafts, and server copies waiting to be deleted after the
+        // draft was sent, discarded, or moved to another account. Device-local,
+        // never synced or exported. See docs/server-drafts-design.md.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS draft_server_links (
+                 draft_id TEXT PRIMARY KEY,
+                 account TEXT NOT NULL,
+                 server_id TEXT,
+                 pushed_revision INTEGER NOT NULL DEFAULT 0,
+                 pending_since INTEGER,
+                 due_at INTEGER,
+                 state TEXT NOT NULL CHECK(state IN ('pending', 'retrying', 'failed', 'saved')),
+                 error TEXT,
+                 attempts INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE IF NOT EXISTS draft_server_deletions (
+                 id INTEGER PRIMARY KEY,
+                 account TEXT NOT NULL,
+                 server_id TEXT,
+                 message_id TEXT NOT NULL,
+                 due_at INTEGER NOT NULL,
+                 attempts INTEGER NOT NULL DEFAULT 0
+             );",
+        )
+        .map_err(error)?;
+    }
     if stored == 0 {
         // Only new installations get the 90-day default. Existing databases
         // without a retention setting still mean Forever. Keep the default
@@ -1126,6 +1154,8 @@ mod tests {
         "table:sender_rules",
         "table:signatures",
         "table:signature_defaults",
+        "table:draft_server_links",
+        "table:draft_server_deletions",
     ];
 
     #[test]
@@ -1196,6 +1226,29 @@ mod tests {
                 [],
             )
             .is_err(), "only address and domain rules are stored");
+    }
+
+    #[test]
+    fn a_v78_database_gains_server_draft_tables_and_keeps_its_drafts_local_until_edited() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(crate::schema::INITIAL_SCHEMA).unwrap();
+        super::migrate(&mut connection).unwrap();
+        // Roll back to what a 0.147 database looks like.
+        connection
+            .execute_batch("DROP TABLE draft_server_links; DROP TABLE draft_server_deletions;")
+            .unwrap();
+        connection.pragma_update(None, "user_version", 78).unwrap();
+        connection
+            .execute("INSERT INTO drafts VALUES ('draft-1', 4, '{\"id\":\"draft-1\"}')", [])
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let count = |sql: &str| connection.query_row(sql, [], |row| row.get::<_, i64>(0)).unwrap();
+        assert_eq!(count("SELECT count(*) FROM drafts"), 1);
+        assert_eq!(count("SELECT count(*) FROM draft_server_links"), 0, "existing drafts wait for an edit");
+        assert_eq!(count("SELECT count(*) FROM draft_server_deletions"), 0);
+        assert!(connection
+            .execute("INSERT INTO draft_server_links(draft_id, account, state) VALUES ('d', 'a', 'pushing')", [])
+            .is_err(), "only known push states are stored");
     }
 
     #[test]

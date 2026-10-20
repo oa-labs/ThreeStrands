@@ -767,6 +767,7 @@ describe("Composer body input responsiveness", () => {
   it("discards a completely empty draft when the composer closes", async () => {
     const onClose = vi.fn();
     const discardDraft = vi.spyOn(mailClient, "discardDraft").mockResolvedValue();
+    const pushDraft = vi.spyOn(mailClient, "pushDraft").mockResolvedValue();
     const saveDraft = vi.spyOn(mailClient, "saveDraft");
     render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={onClose} onQueued={() => {}} />);
 
@@ -775,6 +776,7 @@ describe("Composer body input responsiveness", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(discardDraft).toHaveBeenCalledWith("draft-1");
     expect(saveDraft).not.toHaveBeenCalled();
+    expect(pushDraft).not.toHaveBeenCalled();
   });
 
   it("keeps a draft with authored content when the composer closes", async () => {
@@ -789,6 +791,32 @@ describe("Composer body input responsiveness", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(saveDraft).toHaveBeenCalledWith(expect.objectContaining({ subject: "Keep this draft" }));
     expect(discardDraft).not.toHaveBeenCalled();
+  });
+
+  it("pushes a kept draft to the server without waiting when the composer closes", async () => {
+    const onClose = vi.fn();
+    const pushDraft = vi.spyOn(mailClient, "pushDraft").mockResolvedValue();
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={onClose} onQueued={() => {}} />);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "Keep this draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save and Close Draft" }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(pushDraft).toHaveBeenCalledWith("draft-1");
+  });
+
+  it("closes even when the push request fails", async () => {
+    const onClose = vi.fn();
+    vi.spyOn(mailClient, "pushDraft").mockRejectedValue(new Error("offline"));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={onClose} onQueued={() => {}} />);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "Keep this draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save and Close Draft" }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 });
 
@@ -1064,6 +1092,22 @@ describe("Composer drafts synced from other devices", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "Huge" } });
     await act(async () => { await ref.current!.flush(); });
     expect(screen.getByRole("status")).toHaveTextContent("Draft saved · Too large to sync");
+  });
+  it.each([
+    [{ state: "pending" as const }, "Saving…", null],
+    [{ state: "saved" as const }, "Draft saved", null],
+    [{ state: "retrying" as const, error: "The server couldn't be reached." }, "Saved on this device · Will sync when online", "The server couldn't be reached."],
+    [{ state: "failed" as const, error: "Reconnect you@example.com to save this draft to the server." }, "Saved on this device · Couldn't save to server", "Reconnect you@example.com to save this draft to the server."],
+  ])("says where the server copy stands after a save (%o)", async (serverDraft, text, detail) => {
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1, serverDraft }));
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={saved} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "Plans for Friday" } });
+    await act(async () => { await ref.current!.flush(); });
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent(text);
+    if (detail) expect(status).toHaveAttribute("title", detail);
+    else expect(status).not.toHaveAttribute("title");
   });
 });
 

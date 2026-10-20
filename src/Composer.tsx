@@ -124,6 +124,7 @@ export const Composer = forwardRef<ComposerHandle, {
         && saved.attachments.length === 0
         && (!saved.signature?.html.trim() || saved.signature.automatic);
       if (isEmpty) await mailClient.discardDraft(saved.id);
+      else void mailClient.pushDraft(saved.id).catch(logBackgroundFailure("Draft push on close"));
       onClose();
     });
   }
@@ -474,7 +475,7 @@ export const Composer = forwardRef<ComposerHandle, {
         <ComposeSendActions busy={busy} onSend={() => send()} onSchedule={() => setScheduleOpen(true)} onSendAndArchive={onSendAndArchive} />
         <button className="btn-icon" onClick={attach} disabled={busy} aria-label="Attach Files" title={`Attach Files (${composeKeyLabel("Mod+Shift+a")})`} aria-keyshortcuts="Meta+Shift+A Control+Shift+A"><Paperclip size={ICON_SIZE.lg} /></button>
         <div className="compose-draft-status">
-          <span className="save-status" role="status">{status}</span>
+          <span className="save-status" role="status" title={status.detail}>{status.text}</span>
           <button className="btn-icon" disabled={busy} aria-label="Discard Draft" onClick={discard}><Trash size={ICON_SIZE.lg} /></button>
         </div>
       </footer>

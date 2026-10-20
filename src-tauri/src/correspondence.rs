@@ -157,6 +157,11 @@ pub struct Draft {
     /// this draft is too large to reach other devices.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub too_large_to_sync: bool,
+    /// Set on a draft a save returns, never stored or synced: where its copy
+    /// in the account's server drafts stands. `None` when the draft stays on
+    /// this device.
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub server_draft: Option<crate::draft_push::ServerDraftStatus>,
 }
 impl Draft {
     /// The address this draft sends FROM: the chosen identity `from` when set,
@@ -262,6 +267,11 @@ pub enum Request {
         draft: Draft,
     },
     Discard {
+        id: String,
+    },
+    /// Pushes the draft to the server without waiting for the push delay,
+    /// because the composer closed.
+    PushDraft {
         id: String,
     },
     Queue {
@@ -537,6 +547,7 @@ impl Database {
             attachments: vec![],
             updated_at: now(),
             too_large_to_sync: false,
+            server_draft: None,
         };
         if mode != "new" {
             let source_id = source_id.ok_or("Select a source message")?;
@@ -668,7 +679,7 @@ impl Database {
             }
         }
         d.signature = self.default_draft_signature(&d.account, d.from_address(), &d.mode)?;
-        self.write_draft(&mut d, |tx, d, payload| {
+        self.write_draft(&mut d, false, |tx, d, payload| {
             tx.execute("INSERT INTO drafts VALUES (?1,?2,?3)", params![d.id, d.revision, payload])
         })?;
         Ok(d)
@@ -736,8 +747,9 @@ impl Database {
             attachments: forward_attachments(&source, &normalized)?,
             updated_at: now(),
             too_large_to_sync: false,
+            server_draft: None,
         };
-        self.write_draft(&mut d, |tx, d, payload| {
+        self.write_draft(&mut d, false, |tx, d, payload| {
             tx.execute("INSERT INTO drafts VALUES (?1,?2,?3)", params![d.id, d.revision, payload])
         })?;
         Ok(d)
@@ -867,32 +879,39 @@ impl Database {
             if tx.execute("DELETE FROM drafts WHERE id=?1", [id])? == 1 && sync {
                 crate::draft_sync::record_draft_deletion(tx, id)?;
             }
+            Self::draft_left_drafts(tx, id, now())?;
             Ok(())
         })?;
         Ok(())
     }
     /// Writes one draft row and, while sync is on, records the draft for
-    /// other devices in the same transaction. Returns the rows `write`
-    /// changed; nothing is recorded when it changed none.
+    /// other devices in the same transaction. `push` marks an edit that the
+    /// account's server drafts need. Returns the rows `write` changed;
+    /// nothing is recorded when it changed none.
     fn write_draft(
         &self,
         d: &mut Draft,
+        push: bool,
         write: impl FnOnce(&rusqlite::Transaction, &Draft, &str) -> rusqlite::Result<usize>,
     ) -> Result<usize, String> {
         let sync = self.draft_sync_enabled()?;
         d.too_large_to_sync = false;
+        d.server_draft = None;
         let payload = json(d)?;
         let draft = &*d;
         let (changed, synced) = self.with_transaction(|tx| {
             let changed = write(tx, draft, &payload)?;
             let synced = changed != 1 || !sync || crate::draft_sync::record_draft_write(tx, draft)?;
+            if changed == 1 && push {
+                Self::mark_draft_push_pending(tx, draft, now())?;
+            }
             Ok((changed, synced))
         })?;
         d.too_large_to_sync = !synced;
         Ok(changed)
     }
     fn update_draft(&self, d: &mut Draft, expected: i64) -> Result<usize, String> {
-        self.write_draft(d, |tx, d, payload| {
+        self.write_draft(d, true, |tx, d, payload| {
             tx.execute(
                 "UPDATE drafts SET revision=?1,payload=?2 WHERE id=?3 AND revision=?4",
                 params![d.revision, payload, d.id, expected],
@@ -1045,6 +1064,7 @@ impl Database {
         if sync {
             crate::draft_sync::record_draft_deletion(&tx, id)?;
         }
+        Self::draft_left_drafts(&tx, id, now())?;
         tx.execute("INSERT INTO outbox_messages(id,draft_id,revision,account,state,deadline,payload,raw,archive_on_send) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![item.id,id,revision,d.account,item.state,item.deadline,json(&d)?,raw,item.archive_on_send]).map_err(error)?;
         tx.commit().map_err(error)?;
         Ok(item)
@@ -1088,6 +1108,7 @@ impl Database {
         if sync {
             crate::draft_sync::record_draft_write(&tx, &d)?;
         }
+        Self::mark_draft_push_pending(&tx, &d, now())?;
         if let Some(schedule) = &item.schedule { crate::scheduled_send::record(&tx,id,&schedule.report.owner_installation_id,now()).map_err(error)?; }
         tx.commit().map_err(error)?;
         Ok(d)
@@ -1148,13 +1169,40 @@ pub(crate) fn build_mime(
     id: &str,
     root: &Path,
 ) -> Result<Vec<u8>, String> {
+    build_message(d, identities, account_display_name, message_id_domain, id, root, true)
+}
+
+/// The server copy of a draft: the message exactly as it would be sent, but
+/// with no recipients allowed and a `Message-ID` that stays the same across
+/// every push, so any device can find the copy again
+/// (`docs/server-drafts-design.md`, "Server message").
+pub(crate) fn build_draft_mime(
+    d: &Draft,
+    identities: &[crate::provider::SendingIdentity],
+    account_display_name: Option<&str>,
+    message_id_domain: Option<&str>,
+    root: &Path,
+) -> Result<Vec<u8>, String> {
+    let id = crate::draft_push::server_message_local_part(&d.id);
+    build_message(d, identities, account_display_name, message_id_domain, &id, root, false)
+}
+
+fn build_message(
+    d: &Draft,
+    identities: &[crate::provider::SendingIdentity],
+    account_display_name: Option<&str>,
+    message_id_domain: Option<&str>,
+    id: &str,
+    root: &Path,
+    sending: bool,
+) -> Result<Vec<u8>, String> {
     if d.subject.contains(['\r', '\n']) {
         return Err("Subject cannot contain newlines".into());
     }
     let to = addresses(&d.to)?;
     let cc = addresses(&d.cc)?;
     let bcc = addresses(&d.bcc)?;
-    if to.len() + cc.len() + bcc.len() == 0 {
+    if sending && to.len() + cc.len() + bcc.len() == 0 {
         return Err("Add at least one recipient".into());
     }
 
@@ -1344,6 +1392,10 @@ pub struct Correspondence {
     pub edits: Arc<tokio::sync::Mutex<()>>,
     /// Serializes identity creation and schedule edits without blocking compose.
     pub scheduling: Arc<tokio::sync::Mutex<()>>,
+    /// Serializes server draft pushes and deletions.
+    pub draft_pushes: Arc<tokio::sync::Mutex<()>>,
+    /// Tells the frontend when a draft's server copy changes state.
+    pub draft_events: Arc<dyn Fn(&crate::draft_push::ServerDraftEvent) + Send + Sync>,
 }
 impl Correspondence {
     pub fn resume_schedules(&self) -> Result<(),String> {
@@ -1498,6 +1550,15 @@ impl Correspondence {
                 self.reconcile(id).await?;
                 return Ok(serde_json::Value::Null);
             }
+            // Touches only the push queue, so it never waits behind an edit.
+            PushDraft { id } => {
+                let database = self.database.clone();
+                let id = id.clone();
+                crate::run_database_task(move || database.push_drafts_now(Some(&id), now()))
+                    .await
+                    .map_err(String::from)?;
+                return Ok(serde_json::Value::Null);
+            }
             _ => {}
         }
         // Never hold a data lock while a user is choosing files; undo remains responsive.
@@ -1539,7 +1600,7 @@ impl Correspondence {
                 });
                 Ok(serde_json::to_value(identity?).map_err(error)?)
             }
-            ListDrafts | ListOutbox | ListScheduledSummaries | Reconcile { .. } => unreachable!("handled before the compose lock"),
+            ListDrafts | ListOutbox | ListScheduledSummaries | Reconcile { .. } | PushDraft { .. } => unreachable!("handled before the compose lock"),
             SchedulingInfo => {
                 let label=self.database.device_roster().map_err(error)?.into_iter().find(|d|d.is_self).and_then(|d|d.label).unwrap_or_else(||gethostname::gethostname().to_string_lossy().chars().take(60).collect());
                 Ok(serde_json::json!({"deviceName":label,"sharing":self.database.cross_device_sync_enrolled().map_err(error)?}))
@@ -1626,7 +1687,9 @@ impl Correspondence {
             )
             .map_err(error)?),
             Save { draft } => {
-                Ok(serde_json::to_value(self.database.save_draft(draft)?).map_err(error)?)
+                let mut saved = self.database.save_draft(draft)?;
+                saved.server_draft = self.database.server_draft_status(&saved)?;
+                Ok(serde_json::to_value(saved).map_err(error)?)
             }
             Discard { id } => {
                 self.database.discard_draft(&id)?;
@@ -2637,6 +2700,7 @@ mod tests {
             attachments: vec![],
             updated_at: now(),
             too_large_to_sync: false,
+            server_draft: None,
         };
         db.connection()
             .unwrap()
@@ -4298,6 +4362,55 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_server_draft_allows_no_recipients_and_keeps_one_message_id_across_pushes() {
+        let db = database();
+        let mut d = saved(&db);
+        d.to.clear();
+        assert!(build_mime(&d, &[], None, None, "op", Path::new("/unused")).is_err(), "sending still needs a recipient");
+        let first = build_draft_mime(&d, &[], None, None, Path::new("/unused")).unwrap();
+        d.body = "Edited".into();
+        d.revision += 1;
+        let second = build_draft_mime(&d, &[], None, None, Path::new("/unused")).unwrap();
+        let expected = format!("draft-{}@threestrands.local", d.id);
+        for raw in [&first, &second] {
+            let parsed = MessageParser::default().parse(raw).unwrap();
+            assert_eq!(parsed.message_id(), Some(expected.as_str()));
+            assert!(parsed.to().is_none(), "no empty To header");
+        }
+        let domain = build_draft_mime(&d, &[], None, Some("example.org"), Path::new("/unused")).unwrap();
+        let parsed = MessageParser::default().parse(&domain).unwrap();
+        assert_eq!(parsed.message_id(), Some(format!("draft-{}@example.org", d.id).as_str()));
+    }
+
+    #[test]
+    fn a_server_draft_keeps_bcc_and_reply_headers() {
+        let db = database();
+        let mut d = saved(&db);
+        d.bcc = "hidden@example.com".into();
+        d.reply_id = Some("original@example.com".into());
+        d.references = vec!["original@example.com".into()];
+        let raw = build_draft_mime(&d, &[], None, None, Path::new("/unused")).unwrap();
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        let bcc: Vec<_> = parsed.bcc().into_iter().flat_map(|list| list.iter()).filter_map(|a| a.address()).collect();
+        assert_eq!(bcc, ["hidden@example.com"]);
+        assert_eq!(
+            parsed.in_reply_to().as_text_list().map(|ids| ids.to_vec()),
+            Some(vec!["original@example.com".into()])
+        );
+    }
+
+    #[test]
+    fn a_server_draft_blocks_header_injection_like_a_send() {
+        let db = database();
+        let mut d = saved(&db);
+        d.subject = "Hi\r\nBcc: attacker@example.com".into();
+        assert!(build_draft_mime(&d, &[], None, None, Path::new("/unused")).is_err());
+        let mut d = saved(&db);
+        d.reply_id = Some("x\r\nBcc: attacker@example.com".into());
+        assert!(build_draft_mime(&d, &[], None, None, Path::new("/unused")).is_err());
+    }
+
     // ---- Phase 4 run 2 (D): Draft.from, identity From selection, stale
     //      identity rejection, Message-ID domain, header-injection bytes. ----
 
@@ -4933,6 +5046,8 @@ mod tests {
             gate: Arc::new(tokio::sync::Mutex::new(())),
             edits: Arc::new(tokio::sync::Mutex::new(())),
             scheduling: Arc::new(tokio::sync::Mutex::new(())),
+            draft_pushes: Arc::new(tokio::sync::Mutex::new(())),
+            draft_events: Arc::new(|_| {}),
         }
     }
     #[tokio::test]
