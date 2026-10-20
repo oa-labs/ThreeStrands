@@ -106,7 +106,7 @@ fn inbox_preview_decodes_entity_references_in_plain_text_bodies() {
         (
             "padding",
             "Your claim &#847; &#847;&zwnj;&nbsp; is ready",
-            "Your claim \u{34F} \u{34F}\u{200C}\u{A0} is ready",
+            "Your claim is ready",
         ),
         (
             "mixed",
@@ -127,6 +127,66 @@ fn inbox_preview_decodes_entity_references_in_plain_text_bodies() {
             "{thread}"
         );
     }
+}
+
+#[test]
+fn inbox_preview_drops_entity_padding_that_runs_past_the_preview_cap() {
+    // The cap counts displayed characters, so it never lands inside a
+    // reference and long padding cannot leave a literal `&zwnj` behind.
+    let database = database();
+    let fixtures = [
+        (
+            "padded-preheader",
+            format!("Shutterstock {}\n\nThis week's free images", "&zwnj;&nbsp;".repeat(60)),
+            "Shutterstock This week&#39;s free images",
+        ),
+        (
+            "spaced-padding",
+            format!("Your receipt {} &#8204;&#160;&#847;", "&#847; &zwnj; &shy; ".repeat(80)),
+            "Your receipt",
+        ),
+    ];
+    for (thread, body, preview) in fixtures {
+        database
+            .upsert_thread(
+                "you@example.com",
+                &[message(thread, thread, "2026-10-02T09:00:00Z", &body)],
+            )
+            .unwrap();
+        let thread_id = local_thread_id("you@example.com", thread);
+        assert_eq!(list_snippet(&database, &thread_id), preview, "{thread}");
+        assert!(!search_column(&database, "snippet", &thread_id).contains('&'), "{thread}");
+    }
+}
+
+#[test]
+fn reindexing_rebuilds_a_stored_preview_with_cut_off_padding() {
+    let database = database();
+    let body = format!("Shutterstock {}", "&zwnj;&nbsp;".repeat(60));
+    database
+        .upsert_thread(
+            "you@example.com",
+            &[message("stale", "stale", "2026-10-02T09:00:00Z", &body)],
+        )
+        .unwrap();
+    let thread_id = local_thread_id("you@example.com", "stale");
+    {
+        let connection = database.connection().unwrap();
+        connection
+            .execute(
+                "UPDATE threads SET snippet = 'Shutterstock \u{200C}\u{A0} &amp;zwnj' WHERE id = ?1",
+                [&thread_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pending_search_reindex(thread_id) VALUES (?1)",
+                [&thread_id],
+            )
+            .unwrap();
+    }
+    while database.reindex_next_search_batch(10).unwrap() > 0 {}
+    assert_eq!(list_snippet(&database, &thread_id), "Shutterstock");
 }
 
 #[test]

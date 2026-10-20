@@ -148,9 +148,10 @@ pub struct ThreadSearchText {
     /// repeated at `MIN_SEEN_LINE_COVERAGE`, not 100%) are kept, so every
     /// word stays searchable.
     pub body: String,
-    /// The latest message before any quoted history, Markdown and URLs
-    /// removed (see [`crate::preview_text`]), whitespace collapsed, and
-    /// capped at `SEARCH_PREVIEW_CHARS`; empty when that message has no text.
+    /// The latest message before any quoted history, HTML entity references
+    /// decoded, Markdown and URLs removed (see [`crate::preview_text`]),
+    /// whitespace and invisible padding collapsed, and capped at
+    /// `SEARCH_PREVIEW_CHARS`; empty when that message has no text.
     /// Everything here is also in `body`, so cutting at an unconfirmed quote
     /// loses no matches.
     pub latest_preview: String,
@@ -163,13 +164,16 @@ pub fn searchable_thread_text<'a>(bodies: impl IntoIterator<Item = &'a str>) -> 
     let mut out = String::new();
     let mut latest_preview = String::new();
     for body in bodies {
-        let preview = &body[..history.preview_text_len(body)];
+        // Decoded before collapsing and capping, so entity padding collapses
+        // like the characters it stands for and the cap never splits a
+        // reference.
+        let preview = crate::preview_text::decode_entity_references(&body[..history.preview_text_len(body)]);
         // Markdown and raw URLs are noise in a one-line preview; a body that
         // is nothing but a link still previews as that link.
-        let readable = crate::preview_text::readable_preview(preview);
-        let collapse = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let readable = crate::preview_text::readable_preview(&preview);
+        let collapse = crate::preview_text::collapse_preview;
         latest_preview = match collapse(&readable) {
-            cleaned if cleaned.is_empty() => collapse(preview),
+            cleaned if cleaned.is_empty() => collapse(&preview),
             cleaned => cleaned,
         }
         .chars()
