@@ -70,6 +70,7 @@ type Options = {
     getSuggestions: () => void;
     openThreadChat: () => void;
     refreshMail: () => void;
+    closeSearch: () => void;
   };
 };
 
@@ -93,13 +94,13 @@ export function useAppCommandContext({
   const targetThreads = useMemo(() => mailboxThreads.threads.filter((thread) => targetIds.includes(thread.id)), [mailboxThreads.threads, targetIds]);
   const { taskWorkspaceRef, taskLayout, selectedTaskStatus, selectedTaskHasThread, newTask } = tasks;
   const { canUndoAction, canUndoArchive, undoLastAction } = undo;
-  const { includeArchived, setSearchOpen } = mailboxThreads;
+  const { includeArchived, searchOpen, setSearchOpen } = mailboxThreads;
   const { mailbox, setMailbox, setActiveSplitInboxId, activeAccountId, selectedId, setSelectedId, isTabbedMailbox } = view;
   const {
     interactionScope, canUnsubscribe, latestMessage, aiSummaryAvailable, aiBriefEnabled, aiChatEnabled, aiDraftEnabled, labelTargetIds,
     setLabelTargetIds, setUnsubscribeMessageId, setPaletteOpen, setShortcutHelpOpen, setGettingStartedOpen,
     openSettingsAt, adjustFontScale, toggleContextPanelFocus, selectAdjacentMessage,
-    getSuggestions, openThreadChat, refreshMail,
+    getSuggestions, openThreadChat, refreshMail, closeSearch,
   } = ui;
   const context = useMemo<CommandContext>(() => ({
     ...correspondence.context,
@@ -119,6 +120,8 @@ export function useAppCommandContext({
     canUnsubscribe,
     canGoBack: returnStep !== null,
     goBack,
+    searchOpen: searchOpen && isTabbedMailbox,
+    closeSearch,
     canNavigateMessages: displayedMessages.length > 1,
     canSendAndMarkDone: composerBelongsToVisibleThread,
     sendAndMarkDone: () => {
@@ -313,7 +316,7 @@ export function useAppCommandContext({
     mutateIds, openFolder, selectedIndex, visibleThreads, setSelectedId, selectAdjacentMessage,
     taskWorkspaceRef, setContactsView, latestMessage, setUnsubscribeMessageId, labelTargetIds,
     recordTriageEvent, includeArchived, toggleChecked, setMessageExpansionOverrides,
-    messageStackRef, activeMessageIdRef, runBrief, isTabbedMailbox, setSearchOpen, setMailbox, activeAccountId,
+    messageStackRef, activeMessageIdRef, runBrief, isTabbedMailbox, searchOpen, setSearchOpen, closeSearch, setMailbox, activeAccountId,
     setActiveSplitInboxId, setLabelTargetIds, setPaletteOpen, setShortcutHelpOpen, setGettingStartedOpen, openSettingsAt,
     adjustFontScale, undoLastAction,
   ]);

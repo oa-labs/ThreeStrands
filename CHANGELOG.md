@@ -14,6 +14,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Event details in the calendar side panel now show attendees and the description in the same text size as the rest of the panel, and a single guest reads "1 attendee".
 - Calendars on your other accounts keep loading when a calendar account you connected on another device syncs to this one. Previously **Settings → Calendar Accounts** said every account's calendars couldn't be loaded until you disconnected that account here. A newly synced account now also appears there without restarting.
 - Inbox previews for some newsletters no longer show a wide blank gap followed by stray text like `&zwnj`. Conversations already in your inbox are fixed automatically.
+- Escape now closes search after you open a result. Previously it worked only while the search box had focus.
 
 ## 0.145.2 — 2026-10-19
 

@@ -451,13 +451,18 @@ export function App() {
     if (activeDraft) handleContextPanelKeyDown(event, focusDraftBody);
   }, [activeDraft, focusDraftBody]);
 
+  const closeSearch = useCallback(() => {
+    setQuery("");
+    setSearchOpen(false);
+    selectedThreadRowRef.current?.focus();
+  }, [selectedThreadRowRef, setQuery, setSearchOpen]);
   const context = useAppCommandContext({
     correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads,
     runBrief, recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, mutateIds,
     view: { mailbox, setMailbox, setActiveSplitInboxId, activeAccountId, selectedId, setSelectedId, isTabbedMailbox },
     ui: { interactionScope, canUnsubscribe, latestMessage, aiSummaryAvailable,
       aiBriefEnabled: aiSummaryFeatureEnabled || aiActionFeatureEnabled, aiChatEnabled: aiChatFeatureEnabled, aiDraftEnabled: aiDraftFeatureEnabled,
-      labelTargetIds, setLabelTargetIds, setUnsubscribeMessageId, setPaletteOpen, setShortcutHelpOpen, setGettingStartedOpen, openSettingsAt, adjustFontScale, toggleContextPanelFocus, selectAdjacentMessage, getSuggestions, openThreadChat, refreshMail },
+      labelTargetIds, setLabelTargetIds, setUnsubscribeMessageId, setPaletteOpen, setShortcutHelpOpen, setGettingStartedOpen, openSettingsAt, adjustFontScale, toggleContextPanelFocus, selectAdjacentMessage, getSuggestions, openThreadChat, refreshMail, closeSearch },
   });
 
   const {
@@ -546,11 +551,6 @@ export function App() {
   const clearContextOpenedThread = useCallback(() => {
     contextOpenedThreadRef.current = null;
   }, [contextOpenedThreadRef]);
-  const closeSearch = useCallback(() => {
-    setQuery("");
-    setSearchOpen(false);
-    selectedThreadRowRef.current?.focus();
-  }, [selectedThreadRowRef, setQuery, setSearchOpen]);
   const toggleInboxOnly = useCallback(() => setInboxOnly((current) => !current), [setInboxOnly]);
   // Search suggestions draw on the account(s) being searched: the active one,
   // or every account in the merged view.

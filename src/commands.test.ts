@@ -182,6 +182,8 @@ describe("command registry", () => {
       "mod+j": ["draft.replyAssist", "chat.open"],
       tab: ["mailbox.nextSplit", "tasks.nextView", "contacts.nextView"],
       "shift+tab": ["mailbox.previousSplit", "contacts.previousView", "tasks.previousView"],
+      // Close Search stands aside while Back is available.
+      escape: ["navigation.back", "search.close"],
     });
 
     for (const focusedPane of ["mail", "tasks", "contacts", "files", "calendar"] as const) {
@@ -211,6 +213,23 @@ describe("command registry", () => {
     expect(back.enabled(noopContext())).toBe(false);
     expect(back.enabled({ ...noopContext(), canGoBack: true })).toBe(true);
     expect(back.enabled({ ...noopContext(), canGoBack: true, composerActive: true })).toBe(false);
+  });
+
+  it("closes search with Escape from a result, after Back and never while composing", () => {
+    const close = commands.find((command) => command.id === "search.close")!;
+    const closeSearch = vi.fn();
+    const searching = { ...noopContext(), searchOpen: true, closeSearch };
+    expect(close.keys).toEqual(["Escape"]);
+    expect(close.enabled(noopContext())).toBe(false);
+    expect(close.enabled(searching)).toBe(true);
+    expect(close.enabled({ ...searching, composerActive: true })).toBe(false);
+    expect(close.enabled({ ...searching, focusedPane: "tasks" })).toBe(false);
+    // A jump out of the results goes back to them first.
+    expect(close.enabled({ ...searching, canGoBack: true })).toBe(false);
+    const escape = new KeyboardEvent("keydown", { key: "Escape" });
+    expect(commands.find((command) => command.enabled(searching) && command.keys.some((key) => matchesShortcut(escape, key)))?.id).toBe("search.close");
+    close.run(searching);
+    expect(closeSearch).toHaveBeenCalledOnce();
   });
 
   it("routes task navigation only while the Tasks pane is focused", () => {

@@ -54,6 +54,10 @@ export type CommandContext = {
   undoSend(): void;
   /** Returns to where the latest jump to another conversation started. */
   goBack(): void;
+  /** The mail list is showing the search box or its results. */
+  searchOpen?: boolean;
+  /** Clears the search and returns to the full mailbox. */
+  closeSearch?(): void;
   selectNext(): void;
   selectPrevious(): void;
   selectNextTask(): void;
@@ -196,6 +200,8 @@ export const commands: Command[] = [
   { id: "draft.forward", title: "Forward", keys: ["f"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive, run: (c) => complete(c.forward) },
   { id: "draft.editAsNew", title: "Edit as New", keys: ["Shift+c"], keywords: ["send again", "resend", "copy", "duplicate", "use as draft"], group: "Compose", enabled: (c) => (c.mailbox === "outbox" ? c.focusedPane === "mail" : c.selectedId !== null && isThreadMailbox(c)) && !c.composerActive && c.canEditAsNew, run: (c) => complete(c.editAsNew) },
   { id: "navigation.back", title: "Go Back", keys: ["Escape"], group: "Navigation", enabled: (c) => c.canGoBack && !c.composerActive, run: (c) => complete(c.goBack) },
+  // Escape inside the search box closes it there; this covers focus on a result or the reader.
+  { id: "search.close", title: "Close Search", keys: ["Escape"], group: "Navigation", enabled: (c) => Boolean(c.searchOpen) && c.focusedPane === "mail" && !c.canGoBack && !c.composerActive, run: (c) => complete(() => c.closeSearch?.()) },
   { id: "mailbox.inbox", title: "Go to Inbox", keys: ["g then i"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openInbox) },
   { id: "mailbox.allMail", title: "Go to All Mail", keys: ["g then a"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openAllMail) },
   { id: "mailbox.sent", title: "Go to Sent", keys: ["g then s"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openSent) },
