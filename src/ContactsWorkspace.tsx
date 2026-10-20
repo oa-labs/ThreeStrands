@@ -136,7 +136,9 @@ export function ContactsWorkspace({onOpenThread,onCompose,onSaved,onOpenAiSettin
   };
   const discard=()=>{if(adding){setAdding(false);setDraft(empty());return;}if(profile)setDraft(draftFrom(profile));};
   const revealField=(field:OptionalField)=>{focusFieldRef.current=field;setRevealedFields(current=>current.includes(field)?current:[...current,field]);};
-  useEffect(()=>{const field=focusFieldRef.current;if(!field)return;focusFieldRef.current=null;editorRef.current?.querySelector<HTMLElement>(`[data-contact-field="${field}"] input,[data-contact-field="${field}"] textarea`)?.focus();},[revealedFields]);
+  // Keep the request until the field renders: a stale run of this effect from
+  // an earlier commit can flush after the click but before the reveal commits.
+  useEffect(()=>{const field=focusFieldRef.current;if(!field)return;const target=editorRef.current?.querySelector<HTMLElement>(`[data-contact-field="${field}"] input,[data-contact-field="${field}"] textarea`);if(!target)return;focusFieldRef.current=null;target.focus();},[revealedFields]);
   const startNewGroup=()=>{changeView("groups");setCreatingGroup(true);};
   const startNew=()=>{if(view==="groups")changeView("all");setSelectedId(null);setProfile(null);setDraft(empty());setAdding(true);setConfirmDelete(false);setSuggestions([]);setMoreEmailsAvailable(false);setEmailsReviewed(0);};
   const deleteProfile=async()=>{if(!profile||profile.id.startsWith("derived:"))return;if(!confirmDelete){setConfirmDelete(true);return;}try{await mailClient.deleteContactProfile(profile.id);setConfirmDelete(false);setSelectedId(null);setProfile(null);setAdding(false);await load();void loadGroups();}catch(reason){setError(errorMessage(reason));}};
