@@ -411,6 +411,14 @@ mod tests {
     const TINY_JPEG: &[u8] = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\
         \xff\xc0\x00\x11\x08\x00\x02\x00\x03\x03\x01\x11\x00\x02\x11\x01\x03\x11\x01\xff\xd9";
 
+    /// A JFIF APP0 segment followed by a baseline SOF0 frame header.
+    fn jpeg_header(width: u16, height: u16) -> Vec<u8> {
+        let mut bytes = TINY_JPEG.to_vec();
+        bytes[25..27].copy_from_slice(&height.to_be_bytes());
+        bytes[27..29].copy_from_slice(&width.to_be_bytes());
+        bytes
+    }
+
     async fn download_served(content_type: Option<&str>, body: &[u8]) -> Result<String, String> {
         let header = content_type
             .map(|value| format!("Content-Type: {value}\r\n"))
@@ -438,6 +446,19 @@ mod tests {
 
         let jpeg = download_served(None, TINY_JPEG).await.unwrap();
         assert!(jpeg.starts_with("data:image/jpeg;base64,"), "{jpeg}");
+    }
+
+    #[tokio::test]
+    async fn admits_full_size_phone_photos_and_refuses_larger_rasters() {
+        let photo = download_served(Some("image/jpeg"), &jpeg_header(5_712, 4_284))
+            .await
+            .unwrap();
+        assert!(photo.starts_with("data:image/jpeg;base64,"), "{photo}");
+
+        let error = download_served(Some("image/jpeg"), &jpeg_header(6_000, 6_000))
+            .await
+            .unwrap_err();
+        assert_eq!(error, "Image dimensions exceed the maximum allowed size");
     }
 
     #[tokio::test]

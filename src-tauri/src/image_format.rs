@@ -8,7 +8,9 @@ pub(crate) const MAX_RASTER_BYTES: usize = 5 * 1024 * 1024;
 pub(crate) const MAX_CONTACT_PHOTO_BYTES: usize = 64 * 1024;
 const MAX_RASTER_WIDTH: usize = 8_192;
 const MAX_RASTER_HEIGHT: usize = 8_192;
-const MAX_RASTER_PIXELS: usize = 16_000_000;
+/// Bounds decoded memory (about 128 MiB as RGBA) while admitting full-size
+/// photos from current phone cameras, such as 24 MP (5712 × 4284) images.
+const MAX_RASTER_PIXELS: usize = 8_192 * 4_096;
 
 pub(crate) fn is_supported_raster_mime(mime_type: &str) -> bool {
     matches!(
@@ -149,9 +151,12 @@ mod tests {
 
     #[test]
     fn enforces_raster_dimension_and_pixel_boundaries() {
-        assert!(validate_raster_dimensions(3_999, 4_000).is_ok());
-        assert!(validate_raster_dimensions(4_000, 4_000).is_ok());
-        assert!(validate_raster_dimensions(4_001, 4_000).is_err());
+        assert!(validate_raster_dimensions(8_192, 4_095).is_ok());
+        assert!(validate_raster_dimensions(8_192, 4_096).is_ok());
+        assert!(validate_raster_dimensions(8_192, 4_097).is_err());
+        assert!(validate_raster_dimensions(5_712, 4_284).is_ok());
+        assert!(validate_raster_dimensions(4_284, 5_712).is_ok());
+        assert!(validate_raster_dimensions(6_000, 6_000).is_err());
         assert!(validate_raster_dimensions(MAX_RASTER_WIDTH + 1, 1).is_err());
         assert!(validate_raster_dimensions(1, MAX_RASTER_HEIGHT + 1).is_err());
     }

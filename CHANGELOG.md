@@ -9,6 +9,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ### Fixed
 - Clicking a conversation in the message list while writing a new message now opens it. Your message is saved to **Drafts** so you can finish it later.
+- Full-size photos taken on recent phones now load in emails when remote images are on, instead of showing as empty boxes.
 
 ## 0.151.3 — 2026-10-21
 
