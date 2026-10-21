@@ -448,6 +448,19 @@ export function App() {
       .then(() => openTaskThread(threadId))
       .catch((reason: unknown) => setNotice({ message: errorMessage(reason) }));
   }, [correspondence, openTaskThread, setNotice]);
+  // Clicking another conversation in the list does the same; a reply stays open over its own conversation.
+  const selectThreadFromList = useCallback((threadId: string) => {
+    if (!correspondence.activeDraft || (!composingApart && threadId === selectedId)) {
+      selectThread(threadId);
+      return;
+    }
+    void correspondence.flushDraft()
+      .then(() => {
+        correspondence.context.openInbox();
+        selectThread(threadId);
+      })
+      .catch((reason: unknown) => setNotice({ message: errorMessage(reason) }));
+  }, [composingApart, correspondence, selectThread, selectedId, setNotice]);
   const {
     selectAdjacentMessage, activateMessage, toggleMessage, showMessage, showMessageLink, linkReveal, registerMessageNode,
     respondToMessage,
@@ -1038,7 +1051,7 @@ export function App() {
               checked={checkedIds.has(thread.id)}
               showAccount={accounts.length > 1}
               accountColor={accountColors.get(thread.accountId)}
-              onSelect={selectThread}
+              onSelect={selectThreadFromList}
               onToggleCheck={toggleChecked}
               onSelectionGesture={applyThreadSelectionGesture}
               rowRef={thread.id === selectedId ? selectedThreadRowRef : undefined}
