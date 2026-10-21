@@ -64,12 +64,15 @@ and message rendering each have their own document in this folder.
 - Sent shows outgoing conversations across devices. Edit as New copies the
   subject, body, and attachments to a fresh message without recipients.
 - Drafts and Outbox views. Outbox contains only mail that has not finished
-  sending. Drafts on Gmail accounts live in Gmail Drafts: they are pushed
+  sending. Drafts on Gmail accounts live in Gmail Drafts, and drafts on IMAP
+  accounts in the mapped Drafts mailbox (each save a new copy, the old one
+  removed after): they are pushed
   after a 5-second pause, on composer close, and before quitting, and pulled
   every minute and when the window comes to the front, attachments included.
   Drafts created or edited elsewhere are imported; a draft changed on both
   sides asks which version to keep. Unsent replies show at the end of their
-  conversation. Drafts on other accounts stay on the device. Replicated Sync
+  conversation (Gmail only; IMAP replies have no conversation id). IMAP
+  accounts without a Drafts mailbox keep drafts on the device. Replicated Sync
   no longer carries drafts.
 - SQLite draft persistence with revision checks, 300 ms debounced autosave,
   visible save status, and save-before-close. Unsaved edits remain visible if a

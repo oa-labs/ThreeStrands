@@ -366,7 +366,9 @@ In label-folder mode:
 ### What gets synced
 
 - **Mailboxes:** INBOX, Sent, Archive, Junk and Trash are synced continuously.
-  Drafts are not, because ThreeStrands drafts are local. Aggregate mailboxes
+  Drafts are not: they are read and written as server drafts
+  ([server-drafts-design.md](server-drafts-design.md)), never as
+  conversation messages. Aggregate mailboxes
   (`\All`, `\Flagged`) are not synced; see above. User folders are
   listed. Their headers sync inside the window below, and bodies are fetched
   when a message is opened.

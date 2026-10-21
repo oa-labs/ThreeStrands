@@ -260,6 +260,14 @@ impl Database {
     /// Returns whether the local draft was removed.
     fn server_copy_deleted(&self, link: &Link) -> DbResult<bool> {
         self.with_transaction(|tx| {
+            // This pull may already have moved the link to a newer copy, as
+            // when a server stores every save as a new message.
+            let current: Option<Option<String>> = tx
+                .query_row("SELECT server_id FROM draft_server_links WHERE draft_id=?1", [&link.draft_id], |row| row.get(0))
+                .optional()?;
+            if current.flatten() != link.server_id {
+                return Ok(false);
+            }
             let local: Option<i64> = tx
                 .query_row("SELECT revision FROM drafts WHERE id=?1", [&link.draft_id], |row| row.get(0))
                 .optional()?;
@@ -730,6 +738,37 @@ mod tests {
         assert_eq!(harness.db().drafts().unwrap().len(), 1);
         let again = harness.db().create_draft("reply", Some("source".into()), ACCOUNT, &[]).unwrap();
         assert_eq!(again.id, imported.id);
+    }
+
+    #[tokio::test]
+    async fn a_copy_replaced_by_another_device_follows_rather_than_leaving() {
+        // An IMAP server stores every save as a new message with a new id.
+        let harness = Harness::new();
+        let draft = harness.edit(harness.new_draft(), "One");
+        harness.run_after(PAST_DELAY).await;
+        let message_id = format!("draft-{}@threestrands.local", draft.id);
+        harness.server.drafts().clear();
+        harness.server.write_elsewhere("server-9", &message(&message_id, "Plans", "Edited on the laptop"), None);
+
+        assert!(harness.pull().await);
+        let pulled = harness.db().draft(&draft.id).expect("a replaced copy is not a deletion");
+        assert!(pulled.body.contains("Edited on the laptop"));
+        assert_eq!(harness.state(&pulled), "saved");
+    }
+
+    #[tokio::test]
+    async fn a_push_over_a_copy_replaced_elsewhere_asks_first() {
+        let harness = Harness::new();
+        let draft = harness.edit(harness.new_draft(), "One");
+        harness.run_after(PAST_DELAY).await;
+        let message_id = format!("draft-{}@threestrands.local", draft.id);
+        harness.server.drafts().clear();
+        harness.server.write_elsewhere("server-9", &message(&message_id, "Plans", "Edited on the laptop"), None);
+        let draft = harness.edit(draft, "Edited here");
+        harness.run_after(PAST_DELAY).await;
+        assert_eq!(harness.state(&draft), "conflict");
+        assert!(harness.server.drafts()["server-9"].0.contains("Edited on the laptop"));
+        assert_eq!(harness.server.drafts().len(), 1, "no second copy");
     }
 
     #[tokio::test]

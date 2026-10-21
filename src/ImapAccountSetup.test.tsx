@@ -184,6 +184,19 @@ describe("IMAP account setup", () => {
     }));
   });
 
+  it("says drafts stay on this computer only while no Drafts mailbox is mapped", async () => {
+    vi.mocked(mailClient.discoverImapMailboxes).mockResolvedValue({
+      proposals: [], selectable: [{ name: "Drafts", delimiter: "/", specialUse: null }], labelContainers: [],
+    });
+    render(<ImapAccountSetup onConnected={vi.fn()} />);
+    fillManualSettings();
+    await save();
+    const note = "Without a Drafts mailbox, drafts stay on this computer.";
+    expect(screen.getByText(note)).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "Drafts Mailbox" }), { target: { value: "Drafts" } });
+    expect(screen.queryByText(note)).not.toBeInTheDocument();
+  });
+
   it("requires an Archive choice when the user turns off creation", async () => {
     vi.mocked(mailClient.discoverImapMailboxes).mockResolvedValue({
       proposals: [], selectable: [{ name: "Storage", delimiter: "/", specialUse: null }], labelContainers: [],

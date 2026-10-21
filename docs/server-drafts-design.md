@@ -1,8 +1,9 @@
 # Server drafts design
 
 Status: accepted (2026-10-20). Phases 1–3 (Gmail push, Gmail pull, and
-retiring Replicated Sync draft content) are implemented in 0.149.0. IMAP
-(phase 4) and the optional metadata entity (phase 5) remain. Replaces the
+retiring Replicated Sync draft content) are implemented in 0.149.0, and
+phase 4 (IMAP) in 0.150.0. Only the optional metadata entity (phase 5)
+remains. Replaces the
 draft content sync that shipped in 0.147.0 through Replicated Sync.
 
 ## Why change
@@ -133,23 +134,35 @@ that builds a draft rather than a send:
 
 ### IMAP
 
-- **Push:** `APPEND` the new copy to `\Drafts` with the `\Draft` and `\Seen`
-  flags. Only after it succeeds, remove the previous copy: `UID EXPUNGE` when
-  `UIDPLUS` is present, otherwise mark it `\Deleted` and leave it, as the Sent
-  copy path does. With `UIDPLUS`, `APPENDUID` gives the new UID. Without it,
-  the next pull finds the copy by `serverMessageId`.
-- **Order matters:** always append before removing, so a failure leaves a
-  duplicate rather than nothing. The pull step collapses duplicates that share
-  a `serverMessageId` by keeping the newest.
-- **Size:** reuse the existing `APPEND` size limit in
-  [policy.rs](../src-tauri/src/provider/imap/policy.rs). A draft over the
-  limit stays local with the **Couldn't save to server** status.
-- **Pull:** `\Drafts` moves from `SyncWindowClass::NotSynced` to a synced
-  class, with headers fetched in a window and bodies fetched on open. Like
-  other synced mailboxes, it contributes no label, and its messages never
-  appear as conversation messages.
-- **No `\Drafts` mailbox:** the account keeps local-only drafts, and
-  **Settings → Mail Accounts** says so. ThreeStrands doesn't create one.
+- **Copy ids:** a copy is `UIDVALIDITY:UID` in the mapped `\Drafts` mailbox,
+  and that id is also its version, since a stored message never changes.
+- **Push:** `APPEND` the new copy with `\Seen`, plus `\Draft` when the
+  mailbox's `PERMANENTFLAGS` keeps it (Proton Mail Bridge's doesn't). The new
+  UID comes from a Message-ID search after the append, so it works without
+  `UIDPLUS`. A copy stored but not yet visible to SEARCH is a retryable
+  error; the retry finds it by `Message-ID` rather than appending again.
+- **Order matters:** only after the new copy is stored is the old one marked
+  `\Deleted`, then removed with `UID EXPUNGE` when `UIDPLUS` is present.
+  Without it the old copy stays marked, as the Sent copy path does, because a
+  plain `EXPUNGE` would also remove other clients' deleted mail.
+- **Duplicates:** listing reports only the newest copy of each `Message-ID`.
+  Stale copies of this app's own drafts (`draft-…` Message-IDs), left by a
+  save interrupted between storing and removing, are removed; other apps'
+  duplicates are left alone.
+- **Replaced elsewhere:** another device saving creates a new copy and removes
+  the one this device knew. Before pushing, a vanished copy is looked up by
+  `Message-ID`; a replacement found there is a conflict, not a deletion. A
+  pull maps a replacement back to the draft through the same `Message-ID`.
+- **Size:** fetches reuse the `APPEND` size limit in
+  [policy.rs](../src-tauri/src/provider/imap/policy.rs).
+- **Mail sync:** `\Drafts` stays `SyncWindowClass::NotSynced`. Drafts reach
+  the app only through pull, never as conversation messages.
+- **Threads:** IMAP conversations are threaded locally, so an imported reply
+  has no conversation id. It opens as a reply with correct headers, but it
+  doesn't show as a draft in its conversation and **Reply** starts a new one.
+- **No `\Drafts` mailbox:** the account keeps local-only drafts, the
+  composer says **Draft saved**, and the mailbox mapping step at setup says
+  drafts stay on this computer. ThreeStrands doesn't create one.
 
 ### Pull and import
 

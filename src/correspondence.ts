@@ -24,8 +24,8 @@ export type Draft = {
   serverDraft?: ServerDraftStatus | null;
   attachments: Attachment[]; updatedAt: number;
 };
-/** `pending` waits for the push delay, `retrying` follows a temporary failure, `failed` needs the user, `conflict` means the draft also changed elsewhere and the user picks a version. */
-export type ServerDraftStatus = { state: "pending" | "retrying" | "failed" | "conflict" | "saved"; error?: string };
+/** `pending` waits for the push delay, `retrying` follows a temporary failure, `failed` needs the user, `conflict` means the draft also changed elsewhere and the user picks a version, `local` means the account keeps drafts on this device only. */
+export type ServerDraftStatus = { state: "pending" | "retrying" | "failed" | "conflict" | "local" | "saved"; error?: string };
 /** Emitted as `draft-server-status` when a push finishes or fails; `revision` is the draft revision it describes. */
 export type ServerDraftEvent = { id: string; revision: number; status: ServerDraftStatus };
 /** The run-4b Sent-copy job state surfaced on an outbox item; `null` for Gmail, legacy rows, and servers that save their own copy. */

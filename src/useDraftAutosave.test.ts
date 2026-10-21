@@ -18,6 +18,7 @@ describe("savedStatus", () => {
     expect(savedStatus().text).toBe("Draft saved");
     expect(savedStatus(null).text).toBe("Draft saved");
     expect(savedStatus({ state: "saved" }).text).toBe("Draft saved");
+    expect(savedStatus({ state: "local" }).text).toBe("Draft saved");
   });
   it("never says Draft saved before the server confirms", () => {
     expect(savedStatus({ state: "pending" }).text).toBe("Saving…");

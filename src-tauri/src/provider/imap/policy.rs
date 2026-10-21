@@ -143,7 +143,7 @@ pub enum SyncWindowClass {
     /// Archive, Junk, Trash, user folders and label folders:
     /// [`FOLDER_SYNC_WINDOW`].
     Folder,
-    /// Never synced: Drafts (drafts are local), `\All` and `\Flagged`
+    /// Never synced: Drafts (read as server drafts instead), `\All` and `\Flagged`
     /// aggregates, and `\Noselect` containers. The window is zero, so nothing
     /// is in it.
     NotSynced,

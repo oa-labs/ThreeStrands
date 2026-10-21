@@ -55,6 +55,7 @@ use super::threading::ThreadingInput;
 use super::{ImapLocation, ImapStateStore};
 
 mod body_fetch;
+mod drafts;
 mod label_folders;
 mod mail_send;
 mod moves;
@@ -558,3 +559,5 @@ mod tests;
 // ===========================================================================
 #[cfg(test)]
 mod mutate_tests;
+#[cfg(test)]
+mod drafts_tests;

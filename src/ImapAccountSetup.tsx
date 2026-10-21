@@ -529,6 +529,9 @@ function MailboxMappingReview({
                     {proposal.source === "special_use" ? "from server attribute" : "name guess — please verify"}
                   </span>
                 )}
+                {role === "drafts" && !choices.drafts && (
+                  <span className="imap-mapping-source">Without a Drafts mailbox, drafts stay on this computer.</span>
+                )}
                 {isArchive && (
                   <label className="imap-mapping-create">
                     <input

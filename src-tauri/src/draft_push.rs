@@ -51,7 +51,7 @@ fn now() -> i64 {
 
 /// Whether drafts on accounts of this kind are kept on the server.
 pub(crate) fn kind_keeps_server_drafts(kind: MailProviderKind) -> bool {
-    matches!(kind, MailProviderKind::Gmail)
+    matches!(kind, MailProviderKind::Gmail | MailProviderKind::Imap)
 }
 
 /// Where a draft's server copy stands, as the composer shows it.
@@ -524,7 +524,10 @@ impl Correspondence {
             }
         };
         if !provider.server_drafts() {
+            // No server drafts on this account, such as an IMAP account
+            // without a Drafts mailbox: the draft stays on this device.
             self.database.forget_server_draft_link(&draft.id)?;
+            self.notify_draft(&draft, "local", None);
             return Ok(());
         }
         match self.push_to_provider(provider.as_ref(), &draft, link).await {
@@ -563,9 +566,15 @@ impl Correspondence {
     ) -> Result<Option<ServerDraft>, PushError> {
         let server_id = link.server_id.as_deref();
         let mut server_id = server_id.map(str::to_string);
+        // The copy this device last saw is gone. On a server where every save
+        // is a new copy, that can mean another device or app replaced it.
+        let mut replaced = false;
         if let (Some(id), Some(seen)) = (&server_id, &link.server_version) {
             match provider.server_draft_version(id).await.map_err(PushError::Provider)? {
-                None => server_id = None,
+                None => {
+                    server_id = None;
+                    replaced = true;
+                }
                 Some(current) if current != *seen => {
                     self.hold_server_conflict(provider, draft, id).await.map_err(PushError::Provider)?;
                     return Ok(None);
@@ -588,11 +597,17 @@ impl Correspondence {
         let thread = draft.thread_id.as_deref();
         let existing = match server_id {
             Some(id) => Some(id.to_string()),
-            None => provider
-                .find_server_draft(&server_message_id(&draft.id, domain.as_deref()))
-                .await
-                .map_err(PushError::Provider)?
-                .map(|found| found.id),
+            None => {
+                let found = provider
+                    .find_server_draft(&server_message_id(&draft.id, domain.as_deref()))
+                    .await
+                    .map_err(PushError::Provider)?;
+                if let Some(found) = found.as_ref().filter(|_| replaced) {
+                    self.hold_server_conflict(provider, draft, &found.id).await.map_err(PushError::Provider)?;
+                    return Ok(None);
+                }
+                found.map(|found| found.id)
+            }
         };
         if let Some(id) = existing {
             match provider.update_server_draft(&id, &raw, thread).await {
@@ -1110,13 +1125,28 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn drafts_on_accounts_without_server_drafts_stay_on_this_device() {
+    async fn imap_accounts_keep_server_drafts_too() {
         let harness = Harness::new();
         harness
             .db()
             .connection()
             .unwrap()
             .execute("UPDATE accounts SET provider='imap' WHERE email=?1", [ACCOUNT])
+            .unwrap();
+        let draft = harness.edit(harness.new_draft(), "Saved to Drafts");
+        assert_eq!(harness.state(&draft), "pending");
+        harness.run_after(PAST_DELAY).await;
+        assert!(harness.only_server_body().contains("Saved to Drafts"));
+    }
+
+    #[tokio::test]
+    async fn drafts_on_an_account_set_up_on_another_device_stay_on_this_one() {
+        let harness = Harness::new();
+        harness
+            .db()
+            .connection()
+            .unwrap()
+            .execute("UPDATE accounts SET on_this_device=0 WHERE email=?1", [ACCOUNT])
             .unwrap();
         let draft = harness.edit(harness.new_draft(), "Local");
         assert_eq!(harness.status(&draft), None);
@@ -1132,6 +1162,11 @@ pub(crate) mod tests {
         harness.run_after(PAST_DELAY).await;
         assert_eq!(harness.status(&draft), None);
         assert!(harness.server.calls().is_empty());
+        let events = harness.events.lock().unwrap().clone();
+        assert!(
+            matches!(events.last(), Some(DraftEvent::Status(event)) if event.status.state == "local"),
+            "the composer learns the draft stays here"
+        );
     }
 
     #[tokio::test]

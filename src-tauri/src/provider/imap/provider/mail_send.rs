@@ -145,4 +145,36 @@ impl MailSend for ImapProvider {
         let _ = session.logout().await;
         result
     }
+
+    fn server_drafts(&self) -> bool {
+        self.drafts_mailbox().is_some()
+    }
+
+    async fn find_server_draft(&self, message_id: &str) -> ProviderResult<Option<crate::provider::ServerDraft>> {
+        self.find_draft_copy(message_id).await
+    }
+
+    async fn create_server_draft(&self, raw: &[u8], _thread: Option<&str>) -> ProviderResult<crate::provider::ServerDraft> {
+        self.write_draft_copy(raw, None).await
+    }
+
+    async fn update_server_draft(&self, id: &str, raw: &[u8], _thread: Option<&str>) -> ProviderResult<crate::provider::ServerDraft> {
+        self.write_draft_copy(raw, Some(id)).await
+    }
+
+    async fn delete_server_draft(&self, id: &str) -> ProviderResult<()> {
+        self.delete_draft_copy(id).await
+    }
+
+    async fn list_server_drafts(&self) -> ProviderResult<Vec<crate::provider::ServerDraft>> {
+        self.list_draft_copies().await
+    }
+
+    async fn fetch_server_draft(&self, id: &str) -> ProviderResult<crate::provider::FetchedServerDraft> {
+        self.fetch_draft_copy(id).await
+    }
+
+    async fn server_draft_version(&self, id: &str) -> ProviderResult<Option<String>> {
+        self.draft_copy_version(id).await
+    }
 }
