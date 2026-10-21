@@ -3,6 +3,7 @@
 //! read as noise in an inbox row. This only shapes preview text; the stored
 //! body and the search index keep every character.
 
+
 /// `text` with Markdown link and emphasis syntax reduced to its words and
 /// URLs removed. Line structure is kept for the caller to collapse.
 pub fn readable_preview(text: &str) -> String {
@@ -57,6 +58,41 @@ pub fn collapse_preview(text: &str) -> String {
         .filter(|word| !word.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// How many of a preheader's first words, in order, mark it as already in a
+/// preview. Enough to be a phrase, not just a shared brand name.
+pub const PREHEADER_OPENING_WORDS: usize = 5;
+
+/// `preview` led by the sender's `preheader` (the hidden line written for
+/// inbox previews), unless the preview already holds the preheader's
+/// opening phrase or every one of its words, so a copy that differs only in
+/// punctuation or what follows is not shown twice. Capped at
+/// `SEARCH_PREVIEW_CHARS` like the preview itself.
+pub fn with_preheader(preview: &str, preheader: &str) -> String {
+    let preheader = collapse_preview(preheader);
+    let shown: String = preview.chars().take(crate::quoted_history::SEARCH_PREVIEW_CHARS).collect();
+    let words = |text: &str| -> Vec<String> {
+        text.split(|c: char| !c.is_alphanumeric())
+            .filter(|word| !word.is_empty())
+            .map(str::to_lowercase)
+            .collect()
+    };
+    let (wanted, shown_words) = (words(&preheader), words(&shown));
+    if wanted.is_empty() {
+        return shown;
+    }
+    let opening = &wanted[..wanted.len().min(PREHEADER_OPENING_WORDS)];
+    let holds_opening = shown_words.windows(opening.len()).any(|run| run == opening);
+    let holds_all = wanted.iter().all(|word| shown_words.contains(word));
+    if holds_opening || holds_all {
+        return shown;
+    }
+    format!("{preheader} {preview}")
+        .trim_end()
+        .chars()
+        .take(crate::quoted_history::SEARCH_PREVIEW_CHARS)
+        .collect()
 }
 
 fn strip_heading(line: &str) -> &str {
@@ -186,7 +222,54 @@ fn tidy(line: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{collapse_preview, decode_entity_references, readable_preview};
+    use super::{collapse_preview, decode_entity_references, readable_preview, with_preheader};
+    use crate::quoted_history::SEARCH_PREVIEW_CHARS;
+
+    #[test]
+    fn a_preheader_leads_a_preview_that_does_not_show_it() {
+        assert_eq!(
+            with_preheader("Your Play Points \u{2022} Gold 146", "Available through\u{00A0}Thursday. \u{200C} \u{034F}"),
+            "Available through Thursday. Your Play Points \u{2022} Gold 146"
+        );
+        assert_eq!(with_preheader("", "Delivered 1 item: Drinkware"), "Delivered 1 item: Drinkware");
+        let long = "x".repeat(SEARCH_PREVIEW_CHARS);
+        let led = with_preheader(&long, "Delivered 1 item");
+        assert!(led.starts_with("Delivered 1 item x"));
+        assert_eq!(led.chars().count(), SEARCH_PREVIEW_CHARS);
+    }
+
+    #[test]
+    fn a_preview_already_showing_the_preheader_is_unchanged() {
+        for (preview, preheader) in [
+            // The preheader is the first line of the text, as converters write it.
+            ("Available through Thursday. Your Play Points", "Available through Thursday."),
+            // Same words, different punctuation and case.
+            ("AVAILABLE through thursday \u{2014} your points", "Available through Thursday."),
+            // A copy that differs by a joined word, behind a brand name.
+            ("Senja Capital for small businesses within 48 hours.Visit our site", "Capital for small businesses within 48 hours. Visit our site"),
+            ("Anything at all", ""),
+        ] {
+            assert_eq!(with_preheader(preview, preheader), preview);
+        }
+        // The opening phrase, one word short of, at, and past its length,
+        // with the rest of the preheader missing from the preview.
+        let preheader = "alpha bravo charlie delta echo foxtrot golf";
+        for (preview, kept) in [
+            ("Brand alpha bravo charlie delta zulu", false),
+            ("Brand alpha bravo charlie delta echo zulu", true),
+            ("Brand alpha bravo charlie delta echo foxtrot zulu", true),
+        ] {
+            assert_eq!(with_preheader(preview, preheader) == preview, kept, "{preview}");
+        }
+        // A copy interrupted by an extra line is still the same preheader.
+        let preview = "Join our live Demo Day on October 21. Tomorrow: see it in action. Discover a smarter approach.";
+        assert_eq!(with_preheader(preview, "Join our live Demo Day on October 21. Discover a smarter approach. Join us live."), preview);
+        // Shared words later in the preview still lead with the preheader.
+        assert!(with_preheader("Wealthfront Funds arrive tomorrow from your Cash account to Checking. Transfer complete.", "Transfer from Cash to Checking (account ending 42)").starts_with("Transfer from Cash"));
+        // Words past what the preview shows do not count as shown.
+        let preview = format!("{} Thursday", "x ".repeat(SEARCH_PREVIEW_CHARS / 2));
+        assert!(with_preheader(&preview, "Available Thursday").starts_with("Available Thursday x"));
+    }
 
     fn preview(text: &str) -> String {
         readable_preview(text).split_whitespace().collect::<Vec<_>>().join(" ")

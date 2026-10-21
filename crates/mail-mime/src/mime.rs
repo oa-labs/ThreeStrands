@@ -158,15 +158,17 @@ pub fn normalize(message: &RawMessage) -> Result<NormalizedMessage, String> {
     // The text/plain alternative is only trusted while it says what the HTML
     // the reader shows says. One that opens with a stylesheet was produced by
     // a converter that leaked the HTML's <style> contents (often with other
-    // residue mixed in), and one missing most of the HTML's words is a stub,
-    // an unfilled template, or a stale copy, so in those cases the HTML
+    // residue mixed in), one missing most of the HTML's words is a stub, an
+    // unfilled template, or a stale copy, and one holding merge fields the
+    // HTML filled in was never rendered, so in those cases the HTML
     // alternative is the better text source.
     let has_html = !body_html.trim().is_empty();
     let body_text = match text {
         Some(text) if has_html => {
             let derived = html_to_text(&body_html);
             let unfaithful = after_leading_stylesheet(&text).is_some()
-                || plain_coverage(&text, &derived) < MIN_PLAIN_COVERAGE;
+                || plain_coverage(&text, &derived) < MIN_PLAIN_COVERAGE
+                || !template_fields(&text).is_subset(&template_fields(&derived));
             if unfaithful && !derived.is_empty() {
                 derived
             } else {
@@ -552,6 +554,33 @@ fn content_words(text: &str) -> HashSet<String> {
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+/// Delimiters of common template merge fields (`${name}`, `{{name}}`,
+/// `%%name%%`, `*|NAME|*`) that a mailing system replaces before sending.
+const TEMPLATE_FIELD_DELIMITERS: [(&str, &str); 4] = [("${", "}"), ("{{", "}}"), ("%%", "%%"), ("*|", "|*")];
+
+/// The merge fields left in `text`, each as its opening delimiter and name.
+/// A name is one word of letters, digits, `_`, `-`, or `.` that starts with
+/// a letter, so prose, prices, and code blocks rarely match.
+fn template_fields(text: &str) -> HashSet<(&'static str, &str)> {
+    let mut fields = HashSet::new();
+    for (open, close) in TEMPLATE_FIELD_DELIMITERS {
+        let mut rest = text;
+        while let Some(start) = rest.find(open) {
+            rest = &rest[start + open.len()..];
+            let Some(end) = rest.find(close) else { break };
+            let name = rest[..end].trim_matches(' ');
+            if (1..=64).contains(&name.len())
+                && name.starts_with(|c: char| c.is_ascii_alphabetic())
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+            {
+                fields.insert((open, name));
+                rest = &rest[end + close.len()..];
+            }
+        }
+    }
+    fields
 }
 
 fn select_bodies(
@@ -1019,6 +1048,36 @@ mod tests {
     }
 
     #[test]
+    fn reads_the_html_when_the_plain_part_holds_merge_fields_the_html_filled_in() {
+        // Plain parts that carry nearly all of the HTML's words, so only the
+        // unfilled fields give them away: a flat alternative, and one nested
+        // in multipart/related with an inline image, in different syntaxes.
+        let story = "kicks off today with five days of technical deep dives into identity and data security you will not want to miss";
+        let mut related = part("multipart/related", "");
+        related.parts = vec![
+            alternative(
+                &format!("Hi {{{{ first_name }}}},\n*|EVENT_NAME|* {story}."),
+                &format!("<table><tr><td>Hi Sam,</td></tr><tr><td><img src=\"cid:logo\">Innovation Week {story}.</td></tr></table>"),
+            ),
+            part("image/png", "png"),
+        ];
+        for (payload, expected) in [
+            (
+                alternative(
+                    &format!("${{mkto-article-pl-text-1}} <https://example.com/a> {story}."),
+                    &format!("<p>Innovation Week {story}.</p>"),
+                ),
+                "Innovation Week kicks off today",
+            ),
+            (related, "Hi Sam,\nInnovation Week kicks off today"),
+        ] {
+            let text = body_text_of(payload);
+            assert!(text.starts_with(expected), "{text}");
+            assert!(template_fields(&text).is_empty(), "{text}");
+        }
+    }
+
+    #[test]
     fn keeps_a_plain_part_that_says_what_the_html_says() {
         for (plain, html) in [
             // A quoted reply keeps the markers quote folding reads.
@@ -1028,6 +1087,10 @@ mod tests {
             ),
             // Template syntax the sender meant to show, in both alternatives.
             ("Set ${HOME} and run {{ build }}.", "<p>Set <code>${HOME}</code> and run <code>{{ build }}</code>.</p>"),
+            // An unrendered template in both alternatives; the plain part is no worse.
+            ("${Headline}\nSee you there", "<h1>${Headline}</h1><p>See you there</p>"),
+            // Braces and percents that are not merge fields.
+            ("Prices up 5%% to 10%% {{ }} ${1}", "<p>Prices up 5%% to 10%% {{ }} ${1}</p>"),
             // Links spelled out in the plain part only.
             ("Read the report <https://example.com/r> today", "<p>Read the <a href=\"https://example.com/r\">report</a> today</p>"),
         ] {

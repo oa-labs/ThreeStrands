@@ -878,8 +878,9 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
     if version < 81 {
         // A text/plain alternative missing most of what its HTML sibling says
         // (a stub, an unfilled template, a stale copy) now takes its text from
-        // the HTML. Queue every thread so the bounded search-reindex batch
-        // re-normalizes its messages and rebuilds its preview.
+        // the HTML, and previews lead with the HTML's hidden preheader. Queue
+        // every thread so the bounded search-reindex batch re-normalizes its
+        // messages and rebuilds its preview.
         tx.execute_batch(
             "INSERT OR IGNORE INTO pending_search_reindex(thread_id)
                  SELECT id FROM threads;",

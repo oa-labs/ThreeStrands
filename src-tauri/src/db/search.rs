@@ -274,9 +274,20 @@ impl Database {
                         [thread_id],
                         |row| row.get(0),
                     )?;
-                    let text = crate::quoted_history::searchable_thread_text(
+                    let mut text = crate::quoted_history::searchable_thread_text(
                         messages.iter().map(|(_, _, text, _)| text.as_str()),
                     );
+                    let latest_html = match messages.last() {
+                        Some((id, ..)) => transaction
+                            .query_row(
+                                "SELECT body_html, body_html_z FROM messages WHERE id = ?1",
+                                [id],
+                                |row| resolve_body(0, row.get(0)?, row.get(1)?),
+                            )
+                            .optional()?,
+                        None => None,
+                    };
+                    lead_with_preheader(&mut text, latest_html.as_deref());
                     transaction.execute(
                         "UPDATE thread_search SET body = ?1, snippet = ?2 WHERE rowid = ?3",
                         params![text.body, search_preview(&text, &provider_snippet), rowid],
@@ -544,6 +555,18 @@ fn fts_query(input: &str) -> String {
         }
     }
     terms.join(" AND ")
+}
+
+/// Leads the latest message's preview with the preheader its HTML hides for
+/// inbox previews (see [`crate::html_plain_text::preheader`]).
+pub(super) fn lead_with_preheader(
+    text: &mut crate::quoted_history::ThreadSearchText,
+    latest_html: Option<&str>,
+) {
+    if let Some(preheader) = latest_html.and_then(crate::html_plain_text::preheader) {
+        text.latest_preview =
+            threestrands_mail_text::preview_text::with_preheader(&text.latest_preview, &preheader);
+    }
 }
 
 /// The search row's `snippet`: the latest message before any quoted history,

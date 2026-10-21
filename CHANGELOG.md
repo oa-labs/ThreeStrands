@@ -7,6 +7,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ### Improved
 - **Drafts** now looks like your other folders, showing who each draft is to, its subject, and a preview. You can select several drafts with ⌘-click, Shift-click, or ⌘A and discard them together, after confirming.
 - In **Outbox**, you can now select several messages the same way: return the ones still waiting to send to **Drafts**, or discard the ones that failed. Its rows also line up with every other folder.
+- Newsletters, receipts, and notifications now preview in the message list with the summary line their sender wrote for inbox previews, like "Your login code is 564368" or "Delivered 1 item", instead of a logo name or a "View in browser" link.
 
 ### Fixed
 - Shift-clicking a checkbox in a folder list now selects every message between it and the last one you checked, as Shift-clicking a row already did.

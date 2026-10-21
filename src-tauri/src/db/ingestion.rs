@@ -2,7 +2,7 @@
 //! The caller-owned transaction also covers replay of undelivered local mutations.
 
 use super::messages::{compress_body, store_message_metadata};
-use super::search::{list_preview, search_preview};
+use super::search::{lead_with_preheader, list_preview, search_preview};
 use super::threads::local_thread_id;
 use super::{contacts, serialization_error, Database, DatabaseError, DbResult};
 use crate::mime::NormalizedMessage;
@@ -92,11 +92,12 @@ impl Database {
             .unwrap_or_else(|| latest.date.clone());
         let mut chronological: Vec<&NormalizedMessage> = messages.iter().collect();
         chronological.sort_by(|a, b| a.date.cmp(&b.date).then_with(|| a.id.cmp(&b.id)));
-        let text = crate::quoted_history::searchable_thread_text(
+        let mut text = crate::quoted_history::searchable_thread_text(
             chronological
                 .iter()
                 .map(|message| message.body_text.as_str()),
         );
+        lead_with_preheader(&mut text, chronological.last().map(|message| message.body_html.as_str()));
         transaction
             .execute(
                 "INSERT INTO threads(
