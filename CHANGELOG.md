@@ -11,6 +11,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ### Fixed
 - Shift-clicking a checkbox in a folder list now selects every message between it and the last one you checked, as Shift-clicking a row already did.
 - Emails that center their layout with older formatting, common in newsletters and promotions, now appear centered in the reading pane instead of pinned to the left edge.
+- Some newsletters and promotions previewed in the message list as placeholder codes like `${Headline-Text}`, or as a note that your email software can't display them, instead of their words. The preview, and searches, now use the text the email actually shows.
 
 ## 0.150.1 — 2026-10-20
 
