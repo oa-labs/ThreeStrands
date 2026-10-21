@@ -5,8 +5,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ## Unreleased
 
 ### Improved
-- **Drafts** now looks like your other folders, showing who each draft is to, its subject, and a preview. You can select several drafts with ⌘-click, Shift-click, or ⌘A and discard them together, after confirming.
+- **Drafts** now looks like your other folders, showing who each draft is to, its subject, and a preview. You can select several drafts with ⌘-click, Shift-click, or ⌘A and discard them together.
 - In **Outbox**, you can now select several messages the same way: return the ones still waiting to send to **Drafts**, or discard the ones that failed. Its rows also line up with every other folder.
+- Discarding drafts, or failed messages in **Outbox**, now works like moving conversations to Trash: it happens right away, and **Undo** in the notice (or <kbd>z</kbd>) brings them back, attachments included, for up to an hour. Failed messages come back to **Drafts**.
 
 ### Fixed
 - Shift-clicking a checkbox in a folder list now selects every message between it and the last one you checked, as Shift-clicking a row already did.

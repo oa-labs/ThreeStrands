@@ -8,7 +8,7 @@ import { parseAddress } from "../emailAddress";
 
 const key = "threestrands.demoCorrespondence";
 const inlineImages = new Map<string, string>();
-type Store = { drafts: Draft[]; outbox: OutboxItem[]; summaries?: ScheduledSendReport[] };
+type Store = { drafts: Draft[]; outbox: OutboxItem[]; summaries?: ScheduledSendReport[]; discarded?: Draft[] };
 const previewOwner = "00000000-0000-4000-8000-000000000001";
 function read(): Store {
   const saved = localStorage.getItem(key);
@@ -159,7 +159,23 @@ export function demoCorrespondence(getSourceThread: (messageId: string) => Promi
       Object.assign(previous, next, { revision: next.revision + 1, updatedAt: Date.now() }); write(store); return previous;
     },
     async listDrafts() { return read().drafts; },
-    async discardDraft(id) { const store = read(); store.drafts = store.drafts.filter((d) => d.id !== id); write(store); },
+    async discardDraft(id) {
+      const store = read();
+      const discarded = store.drafts.find((d) => d.id === id);
+      store.drafts = store.drafts.filter((d) => d.id !== id);
+      if (discarded) store.discarded = [...(store.discarded ?? []).filter((d) => d.id !== id), discarded];
+      write(store);
+    },
+    async restoreDraft(id) {
+      const store = read();
+      const held = store.discarded?.find((d) => d.id === id);
+      if (!held) throw new Error("This draft can no longer be restored");
+      const restored = { ...held, revision: held.revision + 1, updatedAt: Date.now() };
+      store.discarded = store.discarded!.filter((d) => d.id !== id);
+      store.drafts = [restored, ...store.drafts];
+      write(store);
+      return restored;
+    },
     // The preview has no mail server; drafts stay in the browser.
     async pushDraft() {},
     async resolveDraftConflict(id) { return draft(read(), id); },

@@ -50,7 +50,7 @@ import type { GettingStartedStepId } from "./gettingStartedSteps";
 import { CalendarSidebar } from "./CalendarSidebar";
 import { eventDate, startOfLocalDay } from "./calendarTime";
 import { chatAttachmentOptions } from "./chatAttachments";
-import { labelCommand, undoResult, type MailboxKind } from "./commands";
+import { labelCommand, undoResult, type CommandResult, type MailboxKind } from "./commands";
 import { FILES_CHANGED } from "./FileStarButton";
 import { draftRecipients } from "./composeChecks";
 import { ComposeContext, ReplyChecks } from "./ComposeContext";
@@ -103,7 +103,6 @@ import { useCommandExecution, useCommandUndo } from "./useCommandExecution";
 import { ThreadDrafts, threadDrafts } from "./ThreadDrafts";
 import { OutboxDetail, OutboxList, useCorrespondence } from "./useCorrespondence";
 import { DraftsList, useDraftSelection } from "./DraftsList";
-import { InlineConfirm } from "./InlineConfirm";
 import { useCheckedSelection } from "./useCheckedSelection";
 import { checkableOutboxKeys, outboxBatchAbility } from "./outboxView";
 import { useOutboxSelection } from "./useOutboxSelection";
@@ -220,10 +219,6 @@ export function App() {
     signatureLibrary,
   );
   const draftSelection = useDraftSelection(correspondence.drafts, correspondence.activeDraft?.id ?? null);
-  const [confirmingDraftDiscard, setConfirmingDraftDiscard] = useState(false);
-  useEffect(() => {
-    if (mailbox !== "drafts" || draftSelection.checkedIds.size === 0) setConfirmingDraftDiscard(false);
-  }, [mailbox, draftSelection.checkedIds.size]);
   const composerBelongsToVisibleThread = Boolean(
     correspondence.activeDraft
     && correspondence.activeDraft.mode !== "new"
@@ -253,10 +248,6 @@ export function App() {
   const checkedOutboxEntries = outboxSelection.entries.filter((entry) => outboxChecks.checkedIds.has(entry.key));
   const returnableSends = checkedOutboxEntries.filter((entry) => outboxBatchAbility(entry).returnable).flatMap((entry) => entry.kind === "local" ? [entry.item.id] : []);
   const discardableSends = checkedOutboxEntries.filter((entry) => outboxBatchAbility(entry).discardable).flatMap((entry) => entry.kind === "local" ? [entry.item.id] : []);
-  const [confirmingSendDiscard, setConfirmingSendDiscard] = useState(false);
-  useEffect(() => {
-    if (mailbox !== "outbox" || discardableSends.length === 0) setConfirmingSendDiscard(false);
-  }, [mailbox, discardableSends.length]);
   const selectedOutboxItem = outboxSelection.selectedEntry?.kind === "local" ? outboxSelection.selectedEntry.item : undefined;
   const selectedOutboxMessage = useMemo(
     () => selectedOutboxItem ? queuedMessage(selectedOutboxItem, `outbox-${selectedOutboxItem.id}`) : null,
@@ -340,6 +331,16 @@ export function App() {
   useEffect(() => { if (shortcutHelpOpen) completeGettingStartedStep("shortcuts"); }, [shortcutHelpOpen, completeGettingStartedStep]);
   useEffect(() => { if (undo.canUndoArchive) completeGettingStartedStep("archive"); }, [undo.canUndoArchive, completeGettingStartedStep]);
   const { rememberUndo } = undo;
+  /** Discards like the inbox trashes: at once, with Undo in the notice and on z. */
+  const discardWithUndo = useCallback(async (discard: () => Promise<string[]>, describe: (count: number) => string) => {
+    const discarded = await discard();
+    if (discarded.length === 0) return;
+    const result: CommandResult = {
+      message: describe(discarded.length),
+      undoAction: () => correspondence.restoreDiscardedDrafts(discarded),
+    };
+    rememberUndo({ id: "drafts.discard", title: "Discard", keys: [], group: "Compose", enabled: () => true, run: async () => result, undo: undoResult }, result);
+  }, [correspondence, rememberUndo]);
   const searchRef = useRef<HTMLInputElement>(null);
   useNativeMailLinks(correspondence.composeMailto, setRightWorkspace);
 
@@ -703,7 +704,11 @@ export function App() {
               <span className="batch-count">{draftSelection.checkedIds.size} selected</span>
               <div className="batch-actions" style={{ "--batch-columns": 2 } as CSSProperties}>
                 <HoverTooltip label="Discard" placement="bottom">
-                  <ActionButton label="Discard" onClick={() => setConfirmingDraftDiscard(true)}>
+                  <ActionButton label="Discard" onClick={() => {
+                    const ids = [...draftSelection.checkedIds];
+                    draftSelection.clear();
+                    void discardWithUndo(() => correspondence.discardListedDrafts(ids), (count) => count === 1 ? "Draft discarded" : `${count} drafts discarded`);
+                  }}>
                     <Trash size={ICON_SIZE.md} />
                   </ActionButton>
                 </HoverTooltip>
@@ -750,7 +755,11 @@ export function App() {
                   <ActionButton
                     label={`Discard ${discardableSends.length} Failed`}
                     disabled={discardableSends.length === 0}
-                    onClick={() => setConfirmingSendDiscard(true)}
+                    onClick={() => {
+                      const ids = discardableSends;
+                      outboxChecks.clear();
+                      void discardWithUndo(() => correspondence.discardFailedSends(ids), (count) => count === 1 ? "Failed message discarded" : `${count} failed messages discarded`);
+                    }}
                   >
                     <Trash size={ICON_SIZE.md} />
                   </ActionButton>
@@ -936,25 +945,6 @@ export function App() {
         ) : null}
         <ThreadList role={isThreadMailbox || mailbox === "outbox" || mailbox === "drafts" ? "listbox" : "list"} aria-label={mailboxTitle}>
           {mailbox === "drafts" ? (<>
-            {confirmingDraftDiscard ? (
-              <InlineConfirm
-                ariaLabel="Discard drafts confirmation"
-                cancelLabel="Keep"
-                onCancel={() => setConfirmingDraftDiscard(false)}
-                actions={[{
-                  label: draftSelection.checkedIds.size === 1 ? "Discard Draft" : `Discard ${draftSelection.checkedIds.size} Drafts`,
-                  className: "btn-danger",
-                  onClick: () => {
-                    const ids = [...draftSelection.checkedIds];
-                    setConfirmingDraftDiscard(false);
-                    draftSelection.clear();
-                    void correspondence.discardListedDrafts(ids);
-                  },
-                }]}
-              >
-                {draftSelection.checkedIds.size === 1 ? "Discard this draft?" : `Discard ${draftSelection.checkedIds.size} drafts?`} This can't be undone, and they're also removed from your mail account's Drafts.
-              </InlineConfirm>
-            ) : null}
             <DraftsList
               drafts={correspondence.drafts}
               openId={correspondence.activeDraft?.id ?? null}
@@ -962,31 +952,12 @@ export function App() {
               showAccount={accounts.length > 1}
               accountColors={accountColors}
               onOpen={(draft) => { draftSelection.open(draft.id); correspondence.openDraft(draft); }}
-              onDiscard={correspondence.discardListedDraft}
+              onDiscard={(draft) => void discardWithUndo(() => correspondence.discardListedDraft(draft), () => "Draft discarded")}
               onToggleCheck={draftSelection.toggle}
               onSelectionGesture={draftSelection.applyGesture}
             />
           </>
           ) : mailbox === "outbox" ? (<>
-            {confirmingSendDiscard ? (
-              <InlineConfirm
-                ariaLabel="Discard failed messages confirmation"
-                cancelLabel="Keep"
-                onCancel={() => setConfirmingSendDiscard(false)}
-                actions={[{
-                  label: discardableSends.length === 1 ? "Discard Message" : `Discard ${discardableSends.length} Messages`,
-                  className: "btn-danger",
-                  onClick: () => {
-                    const ids = discardableSends;
-                    setConfirmingSendDiscard(false);
-                    outboxChecks.clear();
-                    void correspondence.discardFailedSends(ids);
-                  },
-                }]}
-              >
-                {discardableSends.length === 1 ? "Discard this failed message?" : `Discard ${discardableSends.length} failed messages?`} They weren't sent, and this can't be undone.
-              </InlineConfirm>
-            ) : null}
             <OutboxList
               entries={outboxSelection.entries}
               selectedKey={outboxSelection.selectedEntry?.key ?? null}

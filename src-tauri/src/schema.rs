@@ -14,7 +14,7 @@ pub(crate) const BASELINE_VERSION: i64 = 74;
 
 /// The current schema version. A new schema change adds an
 /// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 80;
+pub(crate) const LATEST_VERSION: i64 = 81;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -875,6 +875,19 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 81 {
+        // Discarded drafts, held for a while so Undo can bring them back with
+        // their attachment files. Device-local, never synced or exported.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS discarded_drafts (
+                 id TEXT PRIMARY KEY,
+                 revision INTEGER NOT NULL,
+                 payload TEXT NOT NULL,
+                 discarded_at INTEGER NOT NULL
+             );",
+        )
+        .map_err(error)?;
+    }
     if stored == 0 {
         // Only new installations get the 90-day default. Existing databases
         // without a retention setting still mean Forever. Keep the default
@@ -1166,6 +1179,7 @@ mod tests {
         "table:signature_defaults",
         "table:draft_server_links",
         "table:draft_server_deletions",
+        "table:discarded_drafts",
     ];
 
     #[test]

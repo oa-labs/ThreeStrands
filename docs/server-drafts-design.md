@@ -93,7 +93,10 @@ local revisions to the provider:
   rule.
 - **Retries** use the shared `backoff.rs` schedule. Authentication errors block
   the account's pushes until it is reconnected; they don't spin.
-- **Delete:** discarding deletes the server copy. Sending deletes it only once
+- **Delete:** discarding deletes the server copy after the 10-second undo
+  window (`DISCARD_SERVER_DELAY_MS`). The discarded draft and its attachment
+  files are held for an hour, so Undo restores it: within the window the
+  server copy is untouched, after it the draft is saved to the server again. Sending deletes it only once
   the send has completed (`sent` or `unverifiable`); while a message waits in
   the undo window, is scheduled, is sending, or has failed, the server copy
   stays, so **Undo** and **Restore** bring back the same draft. The local row

@@ -1179,15 +1179,66 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn discarding_deletes_the_server_copy() {
+    async fn discarding_deletes_the_server_copy_once_undo_has_passed() {
         let harness = Harness::new();
         let draft = harness.edit(harness.new_draft(), "One");
         harness.run_after(PAST_DELAY).await;
         harness.db().discard_draft(&draft.id).unwrap();
-        harness.run_after(0).await;
-        harness.run_after(0).await;
+        harness.run_after(crate::correspondence::DISCARD_SERVER_DELAY_MS - 1_000).await;
+        assert_eq!(harness.server.drafts().len(), 1, "Undo can still leave the server untouched");
+        harness.run_after(crate::correspondence::DISCARD_SERVER_DELAY_MS + 1).await;
+        harness.run_after(crate::correspondence::DISCARD_SERVER_DELAY_MS + 1).await;
         assert!(harness.server.drafts().is_empty());
         assert_eq!(harness.server.calls().last().unwrap(), "delete server-1");
+    }
+
+    #[tokio::test]
+    async fn undoing_a_discard_within_the_window_leaves_the_server_copy_alone() {
+        let harness = Harness::new();
+        let draft = harness.edit(harness.new_draft(), "One");
+        harness.run_after(PAST_DELAY).await;
+        harness.db().discard_draft(&draft.id).unwrap();
+        assert!(harness.db().draft(&draft.id).is_err());
+        let restored = harness.db().restore_discarded_draft(&draft.id).unwrap();
+        assert!(restored.body.contains("One"));
+        assert!(restored.revision > draft.revision);
+        assert_eq!(harness.state(&restored), "saved");
+        harness.run_after(crate::correspondence::DISCARD_SERVER_DELAY_MS * 2).await;
+        assert_eq!(harness.server.drafts().len(), 1);
+        assert!(!harness.server.calls().iter().any(|call| call.starts_with("delete") || call.starts_with("update")));
+        assert!(harness.db().restore_discarded_draft(&draft.id).is_err(), "only once");
+    }
+
+    #[tokio::test]
+    async fn undoing_a_discard_after_the_copy_was_deleted_saves_it_again() {
+        let harness = Harness::new();
+        let draft = harness.edit(harness.new_draft(), "One");
+        harness.run_after(PAST_DELAY).await;
+        harness.db().discard_draft(&draft.id).unwrap();
+        let late = crate::correspondence::DISCARD_SERVER_DELAY_MS + 1;
+        harness.run_after(late).await;
+        harness.run_after(late).await;
+        assert!(harness.server.drafts().is_empty());
+        let restored = harness.db().restore_discarded_draft(&draft.id).unwrap();
+        assert_eq!(harness.state(&restored), "pending");
+        harness.run_after(PAST_DELAY).await;
+        assert!(harness.only_server_body().contains("One"));
+    }
+
+    #[tokio::test]
+    async fn undoing_a_discard_before_its_deletion_ran_cancels_the_deletion() {
+        let harness = Harness::new();
+        let draft = harness.edit(harness.new_draft(), "One");
+        harness.run_after(PAST_DELAY).await;
+        harness.db().discard_draft(&draft.id).unwrap();
+        // The link was retired into a queued deletion that hasn't run yet.
+        let late = crate::correspondence::DISCARD_SERVER_DELAY_MS + 1;
+        harness.service.database.connection().unwrap()
+            .execute("UPDATE draft_server_deletions SET due_at=?1", [now() + 60 * 60 * 1000]).unwrap();
+        harness.run_after(late).await;
+        harness.db().restore_discarded_draft(&draft.id).unwrap();
+        harness.run_after(60 * 60 * 1000 + 1).await;
+        assert_eq!(harness.server.drafts().len(), 1, "the restored draft keeps a server copy");
     }
 
     #[tokio::test]
@@ -1195,10 +1246,34 @@ pub(crate) mod tests {
         let harness = Harness::new();
         let draft = harness.edit(harness.new_draft(), "One");
         harness.db().discard_draft(&draft.id).unwrap();
-        harness.run_after(0).await;
-        harness.run_after(0).await;
+        let late = crate::correspondence::DISCARD_SERVER_DELAY_MS + 1;
+        harness.run_after(late).await;
+        harness.run_after(late).await;
         assert!(harness.server.drafts().is_empty());
         assert!(!harness.server.calls().contains(&"create".to_string()));
+    }
+
+    #[test]
+    fn a_discarded_draft_keeps_its_files_until_it_can_no_longer_be_restored() {
+        let harness = Harness::new();
+        let mut draft = harness.edit(harness.new_draft(), "With a file");
+        let file = uuid::Uuid::new_v4().to_string();
+        std::fs::write(harness.root.0.join(&file), b"notes").unwrap();
+        draft.attachments.push(crate::correspondence::Attachment {
+            id: file.clone(), name: "notes.txt".into(), size: 5, mime: "text/plain".into(), ready: true,
+            message_id: None, provider_id: None, inline: false, content_id: None,
+        });
+        let payload = serde_json::to_string(&draft).unwrap();
+        harness.db().connection().unwrap().execute("UPDATE drafts SET payload=?2 WHERE id=?1", params![draft.id, payload]).unwrap();
+        harness.db().discard_draft(&draft.id).unwrap();
+        harness.service.cleanup().unwrap();
+        assert!(harness.root.0.join(&file).exists(), "Undo brings the file back too");
+
+        let expired = now() - crate::correspondence::DISCARDED_DRAFT_RETENTION_MS - 1;
+        harness.db().connection().unwrap().execute("UPDATE discarded_drafts SET discarded_at=?1", [expired]).unwrap();
+        harness.service.cleanup().unwrap();
+        assert!(!harness.root.0.join(&file).exists());
+        assert!(harness.db().restore_discarded_draft(&draft.id).is_err());
     }
 
     #[tokio::test]

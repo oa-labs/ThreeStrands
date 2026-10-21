@@ -61,6 +61,8 @@ export interface CorrespondenceClient {
   saveDraft(draft: Draft): Promise<Draft>;
   listDrafts(): Promise<Draft[]>;
   discardDraft(id: string): Promise<void>;
+  /** Brings back a draft discarded within the last hour (Undo). */
+  restoreDraft(id: string): Promise<Draft>;
   /** Pushes the draft to its account's server drafts without waiting for the push delay. */
   pushDraft(id: string): Promise<void>;
   /** Settles a draft changed here and elsewhere: `keepServer` adopts the other version, otherwise this one replaces it. */
@@ -80,7 +82,7 @@ export interface CorrespondenceClient {
 type CorrespondenceOperation =
   | "schedulingInfo" | "scheduleChoices" | "schedule" | "reschedule" | "sendScheduledNow" | "listScheduledSummaries"
   | "identity" | "create" | "createFromSent" | "setAccount" | "identities" | "setFrom" | "save" | "listDrafts"
-  | "discard" | "pushDraft" | "resolveConflict" | "queue" | "listOutbox" | "cancel" | "recover"
+  | "discard" | "restoreDraft" | "pushDraft" | "resolveConflict" | "queue" | "listOutbox" | "cancel" | "recover"
   | "reconcile" | "attach" | "attachInline" | "readInline"
   | "removeAttachment" | "fetchAttachment";
 
@@ -100,6 +102,7 @@ const OPERATION_POLICY: Record<CorrespondenceOperation, InvokePolicy> = {
   save: WAIT_FOR_NATIVE_COMPLETION,
   listDrafts: BOUNDED_LOCAL_READ,
   discard: WAIT_FOR_NATIVE_COMPLETION,
+  restoreDraft: WAIT_FOR_NATIVE_COMPLETION,
   pushDraft: WAIT_FOR_NATIVE_COMPLETION,
   resolveConflict: WAIT_FOR_NATIVE_COMPLETION,
   queue: WAIT_FOR_NATIVE_COMPLETION,
@@ -136,6 +139,7 @@ export const nativeCorrespondence: CorrespondenceClient = {
   saveDraft: (draft) => request("save", { draft }),
   listDrafts: () => request("listDrafts"),
   discardDraft: (id) => request("discard", { id }),
+  restoreDraft: (id) => request("restoreDraft", { id }),
   pushDraft: (id) => request("pushDraft", { id }),
   resolveDraftConflict: (id, keepServer) => request("resolveConflict", { id, keepServer }),
   queueDraft: (id, revision, archiveOnSend) => request("queue", { id, revision, archiveOnSend: archiveOnSend ?? false }),
