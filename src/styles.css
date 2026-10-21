@@ -3282,6 +3282,15 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .notice--error { --notice-tone: var(--error); }
 .notice--warning { --notice-tone: var(--warning); }
 
+/* An unsent draft at the end of a conversation sits apart from the last message card.
+   It is ordinary content, not a problem, so it drops the notice's error tone. */
+.thread-draft {
+  margin-top: var(--space-3);
+  border-color: var(--border);
+  background: var(--raised);
+  color: var(--text);
+}
+
 /* Motion. Short, compositor-only (opacity/transform) entrances that make
    state changes read as responses rather than jumps. Fill is `backwards`
    only, so no animated value lingers after an entrance to affect layout,
