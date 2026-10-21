@@ -139,6 +139,13 @@ describe("component typography", () => {
     for (const selector of [".reader-empty p", ".contacts-empty-state p"]) expect(sizeOf(selector), selector).toBe("--text-body");
   });
 
+  it("sets inline confirmations in default UI text with no browser paragraph margins, wherever they appear", () => {
+    expect(sizeOf(".settings-inline-confirm p")).toBe("--text-body");
+    let margin: string | undefined;
+    css.walkRules(".settings-inline-confirm p", (rule) => rule.walkDecls("margin", (declaration) => { margin = declaration.value; }));
+    expect(margin).toBe("0");
+  });
+
   it("keeps file browsing at the email list's UI size with quieter metadata and the shared section label", () => {
     const emailSize = sizeOf(".thread-subject");
     for (const selector of [".file-list-select", ".file-list-name strong", ".file-detail-name"]) {

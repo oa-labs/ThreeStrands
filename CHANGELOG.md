@@ -8,7 +8,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - You can now edit the message you're forwarding. Click **Edit** on the bar above the forwarded message to trim it or add notes. Some formatting and web images may be simplified, and **Restore Original** brings back the message as you received it.
 
 ### Improved
-- When you discard several drafts in **Drafts**, the confirmation is easier to read, and **Keep Drafts** is selected so pressing Return doesn't discard anything by accident.
+- When you discard several drafts in **Drafts**, the confirmation is easier to read and more compact, and **Keep Drafts** is selected so pressing Return doesn't discard anything by accident.
 
 ### Fixed
 - Clicking a conversation in the message list while writing a new message now opens it. Your message is saved to **Drafts** so you can finish it later.
