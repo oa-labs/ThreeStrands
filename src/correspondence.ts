@@ -19,6 +19,8 @@ export type Draft = {
   /** Preserved sender content, rendered only through SafeMessage and appended by native MIME assembly. */
   signature?: import("./signatures").DraftSignature | null;
   forwardedContent?: { html: string; text: string } | null;
+  /** The user's edited copy of `forwardedContent`, already compose-sanitized; sends in its place while the original stays restorable. */
+  forwardedEdit?: { html: string; text: string } | null;
   followUpTaskId?: string | null;
   /** Set on a saved draft whose account keeps drafts on the server: where its server copy stands. */
   serverDraft?: ServerDraftStatus | null;

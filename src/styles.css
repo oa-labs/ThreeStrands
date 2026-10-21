@@ -3190,6 +3190,11 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-quote-toggle { flex-shrink: 0; letter-spacing: var(--tracking-wide); }
 .compose-body.compose-quoted { min-height: 0; height: auto; padding-top: 0; overflow: visible; }
 .compose-body.compose-quoted[hidden] { display: none; }
+/* Names where the forwarded message starts and holds its Edit / Restore Original button. */
+.compose-forwarded-bar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) 0; border-top: 1px solid var(--border); color: var(--muted); font-size: var(--text-meta); }
+.compose-forwarded-bar > .btn { margin-left: auto; }
+.compose-forwarded > .settings-inline-confirm { margin-bottom: var(--space-2); }
+.compose-body.compose-forwarded-edit { min-height: 0; height: auto; padding-top: 0; overflow: visible; }
 .compose-body-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); flex-shrink: 0; padding: var(--space-2) 0; }
 .compose-writing-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); flex-shrink: 0; min-width: 0; }
 .compose-body-actions > .compose-writing-actions { flex: 1 1 auto; justify-content: flex-end; }

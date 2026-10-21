@@ -25,7 +25,7 @@ export function savedStatus(server?: ServerDraftStatus | null): DraftSaveStatus 
 /** Owns draft persistence; the editor supplies body changes only at a save boundary. */
 export function useDraftAutosave(
   initial: Draft,
-  captureChanges: () => Pick<Draft, "body" | "bodyHtml" | "signature"> | null,
+  captureChanges: () => Pick<Draft, "body" | "bodyHtml" | "signature" | "forwardedEdit"> | null,
   onError: (message: string) => void,
 ) {
   const [draft, setDraft] = useState(initial);

@@ -9,6 +9,7 @@ import {
   composeKeyLabel,
   formattingShortcutFor,
   formattingShortcuts,
+  forwardedComposeHtml,
   insertHtmlAtRange,
   pastedLinkHref,
   plainTextToHtml,
@@ -405,6 +406,37 @@ describe("reply quote split", () => {
 
   it("drops the separator when the quoted history was deleted", () => {
     expect(serializeComposeBody(editorFor("Friday works."), editorFor("")).text).toBe("Friday works.");
+  });
+});
+
+describe("forwarded message editing", () => {
+  const textOf = (html: string) => {
+    const editor = document.createElement("div");
+    editor.innerHTML = html;
+    return composeHtmlToText(editor);
+  };
+
+  it("keeps the reader's lines for paragraph and table layouts", () => {
+    expect(textOf(forwardedComposeHtml("<h2>Agenda</h2><p>Tee time 9:00</p><p>Lunch after</p>"))).toBe("Agenda\nTee time 9:00\nLunch after");
+    const table = forwardedComposeHtml('<table><thead><tr><th>Item</th><th>Owner</th></tr></thead><tbody><tr><td>Clubs</td><td>Sam</td></tr><tr><td>Snacks</td><td>Ana</td></tr></tbody></table>');
+    expect(textOf(table)).toBe("Item Owner\nClubs Sam\nSnacks Ana");
+    expect(table).not.toMatch(/<t[a-z]/);
+  });
+
+  it("bolds converted headings", () => {
+    expect(forwardedComposeHtml("<h1>Agenda <em>today</em></h1>")).toBe("<div><b>Agenda <em>today</em></b></div>");
+  });
+
+  it("drops content the sender hid from readers", () => {
+    const html = forwardedComposeHtml('<div hidden>preheader one</div><span style="color:red; display: none !important">preheader two</span><div style="mso-hide:all">outlook only</div><p style="visibility:hidden">invisible</p><p style="display:block">Visible</p>');
+    expect(textOf(html)).toBe("Visible");
+  });
+
+  it("removes scripts, handlers, styles, remote resources, and unsafe links", () => {
+    const html = forwardedComposeHtml('<style>p{background:url(https://tracker.invalid/css)}</style><p onclick="parent.x=1" style="background-image:url(https://tracker.invalid/bg)">Hi</p><img src="https://tracker.invalid/pixel.png"><img src="cid:logo@example.com" alt="Logo"><script>parent.x=1</script><iframe src="https://tracker.invalid"></iframe><a href="javascript:alert(1)">bad</a><a href="https://example.com">ok</a>');
+    expect(html).not.toMatch(/tracker\.invalid|onclick|<script|<iframe|<style|javascript:/);
+    expect(html).toContain('<img src="cid:logo@example.com" alt="Logo">');
+    expect(html).toContain('<a href="https://example.com">ok</a>');
   });
 });
 

@@ -8,6 +8,8 @@ summary: Write with rich text and snippets, keep context beside your draft, catc
 
 Press <kbd>c</kbd> for a new message, or <kbd>r</kbd>, <kbd>a</kbd>, or <kbd>f</kbd> to reply, reply all, or forward. Click the **To** label to show Cc and Bcc. With several accounts, choose the sender in **From**.
 
+In a reply, click **···** below your message to show the quoted text, which you can edit like the rest of your message. A forward shows the original message below a **Forwarded message** bar. Click **Edit** on that bar to trim the message or add notes inside it. Editing simplifies some formatting and removes images loaded from the web. **Restore Original** brings back the message as you received it.
+
 Drafts save automatically. On Gmail accounts they also save to your Gmail **Drafts**, and on IMAP accounts, including Proton Mail Bridge, to the account's Drafts mailbox, a few seconds after you stop typing. You can finish them in your mail provider's apps or in ThreeStrands on another computer, attachments included. Drafts you write in another app appear in **Drafts** here within a minute, and on Gmail a reply you started elsewhere shows at the end of its conversation with **Resume Draft**. If a draft changes both here and somewhere else before either is saved, the composer asks which version to keep. An IMAP account without a Drafts mailbox keeps its drafts on this computer. Press <kbd>Escape</kbd> to close the composer and keep the draft in **Drafts** (<kbd>g</kbd> then <kbd>d</kbd>).
 
 <ts-shot scene="reply" alt="Replying to a conversation, with recipient history and related tasks in the panel beside the draft."></ts-shot>
