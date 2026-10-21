@@ -120,6 +120,7 @@ import { useSplitInboxes } from "./useSplitInboxes";
 import { useTaskActions } from "./useTaskActions";
 import { useTaskIndicators } from "./useTaskIndicators";
 import { useThreadDetail } from "./useThreadDetail";
+import { useSentReplyRefresh } from "./useSentReplyRefresh";
 import { useThreadIntelligence } from "./useThreadIntelligence";
 import { useThreadMutations } from "./useThreadMutations";
 import { useThreadSelection } from "./useThreadSelection";
@@ -235,6 +236,7 @@ export function App() {
     () => visibleDetail ? messagesWithQueuedReplies(visibleDetail, correspondence.outbox) : [],
     [visibleDetail, correspondence.outbox],
   );
+  useSentReplyRefresh(visibleDetail, displayedMessages, correspondence.outbox, setDetail);
   const displayedThreadText = useMemo(() => threadTextIndex(displayedMessages), [displayedMessages]);
   const outboxSelection = useOutboxSelection(correspondence.outbox, correspondence.summaries);
   const selectedOutboxItem = outboxSelection.selectedEntry?.kind === "local" ? outboxSelection.selectedEntry.item : undefined;

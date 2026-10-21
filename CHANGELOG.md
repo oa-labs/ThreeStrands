@@ -12,6 +12,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ### Fixed
 - The composer now says **Draft saved** instead of "Saved on this device" once a draft is safely stored, and the **Drafts** list no longer says "Saved on this device" either.
+- After you reply to a conversation, your sent message now shows **Reply**, **Reply all**, and **Forward** within a few seconds, so you can reply to everyone again without reopening the conversation.
 
 ## 0.147.0 — 2026-10-20
 
