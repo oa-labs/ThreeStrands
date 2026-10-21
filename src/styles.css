@@ -2866,6 +2866,11 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .settings-inline-confirm { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-2-5) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); }
 .settings-inline-confirm p { color: var(--text); }
 .settings-inline-confirm-actions { display: flex; align-items: center; flex-shrink: 0; gap: var(--space-1-5); }
+.settings-inline-confirm-text { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.settings-inline-confirm p.settings-inline-confirm-title { font-weight: var(--weight-semibold); }
+.settings-inline-confirm p.settings-inline-confirm-detail { color: var(--secondary); }
+.settings-inline-confirm--stacked { align-items: stretch; flex-direction: column; gap: var(--space-3); padding: var(--space-3); }
+.settings-inline-confirm--stacked .settings-inline-confirm-actions { flex-wrap: wrap; justify-content: flex-end; }
 .settings-section h4 { margin: var(--space-1-5) 0 0; font-size: var(--text-body); color: var(--text); }
 .settings-disclosure { width: 100%; }
 .settings-disclosure-body { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); width: 100%; margin-top: var(--space-2); }

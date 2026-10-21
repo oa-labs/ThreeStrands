@@ -1665,7 +1665,15 @@ describe("Drafts folder", () => {
 
     fireEvent.click(within(toolbar).getByRole("button", { name: "Discard" }));
     const confirm = screen.getByRole("group", { name: "Discard drafts confirmation" });
-    fireEvent.click(within(confirm).getByRole("button", { name: "Keep" }));
+    expect(confirm).toHaveClass("settings-inline-confirm--stacked");
+    expect(confirm.querySelector(".settings-inline-confirm-title")).toHaveTextContent(/^Discard 3 drafts\?$/);
+    expect(confirm.querySelector(".settings-inline-confirm-detail")).toHaveTextContent("This can't be undone. They'll also be deleted from Drafts on the server.");
+    const keep = within(confirm).getByRole("button", { name: "Keep Drafts" });
+    expect(keep).toHaveFocus();
+    const buttons = within(confirm).getAllByRole("button");
+    expect(buttons.map((button) => button.textContent)).toEqual(["Keep Drafts", "Discard 3 Drafts"]);
+    expect(buttons[1]).toHaveClass("btn-danger-strong");
+    fireEvent.click(keep);
     expect(screen.queryByRole("group", { name: "Discard drafts confirmation" })).not.toBeInTheDocument();
     expect(within(list).getAllByRole("option")).toHaveLength(3);
 

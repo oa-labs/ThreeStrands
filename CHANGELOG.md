@@ -4,6 +4,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### Improved
+- When you discard several drafts in **Drafts**, the confirmation is easier to read, and **Keep Drafts** is selected so pressing Return doesn't discard anything by accident.
+
 ### Fixed
 - Clicking a conversation in the message list while writing a new message now opens it. Your message is saved to **Drafts** so you can finish it later.
 

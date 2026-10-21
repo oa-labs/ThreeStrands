@@ -952,11 +952,14 @@ export function App() {
             {confirmingDraftDiscard ? (
               <InlineConfirm
                 ariaLabel="Discard drafts confirmation"
-                cancelLabel="Keep"
+                title={draftSelection.checkedIds.size === 1 ? "Discard this draft?" : `Discard ${draftSelection.checkedIds.size} drafts?`}
+                stacked
+                focusCancel
+                cancelLabel={draftSelection.checkedIds.size === 1 ? "Keep Draft" : "Keep Drafts"}
                 onCancel={() => setConfirmingDraftDiscard(false)}
                 actions={[{
                   label: draftSelection.checkedIds.size === 1 ? "Discard Draft" : `Discard ${draftSelection.checkedIds.size} Drafts`,
-                  className: "btn-danger",
+                  className: "btn-danger-strong",
                   onClick: () => {
                     const ids = [...draftSelection.checkedIds];
                     setConfirmingDraftDiscard(false);
@@ -965,7 +968,9 @@ export function App() {
                   },
                 }]}
               >
-                {draftSelection.checkedIds.size === 1 ? "Discard this draft?" : `Discard ${draftSelection.checkedIds.size} drafts?`} This can't be undone, and they're also removed from your mail account's Drafts.
+                {draftSelection.checkedIds.size === 1
+                  ? "This can't be undone. It will also be deleted from Drafts on the server."
+                  : "This can't be undone. They'll also be deleted from Drafts on the server."}
               </InlineConfirm>
             ) : null}
             <DraftsList
