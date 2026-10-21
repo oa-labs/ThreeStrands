@@ -219,11 +219,14 @@ export function extractSafeStyleSheet(html: string, theme?: "light" | "dark"): s
     .join("\n");
 }
 
+// <center> and <section> are pure layout wrappers. Templates often center
+// their outermost table with <center> alone; dropping the tag keeps its
+// content but pins that table to the left edge.
 const allowedTags = [
-  "a", "b", "blockquote", "br", "caption", "code", "col", "colgroup",
+  "a", "b", "blockquote", "br", "caption", "center", "code", "col", "colgroup",
   "dd", "del", "div", "dl", "dt", "em", "h1", "h2", "h3", "h4",
   "h5", "h6", "hr", "i", "img", "kbd", "li", "ol", "p", "pre", "s",
-  "small", "span", "strong", "sub", "sup", "table", "tbody", "td",
+  "section", "small", "span", "strong", "sub", "sup", "table", "tbody", "td",
   "tfoot", "th", "thead", "tr", "u", "ul",
 ];
 

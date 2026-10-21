@@ -311,6 +311,31 @@ describe("SafeMessage", () => {
     expect(table).toContain('class="wrapper"');
   });
 
+  it("keeps <center> and <section> wrappers that center a template's content", () => {
+    const table = parseSanitized("centerWrappedTable");
+    expect(table.querySelector("section > center > table.centered")).not.toBeNull();
+    expect(table.querySelector("table")!.hasAttribute("align")).toBe(false);
+    expect(parseSanitized("centerWrappedInline").querySelector<HTMLElement>("center > div.centered")!.style.display).toBe("inline-block");
+  });
+
+  it("strips unsafe attributes, styles, and children from <center> and <section>", () => {
+    const sanitized = sanitizeMessageHtml(`
+      <section onclick="alert(1)" data-track="x" style="position:fixed;background-image:url(javascript:alert(1));text-align:center">
+        <center onmouseover="alert(2)" style="z-index:99;cursor:pointer">
+          <script>alert(3)</script><form action="https://example.com"><input value="bad"></form><p>Safe text</p>
+        </center>
+      </section>
+    `);
+    const body = new DOMParser().parseFromString(sanitized, "text/html").body;
+    const section = body.querySelector("section")!;
+    const center = section.querySelector("center")!;
+    expect(section.getAttributeNames()).toEqual(["style"]);
+    expect(section.getAttribute("style")).toBe("text-align: center");
+    expect(center.getAttributeNames()).toEqual([]);
+    expect(sanitized).not.toMatch(/<script|<form|<input|javascript:|alert/);
+    expect(center.textContent).toContain("Safe text");
+  });
+
   it("preserves harmless empty elements and sender-authored spacing", () => {
     const sanitized = sanitizeMessageHtml(`
       <div style="padding:40px 0"></div>

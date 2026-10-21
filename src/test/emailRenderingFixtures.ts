@@ -350,6 +350,21 @@ Second line: no further action is required from you unless an export fails, in w
       <tr><td style="padding:24px;background-color:#f4f4f4">Your order has shipped.</td></tr>
     </table>
   `,
+  // Centering that comes only from a <center> wrapper. Keep both a table
+  // with no align attribute (inside <section>, as templates nest it) and
+  // inline-block flow content covered.
+  centerWrappedTable: `
+    <section>
+      <center>
+        <table role="presentation" class="centered" width="480" cellpadding="0" cellspacing="0">
+          <tr><td style="padding:24px;background-color:#f4f4f4">About the program</td></tr>
+        </table>
+      </center>
+    </section>
+  `,
+  centerWrappedInline: `
+    <center><div class="centered" style="display:inline-block;width:320px;text-align:left"><img src="https://example.com/info.png" width="20" height="20" alt=""> Program FAQ</div></center>
+  `,
   malformed: `
     <div style="position:fixed;top:0;left:0;z-index:99;animation:spin 1s;cursor:pointer">No overlay</div>
     <img src="javascript:alert(1)"><form action="https://example.com"><input value="bad"></form>

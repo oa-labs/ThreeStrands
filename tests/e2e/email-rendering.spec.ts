@@ -242,6 +242,8 @@ test.describe("email rendering fixtures", () => {
   for (const { fixture, width } of [
     { fixture: "centeredHybridColumn", width: 600 },
     { fixture: "centeredStyledTable", width: 480 },
+    { fixture: "centerWrappedTable", width: 480 },
+    { fixture: "centerWrappedInline", width: 320 },
   ] as const) {
     test(`${fixture} centers its column in a wide pane and fills a narrow one`, async ({ page }) => {
       const gaps = () => page.locator("iframe.message-body").contentFrame().locator(".centered").evaluate((element) => {
