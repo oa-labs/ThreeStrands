@@ -15,9 +15,9 @@ export type DraftSaveStatus = { text: string; detail?: string; conflict?: boolea
 export function savedStatus(server?: ServerDraftStatus | null): DraftSaveStatus {
   switch (server?.state) {
     case "pending": return { text: "Saving…" };
-    case "retrying": return { text: "Saved on this device · Will sync when online", detail: server.error };
-    case "failed": return { text: "Saved on this device · Couldn't save to server", detail: server.error };
-    case "conflict": return { text: "Saved on this device · Also changed in another app", conflict: true };
+    case "retrying": return { text: "Draft saved · Will sync when online", detail: server.error };
+    case "failed": return { text: "Draft saved · Couldn't sync", detail: server.error };
+    case "conflict": return { text: "Draft saved · Also changed in another app", conflict: true };
     default: return { text: "Draft saved" };
   }
 }

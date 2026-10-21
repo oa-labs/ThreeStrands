@@ -1107,7 +1107,7 @@ describe("Composer drafts synced from other devices", () => {
     const other = { ...saved, revision: 9, body: "Edited on my phone", serverDraft: { state: "saved" as const } };
     const resolve = vi.spyOn(mailClient, "resolveDraftConflict").mockResolvedValue(other);
     render(<Composer draft={{ ...saved, serverDraft: { state: "conflict" } }} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} onRemoteVersion={onRemoteVersion} />);
-    expect(screen.getByRole("status")).toHaveTextContent("Saved on this device · Also changed in another app");
+    expect(screen.getByRole("status")).toHaveTextContent("Draft saved · Also changed in another app");
     expect(screen.getByText("This draft was also changed in another app.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Use Other Version" }));
     await waitFor(() => expect(onRemoteVersion).toHaveBeenCalledWith(other));
@@ -1124,8 +1124,8 @@ describe("Composer drafts synced from other devices", () => {
   it.each([
     [{ state: "pending" as const }, "Saving…", null],
     [{ state: "saved" as const }, "Draft saved", null],
-    [{ state: "retrying" as const, error: "The server couldn't be reached." }, "Saved on this device · Will sync when online", "The server couldn't be reached."],
-    [{ state: "failed" as const, error: "Reconnect you@example.com to save this draft to the server." }, "Saved on this device · Couldn't save to server", "Reconnect you@example.com to save this draft to the server."],
+    [{ state: "retrying" as const, error: "The server couldn't be reached." }, "Draft saved · Will sync when online", "The server couldn't be reached."],
+    [{ state: "failed" as const, error: "Reconnect you@example.com to save this draft to the server." }, "Draft saved · Couldn't sync", "Reconnect you@example.com to save this draft to the server."],
   ])("says where the server copy stands after a save (%o)", async (serverDraft, text, detail) => {
     vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1, serverDraft }));
     const ref = createRef<ComposerHandle>();

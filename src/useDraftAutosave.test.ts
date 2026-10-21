@@ -22,11 +22,11 @@ describe("savedStatus", () => {
   });
   it("never says Draft saved before the server confirms", () => {
     expect(savedStatus({ state: "pending" }).text).toBe("Saving…");
-    expect(savedStatus({ state: "retrying", error: "offline" })).toEqual({ text: "Saved on this device · Will sync when online", detail: "offline" });
-    expect(savedStatus({ state: "failed", error: "Reconnect" })).toEqual({ text: "Saved on this device · Couldn't save to server", detail: "Reconnect" });
+    expect(savedStatus({ state: "retrying", error: "offline" })).toEqual({ text: "Draft saved · Will sync when online", detail: "offline" });
+    expect(savedStatus({ state: "failed", error: "Reconnect" })).toEqual({ text: "Draft saved · Couldn't sync", detail: "Reconnect" });
   });
   it("flags a draft changed both here and in another app", () => {
-    expect(savedStatus({ state: "conflict" })).toEqual({ text: "Saved on this device · Also changed in another app", conflict: true });
+    expect(savedStatus({ state: "conflict" })).toEqual({ text: "Draft saved · Also changed in another app", conflict: true });
   });
 });
 
@@ -57,7 +57,7 @@ describe("useDraftAutosave server status", () => {
   it("shows a failed push with its reason", async () => {
     const { hook, emit } = await savedPending();
     emit({ id: "draft-1", revision: 2, status: { state: "retrying", error: "The server couldn't be reached." } });
-    expect(hook.result.current.status).toEqual({ text: "Saved on this device · Will sync when online", detail: "The server couldn't be reached." });
+    expect(hook.result.current.status).toEqual({ text: "Draft saved · Will sync when online", detail: "The server couldn't be reached." });
   });
 
   it("starts from the opened draft's server status", () => {

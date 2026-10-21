@@ -36,9 +36,9 @@ email can't hold.
 - The save status tells the truth:
   - **Saving…** while the revision waits for the push delay.
   - **Draft saved** only once the server has confirmed the current revision.
-  - **Saved on this device · Will sync when online** while a revision is waiting
+  - **Draft saved · Will sync when online** while a revision is waiting
     for the network or the account is offline.
-  - **Saved on this device · Couldn't save to server** after a permanent error,
+  - **Draft saved · Couldn't sync** after a permanent error,
     with the reason available, and the draft kept locally.
 - Drafts created or edited in another app appear in **Drafts** and can be
   opened, edited, sent, and discarded from ThreeStrands.

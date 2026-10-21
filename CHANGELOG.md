@@ -11,7 +11,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Drafts on IMAP accounts, including Proton Mail Bridge, now save to the account's Drafts mailbox and come back from it, just like Gmail drafts, so you can finish them in another mail app. If you didn't map a Drafts mailbox during setup, drafts stay on this computer.
 
 ### Fixed
-- The composer now says **Draft saved** instead of "Saved on this device" once a draft is safely stored, and the **Drafts** list no longer says "Saved on this device" either.
+- The composer now says **Draft saved** instead of "Saved on this device" once a draft is safely stored, including while it waits to sync or needs your attention, and the **Drafts** list no longer says "Saved on this device" either.
 - After you reply to a conversation, your sent message now shows **Reply**, **Reply all**, and **Forward** within a few seconds, so you can reply to everyone again without reopening the conversation.
 
 ## 0.147.0 — 2026-10-20
