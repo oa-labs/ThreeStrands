@@ -79,7 +79,9 @@ export function DraftsList({
             aria-hidden="true"
             onClick={(event) => {
               event.stopPropagation();
-              onToggleCheck(draft.id);
+              // Shift-clicking a checkbox adds every row since the last one checked.
+              if (event.shiftKey) onSelectionGesture(draft.id, "range-add");
+              else onToggleCheck(draft.id);
             }}
           >
             {checked ? <SquareCheckBig size={ICON_SIZE.md} /> : <Square size={ICON_SIZE.md} />}

@@ -1359,6 +1359,19 @@ describe("trash and batch actions", () => {
     } finally { mutate.mockRestore(); }
   });
 
+  it("checks every conversation between two checkboxes when the second is Shift-clicked", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const rows = within(screen.getByRole("listbox", { name: /Inbox/ })).getAllByRole("option");
+    expect(rows.length).toBeGreaterThanOrEqual(3);
+    fireEvent.click(rows[0].querySelector(".row-check")!);
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+    fireEvent.click(rows[2].querySelector(".row-check")!, { shiftKey: true });
+    expect(screen.getByText("3 selected")).toBeInTheDocument();
+    for (const row of rows.slice(0, 3)) expect(row).toHaveTextContent("Selected for batch actions");
+    fireEvent.keyDown(document.body, { key: "Escape" });
+  });
+
   it("selects only the conversations visible through the active filters", async () => {
     await mailClient.mutateThread({ kind: "star", threadId: "roadmap", value: true });
     render(<App />);
@@ -1660,6 +1673,22 @@ describe("Drafts folder", () => {
     fireEvent.click(within(screen.getByRole("group", { name: "Discard drafts confirmation" })).getByRole("button", { name: "Discard 3 Drafts" }));
     expect(await screen.findByRole("heading", { name: "0 drafts" })).toBeInTheDocument();
     expect(screen.queryByRole("toolbar", { name: "Batch actions" })).not.toBeInTheDocument();
+    selectFolder("Inbox");
+    expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
+  });
+
+  it("checks every draft between two checkboxes when the second is Shift-clicked", async () => {
+    for (let index = 0; index < 3; index++) await mailClient.createDraft("new");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    selectFolder("Drafts");
+    expect(await screen.findByRole("heading", { name: "3 drafts" })).toBeInTheDocument();
+    const rows = screen.getAllByRole("option");
+    fireEvent.click(rows[0].querySelector(".row-check")!);
+    fireEvent.click(rows[2].querySelector(".row-check")!, { shiftKey: true });
+    expect(screen.getByRole("toolbar", { name: "Batch actions" })).toHaveTextContent("3 selected");
+    fireEvent.keyDown(window, { key: "Escape" });
+    for (const draft of await mailClient.listDrafts()) await mailClient.discardDraft(draft.id);
     selectFolder("Inbox");
     expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
   });

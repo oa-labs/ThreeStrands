@@ -173,4 +173,20 @@ describe("ThreadList", () => {
     expect(fireEvent.mouseDown(row, { shiftKey: true })).toBe(false);
     expect(fireEvent.mouseDown(row)).toBe(true);
   });
+
+  it("toggles one checkbox on a click and adds a range on a Shift-click", () => {
+    const onToggleCheck = vi.fn();
+    const onSelectionGesture = vi.fn();
+    const onSelect = vi.fn();
+    const { container } = render(
+      <ThreadRow thread={thread} selected={false} checked={false} showAccount={false}
+        onSelect={onSelect} onToggleCheck={onToggleCheck} onSelectionGesture={onSelectionGesture} />,
+    );
+    const checkbox = container.querySelector(".row-check")!;
+    fireEvent.click(checkbox);
+    fireEvent.click(checkbox, { shiftKey: true });
+    expect(onToggleCheck.mock.calls).toEqual([["thread-1"]]);
+    expect(onSelectionGesture.mock.calls).toEqual([["thread-1", "range-add"]]);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
 });

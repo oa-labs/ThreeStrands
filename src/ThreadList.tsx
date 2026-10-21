@@ -101,7 +101,9 @@ export const ThreadRow = memo(function ThreadRow({
           aria-hidden="true"
           onClick={(event) => {
             event.stopPropagation();
-            onToggleCheck(thread.id);
+            // Shift-clicking a checkbox adds every row since the last one checked.
+            if (event.shiftKey && onSelectionGesture) onSelectionGesture(thread.id, "range-add");
+            else onToggleCheck(thread.id);
           }}
         >
           {checked ? <SquareCheckBig size={ICON_SIZE.md} /> : <Square size={ICON_SIZE.md} />}

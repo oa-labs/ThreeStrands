@@ -542,7 +542,9 @@ export function OutboxList({
               aria-hidden="true"
               onClick={(event) => {
                 event.stopPropagation();
-                onToggleCheck(entry.key);
+                // Shift-clicking a checkbox adds every row since the last one checked.
+                if (event.shiftKey && onSelectionGesture) onSelectionGesture(entry.key, "range-add");
+                else onToggleCheck(entry.key);
               }}
             >
               {checked ? <SquareCheckBig size={ICON_SIZE.md} /> : <Square size={ICON_SIZE.md} />}
