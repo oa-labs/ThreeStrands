@@ -4,6 +4,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### Improved
+- **Drafts** now looks like your other folders, showing who each draft is to, its subject, and a preview. You can select several drafts with ⌘-click, Shift-click, or ⌘A and discard them together, after confirming.
+
 ## 0.150.1 — 2026-10-20
 
 ### New

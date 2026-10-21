@@ -9,7 +9,6 @@ import type { DraftReviewAvailability } from "./DraftReviewSection";
 import { mailClient } from "./data/client";
 import type { ComposeMode, Draft, OutboxItem, ScheduledSendReport } from "./correspondence";
 import type { Account, Snippet } from "./domain";
-import { matchesShortcut } from "./commands";
 import { logBackgroundFailure } from "./errors";
 import { draftWithSelectedQuote } from "./selectedMessageQuote";
 import { sanitizeComposeHtml } from "./richText";
@@ -347,6 +346,14 @@ export function useCorrespondence(
     if (active?.id === draft.id) { editor.current?.discard(); return; }
     void mailClient.discardDraft(draft.id).then(() => refresh()).catch((e: unknown) => setError(String(e)));
   }, [active?.id, refresh]);
+  /** Discards every listed draft in `ids`; an open one closes its composer. */
+  const discardListedDrafts = useCallback(async (ids: readonly string[]) => {
+    if (active && ids.includes(active.id)) editor.current?.discard();
+    const results = await Promise.allSettled(ids.filter((id) => id !== active?.id).map((id) => mailClient.discardDraft(id)));
+    const failed = results.filter((result) => result.status === "rejected");
+    if (failed.length) setError(`${failed.length} ${failed.length === 1 ? "draft" : "drafts"} couldn't be discarded: ${String((failed[0] as PromiseRejectedResult).reason)}`);
+    await refresh().catch((e: unknown) => setError(String(e)));
+  }, [active, refresh]);
   const renderComposer = (onSendAndArchive?: () => void, review?: DraftReviewAvailability) => active ? (
     <Composer
       key={`${active.id}:${activeVersion}`}
@@ -407,6 +414,7 @@ export function useCorrespondence(
     outboxCount: outbox.filter((o) => !["sent", "canceled"].includes(o.state)).length + summaries.filter((s) => !["sent", "canceled"].includes(s.state) && !outbox.some((o) => o.id === s.operationId && o.schedule?.report.ownerInstallationId === s.ownerInstallationId)).length,
     openDraft,
     discardListedDraft,
+    discardListedDrafts,
     undoSendItem,
     restoreFailedSend,
     reconcileSend,
@@ -426,27 +434,6 @@ export function useCorrespondence(
       {error && <div className="compose-notice" role="alert">{error}<button className="btn-icon btn-icon-sm" aria-label="Dismiss Compose Error" onClick={() => setError("")}><X size={ICON_SIZE.sm} /></button></div>}
     </>,
   };
-}
-
-export function DraftsList({ drafts, onOpen, onDiscard }: { drafts: Draft[]; onOpen(draft: Draft): void; onDiscard(draft: Draft): void }) {
-  if (drafts.length === 0) return <p className="empty">No saved drafts.</p>;
-  return <>{drafts.map((d) => (
-    <button
-      className="draft-row"
-      key={d.id}
-      aria-keyshortcuts="#"
-      onClick={() => onOpen(d)}
-      onKeyDown={(event) => {
-        if (!matchesShortcut(event.nativeEvent, "#")) return;
-        event.preventDefault();
-        onDiscard(d);
-      }}
-    >
-      <strong>{d.subject || "(no subject)"}</strong>
-      <span>{d.to || "No recipients"}</span>
-      <small>{new Date(d.updatedAt).toLocaleString()}</small>
-    </button>
-  ))}</>;
 }
 
 function outboxRecipients(draft: Draft): string {

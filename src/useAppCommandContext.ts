@@ -21,6 +21,7 @@ import type { useMailboxThreads } from "./useMailboxThreads";
 import type { useTriageSession } from "./useTriageSession";
 import type { useThreadIntelligence } from "./useThreadIntelligence";
 import type { useOutboxSelection } from "./useOutboxSelection";
+import type { useDraftSelection } from "./DraftsList";
 
 type Options = {
   correspondence: ReturnType<typeof useCorrespondence>;
@@ -36,6 +37,7 @@ type Options = {
   displayedMessages: Message[];
   composerBelongsToVisibleThread: boolean;
   outboxSelection: ReturnType<typeof useOutboxSelection>;
+  draftSelection: ReturnType<typeof useDraftSelection>;
   mutateIds: (ids: string[], template: MutationTemplate, options?: { includeUnloaded?: boolean }) => Promise<CommandResult>;
   view: {
     mailbox: MailboxKind;
@@ -77,7 +79,7 @@ type Options = {
 /** Binds global commands to the current domain controllers and interaction scope. */
 export function useAppCommandContext({
   correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads, runBrief,
-  recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, mutateIds, view, ui,
+  recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, draftSelection, mutateIds, view, ui,
 }: Options) {
   const outboxEditSource = useMemo(() => outboxEditAsNewSource(outboxSelection.selectedEntry), [outboxSelection.selectedEntry]);
   const { messageStackRef, setMessageExpansionOverrides, activeMessageIdRef } = reader;
@@ -115,6 +117,7 @@ export function useAppCommandContext({
     selectedId,
     checkedCount: checkedIds.size,
     selectAllConversations: () => setCheckedIds(new Set(visibleThreads.map((thread) => thread.id))),
+    selectAllDrafts: draftSelection.selectAll,
     selectedArchived: selected?.archived ?? false,
     selectedTrashed: selected?.trashed ?? false,
     canUnsubscribe,
@@ -306,7 +309,7 @@ export function useAppCommandContext({
     showAllAccounts: () => switchAccount(null),
     toggleMessageFilter,
   }), [
-    correspondence.context, correspondence.pendingUndoOrder, undo.lastUndoOrder, checkedIds, setCheckedIds, targetIds, targetThreads, toggleContextPanelFocus, interactionScope, rightWorkspace, mailbox,
+    correspondence.context, correspondence.pendingUndoOrder, undo.lastUndoOrder, checkedIds, setCheckedIds, draftSelection.selectAll, targetIds, targetThreads, toggleContextPanelFocus, interactionScope, rightWorkspace, mailbox,
     selectedId, selected, canUnsubscribe, returnStep, goBack, displayedMessages,
     composerBelongsToVisibleThread, outboxSelection, outboxEditSource, goToInboxTab, accountSplitInboxes.length, goToNextSplitTab,
     goToPreviousSplitTab, goToSplitTab, taskLayout, selectedTaskStatus, selectedTaskHasThread,

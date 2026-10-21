@@ -101,7 +101,9 @@ import { useAppCommandContext } from "./useAppCommandContext";
 import { useAppPreferences } from "./useAppPreferences";
 import { useCommandExecution, useCommandUndo } from "./useCommandExecution";
 import { ThreadDrafts, threadDrafts } from "./ThreadDrafts";
-import { DraftsList, OutboxDetail, OutboxList, useCorrespondence } from "./useCorrespondence";
+import { OutboxDetail, OutboxList, useCorrespondence } from "./useCorrespondence";
+import { DraftsList, useDraftSelection } from "./DraftsList";
+import { InlineConfirm } from "./InlineConfirm";
 import { useOutboxSelection } from "./useOutboxSelection";
 import { useLabelCatalog } from "./useLabelCatalog";
 import { loadSearchContacts } from "./searchContacts";
@@ -215,6 +217,11 @@ export function App() {
     { theme: effectiveThemeValue, fontScale: fontScale / 100, fontFamily, emailMinimumFontSize, loadImages: loadRemoteImages },
     signatureLibrary,
   );
+  const draftSelection = useDraftSelection(correspondence.drafts, correspondence.activeDraft?.id ?? null);
+  const [confirmingDraftDiscard, setConfirmingDraftDiscard] = useState(false);
+  useEffect(() => {
+    if (mailbox !== "drafts" || draftSelection.checkedIds.size === 0) setConfirmingDraftDiscard(false);
+  }, [mailbox, draftSelection.checkedIds.size]);
   const composerBelongsToVisibleThread = Boolean(
     correspondence.activeDraft
     && correspondence.activeDraft.mode !== "new"
@@ -463,7 +470,7 @@ export function App() {
   }, [selectedThreadRowRef, setQuery, setSearchOpen]);
   const context = useAppCommandContext({
     correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads,
-    runBrief, recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, mutateIds,
+    runBrief, recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, draftSelection, mutateIds,
     view: { mailbox, setMailbox, setActiveSplitInboxId, activeAccountId, selectedId, setSelectedId, isTabbedMailbox },
     ui: { interactionScope, canUnsubscribe, latestMessage, aiSummaryAvailable,
       aiBriefEnabled: aiSummaryFeatureEnabled || aiActionFeatureEnabled, aiChatEnabled: aiChatFeatureEnabled, aiDraftEnabled: aiDraftFeatureEnabled,
@@ -669,7 +676,38 @@ export function App() {
         <PanelResizeHandle {...inboxSize} label="Resize Inbox" controlsId="inbox-panel" title="Drag to resize inbox. Use arrow keys to adjust; double-click to reset." />
         <ErrorBoundary area="the inbox" resetKey={`${activeAccountId ?? "all"}:${mailbox}`}>
         <header className="thread-header">
-          {isThreadMailbox && checkedIds.size > 0 ? (
+          {mailbox === "drafts" && draftSelection.checkedIds.size > 0 ? (
+            <div className="batch-toolbar" role="toolbar" aria-label="Batch actions">
+              <label className="select-all">
+                <input
+                  type="checkbox"
+                  ref={(input) => {
+                    if (input) input.indeterminate = draftSelection.checkedIds.size < correspondence.drafts.length;
+                  }}
+                  checked={draftSelection.checkedIds.size === correspondence.drafts.length}
+                  aria-label="Select All Drafts" title="Select all drafts (⌘/Ctrl+A)" aria-keyshortcuts="Meta+A Control+A"
+                  onChange={(event) => event.target.checked ? draftSelection.selectAll() : draftSelection.clear()}
+                />
+              </label>
+              <span className="batch-count">{draftSelection.checkedIds.size} selected</span>
+              <div className="batch-actions" style={{ "--batch-columns": 2 } as CSSProperties}>
+                <HoverTooltip label="Discard" placement="bottom">
+                  <ActionButton label="Discard" onClick={() => setConfirmingDraftDiscard(true)}>
+                    <Trash size={ICON_SIZE.md} />
+                  </ActionButton>
+                </HoverTooltip>
+                <HoverTooltip label="Clear selection" placement="bottom">
+                  <button
+                    className="btn-icon"
+                    aria-label="Clear Selection" title="Clear selection (Esc)" aria-keyshortcuts="Escape"
+                    onClick={draftSelection.clear}
+                  >
+                    <X size={ICON_SIZE.lg} />
+                  </button>
+                </HoverTooltip>
+              </div>
+            </div>
+          ) : isThreadMailbox && checkedIds.size > 0 ? (
             <div className="batch-toolbar" role="toolbar" aria-label="Batch actions">
               <label className="select-all">
                 <input
@@ -837,9 +875,39 @@ export function App() {
             />
           </div>
         ) : null}
-        <ThreadList role={isThreadMailbox || mailbox === "outbox" ? "listbox" : "list"} aria-label={mailboxTitle}>
-          {mailbox === "drafts" ? (
-            <DraftsList drafts={correspondence.drafts} onOpen={correspondence.openDraft} onDiscard={correspondence.discardListedDraft} />
+        <ThreadList role={isThreadMailbox || mailbox === "outbox" || mailbox === "drafts" ? "listbox" : "list"} aria-label={mailboxTitle}>
+          {mailbox === "drafts" ? (<>
+            {confirmingDraftDiscard ? (
+              <InlineConfirm
+                ariaLabel="Discard drafts confirmation"
+                cancelLabel="Keep"
+                onCancel={() => setConfirmingDraftDiscard(false)}
+                actions={[{
+                  label: draftSelection.checkedIds.size === 1 ? "Discard Draft" : `Discard ${draftSelection.checkedIds.size} Drafts`,
+                  className: "btn-danger",
+                  onClick: () => {
+                    const ids = [...draftSelection.checkedIds];
+                    setConfirmingDraftDiscard(false);
+                    draftSelection.clear();
+                    void correspondence.discardListedDrafts(ids);
+                  },
+                }]}
+              >
+                {draftSelection.checkedIds.size === 1 ? "Discard this draft?" : `Discard ${draftSelection.checkedIds.size} drafts?`} This can't be undone, and they're also removed from your mail account's Drafts.
+              </InlineConfirm>
+            ) : null}
+            <DraftsList
+              drafts={correspondence.drafts}
+              openId={correspondence.activeDraft?.id ?? null}
+              checkedIds={draftSelection.checkedIds}
+              showAccount={accounts.length > 1}
+              accountColors={accountColors}
+              onOpen={(draft) => { draftSelection.open(draft.id); correspondence.openDraft(draft); }}
+              onDiscard={correspondence.discardListedDraft}
+              onToggleCheck={draftSelection.toggle}
+              onSelectionGesture={draftSelection.applyGesture}
+            />
+          </>
           ) : mailbox === "outbox" ? (
             <OutboxList
               entries={outboxSelection.entries}

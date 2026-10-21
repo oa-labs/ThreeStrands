@@ -1613,12 +1613,12 @@ describe("Drafts folder", () => {
     selectFolder("Drafts");
     expect(await screen.findByRole("heading", { name: "2 drafts" })).toBeInTheDocument();
 
-    const [first] = screen.getAllByRole("button", { name: /\(no subject\)/ });
+    const [first] = screen.getAllByRole("option", { name: /\(no subject\)/ });
     first.focus();
     fireEvent.keyDown(first, { key: "#", code: "Digit3", shiftKey: true });
     expect(await screen.findByRole("heading", { name: "1 drafts" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /\(no subject\)/ }));
+    fireEvent.click(screen.getByRole("option", { name: /\(no subject\)/ }));
     const discard = await screen.findByRole("button", { name: "Discard Draft" });
     discard.focus();
     fireEvent.keyDown(discard, { key: "#", code: "Digit3", shiftKey: true });
@@ -1629,12 +1629,66 @@ describe("Drafts folder", () => {
     expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
   });
 
+  it("lists drafts like conversations and discards several at once after confirming", async () => {
+    for (const subject of ["First", "Second", "Third"]) {
+      const draft = await mailClient.createDraft("new");
+      await mailClient.saveDraft({ ...draft, subject, to: "Jane <jane@example.com>", body: `${subject} body` });
+    }
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    selectFolder("Drafts");
+    expect(await screen.findByRole("heading", { name: "3 drafts" })).toBeInTheDocument();
+    const list = screen.getByRole("listbox", { name: /Drafts/ });
+    const rows = within(list).getAllByRole("option");
+    expect(rows).toHaveLength(3);
+    for (const row of rows) expect(row).toHaveClass("thread-row");
+    expect(rows[0]).toHaveTextContent("To Jane");
+
+    fireEvent.click(rows[0], { metaKey: true });
+    fireEvent.click(rows[2], { shiftKey: true });
+    const toolbar = screen.getByRole("toolbar", { name: "Batch actions" });
+    expect(toolbar).toHaveTextContent("3 selected");
+    expect(screen.queryByRole("textbox", { name: "Subject" })).not.toBeInTheDocument();
+
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Discard" }));
+    const confirm = screen.getByRole("group", { name: "Discard drafts confirmation" });
+    fireEvent.click(within(confirm).getByRole("button", { name: "Keep" }));
+    expect(screen.queryByRole("group", { name: "Discard drafts confirmation" })).not.toBeInTheDocument();
+    expect(within(list).getAllByRole("option")).toHaveLength(3);
+
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Discard" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Discard drafts confirmation" })).getByRole("button", { name: "Discard 3 Drafts" }));
+    expect(await screen.findByRole("heading", { name: "0 drafts" })).toBeInTheDocument();
+    expect(screen.queryByRole("toolbar", { name: "Batch actions" })).not.toBeInTheDocument();
+    selectFolder("Inbox");
+    expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
+  });
+
+  it("selects every draft with the checkbox and clears the selection with Escape", async () => {
+    await mailClient.createDraft("new");
+    await mailClient.createDraft("new");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    selectFolder("Drafts");
+    expect(await screen.findByRole("heading", { name: "2 drafts" })).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("option")[0], { metaKey: true });
+    const selectAll = screen.getByRole("checkbox", { name: "Select All Drafts" });
+    expect(selectAll).toBePartiallyChecked();
+    fireEvent.click(selectAll);
+    expect(screen.getByRole("toolbar", { name: "Batch actions" })).toHaveTextContent("2 selected");
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("toolbar", { name: "Batch actions" })).not.toBeInTheDocument());
+    for (const draft of await mailClient.listDrafts()) await mailClient.discardDraft(draft.id);
+    selectFolder("Inbox");
+    expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
+  });
+
   it("switches folders from the menu while a draft is open and keeps unsaved edits", async () => {
     await mailClient.createDraft("new");
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     selectFolder("Drafts");
-    fireEvent.click(await screen.findByRole("button", { name: /\(no subject\)/ }));
+    fireEvent.click(await screen.findByRole("option", { name: /\(no subject\)/ }));
     const subject = await screen.findByRole("textbox", { name: "Subject" });
     fireEvent.click(subject);
     fireEvent.change(subject, { target: { value: "Unsaved plans" } });
@@ -1644,8 +1698,8 @@ describe("Drafts folder", () => {
     expect(screen.queryByRole("textbox", { name: "Subject" })).not.toBeInTheDocument();
 
     selectFolder("Drafts");
-    expect(await screen.findByRole("button", { name: /Unsaved plans/ })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Unsaved plans/ }));
+    expect(await screen.findByRole("option", { name: /Unsaved plans/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("option", { name: /Unsaved plans/ }));
     await screen.findByRole("textbox", { name: "Subject" });
 
     selectFolder("Inbox");

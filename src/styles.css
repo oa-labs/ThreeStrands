@@ -3236,9 +3236,6 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .attachment-list li { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2); background: var(--input); border-radius: var(--radius-sm); margin-top: var(--space-1-5); font-size: var(--text-body); }
 .attachment-list li > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .attachment-list small { display: block; color: var(--muted); }
-.draft-row { display: flex; flex-direction: column; gap: var(--space-1); width: 100%; padding: var(--space-4) var(--space-2-5); text-align: left; background: transparent; border: 0; border-bottom: 1px solid var(--border); }
-.draft-row:hover { background: var(--hover); }
-.draft-row span, .draft-row small { color: var(--muted); }
 /* Outbox rows reuse .thread-row; only a status that needs attention differs. */
 .outbox-row-status.problem { color: var(--error); }
 .outbox-detail { display: flex; min-height: 0; flex: 1; flex-direction: column; }

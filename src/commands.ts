@@ -14,6 +14,7 @@ export type CommandContext = {
   selectedId: string | null;
   checkedCount?: number;
   selectAllConversations?(): void;
+  selectAllDrafts?(): void;
   selectedArchived: boolean;
   selectedTrashed: boolean;
   canUnsubscribe: boolean;
@@ -193,7 +194,9 @@ export const commands: Command[] = [
   workspaceCommand("files.open", "Open Selected File", ["o"], "files"),
   workspaceCommand("files.save", "Save Selected File As…", ["Mod+Shift+s"], "files"),
   workspaceCommand("files.star", "Toggle File Star", ["s"], "files"),
-  { id: "selection.all", title: "Select All Conversations", keys: ["Mod+a"], group: "Triage", enabled: (c) => isThreadMailbox(c) && !c.composerActive, run: (c) => complete(() => c.selectAllConversations?.()) },
+  { id: "selection.all", title: "Select All Conversations", keys: ["Mod+a"], group: "Triage",
+    enabled: (c) => (isThreadMailbox(c) || (c.focusedPane === "mail" && c.mailbox === "drafts")) && !c.composerActive,
+    run: (c) => complete(() => (c.mailbox === "drafts" ? c.selectAllDrafts : c.selectAllConversations)?.()) },
   { id: "draft.new", title: "New Message", keys: ["c"], group: "Compose", enabled: () => true, run: (c) => complete(c.compose) },
   { id: "draft.reply", title: "Reply", keys: ["r"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive, run: (c) => complete(c.reply) },
   { id: "draft.replyAll", title: "Reply All", keys: ["a"], group: "Compose", enabled: (c) => c.selectedId !== null && isThreadMailbox(c) && !c.composerActive, run: (c) => complete(c.replyAll) },

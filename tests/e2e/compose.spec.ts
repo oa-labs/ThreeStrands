@@ -110,7 +110,7 @@ test("reviews a new email in the composer, applies and undoes without sending, a
   await expect(body).toHaveText("I help teams improve their workflow.");
   await composer.getByRole("button", { name: "Save and Close Draft" }).click();
   await (await openFolders(page)).getByRole("button", { name: /Drafts/ }).click();
-  await page.getByRole("button", { name: /An introduction/ }).click();
+  await page.getByRole("option", { name: /An introduction/ }).click();
   await expect(body).toHaveText("I help teams improve their workflow.");
   // A reopened draft starts with Draft Review closed and empty.
   await expect(panel).toHaveCount(0);
@@ -151,7 +151,7 @@ test("saves an offline draft, restores after reload, sends once, and undoes", as
   const folders = await openFolders(page);
   await expect(folders.getByRole("button", { name: "Drafts" })).toContainText("1");
   await folders.getByRole("button", { name: "Drafts" }).click();
-  await page.getByRole("button", { name: /Offline draft/ }).click();
+  await page.getByRole("option", { name: /Offline draft/ }).click();
   await expect(composer.getByRole("textbox", { name: "Message Body" })).toHaveText("Hello j k e r a f — these are text, not inbox actions.");
   await page.keyboard.press("ControlOrMeta+Enter");
   await expect(composer).not.toBeVisible();
@@ -197,7 +197,7 @@ for (const paste of [
     await expect(composer).not.toBeVisible();
     await page.reload();
     await (await openFolders(page)).getByRole("button", { name: "Drafts" }).click();
-    await page.getByRole("button", { name: new RegExp(paste.subject) }).click();
+    await page.getByRole("option", { name: new RegExp(paste.subject) }).click();
     await expect(body).toHaveText(paste.expected);
     await expect(body.locator("a")).toHaveAttribute("href", "https://example.com/docs");
     await expect(body.locator("img, script")).toHaveCount(0);
@@ -253,7 +253,7 @@ test("HTML forwarding preserves formatting and blocked images after reopening, s
   await composer.getByRole("button", { name: "Save and Close Draft" }).click();
   await page.reload();
   await (await openFolders(page)).getByRole("button", { name: "Drafts" }).click();
-  await page.getByRole("button", { name: /Fwd: Welcome to ThreeStrands/ }).click();
+  await page.getByRole("option", { name: /Fwd: Welcome to ThreeStrands/ }).click();
   await expect(body).toHaveText("Please see the original message below.");
   await expect(frame.locator("strong")).toHaveText("ThreeStrands");
   await expect(frame.locator("img")).not.toHaveAttribute("src");
@@ -297,7 +297,7 @@ for (const [key, heading] of [["r", "Reply"], ["a", "Reply All"], ["f", "Forward
       await expect(forwarded.locator("body")).not.toContainText("A keyboard-first inbox that keeps your mail on this device.");
       await reply.getByRole("button", { name: "Save and Close Draft" }).click();
       await (await openFolders(page)).getByRole("button", { name: /Drafts/ }).click();
-      await page.getByRole("button", { name: /Fwd: Welcome to ThreeStrands/ }).click();
+      await page.getByRole("option", { name: /Fwd: Welcome to ThreeStrands/ }).click();
       await expect(forwarded.locator("blockquote")).toHaveText(selected);
       return;
     }
@@ -323,7 +323,7 @@ test("switching conversations saves an edited reply all and shows the selected t
   await expect(reply).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Conversation" }).getByRole("heading", { name: "Phase 1: read and triage" })).toBeVisible();
   await (await openFolders(page)).getByRole("button", { name: /Drafts/ }).click();
-  await page.getByRole("button", { name: /Welcome to ThreeStrands/ }).click();
+  await page.getByRole("option", { name: /Welcome to ThreeStrands/ }).click();
   await expect(reply.getByRole("textbox", { name: "Message Body" })).toHaveText("Keep this reply all draft");
 });
 
