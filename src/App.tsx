@@ -104,6 +104,8 @@ import { ThreadDrafts, threadDrafts } from "./ThreadDrafts";
 import { OutboxDetail, OutboxList, useCorrespondence } from "./useCorrespondence";
 import { DraftsList, useDraftSelection } from "./DraftsList";
 import { InlineConfirm } from "./InlineConfirm";
+import { useCheckedSelection } from "./useCheckedSelection";
+import { checkableOutboxKeys, outboxBatchAbility } from "./outboxView";
 import { useOutboxSelection } from "./useOutboxSelection";
 import { useLabelCatalog } from "./useLabelCatalog";
 import { loadSearchContacts } from "./searchContacts";
@@ -246,6 +248,15 @@ export function App() {
   useSentReplyRefresh(visibleDetail, displayedMessages, correspondence.outbox, setDetail);
   const displayedThreadText = useMemo(() => threadTextIndex(displayedMessages), [displayedMessages]);
   const outboxSelection = useOutboxSelection(correspondence.outbox, correspondence.summaries);
+  const checkableOutbox = useMemo(() => checkableOutboxKeys(outboxSelection.entries), [outboxSelection.entries]);
+  const outboxChecks = useCheckedSelection(checkableOutbox, outboxSelection.selectedEntry?.key ?? null);
+  const checkedOutboxEntries = outboxSelection.entries.filter((entry) => outboxChecks.checkedIds.has(entry.key));
+  const returnableSends = checkedOutboxEntries.filter((entry) => outboxBatchAbility(entry).returnable).flatMap((entry) => entry.kind === "local" ? [entry.item.id] : []);
+  const discardableSends = checkedOutboxEntries.filter((entry) => outboxBatchAbility(entry).discardable).flatMap((entry) => entry.kind === "local" ? [entry.item.id] : []);
+  const [confirmingSendDiscard, setConfirmingSendDiscard] = useState(false);
+  useEffect(() => {
+    if (mailbox !== "outbox" || discardableSends.length === 0) setConfirmingSendDiscard(false);
+  }, [mailbox, discardableSends.length]);
   const selectedOutboxItem = outboxSelection.selectedEntry?.kind === "local" ? outboxSelection.selectedEntry.item : undefined;
   const selectedOutboxMessage = useMemo(
     () => selectedOutboxItem ? queuedMessage(selectedOutboxItem, `outbox-${selectedOutboxItem.id}`) : null,
@@ -470,7 +481,7 @@ export function App() {
   }, [selectedThreadRowRef, setQuery, setSearchOpen]);
   const context = useAppCommandContext({
     correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads,
-    runBrief, recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, draftSelection, mutateIds,
+    runBrief, recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, draftSelection, selectAllOutbox: outboxChecks.selectAll, mutateIds,
     view: { mailbox, setMailbox, setActiveSplitInboxId, activeAccountId, selectedId, setSelectedId, isTabbedMailbox },
     ui: { interactionScope, canUnsubscribe, latestMessage, aiSummaryAvailable,
       aiBriefEnabled: aiSummaryFeatureEnabled || aiActionFeatureEnabled, aiChatEnabled: aiChatFeatureEnabled, aiDraftEnabled: aiDraftFeatureEnabled,
@@ -707,6 +718,54 @@ export function App() {
                 </HoverTooltip>
               </div>
             </div>
+          ) : mailbox === "outbox" && outboxChecks.checkedIds.size > 0 ? (
+            <div className="batch-toolbar" role="toolbar" aria-label="Batch actions">
+              <label className="select-all">
+                <input
+                  type="checkbox"
+                  ref={(input) => {
+                    if (input) input.indeterminate = outboxChecks.checkedIds.size < checkableOutbox.length;
+                  }}
+                  checked={outboxChecks.checkedIds.size === checkableOutbox.length}
+                  aria-label="Select All Messages" title="Select all messages you can act on (⌘/Ctrl+A)" aria-keyshortcuts="Meta+A Control+A"
+                  onChange={(event) => event.target.checked ? outboxChecks.selectAll() : outboxChecks.clear()}
+                />
+              </label>
+              <span className="batch-count">{outboxChecks.checkedIds.size} selected</span>
+              <div className="batch-actions" style={{ "--batch-columns": 3 } as CSSProperties}>
+                <HoverTooltip label={returnableSends.length ? `Return ${returnableSends.length} to Drafts` : "Nothing selected can return to Drafts"} placement="bottom">
+                  <ActionButton
+                    label={`Return ${returnableSends.length} to Drafts`}
+                    disabled={returnableSends.length === 0}
+                    onClick={() => {
+                      const ids = returnableSends;
+                      outboxChecks.clear();
+                      void correspondence.returnSendsToDrafts(ids);
+                    }}
+                  >
+                    <RotateCcw size={ICON_SIZE.md} />
+                  </ActionButton>
+                </HoverTooltip>
+                <HoverTooltip label={discardableSends.length ? `Discard ${discardableSends.length} failed` : "Only failed messages can be discarded"} placement="bottom">
+                  <ActionButton
+                    label={`Discard ${discardableSends.length} Failed`}
+                    disabled={discardableSends.length === 0}
+                    onClick={() => setConfirmingSendDiscard(true)}
+                  >
+                    <Trash size={ICON_SIZE.md} />
+                  </ActionButton>
+                </HoverTooltip>
+                <HoverTooltip label="Clear selection" placement="bottom">
+                  <button
+                    className="btn-icon"
+                    aria-label="Clear Selection" title="Clear selection (Esc)" aria-keyshortcuts="Escape"
+                    onClick={outboxChecks.clear}
+                  >
+                    <X size={ICON_SIZE.lg} />
+                  </button>
+                </HoverTooltip>
+              </div>
+            </div>
           ) : isThreadMailbox && checkedIds.size > 0 ? (
             <div className="batch-toolbar" role="toolbar" aria-label="Batch actions">
               <label className="select-all">
@@ -908,14 +967,37 @@ export function App() {
               onSelectionGesture={draftSelection.applyGesture}
             />
           </>
-          ) : mailbox === "outbox" ? (
+          ) : mailbox === "outbox" ? (<>
+            {confirmingSendDiscard ? (
+              <InlineConfirm
+                ariaLabel="Discard failed messages confirmation"
+                cancelLabel="Keep"
+                onCancel={() => setConfirmingSendDiscard(false)}
+                actions={[{
+                  label: discardableSends.length === 1 ? "Discard Message" : `Discard ${discardableSends.length} Messages`,
+                  className: "btn-danger",
+                  onClick: () => {
+                    const ids = discardableSends;
+                    setConfirmingSendDiscard(false);
+                    outboxChecks.clear();
+                    void correspondence.discardFailedSends(ids);
+                  },
+                }]}
+              >
+                {discardableSends.length === 1 ? "Discard this failed message?" : `Discard ${discardableSends.length} failed messages?`} They weren't sent, and this can't be undone.
+              </InlineConfirm>
+            ) : null}
             <OutboxList
               entries={outboxSelection.entries}
               selectedKey={outboxSelection.selectedEntry?.key ?? null}
               clock={correspondence.clock}
-              onSelect={outboxSelection.select}
+              onSelect={(key) => { outboxChecks.open(key); outboxSelection.select(key); }}
               selectedRowRef={outboxSelection.selectedRowRef}
+              checkedKeys={outboxChecks.checkedIds}
+              onToggleCheck={outboxChecks.toggle}
+              onSelectionGesture={outboxChecks.applyGesture}
             />
+          </>
           ) : (
             <>
           {loading ? <p className="empty">Loading inbox…</p> : null}

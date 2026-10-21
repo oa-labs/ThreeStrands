@@ -366,6 +366,45 @@ describe("useCorrespondence", () => {
     cleanup();
   });
 
+  it("keeps every Outbox row's checkbox column and checks only rows a batch action can use", () => {
+    const report: ScheduledSendReport = {operationId:"remote",ownerInstallationId:"peer",ownerSyncDeviceId:null,ownerNameAtCreation:"MacBook",account:"me@example.com",subject:"Remote schedule",scheduledAt:10,timeZone:"UTC",state:"scheduled",blockedReason:null,reportRevision:1,statusChangedAt:1};
+    const entries = outboxEntries([{ ...outbox, id: "failed", state: "failed" }, { ...outbox, id: "sending", state: "sending" }], [report]);
+    const toggle = vi.fn(), gesture = vi.fn(), select = vi.fn();
+    render(<OutboxList entries={entries} selectedKey={null} clock={20} onSelect={select} checkedKeys={new Set(["local:failed"])} onToggleCheck={toggle} onSelectionGesture={gesture} />);
+    const rows = screen.getAllByRole("option");
+    for (const row of rows) expect(row.querySelector(".row-leading")).not.toBeNull();
+    expect(rows.map((row) => Boolean(row.querySelector(".row-check")))).toEqual([true, false, false]);
+    expect(rows[0]).toHaveTextContent("Selected for batch actions");
+    fireEvent.click(rows[0].querySelector(".row-check")!);
+    expect(toggle).toHaveBeenCalledWith("local:failed");
+    fireEvent.click(rows[0], { metaKey: true });
+    expect(gesture).toHaveBeenCalledWith("local:failed", "toggle");
+    fireEvent.click(rows[1], { metaKey: true });
+    expect(gesture).toHaveBeenCalledTimes(1);
+    expect(select).toHaveBeenCalledWith("local:sending");
+    cleanup();
+  });
+
+  it("returns several sends to Drafts without opening them, and discards failed ones", async () => {
+    vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listOutbox").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listScheduledSummaries").mockResolvedValue([]);
+    const cancel = vi.spyOn(mailClient, "cancelSend").mockImplementation(async (id) => ({ ...draft, id: `draft-${id}` }));
+    const recover = vi.spyOn(mailClient, "recoverSend").mockImplementation(async (id) => ({ ...draft, id: `draft-${id}` }));
+    const discard = vi.spyOn(mailClient, "discardDraft").mockResolvedValue();
+    const { result } = renderHook(() => useCorrespondence([], undefined, undefined, ...snippetArgs, null));
+    await act(async () => { await result.current.returnSendsToDrafts(["a", "b"]); });
+    expect(cancel.mock.calls.map(([id]) => id)).toEqual(["a", "b"]);
+    expect(result.current.activeDraft).toBeNull();
+    await act(async () => { await result.current.discardFailedSends(["c"]); });
+    expect(recover).toHaveBeenCalledWith("c");
+    expect(discard).toHaveBeenCalledWith("draft-c");
+
+    cancel.mockRejectedValueOnce(new Error("Delivery has already started"));
+    await act(async () => { await result.current.returnSendsToDrafts(["d", "e"]); });
+    expect(cancel).toHaveBeenCalledTimes(4);
+  });
+
   it("keeps local schedules out of the undo banner and deduplicates owner summaries", async () => {
     const report:ScheduledSendReport={operationId:outbox.id,ownerInstallationId:"self",ownerSyncDeviceId:null,ownerNameAtCreation:"Desktop",account:draft.account,subject:draft.subject,scheduledAt:Date.now()+60000,timeZone:"UTC",state:"scheduled",blockedReason:null,reportRevision:1,statusChangedAt:Date.now()};
     vi.spyOn(mailClient,"listDrafts").mockResolvedValue([]);

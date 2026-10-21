@@ -1,12 +1,12 @@
 import { Paperclip, Square, SquareCheckBig } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 import type { Draft } from "./correspondence";
 import { formatDisplayName, parseAddress, splitAddressList } from "./emailAddress";
 import { ICON_SIZE } from "./iconSizes";
 import { matchesShortcut } from "./commands";
 import { formatMailTimestamp } from "./threadPresentation";
-import { applySelectionGesture, selectionGestureFor, type SelectionGesture } from "./threadSelection";
-import { useEscapeDismiss } from "./useEscapeDismiss";
+import { selectionGestureFor, type SelectionGesture } from "./threadSelection";
+import { useCheckedSelection } from "./useCheckedSelection";
 
 function draftRecipients(draft: Draft): string {
   const recipients = splitAddressList([draft.to, draft.cc, draft.bcc].filter(Boolean).join(", "));
@@ -19,44 +19,10 @@ function draftPreview(draft: Draft): string {
   return draft.body.replace(/\s+/g, " ").trim().slice(0, 200);
 }
 
-/** Checked drafts for batch actions, with the inbox's click, ⌘-click and Shift-click rules. */
+/** Checked drafts for batch actions. */
 export function useDraftSelection(drafts: Draft[], openId: string | null) {
-  const [checkedIds, setCheckedIds] = useState<Set<string>>(() => new Set());
-  const anchor = useRef<string | null>(null);
   const orderedIds = useMemo(() => drafts.map((draft) => draft.id), [drafts]);
-
-  useEffect(() => {
-    setCheckedIds((current) => {
-      if (current.size === 0) return current;
-      const next = new Set([...current].filter((id) => orderedIds.includes(id)));
-      return next.size === current.size ? current : next;
-    });
-  }, [orderedIds]);
-  useEffect(() => { if (openId) anchor.current = openId; }, [openId]);
-  useEscapeDismiss(() => setCheckedIds((current) => (current.size > 0 ? new Set() : current)), checkedIds.size > 0);
-
-  const toggle = useCallback((id: string) => {
-    anchor.current = id;
-    setCheckedIds((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-  const applyGesture = useCallback((id: string, gesture: SelectionGesture) => {
-    const anchorId = anchor.current;
-    if (gesture === "toggle") anchor.current = id;
-    setCheckedIds((current) => applySelectionGesture({ gesture, targetId: id, anchorId, openId, orderedIds, checked: current }));
-  }, [openId, orderedIds]);
-  const selectAll = useCallback(() => setCheckedIds(new Set(orderedIds)), [orderedIds]);
-  const clear = useCallback(() => setCheckedIds((current) => (current.size > 0 ? new Set() : current)), []);
-  const open = useCallback((id: string) => {
-    anchor.current = id;
-    clear();
-  }, [clear]);
-
-  return { checkedIds, toggle, applyGesture, selectAll, clear, open };
+  return useCheckedSelection(orderedIds, openId);
 }
 
 export function DraftsList({

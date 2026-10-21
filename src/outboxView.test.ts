@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Draft, OutboxItem, ScheduledSendReport } from "./correspondence";
-import { adjacentOutboxKey, isOutgoing, outboxEditAsNewSource, outboxEntries, outboxEntryTime, selectedOutboxEntry, type OutboxEntry } from "./outboxView";
+import { adjacentOutboxKey, checkableOutboxKeys, isOutgoing, outboxBatchAbility, outboxEditAsNewSource, outboxEntries, outboxEntryTime, selectedOutboxEntry, type OutboxEntry } from "./outboxView";
 
 const draft: Draft = {
   id: "draft", revision: 1, account: "me@example.com", mode: "new", sourceId: null, threadId: null,
@@ -83,5 +83,26 @@ describe("outboxEntryTime", () => {
     expect(outboxEntryTime(local(item("a", "failed")))).toBe(500);
     expect(outboxEntryTime(outboxEntries([item("a", "scheduled", { schedule: { report, canManage: true, visibility: "local" } })], [])[0])).toBe(900);
     expect(outboxEntryTime(outboxEntries([], [report])[0])).toBe(900);
+  });
+});
+
+describe("outboxBatchAbility", () => {
+  it.each(["undo_pending", "ready", "scheduled", "overdue"] as const)("lets a %s send return to Drafts", (state) => {
+    expect(outboxBatchAbility(local(item("a", state)))).toEqual({ returnable: true, discardable: false });
+  });
+  it("lets only a failed send be discarded", () => {
+    expect(outboxBatchAbility(local(item("a", "failed")))).toEqual({ returnable: false, discardable: true });
+  });
+  it.each(["sending", "uncertain", "unverifiable", "sent"] as const)("leaves a %s send out of batch actions", (state) => {
+    expect(outboxBatchAbility(local(item("a", state)))).toEqual({ returnable: false, discardable: false });
+  });
+  it("leaves out schedules this computer can't manage and other computers' reports", () => {
+    const schedule = { report, canManage: false, visibility: "local" };
+    expect(outboxBatchAbility(local(item("a", "scheduled", { schedule })))).toEqual({ returnable: false, discardable: false });
+    expect(outboxBatchAbility({ key: "peer:x", kind: "peer", report })).toEqual({ returnable: false, discardable: false });
+  });
+  it("lists the keys a batch action can check, in display order", () => {
+    const entries = outboxEntries([item("a", "failed"), item("b", "sending"), item("c", "scheduled")], [report]);
+    expect(checkableOutboxKeys(entries)).toEqual(["local:a", "local:c"]);
   });
 });

@@ -31,6 +31,33 @@ export function outboxEntries(outbox: OutboxItem[], summaries: ScheduledSendRepo
   ];
 }
 
+/** States a send can return to Drafts from, as Undo Send and Return to Draft do. */
+const RETURNABLE_STATES = ["undo_pending", "ready", "scheduled", "overdue"];
+
+/**
+ * What a batch action may do with one row. Only this computer's sends it can
+ * manage qualify: one waiting to go out can return to Drafts, a failed one
+ * can be discarded. Anything else, including another computer's schedule,
+ * can't be checked.
+ */
+export function outboxBatchAbility(entry: OutboxEntry): { returnable: boolean; discardable: boolean } {
+  if (entry.kind !== "local") return { returnable: false, discardable: false };
+  const { item } = entry;
+  const canManage = !item.schedule || item.schedule.canManage;
+  return {
+    returnable: canManage && RETURNABLE_STATES.includes(item.state),
+    discardable: canManage && item.state === "failed",
+  };
+}
+
+/** The keys of the rows a batch action can apply to, in display order. */
+export function checkableOutboxKeys(entries: OutboxEntry[]): string[] {
+  return entries.filter((entry) => {
+    const ability = outboxBatchAbility(entry);
+    return ability.returnable || ability.discardable;
+  }).map((entry) => entry.key);
+}
+
 /** The selected row, or the first one when nothing (or a row that has left the Outbox) is selected. */
 export function selectedOutboxEntry(entries: OutboxEntry[], key: string | null): OutboxEntry | null {
   return entries.find((entry) => entry.key === key) ?? entries[0] ?? null;

@@ -1683,6 +1683,47 @@ describe("Drafts folder", () => {
     expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
   });
 
+  it("selects several Outbox messages and returns or discards the ones each action fits", async () => {
+    const base = await mailClient.createDraft("new");
+    const draft = { ...base, to: "Jane <jane@example.com>", subject: "Quarterly notes" };
+    const report = { operationId: "scheduled", ownerInstallationId: "self", ownerSyncDeviceId: null, ownerNameAtCreation: "Desktop", account: draft.account, subject: "Later", scheduledAt: Date.now() + 3_600_000, timeZone: "UTC", state: "scheduled" as const, blockedReason: null, reportRevision: 1, statusChangedAt: 1 };
+    const items = [
+      { id: "failed", draft: { ...draft, subject: "Bounced" }, state: "failed" as const, deadline: 0, error: "Rejected" },
+      { id: "scheduled", draft: { ...draft, subject: "Later" }, state: "scheduled" as const, deadline: Date.now() + 3_600_000, error: null, schedule: { report, canManage: true, visibility: "local" } },
+    ];
+    vi.spyOn(mailClient, "listOutbox").mockResolvedValue(items);
+    const cancel = vi.spyOn(mailClient, "cancelSend").mockResolvedValue(draft);
+    const recover = vi.spyOn(mailClient, "recoverSend").mockResolvedValue(draft);
+    const discard = vi.spyOn(mailClient, "discardDraft").mockResolvedValue();
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    selectFolder("Outbox");
+    const bounced = await screen.findByRole("option", { name: /Bounced/ });
+    fireEvent.click(bounced, { metaKey: true });
+    fireEvent.click(screen.getByRole("option", { name: /Later/ }), { shiftKey: true });
+    const toolbar = screen.getByRole("toolbar", { name: "Batch actions" });
+    expect(toolbar).toHaveTextContent("2 selected");
+
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Discard 1 Failed" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Discard failed messages confirmation" })).getByRole("button", { name: "Discard Message" }));
+    await waitFor(() => expect(discard).toHaveBeenCalledWith(draft.id));
+    expect(recover).toHaveBeenCalledWith("failed");
+    expect(cancel).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("option", { name: /Later/ }), { metaKey: true });
+    cancel.mockRejectedValueOnce(new Error("Delivery has already started"));
+    fireEvent.click(within(screen.getByRole("toolbar", { name: "Batch actions" })).getByRole("button", { name: "Return 1 to Drafts" }));
+    expect(await screen.findByText(/1 message couldn't be returned to Drafts: Error: Delivery has already started/)).toBeInTheDocument();
+    expect(cancel).toHaveBeenCalledWith("scheduled");
+    expect(screen.queryByRole("textbox", { name: "Subject" })).not.toBeInTheDocument();
+
+    vi.mocked(mailClient.listOutbox).mockRestore();
+    discard.mockRestore();
+    await mailClient.discardDraft(base.id);
+    selectFolder("Inbox");
+    expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
+  });
+
   it("switches folders from the menu while a draft is open and keeps unsaved edits", async () => {
     await mailClient.createDraft("new");
     render(<App />);

@@ -3,7 +3,7 @@ import { type SignatureState } from "./signatures";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { X } from "lucide-react";
+import { Square, SquareCheckBig, X } from "lucide-react";
 import { Composer, type ComposerHandle } from "./Composer";
 import type { DraftReviewAvailability } from "./DraftReviewSection";
 import { mailClient } from "./data/client";
@@ -18,7 +18,8 @@ import type { MailtoRequest } from "./mailtoLink";
 import { ScheduleSendPicker, formatScheduledTime } from "./ScheduleSendPicker";
 import { formatDisplayName, parseAddress, splitAddressList } from "./emailAddress";
 import { formatMailTimestamp } from "./threadPresentation";
-import { outboxEditAsNewSource, outboxEntryTime, selectedOutboxEntry, type OutboxEntry } from "./outboxView";
+import { outboxBatchAbility, outboxEditAsNewSource, outboxEntryTime, selectedOutboxEntry, type OutboxEntry } from "./outboxView";
+import { selectionGestureFor, type SelectionGesture } from "./threadSelection";
 
 /**
  * Plain, honest label for an outbox item's raw state string. Only the states
@@ -256,6 +257,23 @@ export function useCorrespondence(
       mailClient.recoverSend(id).then((d) => { setActiveFollowUpTaskId(d.followUpTaskId ?? null); setActiveThreadId(null); setActive(d); return refresh(); }).catch((e: unknown) => setError(String(e))),
     );
   }, [refresh, withOutboxActionGuard]);
+  /** Runs `action` on each send, then reports how many failed in one message. */
+  const runOnSends = useCallback(async (ids: readonly string[], verb: string, action: (id: string) => Promise<unknown>) => {
+    const results = await Promise.allSettled(ids.map(action));
+    const failed = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failed.length) setError(`${failed.length} ${failed.length === 1 ? "message" : "messages"} couldn't be ${verb}: ${String(failed[0].reason)}`);
+    await refresh().catch((e: unknown) => setError(String(e)));
+  }, [refresh]);
+  /** Returns sends that haven't gone out to Drafts, without opening each in the composer. */
+  const returnSendsToDrafts = useCallback(
+    (ids: readonly string[]) => runOnSends(ids, "returned to Drafts", (id) => mailClient.cancelSend(id)),
+    [runOnSends],
+  );
+  /** Discards failed sends: each is restored to a draft, then discarded. */
+  const discardFailedSends = useCallback(
+    (ids: readonly string[]) => runOnSends(ids, "discarded", async (id) => mailClient.discardDraft((await mailClient.recoverSend(id)).id)),
+    [runOnSends],
+  );
   const reconcileSend = useCallback((id: string) => {
     if (pendingOutboxActionsRef.current.has(id)) return;
     withOutboxActionGuard(id, () => mailClient.reconcileSend(id).then(() => refresh()).catch((e: unknown) => setError(String(e))));
@@ -417,6 +435,8 @@ export function useCorrespondence(
     discardListedDrafts,
     undoSendItem,
     restoreFailedSend,
+    returnSendsToDrafts,
+    discardFailedSends,
     reconcileSend,
     pendingOutboxActions,
     activeDraft: active,
@@ -475,18 +495,27 @@ export function OutboxList({
   clock,
   onSelect,
   selectedRowRef,
+  checkedKeys = new Set(),
+  onToggleCheck,
+  onSelectionGesture,
 }: {
   entries: OutboxEntry[];
   selectedKey: string | null;
   clock: number;
   onSelect(key: string): void;
   selectedRowRef?: RefObject<HTMLButtonElement | null>;
+  checkedKeys?: ReadonlySet<string>;
+  onToggleCheck?(key: string): void;
+  onSelectionGesture?(key: string, gesture: SelectionGesture): void;
 }) {
   if (entries.length === 0) return <p className="empty">No outgoing messages.</p>;
   const selected = selectedOutboxEntry(entries, selectedKey)?.key;
   return <>{entries.map((entry) => {
     const status = outboxRowStatus(entry, clock);
     const isSelected = entry.key === selected;
+    const ability = outboxBatchAbility(entry);
+    const checkable = ability.returnable || ability.discardable;
+    const checked = checkedKeys.has(entry.key);
     return (
       <button
         key={entry.key}
@@ -495,8 +524,33 @@ export function OutboxList({
         role="option"
         aria-selected={isSelected}
         className={`thread-row outbox-row${isSelected ? " selected" : ""}`}
-        onClick={() => onSelect(entry.key)}
+        onMouseDown={(event) => {
+          // Keep Shift-click from extending a text selection across rows.
+          if (event.shiftKey && checkable) event.preventDefault();
+        }}
+        onClick={(event) => {
+          const gesture = checkable && onSelectionGesture ? selectionGestureFor(event) : null;
+          if (gesture) onSelectionGesture!(entry.key, gesture);
+          else onSelect(entry.key);
+        }}
       >
+        {/* Every row keeps the checkbox column, so text lines up with other folders. */}
+        <span className="row-leading">
+          {checkable && onToggleCheck ? (
+            <span
+              className={`row-check ${checked ? "checked" : ""}`}
+              aria-hidden="true"
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleCheck(entry.key);
+              }}
+            >
+              {checked ? <SquareCheckBig size={ICON_SIZE.md} /> : <Square size={ICON_SIZE.md} />}
+            </span>
+          ) : null}
+        </span>
+        {checked ? <span className="sr-only">Selected for batch actions</span> : null}
+        <span className="unread-dot" />
         <span className="thread-content">
           <span className="thread-meta">
             <span className="thread-sender">

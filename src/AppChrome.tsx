@@ -122,13 +122,15 @@ export function ActionButton({
   label,
   onClick,
   shortcut,
+  disabled = false,
 }: {
   children: ReactNode;
   label: string;
   onClick(): void;
   shortcut?: string;
+  disabled?: boolean;
 }) {
-  return <button className="btn-icon action-button" aria-label={shortcut ? `${label} (${shortcut})` : label} onClick={onClick}>{children}<span>{label}</span>{shortcut ? <kbd>{shortcut}</kbd> : null}</button>;
+  return <button className="btn-icon action-button" aria-label={shortcut ? `${label} (${shortcut})` : label} disabled={disabled} onClick={onClick}>{children}<span>{label}</span>{shortcut ? <kbd>{shortcut}</kbd> : null}</button>;
 }
 
 export function CommandPalette({
