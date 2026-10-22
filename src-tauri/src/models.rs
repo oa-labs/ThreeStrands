@@ -422,6 +422,9 @@ pub struct Thread {
     /// The `last_message_at` the summary was written from. A summary is
     /// stale once the thread has a newer message than this.
     pub summary_revision: Option<String>,
+    /// The send time of the first message the summary focused on; earlier
+    /// messages were background. `None` for a summary of the whole thread.
+    pub summary_focus_from: Option<String>,
     pub has_attachments: bool,
 }
 
@@ -826,6 +829,8 @@ pub struct SummaryResult {
     pub generated_at: String,
     /// The thread's `last_message_at` the summary was written from.
     pub revision: String,
+    /// See `Thread::summary_focus_from`.
+    pub focus_from: Option<String>,
 }
 
 /// One day's AI provider usage for a provider and model. Cost is known only
@@ -841,6 +846,24 @@ pub struct AiUsageDay {
     pub output_tokens: i64,
     pub reported_cost_requests: i64,
     pub reported_cost_usd: f64,
+}
+
+/// One AI provider request, as Settings → AI lists it. Never holds email
+/// text: only what the request was for and how large it was.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiActivity {
+    pub at: String,
+    /// What the request was for, such as `brief`; see `ai::RequestPurpose`.
+    pub feature: String,
+    pub provider: String,
+    pub model: String,
+    /// The conversation or draft subject, when the request was about one.
+    pub subject: Option<String>,
+    /// How many messages were sent, when the request sent messages.
+    pub message_count: Option<i64>,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
 }
 
 /// One earlier exchange in a thread chat, as the client kept it.

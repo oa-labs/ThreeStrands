@@ -35,6 +35,7 @@ import {
 import { ModelCombobox } from "./ModelCombobox";
 import { errorMessage } from "./errors";
 import { AiUsageSummary } from "./AiUsageSummary";
+import { AiActivityList } from "./AiActivityList";
 import { MIN_PROACTIVE_DWELL_SECONDS } from "./proactiveBrief";
 import { ICON_SIZE } from "./iconSizes";
 
@@ -385,6 +386,8 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
               <AiUsageSummary provider={provider} model={resolveAiModel(provider, model)} fastModel={fastModel} />
             </div>
           </details>
+
+          <AiActivityList />
         </>
       ) : null}
     </section>

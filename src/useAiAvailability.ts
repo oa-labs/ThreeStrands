@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { isAiApiKeyConfigured, readAiFeatures, readAiProvider } from "./aiSettings";
+import { AI_PROVIDERS, isAiApiKeyConfigured, readAiFeatures, readAiProvider, type AiProvider } from "./aiSettings";
+
+/** How the Brief names who a conversation was shared with. */
+export function aiProviderName(provider: AiProvider): string | null {
+  if (provider === "none") return null;
+  if (provider === "custom") return "your custom endpoint";
+  return AI_PROVIDERS.find((candidate) => candidate.id === provider)?.label ?? null;
+}
 
 /**
  * Which AI features to show. A feature is *enabled* when an AI provider is
@@ -9,6 +16,7 @@ import { isAiApiKeyConfigured, readAiFeatures, readAiProvider } from "./aiSettin
  */
 export function useAiAvailability(settingsOpen: boolean) {
   const [aiProviderChosen, setAiProviderChosen] = useState(false);
+  const [aiProviderLabel, setAiProviderLabel] = useState<string | null>(null);
   const [aiSummaryAvailable, setAiSummaryAvailable] = useState(false);
   const [aiSummaryFeatureEnabled, setAiSummaryFeatureEnabled] = useState(false);
   const [aiProactive, setAiProactive] = useState<{ enabled: boolean; knownSendersOnly: boolean }>({ enabled: false, knownSendersOnly: false });
@@ -26,6 +34,7 @@ export function useAiAvailability(settingsOpen: boolean) {
     const chatEnabled = provider !== "none" && features.threadChat;
     const draftEnabled = provider !== "none" && features.draftAssist;
     setAiProviderChosen(provider !== "none");
+    setAiProviderLabel(aiProviderName(provider));
     setAiChatFeatureEnabled(chatEnabled);
     setAiSummaryFeatureEnabled(summaryEnabled);
     setAiProactive({ enabled: features.proactiveBriefs, knownSendersOnly: features.proactiveKnownSendersOnly });
@@ -57,7 +66,7 @@ export function useAiAvailability(settingsOpen: boolean) {
     if (!settingsOpen) refreshAiAvailability();
   }, [settingsOpen, refreshAiAvailability]);
   return {
-    aiProviderChosen, aiSummaryAvailable, aiSummaryFeatureEnabled, aiProactive, aiActionFeatureEnabled,
+    aiProviderChosen, aiProviderLabel, aiSummaryAvailable, aiSummaryFeatureEnabled, aiProactive, aiActionFeatureEnabled,
     aiActionAvailable, aiChatFeatureEnabled, aiChatAvailable, aiDraftFeatureEnabled, aiDraftAvailable, refreshAiAvailability,
   };
 }

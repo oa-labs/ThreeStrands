@@ -141,7 +141,7 @@ fn find_times_output_schema() -> OutputSchema {
 }
 
 pub async fn find_times(request: FindTimesRequest, api_key: &str) -> Result<TimeSearch, String> {
-    let bounded = action_context(&request.messages);
+    let bounded = action_context(&request.messages, None);
     let prompt = build_find_times_prompt(&request, &bounded)?;
     let content = call_provider(
         request.provider,

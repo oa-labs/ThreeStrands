@@ -10,8 +10,11 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - The header of an open email now shows who was copied, as in "to David Martinez, cc me", so you can tell whether a message was sent to you or you were only Cc'd. Your own address shows as "me".
 - Meeting details in the **Calendar** now show who has accepted or declined. The guest count adds a tally such as "2 going, 1 not going", and each guest is marked **Going**, **Not going**, **Maybe**, or **Awaiting**.
 - ThreeStrands now reopens where you left off. If you quit while in **Calendar**, **Tasks**, **Contacts**, or **Files**, that view is open the next time you start the app.
+- **Settings → AI Provider** now lists recent **Activity**: which feature sent each request to your AI provider, the conversation's subject, how many messages, and the tokens used. Email text is never kept there.
 
 ### Improved
+- The **Brief** now sums up what's new since your last reply or your last brief, instead of the whole conversation again, and suggests tasks only from the new messages. When it helps, a last line recaps the earlier conversation, and a note says when the brief covers only the latest messages.
+- The **Brief** section collapses from its heading like the rest of the side panel. Instead of the raw data that was shared with AI, it now says how many messages were shared and with which provider.
 - Discarding drafts, or failed messages in **Outbox**, now works like moving conversations to Trash: it happens right away, and **Undo** in the notice (or <kbd>z</kbd>) brings them back, attachments included, for up to an hour. Failed messages come back to **Drafts**.
 - Collapsed emails in a conversation now use the same text sizes as the rest of the app, instead of larger type.
 - An unsent draft at the end of a conversation now lines up with the emails above it, with **Resume Draft** on the right.

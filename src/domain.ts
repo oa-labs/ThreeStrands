@@ -19,6 +19,11 @@ export type Thread = {
   summaryGeneratedAt: string | null;
   /** The `lastMessageAt` the summary was written from; null for summaries saved before it was recorded. */
   summaryRevision: string | null;
+  /**
+   * When the summary's new messages start; earlier ones were background.
+   * Null or absent when the summary read the whole conversation.
+   */
+  summaryFocusFrom?: string | null;
   hasAttachments: boolean;
 };
 
@@ -563,6 +568,21 @@ export type SummaryResult = {
   generatedAt: string;
   /** The thread's `lastMessageAt` the summary was written from. */
   revision: string;
+  /** See `Thread.summaryFocusFrom`. */
+  focusFrom?: string | null;
+};
+
+/** One AI provider request, as Settings → AI lists it; never email text. */
+export type AiActivity = {
+  at: string;
+  /** What the request was for, such as "brief"; see `aiActivityFeatureLabel`. */
+  feature: string;
+  provider: string;
+  model: string;
+  subject: string | null;
+  messageCount: number | null;
+  inputTokens: number;
+  outputTokens: number;
 };
 
 /** One local day's provider usage for one provider and model. */

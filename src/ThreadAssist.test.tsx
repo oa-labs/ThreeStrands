@@ -1,9 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import { SLOTS_PER_DAY } from "./scheduling";
-import { ThreadAssist, type ThreadAssistProps } from "./ThreadAssist";
+import { briefScope, ThreadAssist, type ThreadAssistProps } from "./ThreadAssist";
 import type { ActionProposal, ThreadDetail } from "./domain";
 
 const detail: ThreadDetail = {
@@ -69,7 +69,7 @@ function props(overrides: Partial<Omit<ThreadAssistProps, "summary" | "suggestio
     providerChosen: true,
     loading: false,
     error: null,
-    preview: null,
+    providerName: "Anthropic",
     onRun: vi.fn(),
     onOpenSettings: vi.fn(),
     ...rest,
@@ -97,7 +97,75 @@ function props(overrides: Partial<Omit<ThreadAssistProps, "summary" | "suggestio
 }
 
 describe("ThreadAssist", () => {
+  beforeEach(() => localStorage.clear());
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  it("collapses from its heading, keeps its actions, and remembers the choice", () => {
+    const onRun = vi.fn();
+    const { unmount } = render(<ThreadAssist {...props({ onRun, detail: summarized, suggestions: { requested: true } })} />);
+    const toggle = screen.getByRole("button", { name: "Brief" });
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("The client needs the website.")).not.toBeVisible();
+    // Copy and Refresh still work while collapsed.
+    fireEvent.click(screen.getByRole("button", { name: "Refresh brief" }));
+    expect(onRun).toHaveBeenCalledWith(true);
+    expect(screen.getByRole("button", { name: "Copy brief" })).toBeInTheDocument();
+    unmount();
+
+    render(<ThreadAssist {...props({ detail: summarized, suggestions: { requested: true } })} />);
+    expect(screen.getByRole("button", { name: "Brief" })).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Brief" }));
+    expect(screen.getByText("The client needs the website.")).toBeVisible();
+  });
+
+  it("says in words what was shared and with whom, and links to the activity log", () => {
+    const onOpenSettings = vi.fn();
+    const { rerender } = render(<ThreadAssist {...props({ onOpenSettings, detail: summarized, suggestions: { requested: true } })} />);
+    expect(screen.getByText(/Shared 1 message with Anthropic\./)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "AI Activity" }));
+    expect(onOpenSettings).toHaveBeenCalled();
+    rerender(<ThreadAssist {...props({ detail: summarized, providerName: "your custom endpoint", suggestions: { requested: true } })} />);
+    expect(screen.getByText(/Shared 1 message with your custom endpoint\./)).toBeInTheDocument();
+    // Nothing is claimed while the brief is still being read.
+    rerender(<ThreadAssist {...props({ detail: summarized, loading: true, suggestions: { requested: true } })} />);
+    expect(screen.queryByText(/^Shared /)).not.toBeInTheDocument();
+  });
+
+  it("says when a brief covers only the latest messages and reads the recap of earlier ones last", () => {
+    const message = (id: string, sentAt: string) => ({ ...detail.messages[0], id, sentAt });
+    const thread: ThreadDetail = {
+      thread: {
+        ...summarized.thread,
+        lastMessageAt: "2026-09-21T10:00:00Z",
+        summary: "- Earlier: The client asked for the website by Friday.\n- They now want it Monday instead.",
+        summaryRevision: "2026-09-21T10:00:00Z",
+        summaryFocusFrom: "2026-09-21T10:00:00Z",
+      },
+      messages: [message("m1", "2026-09-19T10:00:00Z"), message("m2", "2026-09-20T10:00:00Z"), message("m3", "2026-09-21T10:00:00Z")],
+    };
+    const { rerender } = render(<ThreadAssist {...props({ detail: thread, suggestions: { requested: true } })} />);
+    expect(screen.getByText("From the latest message")).toBeInTheDocument();
+    const items = screen.getAllByRole("listitem");
+    expect(items.map((item) => item.textContent)).toEqual(["They now want it Monday instead.", "Earlier: The client asked for the website by Friday."]);
+    expect(items[1]).toHaveClass("thread-assist-summary-earlier");
+    expect(screen.getByText(/Shared 3 messages with Anthropic\./)).toBeInTheDocument();
+
+    rerender(<ThreadAssist {...props({ detail: { ...thread, thread: { ...thread.thread, summaryFocusFrom: "2026-09-20T10:00:00Z" } }, suggestions: { requested: true } })} />);
+    expect(screen.getByText("From the 2 latest messages")).toBeInTheDocument();
+    // A brief of the whole conversation, or one saved before focus was recorded, needs no note.
+    rerender(<ThreadAssist {...props({ detail: { ...thread, thread: { ...thread.thread, summaryFocusFrom: null } }, suggestions: { requested: true } })} />);
+    expect(screen.queryByText(/^From the /)).not.toBeInTheDocument();
+  });
+
+  it("counts only messages the brief was written from, and at most what a brief sends", () => {
+    const many: ThreadDetail = {
+      thread: { ...summarized.thread, lastMessageAt: "2026-09-30T00:00:00Z", summaryRevision: "2026-09-25T00:00:00Z", summaryFocusFrom: "2026-09-24T00:00:00Z" },
+      messages: Array.from({ length: 25 }, (_, index) => ({ ...detail.messages[0], id: `m${index}`, sentAt: `2026-09-${String(index + 6).padStart(2, "0")}T00:00:00Z` })),
+    };
+    // Sept 6 through 25 were covered (20 messages); Sept 24 and 25 were new.
+    expect(briefScope(many)).toEqual({ newCount: 2, coveredCount: 20, sentCount: 15 });
+  });
 
   it("offers one Get Brief action before anything has run and refreshes everything afterwards", () => {
     const onRun = vi.fn();
@@ -117,9 +185,10 @@ describe("ThreadAssist", () => {
     expect(screen.queryByRole("button", { name: "Refresh brief" })).not.toBeInTheDocument();
 
     rerender(<ThreadAssist {...props({ onRun, detail: summarized, suggestions: { requested: true } })} />);
-    // With a brief, the section opens under a heading with a section icon; the AI mark stays on actions.
+    // With a brief, the section opens under a heading that collapses it, like
+    // the panel's other sections; the AI mark stays on actions.
     const heading = screen.getByRole("heading", { name: "Brief" });
-    expect(heading.querySelector(".context-row-glyph .lucide-scroll-text")).not.toBeNull();
+    expect(within(heading).getByRole("button", { name: "Brief" })).toHaveAttribute("aria-expanded", "true");
     expect(heading.querySelector(".lucide-sparkles")).toBeNull();
     expect(screen.getByText("The client needs the website.")).toBeInTheDocument();
     expect(screen.getByText("Due Friday.")).toBeInTheDocument();
@@ -220,7 +289,7 @@ describe("ThreadAssist", () => {
   it("previews typed proposals with evidence and review actions", () => {
     const onReview = vi.fn();
     const onDiscard = vi.fn();
-    render(<ThreadAssist {...props({ preview: '{"emailContext":{"messages":[]}}', suggestions: { requested: true, proposals: [taskProposal], onReview, onDiscard } })} />);
+    render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [taskProposal], onReview, onDiscard } })} />);
 
     expect(screen.getByRole("heading", { name: "Suggested" })).toBeInTheDocument();
     expect(screen.getByText("Set up the website")).toBeInTheDocument();
@@ -235,7 +304,9 @@ describe("ThreadAssist", () => {
     expect(onReview).toHaveBeenLastCalledWith(0, taskProposal, "edit");
     fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     expect(onDiscard).toHaveBeenCalledWith(0);
-    expect(screen.getByText("What was shared with AI")).toBeInTheDocument();
+    // What was sent is said in words; the request itself is in Settings → AI.
+    expect(screen.queryByText("What was shared with AI")).not.toBeInTheDocument();
+    expect(document.querySelector("pre")).toBeNull();
   });
 
   it("flags uncertain suggestions for a closer look and schedules an unzoned meeting in the user's time zone", async () => {
@@ -286,24 +357,24 @@ describe("ThreadAssist", () => {
   });
 
   it("reports withheld suggestions instead of claiming there was nothing to do", () => {
-    const { rerender } = render(<ThreadAssist {...props({ preview: "{}", suggestions: { requested: true, hiddenCount: 2 } })} />);
+    const { rerender } = render(<ThreadAssist {...props({ suggestions: { requested: true, hiddenCount: 2 } })} />);
     expect(screen.getByText("2 suggestions couldn’t be matched to the email, so they were hidden.")).toBeInTheDocument();
     expect(screen.queryByText("Nothing to schedule or follow up on.")).not.toBeInTheDocument();
 
-    rerender(<ThreadAssist {...props({ preview: "{}", suggestions: { requested: true, hiddenCount: 1 } })} />);
+    rerender(<ThreadAssist {...props({ suggestions: { requested: true, hiddenCount: 1 } })} />);
     expect(screen.getByText("1 suggestion couldn’t be matched to the email, so it was hidden.")).toBeInTheDocument();
 
-    rerender(<ThreadAssist {...props({ preview: "{}", suggestions: { requested: true } })} />);
+    rerender(<ThreadAssist {...props({ suggestions: { requested: true } })} />);
     expect(screen.getByText("Nothing to schedule or follow up on.")).toBeInTheDocument();
   });
 
   it("reports suggestions past the limit separately from withheld ones", () => {
-    const { rerender } = render(<ThreadAssist {...props({ preview: "{}", suggestions: { requested: true, proposals: [taskProposal], extraCount: 3 } })} />);
+    const { rerender } = render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [taskProposal], extraCount: 3 } })} />);
     expect(screen.getByText("3 more suggestions weren’t shown. Ask about one by name to add it.")).toBeInTheDocument();
     expect(screen.queryByText(/couldn’t be matched/)).not.toBeInTheDocument();
-    rerender(<ThreadAssist {...props({ preview: "{}", suggestions: { requested: true, proposals: [taskProposal], extraCount: 1 } })} />);
+    rerender(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [taskProposal], extraCount: 1 } })} />);
     expect(screen.getByText("1 more suggestion wasn’t shown. Ask about it by name to add it.")).toBeInTheDocument();
-    rerender(<ThreadAssist {...props({ preview: "{}", suggestions: { requested: true, proposals: [taskProposal], extraCount: 0 } })} />);
+    rerender(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [taskProposal], extraCount: 0 } })} />);
     expect(screen.queryByText(/more suggestion/)).not.toBeInTheDocument();
   });
 

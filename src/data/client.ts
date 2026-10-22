@@ -9,6 +9,7 @@ import type {
   Account,
   ActionAnalysis,
   ActionProposal,
+  AiActivity,
   AiUsageDay,
   AuthStatus,
   AvailabilityPreferences,
@@ -142,6 +143,8 @@ export interface MailClient extends CorrespondenceClient {
   removeThreadSuggestion(threadId: string, revision: string, proposal: ActionProposal): Promise<boolean>;
   /** AI provider usage for the last `days` local days, including today. */
   aiUsageSummary(days: number): Promise<AiUsageDay[]>;
+  /** The most recent AI provider requests, newest first; never email text. */
+  aiActivity(limit: number): Promise<AiActivity[]>;
   briefThread(
     threadId: string,
     userTimeZone: string,
@@ -379,6 +382,7 @@ const tauriClient: MailClient = {
   analyzeThread: (threadId, userTimeZone, provider, model, endpoint) =>
     complete("ai_analyze_thread", { threadId, userTimeZone, provider, model, endpoint }),
   aiUsageSummary: (days) => read("ai_usage_summary", { days }),
+  aiActivity: (limit) => read("ai_activity", { limit }),
   threadChat: (request, provider, model, endpoint) => complete("ai_thread_chat", { request, provider, model, endpoint }),
   removeThreadSuggestion: (threadId, revision, proposal) => complete("remove_thread_suggestion", { threadId, revision, proposal }),
   briefThread: (threadId, userTimeZone, provider, model, endpoint) =>

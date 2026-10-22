@@ -311,7 +311,7 @@ export function App() {
     : undefined;
   const [lightboxImageSrc, setLightboxImageSrc] = useState<string | null>(null);
   const {
-    aiProviderChosen, aiSummaryAvailable, aiSummaryFeatureEnabled, aiProactive, aiActionFeatureEnabled,
+    aiProviderChosen, aiProviderLabel, aiSummaryAvailable, aiSummaryFeatureEnabled, aiProactive, aiActionFeatureEnabled,
     aiActionAvailable, aiChatFeatureEnabled, aiChatAvailable, aiDraftFeatureEnabled, aiDraftAvailable, refreshAiAvailability,
   } = useAiAvailability(settingsOpen);
   const {
@@ -380,7 +380,7 @@ export function App() {
   });
   const {
     summaryPending, summaryError, runBrief, actionProposals, actionProposalSource,
-    actionAnalysisLoading, actionAnalysisError, actionAnalysisRequested, actionAnalysisPreview,
+    actionAnalysisLoading, actionAnalysisError, actionAnalysisRequested,
     actionHiddenCount, actionExtraCount, chatByThread, chatPendingThreads, chatFailures, chatFocusRequest, askThread,
     focusThreadChat, updateActionProposal, removeActionProposal, discardActionProposal,
     ownAddresses,
@@ -1421,7 +1421,7 @@ export function App() {
               }}
               loading={actionAnalysisLoading}
               error={summaryError ?? actionAnalysisError}
-              preview={actionAnalysisRequested ? actionAnalysisPreview : null}
+              providerName={aiProviderLabel}
               onRun={(force) => void runBrief({ force })}
               onOpenSettings={() => openSettingsAt("ai")}
             />

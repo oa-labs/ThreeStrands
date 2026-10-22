@@ -26,7 +26,7 @@ ThreeStrands keeps one API key at a time, so enter a new key when you switch pro
 
 ### Reading
 
-- **Brief** — press <kbd>i</kbd> for a summary of the open conversation, with suggested tasks and meetings. Each suggestion shows the evidence from the email, and nothing is added until you click **Review & Add Task**. Press <kbd>Shift + a</kbd> for suggestions alone.
+- **Brief** — press <kbd>i</kbd> for a summary of what's new in the open conversation, with suggested tasks and meetings. A brief covers the messages since your last reply or your last brief, and reads earlier messages only for context, so it doesn't repeat what you already know. When it helps, the last line recaps the earlier conversation. Each suggestion shows the evidence from the email, and nothing is added until you click **Review & Add Task**. Press <kbd>Shift + a</kbd> for suggestions alone. Click the **Brief** heading to collapse it.
 - **Calendar events** — **Get Brief** and **Ask About This Conversation** can find each event announced in an email at its stated date and time. Dated events without a time become all-day events; review before adding.
 - **Ask About This Conversation** — press <kbd>q</kbd> to ask about the open conversation. Questions only look beyond it when you tick **Search all mail** for that question. **Use as Reply** turns an answer into a draft. Ask "When am I free Thursday afternoon?" and the answer shows open times from your calendar, already limited to the days and hours you asked for.
 - **Automatic Briefs** — prepares the brief once you stay on a conversation for a few seconds. They skip mailing lists and conversations with no one else in them.
@@ -41,10 +41,12 @@ ThreeStrands keeps one API key at a time, so enter a new key when you switch pro
 
 - **Enhance With AI** on a contact suggests profile details from your email for you to accept.
 
-Each feature shows what will be shared before anything is sent. Buttons marked with the sparkle icon, such as **Get Brief** and **Get Feedback**, are the ones that send something to your AI provider.
+Buttons marked with the sparkle icon, such as **Get Brief** and **Get Feedback**, are the ones that send something to your AI provider. After a brief, a line under it says how many messages were shared and with which provider.
 
 Areas you switch off disappear from the app, along with their commands. Until you choose an AI provider, the **Brief** section beside a conversation is the one place that offers **Set Up AI**.
 
 ## Usage and Cost
 
 The usage panel under **Settings → AI Provider → Models and Usage** shows requests, tokens, and estimated cost for today and the last seven days. Add your model's prices to get accurate estimates; OpenRouter reports exact costs itself.
+
+**Activity**, below it, lists recent requests: which feature sent them, the conversation's subject, how many messages, and the model and tokens used. It's kept on this device and never includes email text.

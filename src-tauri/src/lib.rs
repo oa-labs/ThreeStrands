@@ -980,6 +980,21 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         if let Err(error) = usage_database.record_ai_usage(&day, event.provider.id(), &event.model, event.input_tokens, event.output_tokens, event.cost_usd) {
             log::warn!(target: "ai_provider", "could not record AI usage: {error}");
         }
+        let to_i64 = |value: u64| i64::try_from(value).unwrap_or(i64::MAX);
+        let purpose = event.purpose.clone().unwrap_or_else(|| ai::RequestPurpose::new("other"));
+        let entry = models::AiActivity {
+            at: chrono::Utc::now().to_rfc3339(),
+            feature: purpose.feature.to_string(),
+            provider: event.provider.id().to_string(),
+            model: event.model.clone(),
+            subject: purpose.subject,
+            message_count: purpose.message_count.map(|count| i64::try_from(count).unwrap_or(i64::MAX)),
+            input_tokens: to_i64(event.input_tokens),
+            output_tokens: to_i64(event.output_tokens),
+        };
+        if let Err(error) = usage_database.record_ai_activity(&entry) {
+            log::warn!(target: "ai_provider", "could not record AI activity: {error}");
+        }
     }));
     let recovery = match recovery {
         db::RecoveryOutcome::Clean => None,
@@ -1481,6 +1496,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::ai::remove_thread_suggestion,
         commands::ai::ai_brief_thread,
         commands::ai::ai_usage_summary,
+        commands::ai::ai_activity,
         commands::ai::ai_thread_chat,
         commands::ai::ai_enrich_contact,
         commands::ai::ai_reply_assist_context,
