@@ -173,6 +173,8 @@ export type AvailabilityResult = {
   candidates: AvailabilityCandidate[];
   checkedCalendarCount: number;
   totalCalendarCount: number;
+  /** Names of the selected calendars, or whole accounts, that could not be checked. */
+  uncheckedCalendars: string[];
   errors: string[];
 };
 
@@ -181,6 +183,8 @@ export type ProposedTimeCheck = {
   conflicts: { start: string; end: string }[];
   checkedCalendarCount: number;
   totalCalendarCount: number;
+  /** Names of the selected calendars, or whole accounts, that could not be checked. */
+  uncheckedCalendars: string[];
   errors: string[];
 };
 

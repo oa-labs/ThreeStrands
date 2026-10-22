@@ -189,7 +189,7 @@ describe("ComposeContext", () => {
         { start: "2030-01-07T15:00:00Z", end: "2030-01-07T15:30:00Z", status: "verified" },
         { start: "2030-01-08T15:00:00Z", end: "2030-01-08T15:30:00Z", status: "verified" },
       ],
-      checkedCalendarCount: 1, totalCalendarCount: 1, errors: [],
+      checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [],
     });
     const { props } = renderPanel({ calendarConnected: true, draft: { ...draft, to: "ann@partner.com" } });
     const section = screen.getByRole("region", { name: "Availability" });
@@ -246,7 +246,7 @@ describe("Find Times with AI", () => {
     vi.mocked(mailClient.listTasks).mockResolvedValue([]);
     vi.mocked(mailClient.findAvailability).mockResolvedValue({
       candidates: [{ start: search.rangeStart, end: new Date(Date.parse(search.rangeStart) + 1_800_000).toISOString(), status: "verified" }],
-      checkedCalendarCount: 1, totalCalendarCount: 1, errors: [],
+      checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [],
     });
   });
   // Answers queued for one call must not leak into the next test.
