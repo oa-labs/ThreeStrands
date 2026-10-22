@@ -58,6 +58,43 @@ describe("useCalendarAccounts", () => {
     expect(onLastAccountRemoved).toHaveBeenCalledTimes(1);
   });
 
+  it("shows a new account order right away and keeps what the backend saved", async () => {
+    const { result } = await renderWithCalendars([work, home]);
+    let finishReorder!: () => void;
+    const reorder = vi.spyOn(mailClient, "reorderCalendarAccounts")
+      .mockReturnValue(new Promise<void>((resolve) => { finishReorder = resolve; }));
+    vi.mocked(mailClient.listCalendarAccounts).mockResolvedValue([home, work]);
+
+    let pending!: Promise<void>;
+    act(() => { pending = result.current.reorder([home.email, work.email]); });
+    expect(result.current.accounts.map((account) => account.email)).toEqual([home.email, work.email]);
+    await act(async () => { finishReorder(); await pending; });
+
+    expect(reorder).toHaveBeenCalledWith([home.email, work.email]);
+    expect(result.current.accounts).toEqual([home, work]);
+  });
+
+  it("puts the accounts back when saving a new order fails", async () => {
+    const { result } = await renderWithCalendars([work, home]);
+    vi.spyOn(mailClient, "reorderCalendarAccounts").mockRejectedValue(new Error("database locked"));
+
+    await act(async () => {
+      await expect(result.current.reorder([home.email, work.email])).rejects.toThrow("database locked");
+    });
+
+    expect(result.current.accounts).toEqual([work, home]);
+  });
+
+  it("ignores an order that does not name every account", async () => {
+    const { result } = await renderWithCalendars([work, home]);
+    const reorder = vi.spyOn(mailClient, "reorderCalendarAccounts").mockResolvedValue();
+
+    await act(async () => { await result.current.reorder([home.email]); });
+
+    expect(reorder).not.toHaveBeenCalled();
+    expect(result.current.accounts).toEqual([work, home]);
+  });
+
   it("replaces only the updated account's calendars when selection changes", async () => {
     const { result } = await renderWithCalendars([work, home]);
     await seedCache();

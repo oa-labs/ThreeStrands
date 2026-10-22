@@ -1342,6 +1342,11 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       calendarAccounts = calendarAccounts.filter((account) => account.email !== email);
       calendarOptions = calendarOptions.filter((calendar) => calendar.accountId !== email);
     },
+    async reorderCalendarAccounts(emails) {
+      calendarAccounts = emails
+        .map((email) => calendarAccounts.find((candidate) => candidate.email === email))
+        .filter((account): account is CalendarAccount => account !== undefined);
+    },
     async listCalendarOptions() {
       return structuredClone(calendarOptions);
     },

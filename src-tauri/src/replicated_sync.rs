@@ -244,7 +244,7 @@ impl Database {
         }
         for account in self.list_calendar_accounts()? {
             let email = account.email.to_ascii_lowercase();
-            if self.reconcile_one_entity(EntityType::CalendarAccount, &email, json!({ "email": account.email }))? {
+            if self.reconcile_one_entity(EntityType::CalendarAccount, &email, json!({ "email": account.email, "sortOrder": account.sort_order }))? {
                 repaired += 1;
             }
             if let Some(ids) = self.calendar_selection(&account.email)? {

@@ -14,6 +14,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - When you discard several drafts in **Drafts**, the confirmation is easier to read and more compact, and **Keep Drafts** is selected so pressing Return doesn't discard anything by accident.
 - Collapsed emails in a conversation now use the same text sizes as the rest of the app, instead of larger type.
 - An unsent draft at the end of a conversation now lines up with the emails above it, with **Resume Draft** on the right.
+- You can now reorder accounts in **Settings → Calendar Accounts** with the up and down arrows, the same way as mail accounts. The **Calendar** sidebar follows the new order, and reconnecting an account no longer moves it to the bottom of the list.
 
 ### Fixed
 - Clicking a conversation in the message list while writing a new message now opens it. Your message is saved to **Drafts** so you can finish it later.

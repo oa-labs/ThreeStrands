@@ -73,6 +73,7 @@ export type CalendarAccountSettingsState = {
   reconnect(email: string): Promise<void>;
   remove(email: string): Promise<void>;
   removeEverywhere(email: string): Promise<void>;
+  reorder(emails: string[]): Promise<void>;
   setSelection(accountId: string, calendarIds: string[]): Promise<void>;
 };
 
