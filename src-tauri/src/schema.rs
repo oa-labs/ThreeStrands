@@ -14,7 +14,7 @@ pub(crate) const BASELINE_VERSION: i64 = 74;
 
 /// The current schema version. A new schema change adds an
 /// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 82;
+pub(crate) const LATEST_VERSION: i64 = 83;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -898,6 +898,19 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 83 {
+        // Calendar accounts keep a chosen order, like mail accounts. Existing
+        // accounts keep the order they were listed in: oldest connection first.
+        tx.execute_batch(
+            "ALTER TABLE calendar_accounts ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+             UPDATE calendar_accounts SET sort_order = (
+                 SELECT count(*) FROM calendar_accounts AS earlier
+                 WHERE earlier.connected_at < calendar_accounts.connected_at
+                    OR (earlier.connected_at = calendar_accounts.connected_at AND earlier.email < calendar_accounts.email)
+             );",
+        )
+        .map_err(error)?;
+    }
     if stored == 0 {
         // Only new installations get the 90-day default. Existing databases
         // without a retention setting still mean Forever. Keep the default
@@ -1268,7 +1281,7 @@ mod tests {
         super::migrate(&mut connection).unwrap();
         // Roll back to what a 0.147 database looks like.
         connection
-            .execute_batch("DROP TABLE draft_server_links; DROP TABLE draft_server_deletions; ALTER TABLE messages DROP COLUMN cc_json;")
+            .execute_batch("DROP TABLE draft_server_links; DROP TABLE draft_server_deletions; ALTER TABLE messages DROP COLUMN cc_json; ALTER TABLE calendar_accounts DROP COLUMN sort_order;")
             .unwrap();
         connection.pragma_update(None, "user_version", 78).unwrap();
         connection
@@ -1327,6 +1340,43 @@ mod tests {
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
             super::LATEST_VERSION
+        );
+    }
+
+    #[test]
+    fn a_v82_database_orders_its_calendar_accounts_by_when_they_were_connected() {
+        // Before v83 calendar accounts were listed oldest connection first;
+        // the new order keeps that, breaking ties by email.
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(crate::schema::INITIAL_SCHEMA).unwrap();
+        connection.execute_batch("ALTER TABLE messages ADD COLUMN cc_bcc_json TEXT NOT NULL DEFAULT '[]';
+             ALTER TABLE messages ADD COLUMN cc_json TEXT NOT NULL DEFAULT '[]';").unwrap();
+        connection.pragma_update(None, "user_version", 82).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO calendar_accounts(email, connected_at) VALUES
+                     ('work@example.com', '2026-03-01T00:00:00Z'),
+                     ('home@example.com', '2026-01-01T00:00:00Z'),
+                     ('b@example.com', '2026-02-01T00:00:00Z'),
+                     ('a@example.com', '2026-02-01T00:00:00Z');",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let ordered: Vec<(String, i64)> = connection
+            .prepare("SELECT email, sort_order FROM calendar_accounts ORDER BY sort_order")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            ordered,
+            vec![
+                ("home@example.com".to_string(), 0),
+                ("a@example.com".to_string(), 1),
+                ("b@example.com".to_string(), 2),
+                ("work@example.com".to_string(), 3),
+            ]
         );
     }
 
@@ -1417,7 +1467,7 @@ mod tests {
                         ('thread-b', 'b', 'B', 'Hello', '[]', '2026-01-02T00:00:00Z', '[]', 'you@example.com');",
             )
             .unwrap();
-        connection.execute_batch("ALTER TABLE messages DROP COLUMN cc_json;").unwrap();
+        connection.execute_batch("ALTER TABLE messages DROP COLUMN cc_json; ALTER TABLE calendar_accounts DROP COLUMN sort_order;").unwrap();
         connection.pragma_update(None, "user_version", 80).unwrap();
         super::migrate(&mut connection).unwrap();
         let queued: Vec<String> = connection

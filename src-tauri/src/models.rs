@@ -15,6 +15,8 @@ pub struct CalendarAccount {
     pub email: String,
     pub connected_at: String,
     pub status: String,
+    #[serde(default)]
+    pub sort_order: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -39,8 +39,19 @@ pub(crate) async fn add_calendar_account(state: State<'_, AppState>) -> AppResul
         .into_iter()
         .find(|account| account.email == email)
         .ok_or_else(|| "Calendar account was not saved".to_string())?;
-    record_synced_value(&state, threestrands_sync_protocol::EntityType::CalendarAccount, &email.to_ascii_lowercase(), &serde_json::json!({"email":email}), None)?;
+    record_synced_value(&state, threestrands_sync_protocol::EntityType::CalendarAccount, &email.to_ascii_lowercase(), &serde_json::json!({"email":email,"sortOrder":account.sort_order}), None)?;
     Ok(account)
+}
+
+#[tauri::command(async)]
+pub(crate) fn reorder_calendar_accounts(emails: Vec<String>, state: State<'_, AppState>) -> AppResult<()> {
+    state.database.reorder_calendar_accounts(&emails)?;
+    for account in state.database.list_calendar_accounts()? {
+        record_synced_value(&state, threestrands_sync_protocol::EntityType::CalendarAccount, &account.email.to_ascii_lowercase(),
+            &serde_json::json!({"email":account.email,"sortOrder":account.sort_order}),
+            Some(std::collections::BTreeSet::from(["sortOrder".to_string()])))?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -680,7 +691,7 @@ mod tests {
     use super::*;
 
     fn account(email: &str, status: &str) -> CalendarAccount {
-        CalendarAccount { email: email.into(), connected_at: "2026-10-19T00:00:00Z".into(), status: status.into() }
+        CalendarAccount { email: email.into(), connected_at: "2026-10-19T00:00:00Z".into(), status: status.into(), sort_order: 0 }
     }
 
     #[test]

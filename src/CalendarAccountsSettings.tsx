@@ -1,8 +1,8 @@
-import { CircleAlert, CalendarDays, Plus } from "lucide-react";
+import { CircleAlert, CalendarDays, ChevronDown, ChevronUp, Plus } from "lucide-react";
 import { CalendarColorRow } from "./CalendarColorMenu";
 import { useState } from "react";
 import type { AuthStatus, CalendarAccount, CalendarOption } from "./domain";
-import { useSettingsOperation } from "./settingsOperations";
+import { moveItem, useSettingsOperation } from "./settingsOperations";
 import { ICON_SIZE } from "./iconSizes";
 import { AccountStatusBadge, AccountDisconnectConfirm } from "./accountSettingsParts";
 
@@ -16,6 +16,7 @@ export function CalendarAccountsSettings({
   onReconnect,
   onRemove,
   onRemoveEverywhere,
+  onReorder,
   onSetSelection,
 }: {
   authStatus: AuthStatus | null;
@@ -27,10 +28,17 @@ export function CalendarAccountsSettings({
   onReconnect(email: string): Promise<void>;
   onRemove(email: string): Promise<void>;
   onRemoveEverywhere(email: string): Promise<void>;
+  onReorder(emails: string[]): Promise<void>;
   onSetSelection(accountId: string, calendarIds: string[]): Promise<void>;
 }) {
   const { pending: busyEmail, error, runFor } = useSettingsOperation();
   const [confirmEmail, setConfirmEmail] = useState<string | null>(null);
+
+  const move = (index: number, direction: -1 | 1) => {
+    const account = accounts[index];
+    const next = moveItem(accounts, index, direction);
+    if (account && next) runFor(account.email, () => onReorder(next.map((item) => item.email)));
+  };
 
   return (
     <section className="settings-section accounts-manager" aria-label="Calendar Accounts">
@@ -69,7 +77,7 @@ export function CalendarAccountsSettings({
         </div>
       ) : (
         <ul className="accounts-list">
-          {accounts.map((account) => {
+          {accounts.map((account, index) => {
             const accountCalendars = calendars.filter((calendar) => calendar.accountId === account.email);
             return (
             <li className="account-card" key={account.email}>
@@ -95,6 +103,28 @@ export function CalendarAccountsSettings({
                   </button>
                 ) : null}
                 <span className="accounts-list-actions">
+                  {accounts.length > 1 ? (
+                    <span className="account-reorder" role="group" aria-label={`Order for ${account.email}`}>
+                      <button className="btn-icon"
+                        type="button"
+                        title="Move up"
+                        aria-label={`Move ${account.email} up`}
+                        disabled={index === 0 || busyEmail !== null}
+                        onClick={() => move(index, -1)}
+                      >
+                        <ChevronUp size={ICON_SIZE.sm} />
+                      </button>
+                      <button className="btn-icon"
+                        type="button"
+                        title="Move down"
+                        aria-label={`Move ${account.email} down`}
+                        disabled={index === accounts.length - 1 || busyEmail !== null}
+                        onClick={() => move(index, 1)}
+                      >
+                        <ChevronDown size={ICON_SIZE.sm} />
+                      </button>
+                    </span>
+                  ) : null}
                   <button
                     type="button"
                     className="btn btn-sm btn-danger"
