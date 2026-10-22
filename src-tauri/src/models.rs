@@ -1,4 +1,5 @@
 use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::BTreeMap;
 
 fn deserialize_optional_field<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
 where
@@ -81,6 +82,9 @@ pub struct ScheduleEvent {
     pub conference_url: Option<String>,
     /// Lowercased addresses of the other people on the event.
     pub attendees: Vec<String>,
+    /// Each of `attendees`' RSVP (`accepted`, `declined`, `tentative`, or
+    /// `needsAction`), keyed by address, when their calendar reports one.
+    pub attendee_responses: BTreeMap<String, String>,
     pub response_status: Option<String>,
     pub can_respond: bool,
     /// The connected calendar organizes this event and can write to it, so it
