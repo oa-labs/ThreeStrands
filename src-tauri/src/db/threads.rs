@@ -214,7 +214,7 @@ impl Database {
 
             let mut statement = connection.prepare(
                 "SELECT id, thread_id, sender, recipients_json, sent_at, body_html, body_text,
-                            body_html_z, body_text_z, unsubscribe_json, unread, attachments_json
+                            body_html_z, body_text_z, unsubscribe_json, unread, attachments_json, cc_json
                      FROM messages WHERE thread_id = ?1 ORDER BY sent_at",
             )?;
             let rows = statement.query_map([id], |row| {
@@ -223,6 +223,7 @@ impl Database {
                     thread_id: row.get(1)?,
                     sender: row.get(2)?,
                     recipients: decode_json(row.get::<_, String>(3)?)?,
+                    cc: decode_json(row.get::<_, String>(12)?)?,
                     sent_at: row.get(4)?,
                     body_html: resolve_body(7, row.get(5)?, row.get(7)?)?,
                     body_text: readable_body_text(resolve_body(8, row.get(6)?, row.get(8)?)?),

@@ -151,11 +151,11 @@ impl Database {
             transaction.execute(
                 "INSERT INTO messages(
                         id, thread_id, sender, recipients_json, sent_at, body_html, body_text,
-                        body_html_z, body_text_z, unsubscribe_json, unread, attachments_json, cc_bcc_json
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                        body_html_z, body_text_z, unsubscribe_json, unread, attachments_json, cc_bcc_json, cc_json
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                      ON CONFLICT(id) DO UPDATE SET thread_id=excluded.thread_id,
                         sender=excluded.sender,recipients_json=excluded.recipients_json,
-                        cc_bcc_json=excluded.cc_bcc_json,sent_at=excluded.sent_at,
+                        cc_bcc_json=excluded.cc_bcc_json,cc_json=excluded.cc_json,sent_at=excluded.sent_at,
                         body_html=excluded.body_html,body_text=excluded.body_text,body_html_z=excluded.body_html_z,
                         body_text_z=excluded.body_text_z,unsubscribe_json=excluded.unsubscribe_json,
                         unread=excluded.unread,attachments_json=excluded.attachments_json",
@@ -177,6 +177,7 @@ impl Database {
                     message_unread,
                     serde_json::to_string(&message.attachments).map_err(serialization_error)?,
                     serde_json::to_string(&message.cc_bcc).map_err(serialization_error)?,
+                    serde_json::to_string(&message.cc).map_err(serialization_error)?,
                 ],
             )?;
             transaction.execute("DELETE FROM contact_interactions WHERE message_id=?1", [&message.id])?;

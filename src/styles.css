@@ -1390,6 +1390,7 @@ kbd {
   border: none;
   background: transparent;
   font: inherit;
+  font-size: var(--text-body);
   color: var(--muted);
   text-align: left;
   cursor: pointer;
@@ -1410,6 +1411,7 @@ kbd {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
+  font-size: var(--text-secondary);
   white-space: nowrap;
   text-overflow: ellipsis;
 }

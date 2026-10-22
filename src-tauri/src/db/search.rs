@@ -231,7 +231,7 @@ impl Database {
                     )
                     .optional()?;
                 if let Some(rowid) = rowid {
-                    let messages: Vec<(String, String, String, Option<Vec<String>>)> = transaction
+                    let messages: Vec<(String, String, String, Option<(Vec<String>, Vec<String>)>)> = transaction
                         .prepare(
                             "SELECT m.id, m.body_text, m.body_text_z,
                                     COALESCE(mm.payload, ''), mm.payload_z
@@ -244,14 +244,16 @@ impl Database {
                             let normalized = serde_json::from_str::<RawMessage>(&metadata)
                                 .ok()
                                 .and_then(|raw| normalize(&raw).ok());
-                            let cc_bcc = normalized.as_ref().map(|message| message.cc_bcc.clone());
+                            let copied = normalized
+                                .as_ref()
+                                .map(|message| (message.cc.clone(), message.cc_bcc.clone()));
                             let corrected = normalized
                                 .map(|message| message.body_text)
                                 .unwrap_or_else(|| readable_body_text(stored.clone()));
-                            Ok((row.get(0)?, stored, corrected, cc_bcc))
+                            Ok((row.get(0)?, stored, corrected, copied))
                         })?
                         .collect::<Result<_, _>>()?;
-                    for (id, stored, corrected, cc_bcc) in &messages {
+                    for (id, stored, corrected, copied) in &messages {
                         if stored != corrected {
                             transaction.execute(
                                 "UPDATE messages SET body_text = '', body_text_z = ?1 WHERE id = ?2",
@@ -260,10 +262,14 @@ impl Database {
                         }
                         // Fills in Cc/Bcc for mail stored before they were
                         // kept; a message without a stored payload keeps `[]`.
-                        if let Some(cc_bcc) = cc_bcc {
+                        if let Some((cc, cc_bcc)) = copied {
                             transaction.execute(
-                                "UPDATE messages SET cc_bcc_json = ?1 WHERE id = ?2",
-                                params![serde_json::to_string(cc_bcc).unwrap_or_else(|_| "[]".into()), id],
+                                "UPDATE messages SET cc_json = ?1, cc_bcc_json = ?2 WHERE id = ?3",
+                                params![
+                                    serde_json::to_string(cc).unwrap_or_else(|_| "[]".into()),
+                                    serde_json::to_string(cc_bcc).unwrap_or_else(|_| "[]".into()),
+                                    id
+                                ],
                             )?;
                         }
                     }

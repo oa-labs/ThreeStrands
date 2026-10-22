@@ -2,7 +2,7 @@ import { AttachmentChip } from "./AttachmentChip";
 import { AttachmentThumbnail } from "./AttachmentThumbnail";
 import { thumbnailAttachmentIds } from "./attachmentThumbnails";
 import { Check, ChevronDown, ChevronUp, Copy, CopyPlus, Forward, Paperclip, Reply, ReplyAll } from "lucide-react";
-import { memo, useCallback, useContext, useMemo, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { Fragment, memo, useCallback, useContext, useMemo, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { HoverTooltip } from "./AppChrome";
 import { CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachment";
 import { AddressWithCard } from "./AddressWithCard";
@@ -21,7 +21,7 @@ import { ICON_SIZE } from "./iconSizes";
 import { selectedMessageQuote } from "./selectedMessageQuote";
 import { formatShortcutStep } from "./shortcutCatalog";
 
-/** A long recipient list shows this many names, then "and N more" to reveal the rest. */
+/** A long recipient list (To and Cc together) shows this many names, then "and N more" to reveal the rest. */
 const RECIPIENT_PREVIEW_LIMIT = 20;
 
 export type MessageResponseKind = "reply" | "replyAll" | "forward";
@@ -156,12 +156,9 @@ export const MessageCard = memo(function MessageCard({
     );
   }
 
-  const recipients = splitAddressList(message.recipients.join(", "));
-  const hiddenRecipientCount = showAllRecipients || recipients.length <= RECIPIENT_PREVIEW_LIMIT
-    ? 0
-    : recipients.length - RECIPIENT_PREVIEW_LIMIT;
-  const shownRecipients = hiddenRecipientCount ? recipients.slice(0, RECIPIENT_PREVIEW_LIMIT) : recipients;
   const ownEmails = new Set(accounts.map((account) => account.email.toLocaleLowerCase()));
+  const recipientGroups = visibleRecipientGroups(message, showAllRecipients ? Infinity : RECIPIENT_PREVIEW_LIMIT);
+  const hiddenRecipientCount = recipientGroups.hiddenCount;
   const headerDetails = (
     <div className="message-header-details">
       <div className="message-sender-row">
@@ -218,17 +215,28 @@ export const MessageCard = memo(function MessageCard({
         <time>{formatMailTimestamp(message.sentAt)}</time>
       </div>
       <div className="message-recipients">
-        to{" "}
-        {shownRecipients.map((recipient, recipientIndex) => (
-          <span key={recipient}>
-            {recipientListSeparator(recipientIndex, shownRecipients.length + (hiddenRecipientCount ? 1 : 0))}
-            <MessageAddress
-              address={recipient}
-              displayName={formatDisplayName(parseAddress(recipient).name)}
-              own={ownEmails}
-            />
-          </span>
-        ))}
+        {recipientGroups.groups.map((group, groupIndex) => {
+          const isLastGroup = groupIndex === recipientGroups.groups.length - 1;
+          const listLength = group.addresses.length + (isLastGroup && hiddenRecipientCount ? 1 : 0);
+          return (
+            <Fragment key={group.label}>
+              {groupIndex > 0 ? ", " : null}
+              {group.label}{" "}
+              {group.addresses.map((recipient, recipientIndex) => (
+                <span key={recipient}>
+                  {recipientListSeparator(recipientIndex, listLength)}
+                  <MessageAddress
+                    address={recipient}
+                    displayName={ownEmails.has(parseAddress(recipient).email.toLocaleLowerCase())
+                      ? "me"
+                      : formatDisplayName(parseAddress(recipient).name)}
+                    own={ownEmails}
+                  />
+                </span>
+              ))}
+            </Fragment>
+          );
+        })}
         {hiddenRecipientCount ? <>
           {", and "}
           <button type="button" className="btn-link message-recipients-more" onClick={() => setShowAllRecipients(true)}>
@@ -366,6 +374,23 @@ function AddressWithCopy({ address, displayName }: { address: string; displayNam
 function messageSnippet(bodyText: string, maxLength = 140): string {
   const collapsed = decodeHtmlEntities(bodyText).replace(/\s+/g, " ").trim();
   return collapsed.length > maxLength ? `${collapsed.slice(0, maxLength).trimEnd()}…` : collapsed;
+}
+
+type RecipientGroup = { label: "to" | "cc"; addresses: string[] };
+
+/**
+ * The header's "to …, cc …" groups, showing at most `limit` addresses across
+ * both. A message with no Cc keeps its "to" group even when it is empty.
+ */
+function visibleRecipientGroups(message: Message, limit: number): { groups: RecipientGroup[]; hiddenCount: number } {
+  const to = splitAddressList(message.recipients.join(", "));
+  const cc = splitAddressList((message.cc ?? []).join(", "));
+  const shownTo = to.slice(0, limit);
+  const shownCc = cc.slice(0, Math.max(0, limit - shownTo.length));
+  const groups: RecipientGroup[] = [];
+  if (shownTo.length || !cc.length) groups.push({ label: "to", addresses: shownTo });
+  if (shownCc.length) groups.push({ label: "cc", addresses: shownCc });
+  return { groups, hiddenCount: to.length + cc.length - shownTo.length - shownCc.length };
 }
 
 function recipientListSeparator(index: number, recipientCount: number): string {

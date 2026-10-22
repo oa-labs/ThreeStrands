@@ -743,6 +743,7 @@ fn search_supports_offset_pagination() {
                     subject: "Pagination test".into(),
                     from: "sender@example.com".into(),
                     to: vec!["recipient@example.com".into()],
+                    cc: Vec::new(),
                     cc_bcc: Vec::new(),
                     date: date.into(),
                     body_html: String::new(),
@@ -923,6 +924,7 @@ fn alice_thread(database: &Database) -> String {
                 subject: "Quarterly planning".into(),
                 from: "alice@example.com".into(),
                 to: vec!["bob@example.com".into()],
+                cc: Vec::new(),
                 cc_bcc: Vec::new(),
                 date: "2024-06-15T09:00:00Z".into(),
                 body_html: String::new(),
@@ -992,6 +994,7 @@ fn op_message(
         subject: subject.into(),
         from: from.into(),
         to: to.into_iter().map(Into::into).collect(),
+        cc: Vec::new(),
         cc_bcc: Vec::new(),
         date: date.into(),
         body_html: String::new(),
@@ -2581,6 +2584,7 @@ fn the_reindex_queue_fills_in_cc_and_bcc_for_mail_stored_before_them() {
     };
     let normalized = normalize(&raw).unwrap();
     assert_eq!(normalized.cc_bcc, vec!["Carol <carol@example.com>", "dave@example.com"]);
+    assert_eq!(normalized.cc, vec!["Carol <carol@example.com>"]);
 
     let database = database();
     database.upsert_thread("you@example.com", &[normalized]).unwrap();
@@ -2588,7 +2592,7 @@ fn the_reindex_queue_fills_in_cc_and_bcc_for_mail_stored_before_them() {
     // Simulate mail stored before the column existed, then queued by the
     // schema migration.
     let connection = database.connection().unwrap();
-    connection.execute("UPDATE messages SET cc_bcc_json = '[]'", []).unwrap();
+    connection.execute("UPDATE messages SET cc_bcc_json = '[]', cc_json = '[]'", []).unwrap();
     connection
         .execute("INSERT INTO pending_search_reindex(thread_id) VALUES (?1)", [&thread_id])
         .unwrap();
@@ -2597,5 +2601,9 @@ fn the_reindex_queue_fills_in_cc_and_bcc_for_mail_stored_before_them() {
 
     assert_eq!(database.reindex_next_search_batch(10).unwrap(), 1);
     assert_eq!(ids_all_mail(&database, "to:carol"), vec![thread_id.clone()]);
-    assert_eq!(ids_all_mail(&database, "to:dave"), vec![thread_id]);
+    assert_eq!(ids_all_mail(&database, "to:dave"), vec![thread_id.clone()]);
+    // The reader shows Cc but never Bcc.
+    let detail = database.get_thread(&thread_id).unwrap();
+    assert_eq!(detail.messages[0].recipients, vec!["first@example.com"]);
+    assert_eq!(detail.messages[0].cc, vec!["Carol <carol@example.com>"]);
 }
