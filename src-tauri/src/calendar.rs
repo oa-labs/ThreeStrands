@@ -277,6 +277,8 @@ async fn fetch_drive_time_pages(
 pub struct FreeBusyResult {
     pub busy: Vec<BusyInterval>,
     pub checked_calendar_count: usize,
+    /// Selected calendars whose busy times could not be read.
+    pub unchecked_calendar_ids: Vec<String>,
     pub errors: Vec<String>,
 }
 
@@ -558,6 +560,7 @@ pub async fn fetch_freebusy(
         return Ok(FreeBusyResult {
             busy: Vec::new(),
             checked_calendar_count: 0,
+            unchecked_calendar_ids: Vec::new(),
             errors: Vec::new(),
         });
     }
@@ -583,8 +586,28 @@ pub async fn fetch_freebusy(
         .await
         .map_err(|error| error.to_string())?;
     let freebusy: GoogleFreeBusy = checked_json(response).await?;
+    let mut result = freebusy_result(calendar_ids, freebusy);
+    if drive_time_buffer_minutes > 0 {
+        let readable = calendar_ids.iter().filter(|id| !result.unchecked_calendar_ids.contains(id));
+        for calendar_id in readable {
+            // FreeBusy already covered this calendar's events; drive time only
+            // widens them, so a failure here keeps the calendar checked.
+            match fetch_drive_time_busy(&client, &access_token, calendar_id, time_min, time_max, time_zone, drive_time_buffer_minutes).await {
+                Ok(intervals) => result.busy.extend(intervals),
+                Err(error) => log::warn!(target: "availability", "drive time for calendar {calendar_id} could not be read: {error}"),
+            }
+        }
+        result.busy.sort_by(|left, right| left.start.cmp(&right.start));
+    }
+    Ok(result)
+}
+
+/// Busy times from a FreeBusy response, with each selected calendar it could
+/// not answer for listed as unchecked.
+fn freebusy_result(calendar_ids: &[String], freebusy: GoogleFreeBusy) -> FreeBusyResult {
     let mut busy = Vec::new();
     let mut checked = 0;
+    let mut unchecked = Vec::new();
     let mut errors = Vec::new();
     for calendar_id in calendar_ids {
         match freebusy.calendars.get(calendar_id) {
@@ -593,25 +616,25 @@ pub async fn fetch_freebusy(
                     start: interval.start.clone(),
                     end: interval.end.clone(),
                 }));
-                if drive_time_buffer_minutes > 0 {
-                    match fetch_drive_time_busy(&client, &access_token, calendar_id, time_min, time_max, time_zone, drive_time_buffer_minutes).await {
-                        Ok(intervals) => { busy.extend(intervals); checked += 1; }
-                        Err(error) => errors.push(format!("Calendar {calendar_id} drive time could not be checked: {error}")),
-                    }
-                } else {
-                    checked += 1;
-                }
+                checked += 1;
             }
-            Some(_calendar) => errors.push(format!("Calendar {calendar_id} returned a FreeBusy error")),
-            None => errors.push(format!("Calendar {calendar_id} was not returned by FreeBusy")),
+            Some(_calendar) => {
+                unchecked.push(calendar_id.clone());
+                errors.push(format!("Calendar {calendar_id} returned a FreeBusy error"));
+            }
+            None => {
+                unchecked.push(calendar_id.clone());
+                errors.push(format!("Calendar {calendar_id} was not returned by FreeBusy"));
+            }
         }
     }
     busy.sort_by(|left, right| left.start.cmp(&right.start));
-    Ok(FreeBusyResult {
+    FreeBusyResult {
         busy,
         checked_calendar_count: checked,
+        unchecked_calendar_ids: unchecked,
         errors,
-    })
+    }
 }
 
 fn events_url(calendar_id: &str) -> Result<Option<url::Url>, String> {
@@ -1642,5 +1665,35 @@ mod tests {
         let json = serde_json::to_value(request).unwrap();
         assert_eq!(json["timeMin"], "2026-09-21T00:00:00Z");
         assert!(json.get("time_min").is_none());
+    }
+
+    #[test]
+    fn freebusy_result_lists_calendars_it_could_not_read() {
+        let freebusy: GoogleFreeBusy = serde_json::from_value(serde_json::json!({
+            "calendars": {
+                "me@example.com": { "busy": [{ "start": "2026-09-21T14:00:00Z", "end": "2026-09-21T15:00:00Z" }] },
+                "team@group.calendar.google.com": { "errors": [{ "domain": "global", "reason": "notFound" }] }
+            }
+        }))
+        .unwrap();
+        let ids = ["me@example.com", "team@group.calendar.google.com", "missing@group.calendar.google.com"].map(String::from);
+        let result = freebusy_result(&ids, freebusy);
+        assert_eq!(result.checked_calendar_count, 1);
+        assert_eq!(result.unchecked_calendar_ids, ["team@group.calendar.google.com", "missing@group.calendar.google.com"]);
+        assert_eq!(result.busy.len(), 1);
+        assert_eq!(result.errors.len(), 2);
+    }
+
+    #[test]
+    fn freebusy_result_checks_every_calendar_that_answered() {
+        let freebusy: GoogleFreeBusy = serde_json::from_value(serde_json::json!({
+            "calendars": { "me@example.com": { "busy": [] }, "family@group.calendar.google.com": { "busy": [] } }
+        }))
+        .unwrap();
+        let ids = ["me@example.com", "family@group.calendar.google.com"].map(String::from);
+        let result = freebusy_result(&ids, freebusy);
+        assert_eq!(result.checked_calendar_count, 2);
+        assert!(result.unchecked_calendar_ids.is_empty());
+        assert!(result.errors.is_empty());
     }
 }

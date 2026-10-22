@@ -117,6 +117,8 @@ pub struct AvailabilityResult {
     pub candidates: Vec<AvailabilityCandidate>,
     pub checked_calendar_count: usize,
     pub total_calendar_count: usize,
+    /// Names of the selected calendars, or whole accounts, that could not be checked.
+    pub unchecked_calendars: Vec<String>,
     pub errors: Vec<String>,
 }
 
@@ -134,6 +136,8 @@ pub struct ProposedTimeCheck {
     pub conflicts: Vec<BusyInterval>,
     pub checked_calendar_count: usize,
     pub total_calendar_count: usize,
+    /// Names of the selected calendars, or whole accounts, that could not be checked.
+    pub unchecked_calendars: Vec<String>,
     pub errors: Vec<String>,
 }
 

@@ -16,12 +16,14 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - An unsent draft at the end of a conversation now lines up with the emails above it, with **Resume Draft** on the right.
 - You can now reorder accounts in **Settings → Calendar Accounts** with the up and down arrows, the same way as mail accounts. The **Calendar** sidebar follows the new order, and reconnecting an account no longer moves it to the bottom of the list.
 - Files you attach to a message now appear right above **Send** and the paperclip button, so you can see them as soon as you add them instead of having to scroll down past your signature.
+- When suggested meeting times can't be checked against one of your calendars, a single note under the times now names that calendar and links to **Calendar Settings**, instead of "not every calendar checked" on every time. Times for an email that doesn't give a time zone now say which zone they use in familiar terms, such as "Eastern Time".
 
 ### Fixed
 - Clicking a conversation in the message list while writing a new message now opens it. Your message is saved to **Drafts** so you can finish it later.
 - Newsletters that space out their sections with blank table rows, such as article cards with a gap between the headline, image, and summary, now keep that spacing instead of running the sections together.
 - Full-size photos taken on recent phones now load in emails when remote images are on, instead of showing as empty boxes.
 - The **Brief** for an email you're only copied on no longer treats requests made of someone else as yours, and doesn't suggest them as tasks for you. Briefs are also shorter, so a short email gets a single line.
+- With **Drive Time** on, suggested meeting times no longer warn that a calendar wasn't checked when only its travel time couldn't be read. Its busy times are still checked.
 
 ## 0.151.3 — 2026-10-21
 
