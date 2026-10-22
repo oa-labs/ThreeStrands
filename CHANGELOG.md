@@ -7,9 +7,11 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ### New
 - You can now edit the message you're forwarding. Click **Edit** on the bar above the forwarded message to trim it or add notes. Some formatting and web images may be simplified, and **Restore Original** brings back the message as you received it.
 - Events suggested in the **Brief** now tell you when they're already on your calendar, instead of listing them as a conflict, including events you added from that email at a different time or under a new name. Click **Open in Calendar** to see the event, or **Add Again** if you really want a second copy.
+- The header of an open email now shows who was copied, as in "to David Martinez, cc me", so you can tell whether a message was sent to you or you were only Cc'd. Your own address shows as "me".
 
 ### Improved
 - When you discard several drafts in **Drafts**, the confirmation is easier to read and more compact, and **Keep Drafts** is selected so pressing Return doesn't discard anything by accident.
+- Collapsed emails in a conversation now use the same text sizes as the rest of the app, instead of larger type.
 
 ### Fixed
 - Clicking a conversation in the message list while writing a new message now opens it. Your message is saved to **Drafts** so you can finish it later.

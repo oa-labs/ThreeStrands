@@ -429,6 +429,7 @@ pub struct Message {
     pub thread_id: String,
     pub sender: String,
     pub recipients: Vec<String>,
+    pub cc: Vec<String>,
     pub sent_at: String,
     pub body_html: String,
     pub body_text: String,

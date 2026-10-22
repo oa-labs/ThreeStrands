@@ -278,7 +278,10 @@ export type Message = {
   id: string;
   threadId: string;
   sender: string;
+  /** The To addresses. */
   recipients: string[];
+  /** The Cc addresses; Bcc is never shown. Absent from older stored data. */
+  cc?: string[];
   sentAt: string;
   bodyHtml: string;
   bodyText: string;
