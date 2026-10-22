@@ -3248,7 +3248,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-format-hints { display: inline-flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); }
 .compose-error { margin: var(--space-2) 0 var(--space-3); }
 .compose-error .btn { flex-shrink: 0; }
-.attachment-list { margin: 0 0 var(--space-4); padding: 0; list-style: none; flex-shrink: 0; }
+.attachment-list { margin: 0; padding: var(--space-1) var(--pane-inset) var(--space-3); list-style: none; flex-shrink: 0; max-height: 180px; overflow-y: auto; }
 .attachment-list li { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2); background: var(--input); border-radius: var(--radius-sm); margin-top: var(--space-1-5); font-size: var(--text-body); }
 .attachment-list li > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .attachment-list small { display: block; color: var(--muted); }
