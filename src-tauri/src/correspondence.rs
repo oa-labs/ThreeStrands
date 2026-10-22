@@ -25,6 +25,11 @@ use uuid::Uuid;
 
 const MAX_ENCODED_MIME_BYTES: usize = 24 * 1024 * 1024;
 const UNDO_MS: i64 = 10_000;
+/// How long a discarded draft's server copy stays, so Undo within it leaves
+/// the server untouched. The same window as undoing a send.
+pub(crate) const DISCARD_SERVER_DELAY_MS: i64 = UNDO_MS;
+/// How long a discarded draft, and its attachment files, can be restored.
+pub(crate) const DISCARDED_DRAFT_RETENTION_MS: i64 = 60 * 60 * 1000;
 
 pub(crate) fn validate_retention_days(days: Option<i64>) -> Result<(), String> {
     if matches!(days, None | Some(30 | 90 | 365)) {
@@ -268,6 +273,10 @@ pub enum Request {
         draft: Draft,
     },
     Discard {
+        id: String,
+    },
+    /// Brings back a draft discarded within the last hour (Undo).
+    RestoreDraft {
         id: String,
     },
     /// Pushes the draft to the server without waiting for the push delay,
@@ -904,13 +913,76 @@ impl Database {
         }
         Ok(d)
     }
+    /// Discards a draft. It is held for [`DISCARDED_DRAFT_RETENTION_MS`] so
+    /// [`restore_discarded_draft`](Self::restore_discarded_draft) can bring it
+    /// back, and its server copy waits [`DISCARD_SERVER_DELAY_MS`] before it
+    /// is deleted.
     pub fn discard_draft(&self, id: &str) -> Result<(), String> {
+        let at = now();
         self.with_transaction(|tx| {
+            tx.execute(
+                "INSERT OR REPLACE INTO discarded_drafts(id, revision, payload, discarded_at)
+                 SELECT id, revision, payload, ?2 FROM drafts WHERE id=?1",
+                params![id, at],
+            )?;
             tx.execute("DELETE FROM drafts WHERE id=?1", [id])?;
-            Self::draft_left_drafts(tx, id, now())?;
+            Self::draft_left_drafts(tx, id, at + DISCARD_SERVER_DELAY_MS)?;
             Ok(())
         })?;
         Ok(())
+    }
+    /// Brings back a draft discarded within [`DISCARDED_DRAFT_RETENTION_MS`].
+    /// A server copy not yet deleted stays as it is; otherwise the draft is
+    /// saved to the server again.
+    pub fn restore_discarded_draft(&self, id: &str) -> Result<Draft, String> {
+        let restored = self.with_transaction(|tx| {
+            let held: Option<(i64, String)> = tx
+                .query_row("SELECT revision, payload FROM discarded_drafts WHERE id=?1", [id], |row| Ok((row.get(0)?, row.get(1)?)))
+                .optional()?;
+            let Some((revision, payload)) = held else {
+                return Err(DatabaseError::invalid("This draft can no longer be restored"));
+            };
+            let mut draft: Draft = serde_json::from_str(&payload).map_err(crate::db::serialization_error)?;
+            draft.revision = revision + 1;
+            draft.updated_at = now();
+            tx.execute(
+                "INSERT INTO drafts VALUES (?1,?2,?3)",
+                params![draft.id, draft.revision, serde_json::to_string(&draft).map_err(crate::db::serialization_error)?],
+            )?;
+            tx.execute("DELETE FROM discarded_drafts WHERE id=?1", [id])?;
+            // Never delete the copy of a draft that came back.
+            tx.execute(
+                "DELETE FROM draft_server_deletions WHERE message_id=?1",
+                [crate::draft_push::server_message_local_part(id)],
+            )?;
+            let in_sync = tx.execute(
+                "UPDATE draft_server_links SET pushed_revision=?2, due_at=NULL, pending_since=NULL WHERE draft_id=?1 AND pushed_revision=?3 AND state='saved' AND server_id IS NOT NULL",
+                params![id, draft.revision, revision],
+            )?;
+            if in_sync == 0 {
+                Self::mark_draft_push_pending(tx, &draft, now())?;
+            }
+            Ok(draft)
+        });
+        restored.map_err(|error| error.to_string())
+    }
+    /// Forgets discarded drafts past [`DISCARDED_DRAFT_RETENTION_MS`].
+    fn purge_discarded_drafts(&self, at: i64) -> Result<(), String> {
+        self.connection()?
+            .execute("DELETE FROM discarded_drafts WHERE discarded_at < ?1", [at - DISCARDED_DRAFT_RETENTION_MS])
+            .map_err(error)?;
+        Ok(())
+    }
+    fn discarded_draft_attachments(&self) -> Result<Vec<String>, String> {
+        let c = self.connection()?;
+        let mut q = c.prepare("SELECT payload FROM discarded_drafts").map_err(error)?;
+        let rows = q.query_map([], |r| r.get::<_, String>(0)).map_err(error)?;
+        let mut ids = Vec::new();
+        for row in rows {
+            let draft: Draft = serde_json::from_str(&row.map_err(error)?).map_err(error)?;
+            ids.extend(draft.attachments.into_iter().map(|a| a.id));
+        }
+        Ok(ids)
     }
     /// Writes one draft row. `push` marks an edit that the account's server
     /// drafts need, in the same transaction. Returns the rows `write` changed.
@@ -1732,6 +1804,11 @@ impl Correspondence {
             ResolveConflict { id, keep_server } => {
                 Ok(serde_json::to_value(self.database.resolve_draft_conflict(&id, keep_server)?).map_err(error)?)
             }
+            RestoreDraft { id } => {
+                let mut restored = self.database.restore_discarded_draft(&id)?;
+                restored.server_draft = self.database.server_draft_status(&restored)?;
+                Ok(serde_json::to_value(restored).map_err(error)?)
+            }
             Discard { id } => {
                 self.database.discard_draft(&id)?;
                 self.cleanup()?;
@@ -1982,12 +2059,15 @@ impl Correspondence {
         }
     }
     pub fn cleanup(&self) -> Result<(), String> {
+        self.database.purge_discarded_drafts(now())?;
         let mut retained: HashSet<String> = self
             .database
             .drafts()?
             .iter()
             .flat_map(|d| d.attachments.iter().map(|a| a.id.clone()))
             .collect();
+        // Undo brings a discarded draft back with its files.
+        retained.extend(self.database.discarded_draft_attachments()?);
         for item in self.database.outbox()? {
             if item.state != "canceled" {
                 retained.extend(item.draft.attachments.iter().map(|a| a.id.clone()));

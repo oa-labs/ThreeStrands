@@ -12,7 +12,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - ThreeStrands now reopens where you left off. If you quit while in **Calendar**, **Tasks**, **Contacts**, or **Files**, that view is open the next time you start the app.
 
 ### Improved
-- When you discard several drafts in **Drafts**, the confirmation is easier to read and more compact, and **Keep Drafts** is selected so pressing Return doesn't discard anything by accident.
+- Discarding drafts, or failed messages in **Outbox**, now works like moving conversations to Trash: it happens right away, and **Undo** in the notice (or <kbd>z</kbd>) brings them back, attachments included, for up to an hour. Failed messages come back to **Drafts**.
 - Collapsed emails in a conversation now use the same text sizes as the rest of the app, instead of larger type.
 - An unsent draft at the end of a conversation now lines up with the emails above it, with **Resume Draft** on the right.
 - You can now reorder accounts in **Settings → Calendar Accounts** with the up and down arrows, the same way as mail accounts. The **Calendar** sidebar follows the new order, and reconnecting an account no longer moves it to the bottom of the list.

@@ -1642,7 +1642,7 @@ describe("Drafts folder", () => {
     expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
   });
 
-  it("lists drafts like conversations and discards several at once after confirming", async () => {
+  it("lists drafts like conversations and discards several at once with Undo", async () => {
     for (const subject of ["First", "Second", "Third"]) {
       const draft = await mailClient.createDraft("new");
       await mailClient.saveDraft({ ...draft, subject, to: "Jane <jane@example.com>", body: `${subject} body` });
@@ -1663,22 +1663,18 @@ describe("Drafts folder", () => {
     expect(toolbar).toHaveTextContent("3 selected");
     expect(screen.queryByRole("textbox", { name: "Subject" })).not.toBeInTheDocument();
 
+    // Discards at once, like the inbox's Trash, and offers Undo instead of asking first.
     fireEvent.click(within(toolbar).getByRole("button", { name: "Discard" }));
-    const confirm = screen.getByRole("group", { name: "Discard drafts confirmation" });
-    expect(confirm).toHaveClass("settings-inline-confirm--stacked");
-    expect(confirm.querySelector(".settings-inline-confirm-title")).toHaveTextContent(/^Discard 3 drafts\?$/);
-    expect(confirm.querySelector(".settings-inline-confirm-detail")).toHaveTextContent("This can't be undone. They'll also be deleted from Drafts on the server.");
-    const keep = within(confirm).getByRole("button", { name: "Keep Drafts" });
-    expect(keep).toHaveFocus();
-    const buttons = within(confirm).getAllByRole("button");
-    expect(buttons.map((button) => button.textContent)).toEqual(["Keep Drafts", "Discard 3 Drafts"]);
-    expect(buttons[1]).toHaveClass("btn-danger-strong");
-    fireEvent.click(keep);
-    expect(screen.queryByRole("group", { name: "Discard drafts confirmation" })).not.toBeInTheDocument();
-    expect(within(list).getAllByRole("option")).toHaveLength(3);
+    expect(await screen.findByRole("heading", { name: "0 drafts" })).toBeInTheDocument();
+    expect(screen.getByText("3 drafts discarded")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByRole("heading", { name: "3 drafts" })).toBeInTheDocument();
+    expect(within(screen.getByRole("listbox", { name: /Drafts/ })).getAllByRole("option").map((row) => row.textContent)).toEqual(
+      expect.arrayContaining([expect.stringContaining("First"), expect.stringContaining("Second"), expect.stringContaining("Third")]),
+    );
 
-    fireEvent.click(within(toolbar).getByRole("button", { name: "Discard" }));
-    fireEvent.click(within(screen.getByRole("group", { name: "Discard drafts confirmation" })).getByRole("button", { name: "Discard 3 Drafts" }));
+    for (const row of within(screen.getByRole("listbox", { name: /Drafts/ })).getAllByRole("option")) fireEvent.click(row, { metaKey: true });
+    fireEvent.click(within(screen.getByRole("toolbar", { name: "Batch actions" })).getByRole("button", { name: "Discard" }));
     expect(await screen.findByRole("heading", { name: "0 drafts" })).toBeInTheDocument();
     expect(screen.queryByRole("toolbar", { name: "Batch actions" })).not.toBeInTheDocument();
     selectFolder("Inbox");
@@ -1741,11 +1737,15 @@ describe("Drafts folder", () => {
     const toolbar = screen.getByRole("toolbar", { name: "Batch actions" });
     expect(toolbar).toHaveTextContent("2 selected");
 
+    const restore = vi.spyOn(mailClient, "restoreDraft").mockResolvedValue(draft);
     fireEvent.click(within(toolbar).getByRole("button", { name: "Discard 1 Failed" }));
-    fireEvent.click(within(screen.getByRole("group", { name: "Discard failed messages confirmation" })).getByRole("button", { name: "Discard Message" }));
     await waitFor(() => expect(discard).toHaveBeenCalledWith(draft.id));
     expect(recover).toHaveBeenCalledWith("failed");
     expect(cancel).not.toHaveBeenCalled();
+    expect(await screen.findByText("Failed message discarded")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(restore).toHaveBeenCalledWith(draft.id));
+    restore.mockRestore();
 
     fireEvent.click(screen.getByRole("option", { name: /Later/ }), { metaKey: true });
     cancel.mockRejectedValueOnce(new Error("Delivery has already started"));
@@ -1757,6 +1757,24 @@ describe("Drafts folder", () => {
     vi.mocked(mailClient.listOutbox).mockRestore();
     discard.mockRestore();
     await mailClient.discardDraft(base.id);
+    selectFolder("Inbox");
+    expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
+  });
+
+  it("brings back a draft discarded with # when z is pressed", async () => {
+    const draft = await mailClient.createDraft("new");
+    await mailClient.saveDraft({ ...draft, subject: "Keep me after all" });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    selectFolder("Drafts");
+    const row = await screen.findByRole("option", { name: /Keep me after all/ });
+    row.focus();
+    fireEvent.keyDown(row, { key: "#", code: "Digit3", shiftKey: true });
+    expect(await screen.findByRole("heading", { name: "0 drafts" })).toBeInTheDocument();
+    expect(screen.getByText("Draft discarded")).toBeInTheDocument();
+    fireEvent.keyDown(document.body, { key: "z" });
+    expect(await screen.findByRole("option", { name: /Keep me after all/ })).toBeInTheDocument();
+    for (const listed of await mailClient.listDrafts()) await mailClient.discardDraft(listed.id);
     selectFolder("Inbox");
     expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
   });

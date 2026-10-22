@@ -257,21 +257,32 @@ export function useCorrespondence(
       mailClient.recoverSend(id).then((d) => { setActiveFollowUpTaskId(d.followUpTaskId ?? null); setActiveThreadId(null); setActive(d); return refresh(); }).catch((e: unknown) => setError(String(e))),
     );
   }, [refresh, withOutboxActionGuard]);
-  /** Runs `action` on each send, then reports how many failed in one message. */
-  const runOnSends = useCallback(async (ids: readonly string[], verb: string, action: (id: string) => Promise<unknown>) => {
+  /**
+   * Runs `action` on each send, then reports how many failed in one message.
+   * Resolves to what each successful action returned.
+   */
+  const runOnSends = useCallback(async <T,>(ids: readonly string[], verb: string, action: (id: string) => Promise<T>): Promise<T[]> => {
     const results = await Promise.allSettled(ids.map(action));
     const failed = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
     if (failed.length) setError(`${failed.length} ${failed.length === 1 ? "message" : "messages"} couldn't be ${verb}: ${String(failed[0].reason)}`);
     await refresh().catch((e: unknown) => setError(String(e)));
+    return results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
   }, [refresh]);
   /** Returns sends that haven't gone out to Drafts, without opening each in the composer. */
   const returnSendsToDrafts = useCallback(
     (ids: readonly string[]) => runOnSends(ids, "returned to Drafts", (id) => mailClient.cancelSend(id)),
     [runOnSends],
   );
-  /** Discards failed sends: each is restored to a draft, then discarded. */
+  /**
+   * Discards failed sends: each is restored to a draft, then discarded.
+   * Resolves to those drafts, so Undo brings them back to Drafts.
+   */
   const discardFailedSends = useCallback(
-    (ids: readonly string[]) => runOnSends(ids, "discarded", async (id) => mailClient.discardDraft((await mailClient.recoverSend(id)).id)),
+    (ids: readonly string[]) => runOnSends(ids, "discarded", async (id) => {
+      const draft = await mailClient.recoverSend(id);
+      await mailClient.discardDraft(draft.id);
+      return draft.id;
+    }),
     [runOnSends],
   );
   const reconcileSend = useCallback((id: string) => {
@@ -360,18 +371,29 @@ export function useCorrespondence(
   const undoSendItem = useCallback((id: string) => { void undo(id); }, [undo]);
   // Discards a draft from the Drafts list. The open draft goes through the
   // composer so pending edits are flushed before it is removed.
-  const discardListedDraft = useCallback((draft: Draft) => {
-    if (active?.id === draft.id) { editor.current?.discard(); return; }
-    void mailClient.discardDraft(draft.id).then(() => refresh()).catch((e: unknown) => setError(String(e)));
-  }, [active?.id, refresh]);
-  /** Discards every listed draft in `ids`; an open one closes its composer. */
-  const discardListedDrafts = useCallback(async (ids: readonly string[]) => {
-    if (active && ids.includes(active.id)) editor.current?.discard();
-    const results = await Promise.allSettled(ids.filter((id) => id !== active?.id).map((id) => mailClient.discardDraft(id)));
-    const failed = results.filter((result) => result.status === "rejected");
-    if (failed.length) setError(`${failed.length} ${failed.length === 1 ? "draft" : "drafts"} couldn't be discarded: ${String((failed[0] as PromiseRejectedResult).reason)}`);
+  /**
+   * Discards every listed draft in `ids`; an open one closes its composer.
+   * Resolves to the drafts discarded, which
+   * [`restoreDiscardedDrafts`](restoreDiscardedDrafts) can bring back.
+   */
+  const discardListedDrafts = useCallback(async (ids: readonly string[]): Promise<string[]> => {
+    const open = active && ids.includes(active.id) ? active.id : null;
+    if (open) editor.current?.discard();
+    const others = ids.filter((id) => id !== open);
+    const results = await Promise.allSettled(others.map((id) => mailClient.discardDraft(id)));
+    const failed = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failed.length) setError(`${failed.length} ${failed.length === 1 ? "draft" : "drafts"} couldn't be discarded: ${String(failed[0].reason)}`);
     await refresh().catch((e: unknown) => setError(String(e)));
+    return [...(open ? [open] : []), ...others.filter((_, index) => results[index].status === "fulfilled")];
   }, [active, refresh]);
+  const discardListedDraft = useCallback((draft: Draft) => discardListedDrafts([draft.id]), [discardListedDrafts]);
+  /** Undo for a discard: brings the drafts back to Drafts. */
+  const restoreDiscardedDrafts = useCallback(async (ids: readonly string[]) => {
+    const results = await Promise.allSettled(ids.map((id) => mailClient.restoreDraft(id)));
+    const failed = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    await refresh().catch((e: unknown) => setError(String(e)));
+    if (failed.length) throw new Error(String(failed[0].reason));
+  }, [refresh]);
   const renderComposer = (onSendAndArchive?: () => void, review?: DraftReviewAvailability) => active ? (
     <Composer
       key={`${active.id}:${activeVersion}`}
@@ -433,6 +455,7 @@ export function useCorrespondence(
     openDraft,
     discardListedDraft,
     discardListedDrafts,
+    restoreDiscardedDrafts,
     undoSendItem,
     restoreFailedSend,
     returnSendsToDrafts,

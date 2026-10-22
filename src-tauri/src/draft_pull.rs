@@ -215,6 +215,16 @@ impl Database {
         })
     }
 
+    fn draft_is_discarded(&self, draft_id: &str) -> DbResult<bool> {
+        self.with_connection(|connection| {
+            Ok(connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM discarded_drafts WHERE id=?1)",
+                [draft_id],
+                |row| row.get(0),
+            )?)
+        })
+    }
+
     /// Links an existing local draft to the server copy carrying its
     /// `Message-ID`, without changing either.
     fn adopt_server_copy(&self, draft_id: &str, server_id: &str) -> DbResult<()> {
@@ -412,6 +422,10 @@ impl Correspondence {
                 }
             }
         };
+        // Discarded here; its copy is about to be deleted, or Undo restores it.
+        if self.database.draft_is_discarded(&draft_id)? {
+            return Ok(Applied::Unchanged);
+        }
         let base = self.database.local_draft(&draft_id)?;
         if base.as_ref().is_some_and(|base| base.account != account) {
             return Ok(Applied::Unchanged);
@@ -770,6 +784,18 @@ mod tests {
         assert_eq!(harness.state(&draft), "conflict");
         assert!(harness.server.drafts()["server-9"].0.contains("Edited on the laptop"));
         assert_eq!(harness.server.drafts().len(), 1, "no second copy");
+    }
+
+    #[tokio::test]
+    async fn a_draft_discarded_here_is_not_brought_back_by_an_edit_elsewhere() {
+        let harness = Harness::new();
+        let draft = harness.edit(harness.new_draft(), "One");
+        harness.run_after(PAST_DELAY).await;
+        harness.db().discard_draft(&draft.id).unwrap();
+        let message_id = format!("draft-{}@threestrands.local", draft.id);
+        harness.server.write_elsewhere("server-1", &message(&message_id, "Plans", "Edited on my phone"), None);
+        harness.pull().await;
+        assert!(harness.db().drafts().unwrap().is_empty());
     }
 
     #[tokio::test]
