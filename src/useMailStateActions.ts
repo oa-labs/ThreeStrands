@@ -15,6 +15,7 @@ export function useMailStateActions({ mailboxThreads: { setThreads }, threadDeta
       summary: result.summary,
       summaryGeneratedAt: result.generatedAt,
       summaryRevision: result.revision,
+      summaryFocusFrom: result.focusFrom ?? null,
     };
     // A request can finish after navigation or a refresh. Update only matching
     // entries in the current state; never restore an absent row or replace a

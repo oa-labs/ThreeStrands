@@ -14,7 +14,7 @@ pub(crate) const BASELINE_VERSION: i64 = 74;
 
 /// The current schema version. A new schema change adds an
 /// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 84;
+pub(crate) const LATEST_VERSION: i64 = 85;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -924,6 +924,28 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 85 {
+        // Briefs focus on messages the user hasn't been briefed on: where a
+        // saved summary's and saved suggestions' new messages started. And a
+        // device-local log of AI requests (metadata only, never email text)
+        // for Settings → AI.
+        tx.execute_batch(
+            "ALTER TABLE threads ADD COLUMN summary_focus_from TEXT;
+             ALTER TABLE ai_thread_analyses ADD COLUMN focus_from TEXT;
+             CREATE TABLE IF NOT EXISTS ai_activity (
+                 id INTEGER PRIMARY KEY,
+                 at TEXT NOT NULL,
+                 feature TEXT NOT NULL,
+                 provider TEXT NOT NULL,
+                 model TEXT NOT NULL,
+                 subject TEXT,
+                 message_count INTEGER,
+                 input_tokens INTEGER NOT NULL,
+                 output_tokens INTEGER NOT NULL
+             );",
+        )
+        .map_err(error)?;
+    }
     if stored == 0 {
         // Only new installations get the 90-day default. Existing databases
         // without a retention setting still mean Forever. Keep the default
@@ -1216,6 +1238,7 @@ mod tests {
         "table:draft_server_links",
         "table:draft_server_deletions",
         "table:discarded_drafts",
+        "table:ai_activity",
     ];
 
     #[test]
@@ -1295,7 +1318,7 @@ mod tests {
         super::migrate(&mut connection).unwrap();
         // Roll back to what a 0.147 database looks like.
         connection
-            .execute_batch("DROP TABLE draft_server_links; DROP TABLE draft_server_deletions; ALTER TABLE messages DROP COLUMN cc_json; ALTER TABLE calendar_accounts DROP COLUMN sort_order;")
+            .execute_batch("DROP TABLE draft_server_links; DROP TABLE draft_server_deletions; ALTER TABLE messages DROP COLUMN cc_json; ALTER TABLE calendar_accounts DROP COLUMN sort_order; ALTER TABLE threads DROP COLUMN summary_focus_from; ALTER TABLE ai_thread_analyses DROP COLUMN focus_from; DROP TABLE ai_activity;")
             .unwrap();
         connection.pragma_update(None, "user_version", 78).unwrap();
         connection
@@ -1395,6 +1418,38 @@ mod tests {
     }
 
     #[test]
+    fn a_v84_database_keeps_its_summaries_and_gains_brief_focus_and_ai_activity() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(crate::schema::INITIAL_SCHEMA).unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE threads DROP COLUMN summary_focus_from;
+                 ALTER TABLE ai_thread_analyses DROP COLUMN focus_from;
+                 DROP TABLE ai_activity;
+                 INSERT INTO threads(id, provider_thread_id, subject, snippet, participants_json, last_message_at, labels_json, account_id, summary, summary_revision)
+                 VALUES ('thread-a', 'a', 'A', '', '[]', '2026-01-01T00:00:00Z', '[]', 'you@example.com', '- Earlier brief', '2026-01-01T00:00:00Z');
+                 INSERT INTO ai_thread_analyses(thread_id, last_message_at, analysis_json, generated_at)
+                 VALUES ('thread-a', '2026-01-01T00:00:00Z', '{\"proposals\":[]}', '2026-01-01T00:00:00Z');",
+            )
+            .unwrap();
+        connection.pragma_update(None, "user_version", 84).unwrap();
+        super::migrate(&mut connection).unwrap();
+        // A brief saved before focus existed reads as covering the whole thread.
+        let (summary, focus): (String, Option<String>) = connection
+            .query_row("SELECT summary, summary_focus_from FROM threads WHERE id = 'thread-a'", [], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap();
+        assert_eq!((summary.as_str(), focus), ("- Earlier brief", None));
+        let analysis_focus: Option<String> = connection
+            .query_row("SELECT focus_from FROM ai_thread_analyses WHERE thread_id = 'thread-a'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(analysis_focus, None);
+        let activity: i64 = connection.query_row("SELECT count(*) FROM ai_activity", [], |row| row.get(0)).unwrap();
+        assert_eq!(activity, 0);
+        assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 85);
+    }
+
+    #[test]
     fn a_v77_database_queues_every_thread_to_rebuild_its_preview() {
         let mut connection = Connection::open_in_memory().unwrap();
         connection
@@ -1481,7 +1536,7 @@ mod tests {
                         ('thread-b', 'b', 'B', 'Hello', '[]', '2026-01-02T00:00:00Z', '[]', 'you@example.com');",
             )
             .unwrap();
-        connection.execute_batch("ALTER TABLE messages DROP COLUMN cc_json; ALTER TABLE calendar_accounts DROP COLUMN sort_order;").unwrap();
+        connection.execute_batch("ALTER TABLE messages DROP COLUMN cc_json; ALTER TABLE calendar_accounts DROP COLUMN sort_order; ALTER TABLE threads DROP COLUMN summary_focus_from; ALTER TABLE ai_thread_analyses DROP COLUMN focus_from; DROP TABLE ai_activity;").unwrap();
         connection.pragma_update(None, "user_version", 80).unwrap();
         super::migrate(&mut connection).unwrap();
         let queued: Vec<String> = connection

@@ -3,9 +3,9 @@
 use std::collections::HashSet;
 
 use crate::models::{
-    ActionAnalysis, ActionProposal, AiUsageDay, ChatAttachmentRef, ChatAttachmentSource,
+    ActionAnalysis, ActionProposal, AiActivity, AiUsageDay, ChatAttachmentRef, ChatAttachmentSource,
     ChatSource, ReplyAssistContext, ReplyAssistResult, SummaryResult, ThreadBriefResult,
-    ThreadChatReply, ThreadChatRequest, ThreadTask,
+    ThreadChatReply, ThreadChatRequest, ThreadDetail, ThreadTask,
 };
 use chrono::Utc;
 use tauri::State;
@@ -59,6 +59,9 @@ pub(crate) async fn ai_summarize_thread(
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
     let detail = state.database.get_thread(&thread_id)?;
     let revision = detail.thread.last_message_at.clone();
+    let user_addresses = account_addresses(&state, &detail.thread.account_id)?;
+    let focus_from = brief_focus(&state, &detail, &user_addresses)?;
+    let purpose = ai::RequestPurpose::about("summary", &detail.thread.subject, Some(ai::sent_message_count(detail.messages.len())));
     let request = ai::SummarizeRequest {
         provider,
         model,
@@ -74,9 +77,40 @@ pub(crate) async fn ai_summarize_thread(
                 body_text: message.body_text,
             })
             .collect(),
+        focus_from: focus_from.clone(),
     };
-    let summary = ai::summarize(request, &api_key).await?;
-    save_thread_summary(&state, &thread_id, summary, &revision)
+    let summary = ai::with_purpose(purpose, ai::summarize(request, &api_key)).await?;
+    save_thread_summary(&state, &thread_id, summary, &revision, focus_from.as_deref())
+}
+
+/// The account's own sending addresses, bounded for a prompt.
+fn account_addresses(state: &AppState, account_id: &str) -> AppResult<Vec<String>> {
+    Ok(state
+        .database
+        .account_sending_identities(account_id)?
+        .into_iter()
+        .take(ai::MAX_PROMPT_USER_ADDRESSES)
+        .map(|identity| identity.address)
+        .collect())
+}
+
+/// Where the messages a brief, summary, or suggestions should focus on
+/// start; see `ai::brief_focus_start`.
+fn brief_focus(state: &AppState, detail: &ThreadDetail, user_addresses: &[String]) -> AppResult<Option<String>> {
+    let analysis = state.database.thread_analysis_coverage(&detail.thread.id)?;
+    let mut prior = Vec::new();
+    if let Some(revision) = detail.thread.summary_revision.as_deref() {
+        prior.push(ai::PriorCoverage { revision, focus_from: detail.thread.summary_focus_from.as_deref() });
+    }
+    if let Some((revision, focus_from)) = &analysis {
+        prior.push(ai::PriorCoverage { revision, focus_from: focus_from.as_deref() });
+    }
+    let messages: Vec<(&str, &str)> = detail
+        .messages
+        .iter()
+        .map(|message| (message.sent_at.as_str(), message.sender.as_str()))
+        .collect();
+    Ok(ai::brief_focus_start(&messages, user_addresses, &detail.thread.last_message_at, &prior))
 }
 
 /// Saves a summary written from the thread as of `revision`. When a request
@@ -87,15 +121,16 @@ fn save_thread_summary(
     thread_id: &str,
     summary: String,
     revision: &str,
+    focus_from: Option<&str>,
 ) -> AppResult<SummaryResult> {
     let generated_at = Utc::now().to_rfc3339();
-    if !state.database.set_thread_summary(thread_id, &summary, &generated_at, revision)? {
+    if !state.database.set_thread_summary(thread_id, &summary, &generated_at, revision, focus_from)? {
         if let Ok(detail) = state.database.get_thread(thread_id) {
             let thread = detail.thread;
             if let (Some(summary), Some(generated_at), Some(revision)) =
                 (thread.summary, thread.summary_generated_at, thread.summary_revision)
             {
-                return Ok(SummaryResult { summary, generated_at, revision });
+                return Ok(SummaryResult { summary, generated_at, revision, focus_from: thread.summary_focus_from });
             }
         }
     }
@@ -103,6 +138,7 @@ fn save_thread_summary(
         summary,
         generated_at,
         revision: revision.to_string(),
+        focus_from: focus_from.map(str::to_string),
     })
 }
 
@@ -135,13 +171,8 @@ async fn thread_analysis_request(
         .take(ai::MAX_PROMPT_GOALS)
         .map(|goal| ai::GoalPromptInput { id: goal.id, title: goal.title, horizon: goal.horizon, period: goal.period })
         .collect();
-    let user_addresses = state
-        .database
-        .account_sending_identities(&detail.thread.account_id)?
-        .into_iter()
-        .take(ai::MAX_PROMPT_USER_ADDRESSES)
-        .map(|identity| identity.address)
-        .collect();
+    let user_addresses = account_addresses(state, &detail.thread.account_id)?;
+    let focus_from = brief_focus(state, &detail, &user_addresses)?;
     let request = ai::AnalyzeRequest {
         provider,
         model,
@@ -162,6 +193,7 @@ async fn thread_analysis_request(
         user_time_zone,
         user_addresses,
         goals,
+        focus_from,
     };
     Ok((revision, request))
 }
@@ -178,6 +210,7 @@ fn cache_thread_analysis(
     revision: &str,
     analysis: ActionAnalysis,
     replace_same_revision: bool,
+    focus_from: Option<&str>,
 ) -> AppResult<ActionAnalysis> {
     let saved = database_result(state.database.save_thread_analysis(
         thread_id,
@@ -185,6 +218,7 @@ fn cache_thread_analysis(
         &analysis,
         &Utc::now().to_rfc3339(),
         replace_same_revision,
+        focus_from,
     ))?;
     if saved {
         return Ok(analysis);
@@ -218,7 +252,9 @@ pub(crate) async fn ai_analyze_thread(
         target: "ai_analyze_thread",
         "starting analysis for thread {thread_id} with provider {provider:?} model {model}"
     );
-    let analysis = match ai::analyze(request, &api_key).await {
+    let focus_from = request.focus_from.clone();
+    let purpose = ai::RequestPurpose::about("suggestions", &request.subject, Some(ai::sent_message_count(request.messages.len())));
+    let analysis = match ai::with_purpose(purpose, ai::analyze(request, &api_key)).await {
         Ok(analysis) => analysis,
         Err(error) => {
             log::error!(target: "ai_analyze_thread", "analysis failed for thread {thread_id}: {error}");
@@ -231,7 +267,7 @@ pub(crate) async fn ai_analyze_thread(
         analysis.proposals.len(),
         analysis.hidden_count
     );
-    cache_thread_analysis(&state, &thread_id, &revision, analysis, false)
+    cache_thread_analysis(&state, &thread_id, &revision, analysis, false, focus_from.as_deref())
 }
 
 /// Drops a handled suggestion from the thread's saved suggestions for
@@ -513,7 +549,8 @@ pub(crate) async fn ai_thread_chat(
         searched.len(),
         shared_attachments.len()
     );
-    let answer = match ai::chat(chat_request, &api_key).await {
+    let purpose = ai::RequestPurpose::about("chat", &chat_request.subject, Some(ai::sent_message_count(chat_request.messages.len())));
+    let answer = match ai::with_purpose(purpose, ai::chat(chat_request, &api_key)).await {
         Ok(answer) => answer,
         Err(error) => {
             log::error!(target: "ai_thread_chat", "chat failed for thread {thread_id}: {error}");
@@ -575,7 +612,9 @@ pub(crate) async fn ai_brief_thread(
         target: "ai_analyze_thread",
         "starting brief for thread {thread_id} with provider {provider:?} model {model}"
     );
-    let brief = match ai::brief(request, &api_key).await {
+    let focus_from = request.focus_from.clone();
+    let purpose = ai::RequestPurpose::about("brief", &request.subject, Some(ai::sent_message_count(request.messages.len())));
+    let brief = match ai::with_purpose(purpose, ai::brief(request, &api_key)).await {
         Ok(brief) => brief,
         Err(error) => {
             log::error!(target: "ai_analyze_thread", "brief failed for thread {thread_id}: {error}");
@@ -588,8 +627,8 @@ pub(crate) async fn ai_brief_thread(
         brief.analysis.proposals.len(),
         brief.analysis.hidden_count
     );
-    let summary = save_thread_summary(&state, &thread_id, brief.summary, &revision)?;
-    let analysis = cache_thread_analysis(&state, &thread_id, &revision, brief.analysis, true)?;
+    let summary = save_thread_summary(&state, &thread_id, brief.summary, &revision, focus_from.as_deref())?;
+    let analysis = cache_thread_analysis(&state, &thread_id, &revision, brief.analysis, true, focus_from.as_deref())?;
     Ok(ThreadBriefResult { summary, analysis })
 }
 
@@ -644,7 +683,8 @@ pub(crate) async fn ai_enrich_contact(
         }
     }
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
-    ai::enrich_contact(
+    let purpose = ai::RequestPurpose { message_count: Some(messages.len()), ..ai::RequestPurpose::new("contact") };
+    ai::with_purpose(purpose, ai::enrich_contact(
         ai::ContactEnrichmentRequest {
             provider,
             model,
@@ -656,7 +696,7 @@ pub(crate) async fn ai_enrich_contact(
             empty_fields,
         },
         &api_key,
-    )
+    ))
     .await
     .map_err(AppError::from)
 }
@@ -741,7 +781,8 @@ pub(crate) async fn ai_find_times(
     };
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
     log::info!(target: "ai_find_times", "finding times with provider {provider:?} model {model}, {} message(s)", messages.len());
-    ai::find_times::find_times(
+    let purpose = ai::RequestPurpose::about("find_times", &subject, Some(messages.len()));
+    ai::with_purpose(purpose, ai::find_times::find_times(
         ai::find_times::FindTimesRequest {
             provider,
             model,
@@ -755,7 +796,7 @@ pub(crate) async fn ai_find_times(
             user_time_zone: request.user_time_zone,
         },
         &api_key,
-    )
+    ))
     .await
     .inspect_err(|error| log::error!(target: "ai_find_times", "find times failed: {error}"))
     .map_err(AppError::from)
@@ -769,9 +810,17 @@ pub(crate) async fn ai_review_draft(
     endpoint: Option<String>,
 ) -> AppResult<ai::DraftReviewResult> {
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
-    ai::review_draft(request, provider, &model, endpoint.as_deref(), &api_key)
+    let purpose = ai::RequestPurpose::about("draft_review", &request.subject, None);
+    ai::with_purpose(purpose, ai::review_draft(request, provider, &model, endpoint.as_deref(), &api_key))
         .await
         .map_err(AppError::from)
+}
+
+/// Recent AI provider requests, newest first, for Settings → AI.
+#[tauri::command(async)]
+pub(crate) fn ai_activity(limit: Option<u32>, state: State<'_, AppState>) -> AppResult<Vec<AiActivity>> {
+    let limit = limit.unwrap_or(100).min(500) as usize;
+    Ok(state.database.ai_activity(limit)?)
 }
 
 #[tauri::command]
@@ -799,7 +848,8 @@ pub(crate) async fn ai_generate_reply(
             })
             .collect(),
     );
-    let body = ai::generate_reply(
+    let purpose = ai::RequestPurpose::about("reply", &bounded.subject, Some(bounded.messages.len()));
+    let body = ai::with_purpose(purpose, ai::generate_reply(
         &bounded,
         &instruction,
         provider,
@@ -807,7 +857,7 @@ pub(crate) async fn ai_generate_reply(
         endpoint.as_deref(),
         reasoning.unwrap_or_default(),
         &api_key,
-    )
+    ))
     .await?;
     Ok(ReplyAssistResult { body })
 }

@@ -335,7 +335,8 @@ fn map_thread_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
         has_attachments: row.get(14)?,
         last_received_at: row.get(15)?,
         summary_revision: row.get(16)?,
-        match_snippet: row.get(17)?,
+        summary_focus_from: row.get(17)?,
+        match_snippet: row.get(18)?,
     })
 }
 

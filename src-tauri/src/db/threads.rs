@@ -22,7 +22,7 @@ const LATEST_ORDER: &str = "last_message_at DESC";
 pub(super) const THREAD_COLUMNS: &str = "t.id, t.provider_thread_id, t.subject, t.snippet,
     t.participants_json, t.last_message_at, t.unread, t.starred, t.archived,
     t.labels_json, t.trashed, t.account_id, t.summary, t.summary_generated_at,
-    t.has_attachments, t.last_received_at, t.summary_revision";
+    t.has_attachments, t.last_received_at, t.summary_revision, t.summary_focus_from";
 
 impl Database {
     /// `account_id` merges every account when absent, or scopes to one account.
@@ -279,12 +279,14 @@ impl Database {
         summary: &str,
         generated_at: &str,
         revision: &str,
+        focus_from: Option<&str>,
     ) -> DbResult<bool> {
         self.with_connection(|connection| {
             Ok(connection.execute(
-                "UPDATE threads SET summary = ?1, summary_generated_at = ?2, summary_revision = ?3
+                "UPDATE threads SET summary = ?1, summary_generated_at = ?2, summary_revision = ?3,
+                    summary_focus_from = ?5
                  WHERE id = ?4 AND (summary_revision IS NULL OR summary_revision <= ?3)",
-                params![summary, generated_at, revision, thread_id],
+                params![summary, generated_at, revision, thread_id, focus_from],
             )? > 0)
         })
     }
@@ -397,6 +399,7 @@ fn thread_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
         has_attachments: row.get(14)?,
         last_received_at: row.get(15)?,
         summary_revision: row.get(16)?,
+        summary_focus_from: row.get(17)?,
         match_snippet: None,
     })
 }

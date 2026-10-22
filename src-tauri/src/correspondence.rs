@@ -3069,7 +3069,7 @@ mod tests {
                 "INSERT INTO threads SELECT ?1, ?2, subject, snippet, participants_json,
                     last_message_at, unread, starred, archived, labels_json, trashed, ?3,
                     summary, summary_generated_at, has_attachments, last_received_at,
-                    summary_revision
+                    summary_revision, summary_focus_from
                  FROM threads WHERE id='welcome'",
                 params![format!("{account}:{provider_thread_id}"), provider_thread_id, account],
             ).unwrap();

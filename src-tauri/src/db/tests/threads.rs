@@ -185,6 +185,7 @@ fn thread_summary_round_trips_through_get_thread() {
             "- Point one\n- Point two",
             "2026-03-05T16:30:00Z",
             &before.last_message_at,
+            Some("2026-03-04T09:00:00Z"),
         )
         .unwrap());
 
@@ -198,6 +199,7 @@ fn thread_summary_round_trips_through_get_thread() {
         after.summary_revision.as_deref(),
         Some(before.last_message_at.as_str())
     );
+    assert_eq!(after.summary_focus_from.as_deref(), Some("2026-03-04T09:00:00Z"));
 }
 
 #[test]
@@ -205,7 +207,7 @@ fn a_summary_for_an_older_revision_never_replaces_a_newer_one() {
     let database = database();
     let save = |summary: &str, revision: &str| {
         database
-            .set_thread_summary("welcome", summary, "2026-03-05T16:30:00Z", revision)
+            .set_thread_summary("welcome", summary, "2026-03-05T16:30:00Z", revision, None)
             .unwrap()
     };
     assert!(save("newer", "2026-03-02T00:00:00Z"));

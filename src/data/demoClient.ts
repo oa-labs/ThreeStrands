@@ -15,6 +15,7 @@ import type {
   ContactGroup,
   Account,
   ActionAnalysis,
+  AiActivity,
   AiUsageDay,
   AvailabilityPreferences,
   AvailabilityResult,
@@ -537,6 +538,9 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     },
     async aiUsageSummary(): Promise<AiUsageDay[]> {
       // The demo never calls a provider, so there is no usage to report.
+      return [];
+    },
+    async aiActivity(): Promise<AiActivity[]> {
       return [];
     },
     async briefThread(threadId, _userTimeZone, provider, model, endpoint): Promise<ThreadBriefResult> {

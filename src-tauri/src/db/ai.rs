@@ -2,10 +2,13 @@ use chrono::{Days, NaiveDate};
 use rusqlite::{params, OptionalExtension};
 
 use super::{Database, DbResult};
-use crate::models::{ActionAnalysis, ActionProposal, AiUsageDay};
+use crate::models::{ActionAnalysis, ActionProposal, AiActivity, AiUsageDay};
 
 /// Daily usage rows older than this are pruned when new usage is recorded.
 pub(crate) const AI_USAGE_RETENTION_DAYS: u64 = 90;
+
+/// The most AI activity entries kept; older ones are pruned as new ones are added.
+pub(crate) const MAX_AI_ACTIVITY_ENTRIES: i64 = 500;
 
 impl Database {
     /// The saved suggestions for a thread, if they were produced for its
@@ -29,8 +32,22 @@ impl Database {
         Ok(saved.and_then(|json| serde_json::from_str(&json).ok()))
     }
 
+    /// The newest message time and focus start of the thread's saved
+    /// suggestions, if any; see `ai::PriorCoverage`.
+    pub fn thread_analysis_coverage(&self, thread_id: &str) -> DbResult<Option<(String, Option<String>)>> {
+        self.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT last_message_at, focus_from FROM ai_thread_analyses WHERE thread_id = ?1",
+                    [thread_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?)
+        })
+    }
+
     /// Saves the thread's suggestions for the newest message time
-    /// `last_message_at`. Suggestions saved for a newer message are never
+    /// `last_message_at`, focused on messages from `focus_from`. Suggestions saved for a newer message are never
     /// replaced by a slower request for an older one; suggestions saved for
     /// the same message are replaced only when `replace_same_revision` is
     /// set. Returns whether this set was saved.
@@ -41,19 +58,21 @@ impl Database {
         analysis: &ActionAnalysis,
         generated_at: &str,
         replace_same_revision: bool,
+        focus_from: Option<&str>,
     ) -> DbResult<bool> {
         let json = serde_json::to_string(analysis).map_err(super::serialization_error)?;
         self.with_connection(|connection| {
             Ok(connection.execute(
-                "INSERT INTO ai_thread_analyses(thread_id, last_message_at, analysis_json, generated_at)
-                 VALUES (?1, ?2, ?3, ?4)
+                "INSERT INTO ai_thread_analyses(thread_id, last_message_at, analysis_json, generated_at, focus_from)
+                 VALUES (?1, ?2, ?3, ?4, ?6)
                  ON CONFLICT(thread_id) DO UPDATE SET
                     last_message_at = excluded.last_message_at,
                     analysis_json = excluded.analysis_json,
-                    generated_at = excluded.generated_at
+                    generated_at = excluded.generated_at,
+                    focus_from = excluded.focus_from
                  WHERE excluded.last_message_at > ai_thread_analyses.last_message_at
                     OR (?5 AND excluded.last_message_at = ai_thread_analyses.last_message_at)",
-                params![thread_id, last_message_at, json, generated_at, replace_same_revision],
+                params![thread_id, last_message_at, json, generated_at, replace_same_revision, focus_from],
             )? > 0)
         })
     }
@@ -140,6 +159,62 @@ impl Database {
             )?;
             connection.execute("DELETE FROM ai_usage WHERE day <= ?1", [cutoff])?;
             Ok(())
+        })
+    }
+
+    /// Logs one completed provider request for Settings → AI and prunes
+    /// entries past the usage retention window or the entry limit. `at` is
+    /// an RFC 3339 time.
+    pub fn record_ai_activity(&self, entry: &AiActivity) -> DbResult<()> {
+        let cutoff = chrono::DateTime::parse_from_rfc3339(&entry.at)
+            .map_err(super::display_error)?
+            .checked_sub_days(Days::new(AI_USAGE_RETENTION_DAYS))
+            .map(|cutoff| cutoff.to_rfc3339())
+            .unwrap_or_default();
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO ai_activity(at, feature, provider, model, subject, message_count, input_tokens, output_tokens)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    entry.at,
+                    entry.feature,
+                    entry.provider,
+                    entry.model,
+                    entry.subject,
+                    entry.message_count,
+                    entry.input_tokens,
+                    entry.output_tokens,
+                ],
+            )?;
+            connection.execute(
+                "DELETE FROM ai_activity WHERE at < ?1 OR id NOT IN
+                    (SELECT id FROM ai_activity ORDER BY at DESC, id DESC LIMIT ?2)",
+                params![cutoff, MAX_AI_ACTIVITY_ENTRIES],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// The most recent AI activity, newest first.
+    pub fn ai_activity(&self, limit: usize) -> DbResult<Vec<AiActivity>> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT at, feature, provider, model, subject, message_count, input_tokens, output_tokens
+                 FROM ai_activity ORDER BY at DESC, id DESC LIMIT ?1",
+            )?;
+            let rows = statement.query_map([i64::try_from(limit).unwrap_or(i64::MAX)], |row| {
+                Ok(AiActivity {
+                    at: row.get(0)?,
+                    feature: row.get(1)?,
+                    provider: row.get(2)?,
+                    model: row.get(3)?,
+                    subject: row.get(4)?,
+                    message_count: row.get(5)?,
+                    input_tokens: row.get(6)?,
+                    output_tokens: row.get(7)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
         })
     }
 
@@ -262,6 +337,7 @@ mod tests {
                 &analysis(1),
                 "2026-09-19T11:00:00Z",
                 true,
+                None,
             )
             .unwrap();
         let saved = database
@@ -281,6 +357,7 @@ mod tests {
                 &analysis(0),
                 "2026-09-20T11:00:00Z",
                 true,
+                None,
             )
             .unwrap();
         assert!(database
@@ -330,6 +407,7 @@ mod tests {
                 &ActionAnalysis { proposals: vec![task("Send the deck"), task("Book the room")], hidden_count: 2, extra_count: 0 },
                 "2026-09-19T11:00:00Z",
                 true,
+                None,
             )
             .unwrap();
 
@@ -346,8 +424,8 @@ mod tests {
     fn a_slower_request_never_replaces_suggestions_saved_for_a_newer_message() {
         let database = database_with_thread();
         let (older, newer) = ("2026-09-19T10:00:00Z", "2026-09-20T10:00:00Z");
-        assert!(database.save_thread_analysis("account:thread", newer, &analysis(0), "2026-09-20T11:00:00Z", true).unwrap());
-        assert!(!database.save_thread_analysis("account:thread", older, &analysis(1), "2026-09-20T12:00:00Z", true).unwrap());
+        assert!(database.save_thread_analysis("account:thread", newer, &analysis(0), "2026-09-20T11:00:00Z", true, None).unwrap());
+        assert!(!database.save_thread_analysis("account:thread", older, &analysis(1), "2026-09-20T12:00:00Z", true, None).unwrap());
         assert!(database.thread_analysis("account:thread", older).unwrap().is_none());
         assert_eq!(database.thread_analysis("account:thread", newer).unwrap().unwrap().hidden_count, 0);
     }
@@ -357,14 +435,14 @@ mod tests {
         let database = database_with_thread();
         let revision = "2026-09-19T10:00:00Z";
         let both = ActionAnalysis { proposals: vec![task("Send the deck"), task("Book the room")], hidden_count: 0, extra_count: 0 };
-        assert!(database.save_thread_analysis("account:thread", revision, &both, "2026-09-19T11:00:00Z", false).unwrap());
+        assert!(database.save_thread_analysis("account:thread", revision, &both, "2026-09-19T11:00:00Z", false, None).unwrap());
         // The user handles one suggestion; a concurrent analysis of the same
         // message then finishes and must not bring it back.
         assert!(database.remove_thread_suggestion("account:thread", revision, &task("Send the deck")).unwrap());
-        assert!(!database.save_thread_analysis("account:thread", revision, &both, "2026-09-19T11:01:00Z", false).unwrap());
+        assert!(!database.save_thread_analysis("account:thread", revision, &both, "2026-09-19T11:01:00Z", false, None).unwrap());
         assert_eq!(saved_titles(&database, revision), Some(vec!["Book the room".to_string()]));
         // An explicit brief of the same message replaces the saved set.
-        assert!(database.save_thread_analysis("account:thread", revision, &both, "2026-09-19T11:02:00Z", true).unwrap());
+        assert!(database.save_thread_analysis("account:thread", revision, &both, "2026-09-19T11:02:00Z", true, None).unwrap());
         assert_eq!(saved_titles(&database, revision).map(|titles| titles.len()), Some(2));
     }
 
@@ -376,7 +454,7 @@ mod tests {
             .unwrap());
 
         database
-            .save_thread_analysis("account:thread", "2026-09-20T10:00:00Z", &analysis(0), "2026-09-20T11:00:00Z", true)
+            .save_thread_analysis("account:thread", "2026-09-20T10:00:00Z", &analysis(0), "2026-09-20T11:00:00Z", true, None)
             .unwrap();
         // A removal for the older revision leaves the newer saved set alone.
         assert!(!database
@@ -389,7 +467,7 @@ mod tests {
     fn suggestions_saved_before_date_only_events_still_load_and_can_be_removed() {
         let database = database_with_thread();
         database
-            .save_thread_analysis("account:thread", "2026-09-19T10:00:00Z", &analysis(0), "2026-09-19T11:00:00Z", true)
+            .save_thread_analysis("account:thread", "2026-09-19T10:00:00Z", &analysis(0), "2026-09-19T11:00:00Z", true, None)
             .unwrap();
         // The saved shape before `eventDate` and `extraCount` existed.
         let earlier = serde_json::json!({
@@ -432,6 +510,7 @@ mod tests {
                 &analysis(0),
                 "2026-09-19T11:00:00Z",
                 true,
+                None,
             )
             .unwrap();
         let connection = database.connection().unwrap();
@@ -552,5 +631,53 @@ mod tests {
         assert!(database
             .record_ai_usage("not-a-day", "openai", "gpt-4o", 1, 1, None)
             .is_err());
+    }
+
+    fn activity(at: &str, feature: &str) -> crate::models::AiActivity {
+        crate::models::AiActivity {
+            at: at.into(),
+            feature: feature.into(),
+            provider: "anthropic".into(),
+            model: "claude".into(),
+            subject: Some("Lunch".into()),
+            message_count: Some(2),
+            input_tokens: 1_200,
+            output_tokens: 80,
+        }
+    }
+
+    #[test]
+    fn ai_activity_lists_newest_first_and_prunes_by_age_and_count() {
+        let database = Database::open_memory();
+        database.record_ai_activity(&activity("2026-06-01T09:00:00+00:00", "brief")).unwrap();
+        database.record_ai_activity(&activity("2026-10-01T09:00:00+00:00", "chat")).unwrap();
+        database.record_ai_activity(&activity("2026-10-02T09:00:00+00:00", "brief")).unwrap();
+        // The June entry is past the retention window of the newest one.
+        let listed = database.ai_activity(10).unwrap();
+        assert_eq!(listed.iter().map(|entry| entry.feature.as_str()).collect::<Vec<_>>(), vec!["brief", "chat"]);
+        assert_eq!(listed[0], activity("2026-10-02T09:00:00+00:00", "brief"));
+        assert_eq!(database.ai_activity(1).unwrap().len(), 1);
+
+        for minute in 0..super::MAX_AI_ACTIVITY_ENTRIES + 5 {
+            let at = format!("2026-10-03T{:02}:{:02}:00+00:00", minute / 60, minute % 60);
+            database.record_ai_activity(&activity(&at, "summary")).unwrap();
+        }
+        let kept = database.ai_activity(10_000).unwrap();
+        assert_eq!(kept.len() as i64, super::MAX_AI_ACTIVITY_ENTRIES);
+        assert!(kept.iter().all(|entry| entry.feature == "summary"));
+        assert!(database.record_ai_activity(&activity("not a time", "brief")).is_err());
+    }
+
+    #[test]
+    fn saved_suggestions_remember_where_their_new_messages_started() {
+        let database = database_with_thread();
+        assert_eq!(database.thread_analysis_coverage("account:thread").unwrap(), None);
+        database
+            .save_thread_analysis("account:thread", "2026-09-20T10:00:00Z", &analysis(0), "2026-09-20T11:00:00Z", true, Some("2026-09-19T10:00:00Z"))
+            .unwrap();
+        assert_eq!(
+            database.thread_analysis_coverage("account:thread").unwrap(),
+            Some(("2026-09-20T10:00:00Z".to_string(), Some("2026-09-19T10:00:00Z".to_string())))
+        );
     }
 }

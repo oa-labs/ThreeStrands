@@ -37,6 +37,19 @@ function saveCollapsed(id: string, collapsed: boolean) {
 }
 
 /**
+ * A section's collapsed state, remembered per device under `id`, and a
+ * toggle that flips and saves it.
+ */
+export function useRememberedCollapse(id: string): [boolean, () => void] {
+  const [collapsed, setCollapsed] = useState(() => readCollapsed().has(id));
+  const toggle = () => {
+    setCollapsed(!collapsed);
+    saveCollapsed(id, !collapsed);
+  };
+  return [collapsed, toggle];
+}
+
+/**
  * The one heading layout every context panel section shares: an uppercase
  * label (optionally a collapse toggle) on the left, then the item count and
  * any section actions on the right. A decorative icon can fill the glyph
@@ -173,15 +186,11 @@ export function ContextSection({ id, title, label, count, actions, note, rows, l
   closing?: ReactNode;
   className?: string;
 }) {
-  const [collapsed, setCollapsed] = useState(() => readCollapsed().has(id));
+  const [collapsed, toggle] = useRememberedCollapse(id);
   const [expanded, setExpanded] = useState(false);
   const bodyId = useId();
   const headingId = useId();
   const hidden = rows.length - limit;
-  const toggle = () => {
-    setCollapsed(!collapsed);
-    saveCollapsed(id, !collapsed);
-  };
   return (
     <section className={`context-section context-collapsible${className ? ` ${className}` : ""}`} aria-label={label} aria-labelledby={label ? undefined : headingId}>
       <ContextSectionHeader title={title} titleId={headingId} count={count} actions={actions} toggle={{ collapsed, controls: bodyId, onToggle: toggle }} />

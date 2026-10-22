@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Check, Copy, Pencil, RefreshCw, RotateCcw, ScrollText, Sparkles } from "lucide-react";
+import { useId, useState } from "react";
+import { Check, Copy, Pencil, RefreshCw, RotateCcw, Sparkles } from "lucide-react";
 import type { ActionProposal, AvailabilityCandidate, AvailabilityPreferences, MeetingProposal, ScheduleEvent, ThreadDetail } from "./domain";
 import type { CalendarAddition, ScheduleSlot } from "./MeetingScheduler";
 import { FindTimesCard } from "./FindTimesCard";
@@ -8,8 +8,16 @@ import { HoverTooltip } from "./AppChrome";
 import { parseAddress } from "./emailAddress";
 import { isSummaryStale } from "./threadPresentation";
 import { ICON_SIZE } from "./iconSizes";
+import { ContextSectionHeader, useRememberedCollapse } from "./ContextSections";
+import { plural } from "./plural";
 
 export const THREAD_ASSIST_ID = "thread-assist";
+
+/** The most messages a brief sends; mirrors the native `MAX_MESSAGES`. */
+export const BRIEF_MAX_MESSAGES = 15;
+
+/** A summary line recapping the conversation before the new messages. */
+const EARLIER_PREFIX = /^Earlier:\s*/i;
 
 // Suggestions keep their object identity while listed, so a card keeps its
 // key — and its calendar check — when an earlier card is discarded.
@@ -62,8 +70,8 @@ export type ThreadAssistProps = {
   };
   loading: boolean;
   error: string | null;
-  /** The exact bounded content sent for analysis, shown once suggestions ran. */
-  preview: string | null;
+  /** Who the conversation was shared with, such as "Anthropic"; null when no provider is chosen. */
+  providerName: string | null;
   /** Runs whatever is missing, or everything when `force` is set. */
   onRun(force: boolean): void;
   onOpenSettings(): void;
@@ -89,6 +97,20 @@ export function describeAnalysisError(message: string): { summary: string; retry
   return { summary: message, retryable: false };
 }
 
+/**
+ * What the brief covered: how many of the conversation's messages were new
+ * to it, and how many were sent. `newCount` equals `coveredCount` when the
+ * brief read the whole conversation.
+ */
+export function briefScope(detail: ThreadDetail): { newCount: number; coveredCount: number; sentCount: number } {
+  const { thread } = detail;
+  const revision = thread.summaryRevision ?? thread.lastMessageAt;
+  const covered = detail.messages.filter((message) => message.sentAt <= revision);
+  const focusFrom = thread.summaryFocusFrom;
+  const newCount = focusFrom ? covered.filter((message) => message.sentAt >= focusFrom).length : covered.length;
+  return { newCount, coveredCount: covered.length, sentCount: Math.min(covered.length, BRIEF_MAX_MESSAGES) };
+}
+
 export function summaryLines(summary: string): string[] {
   return summary
     .split("\n")
@@ -102,10 +124,12 @@ export function summaryClipboardText(summary: string): string {
     .join("\n");
 }
 
-export function ThreadAssist({ detail, providerChosen, summary, suggestions, scheduling, loading, error, preview, onRun, onOpenSettings }: ThreadAssistProps) {
+export function ThreadAssist({ detail, providerChosen, summary, suggestions, scheduling, loading, error, providerName, onRun, onOpenSettings }: ThreadAssistProps) {
   const { thread } = detail;
   const [copiedSummary, setCopiedSummary] = useState<string | null>(null);
   const [copyFailed, setCopyFailed] = useState(false);
+  const [collapsed, toggleCollapsed] = useRememberedCollapse(THREAD_ASSIST_ID);
+  const bodyId = useId();
   if (!providerChosen) {
     return <section id={THREAD_ASSIST_ID} className="context-section thread-assist" aria-label="Brief">
       <p className="context-status">Set up AI to get a brief of each conversation, suggested next steps, and answers to your questions about it.</p>
@@ -161,78 +185,91 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
     return <section id={THREAD_ASSIST_ID} className="context-ai-launcher thread-assist" aria-label={title}>{runButton}</section>;
   }
 
-  return <section id={THREAD_ASSIST_ID} className="context-section thread-assist" aria-labelledby="thread-assist-heading">
-    <header className="context-section-header">
-      <h3><span className="context-row-glyph" aria-hidden="true"><ScrollText size={ICON_SIZE.xs} /></span><span id="thread-assist-heading">{title}</span></h3>
-      {busy ? <span className="context-status" role="status">Reading the conversation…</span> : (
-        <div className="context-section-header-actions">
-          {runButton}
-          {summaryText ? (
-            <HoverTooltip title={copied ? "Copied brief" : "Copy brief"} placement="bottom">
-              <button type="button" className="btn-icon btn-icon-sm" aria-label={copied ? "Copied brief" : "Copy brief"} onClick={() => void copyBrief()}>{copied ? <Check size={ICON_SIZE.sm} /> : <Copy size={ICON_SIZE.sm} />}</button>
-            </HoverTooltip>
-          ) : null}
-          {generated ? (
-            <HoverTooltip title={`Refresh ${title.toLowerCase()}`} placement="bottom">
-              <button type="button" className="btn-icon btn-icon-sm" aria-label={`Refresh ${title.toLowerCase()}`} onClick={() => onRun(true)}><RefreshCw size={ICON_SIZE.sm} /></button>
-            </HoverTooltip>
-          ) : null}
+  const scope = briefScope(detail);
+  const lines = summaryText ? summaryLines(summaryText) : [];
+  // The recap of earlier messages, if the brief gave one, always reads last.
+  const orderedLines = [...lines.filter((line) => !EARLIER_PREFIX.test(line)), ...lines.filter((line) => EARLIER_PREFIX.test(line))];
+  const headerActions = busy ? <span className="context-status" role="status">Reading the conversation…</span> : (
+    <>
+      {runButton}
+      {summaryText ? (
+        <HoverTooltip title={copied ? "Copied brief" : "Copy brief"} placement="bottom">
+          <button type="button" className="btn-icon btn-icon-sm" aria-label={copied ? "Copied brief" : "Copy brief"} onClick={() => void copyBrief()}>{copied ? <Check size={ICON_SIZE.sm} /> : <Copy size={ICON_SIZE.sm} />}</button>
+        </HoverTooltip>
+      ) : null}
+      {generated ? (
+        <HoverTooltip title={`Refresh ${title.toLowerCase()}`} placement="bottom">
+          <button type="button" className="btn-icon btn-icon-sm" aria-label={`Refresh ${title.toLowerCase()}`} onClick={() => onRun(true)}><RefreshCw size={ICON_SIZE.sm} /></button>
+        </HoverTooltip>
+      ) : null}
+    </>
+  );
+
+  return <section id={THREAD_ASSIST_ID} className="context-section context-collapsible thread-assist" aria-labelledby="thread-assist-heading">
+    <ContextSectionHeader title={title} titleId="thread-assist-heading" actions={headerActions} toggle={{ collapsed, controls: bodyId, onToggle: toggleCollapsed }} />
+    <div id={bodyId} hidden={collapsed}>
+      {copyFailed ? <p className="context-status" role="status">Could not copy brief</p> : null}
+      {summaryText && scope.newCount < scope.coveredCount ? <p className="context-section-note">
+        {scope.newCount === 1 ? "From the latest message" : `From the ${scope.newCount} latest messages`}
+      </p> : null}
+      {summaryText ? <ul className="thread-assist-summary">
+        {orderedLines.map((line, index) => EARLIER_PREFIX.test(line)
+          ? <li key={index} className="thread-assist-summary-earlier">{line}</li>
+          : <li key={index}>{line}</li>)}
+      </ul> : null}
+      {stale ? <p className="context-status">New messages since this brief.</p> : null}
+      {failure ? <div className="action-analysis-error" role="alert">
+        <p>{failure.summary}</p>
+        <div className="action-analysis-error-actions">
+          {failure.retryable ? <button type="button" className="btn btn-sm" onClick={() => onRun(false)}><RotateCcw size={ICON_SIZE.sm} /> Try Again</button> : null}
+          {failure.retryable ? <details className="action-analysis-error-details"><summary>Technical details</summary><p>{error}</p></details> : null}
         </div>
-      )}
-    </header>
-    {copyFailed ? <p className="context-status" role="status">Could not copy brief</p> : null}
-    {summaryText ? <ul className="thread-assist-summary">
-      {summaryLines(summaryText).map((line, index) => <li key={index}>{line}</li>)}
-    </ul> : null}
-    {stale ? <p className="context-status">New messages since this brief.</p> : null}
-    {failure ? <div className="action-analysis-error" role="alert">
-      <p>{failure.summary}</p>
-      <div className="action-analysis-error-actions">
-        {failure.retryable ? <button type="button" className="btn btn-sm" onClick={() => onRun(false)}><RotateCcw size={ICON_SIZE.sm} /> Try Again</button> : null}
-        {failure.retryable ? <details className="action-analysis-error-details"><summary>Technical details</summary><p>{error}</p></details> : null}
-      </div>
-    </div> : null}
-    {showSuggestions ? <div className="thread-assist-suggestions">
-      {summary.available ? <h4>Suggested</h4> : null}
-      {!busy && suggestions.requested && suggestions.proposals.length === 0 && suggestions.hiddenCount === 0 ? <p className="context-status">Nothing to schedule or follow up on.</p> : null}
-      {!busy && suggestions.hiddenCount > 0 ? <p className="context-status">{suggestions.hiddenCount === 1 ? "1 suggestion" : `${suggestions.hiddenCount} suggestions`} couldn&rsquo;t be matched to the email, so {suggestions.hiddenCount === 1 ? "it was" : "they were"} hidden.</p> : null}
-      {!busy && suggestions.extraCount ? <p className="context-status">{extraSuggestionsText(suggestions.extraCount)}</p> : null}
-      <div className="action-proposals">
-        {suggestions.proposals.map((proposal, index) => {
-          const source = messageSource(proposal.evidence.sourceMessageId);
-          // Meetings default to the user's timezone and the next week, so only
-          // a task with an unzoned time needs review before use.
-          const needsReview = proposal.type === "task" && proposal.dueKind === "datetime" && !proposal.timeZone;
-          const uncertain = proposal.confidence < 0.75;
-          const kind = proposal.type === "task" ? "Task" : proposal.intent === "attend" ? "Event" : "Meeting";
-          return <article className="action-proposal-card" key={proposalKey(proposal)}>
-            <div className="action-proposal-card-header"><span className="proposal-kind">{kind}</span>{uncertain || needsReview ? <span className="proposal-check">Check details</span> : null}</div>
-            <strong>{proposal.title}</strong>
-            {proposal.type === "meeting" ? <><p>{proposal.rawTimeLanguage || "Time not specified"}</p>{proposal.location ? <p>{proposal.location}</p> : null}{proposal.participants.length > 0 ? <p>{proposal.participants.join(", ")}</p> : null}</> : <p>{proposal.notes || proposal.kind.replace("_", " ")}{proposal.dueValue ? ` · Due ${proposal.dueValue}` : ""}</p>}
-            {proposal.type === "meeting" ? <FindTimesCard
-              key={[proposal.intent, proposal.normalizedStart, proposal.normalizedEnd, proposal.eventDate, proposal.searchRangeStart, proposal.searchRangeEnd, proposal.durationMinutes, proposal.timeZone].join("|")}
-              plan={planMeeting(proposal, new Date(), scheduling.preferences.defaultDurationMinutes)}
-              preferences={scheduling.preferences}
-              calendarConnected={scheduling.calendarConnected}
-              // The AI section stays read-only; Thread Chat is where to ask for other days in words.
-              ai={null}
-              onAddToCalendar={(slot) => scheduling.onAddToCalendar(index, proposal, slot)}
-              onReplyWithTimes={scheduling.onReplyWithTimes}
-              onConfirmTime={scheduling.onConfirmTime}
-              onOpenCalendarSettings={scheduling.onOpenCalendarSettings}
-              identity={{ title: proposal.title, location: proposal.location, sourceMessageId: proposal.evidence.sourceMessageId }}
-              onOpenCalendarEvent={scheduling.onOpenCalendarEvent}
-            /> : null}
-            <details className="proposal-evidence"><summary>From the email</summary><blockquote>{proposal.evidence.excerpt}</blockquote>{source ? <small>{source}</small> : null}</details>
-            <div className="proposal-actions">
-              <button type="button" className="btn btn-sm" onClick={() => suggestions.onReview(index, proposal, "edit")}><Pencil size={ICON_SIZE.sm} /> Edit</button>
-              {proposal.type === "task" ? <button type="button" className="btn btn-sm" onClick={() => suggestions.onReview(index, proposal, "accept")}>Review &amp; Add Task</button> : null}
-              <button type="button" className="btn btn-sm" onClick={() => suggestions.onDiscard(index)}>Discard</button>
-            </div>
-          </article>;
-        })}
-      </div>
-    </div> : null}
-    {showSuggestions && preview ? <details className="action-analysis-preview"><summary>What was shared with AI</summary><pre>{preview}</pre></details> : null}
+      </div> : null}
+      {showSuggestions ? <div className="thread-assist-suggestions">
+        {summary.available ? <h4>Suggested</h4> : null}
+        {!busy && suggestions.requested && suggestions.proposals.length === 0 && suggestions.hiddenCount === 0 ? <p className="context-status">Nothing to schedule or follow up on.</p> : null}
+        {!busy && suggestions.hiddenCount > 0 ? <p className="context-status">{suggestions.hiddenCount === 1 ? "1 suggestion" : `${suggestions.hiddenCount} suggestions`} couldn&rsquo;t be matched to the email, so {suggestions.hiddenCount === 1 ? "it was" : "they were"} hidden.</p> : null}
+        {!busy && suggestions.extraCount ? <p className="context-status">{extraSuggestionsText(suggestions.extraCount)}</p> : null}
+        <div className="action-proposals">
+          {suggestions.proposals.map((proposal, index) => {
+            const source = messageSource(proposal.evidence.sourceMessageId);
+            // Meetings default to the user's timezone and the next week, so only
+            // a task with an unzoned time needs review before use.
+            const needsReview = proposal.type === "task" && proposal.dueKind === "datetime" && !proposal.timeZone;
+            const uncertain = proposal.confidence < 0.75;
+            const kind = proposal.type === "task" ? "Task" : proposal.intent === "attend" ? "Event" : "Meeting";
+            return <article className="action-proposal-card" key={proposalKey(proposal)}>
+              <div className="action-proposal-card-header"><span className="proposal-kind">{kind}</span>{uncertain || needsReview ? <span className="proposal-check">Check details</span> : null}</div>
+              <strong>{proposal.title}</strong>
+              {proposal.type === "meeting" ? <><p>{proposal.rawTimeLanguage || "Time not specified"}</p>{proposal.location ? <p>{proposal.location}</p> : null}{proposal.participants.length > 0 ? <p>{proposal.participants.join(", ")}</p> : null}</> : <p>{proposal.notes || proposal.kind.replace("_", " ")}{proposal.dueValue ? ` · Due ${proposal.dueValue}` : ""}</p>}
+              {proposal.type === "meeting" ? <FindTimesCard
+                key={[proposal.intent, proposal.normalizedStart, proposal.normalizedEnd, proposal.eventDate, proposal.searchRangeStart, proposal.searchRangeEnd, proposal.durationMinutes, proposal.timeZone].join("|")}
+                plan={planMeeting(proposal, new Date(), scheduling.preferences.defaultDurationMinutes)}
+                preferences={scheduling.preferences}
+                calendarConnected={scheduling.calendarConnected}
+                // The AI section stays read-only; Thread Chat is where to ask for other days in words.
+                ai={null}
+                onAddToCalendar={(slot) => scheduling.onAddToCalendar(index, proposal, slot)}
+                onReplyWithTimes={scheduling.onReplyWithTimes}
+                onConfirmTime={scheduling.onConfirmTime}
+                onOpenCalendarSettings={scheduling.onOpenCalendarSettings}
+                identity={{ title: proposal.title, location: proposal.location, sourceMessageId: proposal.evidence.sourceMessageId }}
+                onOpenCalendarEvent={scheduling.onOpenCalendarEvent}
+              /> : null}
+              <details className="proposal-evidence"><summary>From the email</summary><blockquote>{proposal.evidence.excerpt}</blockquote>{source ? <small>{source}</small> : null}</details>
+              <div className="proposal-actions">
+                <button type="button" className="btn btn-sm" onClick={() => suggestions.onReview(index, proposal, "edit")}><Pencil size={ICON_SIZE.sm} /> Edit</button>
+                {proposal.type === "task" ? <button type="button" className="btn btn-sm" onClick={() => suggestions.onReview(index, proposal, "accept")}>Review &amp; Add Task</button> : null}
+                <button type="button" className="btn btn-sm" onClick={() => suggestions.onDiscard(index)}>Discard</button>
+              </div>
+            </article>;
+          })}
+        </div>
+      </div> : null}
+      {generated && !busy && providerName ? <p className="thread-assist-shared">
+        Shared {plural(scope.sentCount, "message")} with {providerName}.{" "}
+        <button type="button" className="btn-link context-link-button" onClick={onOpenSettings}>AI Activity</button>
+      </p> : null}
+    </div>
   </section>;
 }

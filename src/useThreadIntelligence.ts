@@ -22,11 +22,6 @@ function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   return next;
 }
 
-// The action-analysis preview mirrors what the assistant is sent: the most
-// recent messages, each body truncated.
-const ACTION_ANALYSIS_MAX_MESSAGES = 15;
-const ACTION_ANALYSIS_MAX_BODY_CHARS = 10_000;
-
 type Options = Pick<ReturnType<typeof useAiAvailability>, "aiProactive" | "aiSummaryAvailable" | "aiActionAvailable" | "aiActionFeatureEnabled"> & {
   accounts: Account[];
   selected: Thread | null;
@@ -140,20 +135,6 @@ export function useThreadIntelligence({
     const key = actionProposalKey;
     return () => setActionAnalysisErrors((current) => omitKey(current, key));
   }, [actionProposalKey]);
-  const actionAnalysisPreview = useMemo(() => {
-    if (!visibleDetail) return null;
-    const messages = visibleDetail.messages.slice(-ACTION_ANALYSIS_MAX_MESSAGES).map((message) => ({
-      sourceMessageId: message.id,
-      sender: message.sender,
-      sentAt: message.sentAt,
-      bodyText: message.bodyText.slice(0, ACTION_ANALYSIS_MAX_BODY_CHARS),
-    }));
-    return JSON.stringify({
-      userTimeZone: availabilityPreferences.timeZone,
-      emailContext: { subject: visibleDetail.thread.subject, messages },
-    }, null, 2);
-  }, [availabilityPreferences.timeZone, visibleDetail]);
-
   const runAnalyzeThread = useCallback(async () => {
     if (!visibleDetail || !actionProposalKey) return;
     const proposalKey = actionProposalKey;
@@ -386,7 +367,7 @@ export function useThreadIntelligence({
   return {
     summaryPending, summaryError, runBrief, actionProposals,
     actionProposalSource, actionAnalysisLoading, actionAnalysisError, actionAnalysisRequested,
-    actionAnalysisPreview, actionHiddenCount, actionExtraCount, chatByThread, chatPendingThreads, chatFailures,
+    actionHiddenCount, actionExtraCount, chatByThread, chatPendingThreads, chatFailures,
     chatFocusRequest, askThread, focusThreadChat, updateActionProposal, removeActionProposal,
     discardActionProposal, ownAddresses,
   };

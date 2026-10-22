@@ -34,11 +34,13 @@ const summary: SummaryResult = {
   summary: "A summary of the first conversation.",
   generatedAt: "2026-10-09T12:05:00Z",
   revision: first.lastMessageAt,
+  focusFrom: "2026-10-09T11:00:00Z",
 };
 const summaryFields = {
   summary: summary.summary,
   summaryGeneratedAt: summary.generatedAt,
   summaryRevision: summary.revision,
+  summaryFocusFrom: summary.focusFrom,
 };
 
 function setup() {
