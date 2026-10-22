@@ -256,6 +256,7 @@ mod calendar_event_request_tests {
             title: "Planning".into(), start: "2026-09-22T09:00:00Z".into(),
             end: "2026-09-22T10:00:00Z".into(), all_day: false, location: String::new(),
             description: "Agenda".into(), attendees: vec!["guest@example.com".into()],
+            source_message_id: None,
         }
     }
 
@@ -303,6 +304,18 @@ mod calendar_event_request_tests {
         })).unwrap();
         assert!(!request.all_day);
         assert!(request.location.is_empty());
+        assert!(request.source_message_id.is_none());
+        assert!(validate_calendar_event_request(&request).is_ok());
+    }
+
+    #[test]
+    fn create_requests_carry_the_email_they_came_from() {
+        let request: CreateCalendarEventRequest = serde_json::from_value(serde_json::json!({
+            "accountId": "work@example.com", "calendarId": "primary", "title": "Planning",
+            "start": "2026-09-22T09:00:00Z", "end": "2026-09-22T10:00:00Z",
+            "description": "", "attendees": [], "sourceMessageId": "message-1",
+        })).unwrap();
+        assert_eq!(request.source_message_id.as_deref(), Some("message-1"));
         assert!(validate_calendar_event_request(&request).is_ok());
     }
 

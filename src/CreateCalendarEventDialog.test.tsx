@@ -23,6 +23,7 @@ describe("CreateCalendarEventDialog", () => {
       initialTitle="Website kickoff"
       initialInvitees={["jane@example.com", "bob@example.com"]}
       initialDescription="From: Please set up the website by Friday."
+      sourceMessageId="message-1"
       onClose={vi.fn()}
       onCreated={onCreated}
     />);
@@ -39,6 +40,8 @@ describe("CreateCalendarEventDialog", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
     await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
       title: "Website kickoff", attendees: ["jane@example.com", "bob@example.com"], start: new Date(2026, 9, 1, 15, 0).toISOString(),
+      // The email is tagged on the event so the Brief can recognize it there later.
+      sourceMessageId: "message-1",
     })));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(saved));
   });
@@ -69,6 +72,7 @@ describe("CreateCalendarEventDialog", () => {
     await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
       start: "2026-11-07", end: "2026-11-08", allDay: true, location: "Glenn's house", attendees: [],
     })));
+    expect(create.mock.calls[0][0]).not.toHaveProperty("sourceMessageId");
   });
 
   it("switches between all-day and timed before creating", async () => {

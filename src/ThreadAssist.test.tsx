@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import { SLOTS_PER_DAY } from "./scheduling";
 import { ThreadAssist, type ThreadAssistProps } from "./ThreadAssist";
@@ -324,6 +325,26 @@ describe("ThreadAssist", () => {
     expect(screen.getByText("You’re free")).toBeInTheDocument();
     expect(screen.queryByText("Checking your calendar…")).not.toBeInTheDocument();
     expect(check).toHaveBeenCalledTimes(1);
+  });
+
+  it("recognizes a suggested event already on the calendar by its title and opens it there", async () => {
+    clearScheduleCache();
+    const start = new Date(Date.now() + 4 * 86_400_000).toISOString();
+    const end = new Date(Date.parse(start) + 2 * 3_600_000).toISOString();
+    vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "conflicting", conflicts: [{ start, end }], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    const added = { id: "added", accountId: "you@example.com", title: "Entrepreneur Day 2026", allDay: false, start, end };
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [added], errors: [] });
+    const event: ActionProposal = {
+      type: "meeting", intent: "attend", title: "Entrepreneur Day 2026", participants: [], location: "1435 Bedford Ave",
+      rawTimeLanguage: "November 17 at 4:00 PM", normalizedStart: start, normalizedEnd: end, eventDate: null,
+      searchRangeStart: null, searchRangeEnd: null, durationMinutes: 120,
+      timeZone: "America/New_York", confidence: 0.9, evidence: { sourceMessageId: "message-1", excerpt: "You're invited to Entrepreneur Day 2026" },
+    };
+    const onOpenCalendarEvent = vi.fn();
+    render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [event] }, scheduling: { calendarConnected: true, onOpenCalendarEvent } })} />);
+    expect(await screen.findByText("Already on your calendar")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open in Calendar" }));
+    expect(onOpenCalendarEvent).toHaveBeenCalledWith(added);
   });
 
   it("explains unreadable provider output in plain language and keeps the details available", () => {
