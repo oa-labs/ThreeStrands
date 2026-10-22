@@ -64,13 +64,23 @@ export function queuedMessage(item: OutboxItem, threadId: string): Message {
 }
 
 /**
- * Adds locally queued replies to their open conversation immediately. Once
- * Gmail's copy reaches the thread cache it wins, preventing a duplicate.
+ * Whether a sent draft lands in its source conversation. A forward joins it
+ * only when the source had a Message-ID to thread on; otherwise it starts a
+ * new conversation and its local copy would never be replaced.
+ */
+function joinsSourceConversation(draft: Draft): boolean {
+  return ["reply", "replyAll"].includes(draft.mode) || (draft.mode === "forward" && Boolean(draft.replyId));
+}
+
+/**
+ * Adds locally queued replies and forwards to their open conversation
+ * immediately. Once Gmail's copy reaches the thread cache it wins,
+ * preventing a duplicate.
  */
 export function messagesWithQueuedReplies(detail: ThreadDetail, outbox: OutboxItem[]): Message[] {
   const queuedReplies = outbox
     .filter((item) =>
-      ["reply", "replyAll"].includes(item.draft.mode)
+      joinsSourceConversation(item.draft)
       && !["canceled", "failed", "scheduled", "overdue"].includes(item.state)
       && Boolean(item.draft.sourceId)
       && detail.messages.some((message) => message.id === item.draft.sourceId)
