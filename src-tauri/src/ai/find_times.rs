@@ -295,7 +295,7 @@ mod tests {
     }
 
     fn message(body: &str) -> ActionMessageInput {
-        ActionMessageInput { id: "m1".into(), sender: "matt@example.com".into(), sent_at: "2026-10-15T06:14:00-04:00".into(), body_text: body.into() }
+        ActionMessageInput { id: "m1".into(), sender: "matt@example.com".into(), recipients: Vec::new(), sent_at: "2026-10-15T06:14:00-04:00".into(), body_text: body.into() }
     }
 
     fn request(instruction: Option<&str>, current: Option<TimeSearch>) -> FindTimesRequest {
