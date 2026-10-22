@@ -9,6 +9,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Events suggested in the **Brief** now tell you when they're already on your calendar, instead of listing them as a conflict, including events you added from that email at a different time or under a new name. Click **Open in Calendar** to see the event, or **Add Again** if you really want a second copy.
 - The header of an open email now shows who was copied, as in "to David Martinez, cc me", so you can tell whether a message was sent to you or you were only Cc'd. Your own address shows as "me".
 - Meeting details in the **Calendar** now show who has accepted or declined. The guest count adds a tally such as "2 going, 1 not going", and each guest is marked **Going**, **Not going**, **Maybe**, or **Awaiting**.
+- ThreeStrands now reopens where you left off. If you quit while in **Calendar**, **Tasks**, **Contacts**, or **Files**, that view is open the next time you start the app.
 
 ### Improved
 - When you discard several drafts in **Drafts**, the confirmation is easier to read and more compact, and **Keep Drafts** is selected so pressing Return doesn't discard anything by accident.
