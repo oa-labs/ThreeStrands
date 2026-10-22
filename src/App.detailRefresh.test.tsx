@@ -1304,6 +1304,54 @@ it("shows a queued reply immediately and replaces it with the provider copy", as
     .toHaveLength(detail.messages.length);
 });
 
+it("shows a queued forward in its source conversation until the provider copy arrives", async () => {
+  const detail = await mailClient.getThread("welcome");
+  const source = detail.messages.at(-1)!;
+  const queued: OutboxItem = {
+    id: "queued-forward",
+    state: "undo_pending",
+    deadline: Date.now() + 10_000,
+    error: null,
+    draft: {
+      id: "forward-draft",
+      revision: 1,
+      account: "demo@example.com",
+      mode: "forward",
+      sourceId: source.id,
+      threadId: detail.thread.providerThreadId,
+      replyId: "source@example.com",
+      references: ["source@example.com"],
+      to: "colleague@example.com, Me Elsewhere <me@example.org>, ",
+      cc: "",
+      bcc: "",
+      subject: `Fwd: ${detail.thread.subject}`,
+      body: "Passing this along",
+      bodyHtml: "<p>Passing this along</p>",
+      attachments: [],
+      updatedAt: Date.now(),
+    },
+  };
+
+  const optimistic = messagesWithQueuedReplies(detail, [queued]);
+  expect(optimistic).toHaveLength(detail.messages.length + 1);
+  expect(optimistic.at(-1)).toMatchObject({
+    id: "outbox-queued-forward",
+    bodyText: "Passing this along",
+    recipients: ["colleague@example.com", "Me Elsewhere <me@example.org>"],
+  });
+
+  const providerDetail = {
+    ...detail,
+    messages: [...detail.messages, { ...optimistic.at(-1)!, id: "gmail-sent-forward" }],
+  };
+  expect(messagesWithQueuedReplies(providerDetail, [{ ...queued, state: "sent", providerId: "gmail-sent-forward" }]))
+    .toHaveLength(providerDetail.messages.length);
+
+  // A source without a Message-ID forwards as a new conversation, so its copy stays out of this one.
+  expect(messagesWithQueuedReplies(detail, [{ ...queued, draft: { ...queued.draft, replyId: null, threadId: null, references: [] } }]))
+    .toHaveLength(detail.messages.length);
+});
+
 it("resolves a queued reply's inline image from its outbox draft", async () => {
   const detail = await mailClient.getThread("welcome");
   const source = detail.messages.at(-1)!;
