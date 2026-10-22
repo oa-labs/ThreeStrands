@@ -213,11 +213,20 @@ impl GmailClient {
         request: RequestBuilder,
         history: bool,
     ) -> ProviderResult<T> {
-        self.send(request, history)
+        let body = self
+            .send(request, history)
             .await?
-            .json()
+            .bytes()
             .await
-            .map_err(|error| ProviderError::RetryableServer(error.to_string()))
+            .map_err(|error| ProviderError::RetryableServer(format!("reading Gmail's response failed: {error}")))?;
+        // Gmail answers 204 with no body when a `fields` mask leaves nothing
+        // to return, such as listing drafts for an account that has none.
+        let body: &[u8] = if body.is_empty() { b"{}" } else { &body };
+        // Keep serde's reason (missing field, line and column); reqwest's
+        // own decode error drops it.
+        serde_json::from_slice(body).map_err(|error| {
+            ProviderError::RetryableServer(format!("Gmail returned an unreadable response: {error}"))
+        })
     }
 }
 
@@ -1441,6 +1450,28 @@ mod tests {
             );
             let seen = stub.seen.lock().unwrap().clone();
             assert_eq!(seen[1].2["pageToken"], "p2");
+        }
+
+        #[tokio::test]
+        async fn an_account_with_no_drafts_lists_none() {
+            // Gmail sends 204 and no body when the fields mask leaves nothing.
+            let stub = Stub::default();
+            stub.statuses.lock().unwrap().push(204);
+            let gmail = client(&serve(stub.clone()).await);
+            assert_eq!(gmail.list_server_drafts().await.unwrap(), []);
+            assert_eq!(stub.seen.lock().unwrap().len(), 1);
+        }
+
+        #[tokio::test]
+        async fn an_empty_reply_where_a_draft_is_required_names_what_is_missing() {
+            let stub = Stub::default();
+            stub.statuses.lock().unwrap().push(204);
+            let gmail = client(&serve(stub.clone()).await);
+            let error = gmail.update_server_draft("d-1", b"raw", None).await.unwrap_err();
+            assert!(
+                matches!(&error, ProviderError::RetryableServer(detail) if detail.contains("missing field `id`")),
+                "{error:?}"
+            );
         }
 
         #[tokio::test]
