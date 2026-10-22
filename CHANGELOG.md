@@ -12,6 +12,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ### Improved
 - When you discard several drafts in **Drafts**, the confirmation is easier to read and more compact, and **Keep Drafts** is selected so pressing Return doesn't discard anything by accident.
 - Collapsed emails in a conversation now use the same text sizes as the rest of the app, instead of larger type.
+- An unsent draft at the end of a conversation now lines up with the emails above it, with **Resume Draft** on the right.
 
 ### Fixed
 - Clicking a conversation in the message list while writing a new message now opens it. Your message is saved to **Drafts** so you can finish it later.

@@ -1103,7 +1103,8 @@ kbd {
 .reader-actions { display: flex; align-items: center; gap: var(--space-1); }
 .action-button span, .action-button kbd { display: none; }
 .message-stack { min-height: 0; overflow: auto; overflow-anchor: none; padding: var(--space-6) clamp(var(--space-6), 5vw, var(--space-16)); }
-.message { width: 100%; max-width: 840px; margin: 0 auto; }
+/* An unsent draft card shares the message column so it lines up with the cards above it. */
+.message, .thread-draft { width: 100%; max-width: 840px; margin: 0 auto; }
 .message > header { display: flex; align-items: flex-start; width: 100%; gap: var(--space-2-5); padding-bottom: var(--space-6); }
 .message-header-details { display: flex; min-width: 0; flex: 1; flex-direction: column; font-size: var(--text-body); }
 .message-sender-row { display: flex; align-items: center; gap: var(--space-3); min-width: 0; margin-bottom: var(--space-1); }
@@ -3295,13 +3296,20 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .notice--warning { --notice-tone: var(--warning); }
 
 /* An unsent draft at the end of a conversation sits apart from the last message card.
-   It is ordinary content, not a problem, so it drops the notice's error tone. */
+   It is ordinary content, not a problem, so it drops the notice's error tone and
+   takes the expanded message card's chrome, with Resume Draft at the right edge. */
 .thread-draft {
+  align-items: center;
+  justify-content: space-between;
   margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-6);
   border-color: var(--border);
+  border-radius: var(--radius-sm);
   background: var(--raised);
+  box-shadow: var(--shadow-raised);
   color: var(--text);
 }
+.thread-draft > .btn { flex: 0 0 auto; }
 
 /* Motion. Short, compositor-only (opacity/transform) entrances that make
    state changes read as responses rather than jumps. Fill is `backwards`
