@@ -101,6 +101,8 @@ export type CreateCalendarEventRequest = {
   location?: string;
   description: string;
   attendees: string[];
+  /** The email the event is added from, kept privately on the event to recognize it later. */
+  sourceMessageId?: string;
 };
 
 /** All-day events carry `YYYY-MM-DD` dates with an exclusive end; timed events carry ISO times. */
@@ -134,6 +136,8 @@ export type ScheduleEvent = {
   conferenceUrl?: string | null;
   /** Lowercased addresses of the other people on the event, when known. */
   attendees?: string[];
+  /** The email ThreeStrands added this event from, when it did. */
+  sourceMessageId?: string | null;
 };
 
 export type ScheduleResult = {

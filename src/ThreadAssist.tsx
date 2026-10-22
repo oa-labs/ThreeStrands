@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Check, Copy, Pencil, RefreshCw, RotateCcw, ScrollText, Sparkles } from "lucide-react";
-import type { ActionProposal, AvailabilityCandidate, AvailabilityPreferences, MeetingProposal, ThreadDetail } from "./domain";
+import type { ActionProposal, AvailabilityCandidate, AvailabilityPreferences, MeetingProposal, ScheduleEvent, ThreadDetail } from "./domain";
 import type { CalendarAddition, ScheduleSlot } from "./MeetingScheduler";
 import { FindTimesCard } from "./FindTimesCard";
 import { planMeeting } from "./scheduling";
@@ -57,6 +57,8 @@ export type ThreadAssistProps = {
     onReplyWithTimes(slots: AvailabilityCandidate[]): void;
     onConfirmTime(slot: ScheduleSlot): void;
     onOpenCalendarSettings(): void;
+    /** Opens the calendar event a suggestion is already on the calendar as. */
+    onOpenCalendarEvent?(event: ScheduleEvent): void;
   };
   loading: boolean;
   error: string | null;
@@ -218,6 +220,8 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
               onReplyWithTimes={scheduling.onReplyWithTimes}
               onConfirmTime={scheduling.onConfirmTime}
               onOpenCalendarSettings={scheduling.onOpenCalendarSettings}
+              identity={{ title: proposal.title, location: proposal.location, sourceMessageId: proposal.evidence.sourceMessageId }}
+              onOpenCalendarEvent={scheduling.onOpenCalendarEvent}
             /> : null}
             <details className="proposal-evidence"><summary>From the email</summary><blockquote>{proposal.evidence.excerpt}</blockquote>{source ? <small>{source}</small> : null}</details>
             <div className="proposal-actions">

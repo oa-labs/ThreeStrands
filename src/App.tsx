@@ -1440,6 +1440,7 @@ export function App() {
               }}
               scheduling={{
                 ...meetingScheduling,
+                onOpenCalendarEvent: (event) => openCalendarView(eventDate(event), event),
                 onAddToCalendar: (_index, proposal, slot) => addMeetingToCalendar(
                   slot,
                   {
@@ -1553,6 +1554,7 @@ export function App() {
           initialDescription={meetingEventDraft.description}
           initialLocation={meetingEventDraft.location}
           initialAllDay={meetingEventDraft.allDay}
+          sourceMessageId={meetingEventDraft.sourceMessageId}
           onClose={() => setMeetingEventDraft(null)}
           onCreated={(event) => {
             if (meetingEventDraft.fromOpenedFile) dismissOpenedCalendarFile();

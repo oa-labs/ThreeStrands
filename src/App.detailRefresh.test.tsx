@@ -383,6 +383,8 @@ describe("conversation brief", () => {
       await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
         accountId: "calendar@example.com", calendarId: "primary", title: "Budget review", attendees: ["jane@example.com"],
         start: new Date(meeting.normalizedStart).toISOString(),
+        // Tagged with the email the suggestion was read from, to recognize it on the calendar later.
+        sourceMessageId: "welcome-message",
       })));
       expect(await screen.findByText("Added to calendar")).toBeInTheDocument();
       expect(await screen.findByRole("region", { name: "Calendar week" })).toBeInTheDocument();

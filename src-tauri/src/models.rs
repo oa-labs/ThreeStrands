@@ -42,6 +42,11 @@ pub struct CreateCalendarEventRequest {
     pub location: String,
     pub description: String,
     pub attendees: Vec<String>,
+    /// The local id of the email the event was added from, kept privately on
+    /// the event so the app can recognize it there later. Absent from requests
+    /// that do not come from an email.
+    #[serde(default)]
+    pub source_message_id: Option<String>,
 }
 
 /// Replaces an owned event's editable fields. All-day events carry `YYYY-MM-DD`
@@ -81,6 +86,8 @@ pub struct ScheduleEvent {
     /// The connected calendar organizes this event and can write to it, so it
     /// may be edited or deleted from the app.
     pub can_edit: bool,
+    /// The local id of the email ThreeStrands added this event from, if it did.
+    pub source_message_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

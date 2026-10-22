@@ -199,6 +199,116 @@ describe("MeetingScheduler", () => {
     rerender(<MeetingScheduler plan={specific} preferences={{ ...preferences, timeZone: "America/Chicago" }} calendarConnected {...handlers} />);
     await waitFor(() => expect(check).toHaveBeenCalledTimes(2));
   });
+  describe("recognizing an event already on the calendar", () => {
+    const START = "2026-11-17T21:00:00.000Z";
+    const announcedPlan: SchedulePlan = { query: { kind: "specific", start: START, end: at(START, 2) }, durationMinutes: 120, timeZoneAssumed: false, announced: true };
+    const identity = { title: "Entrepreneur Day 2026", location: "Energy Innovation Center - 1435 Bedford Ave, Pittsburgh, PA 15219, USA" };
+    const standing = { id: "standing", accountId: "you@example.com", title: "Premier Labs Bi-Weekly Member Meeting", allDay: false, start: at(START, -0.5), end: at(START, 0.5) };
+    const added = { id: "added", accountId: "you@example.com", title: "Entrepreneur Day 2026", allDay: false, start: START, end: at(START, 2), location: "1435 Bedford Ave, Pittsburgh, PA 15219" };
+    const conflicting = () => vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "conflicting", conflicts: [{ start: START, end: at(START, 2) }], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+
+    it("says the event is already added, names only the other overlaps, and makes adding it again deliberate", async () => {
+      conflicting();
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [standing, added], errors: [] });
+      const onOpenCalendarEvent = vi.fn();
+      const handlers = renderScheduler(announcedPlan, { identity, onOpenCalendarEvent });
+
+      expect(await screen.findByText("Already on your calendar")).toBeInTheDocument();
+      expect(screen.getByText("Also overlaps Premier Labs Bi-Weekly Member Meeting")).toBeInTheDocument();
+      expect(screen.queryByText(/Conflicts with/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Add to Calendar" })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Open in Calendar" }));
+      expect(onOpenCalendarEvent).toHaveBeenCalledWith(added);
+      fireEvent.click(screen.getByRole("button", { name: "Add Again" }));
+      expect(handlers.onAddToCalendar).toHaveBeenCalledWith(announcedPlan.query);
+    });
+
+    it("lets a proposed meeting already on the calendar be confirmed when nothing else overlaps", async () => {
+      conflicting();
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [{ ...added, title: "Invitation: Entrepreneur Day" }], errors: [] });
+      renderScheduler({ ...announcedPlan, announced: false }, { identity });
+
+      expect(await screen.findByText("Already on your calendar")).toBeInTheDocument();
+      expect(screen.queryByText(/Also overlaps/)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Reply “That Works”" })).toBeInTheDocument();
+      // Without a way to open the calendar, there is no button for it.
+      expect(screen.queryByRole("button", { name: "Open in Calendar" })).not.toBeInTheDocument();
+    });
+
+    it("only suggests a match when the place and time agree but the title does not", async () => {
+      conflicting();
+      const venue = { ...added, id: "venue", title: "Pitch practice" };
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [standing, venue], errors: [] });
+      renderScheduler(announcedPlan, { identity });
+
+      expect(await screen.findByText("May already be on your calendar as Pitch practice")).toBeInTheDocument();
+      expect(screen.getByText("Also overlaps Premier Labs Bi-Weekly Member Meeting")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Add to Calendar" })).toBeInTheDocument();
+    });
+
+    it("keeps an ordinary conflict when the overlapping event is a different one, or nothing names the suggestion", async () => {
+      conflicting();
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [standing, { ...added, start: at(START, 1) }], errors: [] });
+      renderScheduler(announcedPlan, { identity });
+      expect(await screen.findByText("Conflicts with Premier Labs Bi-Weekly Member Meeting, Entrepreneur Day 2026")).toBeInTheDocument();
+      cleanup();
+      clearScheduleCache();
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [standing, added], errors: [] });
+      renderScheduler(announcedPlan);
+      expect(await screen.findByText("Conflicts with Premier Labs Bi-Weekly Member Meeting, Entrepreneur Day 2026")).toBeInTheDocument();
+    });
+
+    it("finds a date-only event already on its day, and adds as usual when it is not", async () => {
+      const dayPlan: SchedulePlan = { query: null, day: "2026-11-07", durationMinutes: 30, timeZoneAssumed: false, announced: true };
+      const check = vi.spyOn(mailClient, "checkProposedTime");
+      const list = vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
+        events: [{ id: "race", accountId: "you@example.com", title: "Pittsburgh Marathon", allDay: true, start: "2026-11-07", end: "2026-11-08" }],
+        errors: [],
+      });
+      const handlers = renderScheduler(dayPlan, { identity: { title: "Pittsburgh Marathon 2026" } });
+      expect(await screen.findByText("Already on your calendar")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Add Again" }));
+      expect(handlers.onAddToCalendar).toHaveBeenCalledWith({ start: "2026-11-07", end: "2026-11-07", allDay: true });
+      expect(check).not.toHaveBeenCalled();
+      cleanup();
+
+      renderScheduler(dayPlan, { identity: { title: "Fall Gala" } });
+      await waitFor(() => expect(list).toHaveBeenCalled());
+      expect(screen.getByRole("button", { name: "Add to Calendar" })).toBeInTheDocument();
+      expect(screen.queryByText("Already on your calendar")).not.toBeInTheDocument();
+    });
+
+    it("finds an event added from this email at another time that day, even when the suggested time is free", async () => {
+      vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      // 23:00Z is 6:00 PM in America/New_York, an hour after the suggested 4:00 PM ends.
+      const moved = { ...added, start: "2026-11-17T23:00:00.000Z", end: "2026-11-18T01:00:00.000Z", sourceMessageId: "message-1" };
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [moved], errors: [] });
+      renderScheduler(announcedPlan, { identity: { ...identity, sourceMessageId: "message-1" } });
+      expect(await screen.findByText("Already on your calendar at 6:00 PM")).toBeInTheDocument();
+      expect(screen.queryByText("You’re free")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Add Again" })).toBeInTheDocument();
+    });
+
+    it("does not read the day for a free time with no email to look for", async () => {
+      vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      const list = vi.spyOn(mailClient, "listScheduleEvents");
+      renderScheduler(announcedPlan, { identity });
+      expect(await screen.findByText("You’re free")).toBeInTheDocument();
+      expect(list).not.toHaveBeenCalled();
+    });
+
+    it("checks once when re-rendered with an equal identity", async () => {
+      const check = conflicting();
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [added], errors: [] });
+      const handlers = { onAddToCalendar: vi.fn(), onReplyWithTimes: vi.fn(), onConfirmTime: vi.fn(), onOpenCalendarSettings: vi.fn() };
+      const { rerender } = render(<MeetingScheduler plan={announcedPlan} preferences={preferences} calendarConnected identity={{ ...identity }} {...handlers} />);
+      expect(await screen.findByText("Already on your calendar")).toBeInTheDocument();
+      rerender(<MeetingScheduler plan={announcedPlan} preferences={preferences} calendarConnected identity={{ ...identity }} {...handlers} />);
+      expect(screen.getByText("Already on your calendar")).toBeInTheDocument();
+      expect(check).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("adjusting a range search", () => {
     // Pinned Tuesday 2026-09-29 10:00 New York; slots are in local hours on later days.
     const slotAt = (day: number, hour: number): AvailabilityCandidate => {
