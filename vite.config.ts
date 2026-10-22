@@ -45,5 +45,9 @@ export default defineConfig(({ command }) => ({
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
     exclude: ["tests/e2e/**", "node_modules/**", "dist/**", ".delta/**/node_modules/**"],
+    // Several agents and the developer often run the suite at once on one
+    // machine; half the cores leaves room so concurrent runs don't starve and
+    // time out. CI runners are small and dedicated, so they keep the default.
+    maxWorkers: process.env.CI ? undefined : "50%",
   },
 }));

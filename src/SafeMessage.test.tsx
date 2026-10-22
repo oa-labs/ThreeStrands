@@ -311,6 +311,31 @@ describe("SafeMessage", () => {
     expect(table).toContain('class="wrapper"');
   });
 
+  it("keeps <center> and <section> wrappers that center a template's content", () => {
+    const table = parseSanitized("centerWrappedTable");
+    expect(table.querySelector("section > center > table.centered")).not.toBeNull();
+    expect(table.querySelector("table")!.hasAttribute("align")).toBe(false);
+    expect(parseSanitized("centerWrappedInline").querySelector<HTMLElement>("center > div.centered")!.style.display).toBe("inline-block");
+  });
+
+  it("strips unsafe attributes, styles, and children from <center> and <section>", () => {
+    const sanitized = sanitizeMessageHtml(`
+      <section onclick="alert(1)" data-track="x" style="position:fixed;background-image:url(javascript:alert(1));text-align:center">
+        <center onmouseover="alert(2)" style="z-index:99;cursor:pointer">
+          <script>alert(3)</script><form action="https://example.com"><input value="bad"></form><p>Safe text</p>
+        </center>
+      </section>
+    `);
+    const body = new DOMParser().parseFromString(sanitized, "text/html").body;
+    const section = body.querySelector("section")!;
+    const center = section.querySelector("center")!;
+    expect(section.getAttributeNames()).toEqual(["style"]);
+    expect(section.getAttribute("style")).toBe("text-align: center");
+    expect(center.getAttributeNames()).toEqual([]);
+    expect(sanitized).not.toMatch(/<script|<form|<input|javascript:|alert/);
+    expect(center.textContent).toContain("Safe text");
+  });
+
   it("preserves harmless empty elements and sender-authored spacing", () => {
     const sanitized = sanitizeMessageHtml(`
       <div style="padding:40px 0"></div>
@@ -522,6 +547,57 @@ describe("SafeMessage", () => {
     expect(image.getAttribute("width")).toBe("48");
     expect(image.getAttribute("height")).toBe("48");
     expect(image.style.minWidth).toBe("48px");
+  });
+
+  it("keeps row heights so spacer rows between stacked sections and sized data rows survive", () => {
+    const sanitized = sanitizeMessageHtml(`
+      <table width="100%"><tbody>
+        <tr><td><div>Author • Section</div></td></tr>
+        <tr height="16"><td></td></tr>
+        <tr><td><a href="https://example.com/post"><div>Headline</div></a></td></tr>
+        <tr height="8"><td></td></tr>
+        <tr><td><img src="https://example.com/hero.png" width="550"></td></tr>
+      </tbody></table>
+      <table border="1" cellpadding="4">
+        <thead><tr height="32px"><th>Option</th><th>Price</th></tr></thead>
+        <tbody><tr height="24.5" width="300"><td>Standard</td><td>300 USD</td></tr></tbody>
+      </table>
+    `);
+    const container = document.createElement("div");
+    container.innerHTML = sanitized;
+    const [spacerCard, dataTable] = Array.from(container.querySelectorAll("table"));
+
+    expect(Array.from(spacerCard.querySelectorAll("tr")).map((row) => row.getAttribute("height"))).toEqual([null, "16", null, "8", null]);
+    // Empty spacer cells are layout structure and stay in place.
+    expect(spacerCard.querySelectorAll("tr[height] > td:empty")).toHaveLength(2);
+    const [header, data] = Array.from(dataTable.querySelectorAll("tr"));
+    expect(header.getAttribute("height")).toBe("32");
+    expect(data.getAttribute("height")).toBe("24.5");
+    // Width means nothing on a row and stays stripped.
+    expect(data.hasAttribute("width")).toBe(false);
+  });
+
+  it("bounds row heights with the shared dimension parser", () => {
+    const max = EMAIL_CSS_LIMITS.maxAbsolutePx;
+    const sanitized = sanitizeMessageHtml(`
+      <table>
+        <tr height="${max - 1}"><td>Below</td></tr>
+        <tr height="${max}"><td>At</td></tr>
+        <tr height="${max + 1}"><td>Above</td></tr>
+        <tr height="50%"><td>Percent</td></tr>
+        <tr height="-4"><td>Negative</td></tr>
+        <tr height="calc(20px)"><td>Calc</td></tr>
+        <tr height="12;background:url(https://tracker.invalid/x.png)"><td>Smuggled</td></tr>
+      </table>
+    `);
+    const container = document.createElement("div");
+    container.innerHTML = sanitized;
+
+    // Past the limit or unparseable: removed, never clamped.
+    expect(Array.from(container.querySelectorAll("tr")).map((row) => row.getAttribute("height")))
+      .toEqual([String(max - 1), String(max), null, null, null, null, "12"]);
+    expect(sanitized).not.toContain("url(");
+    expect(container.querySelector("tr[style]")).toBeNull();
   });
 
   it("re-serializes legacy dimension attributes from their leading number, as browsers read them", () => {

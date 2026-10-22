@@ -31,6 +31,7 @@ function renderPicker(props: {
       onReconnect={vi.fn()}
       onRemove={props.onRemove ?? vi.fn()}
       onRemoveEverywhere={props.onRemoveEverywhere ?? vi.fn()}
+      onReorder={vi.fn()}
       onSetSelection={vi.fn()}
     />,
   );
@@ -130,5 +131,59 @@ describe("calendar account picker", () => {
     await waitFor(() => expect(selected).toHaveBeenCalledWith(account.email));
     expect(selected).toHaveBeenCalledTimes(1);
     expect(other).not.toHaveBeenCalled();
+  });
+});
+
+describe("calendar account order", () => {
+  const work = { email: "work@example.com", status: "connected" } as CalendarAccount;
+  const home = { email: "home@example.com", status: "connected" } as CalendarAccount;
+  const side = { email: "side@example.com", status: "connected" } as CalendarAccount;
+
+  function renderAccounts(accounts: CalendarAccount[], onReorder = vi.fn().mockResolvedValue(undefined)) {
+    render(
+      <CalendarAccountsSettings
+        authStatus={null}
+        accounts={accounts}
+        calendars={[]}
+        calendarsError={null}
+        calendarsLoaded
+        onAdd={vi.fn()}
+        onReconnect={vi.fn()}
+        onRemove={vi.fn()}
+        onRemoveEverywhere={vi.fn()}
+        onReorder={onReorder}
+        onSetSelection={vi.fn()}
+      />,
+    );
+    return onReorder;
+  }
+
+  it("moves an account up or down one place", async () => {
+    const onReorder = renderAccounts([home, side, work]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Move work@example.com up" }));
+    await waitFor(() => expect(onReorder).toHaveBeenCalledWith([home.email, work.email, side.email]));
+
+    fireEvent.click(screen.getByRole("button", { name: "Move home@example.com down" }));
+    await waitFor(() => expect(onReorder).toHaveBeenLastCalledWith([side.email, home.email, work.email]));
+  });
+
+  it("disables moves past either end", () => {
+    renderAccounts([home, work]);
+    expect(screen.getByRole("button", { name: "Move home@example.com up" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Move home@example.com down" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Move work@example.com up" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Move work@example.com down" })).toBeDisabled();
+  });
+
+  it("hides the order controls with a single account", () => {
+    renderAccounts([work]);
+    expect(screen.queryByRole("group", { name: "Order for work@example.com" })).not.toBeInTheDocument();
+  });
+
+  it("shows why a new order could not be saved", async () => {
+    renderAccounts([home, work], vi.fn().mockRejectedValue(new Error("database locked")));
+    fireEvent.click(screen.getByRole("button", { name: "Move work@example.com up" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("database locked");
   });
 });

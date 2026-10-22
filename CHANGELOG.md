@@ -4,13 +4,39 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### New
+- You can now edit the message you're forwarding. Click **Edit** on the bar above the forwarded message to trim it or add notes. Some formatting and web images may be simplified, and **Restore Original** brings back the message as you received it.
+- Events suggested in the **Brief** now tell you when they're already on your calendar, instead of listing them as a conflict, including events you added from that email at a different time or under a new name. Click **Open in Calendar** to see the event, or **Add Again** if you really want a second copy.
+- The header of an open email now shows who was copied, as in "to David Martinez, cc me", so you can tell whether a message was sent to you or you were only Cc'd. Your own address shows as "me".
+- Meeting details in the **Calendar** now show who has accepted or declined. The guest count adds a tally such as "2 going, 1 not going", and each guest is marked **Going**, **Not going**, **Maybe**, or **Awaiting**.
+- ThreeStrands now reopens where you left off. If you quit while in **Calendar**, **Tasks**, **Contacts**, or **Files**, that view is open the next time you start the app.
+
 ### Improved
-- **Drafts** now looks like your other folders, showing who each draft is to, its subject, and a preview. You can select several drafts with ⌘-click, Shift-click, or ⌘A and discard them together.
-- In **Outbox**, you can now select several messages the same way: return the ones still waiting to send to **Drafts**, or discard the ones that failed. Its rows also line up with every other folder.
 - Discarding drafts, or failed messages in **Outbox**, now works like moving conversations to Trash: it happens right away, and **Undo** in the notice (or <kbd>z</kbd>) brings them back, attachments included, for up to an hour. Failed messages come back to **Drafts**.
+- Collapsed emails in a conversation now use the same text sizes as the rest of the app, instead of larger type.
+- An unsent draft at the end of a conversation now lines up with the emails above it, with **Resume Draft** on the right.
+- You can now reorder accounts in **Settings → Calendar Accounts** with the up and down arrows, the same way as mail accounts. The **Calendar** sidebar follows the new order, and reconnecting an account no longer moves it to the bottom of the list.
+- Files you attach to a message now appear right above **Send** and the paperclip button, so you can see them as soon as you add them instead of having to scroll down past your signature.
+- When suggested meeting times can't be checked against one of your calendars, a single note under the times now names that calendar and links to **Calendar Settings**, instead of "not every calendar checked" on every time. Times for an email that doesn't give a time zone now say which zone they use in familiar terms, such as "Eastern Time".
+
+### Fixed
+- Clicking a conversation in the message list while writing a new message now opens it. Your message is saved to **Drafts** so you can finish it later.
+- Newsletters that space out their sections with blank table rows, such as article cards with a gap between the headline, image, and summary, now keep that spacing instead of running the sections together.
+- Full-size photos taken on recent phones now load in emails when remote images are on, instead of showing as empty boxes.
+- The **Brief** for an email you're only copied on no longer treats requests made of someone else as yours, and doesn't suggest them as tasks for you. Briefs are also shorter, so a short email gets a single line.
+- With **Drive Time** on, suggested meeting times no longer warn that a calendar wasn't checked when only its travel time couldn't be read. Its busy times are still checked.
+
+## 0.151.3 — 2026-10-21
+
+### Improved
+- **Drafts** now looks like your other folders, showing who each draft is to, its subject, and a preview. You can select several drafts with ⌘-click, Shift-click, or ⌘A and discard them together, after confirming.
+- In **Outbox**, you can now select several messages the same way: return the ones still waiting to send to **Drafts**, or discard the ones that failed. Its rows also line up with every other folder.
+- Newsletters, receipts, and notifications now preview in the message list with the summary line their sender wrote for inbox previews, like "Your login code is 564368" or "Delivered 1 item", instead of a logo name or a "View in browser" link.
 
 ### Fixed
 - Shift-clicking a checkbox in a folder list now selects every message between it and the last one you checked, as Shift-clicking a row already did.
+- Emails that center their layout with older formatting, common in newsletters and promotions, now appear centered in the reading pane instead of pinned to the left edge.
+- Some newsletters and promotions previewed in the message list as placeholder codes like `${Headline-Text}`, or as a note that your email software can't display them, instead of their words. The preview, and searches, now use the text the email actually shows.
 
 ## 0.150.1 — 2026-10-20
 

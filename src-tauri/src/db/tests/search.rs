@@ -190,6 +190,51 @@ fn reindexing_rebuilds_a_stored_preview_with_cut_off_padding() {
 }
 
 #[test]
+fn the_latest_messages_preheader_leads_its_inbox_preview() {
+    let database = database();
+    let html = "<div style=\"display:none;max-height:0;overflow:hidden\">Available through Thursday &amp; Friday.</div><p>Your Play Points</p>";
+    let mut newsletter = message("points", "points", "2026-10-02T09:00:00Z", "Your Play Points \u{2022} Gold 146");
+    newsletter.body_html = html.into();
+    let mut converted = message("converted", "converted", "2026-10-02T09:00:00Z", "Available through Thursday & Friday.\n\nYour Play Points");
+    converted.body_html = html.into();
+    // An earlier message's preheader does not lead a later reply.
+    let mut earlier = message("earlier", "reply", "2026-10-01T09:00:00Z", "Your Play Points");
+    earlier.body_html = html.into();
+    let reply = message("reply", "reply", "2026-10-02T09:00:00Z", "Thanks, claimed it.");
+    for thread in [vec![newsletter], vec![converted], vec![earlier, reply]] {
+        database.upsert_thread("you@example.com", &thread).unwrap();
+    }
+    let preview = |thread: &str| list_snippet(&database, &local_thread_id("you@example.com", thread));
+    assert_eq!(preview("points"), "Available through Thursday &amp; Friday. Your Play Points \u{2022} Gold 146");
+    assert_eq!(
+        search_column(&database, "snippet", &local_thread_id("you@example.com", "points")),
+        "Available through Thursday & Friday. Your Play Points \u{2022} Gold 146"
+    );
+    assert_eq!(preview("converted"), "Available through Thursday &amp; Friday. Your Play Points");
+    assert_eq!(preview("reply"), "Thanks, claimed it.");
+}
+
+#[test]
+fn reindexing_leads_a_stored_preview_with_its_preheader() {
+    let database = database();
+    let mut stored = message("delivered", "delivered", "2026-10-02T09:00:00Z", "Your Orders");
+    stored.body_html = "<table><tr><td><span style=\"font-size:0\">Delivered 1 item: Drinkware &#847; &shy;</span></td></tr><tr><td>Your Orders</td></tr></table>".into();
+    database.upsert_thread("you@example.com", &[stored]).unwrap();
+    let thread_id = local_thread_id("you@example.com", "delivered");
+    {
+        let connection = database.connection().unwrap();
+        connection
+            .execute("UPDATE threads SET snippet = 'Your Orders' WHERE id = ?1", [&thread_id])
+            .unwrap();
+        connection
+            .execute("INSERT INTO pending_search_reindex(thread_id) VALUES (?1)", [&thread_id])
+            .unwrap();
+    }
+    while database.reindex_next_search_batch(10).unwrap() > 0 {}
+    assert_eq!(list_snippet(&database, &thread_id), "Delivered 1 item: Drinkware Your Orders");
+}
+
+#[test]
 fn search_snippet_falls_back_to_the_provider_snippet_for_a_message_without_text() {
     let database = database();
     let mut latest = message("blank", "blank-thread", "2026-10-02T09:00:00Z", "");
@@ -698,6 +743,7 @@ fn search_supports_offset_pagination() {
                     subject: "Pagination test".into(),
                     from: "sender@example.com".into(),
                     to: vec!["recipient@example.com".into()],
+                    cc: Vec::new(),
                     cc_bcc: Vec::new(),
                     date: date.into(),
                     body_html: String::new(),
@@ -878,6 +924,7 @@ fn alice_thread(database: &Database) -> String {
                 subject: "Quarterly planning".into(),
                 from: "alice@example.com".into(),
                 to: vec!["bob@example.com".into()],
+                cc: Vec::new(),
                 cc_bcc: Vec::new(),
                 date: "2024-06-15T09:00:00Z".into(),
                 body_html: String::new(),
@@ -947,6 +994,7 @@ fn op_message(
         subject: subject.into(),
         from: from.into(),
         to: to.into_iter().map(Into::into).collect(),
+        cc: Vec::new(),
         cc_bcc: Vec::new(),
         date: date.into(),
         body_html: String::new(),
@@ -2536,6 +2584,7 @@ fn the_reindex_queue_fills_in_cc_and_bcc_for_mail_stored_before_them() {
     };
     let normalized = normalize(&raw).unwrap();
     assert_eq!(normalized.cc_bcc, vec!["Carol <carol@example.com>", "dave@example.com"]);
+    assert_eq!(normalized.cc, vec!["Carol <carol@example.com>"]);
 
     let database = database();
     database.upsert_thread("you@example.com", &[normalized]).unwrap();
@@ -2543,7 +2592,7 @@ fn the_reindex_queue_fills_in_cc_and_bcc_for_mail_stored_before_them() {
     // Simulate mail stored before the column existed, then queued by the
     // schema migration.
     let connection = database.connection().unwrap();
-    connection.execute("UPDATE messages SET cc_bcc_json = '[]'", []).unwrap();
+    connection.execute("UPDATE messages SET cc_bcc_json = '[]', cc_json = '[]'", []).unwrap();
     connection
         .execute("INSERT INTO pending_search_reindex(thread_id) VALUES (?1)", [&thread_id])
         .unwrap();
@@ -2552,5 +2601,9 @@ fn the_reindex_queue_fills_in_cc_and_bcc_for_mail_stored_before_them() {
 
     assert_eq!(database.reindex_next_search_batch(10).unwrap(), 1);
     assert_eq!(ids_all_mail(&database, "to:carol"), vec![thread_id.clone()]);
-    assert_eq!(ids_all_mail(&database, "to:dave"), vec![thread_id]);
+    assert_eq!(ids_all_mail(&database, "to:dave"), vec![thread_id.clone()]);
+    // The reader shows Cc but never Bcc.
+    let detail = database.get_thread(&thread_id).unwrap();
+    assert_eq!(detail.messages[0].recipients, vec!["first@example.com"]);
+    assert_eq!(detail.messages[0].cc, vec!["Carol <carol@example.com>"]);
 }

@@ -1342,6 +1342,11 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       calendarAccounts = calendarAccounts.filter((account) => account.email !== email);
       calendarOptions = calendarOptions.filter((calendar) => calendar.accountId !== email);
     },
+    async reorderCalendarAccounts(emails) {
+      calendarAccounts = emails
+        .map((email) => calendarAccounts.find((candidate) => candidate.email === email))
+        .filter((account): account is CalendarAccount => account !== undefined);
+    },
     async listCalendarOptions() {
       return structuredClone(calendarOptions);
     },
@@ -1402,6 +1407,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         description: request.description.trim() || null,
         attendees: request.attendees.map((email) => email.toLowerCase()),
         canEdit: true,
+        sourceMessageId: request.sourceMessageId ?? null,
       };
       scheduleEvents.push(created);
       return structuredClone(created);
@@ -1455,7 +1461,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
           status: total > 0 ? "verified" : "unverified",
         });
       }
-      return { candidates, checkedCalendarCount: total, totalCalendarCount: total, errors: [] };
+      return { candidates, checkedCalendarCount: total, totalCalendarCount: total, uncheckedCalendars: [], errors: [] };
     },
     async checkProposedTime(request: { start: string; end: string; timeZone: string; driveTimeBufferMinutes?: number }): Promise<ProposedTimeCheck> {
       const total = calendarOptions.filter((option) => option.selected).length;
@@ -1469,6 +1475,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         conflicts,
         checkedCalendarCount: total,
         totalCalendarCount: total,
+        uncheckedCalendars: [],
         errors: [],
       };
     },

@@ -2,6 +2,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use crate::html_plain_text::{after_leading_stylesheet, html_to_text};
 use mail_parser::MessageParser;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use url::Url;
 
 use crate::MAX_ATTACHMENT_BYTES;
@@ -103,6 +104,8 @@ pub struct NormalizedMessage {
     pub subject: String,
     pub from: String,
     pub to: Vec<String>,
+    /// Cc addresses alone, which the reader shows beside `to`.
+    pub cc: Vec<String>,
     /// Cc and Bcc addresses together (Bcc is only present on mail you sent).
     /// Search's `to:` matches these as well as `to`, as Gmail's does.
     pub cc_bcc: Vec<String>,
@@ -154,15 +157,24 @@ pub fn normalize(message: &RawMessage) -> Result<NormalizedMessage, String> {
     }
     // Some messages (newsletters, marketing mail) omit the text/plain alternative
     // entirely, so fall back to deriving plain text from the HTML body.
-    // A text/plain alternative that opens with a stylesheet was produced by a
-    // converter that leaked the HTML's <style> contents (often with other
-    // residue mixed in), so the HTML alternative is the better text source.
+    // The text/plain alternative is only trusted while it says what the HTML
+    // the reader shows says. One that opens with a stylesheet was produced by
+    // a converter that leaked the HTML's <style> contents (often with other
+    // residue mixed in), one missing most of the HTML's words is a stub, an
+    // unfilled template, or a stale copy, and one holding merge fields the
+    // HTML filled in was never rendered, so in those cases the HTML
+    // alternative is the better text source.
     let has_html = !body_html.trim().is_empty();
     let body_text = match text {
-        Some(text) if has_html && after_leading_stylesheet(&text).is_some() => {
-            match html_to_text(&body_html) {
-                derived if derived.is_empty() => readable_body_text(text),
-                derived => derived,
+        Some(text) if has_html => {
+            let derived = html_to_text(&body_html);
+            let unfaithful = after_leading_stylesheet(&text).is_some()
+                || plain_coverage(&text, &derived) < MIN_PLAIN_COVERAGE
+                || !template_fields(&text).is_subset(&template_fields(&derived));
+            if unfaithful && !derived.is_empty() {
+                derived
+            } else {
+                readable_body_text(text)
             }
         }
         Some(text) => readable_body_text(text),
@@ -178,6 +190,7 @@ pub fn normalize(message: &RawMessage) -> Result<NormalizedMessage, String> {
             .unwrap_or_default()
             .to_string(),
         to: split_addresses(header(&message.payload, "To").unwrap_or_default()),
+        cc: split_addresses(header(&message.payload, "Cc").unwrap_or_default()),
         cc_bcc: ["Cc", "Bcc"]
             .into_iter()
             .flat_map(|name| split_addresses(header(&message.payload, name).unwrap_or_default()))
@@ -210,6 +223,7 @@ pub fn normalized_size(message: &NormalizedMessage) -> Option<usize> {
     fixed_lengths
         .into_iter()
         .chain(message.to.iter().map(String::len))
+        .chain(message.cc.iter().map(String::len))
         .chain(message.cc_bcc.iter().map(String::len))
         .chain(message.labels.iter().map(String::len))
         .chain(message.attachments.iter().flat_map(|attachment| {
@@ -506,6 +520,71 @@ pub fn readable_body_text(text: String) -> String {
         Some(rest) if !rest.is_empty() => rest.to_string(),
         _ => text,
     }
+}
+
+/// The share of the HTML's distinct words a text/plain alternative must also
+/// contain to stand in for it. Converter-made alternatives and quoted replies
+/// carry nearly all of them; stubs ("your email software can't display
+/// this"), unfilled templates, and stale copies fall well below half, while
+/// short notification summaries sit just above it.
+const MIN_PLAIN_COVERAGE: f64 = 0.5;
+
+/// The fewest distinct HTML words worth comparing. A short message gives too
+/// little evidence to judge, so its plain alternative stays trusted.
+const MIN_COMPARED_WORDS: usize = 20;
+
+/// The share of `html_text`'s distinct words that `plain` also contains; 1
+/// when the HTML has fewer than `MIN_COMPARED_WORDS` to compare.
+fn plain_coverage(plain: &str, html_text: &str) -> f64 {
+    let html_words = content_words(html_text);
+    if html_words.len() < MIN_COMPARED_WORDS {
+        return 1.0;
+    }
+    let plain_words = content_words(plain);
+    html_words.intersection(&plain_words).count() as f64 / html_words.len() as f64
+}
+
+/// Lowercased words of two or more letters or digits. URLs are skipped,
+/// since plain alternatives spell out links the HTML keeps in attributes.
+fn content_words(text: &str) -> HashSet<String> {
+    text.split_whitespace()
+        .map(str::to_lowercase)
+        .filter(|piece| !(piece.contains("://") || piece.starts_with("www.") || piece.contains("mailto:")))
+        .flat_map(|piece| {
+            piece
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|word| word.chars().count() >= 2)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Delimiters of common template merge fields (`${name}`, `{{name}}`,
+/// `%%name%%`, `*|NAME|*`) that a mailing system replaces before sending.
+const TEMPLATE_FIELD_DELIMITERS: [(&str, &str); 4] = [("${", "}"), ("{{", "}}"), ("%%", "%%"), ("*|", "|*")];
+
+/// The merge fields left in `text`, each as its opening delimiter and name.
+/// A name is one word of letters, digits, `_`, `-`, or `.` that starts with
+/// a letter, so prose, prices, and code blocks rarely match.
+fn template_fields(text: &str) -> HashSet<(&'static str, &str)> {
+    let mut fields = HashSet::new();
+    for (open, close) in TEMPLATE_FIELD_DELIMITERS {
+        let mut rest = text;
+        while let Some(start) = rest.find(open) {
+            rest = &rest[start + open.len()..];
+            let Some(end) = rest.find(close) else { break };
+            let name = rest[..end].trim_matches(' ');
+            if (1..=64).contains(&name.len())
+                && name.starts_with(|c: char| c.is_ascii_alphabetic())
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+            {
+                fields.insert((open, name));
+                rest = &rest[end + close.len()..];
+            }
+        }
+    }
+    fields
 }
 
 fn select_bodies(
@@ -925,6 +1004,127 @@ mod tests {
             assert!(text.contains(expected), "{text}");
             assert!(!text.contains('<') && !text.contains("color: red"), "{text}");
         }
+    }
+
+    fn alternative(plain: &str, html: &str) -> MimePart {
+        let mut payload = part("multipart/alternative", "");
+        payload.parts = vec![part("text/plain", plain), part("text/html", html)];
+        payload
+    }
+
+    fn body_text_of(payload: MimePart) -> String {
+        let message = RawMessage {
+            id: "m".into(),
+            thread_id: "t".into(),
+            label_ids: vec![],
+            snippet: String::new(),
+            internal_date: "0".into(),
+            payload,
+        };
+        normalize(&message).unwrap().body_text
+    }
+
+    #[test]
+    fn reads_the_html_when_the_plain_part_misses_most_of_what_it_says() {
+        // An alternative nested in multipart/related with an inline image.
+        let mut related = part("multipart/related", "");
+        related.parts = vec![
+            alternative(
+                "Your email software can't display this newsletter. View it online: https://example.com/view",
+                "<table><tr><td><img src=\"cid:logo\">Spring sale starts today.</td></tr><tr><td>Every jacket, boot, and winter hat is thirty percent off through Sunday at all our downtown and suburban locations.</td></tr></table>",
+            ),
+            part("image/png", "png"),
+        ];
+        for (payload, expected) in [
+            // A flat alternative whose template fields were never filled in.
+            (
+                alternative(
+                    "${H1-Headline-Text}\n${Para-Copy-Text}\n${CTA-TEXT} <https://example.com/a>\n\u{2022} Planning for growth",
+                    "<div><h1>Preparing for what\u{2019}s ahead</h1><p>Leaders share an exclusive conversation on the questions business owners ask most, whether focused on growth or a transition.</p><ul><li>Planning for growth</li></ul></div>",
+                ),
+                "Preparing for what\u{2019}s ahead",
+            ),
+            (related, "Spring sale starts today."),
+        ] {
+            let text = body_text_of(payload);
+            assert!(text.starts_with(expected), "{text}");
+        }
+    }
+
+    #[test]
+    fn reads_the_html_when_the_plain_part_holds_merge_fields_the_html_filled_in() {
+        // Plain parts that carry nearly all of the HTML's words, so only the
+        // unfilled fields give them away: a flat alternative, and one nested
+        // in multipart/related with an inline image, in different syntaxes.
+        let story = "kicks off today with five days of technical deep dives into identity and data security you will not want to miss";
+        let mut related = part("multipart/related", "");
+        related.parts = vec![
+            alternative(
+                &format!("Hi {{{{ first_name }}}},\n*|EVENT_NAME|* {story}."),
+                &format!("<table><tr><td>Hi Sam,</td></tr><tr><td><img src=\"cid:logo\">Innovation Week {story}.</td></tr></table>"),
+            ),
+            part("image/png", "png"),
+        ];
+        for (payload, expected) in [
+            (
+                alternative(
+                    &format!("${{mkto-article-pl-text-1}} <https://example.com/a> {story}."),
+                    &format!("<p>Innovation Week {story}.</p>"),
+                ),
+                "Innovation Week kicks off today",
+            ),
+            (related, "Hi Sam,\nInnovation Week kicks off today"),
+        ] {
+            let text = body_text_of(payload);
+            assert!(text.starts_with(expected), "{text}");
+            assert!(template_fields(&text).is_empty(), "{text}");
+        }
+    }
+
+    #[test]
+    fn keeps_a_plain_part_that_says_what_the_html_says() {
+        for (plain, html) in [
+            // A quoted reply keeps the markers quote folding reads.
+            (
+                "Thursday works.\n\nOn Mon, Ann wrote:\n> Can we meet this week?\n> Lunch is on me.",
+                "<div>Thursday works.</div><blockquote>On Mon, Ann wrote:<br>Can we meet this week?<br>Lunch is on me.</blockquote>",
+            ),
+            // Template syntax the sender meant to show, in both alternatives.
+            ("Set ${HOME} and run {{ build }}.", "<p>Set <code>${HOME}</code> and run <code>{{ build }}</code>.</p>"),
+            // An unrendered template in both alternatives; the plain part is no worse.
+            ("${Headline}\nSee you there", "<h1>${Headline}</h1><p>See you there</p>"),
+            // Braces and percents that are not merge fields.
+            ("Prices up 5%% to 10%% {{ }} ${1}", "<p>Prices up 5%% to 10%% {{ }} ${1}</p>"),
+            // Links spelled out in the plain part only.
+            ("Read the report <https://example.com/r> today", "<p>Read the <a href=\"https://example.com/r\">report</a> today</p>"),
+        ] {
+            assert_eq!(body_text_of(alternative(plain, html)), plain);
+        }
+    }
+
+    #[test]
+    fn plain_coverage_switches_below_half_of_the_html_words() {
+        let words: Vec<String> = (0..MIN_COMPARED_WORDS).map(|n| format!("w{n}")).collect();
+        let html = format!("<p>{}</p>", words.join(" "));
+        let half = MIN_COMPARED_WORDS / 2;
+        for (count, keeps_plain) in [(half - 1, false), (half, true), (half + 1, true)] {
+            let plain = words[..count].join(" ");
+            let text = body_text_of(alternative(&plain, &html));
+            assert_eq!(text == plain, keeps_plain, "{count} of {MIN_COMPARED_WORDS}");
+        }
+        assert_eq!(plain_coverage("w0 W1! https://w2.example", &words.join(" ")), 0.1);
+    }
+
+    #[test]
+    fn plain_coverage_trusts_the_plain_part_below_the_compared_word_floor() {
+        let words: Vec<String> = (0..MIN_COMPARED_WORDS).map(|n| format!("w{n}")).collect();
+        let below = words[..MIN_COMPARED_WORDS - 1].join(" ");
+        let exact = words.join(" ");
+        let above = format!("{exact} extra");
+        assert_eq!(plain_coverage("unrelated", &below), 1.0);
+        assert_eq!(plain_coverage("unrelated", &exact), 0.0);
+        assert_eq!(plain_coverage("unrelated", &above), 0.0);
+        assert_eq!(plain_coverage("anything", ""), 1.0);
     }
 
     #[test]

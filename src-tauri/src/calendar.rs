@@ -4,7 +4,7 @@ use calcard::icalendar::{
 };
 use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
 use crate::{
@@ -18,6 +18,11 @@ const CALENDAR_LIST_URL: &str = "https://www.googleapis.com/calendar/v3/users/me
 const CALENDARS_URL: &str = "https://www.googleapis.com/calendar/v3/calendars/";
 const FREEBUSY_URL: &str = "https://www.googleapis.com/calendar/v3/freeBusy";
 const MAX_SCHEDULE_EVENTS: usize = 250;
+/// The private extended property naming the email an event was added from.
+/// Private properties live on this calendar's copy only: guests never see them.
+const SOURCE_MESSAGE_PROPERTY: &str = "threestrandsSourceMessage";
+/// Google's limit on an extended property value; a longer id is not stored.
+const MAX_EXTENDED_PROPERTY_VALUE_BYTES: usize = 1024;
 /// Bounds the attendee addresses kept per event; Google may list hundreds on
 /// large meetings and the client only matches them against contacts.
 const MAX_EVENT_ATTENDEES: usize = 100;
@@ -81,6 +86,13 @@ struct GoogleCreateEvent<'a> {
     start: GoogleCreateEventTime<'a>,
     end: GoogleCreateEventTime<'a>,
     attendees: Vec<GoogleCreateAttendee<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extended_properties: Option<GoogleCreateExtendedProperties<'a>>,
+}
+
+#[derive(Serialize)]
+struct GoogleCreateExtendedProperties<'a> {
+    private: HashMap<&'static str, &'a str>,
 }
 
 fn is_empty_str(value: &&str) -> bool {
@@ -115,6 +127,9 @@ fn create_body(request: &CreateCalendarEventRequest) -> GoogleCreateEvent<'_> {
         start: GoogleCreateEventTime::new(&request.start, request.all_day),
         end: GoogleCreateEventTime::new(&request.end, request.all_day),
         attendees: request.attendees.iter().map(|email| GoogleCreateAttendee { email }).collect(),
+        extended_properties: request.source_message_id.as_deref().map(str::trim)
+            .filter(|id| !id.is_empty() && id.len() <= MAX_EXTENDED_PROPERTY_VALUE_BYTES)
+            .map(|id| GoogleCreateExtendedProperties { private: HashMap::from([(SOURCE_MESSAGE_PROPERTY, id)]) }),
     }
 }
 
@@ -262,6 +277,8 @@ async fn fetch_drive_time_pages(
 pub struct FreeBusyResult {
     pub busy: Vec<BusyInterval>,
     pub checked_calendar_count: usize,
+    /// Selected calendars whose busy times could not be read.
+    pub unchecked_calendar_ids: Vec<String>,
     pub errors: Vec<String>,
 }
 
@@ -280,6 +297,14 @@ struct GoogleEvent {
     #[serde(default)]
     attendees: Vec<GoogleAttendee>,
     organizer: Option<GoogleAttendee>,
+    #[serde(default)]
+    extended_properties: Option<GoogleExtendedProperties>,
+}
+
+#[derive(Deserialize)]
+struct GoogleExtendedProperties {
+    #[serde(default)]
+    private: HashMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -301,8 +326,24 @@ fn self_response(attendees: &[GoogleAttendee], account_id: &str) -> (Option<Stri
     }) else {
         return (None, false);
     };
-    let status = attendee.response_status.as_deref().filter(|status| matches!(*status, "accepted" | "declined" | "tentative" | "needsAction"));
-    (status.map(str::to_string), attendee.email.is_some())
+    (known_response(attendee).map(str::to_string), attendee.email.is_some())
+}
+
+fn known_response(attendee: &GoogleAttendee) -> Option<&str> {
+    attendee.response_status.as_deref().filter(|status| matches!(*status, "accepted" | "declined" | "tentative" | "needsAction"))
+}
+
+/// The RSVP each of `people` gave. Google's organizer object carries no
+/// response, so the organizer's comes from their attendee entry when listed.
+fn attendee_responses(attendees: &[GoogleAttendee], people: &[String]) -> BTreeMap<String, String> {
+    attendees
+        .iter()
+        .filter_map(|attendee| {
+            let email = attendee.email.as_deref()?.trim().to_ascii_lowercase();
+            let status = known_response(attendee)?;
+            people.contains(&email).then(|| (email, status.to_string()))
+        })
+        .collect()
 }
 
 #[derive(Serialize)]
@@ -321,13 +362,13 @@ struct ResponseAttendee<'a> {
 
 /// The lowercased addresses of the other people on an event: the organizer
 /// and attendees, excluding the calendar owner and rooms or other resources.
-fn event_people(organizer: Option<GoogleAttendee>, attendees: Vec<GoogleAttendee>) -> Vec<String> {
+fn event_people(organizer: Option<&GoogleAttendee>, attendees: &[GoogleAttendee]) -> Vec<String> {
     let mut people: Vec<String> = Vec::new();
     for person in organizer.into_iter().chain(attendees) {
         if person.is_self || person.resource {
             continue;
         }
-        let Some(email) = person.email.map(|email| email.trim().to_ascii_lowercase()) else {
+        let Some(email) = person.email.as_deref().map(|email| email.trim().to_ascii_lowercase()) else {
             continue;
         };
         if email.contains('@') && !people.contains(&email) {
@@ -519,6 +560,7 @@ pub async fn fetch_freebusy(
         return Ok(FreeBusyResult {
             busy: Vec::new(),
             checked_calendar_count: 0,
+            unchecked_calendar_ids: Vec::new(),
             errors: Vec::new(),
         });
     }
@@ -544,8 +586,28 @@ pub async fn fetch_freebusy(
         .await
         .map_err(|error| error.to_string())?;
     let freebusy: GoogleFreeBusy = checked_json(response).await?;
+    let mut result = freebusy_result(calendar_ids, freebusy);
+    if drive_time_buffer_minutes > 0 {
+        let readable = calendar_ids.iter().filter(|id| !result.unchecked_calendar_ids.contains(id));
+        for calendar_id in readable {
+            // FreeBusy already covered this calendar's events; drive time only
+            // widens them, so a failure here keeps the calendar checked.
+            match fetch_drive_time_busy(&client, &access_token, calendar_id, time_min, time_max, time_zone, drive_time_buffer_minutes).await {
+                Ok(intervals) => result.busy.extend(intervals),
+                Err(error) => log::warn!(target: "availability", "drive time for calendar {calendar_id} could not be read: {error}"),
+            }
+        }
+        result.busy.sort_by(|left, right| left.start.cmp(&right.start));
+    }
+    Ok(result)
+}
+
+/// Busy times from a FreeBusy response, with each selected calendar it could
+/// not answer for listed as unchecked.
+fn freebusy_result(calendar_ids: &[String], freebusy: GoogleFreeBusy) -> FreeBusyResult {
     let mut busy = Vec::new();
     let mut checked = 0;
+    let mut unchecked = Vec::new();
     let mut errors = Vec::new();
     for calendar_id in calendar_ids {
         match freebusy.calendars.get(calendar_id) {
@@ -554,25 +616,25 @@ pub async fn fetch_freebusy(
                     start: interval.start.clone(),
                     end: interval.end.clone(),
                 }));
-                if drive_time_buffer_minutes > 0 {
-                    match fetch_drive_time_busy(&client, &access_token, calendar_id, time_min, time_max, time_zone, drive_time_buffer_minutes).await {
-                        Ok(intervals) => { busy.extend(intervals); checked += 1; }
-                        Err(error) => errors.push(format!("Calendar {calendar_id} drive time could not be checked: {error}")),
-                    }
-                } else {
-                    checked += 1;
-                }
+                checked += 1;
             }
-            Some(_calendar) => errors.push(format!("Calendar {calendar_id} returned a FreeBusy error")),
-            None => errors.push(format!("Calendar {calendar_id} was not returned by FreeBusy")),
+            Some(_calendar) => {
+                unchecked.push(calendar_id.clone());
+                errors.push(format!("Calendar {calendar_id} returned a FreeBusy error"));
+            }
+            None => {
+                unchecked.push(calendar_id.clone());
+                errors.push(format!("Calendar {calendar_id} was not returned by FreeBusy"));
+            }
         }
     }
     busy.sort_by(|left, right| left.start.cmp(&right.start));
-    Ok(FreeBusyResult {
+    FreeBusyResult {
         busy,
         checked_calendar_count: checked,
+        unchecked_calendar_ids: unchecked,
         errors,
-    })
+    }
 }
 
 fn events_url(calendar_id: &str) -> Result<Option<url::Url>, String> {
@@ -632,6 +694,10 @@ pub async fn update_response(
         .ok_or_else(|| "Google changed the response but did not return event details. Refresh the calendar.".to_string())?;
     updated.response_status = Some(response_status.to_string());
     updated.can_respond = true;
+    // The patch omits attendees, so the reply may too; an RSVP leaves the
+    // other guests unchanged, so keep them from the event read above.
+    updated.attendees = event_people(current.organizer.as_ref(), &current.attendees);
+    updated.attendee_responses = attendee_responses(&current.attendees, &updated.attendees);
     Ok(updated)
 }
 
@@ -777,6 +843,8 @@ fn normalize_events(
             let end = event.end.date_time.or(event.end.date)?;
             let (response_status, can_respond) = self_response(&event.attendees, account_id);
             let organized_by_self = event.organizer.as_ref().is_some_and(|organizer| organizer.is_self);
+            let attendees = event_people(event.organizer.as_ref(), &event.attendees);
+            let attendee_responses = attendee_responses(&event.attendees, &attendees);
             Some(ScheduleEvent {
                 id: format!("{calendar_id}:{}", event.id),
                 account_id: account_id.to_string(),
@@ -790,10 +858,14 @@ fn normalize_events(
                 all_day,
                 location: event.location.filter(|value| !value.trim().is_empty()),
                 description: event.description.filter(|value| !value.trim().is_empty()),
-                attendees: event_people(event.organizer, event.attendees),
+                attendees,
+                attendee_responses,
                 response_status,
                 can_respond,
                 can_edit: writable && organized_by_self,
+                source_message_id: event.extended_properties
+                    .and_then(|properties| properties.private.get(SOURCE_MESSAGE_PROPERTY).cloned())
+                    .filter(|id| !id.trim().is_empty()),
                 conference_url: event.hangout_link.or_else(|| {
                     event.conference_data.and_then(|conference| {
                         conference.entry_points.into_iter().find_map(|entry| {
@@ -1127,11 +1199,14 @@ mod tests {
                     },
                     attendees: vec![
                         GoogleAttendee { email: Some("work@example.com".into()), response_status: Some("needsAction".into()), is_self: true, resource: false },
-                        GoogleAttendee { email: Some("Jane@Example.com".into()), response_status: None, is_self: false, resource: false },
-                        GoogleAttendee { email: Some("room-4b@resource.example.com".into()), response_status: None, is_self: false, resource: true },
+                        GoogleAttendee { email: Some("Jane@Example.com".into()), response_status: Some("accepted".into()), is_self: false, resource: false },
+                        GoogleAttendee { email: Some("bob@example.com".into()), response_status: Some("declined".into()), is_self: false, resource: false },
+                        GoogleAttendee { email: Some("kim@example.com".into()), response_status: Some("delegated".into()), is_self: false, resource: false },
+                        GoogleAttendee { email: Some("room-4b@resource.example.com".into()), response_status: Some("accepted".into()), is_self: false, resource: true },
                         GoogleAttendee { email: None, response_status: None, is_self: false, resource: false },
                     ],
                     organizer: Some(GoogleAttendee { email: Some("jane@example.com".into()), response_status: None, is_self: false, resource: false }),
+                    extended_properties: None,
                 },
                 GoogleEvent {
                     id: "all-day".into(),
@@ -1151,6 +1226,7 @@ mod tests {
                     },
                     attendees: Vec::new(),
                     organizer: None,
+                    extended_properties: None,
                 },
             ],
             "work@example.com",
@@ -1168,13 +1244,19 @@ mod tests {
             events[0].conference_url.as_deref(),
             Some("https://meet.google.com/abc-defg-hij")
         );
-        assert_eq!(events[0].attendees, vec!["jane@example.com"]);
+        assert_eq!(events[0].attendees, vec!["jane@example.com", "bob@example.com", "kim@example.com"]);
+        // The user's own and the room's RSVPs are left out, as are unknown statuses.
+        assert_eq!(
+            events[0].attendee_responses,
+            BTreeMap::from([("bob@example.com".to_string(), "declined".to_string()), ("jane@example.com".to_string(), "accepted".to_string())])
+        );
         assert_eq!(events[0].response_status.as_deref(), Some("needsAction"));
         assert!(events[0].can_respond);
         assert_eq!(events[0].calendar_id, "team@example.com");
         assert_eq!(events[1].title, "Untitled event");
         assert!(events[1].all_day);
         assert!(events[1].attendees.is_empty());
+        assert!(events[1].attendee_responses.is_empty());
         assert_eq!(events[1].response_status, None);
         assert!(!events[1].can_respond);
         // An invitation and an event without a known organizer are not editable.
@@ -1298,6 +1380,7 @@ mod tests {
             start: if all_day { "2026-11-07".into() } else { "2026-10-17T18:45:00-04:00".into() },
             end: if all_day { "2026-11-08".into() } else { "2026-10-17T20:45:00-04:00".into() },
             all_day, location: location.into(), description: " From the email ".into(), attendees: Vec::new(),
+            source_message_id: None,
         }
     }
 
@@ -1312,6 +1395,39 @@ mod tests {
         assert_eq!(all_day["start"], serde_json::json!({ "date": "2026-11-07" }));
         assert_eq!(all_day["end"], serde_json::json!({ "date": "2026-11-08" }));
         assert!(all_day.get("location").is_none());
+    }
+
+    #[test]
+    fn create_body_tags_the_source_email_privately_within_googles_limit() {
+        let tagged = |id: Option<&str>| {
+            let request = CreateCalendarEventRequest { source_message_id: id.map(str::to_string), ..create_request(false, "") };
+            serde_json::to_value(create_body(&request)).unwrap().get("extendedProperties").cloned()
+        };
+        assert_eq!(tagged(Some(" message-1 ")), Some(serde_json::json!({ "private": { "threestrandsSourceMessage": "message-1" } })));
+        assert_eq!(tagged(None), None);
+        assert_eq!(tagged(Some("  ")), None);
+        let at_limit = "m".repeat(MAX_EXTENDED_PROPERTY_VALUE_BYTES);
+        assert!(tagged(Some(&at_limit)).is_some());
+        assert!(tagged(Some(&format!("{at_limit}m"))).is_none());
+        assert!(tagged(Some(&"m".repeat(MAX_EXTENDED_PROPERTY_VALUE_BYTES - 1))).is_some());
+    }
+
+    #[test]
+    fn reads_the_source_email_tag_and_ignores_other_properties() {
+        let event = |properties: serde_json::Value| -> Option<String> {
+            let event: GoogleEvent = serde_json::from_value(serde_json::json!({
+                "id": "tagged", "summary": "Bonfire",
+                "start": {"dateTime": "2026-10-17T18:45:00-04:00"}, "end": {"dateTime": "2026-10-17T20:45:00-04:00"},
+                "extendedProperties": properties,
+            })).unwrap();
+            normalize_events(vec![event], "work@example.com", "primary", true).remove(0).source_message_id
+        };
+        assert_eq!(event(serde_json::json!({ "private": { "threestrandsSourceMessage": "imap:work@example.com:abc" } })).as_deref(), Some("imap:work@example.com:abc"));
+        // Shared properties are visible to every guest; only the private one counts.
+        assert_eq!(event(serde_json::json!({ "shared": { "threestrandsSourceMessage": "message-1" } })), None);
+        assert_eq!(event(serde_json::json!({ "private": { "otherApp": "message-1" } })), None);
+        assert_eq!(event(serde_json::json!({ "private": { "threestrandsSourceMessage": " " } })), None);
+        assert!(normalize_events(vec![organized_event(true)], "work@example.com", "primary", true)[0].source_message_id.is_none());
     }
 
     #[test]
@@ -1366,21 +1482,21 @@ mod tests {
             "attendees": [{"email": "bob@example.com", "responseStatus": "accepted"}, {"email": "not-an-address"}],
         }))
         .unwrap();
-        assert_eq!(event_people(event.organizer, event.attendees), vec!["bob@example.com"]);
+        assert_eq!(event_people(event.organizer.as_ref(), &event.attendees), vec!["bob@example.com"]);
         let without_people: GoogleEvent = serde_json::from_value(serde_json::json!({
             "id": "e2", "start": {"date": "2026-09-18"}, "end": {"date": "2026-09-19"},
         }))
         .unwrap();
-        assert!(event_people(without_people.organizer, without_people.attendees).is_empty());
+        assert!(event_people(without_people.organizer.as_ref(), &without_people.attendees).is_empty());
 
         let attendees = |count: usize| {
             (0..count)
                 .map(|index| GoogleAttendee { email: Some(format!("person{index}@example.com")), response_status: None, is_self: false, resource: false })
                 .collect::<Vec<_>>()
         };
-        assert_eq!(event_people(None, attendees(MAX_EVENT_ATTENDEES - 1)).len(), MAX_EVENT_ATTENDEES - 1);
-        assert_eq!(event_people(None, attendees(MAX_EVENT_ATTENDEES)).len(), MAX_EVENT_ATTENDEES);
-        assert_eq!(event_people(None, attendees(MAX_EVENT_ATTENDEES + 1)).len(), MAX_EVENT_ATTENDEES);
+        assert_eq!(event_people(None, &attendees(MAX_EVENT_ATTENDEES - 1)).len(), MAX_EVENT_ATTENDEES - 1);
+        assert_eq!(event_people(None, &attendees(MAX_EVENT_ATTENDEES)).len(), MAX_EVENT_ATTENDEES);
+        assert_eq!(event_people(None, &attendees(MAX_EVENT_ATTENDEES + 1)).len(), MAX_EVENT_ATTENDEES);
     }
 
     #[test]
@@ -1428,6 +1544,7 @@ mod tests {
             start: GoogleCreateEventTime::new("2026-09-22T09:00:00Z", false),
             end: GoogleCreateEventTime::new("2026-09-22T10:00:00Z", false),
             attendees: vec![GoogleCreateAttendee { email: "guest@example.com" }],
+            extended_properties: None,
         };
         assert_eq!(serde_json::to_value(payload).unwrap(), serde_json::json!({
             "summary": "Planning", "description": "Agenda",
@@ -1548,5 +1665,35 @@ mod tests {
         let json = serde_json::to_value(request).unwrap();
         assert_eq!(json["timeMin"], "2026-09-21T00:00:00Z");
         assert!(json.get("time_min").is_none());
+    }
+
+    #[test]
+    fn freebusy_result_lists_calendars_it_could_not_read() {
+        let freebusy: GoogleFreeBusy = serde_json::from_value(serde_json::json!({
+            "calendars": {
+                "me@example.com": { "busy": [{ "start": "2026-09-21T14:00:00Z", "end": "2026-09-21T15:00:00Z" }] },
+                "team@group.calendar.google.com": { "errors": [{ "domain": "global", "reason": "notFound" }] }
+            }
+        }))
+        .unwrap();
+        let ids = ["me@example.com", "team@group.calendar.google.com", "missing@group.calendar.google.com"].map(String::from);
+        let result = freebusy_result(&ids, freebusy);
+        assert_eq!(result.checked_calendar_count, 1);
+        assert_eq!(result.unchecked_calendar_ids, ["team@group.calendar.google.com", "missing@group.calendar.google.com"]);
+        assert_eq!(result.busy.len(), 1);
+        assert_eq!(result.errors.len(), 2);
+    }
+
+    #[test]
+    fn freebusy_result_checks_every_calendar_that_answered() {
+        let freebusy: GoogleFreeBusy = serde_json::from_value(serde_json::json!({
+            "calendars": { "me@example.com": { "busy": [] }, "family@group.calendar.google.com": { "busy": [] } }
+        }))
+        .unwrap();
+        let ids = ["me@example.com", "family@group.calendar.google.com"].map(String::from);
+        let result = freebusy_result(&ids, freebusy);
+        assert_eq!(result.checked_calendar_count, 2);
+        assert!(result.unchecked_calendar_ids.is_empty());
+        assert!(result.errors.is_empty());
     }
 }

@@ -1103,7 +1103,8 @@ kbd {
 .reader-actions { display: flex; align-items: center; gap: var(--space-1); }
 .action-button span, .action-button kbd { display: none; }
 .message-stack { min-height: 0; overflow: auto; overflow-anchor: none; padding: var(--space-6) clamp(var(--space-6), 5vw, var(--space-16)); }
-.message { width: 100%; max-width: 840px; margin: 0 auto; }
+/* An unsent draft card shares the message column so it lines up with the cards above it. */
+.message, .thread-draft { width: 100%; max-width: 840px; margin: 0 auto; }
 .message > header { display: flex; align-items: flex-start; width: 100%; gap: var(--space-2-5); padding-bottom: var(--space-6); }
 .message-header-details { display: flex; min-width: 0; flex: 1; flex-direction: column; font-size: var(--text-body); }
 .message-sender-row { display: flex; align-items: center; gap: var(--space-3); min-width: 0; margin-bottom: var(--space-1); }
@@ -1390,6 +1391,7 @@ kbd {
   border: none;
   background: transparent;
   font: inherit;
+  font-size: var(--text-body);
   color: var(--muted);
   text-align: left;
   cursor: pointer;
@@ -1410,6 +1412,7 @@ kbd {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
+  font-size: var(--text-secondary);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -1573,7 +1576,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .meeting-scheduler { display: grid; gap: var(--space-1-5); margin-top: var(--space-1); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input); font-size: var(--text-meta); }
 .meeting-slot { margin: 0; color: var(--text); font-weight: var(--weight-semibold); }
 .meeting-slot-status { display: inline-flex; align-items: center; gap: var(--space-1); margin: 0; color: var(--muted); }
-.meeting-slot-free { color: var(--success); }
+.meeting-slot-free, .meeting-slot-added { color: var(--success); }
 .meeting-slot-conflicting { color: var(--error); }
 .meeting-slots { display: grid; gap: var(--space-1); }
 .meeting-slot-option { padding: var(--space-1-5) var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--secondary); background: var(--surface); font: inherit; text-align: left; cursor: pointer; }
@@ -1581,7 +1584,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .meeting-slot-option small { color: var(--muted); }
 .meeting-scheduler-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1-5); }
 .meeting-scheduler-error p { margin: 0 0 var(--space-1); color: var(--text); }
-.meeting-scheduler-note { color: var(--muted); font-size: var(--text-meta); }
+.meeting-scheduler-note { margin: 0; color: var(--muted); font-size: var(--text-meta); }
 .meeting-scheduler-range { margin: 0; color: var(--muted); }
 .meeting-scheduler-adjust { display: grid; gap: var(--space-1-5); padding-top: var(--space-1); border-top: 1px solid var(--border); }
 .meeting-scheduler-adjust-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
@@ -1953,6 +1956,9 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .calendar-event-viewer-details > details { color: var(--secondary); font-size: var(--text-body); line-height: var(--leading-normal); }
 .calendar-event-viewer-details > details > summary { color: var(--text); font-weight: var(--weight-medium); cursor: pointer; }
 .calendar-event-viewer-details > details ul { margin: var(--space-1) 0 0; padding-left: var(--space-5); }
+.calendar-event-attendee-summary { color: var(--secondary); font-weight: var(--weight-regular); }
+.calendar-event-attendee-response { color: var(--muted); }
+.calendar-event-attendee-response[data-response-status="accepted"] { color: var(--accent); }
 .calendar-event-viewer-details > details p { margin: var(--space-1) 0 0; }
 .calendar-event-response { display: grid; min-width: 0; gap: var(--space-2); color: var(--secondary); font-size: var(--text-body); }
 .calendar-event-response strong { color: var(--text); font-weight: var(--weight-semibold); }
@@ -2864,8 +2870,13 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .settings-section-heading-row h3 { margin: 0; }
 .settings-section-heading-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1-5); }
 .settings-inline-confirm { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-2-5) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); }
-.settings-inline-confirm p { color: var(--text); }
-.settings-inline-confirm-actions { display: flex; align-items: center; flex-shrink: 0; gap: var(--space-1-5); }
+.settings-inline-confirm p { margin: 0; color: var(--text); font-size: var(--text-body); line-height: var(--leading-normal); }
+.settings-inline-confirm-actions { display: flex; align-items: center; flex-shrink: 0; gap: var(--space-2); }
+.settings-inline-confirm-text { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.settings-inline-confirm p.settings-inline-confirm-title { font-weight: var(--weight-semibold); }
+.settings-inline-confirm p.settings-inline-confirm-detail { color: var(--secondary); }
+.settings-inline-confirm--stacked { align-items: stretch; flex-direction: column; gap: var(--space-3); padding: var(--space-3); }
+.settings-inline-confirm--stacked .settings-inline-confirm-actions { flex-wrap: wrap; justify-content: flex-end; }
 .settings-section h4 { margin: var(--space-1-5) 0 0; font-size: var(--text-body); color: var(--text); }
 .settings-disclosure { width: 100%; }
 .settings-disclosure-body { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); width: 100%; margin-top: var(--space-2); }
@@ -3185,6 +3196,11 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-quote-toggle { flex-shrink: 0; letter-spacing: var(--tracking-wide); }
 .compose-body.compose-quoted { min-height: 0; height: auto; padding-top: 0; overflow: visible; }
 .compose-body.compose-quoted[hidden] { display: none; }
+/* Names where the forwarded message starts and holds its Edit / Restore Original button. */
+.compose-forwarded-bar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) 0; border-top: 1px solid var(--border); color: var(--muted); font-size: var(--text-meta); }
+.compose-forwarded-bar > .btn { margin-left: auto; }
+.compose-forwarded > .settings-inline-confirm { margin-bottom: var(--space-2); }
+.compose-body.compose-forwarded-edit { min-height: 0; height: auto; padding-top: 0; overflow: visible; }
 .compose-body-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); flex-shrink: 0; padding: var(--space-2) 0; }
 .compose-writing-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); flex-shrink: 0; min-width: 0; }
 .compose-body-actions > .compose-writing-actions { flex: 1 1 auto; justify-content: flex-end; }
@@ -3232,7 +3248,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-format-hints { display: inline-flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); }
 .compose-error { margin: var(--space-2) 0 var(--space-3); }
 .compose-error .btn { flex-shrink: 0; }
-.attachment-list { margin: 0 0 var(--space-4); padding: 0; list-style: none; flex-shrink: 0; }
+.attachment-list { margin: 0; padding: var(--space-1) var(--pane-inset) var(--space-3); list-style: none; flex-shrink: 0; max-height: 180px; overflow-y: auto; }
 .attachment-list li { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2); background: var(--input); border-radius: var(--radius-sm); margin-top: var(--space-1-5); font-size: var(--text-body); }
 .attachment-list li > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .attachment-list small { display: block; color: var(--muted); }
@@ -3281,6 +3297,22 @@ input::placeholder { color: var(--muted); opacity: 1; }
 
 .notice--error { --notice-tone: var(--error); }
 .notice--warning { --notice-tone: var(--warning); }
+
+/* An unsent draft at the end of a conversation sits apart from the last message card.
+   It is ordinary content, not a problem, so it drops the notice's error tone and
+   takes the expanded message card's chrome, with Resume Draft at the right edge. */
+.thread-draft {
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-6);
+  border-color: var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  box-shadow: var(--shadow-raised);
+  color: var(--text);
+}
+.thread-draft > .btn { flex: 0 0 auto; }
 
 /* Motion. Short, compositor-only (opacity/transform) entrances that make
    state changes read as responses rather than jumps. Fill is `backwards`

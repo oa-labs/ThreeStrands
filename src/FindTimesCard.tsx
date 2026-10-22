@@ -3,7 +3,8 @@
 
 import { useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
-import type { AvailabilityCandidate, AvailabilityPreferences, TimeSearch } from "./domain";
+import type { AvailabilityCandidate, AvailabilityPreferences, ScheduleEvent, TimeSearch } from "./domain";
+import type { EventIdentity } from "./eventMatching";
 import { readAiRequestConfig } from "./aiSettings";
 import { mailClient } from "./data/client";
 import { errorMessage } from "./errors";
@@ -41,7 +42,7 @@ export function askFindTimes(
  */
 export function FindTimesCard({
   plan, reason = null, preferences, calendarConnected, ai, intoDraft,
-  onAddToCalendar, onReplyWithTimes, onConfirmTime, onOpenCalendarSettings,
+  onAddToCalendar, onReplyWithTimes, onConfirmTime, onOpenCalendarSettings, identity, onOpenCalendarEvent,
 }: {
   plan: SchedulePlan;
   /** Why these days were chosen, shown above the times. */
@@ -55,6 +56,9 @@ export function FindTimesCard({
   onReplyWithTimes(slots: AvailabilityCandidate[]): void;
   onConfirmTime(slot: ScheduleSlot): void;
   onOpenCalendarSettings(): void;
+  /** What the event is called and where, to recognize it already on the calendar. */
+  identity?: EventIdentity;
+  onOpenCalendarEvent?(event: ScheduleEvent): void;
 }) {
   const [adjusted, setAdjusted] = useState<{ key: number; plan: SchedulePlan; reason: string } | null>(null);
   const [instruction, setInstruction] = useState("");
@@ -118,6 +122,8 @@ export function FindTimesCard({
       onReplyWithTimes={onReplyWithTimes}
       onConfirmTime={onConfirmTime}
       onOpenCalendarSettings={onOpenCalendarSettings}
+      identity={identity}
+      onOpenCalendarEvent={onOpenCalendarEvent}
       onSearchChange={(effective) => { shown.current = effective; }}
       adjustInput={adjustInput}
     />

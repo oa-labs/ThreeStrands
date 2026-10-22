@@ -219,11 +219,14 @@ export function extractSafeStyleSheet(html: string, theme?: "light" | "dark"): s
     .join("\n");
 }
 
+// <center> and <section> are pure layout wrappers. Templates often center
+// their outermost table with <center> alone; dropping the tag keeps its
+// content but pins that table to the left edge.
 const allowedTags = [
-  "a", "b", "blockquote", "br", "caption", "code", "col", "colgroup",
+  "a", "b", "blockquote", "br", "caption", "center", "code", "col", "colgroup",
   "dd", "del", "div", "dl", "dt", "em", "h1", "h2", "h3", "h4",
   "h5", "h6", "hr", "i", "img", "kbd", "li", "ol", "p", "pre", "s",
-  "small", "span", "strong", "sub", "sup", "table", "tbody", "td",
+  "section", "small", "span", "strong", "sub", "sup", "table", "tbody", "td",
   "tfoot", "th", "thead", "tr", "u", "ul",
 ];
 
@@ -233,6 +236,10 @@ const dimensionAttributeTags = new Set(["img", "table", "td", "th"]);
 // width from these alone; dropping them collapses every column and the cells'
 // overflow:hidden clips all of the content.
 const widthOnlyAttributeTags = new Set(["col", "colgroup"]);
+// Row heights are table-structure sizing, bounded by the same parser as cell
+// heights. Templates separate stacked sections with empty spacer rows such as
+// <tr height="16"><td></td></tr>; dropping the height collapses every gap.
+const heightOnlyAttributeTags = new Set(["tr"]);
 
 export function decodeHtmlEntities(text: string): string {
   const container = document.createElement("textarea");
@@ -369,7 +376,7 @@ export function sanitizeMessageHtml(html: string): string {
     }
     const tag = element.tagName.toLowerCase();
     if (!dimensionAttributeTags.has(tag) && !widthOnlyAttributeTags.has(tag)) element.removeAttribute("width");
-    if (!dimensionAttributeTags.has(tag)) element.removeAttribute("height");
+    if (!dimensionAttributeTags.has(tag) && !heightOnlyAttributeTags.has(tag)) element.removeAttribute("height");
 
     const width = element.getAttribute("width");
     if (width !== null) {

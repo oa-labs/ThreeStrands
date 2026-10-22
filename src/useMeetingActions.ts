@@ -72,6 +72,8 @@ export function useMeetingActions({
     description: string;
     /** The suggestion this event comes from; it is removed once the event exists. */
     source: { from: ProposalSource; proposal: ActionProposal } | null;
+    /** The email the suggestion was read from, tagged on the event. */
+    sourceMessageId?: string;
     /** Added from an opened calendar file, which is dismissed once the event exists. */
     fromOpenedFile?: boolean;
   } | null>(null);
@@ -123,6 +125,7 @@ export function useMeetingActions({
       invitees: invitees.length > 0 ? invitees : sender ? [sender] : [],
       description: [`Scheduled from “${visibleDetail.thread.subject}”.`, meeting.excerpt ? `“${meeting.excerpt}”` : null].filter(Boolean).join("\n\n"),
       source,
+      sourceMessageId: source?.proposal.evidence.sourceMessageId,
     });
   }, [ownAddresses, refreshCalendarOptions, visibleDetail]);
   const meetingCreated = useCallback((event: ScheduleEvent) => {

@@ -883,6 +883,16 @@ describe("Composer forwarded content and attachments", () => {
     vi.restoreAllMocks();
   });
 
+  it.each(["new", "reply"] as const)("lists file attachments beside the Attach button instead of below the %s signature and quote", (mode) => {
+    const file = { id: "file", name: "plan.pdf", mime: "application/pdf", size: 2048, ready: true, messageId: null, providerId: null };
+    const { container } = render(<Composer draft={{ ...draft, mode, attachments: [file] }} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    const list = screen.getByRole("list", { name: "Attachments" });
+    expect(within(list).getByText("plan.pdf")).toBeInTheDocument();
+    expect(list.closest(".composer-content")).toBeNull();
+    expect(list.nextElementSibling).toBe(container.querySelector(".composer > footer"));
+    expect(within(list.nextElementSibling as HTMLElement).getByRole("button", { name: "Attach Files" })).toBeInTheDocument();
+  });
+
   it.each([
     '<p><strong>Golf Monday</strong></p><a href="https://example.com/profile?one=1&amp;two=2">Profile</a><img src="https://images.example.com/forward-paragraph.png" alt="Invitation">',
     '<table cellspacing="4"><tr><td></td><td style="padding:8px"><em>Golf Monday</em><a href="https://example.com/profile?one=1&amp;two=2">Profile</a><img src="https://images.example.com/forward-table.png" alt="Invitation"></td></tr></table>',
@@ -965,6 +975,99 @@ describe("Composer forwarded content and attachments", () => {
     await waitFor(() => expect(frame.contentDocument!.querySelector("img")).toHaveAttribute("src", "data:image/png;base64,cG5n"));
     expect(readImage).toHaveBeenCalledWith("draft-1", "embedded-forward");
     expect(proxy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '<span style="display:none">Preview text for inboxes</span><p><strong>Golf Monday</strong> at <a href="https://example.com/tee">the club</a></p><p>Bring clubs.</p>',
+    '<div hidden>Preview text for inboxes</div><table cellspacing="4"><tr><td style="padding:8px"><em>Golf Monday</em> at <a href="https://example.com/tee">the club</a></td></tr><tr><td>Bring clubs.</td></tr></table>',
+  ])("edits a forwarded message as a sanitized copy and keeps the original (%s)", async (html) => {
+    const forwardedContent = { html: `<div>---------- Forwarded message ----------<br>From: Other &lt;other@example.com&gt;<br><br></div>${html}`, text: "Golf Monday at the club\nBring clubs." };
+    const forwarded: Draft = { ...draft, mode: "forward", subject: "Fwd: Golf Monday", forwardedContent };
+    const saveDraft = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    const ref = createRef<ComposerHandle>();
+    const { unmount } = render(<Composer ref={ref} draft={forwarded} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const region = screen.getByRole("region", { name: "Forwarded message" });
+    expect(within(region).getByText("Forwarded message")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Forwarded Message" })).not.toBeInTheDocument();
+
+    fireEvent.click(within(region).getByRole("button", { name: "Edit Forwarded Message" }));
+    const editable = screen.getByRole("textbox", { name: "Forwarded Message" });
+    expect(within(region).queryByLabelText("Message content")).not.toBeInTheDocument();
+    expect(within(region).getByText(/Some formatting may be simplified/)).toBeInTheDocument();
+    expect(editable).toHaveAttribute("contenteditable", "true");
+    expect(editable).toHaveTextContent("Golf Monday at the club");
+    expect(editable).toHaveTextContent("Bring clubs.");
+    expect(editable).not.toHaveTextContent("Preview text");
+    expect(editable.querySelector("a")).toHaveAttribute("href", "https://example.com/tee");
+    expect(editable.querySelector("table, [style*=padding]")).toBeNull();
+
+    editable.querySelector("a")!.parentElement!.append(" (dress code: casual)");
+    fireEvent.input(editable);
+    let saved!: Draft;
+    await act(async () => { saved = await ref.current!.flush(); });
+    const savedDraft = saveDraft.mock.lastCall![0];
+    expect(savedDraft.forwardedContent).toEqual(forwardedContent);
+    expect(savedDraft.forwardedEdit?.html).toContain("(dress code: casual)");
+    expect(savedDraft.forwardedEdit?.html).not.toContain("Preview text");
+    expect(savedDraft.forwardedEdit?.text).toContain("Golf Monday at the club (dress code: casual)");
+    expect(savedDraft.forwardedEdit?.text).toContain("Bring clubs.");
+
+    unmount();
+    render(<Composer draft={saved} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    expect(screen.getByRole("textbox", { name: "Forwarded Message" })).toHaveTextContent("(dress code: casual)");
+    expect(screen.getByRole("button", { name: "Restore Original" })).toBeInTheDocument();
+  });
+
+  it("keeps sender capabilities and remote images out of an edited forward", () => {
+    const url = "https://images.example.com/forward-edit-security.png";
+    const proxy = vi.spyOn(mailClient, "fetchRemoteImage");
+    const forwardedContent = { html: `<p onclick="parent.compromised=true" style="position:fixed;background-image:url(${url})">Invitation</p><img src="${url}" onerror="parent.compromised=true" srcset="https://tracker.invalid/a 2x"><style>p{background:url(https://tracker.invalid/css)}</style><script>parent.compromised=true</script><iframe src="https://tracker.invalid"></iframe><a href="javascript:alert(1)">Unsafe</a>`, text: "Invitation" };
+    render(<Composer draft={{ ...draft, mode: "forward", forwardedContent }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit Forwarded Message" }));
+    const editable = screen.getByRole("textbox", { name: "Forwarded Message" });
+    expect(editable).toHaveTextContent("Invitation");
+    expect(editable.querySelector("img, style, script, iframe, [onclick], [onerror], [srcset]")).toBeNull();
+    expect(editable.querySelector("p")!.getAttribute("style")).toBeNull();
+    expect(editable.querySelector("a")?.hasAttribute("href")).toBe(false);
+    expect(editable.innerHTML).not.toContain("tracker.invalid");
+    expect(editable.innerHTML).not.toContain(url);
+    expect(proxy).not.toHaveBeenCalled();
+  });
+
+  it("asks before Restore Original discards edits to a forwarded message", async () => {
+    const forwardedContent = { html: "<p>Original agenda</p>", text: "Original agenda" };
+    const edited: Draft = { ...draft, mode: "forward", forwardedContent, forwardedEdit: { html: "<p>Edited agenda</p>", text: "Edited agenda" } };
+    const saveDraft = vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    const ref = createRef<ComposerHandle>();
+    render(<Composer ref={ref} draft={edited} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    expect(screen.getByRole("textbox", { name: "Forwarded Message" })).toHaveTextContent("Edited agenda");
+
+    fireEvent.click(screen.getByRole("button", { name: "Restore Original" }));
+    const confirm = screen.getByRole("group", { name: "Restore original forwarded message confirmation" });
+    expect(within(confirm).getByRole("button", { name: "Keep Changes" })).toHaveFocus();
+    fireEvent.click(within(confirm).getByRole("button", { name: "Keep Changes" }));
+    expect(screen.getByRole("textbox", { name: "Forwarded Message" })).toHaveTextContent("Edited agenda");
+
+    fireEvent.click(screen.getByRole("button", { name: "Restore Original" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Restore original forwarded message confirmation" })).getByRole("button", { name: "Restore Original" }));
+    expect(screen.queryByRole("textbox", { name: "Forwarded Message" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Forwarded message" })).getByLabelText("Message content")).toBeInTheDocument();
+    await act(async () => { await ref.current!.flush(); });
+    expect(saveDraft).toHaveBeenLastCalledWith(expect.objectContaining({ forwardedContent, forwardedEdit: null }));
+  });
+
+  it("keeps a forwarded embedded image's attachment when the image is removed from the edited copy", async () => {
+    const attachment = { id: "embedded-edit", name: "photo.png", mime: "image/png", size: 3, ready: true, messageId: "source", providerId: "part", inline: true, contentId: "photo@example.com" };
+    const forwarded: Draft = { ...draft, mode: "forward", attachments: [attachment], forwardedContent: { html: '<p>Photos</p><img src="cid:photo@example.com" alt="Photo">', text: "Photos" } };
+    vi.spyOn(mailClient, "readInlineImage").mockResolvedValue("data:image/png;base64,cG5n");
+    const removeAttachment = vi.spyOn(mailClient, "removeAttachment");
+    render(<Composer draft={forwarded} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit Forwarded Message" }));
+    const editable = screen.getByRole("textbox", { name: "Forwarded Message" });
+    await waitFor(() => expect(editable.querySelector("img")).toHaveAttribute("src", "data:image/png;base64,cG5n"));
+    fireEvent.click(within(editable).getByRole("button", { name: "Remove Pasted Image" }));
+    expect(editable.querySelector("img")).toBeNull();
+    expect(removeAttachment).not.toHaveBeenCalled();
   });
 
   // A forward and an Edit as New copy both carry the source message's files.

@@ -155,6 +155,7 @@ pub(crate) fn draft_from_server_copy(
         body_html,
         signature: None,
         forwarded_content: None,
+        forwarded_edit: None,
         follow_up_task_id: base.and_then(|base| base.follow_up_task_id.clone()),
         attachments,
         updated_at: now(),

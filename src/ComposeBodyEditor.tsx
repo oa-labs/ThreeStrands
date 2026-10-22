@@ -4,12 +4,13 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import type { Attachment, Draft } from "./correspondence";
 import type { Snippet } from "./domain";
 import {
-  applyListShortcut, applyFormattingShortcut, formattingShortcutFor,
+  applyListShortcut, applyFormattingShortcut, formattingShortcutFor, forwardedComposeHtml,
   insertHtmlAtRange, linkifyPlainText, pastedLinkHref, draftTextToComposeHtml,
   plainTextToHtml, sanitizeComposeHtml, serializeComposeBody, splitReplyQuote,
   type FormattingShortcut,
 } from "./richText";
 import { FormattingPromptDialog } from "./FormattingPromptDialog";
+import { InlineConfirm } from "./InlineConfirm";
 import { SafeMessage, type MessageAppearance } from "./SafeMessage";
 import { mailClient } from "./data/client";
 import { normalizeContentId } from "./inlineAttachments";
@@ -27,7 +28,7 @@ const IMAGE_KEY_LARGE_STEP = 50;
 
 export type ComposeBodyEditorHandle = {
   /** Serialize only if the browser-owned DOM has changed. */
-  captureChanges(): Pick<Draft, "body" | "bodyHtml" | "signature"> | null;
+  captureChanges(): Pick<Draft, "body" | "bodyHtml" | "signature" | "forwardedEdit"> | null;
   replaceSignature(signature: DraftSignature | null | undefined): void;
   insertText(text: string): void;
   prependText(text: string): void;
@@ -67,6 +68,12 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
   const bodyEditor = useRef<HTMLDivElement>(null);
   const quotedEditor = useRef<HTMLDivElement>(null);
   const signatureEditor = useRef<HTMLDivElement>(null);
+  const forwardedEditor = useRef<HTMLDivElement>(null);
+  // The editable copy of a forward's sender HTML, or null while the original
+  // shows read-only. The ref lets a save read it before the editor mounts.
+  const [forwardedEdit, setForwardedEditState] = useState(() => initial.forwardedContent && initial.forwardedEdit ? sanitizeComposeHtml(initial.forwardedEdit.html) : null);
+  const forwardedEditHtml = useRef(forwardedEdit);
+  const [confirmingRestore, setConfirmingRestore] = useState(false);
   const [signatureState, setSignatureState] = useState(initial.signature);
   const signatureSnapshot = useRef(initial.signature);
   const signatureMarkup = useMemo(() => signatureState?.html ? signatureEditorHtml(signatureState.html, true) : "", [signatureState]);
@@ -83,7 +90,7 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
     const update = () => {
       const selection = document.getSelection();
       const next = Boolean(selection && !selection.isCollapsed && selection.rangeCount
-        && [bodyEditor.current, quotedEditor.current, signatureEditor.current].some((editor) => editor?.contains(selection.getRangeAt(0).commonAncestorContainer)));
+        && [bodyEditor.current, quotedEditor.current, signatureEditor.current, forwardedEditor.current].some((editor) => editor?.contains(selection.getRangeAt(0).commonAncestorContainer)));
       if (next === selected) return;
       selected = next;
       onSelectionChange(next);
@@ -159,8 +166,17 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
     } : current;
     signatureSnapshot.current = signature;
     bodyDirty.current = false;
-    return { body: text, bodyHtml: html, signature };
-  }, []);
+    if (!initial.forwardedContent) return { body: text, bodyHtml: html, signature };
+    const editedHtml = forwardedEditHtml.current;
+    const forwardedSource = editedHtml === null ? null : forwardedEditor.current ?? Object.assign(document.createElement("div"), { innerHTML: editedHtml });
+    return { body: text, bodyHtml: html, signature, forwardedEdit: forwardedSource ? serializeComposeBody(forwardedSource) : null };
+  }, [initial.forwardedContent]);
+  const setForwardedEdit = useCallback((html: string | null) => {
+    forwardedEditHtml.current = html;
+    setForwardedEditState(html);
+    setConfirmingRestore(false);
+    editBody();
+  }, [editBody]);
   const prependText = useCallback((text: string) => {
     if (!bodyEditor.current) return;
     // Availability and AI output are text; escape markup before insertion.
@@ -248,7 +264,7 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
   }));
   useEffect(() => {
     mounted.current = true;
-    [bodyEditor.current, quotedEditor.current, signatureEditor.current].flatMap((editor) => Array.from(editor?.querySelectorAll<HTMLImageElement>("img") ?? [])).forEach((image) => {
+    [bodyEditor.current, quotedEditor.current, signatureEditor.current, forwardedEditor.current].flatMap((editor) => Array.from(editor?.querySelectorAll<HTMLImageElement>("img") ?? [])).forEach((image) => {
       const source = image.getAttribute("src") ?? "";
       const attachment = source.startsWith("cid:")
         ? attachments.find((candidate) => candidate.inline && candidate.contentId === source.slice(4))
@@ -257,10 +273,11 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
         image.dataset.composeSource = source;
         void readInlineImage(attachment.id).then((preview) => { image.src = preview; }).catch((reason) => onError(String(reason)));
       }
-      if (!signatureEditor.current?.contains(image)) decorateImage(image, attachment?.id);
+      // Removing a forwarded image keeps its attachment, so Restore Original still shows it.
+      if (!signatureEditor.current?.contains(image)) decorateImage(image, forwardedEditor.current?.contains(image) ? undefined : attachment?.id);
     });
     return () => { mounted.current = false; };
-  }, [attachments, onError, readInlineImage, signatureState]);
+  }, [attachments, onError, readInlineImage, signatureState, forwardedEdit]);
   useEffect(() => {
     const root = signatureEditor.current;
     if (!root) return;
@@ -283,7 +300,7 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
     // zero; the UI owns the eventual writing boundary and sanitized content.
     if (signatureSnapshot.current) editBody();
   }, [editBody, signatureState]);
-  // Editing behavior shared by the body and a reply's quoted history.
+  // Editing behavior shared by the body, a reply's quoted history, and an edited forward.
   const editingProps = {
     contentEditable: !busy,
     suppressContentEditableWarning: true,
@@ -449,9 +466,41 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
       />
     ) : null}
     {initial.forwardedContent ? (
-      <section aria-label="Forwarded message">
-        <SafeMessage {...messageAppearance} foldQuotes={false} html={initial.forwardedContent.html} text={initial.forwardedContent.text}
-          resolveImage={resolveForwardedImage} imageCacheKey={`${initial.id}:${attachments.filter((attachment) => attachment.inline && attachment.ready).map((attachment) => attachment.id).join(",")}`} />
+      <section className="compose-forwarded" aria-label="Forwarded message">
+        {/* Sender HTML shows read-only until the user asks to edit it; editing
+            converts it once through the compose sanitizer. */}
+        <div className="compose-forwarded-bar">
+          <span>{forwardedEdit === null ? "Forwarded message" : "Editing forwarded message · Some formatting may be simplified"}</span>
+          {forwardedEdit === null ? (
+            <button type="button" className="btn btn-sm" disabled={busy} aria-label="Edit Forwarded Message"
+              title="Edit the forwarded message. Some formatting and web images may be removed."
+              onClick={() => setForwardedEdit(forwardedComposeHtml(initial.forwardedContent!.html))}>Edit</button>
+          ) : (
+            <button type="button" className="btn btn-sm" disabled={busy || confirmingRestore} onClick={() => setConfirmingRestore(true)}>Restore Original</button>
+          )}
+        </div>
+        {confirmingRestore ? (
+          <InlineConfirm ariaLabel="Restore original forwarded message confirmation" title="Restore the original message?" cancelLabel="Keep Changes"
+            onCancel={() => setConfirmingRestore(false)} disabled={busy} focusCancel
+            actions={[{ label: "Restore Original", className: "btn-danger", onClick: () => setForwardedEdit(null) }]}>
+            Your changes to the forwarded message will be lost.
+          </InlineConfirm>
+        ) : null}
+        {forwardedEdit === null ? (
+          <SafeMessage {...messageAppearance} foldQuotes={false} html={initial.forwardedContent.html} text={initial.forwardedContent.text}
+            resolveImage={resolveForwardedImage} imageCacheKey={`${initial.id}:${attachments.filter((attachment) => attachment.inline && attachment.ready).map((attachment) => attachment.id).join(",")}`} />
+        ) : (
+          <div
+            ref={forwardedEditor}
+            className="compose-body compose-forwarded-edit"
+            role="textbox"
+            aria-label="Forwarded Message"
+            aria-multiline="true"
+            aria-disabled={busy}
+            dangerouslySetInnerHTML={{ __html: forwardedEdit }}
+            {...editingProps}
+          />
+        )}
       </section>
     ) : null}
     {formattingPrompt?.shortcut.prompt ? (
@@ -475,7 +524,7 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
           recordSnippetUsed(snippet.id);
           setSnippetPickerOpen(false);
           const saved = savedSnippetRange.current;
-          const editor = [bodyEditor.current, quotedEditor.current].find((candidate) => candidate && saved && candidate.contains(saved.startContainer)) ?? bodyEditor.current;
+          const editor = [bodyEditor.current, quotedEditor.current, forwardedEditor.current].find((candidate) => candidate && saved && candidate.contains(saved.startContainer)) ?? bodyEditor.current;
           if (!editor) return;
           editor.focus();
           let range: Range;

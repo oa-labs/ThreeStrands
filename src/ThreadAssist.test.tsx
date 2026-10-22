@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import { SLOTS_PER_DAY } from "./scheduling";
 import { ThreadAssist, type ThreadAssistProps } from "./ThreadAssist";
@@ -254,14 +255,14 @@ describe("ThreadAssist", () => {
       confidence: 0.4,
       evidence: { sourceMessageId: "message-unknown", excerpt: "Let's meet next week." },
     };
-    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
     render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [meeting] }, scheduling: { calendarConnected: true } })} />);
 
     expect(screen.getByText("Check details")).toBeInTheDocument();
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Find Times" })).not.toBeInTheDocument();
     const schedule = screen.getByRole("group", { name: "Schedule" });
-    expect(within(schedule).getByText("Using your time zone (America/New_York)")).toBeInTheDocument();
+    expect(within(schedule).getByText("Times in Eastern Time (the email didn’t say)")).toBeInTheDocument();
     await waitFor(() => expect(find).toHaveBeenCalledWith(expect.objectContaining({ maxPerDay: SLOTS_PER_DAY })));
     expect(await within(schedule).findByText("No open times in your working hours for this range.")).toBeInTheDocument();
     fireEvent.click(screen.getByText("From the email"));
@@ -275,7 +276,7 @@ describe("ThreadAssist", () => {
       searchRangeStart: null, searchRangeEnd: null, durationMinutes: 30, timeZone: "America/New_York", confidence: 0.9,
       evidence: { sourceMessageId: "message-1", excerpt: "Please set up the website by Friday." },
     };
-    vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
     const onAddToCalendar = vi.fn();
     render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [taskProposal, meeting] }, scheduling: { calendarConnected: true, onAddToCalendar } })} />);
 
@@ -307,7 +308,7 @@ describe("ThreadAssist", () => {
   });
 
   it("labels announced events and keeps each card's calendar check when an earlier card is discarded", async () => {
-    const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
     const event: ActionProposal = {
       type: "meeting", intent: "attend", title: "Bonfire", participants: [], location: "224 Fairoaks St",
       rawTimeLanguage: "Saturday, starting around 6:45 PM", normalizedStart: new Date(Date.now() + 3 * 86_400_000).toISOString(),
@@ -324,6 +325,26 @@ describe("ThreadAssist", () => {
     expect(screen.getByText("You’re free")).toBeInTheDocument();
     expect(screen.queryByText("Checking your calendar…")).not.toBeInTheDocument();
     expect(check).toHaveBeenCalledTimes(1);
+  });
+
+  it("recognizes a suggested event already on the calendar by its title and opens it there", async () => {
+    clearScheduleCache();
+    const start = new Date(Date.now() + 4 * 86_400_000).toISOString();
+    const end = new Date(Date.parse(start) + 2 * 3_600_000).toISOString();
+    vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "conflicting", conflicts: [{ start, end }], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
+    const added = { id: "added", accountId: "you@example.com", title: "Entrepreneur Day 2026", allDay: false, start, end };
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [added], errors: [] });
+    const event: ActionProposal = {
+      type: "meeting", intent: "attend", title: "Entrepreneur Day 2026", participants: [], location: "1435 Bedford Ave",
+      rawTimeLanguage: "November 17 at 4:00 PM", normalizedStart: start, normalizedEnd: end, eventDate: null,
+      searchRangeStart: null, searchRangeEnd: null, durationMinutes: 120,
+      timeZone: "America/New_York", confidence: 0.9, evidence: { sourceMessageId: "message-1", excerpt: "You're invited to Entrepreneur Day 2026" },
+    };
+    const onOpenCalendarEvent = vi.fn();
+    render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [event] }, scheduling: { calendarConnected: true, onOpenCalendarEvent } })} />);
+    expect(await screen.findByText("Already on your calendar")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open in Calendar" }));
+    expect(onOpenCalendarEvent).toHaveBeenCalledWith(added);
   });
 
   it("explains unreadable provider output in plain language and keeps the details available", () => {
@@ -384,7 +405,7 @@ describe("ThreadAssist", () => {
       searchRangeStart: null, searchRangeEnd: null, durationMinutes: 30, timeZone: null, confidence: 0.9,
       evidence: { sourceMessageId: "message-1", excerpt: "Let's meet next week." },
     };
-    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
     const findTimes = vi.spyOn(mailClient, "findTimes");
     render(<ThreadAssist {...props({ detail: summarized, suggestions: { requested: true, proposals: [taskProposal, meeting] }, scheduling: { calendarConnected: true } })} />);
 

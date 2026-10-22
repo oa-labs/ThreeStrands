@@ -1,6 +1,7 @@
-import { CalendarPlus, CircleCheck, CircleAlert, RotateCcw } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useState } from "react";
-import type { AvailabilityCandidate, AvailabilityPreferences, ProposedTimeCheck } from "./domain";
+import { CalendarCheck, CalendarPlus, CircleCheck, CircleAlert, RotateCcw } from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import type { AvailabilityCandidate, AvailabilityPreferences, ProposedTimeCheck, ScheduleEvent } from "./domain";
+import { findCalendarMatch, findDayMatch, SAME_EVENT_START_TOLERANCE_MINUTES, type CalendarMatch, type EventIdentity } from "./eventMatching";
 import { mailClient } from "./data/client";
 import { refreshScheduleCache } from "./calendarScheduleCache";
 import { scheduleRequestFor } from "./CalendarSidebar";
@@ -18,8 +19,25 @@ export type CalendarAddition = ScheduleSlot & { allDay?: boolean };
 type CheckState =
   | { phase: "idle" | "loading" }
   | { phase: "error"; message: string }
-  | { phase: "specific"; check: ProposedTimeCheck; conflictTitles: string[] }
-  | { phase: "range"; candidates: AvailabilityCandidate[] };
+  | { phase: "specific"; check: ProposedTimeCheck; conflictTitles: string[]; match: CalendarMatch | null }
+  | { phase: "range"; candidates: AvailabilityCandidate[]; verified: boolean; unchecked: string[] };
+
+/** Names the calendars a check could not read, once for the whole card, such as "Couldn't check Team, so these times may conflict with it." */
+export function uncheckedNote(unchecked: string[], subject: "this time" | "these times"): string {
+  if (unchecked.length === 0) return `Some calendars couldn’t be checked, so ${subject} may conflict with them.`;
+  const names = new Intl.ListFormat(undefined, { type: "conjunction" }).format(unchecked);
+  return `Couldn’t check ${names}, so ${subject} may conflict with ${unchecked.length === 1 ? "it" : "them"}.`;
+}
+
+/** A familiar name for the zone, such as "Eastern Time", which stays right across daylight saving changes. */
+export function zoneName(timeZone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat(undefined, { timeZone, timeZoneName: "longGeneric" }).formatToParts(new Date());
+    return parts.find((part) => part.type === "timeZoneName")?.value ?? timeZone;
+  } catch {
+    return timeZone;
+  }
+}
 
 function formatSlot(slot: ScheduleSlot, timeZone: string): string {
   const start = new Date(slot.start);
@@ -61,16 +79,29 @@ function formatDay(date: string): string {
   return new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(new Date(year, month - 1, day));
 }
 
-/** Titles of timed schedule events that overlap the slot, from the day's cached schedule. */
-async function overlappingTitles(slot: ScheduleSlot): Promise<string[]> {
-  const request = scheduleRequestFor(new Date(slot.start));
+/** The day's schedule events, from the cache. */
+async function eventsOnDay(date: Date): Promise<ScheduleEvent[]> {
+  const request = scheduleRequestFor(date);
   const result = await refreshScheduleCache(request, () => mailClient.listScheduleEvents(request.timeMin, request.timeMax, request.timeZone));
-  const start = Date.parse(slot.start);
-  const end = Date.parse(slot.end);
-  return [...new Set(result.events
-    .filter((event) => !event.allDay && Date.parse(event.start) < end && Date.parse(event.end) > start)
-    .map((event) => event.title))];
+  return result.events;
 }
+
+/** Whether a timed schedule event overlaps the slot. */
+function overlaps(event: ScheduleEvent, slot: ScheduleSlot): boolean {
+  return !event.allDay && Date.parse(event.start) < Date.parse(slot.end) && Date.parse(event.end) > Date.parse(slot.start);
+}
+
+/** "Already on your calendar", with the time when the event sits at another one that day. */
+function addedText(match: CalendarMatch, slot: ScheduleSlot, timeZone: string): string {
+  const moved = !match.event.allDay
+    && Math.abs(Date.parse(match.event.start) - Date.parse(slot.start)) > SAME_EVENT_START_TOLERANCE_MINUTES * 60_000;
+  if (!moved) return "Already on your calendar";
+  const time = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone }).format(new Date(match.event.start));
+  return `Already on your calendar at ${time}`;
+}
+
+/** Whether two schedule entries are the same event. */
+const sameEvent = (left: ScheduleEvent, right: ScheduleEvent) => left.accountId === right.accountId && left.id === right.id;
 
 /**
  * Checks a meeting against the user's calendar without involving AI: an
@@ -78,6 +109,8 @@ async function overlappingTitles(slot: ScheduleSlot): Promise<string[]> {
  * across its days. A range can be adjusted in place — mornings, afternoons,
  * or a later range — and shows more slots on request. Every outcome goes
  * through a review step: the event dialog or a reply in the composer.
+ * Given what the event is called, a time or day already on the calendar
+ * under that name reads as added rather than as a conflict.
  */
 export function MeetingScheduler({
   plan: initialPlan,
@@ -89,6 +122,8 @@ export function MeetingScheduler({
   onOpenCalendarSettings,
   onSearchChange,
   adjustInput,
+  identity: latestIdentity,
+  onOpenCalendarEvent,
   intoDraft = false,
 }: {
   plan: SchedulePlan;
@@ -104,6 +139,10 @@ export function MeetingScheduler({
   onSearchChange?(search: EffectiveSearch): void;
   /** Shown with the adjustment chips, for example a field to adjust with AI. */
   adjustInput?: ReactNode;
+  /** What the event is called and where, to recognize it already on the calendar. */
+  identity?: EventIdentity;
+  /** Opens a calendar event the suggestion already appears as. */
+  onOpenCalendarEvent?(event: ScheduleEvent): void;
 }) {
   // Plans computed from "now" differ on every render; keep the one this
   // scheduler mounted with. Callers key the scheduler by what it schedules.
@@ -125,6 +164,10 @@ export function MeetingScheduler({
   const [state, setState] = useState<CheckState>({ phase: "idle" });
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   const [attempt, setAttempt] = useState(0);
+  // Callers build the identity on each render; re-check only when its values change.
+  const identityKey = latestIdentity ? `${latestIdentity.title}|${latestIdentity.location ?? ""}|${latestIdentity.sourceMessageId ?? ""}` : "";
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const identity = useMemo(() => latestIdentity, [identityKey]);
   const timeZone = preferences.timeZone;
   const announced = plan.announced === true;
 
@@ -133,8 +176,14 @@ export function MeetingScheduler({
     try {
       if (target.kind === "specific") {
         const check = await mailClient.checkProposedTime({ start: target.start, end: target.end, timeZone, driveTimeBufferMinutes: preferences.driveTimeBufferMinutes });
-        const conflictTitles = check.status === "conflicting" ? await overlappingTitles(target).catch(() => []) : [];
-        if (isCurrent()) setState({ phase: "specific", check, conflictTitles });
+        // An event added from this email may sit at another time that day, so
+        // its day is read even when the time itself is free.
+        const readDay = check.status === "conflicting" || Boolean(identity?.sourceMessageId);
+        const dayEvents = readDay ? await eventsOnDay(new Date(target.start)).catch(() => []) : [];
+        const overlapping = check.status === "conflicting" ? dayEvents.filter((event) => overlaps(event, target)) : [];
+        const match = identity ? findCalendarMatch(identity, target, dayEvents) : null;
+        const conflictTitles = [...new Set(overlapping.filter((event) => !match || !sameEvent(event, match.event)).map((event) => event.title))];
+        if (isCurrent()) setState({ phase: "specific", check, conflictTitles, match });
       } else {
         const result = await mailClient.findAvailability({
           rangeStart: target.start,
@@ -148,14 +197,19 @@ export function MeetingScheduler({
         });
         const candidates = spreadAcrossDays(result.candidates, timeZone);
         if (!isCurrent()) return;
-        setState({ phase: "range", candidates });
+        setState({
+          phase: "range",
+          candidates,
+          verified: result.totalCalendarCount > 0 && result.checkedCalendarCount === result.totalCalendarCount,
+          unchecked: result.uncheckedCalendars,
+        });
         setVisibleCount(SUGGESTED_SLOT_COUNT);
         setSelected(new Set(candidates.slice(0, SUGGESTED_SLOT_COUNT).map(slotKey)));
       }
     } catch (reason) {
       if (isCurrent()) setState({ phase: "error", message: errorMessage(reason) });
     }
-  }, [bounds, plan.durationMinutes, preferences, timeZone]);
+  }, [bounds, identity, plan.durationMinutes, preferences, timeZone]);
 
   const boundsKey = `${bounds.weekdays.join(",")}|${bounds.dayStart ?? ""}|${bounds.dayEnd ?? ""}`;
   const queryKey = query ? `${query.kind}:${query.start}:${query.end}:${query.kind === "range" ? boundsKey : ""}` : "none";
@@ -167,6 +221,21 @@ export function MeetingScheduler({
     // The query is identified by `queryKey`; `attempt` re-runs after a failure.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [calendarConnected, queryKey, attempt, run]);
+  // A bare day is not checked for conflicts, only for the event already being on it.
+  const [dayMatch, setDayMatch] = useState<CalendarMatch | null>(null);
+  useEffect(() => {
+    const day = plan.day;
+    if (!calendarConnected || query || !day || !identity) return;
+    let current = true;
+    const [year, month, date] = day.split("-").map(Number);
+    eventsOnDay(new Date(year, month - 1, date))
+      .then((events) => { if (current) setDayMatch(findDayMatch(identity, day, events)); })
+      // Without the schedule the day still adds as usual.
+      .catch(() => undefined);
+    return () => { current = false; };
+    // A bare day has no query; `queryKey` stays "none" while it shows.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calendarConnected, plan.day, queryKey, identity]);
   useEffect(() => {
     if (query?.kind === "range") onSearchChange?.({ query, durationMinutes: plan.durationMinutes, bounds });
     // Reported once per distinct search, identified by `queryKey`.
@@ -192,7 +261,10 @@ export function MeetingScheduler({
     </div>
     {adjustInput}
   </div>;
-  const assumedZone = plan.timeZoneAssumed ? <small className="meeting-scheduler-note">Using your time zone ({timeZone})</small> : null;
+  const coverageNote = (text: string) => <p className="meeting-scheduler-note" role="note">
+    {text} <button type="button" className="btn-link" onClick={onOpenCalendarSettings}>Calendar Settings</button>
+  </p>;
+  const assumedZone = plan.timeZoneAssumed ? <small className="meeting-scheduler-note">Times in {zoneName(timeZone)} (the email didn&rsquo;t say)</small> : null;
 
   if (!calendarConnected) {
     return <div className="meeting-scheduler" role="group" aria-label="Schedule">
@@ -205,8 +277,10 @@ export function MeetingScheduler({
   if (!query && day) {
     return <div className="meeting-scheduler" role="group" aria-label="Schedule">
       <p className="meeting-slot">{formatDay(day)} · Time not set</p>
+      {dayMatch ? <p className="meeting-slot-status meeting-slot-added"><CircleCheck size={ICON_SIZE.xs} aria-hidden="true" /> Already on your calendar</p> : null}
       <div className="meeting-scheduler-actions">
-        <button type="button" className="btn btn-sm" onClick={() => onAddToCalendar({ start: day, end: day, allDay: true })}><CalendarPlus size={ICON_SIZE.sm} /> Add to Calendar</button>
+        {dayMatch && onOpenCalendarEvent ? <button type="button" className="btn btn-sm" onClick={() => onOpenCalendarEvent(dayMatch.event)}><CalendarCheck size={ICON_SIZE.sm} /> Open in Calendar</button> : null}
+        <button type="button" className="btn btn-sm" onClick={() => onAddToCalendar({ start: day, end: day, allDay: true })}>{dayMatch ? "Add Again" : <><CalendarPlus size={ICON_SIZE.sm} /> Add to Calendar</>}</button>
       </div>
     </div>;
   }
@@ -232,15 +306,25 @@ export function MeetingScheduler({
     </div> : null}
     {state.phase === "specific" && query.kind === "specific" ? <>
       <p className="meeting-slot">{formatSlot(query, timeZone)}</p>
-      <p className={`meeting-slot-status meeting-slot-${state.check.status}`}>
+      {state.match?.kind === "same" ? <>
+        <p className="meeting-slot-status meeting-slot-added"><CircleCheck size={ICON_SIZE.xs} aria-hidden="true" /> {addedText(state.match, query, timeZone)}</p>
+        {state.conflictTitles.length ? <p className="meeting-slot-status meeting-slot-conflicting"><CircleAlert size={ICON_SIZE.xs} aria-hidden="true" /> Also overlaps {state.conflictTitles.join(", ")}</p> : null}
+      </> : state.match?.kind === "maybe" ? <>
+        <p className="meeting-slot-status"><CircleAlert size={ICON_SIZE.xs} aria-hidden="true" /> May already be on your calendar as {state.match.event.title}</p>
+        {state.conflictTitles.length ? <p className="meeting-slot-status meeting-slot-conflicting"><CircleAlert size={ICON_SIZE.xs} aria-hidden="true" /> Also overlaps {state.conflictTitles.join(", ")}</p> : null}
+      </> : <p className={`meeting-slot-status meeting-slot-${state.check.status}`}>
         {state.check.status === "free" ? <><CircleCheck size={ICON_SIZE.xs} aria-hidden="true" /> You&rsquo;re free</> : null}
         {state.check.status === "conflicting" ? <><CircleAlert size={ICON_SIZE.xs} aria-hidden="true" /> {state.conflictTitles.length ? `Conflicts with ${state.conflictTitles.join(", ")}` : "Conflicts with another event"}</> : null}
         {state.check.status === "partiallyChecked" ? <>Free on the calendars that could be checked</> : null}
         {state.check.status === "unverified" ? <>No calendar could be checked</> : null}
-      </p>
+      </p>}
+      {state.check.status === "partiallyChecked" ? coverageNote(uncheckedNote(state.check.uncheckedCalendars, "this time")) : null}
       <div className="meeting-scheduler-actions">
-        <button type="button" className="btn btn-sm" onClick={() => onAddToCalendar(query)}><CalendarPlus size={ICON_SIZE.sm} /> Add to Calendar</button>
-        {announced || state.check.status === "conflicting" ? null
+        {state.match && onOpenCalendarEvent ? <button type="button" className="btn btn-sm" onClick={() => onOpenCalendarEvent(state.match!.event)}><CalendarCheck size={ICON_SIZE.sm} /> Open in Calendar</button> : null}
+        {/* Adding a second copy of an event already there takes a deliberate choice. */}
+        <button type="button" className="btn btn-sm" onClick={() => onAddToCalendar(query)}>{state.match?.kind === "same" ? "Add Again" : <><CalendarPlus size={ICON_SIZE.sm} /> Add to Calendar</>}</button>
+        {/* The matched event is this one, so only other overlaps rule out a reply that the time works. */}
+        {announced || (state.check.status === "conflicting" && !(state.match?.kind === "same" && state.conflictTitles.length === 0)) ? null
           : <button type="button" className="btn btn-sm" onClick={() => onConfirmTime(query)}>Reply &ldquo;That Works&rdquo;</button>}
         {announced ? null : <button type="button" className="btn btn-sm" onClick={() => findOtherTimes(query.start)}>Find Other Times</button>}
       </div>
@@ -265,7 +349,7 @@ export function MeetingScheduler({
                   else next.add(key);
                   return next;
                 })}
-              >{formatSlot(candidate, timeZone)}{candidate.status !== "verified" ? <small> · not every calendar checked</small> : null}</button>;
+              >{formatSlot(candidate, timeZone)}</button>;
             })}
         </div>
         {(() => {
@@ -279,6 +363,9 @@ export function MeetingScheduler({
               : null}
           </div>;
         })()}
+        {state.verified ? null : coverageNote(state.unchecked.length === 0 && !state.candidates.some((candidate) => candidate.status === "partiallyChecked")
+          ? "No calendar could be checked, so these times may conflict."
+          : uncheckedNote(state.unchecked, "these times"))}
       </>}
       {adjust}
     </> : null}

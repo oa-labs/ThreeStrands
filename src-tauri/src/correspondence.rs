@@ -154,6 +154,11 @@ pub struct Draft {
     // drafts have no preserved HTML and keep their existing text body.
     #[serde(default)]
     pub forwarded_content: Option<ForwardedContent>,
+    /// The user's edited copy of `forwarded_content`, saved by the composer
+    /// after the compose sanitizer. When set, it sends in place of the
+    /// original, which stays unchanged so the user can restore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forwarded_edit: Option<ForwardedContent>,
     #[serde(default)]
     pub follow_up_task_id: Option<String>,
     pub attachments: Vec<Attachment>,
@@ -554,6 +559,7 @@ impl Database {
             body_html: String::new(),
             signature: None,
             forwarded_content: None,
+            forwarded_edit: None,
             follow_up_task_id: None,
             attachments: vec![],
             updated_at: now(),
@@ -772,6 +778,7 @@ impl Database {
             body_html: normalized.body_html.clone(),
             signature: None,
             forwarded_content: None,
+            forwarded_edit: None,
             follow_up_task_id: None,
             attachments: forward_attachments(&source, &normalized)?,
             updated_at: now(),
@@ -792,7 +799,8 @@ impl Database {
             if old.signature.as_ref().is_some_and(|old| old.html != signature.html || old.text != signature.text) { signature.automatic = false; }
         }
         // Only editable fields cross the trust boundary; routing and file locators are native-owned.
-        if draft.body.len() + draft.body_html.len() > 2 * 1024 * 1024
+        let forwarded_edit_len = draft.forwarded_edit.as_ref().map_or(0, |edit| edit.html.len() + edit.text.len());
+        if draft.body.len() + draft.body_html.len() + forwarded_edit_len > 2 * 1024 * 1024
             || draft.subject.len() > 998
             || draft.to.len() + draft.cc.len() + draft.bcc.len() > 32000
         {
@@ -807,6 +815,10 @@ impl Database {
         draft.references = old.references;
         draft.attachments = old.attachments;
         draft.forwarded_content = old.forwarded_content;
+        // An edited copy exists only beside the original it replaces.
+        if draft.forwarded_content.is_none() {
+            draft.forwarded_edit = None;
+        }
         draft.follow_up_task_id = draft.follow_up_task_id.or(old.follow_up_task_id);
         if draft.subject != old.subject {
             draft.thread_id = None;
@@ -1394,7 +1406,7 @@ fn build_message(
             }
         }
     }
-    if let Some(forwarded) = &d.forwarded_content {
+    if let Some(forwarded) = d.forwarded_edit.as_ref().filter(|_| d.forwarded_content.is_some()).or(d.forwarded_content.as_ref()) {
         body.push_str(&format!("\n\n{}", forwarded.text));
         if body_html.trim().is_empty() {
             body_html = plain_text_html(&d.body);
@@ -2805,6 +2817,7 @@ mod tests {
             body_html: String::new(),
             signature: None,
             forwarded_content: None,
+            forwarded_edit: None,
             follow_up_task_id: None,
             attachments: vec![],
             updated_at: now(),
@@ -4895,6 +4908,58 @@ mod tests {
             assert_eq!(plain, format!("{}\n\n{}", reopened.body, reopened.forwarded_content.as_ref().unwrap().text));
             assert!(parsed.in_reply_to().as_text().is_none());
         }
+    }
+
+    #[test]
+    fn edited_forwards_send_the_edit_and_keep_the_original_to_restore() {
+        let db = database();
+        let html = "<p>Agenda</p><p>Private note for the team</p>";
+        let source = serde_json::json!({"id":"edited-forward","threadId":"thread","payload":{"mimeType":"text/html","headers":[{"name":"From","value":"Other <other@example.com>"},{"name":"To","value":"you@example.com"},{"name":"Subject","value":"Plans"}],"body":{"data":URL_SAFE_NO_PAD.encode(html)}}});
+        db.connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES (?1, ?2)", params!["edited-forward", source.to_string()]).unwrap();
+        let mut draft = db.create_draft("forward", Some("edited-forward".into()), "you@example.com", &[]).unwrap();
+        let original = draft.forwarded_content.clone().unwrap();
+        draft.to = "friend@example.com".into();
+        draft.body = "See below".into();
+        draft.forwarded_edit = Some(ForwardedContent { html: "<p>Agenda</p>".into(), text: "Agenda".into() });
+        let saved = db.save_draft(draft).unwrap();
+        let reopened = db.draft(&saved.id).unwrap();
+        assert_eq!(reopened.forwarded_content.as_ref().unwrap().html, original.html);
+        let raw = build_mime(&reopened, &[], None, None, "edited", Path::new(".")).unwrap();
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        assert_eq!(parsed.body_html(0).unwrap(), "See below<br><br><p>Agenda</p>");
+        assert_eq!(parsed.body_text(0).unwrap().replace("\r\n", "\n"), "See below\n\nAgenda");
+        assert!(!String::from_utf8_lossy(&raw).contains("Private note"));
+
+        // Restoring the original clears the edit; the untouched source sends again.
+        let mut restored = reopened.clone();
+        restored.forwarded_edit = None;
+        let restored = db.save_draft(restored).unwrap();
+        let raw = build_mime(&db.draft(&restored.id).unwrap(), &[], None, None, "restored", Path::new(".")).unwrap();
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        assert_eq!(parsed.body_html(0).unwrap(), format!("See below<br><br>{}", original.html));
+    }
+
+    #[test]
+    fn a_forwarded_edit_needs_an_original_to_replace() {
+        let db = database();
+        let mut draft = saved(&db);
+        draft.forwarded_edit = Some(ForwardedContent { html: "<p>Injected</p>".into(), text: "Injected".into() });
+        let saved = db.save_draft(draft).unwrap();
+        assert!(db.draft(&saved.id).unwrap().forwarded_edit.is_none());
+        let mut unsaved = saved.clone();
+        unsaved.forwarded_edit = Some(ForwardedContent { html: "<p>Injected</p>".into(), text: "Injected".into() });
+        let raw = build_mime(&unsaved, &[], None, None, "no-original", Path::new(".")).unwrap();
+        assert!(!String::from_utf8_lossy(&raw).contains("Injected"));
+    }
+
+    #[test]
+    fn a_forwarded_edit_counts_toward_the_draft_size_limit() {
+        let db = database();
+        let source = serde_json::json!({"id":"large-forward","threadId":"thread","payload":{"mimeType":"text/html","headers":[{"name":"From","value":"other@example.com"},{"name":"Subject","value":"Large"}],"body":{"data":URL_SAFE_NO_PAD.encode("<p>Large</p>")}}});
+        db.connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES (?1, ?2)", params!["large-forward", source.to_string()]).unwrap();
+        let mut draft = db.create_draft("forward", Some("large-forward".into()), "you@example.com", &[]).unwrap();
+        draft.forwarded_edit = Some(ForwardedContent { html: "x".repeat(2 * 1024 * 1024), text: "x".into() });
+        assert_eq!(db.save_draft(draft).unwrap_err(), "Draft is too large");
     }
 
     #[test]

@@ -4,9 +4,11 @@ import { afterEach } from "vitest";
 
 // Vitest globals are off, so Testing Library cannot register its own
 // automatic cleanup; without this, rendered trees and hooks (and their
-// intervals) from one test stay mounted into the next.
+// intervals) from one test stay mounted into the next. The app also reopens
+// the last workspace it showed, so each test starts back in Mail.
 afterEach(() => {
   cleanup();
+  localStorage.removeItem("threestrands.workspace.last");
 });
 
 Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {

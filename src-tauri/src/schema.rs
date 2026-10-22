@@ -14,7 +14,7 @@ pub(crate) const BASELINE_VERSION: i64 = 74;
 
 /// The current schema version. A new schema change adds an
 /// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 81;
+pub(crate) const LATEST_VERSION: i64 = 84;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -876,6 +876,42 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         .map_err(error)?;
     }
     if version < 81 {
+        // A text/plain alternative missing most of what its HTML sibling says
+        // (a stub, an unfilled template, a stale copy) now takes its text from
+        // the HTML, and previews lead with the HTML's hidden preheader. Queue
+        // every thread so the bounded search-reindex batch re-normalizes its
+        // messages and rebuilds its preview.
+        tx.execute_batch(
+            "INSERT OR IGNORE INTO pending_search_reindex(thread_id)
+                 SELECT id FROM threads;",
+        )
+        .map_err(error)?;
+    }
+    if version < 82 {
+        // Cc recipients on their own, so the reader can show who was copied.
+        // `cc_bcc_json` stays for search. Existing mail is filled in from each
+        // message's stored payload by the bounded search-reindex queue.
+        tx.execute_batch(
+            "ALTER TABLE messages ADD COLUMN cc_json TEXT NOT NULL DEFAULT '[]';
+             INSERT OR IGNORE INTO pending_search_reindex(thread_id)
+                 SELECT DISTINCT thread_id FROM messages;",
+        )
+        .map_err(error)?;
+    }
+    if version < 83 {
+        // Calendar accounts keep a chosen order, like mail accounts. Existing
+        // accounts keep the order they were listed in: oldest connection first.
+        tx.execute_batch(
+            "ALTER TABLE calendar_accounts ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+             UPDATE calendar_accounts SET sort_order = (
+                 SELECT count(*) FROM calendar_accounts AS earlier
+                 WHERE earlier.connected_at < calendar_accounts.connected_at
+                    OR (earlier.connected_at = calendar_accounts.connected_at AND earlier.email < calendar_accounts.email)
+             );",
+        )
+        .map_err(error)?;
+    }
+    if version < 84 {
         // Discarded drafts, held for a while so Undo can bring them back with
         // their attachment files. Device-local, never synced or exported.
         tx.execute_batch(
@@ -1259,7 +1295,7 @@ mod tests {
         super::migrate(&mut connection).unwrap();
         // Roll back to what a 0.147 database looks like.
         connection
-            .execute_batch("DROP TABLE draft_server_links; DROP TABLE draft_server_deletions;")
+            .execute_batch("DROP TABLE draft_server_links; DROP TABLE draft_server_deletions; ALTER TABLE messages DROP COLUMN cc_json; ALTER TABLE calendar_accounts DROP COLUMN sort_order;")
             .unwrap();
         connection.pragma_update(None, "user_version", 78).unwrap();
         connection
@@ -1273,6 +1309,89 @@ mod tests {
         assert!(connection
             .execute("INSERT INTO draft_server_links(draft_id, account, state) VALUES ('d', 'a', 'pushing')", [])
             .is_err(), "only known push states are stored");
+    }
+
+    #[test]
+    fn a_v81_database_gains_cc_and_queues_its_mail_for_backfill() {
+        // Mail stored before v82 has no separate Cc yet: it gets an empty list
+        // and its thread is queued so the reindex batch can fill it in.
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(crate::schema::INITIAL_SCHEMA)
+            .unwrap();
+        connection.execute_batch("ALTER TABLE messages ADD COLUMN cc_bcc_json TEXT NOT NULL DEFAULT '[]';").unwrap();
+        connection.pragma_update(None, "user_version", 81).unwrap();
+        connection.pragma_update(None, "foreign_keys", false).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO messages(id, thread_id, sender, recipients_json, sent_at, body_html, body_text, cc_bcc_json)
+                 VALUES ('m1', 'thread-a', 'a@example.com', '[\"b@example.com\"]', '2026-01-01T00:00:00Z', '', '', '[\"c@example.com\"]'),
+                        ('m2', 'thread-b', 'b@example.com', '[]', '2026-01-02T00:00:00Z', '', '', '[]');",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let stored: Vec<(String, String)> = connection
+            .prepare("SELECT cc_json, cc_bcc_json FROM messages ORDER BY id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            stored,
+            vec![("[]".to_string(), "[\"c@example.com\"]".to_string()), ("[]".to_string(), "[]".to_string())]
+        );
+        let queued: Vec<String> = connection
+            .prepare("SELECT thread_id FROM pending_search_reindex ORDER BY thread_id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(queued, vec!["thread-a", "thread-b"]);
+        assert_eq!(
+            connection
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            super::LATEST_VERSION
+        );
+    }
+
+    #[test]
+    fn a_v82_database_orders_its_calendar_accounts_by_when_they_were_connected() {
+        // Before v83 calendar accounts were listed oldest connection first;
+        // the new order keeps that, breaking ties by email.
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(crate::schema::INITIAL_SCHEMA).unwrap();
+        connection.execute_batch("ALTER TABLE messages ADD COLUMN cc_bcc_json TEXT NOT NULL DEFAULT '[]';
+             ALTER TABLE messages ADD COLUMN cc_json TEXT NOT NULL DEFAULT '[]';").unwrap();
+        connection.pragma_update(None, "user_version", 82).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO calendar_accounts(email, connected_at) VALUES
+                     ('work@example.com', '2026-03-01T00:00:00Z'),
+                     ('home@example.com', '2026-01-01T00:00:00Z'),
+                     ('b@example.com', '2026-02-01T00:00:00Z'),
+                     ('a@example.com', '2026-02-01T00:00:00Z');",
+            )
+            .unwrap();
+        super::migrate(&mut connection).unwrap();
+        let ordered: Vec<(String, i64)> = connection
+            .prepare("SELECT email, sort_order FROM calendar_accounts ORDER BY sort_order")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            ordered,
+            vec![
+                ("home@example.com".to_string(), 0),
+                ("a@example.com".to_string(), 1),
+                ("b@example.com".to_string(), 2),
+                ("work@example.com".to_string(), 3),
+            ]
+        );
     }
 
     #[test]
@@ -1334,6 +1453,37 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         assert_eq!(cc_bcc, vec!["[]", "[]", "[]"]);
+        let queued: Vec<String> = connection
+            .prepare("SELECT thread_id FROM pending_search_reindex ORDER BY thread_id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(queued, vec!["thread-a", "thread-b"]);
+        assert_eq!(
+            connection
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            super::LATEST_VERSION
+        );
+    }
+
+    #[test]
+    fn a_v80_database_queues_every_thread_to_recheck_its_plain_text() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(crate::schema::INITIAL_SCHEMA).unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO threads(id, provider_thread_id, subject, snippet, participants_json, last_message_at, labels_json, account_id)
+                 VALUES ('thread-a', 'a', 'A', '${H1-Headline-Text}', '[]', '2026-01-01T00:00:00Z', '[]', 'you@example.com'),
+                        ('thread-b', 'b', 'B', 'Hello', '[]', '2026-01-02T00:00:00Z', '[]', 'you@example.com');",
+            )
+            .unwrap();
+        connection.execute_batch("ALTER TABLE messages DROP COLUMN cc_json; ALTER TABLE calendar_accounts DROP COLUMN sort_order;").unwrap();
+        connection.pragma_update(None, "user_version", 80).unwrap();
+        super::migrate(&mut connection).unwrap();
         let queued: Vec<String> = connection
             .prepare("SELECT thread_id FROM pending_search_reindex ORDER BY thread_id")
             .unwrap()

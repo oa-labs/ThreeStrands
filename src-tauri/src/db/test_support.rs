@@ -41,6 +41,7 @@ pub(super) fn message(id: &str, thread_id: &str, date: &str, body: &str) -> Norm
         subject: "Subject".into(),
         from: "sender@example.com".into(),
         to: vec!["recipient@example.com".into()],
+        cc: Vec::new(),
         cc_bcc: Vec::new(),
         date: date.into(),
         body_html: String::new(),

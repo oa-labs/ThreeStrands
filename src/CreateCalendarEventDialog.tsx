@@ -30,6 +30,7 @@ export function CreateCalendarEventDialog({
   initialDescription = "",
   initialLocation = "",
   initialAllDay = false,
+  sourceMessageId,
   onClose,
   onCreated,
 }: {
@@ -44,6 +45,8 @@ export function CreateCalendarEventDialog({
   initialDescription?: string;
   initialLocation?: string;
   initialAllDay?: boolean;
+  /** The email the event comes from, so it can be recognized on the calendar later. */
+  sourceMessageId?: string;
   onClose(): void;
   onCreated(event: ScheduleEvent): void;
 }) {
@@ -117,6 +120,7 @@ export function CreateCalendarEventDialog({
       location: location.trim(),
       description,
       attendees: [...new Set(attendees.map((email) => email.toLowerCase()))],
+      ...(sourceMessageId ? { sourceMessageId } : {}),
     };
     setSaving(true);
     try {

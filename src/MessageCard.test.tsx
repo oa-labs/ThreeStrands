@@ -88,6 +88,49 @@ describe("MessageCard", () => {
     expect(stableProps.onToggle).not.toHaveBeenCalled();
   });
 
+  describe("recipient line", () => {
+    const own = [{ email: "me@example.com" } as Account];
+    const names = (container: HTMLElement) =>
+      Array.from(container.querySelectorAll(".message-recipients .address-name"), (node) => node.textContent);
+    const line = (container: HTMLElement) => container.querySelector(".message-recipients")!;
+
+    it("shows Cc after To and calls the user's own address me", () => {
+      const { container } = render(<MessageCard
+        message={{ ...message, recipients: ["David Martinez <david@example.com>"], cc: ["Joel <ME@example.com>", "Jane Doe <jane@example.com>"] }}
+        isExpanded {...stableProps} accounts={own}
+      />);
+      expect(names(container)).toEqual(["David Martinez", "me", "Jane Doe"]);
+      expect(line(container)).toHaveTextContent(/^to David Martinezdavid@example\.com, cc meME@example\.com and Jane Doejane@example\.com$/);
+    });
+
+    it("says to me when the user is a To recipient and omits an empty Cc", () => {
+      const { container } = render(<MessageCard message={{ ...message, cc: [] }} isExpanded {...stableProps} accounts={own} />);
+      expect(names(container)).toEqual(["me"]);
+      expect(line(container)).not.toHaveTextContent("cc");
+    });
+
+    it("shows only the Cc group when a message has no To", () => {
+      const { container } = render(<MessageCard
+        message={{ ...message, recipients: [], cc: ["me@example.com"] }}
+        isExpanded {...stableProps} accounts={own}
+      />);
+      expect(line(container)).toHaveTextContent(/^cc meme@example\.com$/);
+    });
+
+    it("counts To and Cc together toward the preview limit", () => {
+      const people = (prefix: string, count: number) => Array.from({ length: count }, (_, i) => `${prefix} ${i + 1} <${prefix}${i + 1}@example.com>`);
+      const { container } = render(<MessageCard
+        message={{ ...message, recipients: people("To", 15), cc: people("Cc", 10) }}
+        isExpanded {...stableProps}
+      />);
+      expect(names(container)).toHaveLength(20);
+      expect(line(container)).toHaveTextContent(/, cc Cc 1Cc1@example\.com, .*Cc 5Cc5@example\.com, and 5 more$/);
+      fireEvent.click(screen.getByRole("button", { name: "5 more" }));
+      expect(names(container)).toHaveLength(25);
+      expect(line(container)).toHaveTextContent(/Cc 9Cc9@example\.com, and Cc 10Cc10@example\.com$/);
+    });
+  });
+
   it("reports toggles and responses by message id", () => {
     render(<MessageCard message={message} isExpanded {...stableProps} />);
     fireEvent.click(screen.getByRole("button", { name: "Reply All" }));

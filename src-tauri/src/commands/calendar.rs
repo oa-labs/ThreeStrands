@@ -39,8 +39,19 @@ pub(crate) async fn add_calendar_account(state: State<'_, AppState>) -> AppResul
         .into_iter()
         .find(|account| account.email == email)
         .ok_or_else(|| "Calendar account was not saved".to_string())?;
-    record_synced_value(&state, threestrands_sync_protocol::EntityType::CalendarAccount, &email.to_ascii_lowercase(), &serde_json::json!({"email":email}), None)?;
+    record_synced_value(&state, threestrands_sync_protocol::EntityType::CalendarAccount, &email.to_ascii_lowercase(), &serde_json::json!({"email":email,"sortOrder":account.sort_order}), None)?;
     Ok(account)
+}
+
+#[tauri::command(async)]
+pub(crate) fn reorder_calendar_accounts(emails: Vec<String>, state: State<'_, AppState>) -> AppResult<()> {
+    state.database.reorder_calendar_accounts(&emails)?;
+    for account in state.database.list_calendar_accounts()? {
+        record_synced_value(&state, threestrands_sync_protocol::EntityType::CalendarAccount, &account.email.to_ascii_lowercase(),
+            &serde_json::json!({"email":account.email,"sortOrder":account.sort_order}),
+            Some(std::collections::BTreeSet::from(["sortOrder".to_string()])))?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -126,29 +137,45 @@ async fn selected_calendar_ids(
     }
 }
 
+struct FreeBusyCoverage {
+    busy: Vec<BusyInterval>,
+    checked: usize,
+    total: usize,
+    /// Names of selected calendars, or accounts, whose busy times are missing.
+    unchecked: Vec<String>,
+    errors: Vec<String>,
+}
+
+/// Display names for calendars that could not be checked, falling back to
+/// the calendar ID when the account's calendar list cannot be read.
+async fn calendar_names(config: &auth::OAuthApp, email: &str, ids: &[String]) -> Vec<String> {
+    let options = calendar::list_calendar_options(config.calendar_account(email), email).await.unwrap_or_default();
+    ids.iter()
+        .map(|id| options.iter().find(|option| &option.id == id).map_or_else(|| id.clone(), |option| option.name.clone()))
+        .collect()
+}
+
 async fn freebusy_coverage(
     time_min: &str,
     time_max: &str,
     time_zone: &str,
     drive_time_buffer_minutes: u32,
     state: &AppState,
-) -> AppResult<(Vec<BusyInterval>, usize, usize, Vec<String>)> {
+) -> AppResult<FreeBusyCoverage> {
+    let mut coverage = FreeBusyCoverage { busy: Vec::new(), checked: 0, total: 0, unchecked: Vec::new(), errors: Vec::new() };
     let Ok(config) = state.auth_config.google() else {
-        return Ok((Vec::new(), 0, 0, Vec::new()));
+        return Ok(coverage);
     };
-    let mut busy = Vec::new();
-    let mut checked = 0;
-    let mut total = 0;
-    let mut errors = Vec::new();
     for account in connected_calendar_accounts(config, &state.database)? {
         let calendar_ids = match selected_calendar_ids(config, &state.database, &account.email).await {
             Ok(ids) => ids,
             Err(error) => {
-                errors.push(format!("{}: {error}", account.email));
+                coverage.unchecked.push(account.email.clone());
+                coverage.errors.push(format!("{}: {error}", account.email));
                 continue;
             }
         };
-        total += calendar_ids.len();
+        coverage.total += calendar_ids.len();
         if calendar_ids.is_empty() {
             continue;
         }
@@ -163,19 +190,25 @@ async fn freebusy_coverage(
         .await
         {
             Ok(result) => {
-                checked += result.checked_calendar_count;
-                busy.extend(result.busy);
-                errors.extend(result.errors.into_iter().map(|error| format!("{}: {error}", account.email)));
+                coverage.checked += result.checked_calendar_count;
+                coverage.busy.extend(result.busy);
+                if !result.unchecked_calendar_ids.is_empty() {
+                    coverage.unchecked.extend(calendar_names(config, &account.email, &result.unchecked_calendar_ids).await);
+                }
+                coverage.errors.extend(result.errors.into_iter().map(|error| format!("{}: {error}", account.email)));
             }
-            Err(error) => errors.push(format!("{}: {error}", account.email)),
+            Err(error) => {
+                coverage.unchecked.push(account.email.clone());
+                coverage.errors.push(format!("{}: {error}", account.email));
+            }
         }
     }
     // Preserve an explicit partial state when an account/calendar discovery
     // call failed before it could tell us how many calendars were selected.
-    if !errors.is_empty() && checked >= total {
-        total = checked + 1;
+    if !coverage.errors.is_empty() && coverage.checked >= coverage.total {
+        coverage.total = coverage.checked + 1;
     }
-    Ok((busy, checked, total, errors))
+    Ok(coverage)
 }
 
 #[tauri::command]
@@ -256,6 +289,7 @@ mod calendar_event_request_tests {
             title: "Planning".into(), start: "2026-09-22T09:00:00Z".into(),
             end: "2026-09-22T10:00:00Z".into(), all_day: false, location: String::new(),
             description: "Agenda".into(), attendees: vec!["guest@example.com".into()],
+            source_message_id: None,
         }
     }
 
@@ -303,6 +337,18 @@ mod calendar_event_request_tests {
         })).unwrap();
         assert!(!request.all_day);
         assert!(request.location.is_empty());
+        assert!(request.source_message_id.is_none());
+        assert!(validate_calendar_event_request(&request).is_ok());
+    }
+
+    #[test]
+    fn create_requests_carry_the_email_they_came_from() {
+        let request: CreateCalendarEventRequest = serde_json::from_value(serde_json::json!({
+            "accountId": "work@example.com", "calendarId": "primary", "title": "Planning",
+            "start": "2026-09-22T09:00:00Z", "end": "2026-09-22T10:00:00Z",
+            "description": "", "attendees": [], "sourceMessageId": "message-1",
+        })).unwrap();
+        assert_eq!(request.source_message_id.as_deref(), Some("message-1"));
         assert!(validate_calendar_event_request(&request).is_ok());
     }
 
@@ -596,7 +642,7 @@ pub(crate) async fn find_availability(
 ) -> AppResult<models::AvailabilityResult> {
     availability::validate_preferences(&request.preferences)?;
     availability::buffered_range(&request.range_start, &request.range_end, request.preferences.drive_time_buffer_minutes)?;
-    let (busy, checked, total, errors) = freebusy_coverage(
+    let FreeBusyCoverage { busy, checked, total, unchecked, errors } = freebusy_coverage(
         &request.range_start,
         &request.range_end,
         &request.preferences.time_zone,
@@ -617,6 +663,7 @@ pub(crate) async fn find_availability(
         candidates,
         checked_calendar_count: checked,
         total_calendar_count: total,
+        unchecked_calendars: unchecked,
         errors,
     })
 }
@@ -630,7 +677,7 @@ pub(crate) async fn check_proposed_time(
         return Err(format!("Unknown IANA timezone: {}", request.time_zone).into());
     }
     availability::buffered_range(&request.start, &request.end, request.drive_time_buffer_minutes)?;
-    let (busy, checked, total, errors) = freebusy_coverage(
+    let FreeBusyCoverage { busy, checked, total, unchecked, errors } = freebusy_coverage(
         &request.start,
         &request.end,
         &request.time_zone,
@@ -658,6 +705,7 @@ pub(crate) async fn check_proposed_time(
         conflicts,
         checked_calendar_count: checked,
         total_calendar_count: total,
+        unchecked_calendars: unchecked,
         errors,
     })
 }
@@ -667,7 +715,7 @@ mod tests {
     use super::*;
 
     fn account(email: &str, status: &str) -> CalendarAccount {
-        CalendarAccount { email: email.into(), connected_at: "2026-10-19T00:00:00Z".into(), status: status.into() }
+        CalendarAccount { email: email.into(), connected_at: "2026-10-19T00:00:00Z".into(), status: status.into(), sort_order: 0 }
     }
 
     #[test]

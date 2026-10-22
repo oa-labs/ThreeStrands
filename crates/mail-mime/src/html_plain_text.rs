@@ -57,23 +57,10 @@ impl TokenSink for TextSink {
                         state.ignored.truncate(index);
                     }
                 } else {
-                    if matches!(
-                        name,
-                        "head" | "style" | "script" | "template" | "noscript" | "title"
-                    ) {
+                    if is_non_content(name) {
                         state.ignored.push(tag.name.clone());
                     }
-                    // Raw-text states recognize only the matching end tag:
-                    // markup-like CSS/JS strings cannot end an ignored block.
-                    let raw = match name {
-                        "script" => Some(RawKind::ScriptData),
-                        "style" | "noscript" | "xmp" | "iframe" | "noembed" => {
-                            Some(RawKind::Rawtext)
-                        }
-                        "title" | "textarea" => Some(RawKind::Rcdata),
-                        _ => None,
-                    };
-                    if let Some(raw) = raw {
+                    if let Some(raw) = raw_kind(name) {
                         return TokenSinkResult::RawData(raw);
                     }
                 }
@@ -122,6 +109,22 @@ impl TokenSink for TextSink {
     }
 }
 
+/// Elements whose contents are never message text.
+fn is_non_content(name: &str) -> bool {
+    matches!(name, "head" | "style" | "script" | "template" | "noscript" | "title")
+}
+
+/// Raw-text states recognize only the matching end tag: markup-like CSS/JS
+/// strings cannot end an ignored block.
+fn raw_kind(name: &str) -> Option<RawKind> {
+    match name {
+        "script" => Some(RawKind::ScriptData),
+        "style" | "noscript" | "xmp" | "iframe" | "noembed" => Some(RawKind::Rawtext),
+        "title" | "textarea" => Some(RawKind::Rcdata),
+        _ => None,
+    }
+}
+
 pub fn html_to_text(html: &str) -> String {
     let tokenizer = Tokenizer::new(TextSink::default(), Default::default());
     let input = BufferQueue::default();
@@ -129,6 +132,142 @@ pub fn html_to_text(html: &str) -> String {
     let _ = tokenizer.feed(&input);
     tokenizer.end();
     tokenizer.sink.state.into_inner().text.trim().to_string()
+}
+
+/// Longest preheader kept, in characters once whitespace and invisible
+/// padding are collapsed. Senders write a line or two; more than this means
+/// an unclosed hidden element swallowed the message.
+pub const MAX_PREHEADER_CHARS: usize = 300;
+
+/// Fewest words, each with two or more letters, a preheader must hold, so a
+/// hidden tracking token is not mistaken for one.
+pub const MIN_PREHEADER_WORDS: usize = 3;
+
+/// Elements without an end tag.
+const VOID_ELEMENTS: [&str; 14] = [
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr",
+];
+
+/// Characters that draw nothing; senders pad preheaders with them so inbox
+/// previews stop early.
+fn is_invisible(c: char) -> bool {
+    matches!(c, '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}' | '\u{034F}' | '\u{00AD}')
+}
+
+/// Whether an inline style keeps an element's text from being seen:
+/// `display: none`, `visibility: hidden`, `opacity: 0`, a font size of at
+/// most 1px, or a zero height or max-height with `overflow: hidden`.
+fn style_hides(style: &str) -> bool {
+    let number = |value: &str| value.trim_end_matches(|c: char| c.is_ascii_alphabetic() || c == '%').parse::<f64>().ok();
+    let (mut zero_height, mut clipped) = (false, false);
+    for declaration in style.split(';') {
+        let Some((name, value)) = declaration.split_once(':') else { continue };
+        let name = name.trim().to_ascii_lowercase();
+        let value = value.to_ascii_lowercase();
+        let value = value.trim().trim_end_matches("!important").trim();
+        match name.as_str() {
+            "display" if value == "none" => return true,
+            "visibility" if value == "hidden" => return true,
+            "opacity" if number(value) == Some(0.0) => return true,
+            "font-size" if number(value) == Some(0.0) || value == "1px" => return true,
+            "height" | "max-height" if number(value) == Some(0.0) => zero_height = true,
+            "overflow" if value == "hidden" => clipped = true,
+            _ => {}
+        }
+    }
+    zero_height && clipped
+}
+
+#[derive(Default)]
+struct PreheaderSink {
+    state: RefCell<PreheaderState>,
+}
+
+#[derive(Default)]
+struct PreheaderState {
+    /// Open elements, each with whether it hides its contents.
+    open: Vec<(LocalName, bool)>,
+    ignored: Vec<LocalName>,
+    text: String,
+    /// Visible text has appeared; nothing after it is a preheader.
+    done: bool,
+}
+
+impl TokenSink for PreheaderSink {
+    type Handle = ();
+
+    fn process_token(&self, token: Token, _: u64) -> TokenSinkResult<()> {
+        let mut state = self.state.borrow_mut();
+        if state.done {
+            return TokenSinkResult::Continue;
+        }
+        match token {
+            Token::TagToken(tag) => {
+                let name = tag.name.as_ref();
+                if tag.kind == TagKind::EndTag {
+                    if let Some(index) = state.ignored.iter().rposition(|name| *name == tag.name) {
+                        state.ignored.truncate(index);
+                    }
+                    if let Some(index) = state.open.iter().rposition(|(name, _)| *name == tag.name) {
+                        state.open.truncate(index);
+                    }
+                } else {
+                    if is_non_content(name) {
+                        state.ignored.push(tag.name.clone());
+                    } else if !tag.self_closing && !VOID_ELEMENTS.contains(&name) {
+                        let hidden = tag.attrs.iter().any(|attribute| match attribute.name.local.as_ref() {
+                            "hidden" => true,
+                            "style" => style_hides(&attribute.value),
+                            _ => false,
+                        });
+                        state.open.push((tag.name.clone(), hidden));
+                    }
+                    if let Some(raw) = raw_kind(name) {
+                        return TokenSinkResult::RawData(raw);
+                    }
+                }
+                // Element boundaries separate words.
+                state.text.push(' ');
+            }
+            Token::CharacterTokens(text) if state.ignored.is_empty() => {
+                if state.open.iter().any(|(_, hidden)| *hidden) {
+                    state.text.push_str(&text);
+                    if state.text.len() > MAX_PREHEADER_CHARS * 16 {
+                        state.done = true;
+                    }
+                } else if text.chars().any(|c| !c.is_whitespace() && !is_invisible(c)) {
+                    state.done = true;
+                }
+            }
+            _ => {}
+        }
+        TokenSinkResult::Continue
+    }
+}
+
+/// The preheader: text the sender hid with inline styles ahead of any visible
+/// text, written to be read in an inbox preview rather than in the message.
+/// Invisible padding is dropped and whitespace collapsed; `None` when there
+/// is no such text, or it has fewer than `MIN_PREHEADER_WORDS` words or more
+/// than `MAX_PREHEADER_CHARS` characters.
+pub fn preheader(html: &str) -> Option<String> {
+    let tokenizer = Tokenizer::new(PreheaderSink::default(), Default::default());
+    let input = BufferQueue::default();
+    input.push_back(html.into());
+    let _ = tokenizer.feed(&input);
+    tokenizer.end();
+    let text = tokenizer.sink.state.into_inner().text;
+    let collapsed = text
+        .split_whitespace()
+        .map(|word| word.trim_matches(is_invisible))
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let words = collapsed
+        .split(' ')
+        .filter(|word| word.chars().filter(|c| c.is_alphabetic()).count() >= 2)
+        .count();
+    (words >= MIN_PREHEADER_WORDS && collapsed.chars().count() <= MAX_PREHEADER_CHARS).then_some(collapsed)
 }
 
 /// Some senders generate their text/plain alternative with an HTML-to-text
@@ -202,7 +341,67 @@ fn is_declaration(entry: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::after_leading_stylesheet;
+    use super::{after_leading_stylesheet, preheader, MAX_PREHEADER_CHARS, MIN_PREHEADER_WORDS};
+
+    #[test]
+    fn finds_text_hidden_ahead_of_the_visible_message() {
+        for (html, expected) in [
+            // A hidden div first in the body, then a padding div.
+            (
+                "<html><head><title>Play</title><style>.x { display: none; }</style></head><body><div style=\"display:none;max-height:0;overflow:hidden;mso-hide:all\">Available through Thursday.</div><div style=\"display: none !important\">&zwnj;&nbsp;&zwnj;&nbsp;&#847; &shy;</div><table><tr><td>Your Play Points</td></tr></table></body></html>",
+                "Available through Thursday.",
+            ),
+            // A zero-size span inside a layout table, padded with invisible characters.
+            (
+                "<table role=presentation><tr><td><img src=\"cid:logo\" alt=\"\"><span style=\"FONT-SIZE: 0PX; color:#ffffff\">Delivered 1 item: <b>Drinkware</b> &#847; &shy; &#847;</span></td></tr><tr><td>Your Orders</td></tr></table>",
+                "Delivered 1 item: Drinkware",
+            ),
+            // Clipped to zero height, then the hidden attribute, then transparency.
+            ("<div style=\"max-height: 0px; overflow: hidden\">Your weekly performance</div><p hidden>and tips</p><span style=\"opacity:0.0\">to reach more people</span><p>Hi Joel</p>", "Your weekly performance and tips to reach more people"),
+        ] {
+            assert_eq!(preheader(html).as_deref(), Some(expected), "{html}");
+        }
+    }
+
+    #[test]
+    fn finds_no_preheader_without_hidden_leading_text() {
+        for html in [
+            // Visible text comes first.
+            "<p>View in browser</p><div style=\"display:none\">Available through Thursday.</div>",
+            // Hidden only by a class rule, which inline styles cannot show.
+            "<style>.pre { display: none }</style><div class=pre>Available through Thursday.</div><p>Hi</p>",
+            // A hidden void element hides nothing after it.
+            "<img style=\"display:none\" src=\"cid:x\">Available through Thursday.",
+            // Outlook-only hiding, and a zero height that does not clip.
+            "<div style=\"mso-hide:all\">Available through Thursday.</div>",
+            "<div style=\"max-height:0\">Available through Thursday.</div>",
+            // A hidden tracking token is not words.
+            "<div style=\"display:none\">m7d\u{200D}bmt\u{FEFF}ixxl</div><p>Hi there</p>",
+            // An unclosed hidden element swallowing the message.
+            &format!("<span style=\"display:none\">{}", "Long story words. ".repeat(100)),
+            "<p>Hello</p>",
+            "",
+        ] {
+            assert_eq!(preheader(html), None, "{html}");
+        }
+    }
+
+    #[test]
+    fn preheader_limits_hold_at_their_exact_values() {
+        let words = |count: usize| vec!["word"; count].join(" ");
+        for (count, kept) in [(MIN_PREHEADER_WORDS - 1, false), (MIN_PREHEADER_WORDS, true), (MIN_PREHEADER_WORDS + 1, true)] {
+            let html = format!("<div style=\"display:none\">{} x 1</div>", words(count));
+            assert_eq!(preheader(&html).is_some(), kept, "{count} words");
+        }
+        let sized = |chars: usize| format!("<div style=\"display:none\">abc def {}</div>", "g".repeat(chars - 8));
+        for (chars, kept) in [(MAX_PREHEADER_CHARS - 1, true), (MAX_PREHEADER_CHARS, true), (MAX_PREHEADER_CHARS + 1, false)] {
+            let found = preheader(&sized(chars));
+            assert_eq!(found.is_some(), kept, "{chars} chars");
+            if let Some(text) = found {
+                assert_eq!(text.chars().count(), chars);
+            }
+        }
+    }
 
     #[test]
     fn finds_message_text_after_a_leading_stylesheet() {

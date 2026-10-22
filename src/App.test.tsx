@@ -1802,6 +1802,27 @@ describe("Drafts folder", () => {
     expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("textbox", { name: "Subject" })).not.toBeInTheDocument());
   });
+
+  it("opens a conversation clicked in the list while a new message is open and keeps the draft", async () => {
+    const roadmap = await mailClient.getThread("roadmap");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.click(screen.getByRole("button", { name: "New message (c)" }));
+    const subject = await screen.findByRole("textbox", { name: "Subject" });
+    fireEvent.click(subject);
+    fireEvent.change(subject, { target: { value: "Half-written note" } });
+
+    const inbox = screen.getByRole("listbox", { name: /Inbox/ });
+    fireEvent.click(within(inbox).getByRole("option", { name: new RegExp(roadmap.thread.subject) }));
+
+    expect(await screen.findByRole("heading", { name: roadmap.thread.subject })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Subject" })).not.toBeInTheDocument());
+    selectFolder("Drafts");
+    expect(await screen.findByRole("option", { name: /Half-written note/ })).toBeInTheDocument();
+    for (const draft of await mailClient.listDrafts()) await mailClient.discardDraft(draft.id);
+    selectFolder("Inbox");
+    expect(await screen.findByRole("listbox", { name: /Inbox/ })).toBeInTheDocument();
+  });
 });
 
 describe("foreground mail refresh", () => {
@@ -1918,6 +1939,9 @@ describe("account selection persistence", () => {
 
     const secondRun = render(<App />);
     await waitFor(() => expect(screen.getByRole("radio", { name: "Work" })).toHaveAttribute("aria-checked", "true"));
+    // The restart reopens the workspace that was open, Contacts.
+    expect(secondRun.container.querySelector(".contacts-header")).toHaveTextContent("work@example.com");
+    fireEvent.click(screen.getByRole("button", { name: "Inbox (1)" }));
     fireEvent.click(screen.getByRole("radio", { name: /All accounts/i }));
     expect(localStorage.getItem("threestrands.settings.selectedAccountId")).toBe("all");
     expect(secondRun.container.querySelector(".mailbox-heading-context")).toHaveTextContent("All accounts");

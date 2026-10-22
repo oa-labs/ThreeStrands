@@ -135,6 +135,13 @@ async fn thread_analysis_request(
         .take(ai::MAX_PROMPT_GOALS)
         .map(|goal| ai::GoalPromptInput { id: goal.id, title: goal.title, horizon: goal.horizon, period: goal.period })
         .collect();
+    let user_addresses = state
+        .database
+        .account_sending_identities(&detail.thread.account_id)?
+        .into_iter()
+        .take(ai::MAX_PROMPT_USER_ADDRESSES)
+        .map(|identity| identity.address)
+        .collect();
     let request = ai::AnalyzeRequest {
         provider,
         model,
@@ -146,12 +153,14 @@ async fn thread_analysis_request(
             .map(|message| ai::ActionMessageInput {
                 id: message.id,
                 sender: message.sender,
+                recipients: message.recipients,
                 sent_at: message.sent_at,
                 body_text: message.body_text,
             })
             .collect(),
         current_time: Utc::now().to_rfc3339(),
         user_time_zone,
+        user_addresses,
         goals,
     };
     Ok((revision, request))
@@ -721,6 +730,7 @@ pub(crate) async fn ai_find_times(
                 .map(|message| ai::ActionMessageInput {
                     id: message.id,
                     sender: message.sender,
+                    recipients: message.recipients,
                     sent_at: message.sent_at,
                     body_text: message.body_text,
                 })

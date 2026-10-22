@@ -433,6 +433,47 @@ export function sanitizeComposeHtml(html: string): string {
   return container.innerHTML;
 }
 
+const HIDDEN_STYLE = /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden|mso-hide\s*:\s*all)\s*(?:!important\s*)?(?:;|$)/i;
+const FORWARDED_LINE_BLOCKS = "address, article, aside, caption, center, dd, dl, dt, figcaption, figure, footer, h1, h2, h3, h4, h5, h6, header, main, nav, pre, section, table, tbody, tfoot, thead, tr";
+
+function renameElement(element: Element, tagName: string): HTMLElement {
+  const replacement = document.createElement(tagName);
+  replacement.append(...Array.from(element.childNodes));
+  element.replaceWith(replacement);
+  return replacement;
+}
+
+/**
+ * Turns a forward's preserved sender HTML into editable compose HTML. The
+ * compose sanitizer drops inline styles, so content the sender hid from
+ * readers, such as preview text, would otherwise appear in the editor and
+ * send. It also unwraps tags outside its small set, which would run table
+ * rows and headings together, so those become the blocks it keeps and the
+ * reader's line breaks survive. Parsing happens in an inert template:
+ * nothing loads or runs.
+ */
+export function forwardedComposeHtml(html: string): string {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const content = template.content;
+  content.querySelectorAll("[hidden], [style]").forEach((element) => {
+    if (element.hasAttribute("hidden") || HIDDEN_STYLE.test(element.getAttribute("style") ?? "")) element.remove();
+  });
+  content.querySelectorAll(FORWARDED_LINE_BLOCKS).forEach((element) => {
+    const heading = /^H[1-6]$/.test(element.tagName);
+    const block = renameElement(element, "div");
+    if (!heading) return;
+    const bold = document.createElement("b");
+    bold.append(...Array.from(block.childNodes));
+    block.append(bold);
+  });
+  content.querySelectorAll("td, th").forEach((cell) => {
+    const next = cell.nextElementSibling;
+    renameElement(cell, "span").after(next && /^T[DH]$/.test(next.tagName) ? " " : "");
+  });
+  return sanitizeComposeHtml(template.innerHTML);
+}
+
 /**
  * Inserts an HTML string at a `Range`, then collapses the selection to just
  * after the inserted content. Used instead of `execCommand("insertHTML", …)`

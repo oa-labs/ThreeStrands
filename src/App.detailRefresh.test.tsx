@@ -104,7 +104,7 @@ it("inserts open times from the reply's context panel into that reply instead of
   vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
   vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
     candidates: [{ start: "2030-01-07T15:00:00Z", end: "2030-01-07T15:30:00Z", status: "verified" }],
-    checkedCalendarCount: 1, totalCalendarCount: 1, errors: [],
+    checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [],
   });
   try {
     render(<App />);
@@ -364,7 +364,7 @@ describe("conversation brief", () => {
 
     it("checks the proposed time, then adds it to the calendar through the prefilled event dialog", async () => {
       const meeting = meetingAt(1);
-      const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
       const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue({ id: "created", accountId: "calendar@example.com", title: "Budget review", start: meeting.normalizedStart, end: meeting.normalizedEnd, allDay: false });
       const { schedule } = await openWithMeeting(meeting);
 
@@ -383,6 +383,8 @@ describe("conversation brief", () => {
       await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
         accountId: "calendar@example.com", calendarId: "primary", title: "Budget review", attendees: ["jane@example.com"],
         start: new Date(meeting.normalizedStart).toISOString(),
+        // Tagged with the email the suggestion was read from, to recognize it on the calendar later.
+        sourceMessageId: "welcome-message",
       })));
       expect(await screen.findByText("Added to calendar")).toBeInTheDocument();
       expect(await screen.findByRole("region", { name: "Calendar week" })).toBeInTheDocument();
@@ -422,14 +424,14 @@ describe("conversation brief", () => {
 
     it("replies that a free time works, and finds other times in place without opening the calendar", async () => {
       const meeting = meetingAt(2);
-      vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
       const { schedule } = await openWithMeeting(meeting);
 
       fireEvent.click(await within(schedule).findByRole("button", { name: "Reply “That Works”" }));
       const editor = await screen.findByRole("textbox", { name: "Message Body" });
       await waitFor(() => expect(editor).toHaveTextContent("That time works for me:"));
 
-      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
       fireEvent.click(within(schedule).getByRole("button", { name: "Find Other Times" }));
       expect(await within(schedule).findByText("No open times in your working hours for this range.")).toBeInTheDocument();
       expect(find).toHaveBeenCalledTimes(1);
@@ -440,7 +442,7 @@ describe("conversation brief", () => {
     it("keeps a failed chat suggestion reviewable, then opens the saved event and replaces the review link", async () => {
       const meeting = meetingAt(1);
       const unrelated = { ...meeting, title: "Another meeting" };
-      vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
       const { panel } = await openWithMeeting(unrelated);
       vi.spyOn(mailClient, "threadChat").mockResolvedValue({
         answer: "I've prepared the class for review.", analysis: { proposals: [meeting], hiddenCount: 0 },
@@ -493,7 +495,7 @@ describe("conversation brief", () => {
         attachments: [],
         availability: { rangeStart, rangeEnd, durationMinutes: null, weekdays: [4], dayStart: "12:00", dayEnd: null },
       });
-      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
       render(<App />);
       await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
       const panel = screen.getByRole("complementary", { name: "Conversation context" });
@@ -525,7 +527,7 @@ describe("conversation brief", () => {
         availability: { rangeStart, rangeEnd, durationMinutes: 45, weekdays: [], dayStart: null, dayEnd: null },
       });
       const slot = { start: new Date(Date.now() + 20 * hour).toISOString(), end: new Date(Date.now() + 20.75 * hour).toISOString(), status: "verified" as const };
-      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [slot], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [slot], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
       render(<App />);
       await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
       const panel = screen.getByRole("complementary", { name: "Conversation context" });
@@ -873,7 +875,7 @@ describe("conversation brief", () => {
     };
     vi.spyOn(mailClient, "briefThread").mockResolvedValue({ ...briefResult, analysis: { proposals: [meeting], hiddenCount: 0 } });
     const findTimes = vi.spyOn(mailClient, "findTimes");
-    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
     try {
       render(<App />);
       await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
@@ -910,7 +912,7 @@ describe("conversation brief", () => {
     const findTimes = vi.spyOn(mailClient, "findTimes").mockResolvedValue({
       rangeStart, rangeEnd, durationMinutes: 45, weekdays: [], dayStart: null, dayEnd: null, reason: "The welcome note suggests a call next week.",
     });
-    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
     try {
       render(<App />);
       await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
