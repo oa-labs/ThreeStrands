@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type RefObject } from "react
 import type { ScheduleEvent, ThreadDetail } from "./domain";
 import type { ContactCardActions } from "./ContactCard";
 import { readContactsView, writeContactsView, type ContactsView } from "./contactsView";
+import { readLastWorkspace, writeLastWorkspace } from "./lastWorkspace";
 import { startOfLocalDay } from "./calendarTime";
 import { useCalendarAccounts } from "./useCalendarAccounts";
 import { mailClient } from "./data/client";
@@ -28,7 +29,8 @@ type Options = {
 
 /** Owns the selected workspace and calendar/contact entry points. */
 export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, readingMessageId, readingMessageIdRef, openSettingsAt, setNotice }: Options) {
-  const [rightWorkspace, setRightWorkspace] = useState<RightWorkspace>(null);
+  const [rightWorkspace, setRightWorkspace] = useState<RightWorkspace>(readLastWorkspace);
+  useEffect(() => { writeLastWorkspace(rightWorkspace); }, [rightWorkspace]);
   const [calendarWeekAnchor, setCalendarWeekAnchor] = useState<Date | null>(null);
   const [calendarEventToOpen, setCalendarEventToOpen] = useState<ScheduleEvent | null>(null);
   const [contactAddressBookTarget, setContactAddressBookTarget] = useState<string | null>(null);

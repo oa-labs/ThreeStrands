@@ -1921,6 +1921,9 @@ describe("account selection persistence", () => {
 
     const secondRun = render(<App />);
     await waitFor(() => expect(screen.getByRole("radio", { name: "Work" })).toHaveAttribute("aria-checked", "true"));
+    // The restart reopens the workspace that was open, Contacts.
+    expect(secondRun.container.querySelector(".contacts-header")).toHaveTextContent("work@example.com");
+    fireEvent.click(screen.getByRole("button", { name: "Inbox (1)" }));
     fireEvent.click(screen.getByRole("radio", { name: /All accounts/i }));
     expect(localStorage.getItem("threestrands.settings.selectedAccountId")).toBe("all");
     expect(secondRun.container.querySelector(".mailbox-heading-context")).toHaveTextContent("All accounts");

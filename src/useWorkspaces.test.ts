@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ThreadDetail } from "./domain";
 import { useWorkspaces } from "./useWorkspaces";
 import { mailClient } from "./data/client";
@@ -68,5 +68,36 @@ describe("calendar accounts", () => {
     hook.rerender({ settingsOpen: true });
 
     await waitFor(() => expect(hook.result.current.calendar.accounts).toEqual([synced]));
+  });
+});
+
+describe("the remembered workspace", () => {
+  const render = () => renderHook(() => useWorkspaces({
+    settingsOpen: false,
+    settingsSection: "general" as never,
+    visibleDetail: null,
+    readingMessageId: null,
+    readingMessageIdRef: { current: null },
+    openSettingsAt: vi.fn(),
+    setNotice: vi.fn(),
+  }));
+
+  afterEach(() => localStorage.removeItem("threestrands.workspace.last"));
+
+  it("reopens the view that was open when the app last closed", () => {
+    const first = render();
+    act(() => first.result.current.openFilesView());
+    first.unmount();
+
+    expect(render().result.current.rightWorkspace).toBe("files");
+  });
+
+  it("reopens Mail once the user has gone back to it", () => {
+    const first = render();
+    act(() => first.result.current.openTasksView());
+    act(() => first.result.current.setRightWorkspace(null));
+    first.unmount();
+
+    expect(render().result.current.rightWorkspace).toBeNull();
   });
 });
