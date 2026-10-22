@@ -119,11 +119,13 @@ export type UpdateCalendarEventRequest = {
   attendees: string[];
 };
 
+export type AttendeeResponseStatus = "accepted" | "declined" | "tentative" | "needsAction";
+
 export type ScheduleEvent = {
   id: string;
   accountId: string;
   calendarId?: string;
-  responseStatus?: "accepted" | "declined" | "tentative" | "needsAction" | null;
+  responseStatus?: AttendeeResponseStatus | null;
   canRespond?: boolean;
   /** The user organizes this event on a calendar they can write to. */
   canEdit?: boolean;
@@ -136,6 +138,8 @@ export type ScheduleEvent = {
   conferenceUrl?: string | null;
   /** Lowercased addresses of the other people on the event, when known. */
   attendees?: string[];
+  /** Each attendee's RSVP keyed by address, when their calendar reports one. */
+  attendeeResponses?: Record<string, AttendeeResponseStatus>;
   /** The email ThreeStrands added this event from, when it did. */
   sourceMessageId?: string | null;
 };
@@ -169,6 +173,8 @@ export type AvailabilityResult = {
   candidates: AvailabilityCandidate[];
   checkedCalendarCount: number;
   totalCalendarCount: number;
+  /** Names of the selected calendars, or whole accounts, that could not be checked. */
+  uncheckedCalendars: string[];
   errors: string[];
 };
 
@@ -177,6 +183,8 @@ export type ProposedTimeCheck = {
   conflicts: { start: string; end: string }[];
   checkedCalendarCount: number;
   totalCalendarCount: number;
+  /** Names of the selected calendars, or whole accounts, that could not be checked. */
+  uncheckedCalendars: string[];
   errors: string[];
 };
 

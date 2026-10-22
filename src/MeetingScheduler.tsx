@@ -20,7 +20,24 @@ type CheckState =
   | { phase: "idle" | "loading" }
   | { phase: "error"; message: string }
   | { phase: "specific"; check: ProposedTimeCheck; conflictTitles: string[]; match: CalendarMatch | null }
-  | { phase: "range"; candidates: AvailabilityCandidate[] };
+  | { phase: "range"; candidates: AvailabilityCandidate[]; verified: boolean; unchecked: string[] };
+
+/** Names the calendars a check could not read, once for the whole card, such as "Couldn't check Team, so these times may conflict with it." */
+export function uncheckedNote(unchecked: string[], subject: "this time" | "these times"): string {
+  if (unchecked.length === 0) return `Some calendars couldn’t be checked, so ${subject} may conflict with them.`;
+  const names = new Intl.ListFormat(undefined, { type: "conjunction" }).format(unchecked);
+  return `Couldn’t check ${names}, so ${subject} may conflict with ${unchecked.length === 1 ? "it" : "them"}.`;
+}
+
+/** A familiar name for the zone, such as "Eastern Time", which stays right across daylight saving changes. */
+export function zoneName(timeZone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat(undefined, { timeZone, timeZoneName: "longGeneric" }).formatToParts(new Date());
+    return parts.find((part) => part.type === "timeZoneName")?.value ?? timeZone;
+  } catch {
+    return timeZone;
+  }
+}
 
 function formatSlot(slot: ScheduleSlot, timeZone: string): string {
   const start = new Date(slot.start);
@@ -180,7 +197,12 @@ export function MeetingScheduler({
         });
         const candidates = spreadAcrossDays(result.candidates, timeZone);
         if (!isCurrent()) return;
-        setState({ phase: "range", candidates });
+        setState({
+          phase: "range",
+          candidates,
+          verified: result.totalCalendarCount > 0 && result.checkedCalendarCount === result.totalCalendarCount,
+          unchecked: result.uncheckedCalendars,
+        });
         setVisibleCount(SUGGESTED_SLOT_COUNT);
         setSelected(new Set(candidates.slice(0, SUGGESTED_SLOT_COUNT).map(slotKey)));
       }
@@ -239,7 +261,10 @@ export function MeetingScheduler({
     </div>
     {adjustInput}
   </div>;
-  const assumedZone = plan.timeZoneAssumed ? <small className="meeting-scheduler-note">Using your time zone ({timeZone})</small> : null;
+  const coverageNote = (text: string) => <p className="meeting-scheduler-note" role="note">
+    {text} <button type="button" className="btn-link" onClick={onOpenCalendarSettings}>Calendar Settings</button>
+  </p>;
+  const assumedZone = plan.timeZoneAssumed ? <small className="meeting-scheduler-note">Times in {zoneName(timeZone)} (the email didn&rsquo;t say)</small> : null;
 
   if (!calendarConnected) {
     return <div className="meeting-scheduler" role="group" aria-label="Schedule">
@@ -293,6 +318,7 @@ export function MeetingScheduler({
         {state.check.status === "partiallyChecked" ? <>Free on the calendars that could be checked</> : null}
         {state.check.status === "unverified" ? <>No calendar could be checked</> : null}
       </p>}
+      {state.check.status === "partiallyChecked" ? coverageNote(uncheckedNote(state.check.uncheckedCalendars, "this time")) : null}
       <div className="meeting-scheduler-actions">
         {state.match && onOpenCalendarEvent ? <button type="button" className="btn btn-sm" onClick={() => onOpenCalendarEvent(state.match!.event)}><CalendarCheck size={ICON_SIZE.sm} /> Open in Calendar</button> : null}
         {/* Adding a second copy of an event already there takes a deliberate choice. */}
@@ -323,7 +349,7 @@ export function MeetingScheduler({
                   else next.add(key);
                   return next;
                 })}
-              >{formatSlot(candidate, timeZone)}{candidate.status !== "verified" ? <small> · not every calendar checked</small> : null}</button>;
+              >{formatSlot(candidate, timeZone)}</button>;
             })}
         </div>
         {(() => {
@@ -337,6 +363,9 @@ export function MeetingScheduler({
               : null}
           </div>;
         })()}
+        {state.verified ? null : coverageNote(state.unchecked.length === 0 && !state.candidates.some((candidate) => candidate.status === "partiallyChecked")
+          ? "No calendar could be checked, so these times may conflict."
+          : uncheckedNote(state.unchecked, "these times"))}
       </>}
       {adjust}
     </> : null}

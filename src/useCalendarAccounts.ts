@@ -85,6 +85,24 @@ export function useCalendarAccounts({ onLastAccountRemoved }: { onLastAccountRem
     await refreshAccounts();
   }, [refreshAccounts]);
 
+  const reorder = useCallback(async (emails: string[]) => {
+    const accountsByEmail = new Map(accounts.map((account) => [account.email, account]));
+    const reordered = emails
+      .map((email) => accountsByEmail.get(email))
+      .filter((account): account is CalendarAccount => account !== undefined);
+    if (reordered.length !== accounts.length) return;
+
+    const previous = accounts;
+    setAccounts(reordered);
+    try {
+      await mailClient.reorderCalendarAccounts(emails);
+      await refreshAccounts();
+    } catch (error) {
+      setAccounts(previous);
+      throw error;
+    }
+  }, [accounts, refreshAccounts]);
+
   const setSelection = useCallback(async (accountId: string, calendarIds: string[]) => {
     const updated = await mailClient.setCalendarSelection(accountId, calendarIds);
     clearScheduleCache();
@@ -105,6 +123,7 @@ export function useCalendarAccounts({ onLastAccountRemoved }: { onLastAccountRem
     reconnect,
     remove,
     removeEverywhere,
+    reorder,
     setSelection,
   };
 }

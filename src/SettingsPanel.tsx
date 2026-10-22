@@ -282,6 +282,7 @@ export function Settings({
               onReconnect={calendarAccounts.reconnect}
               onRemove={calendarAccounts.remove}
               onRemoveEverywhere={calendarAccounts.removeEverywhere}
+              onReorder={calendarAccounts.reorder}
               onSetSelection={calendarAccounts.setSelection}
             />
           ) : null}

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::BTreeMap;
 
 fn deserialize_optional_field<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
 where
@@ -14,6 +15,8 @@ pub struct CalendarAccount {
     pub email: String,
     pub connected_at: String,
     pub status: String,
+    #[serde(default)]
+    pub sort_order: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,6 +84,9 @@ pub struct ScheduleEvent {
     pub conference_url: Option<String>,
     /// Lowercased addresses of the other people on the event.
     pub attendees: Vec<String>,
+    /// Each of `attendees`' RSVP (`accepted`, `declined`, `tentative`, or
+    /// `needsAction`), keyed by address, when their calendar reports one.
+    pub attendee_responses: BTreeMap<String, String>,
     pub response_status: Option<String>,
     pub can_respond: bool,
     /// The connected calendar organizes this event and can write to it, so it
@@ -111,6 +117,8 @@ pub struct AvailabilityResult {
     pub candidates: Vec<AvailabilityCandidate>,
     pub checked_calendar_count: usize,
     pub total_calendar_count: usize,
+    /// Names of the selected calendars, or whole accounts, that could not be checked.
+    pub unchecked_calendars: Vec<String>,
     pub errors: Vec<String>,
 }
 
@@ -128,6 +136,8 @@ pub struct ProposedTimeCheck {
     pub conflicts: Vec<BusyInterval>,
     pub checked_calendar_count: usize,
     pub total_calendar_count: usize,
+    /// Names of the selected calendars, or whole accounts, that could not be checked.
+    pub unchecked_calendars: Vec<String>,
     pub errors: Vec<String>,
 }
 

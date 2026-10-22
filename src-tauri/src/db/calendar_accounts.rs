@@ -10,12 +10,13 @@ impl Database {
     pub fn list_calendar_accounts(&self) -> DbResult<Vec<CalendarAccount>> {
         self.with_connection(|connection| {
             let mut statement = connection
-                .prepare("SELECT email, connected_at, status FROM calendar_accounts ORDER BY connected_at, email")?;
+                .prepare("SELECT email, connected_at, status, sort_order FROM calendar_accounts ORDER BY sort_order, email")?;
             let rows = statement.query_map([], |row| {
                 Ok(CalendarAccount {
                     email: row.get(0)?,
                     connected_at: row.get(1)?,
                     status: row.get(2)?,
+                    sort_order: row.get(3)?,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -25,10 +26,24 @@ impl Database {
     pub fn adopt_calendar_account(&self, email: &str) -> DbResult<()> {
         self.with_connection(|connection| {
             connection.execute(
-                "INSERT INTO calendar_accounts(email, connected_at, status) VALUES (?1, ?2, 'connected')
+                // A new account goes last; reconnecting one keeps its place.
+                "INSERT INTO calendar_accounts(email, connected_at, status, sort_order)
+                 VALUES (?1, ?2, 'connected', (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM calendar_accounts))
                  ON CONFLICT(email) DO UPDATE SET connected_at = excluded.connected_at, status='connected'",
                 params![email, Utc::now().to_rfc3339()],
             )?;
+            Ok(())
+        })
+    }
+
+    pub fn reorder_calendar_accounts(&self, ordered_emails: &[String]) -> DbResult<()> {
+        self.with_transaction(|transaction| {
+            for (index, email) in ordered_emails.iter().enumerate() {
+                transaction.execute(
+                    "UPDATE calendar_accounts SET sort_order = ?1 WHERE email = ?2",
+                    params![index as i64, email],
+                )?;
+            }
             Ok(())
         })
     }
@@ -121,6 +136,31 @@ mod tests {
 
         database.remove_calendar_account("calendar@example.com").unwrap();
         assert!(database.list_calendar_accounts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn calendar_accounts_keep_their_chosen_order_through_a_reconnect() {
+        let database = Database::open_memory();
+        for email in ["home@example.com", "side@example.com", "work@example.com"] {
+            database.adopt_calendar_account(email).unwrap();
+        }
+        let emails = |database: &Database| -> Vec<String> {
+            database.list_calendar_accounts().unwrap().into_iter().map(|account| account.email).collect()
+        };
+        assert_eq!(emails(&database), ["home@example.com", "side@example.com", "work@example.com"]);
+
+        database
+            .reorder_calendar_accounts(&["work@example.com".into(), "home@example.com".into(), "side@example.com".into()])
+            .unwrap();
+        assert_eq!(emails(&database), ["work@example.com", "home@example.com", "side@example.com"]);
+
+        // Reconnecting refreshes the connection without moving the account.
+        database.disconnect_calendar_account_locally("work@example.com").unwrap();
+        database.adopt_calendar_account("work@example.com").unwrap();
+        assert_eq!(emails(&database), ["work@example.com", "home@example.com", "side@example.com"]);
+
+        database.adopt_calendar_account("new@example.com").unwrap();
+        assert_eq!(emails(&database).last().map(String::as_str), Some("new@example.com"));
     }
 
     #[test]

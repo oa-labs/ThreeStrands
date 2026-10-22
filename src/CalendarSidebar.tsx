@@ -13,7 +13,7 @@ import {
   timeZoneLabel,
 } from "./calendarTime";
 import { calendarDescriptionText } from "./calendarDescription";
-import { responseLabel } from "./calendarResponse";
+import { attendeeResponseLabel, attendeeResponseSummary, responseLabel } from "./calendarResponse";
 import { calendarColorStyle, useCalendarColors } from "./calendarColors";
 import { removeFromScheduleCache, revalidateScheduleCache } from "./calendarScheduleCache";
 import { isEditableTarget } from "./commands";
@@ -143,6 +143,20 @@ function EventLocation({ location }: { location: string }) {
   });
 }
 
+function EventAttendees({ event, attendees }: { event: ScheduleEvent; attendees: string[] }) {
+  const summary = attendeeResponseSummary(event);
+  return (
+    <details className="calendar-event-attendees">
+      <summary>{attendees.length === 1 ? "1 attendee" : `${attendees.length} attendees`}{summary ? <span className="calendar-event-attendee-summary"> · {summary}</span> : null}</summary>
+      <ul>{attendees.map((email) => {
+        const status = event.attendeeResponses?.[email];
+        const label = attendeeResponseLabel(status);
+        return <li key={email}>{email}{label ? <span className="calendar-event-attendee-response" data-response-status={status}> · {label}</span> : null}</li>;
+      })}</ul>
+    </details>
+  );
+}
+
 export function EventViewer({ event, onDismiss, onUpdated, embedded = false }: { embedded?: boolean; event: ScheduleEvent; onDismiss(): void; onUpdated(event: ScheduleEvent): void }) {
   const calendarColors = useCalendarColors();
   const viewerRef = useRef<HTMLDivElement>(null);
@@ -221,7 +235,7 @@ export function EventViewer({ event, onDismiss, onUpdated, embedded = false }: {
         {event.location ? <p><MapPin size={ICON_SIZE.lg} /><span><EventLocation location={event.location} /></span></p> : null}
         <p><CalendarDays size={ICON_SIZE.lg} /><span>{event.accountId}</span></p>
         <CalendarResponseControls event={event} onUpdated={onUpdated} />
-        {event.attendees?.length ? <details><summary>{event.attendees.length === 1 ? "1 attendee" : `${event.attendees.length} attendees`}</summary><ul>{event.attendees.map((email) => <li key={email}>{email}</li>)}</ul></details> : null}
+        {event.attendees?.length ? <EventAttendees event={event} attendees={event.attendees} /> : null}
         {event.description ? embedded ? <details className="calendar-event-viewer-description"><summary>Description</summary><p>{calendarDescriptionText(event.description)}</p></details> : <p className="calendar-event-viewer-description"><TextAlignStart size={ICON_SIZE.lg} /><span>{calendarDescriptionText(event.description)}</span></p> : null}
       </div>
       {editing ? <EditCalendarEventDialog

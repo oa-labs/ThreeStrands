@@ -883,6 +883,16 @@ describe("Composer forwarded content and attachments", () => {
     vi.restoreAllMocks();
   });
 
+  it.each(["new", "reply"] as const)("lists file attachments beside the Attach button instead of below the %s signature and quote", (mode) => {
+    const file = { id: "file", name: "plan.pdf", mime: "application/pdf", size: 2048, ready: true, messageId: null, providerId: null };
+    const { container } = render(<Composer draft={{ ...draft, mode, attachments: [file] }} accounts={accounts} {...snippetProps} onClose={vi.fn()} onQueued={vi.fn()} />);
+    const list = screen.getByRole("list", { name: "Attachments" });
+    expect(within(list).getByText("plan.pdf")).toBeInTheDocument();
+    expect(list.closest(".composer-content")).toBeNull();
+    expect(list.nextElementSibling).toBe(container.querySelector(".composer > footer"));
+    expect(within(list.nextElementSibling as HTMLElement).getByRole("button", { name: "Attach Files" })).toBeInTheDocument();
+  });
+
   it.each([
     '<p><strong>Golf Monday</strong></p><a href="https://example.com/profile?one=1&amp;two=2">Profile</a><img src="https://images.example.com/forward-paragraph.png" alt="Invitation">',
     '<table cellspacing="4"><tr><td></td><td style="padding:8px"><em>Golf Monday</em><a href="https://example.com/profile?one=1&amp;two=2">Profile</a><img src="https://images.example.com/forward-table.png" alt="Invitation"></td></tr></table>',

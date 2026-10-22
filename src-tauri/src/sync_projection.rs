@@ -293,10 +293,15 @@ impl Database {
 
     fn upsert_synced_calendar(&self, value: &Value) -> DbResult<()> {
         let email = value.get("email").and_then(Value::as_str).ok_or_else(|| DatabaseError::corrupt("Invalid calendar account"))?;
+        // Devices from before calendar ordering send no sortOrder: a new
+        // account then goes last and an existing one keeps its place.
+        let sort_order = value.get("sortOrder").and_then(Value::as_i64);
         self.with_connection(|connection| {
             connection.execute(
-                "INSERT INTO calendar_accounts(email,connected_at,status) VALUES(?1,?2,'needs_reauth') ON CONFLICT(email) DO NOTHING",
-                params![email, Utc::now().to_rfc3339()],
+                "INSERT INTO calendar_accounts(email,connected_at,status,sort_order)
+                 VALUES(?1,?2,'needs_reauth',COALESCE(?3,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM calendar_accounts)))
+                 ON CONFLICT(email) DO UPDATE SET sort_order=COALESCE(?3,sort_order)",
+                params![email, Utc::now().to_rfc3339(), sort_order],
             )?;
             Ok(())
         })
@@ -437,6 +442,27 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap()
+    }
+
+    #[test]
+    fn a_synced_calendar_account_takes_the_order_another_device_chose() {
+        let db = Database::open_memory();
+        db.adopt_calendar_account("home@example.com").unwrap();
+        db.adopt_calendar_account("work@example.com").unwrap();
+        let project = |email: &str, payload: Value| {
+            db.materialize_entity(EntityType::CalendarAccount, email, Some(&payload), false).unwrap();
+        };
+        let emails = || db.list_calendar_accounts().unwrap().into_iter().map(|account| account.email).collect::<Vec<_>>();
+
+        project("work@example.com", json!({"email": "work@example.com", "sortOrder": 0}));
+        project("home@example.com", json!({"email": "home@example.com", "sortOrder": 1}));
+        assert_eq!(emails(), ["work@example.com", "home@example.com"]);
+
+        // An older device sends no order: a new account goes last and an
+        // existing one stays where it is.
+        project("side@example.com", json!({"email": "side@example.com"}));
+        project("work@example.com", json!({"email": "work@example.com"}));
+        assert_eq!(emails(), ["work@example.com", "home@example.com", "side@example.com"]);
     }
 
     #[test]

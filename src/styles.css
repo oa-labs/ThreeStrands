@@ -1584,7 +1584,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .meeting-slot-option small { color: var(--muted); }
 .meeting-scheduler-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1-5); }
 .meeting-scheduler-error p { margin: 0 0 var(--space-1); color: var(--text); }
-.meeting-scheduler-note { color: var(--muted); font-size: var(--text-meta); }
+.meeting-scheduler-note { margin: 0; color: var(--muted); font-size: var(--text-meta); }
 .meeting-scheduler-range { margin: 0; color: var(--muted); }
 .meeting-scheduler-adjust { display: grid; gap: var(--space-1-5); padding-top: var(--space-1); border-top: 1px solid var(--border); }
 .meeting-scheduler-adjust-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
@@ -1956,6 +1956,9 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .calendar-event-viewer-details > details { color: var(--secondary); font-size: var(--text-body); line-height: var(--leading-normal); }
 .calendar-event-viewer-details > details > summary { color: var(--text); font-weight: var(--weight-medium); cursor: pointer; }
 .calendar-event-viewer-details > details ul { margin: var(--space-1) 0 0; padding-left: var(--space-5); }
+.calendar-event-attendee-summary { color: var(--secondary); font-weight: var(--weight-regular); }
+.calendar-event-attendee-response { color: var(--muted); }
+.calendar-event-attendee-response[data-response-status="accepted"] { color: var(--accent); }
 .calendar-event-viewer-details > details p { margin: var(--space-1) 0 0; }
 .calendar-event-response { display: grid; min-width: 0; gap: var(--space-2); color: var(--secondary); font-size: var(--text-body); }
 .calendar-event-response strong { color: var(--text); font-weight: var(--weight-semibold); }
@@ -3245,7 +3248,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .compose-format-hints { display: inline-flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); }
 .compose-error { margin: var(--space-2) 0 var(--space-3); }
 .compose-error .btn { flex-shrink: 0; }
-.attachment-list { margin: 0 0 var(--space-4); padding: 0; list-style: none; flex-shrink: 0; }
+.attachment-list { margin: 0; padding: var(--space-1) var(--pane-inset) var(--space-3); list-style: none; flex-shrink: 0; max-height: 180px; overflow-y: auto; }
 .attachment-list li { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2); background: var(--input); border-radius: var(--radius-sm); margin-top: var(--space-1-5); font-size: var(--text-body); }
 .attachment-list li > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .attachment-list small { display: block; color: var(--muted); }

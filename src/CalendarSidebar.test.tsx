@@ -50,6 +50,38 @@ describe("calendar sidebar", () => {
     expect(screen.getByRole("dialog", { name: "Prep call details" })).toHaveTextContent("javascript:alert(1) or Room 4B");
   });
 
+  it("shows each attendee's RSVP and a count of responses", () => {
+    const event = {
+      id: "planning",
+      accountId: "calendar@example.com",
+      title: "Product planning",
+      start: "2026-10-05T14:00:00-04:00",
+      end: "2026-10-05T14:45:00-04:00",
+      allDay: false,
+      attendees: ["jane@example.com", "bob@example.com", "kim@example.com", "lee@example.com", "sam@example.com"],
+      attendeeResponses: { "jane@example.com": "accepted", "bob@example.com": "declined", "kim@example.com": "tentative", "lee@example.com": "accepted" } as const,
+    };
+    const { rerender } = render(<EventViewer event={event} onDismiss={() => {}} onUpdated={() => {}} />);
+    const attendees = screen.getByRole("group");
+    expect(attendees.querySelector("summary")).toHaveTextContent("5 attendees · 2 going, 1 not going, 1 maybe");
+    const rows = within(attendees).getAllByRole("listitem");
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "jane@example.com · Going",
+      "bob@example.com · Not going",
+      "kim@example.com · Maybe",
+      "lee@example.com · Going",
+      "sam@example.com",
+    ]);
+    expect(within(rows[1]).getByText("· Not going")).toHaveAttribute("data-response-status", "declined");
+
+    // A response for someone not listed is not counted.
+    rerender(<EventViewer event={{ ...event, attendees: ["sam@example.com"], attendeeResponses: { "jane@example.com": "accepted", "sam@example.com": "needsAction" } }} onDismiss={() => {}} onUpdated={() => {}} />);
+    expect(screen.getByRole("group").querySelector("summary")).toHaveTextContent(/^1 attendee · 1 awaiting$/);
+
+    rerender(<EventViewer event={{ ...event, attendeeResponses: undefined }} onDismiss={() => {}} onUpdated={() => {}} />);
+    expect(screen.getByRole("group").querySelector("summary")).toHaveTextContent(/^5 attendees$/);
+  });
+
   it("routes T to Calendar Accounts until a calendar is connected", async () => {
     vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([]);
     render(<App />);

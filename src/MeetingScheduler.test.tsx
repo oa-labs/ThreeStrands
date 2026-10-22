@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MeetingScheduler } from "./MeetingScheduler";
+import { MeetingScheduler, uncheckedNote, zoneName } from "./MeetingScheduler";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import type { AvailabilityCandidate, AvailabilityPreferences } from "./domain";
@@ -37,9 +37,9 @@ describe("MeetingScheduler", () => {
   const at = (iso: string, hours: number) => new Date(Date.parse(iso) + hours * 3_600_000).toISOString();
 
   it("uses the drive time setting for exact checks and alternative time suggestions", async () => {
-    const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "conflicting", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "conflicting", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
     vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
-    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
     renderScheduler(specific, { preferences: { ...preferences, driveTimeBufferMinutes: 30 } });
     await waitFor(() => expect(check).toHaveBeenCalledWith(expect.objectContaining({ driveTimeBufferMinutes: 30 })));
     fireEvent.click(await screen.findByRole("button", { name: "Find Other Times" }));
@@ -47,8 +47,8 @@ describe("MeetingScheduler", () => {
   });
 
   it("confirms a free exact time and offers to add it, reply that it works, or find other times in place", async () => {
-    const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
-    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [candidate(50)], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
+    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [candidate(50)], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
     const handlers = renderScheduler(specific);
 
     expect(await screen.findByText("You’re free")).toBeInTheDocument();
@@ -69,7 +69,7 @@ describe("MeetingScheduler", () => {
   ])("names the conflicting events and switches to a search for other times $when", async ({ start, rangeStart, rangeEnd }) => {
     pinClock();
     const conflicting: SchedulePlan = { query: { kind: "specific", start, end: at(start, 0.5) }, durationMinutes: 30, timeZoneAssumed: false };
-    vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "conflicting", conflicts: [{ start, end: at(start, 0.5) }], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "conflicting", conflicts: [{ start, end: at(start, 0.5) }], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
     vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
       events: [
         { id: "crit", accountId: "you@example.com", title: "Design crit", allDay: false, start, end: at(start, 0.5) },
@@ -77,7 +77,7 @@ describe("MeetingScheduler", () => {
       ],
       errors: [],
     });
-    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [{ start: at(NOW, 30), end: at(NOW, 30.75), status: "verified" }], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [{ start: at(NOW, 30), end: at(NOW, 30.75), status: "verified" }], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
     renderScheduler(conflicting);
 
     expect(await screen.findByText("Conflicts with Design crit")).toBeInTheDocument();
@@ -91,7 +91,7 @@ describe("MeetingScheduler", () => {
   it("offers the first open time on each of the next days, selectable with ordinary buttons, without booking any", async () => {
     const days = [candidate(20), candidate(44), candidate(68), candidate(92)];
     const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
-      candidates: days, checkedCalendarCount: 1, totalCalendarCount: 1, errors: [],
+      candidates: days, checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [],
     });
     const handlers = renderScheduler(range);
 
@@ -101,7 +101,9 @@ describe("MeetingScheduler", () => {
       rangeStart: range.query!.start, rangeEnd: range.query!.end, maxPerDay: SLOTS_PER_DAY,
       preferences: { ...preferences, defaultDurationMinutes: 45 },
     });
-    expect(screen.getByText("Using your time zone (America/New_York)")).toBeInTheDocument();
+    expect(screen.getByText("Times in Eastern Time (the email didn’t say)")).toBeInTheDocument();
+    // Every calendar answered, so nothing warns that a time may conflict.
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
     expect(slots.every((slot) => slot.getAttribute("aria-pressed") === "true")).toBe(true);
     // Offered times are proposals; nothing is booked until the other side picks one.
     expect(screen.queryByRole("button", { name: "Add to Calendar" })).not.toBeInTheDocument();
@@ -129,7 +131,7 @@ describe("MeetingScheduler", () => {
 
   it("explains a passed time and can search new times instead", async () => {
     pinClock();
-    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
     renderScheduler({ query: null, durationMinutes: 30, timeZoneAssumed: false });
     expect(screen.getByText("That time has already passed.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Find New Times" }));
@@ -138,10 +140,51 @@ describe("MeetingScheduler", () => {
     expect(find).toHaveBeenCalledWith(expect.objectContaining({ rangeStart: NOW, rangeEnd: "2026-10-06T14:00:00.000Z" }));
   });
 
+  it("names the calendars it could not check once for the whole list, not on each time", async () => {
+    const partial = (hours: number): AvailabilityCandidate => ({ ...candidate(hours), status: "partiallyChecked" });
+    vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
+      candidates: [partial(20), partial(44), partial(68)], checkedCalendarCount: 1, totalCalendarCount: 2, uncheckedCalendars: ["Team Shared"], errors: [],
+    });
+    const handlers = renderScheduler(range);
+    const slots = within(await screen.findByRole("group", { name: "Open times" })).getAllByRole("button");
+    expect(slots.some((slot) => /calendar/i.test(slot.textContent ?? ""))).toBe(false);
+    const note = screen.getByRole("note");
+    expect(note).toHaveTextContent("Couldn’t check Team Shared, so these times may conflict with it.");
+    fireEvent.click(within(note).getByRole("button", { name: "Calendar Settings" }));
+    expect(handlers.onOpenCalendarSettings).toHaveBeenCalled();
+  });
+
+  it("says when no calendar could be checked for a range", async () => {
+    vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
+      candidates: [{ ...candidate(20), status: "unverified" }], checkedCalendarCount: 0, totalCalendarCount: 0, uncheckedCalendars: [], errors: [],
+    });
+    renderScheduler(range);
+    expect(await screen.findByRole("note")).toHaveTextContent("No calendar could be checked, so these times may conflict.");
+  });
+
+  it("names the calendars an exact time could not be checked against", async () => {
+    vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({
+      status: "partiallyChecked", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 3, uncheckedCalendars: ["Team Shared", "work@example.com"], errors: [],
+    });
+    renderScheduler(specific);
+    expect(await screen.findByText("Free on the calendars that could be checked")).toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent("Couldn’t check Team Shared and work@example.com, so this time may conflict with them.");
+  });
+
+  it("describes unchecked calendars even when their names are unknown", () => {
+    expect(uncheckedNote([], "these times")).toBe("Some calendars couldn’t be checked, so these times may conflict with them.");
+  });
+
+  it("names time zones the way people say them, keeping the zone ID when it has no name", () => {
+    expect(zoneName("America/New_York")).toBe("Eastern Time");
+    expect(zoneName("Europe/Berlin")).toBe("Central European Time");
+    expect(zoneName("Not/AZone")).toBe("Not/AZone");
+  });
+
   it("keeps a failed check retryable", async () => {
     const check = vi.spyOn(mailClient, "checkProposedTime")
       .mockRejectedValueOnce(new Error("Google Calendar request failed (503)."))
-      .mockResolvedValueOnce({ status: "partiallyChecked", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 2, errors: [] });
+      .mockResolvedValueOnce({ status: "partiallyChecked", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 2, uncheckedCalendars: [], errors: [] });
     renderScheduler(specific);
     expect(await screen.findByRole("alert")).toHaveTextContent("Google Calendar request failed (503).");
     fireEvent.click(screen.getByRole("button", { name: "Try Again" }));
@@ -149,7 +192,7 @@ describe("MeetingScheduler", () => {
     await waitFor(() => expect(check).toHaveBeenCalledTimes(2));
   });
   it("adds an announced event as given, without offering other times or a reply", async () => {
-    vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "conflicting", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "conflicting", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
     vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] } as never);
     const handlers = renderScheduler({ ...specific, announced: true });
 
@@ -186,7 +229,7 @@ describe("MeetingScheduler", () => {
   });
 
   it("keeps its result when re-rendered with equal preferences", async () => {
-    const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    const check = vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
     const handlers = { onAddToCalendar: vi.fn(), onReplyWithTimes: vi.fn(), onConfirmTime: vi.fn(), onOpenCalendarSettings: vi.fn() };
     const { rerender } = render(<MeetingScheduler plan={specific} preferences={preferences} calendarConnected {...handlers} />);
     expect(await screen.findByText("You’re free")).toBeInTheDocument();
@@ -205,7 +248,7 @@ describe("MeetingScheduler", () => {
     const identity = { title: "Entrepreneur Day 2026", location: "Energy Innovation Center - 1435 Bedford Ave, Pittsburgh, PA 15219, USA" };
     const standing = { id: "standing", accountId: "you@example.com", title: "Premier Labs Bi-Weekly Member Meeting", allDay: false, start: at(START, -0.5), end: at(START, 0.5) };
     const added = { id: "added", accountId: "you@example.com", title: "Entrepreneur Day 2026", allDay: false, start: START, end: at(START, 2), location: "1435 Bedford Ave, Pittsburgh, PA 15219" };
-    const conflicting = () => vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "conflicting", conflicts: [{ start: START, end: at(START, 2) }], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+    const conflicting = () => vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "conflicting", conflicts: [{ start: START, end: at(START, 2) }], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
 
     it("says the event is already added, names only the other overlaps, and makes adding it again deliberate", async () => {
       conflicting();
@@ -279,7 +322,7 @@ describe("MeetingScheduler", () => {
     });
 
     it("finds an event added from this email at another time that day, even when the suggested time is free", async () => {
-      vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
       // 23:00Z is 6:00 PM in America/New_York, an hour after the suggested 4:00 PM ends.
       const moved = { ...added, start: "2026-11-17T23:00:00.000Z", end: "2026-11-18T01:00:00.000Z", sourceMessageId: "message-1" };
       vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [moved], errors: [] });
@@ -290,7 +333,7 @@ describe("MeetingScheduler", () => {
     });
 
     it("does not read the day for a free time with no email to look for", async () => {
-      vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
       const list = vi.spyOn(mailClient, "listScheduleEvents");
       renderScheduler(announcedPlan, { identity });
       expect(await screen.findByText("You’re free")).toBeInTheDocument();
@@ -323,7 +366,7 @@ describe("MeetingScheduler", () => {
       vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
         // Earliest first, as the calendar search returns them; day 31 is Oct 1.
         candidates: [slotAt(30, 9), slotAt(30, 10), slotAt(30, 11), slotAt(31, 9)],
-        checkedCalendarCount: 1, totalCalendarCount: 1, errors: [],
+        checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [],
       });
       renderScheduler(week);
 
@@ -344,7 +387,7 @@ describe("MeetingScheduler", () => {
 
     it("narrows the search to mornings or afternoons of the working hours, and back", async () => {
       pinClock();
-      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [slotAt(30, 9)], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [slotAt(30, 9)], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
       renderScheduler(week);
       await screen.findByRole("group", { name: "Open times" });
       const windowsOf = (call: number) => find.mock.calls[call][0].preferences.workingWindows;
@@ -367,7 +410,7 @@ describe("MeetingScheduler", () => {
 
     it("starts from the days and hours it was given, names them, and keeps the days when the hours change", async () => {
       pinClock();
-      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
       const onSearchChange = vi.fn();
       renderScheduler({ ...week, bounds: { weekdays: [4, 5], dayStart: "15:00", dayEnd: null } }, { onSearchChange });
 
@@ -398,7 +441,7 @@ describe("MeetingScheduler", () => {
     });
 
     it("shows what it is given beside the adjustment chips", async () => {
-      vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
       renderScheduler(range, { adjustInput: <input aria-label="Adjust times" /> });
       await screen.findByText("No open times in your working hours for this range.");
       expect(screen.getByRole("textbox", { name: "Adjust times" })).toBeInTheDocument();
@@ -406,7 +449,7 @@ describe("MeetingScheduler", () => {
 
     it("moves to the following range and back, naming the days searched", async () => {
       pinClock();
-      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, errors: [] });
+      const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
       renderScheduler(week);
       expect(await screen.findByText("Wed, Sep 30 – Tue, Oct 6")).toBeInTheDocument();
       // An empty range can still be adjusted.

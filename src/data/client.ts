@@ -292,6 +292,7 @@ export interface MailClient extends CorrespondenceClient {
   addCalendarAccount(): Promise<CalendarAccount>;
   reconnectCalendarAccount(email: string): Promise<CalendarAccount>;
   removeCalendarAccount(email: string): Promise<void>;
+  reorderCalendarAccounts(emails: string[]): Promise<void>;
   listCalendarOptions(): Promise<CalendarOption[]>;
   setCalendarSelection(accountId: string, calendarIds: string[]): Promise<CalendarOption[]>;
   listScheduleEvents(timeMin: string, timeMax: string, timeZone: string): Promise<ScheduleResult>;
@@ -473,6 +474,7 @@ const tauriClient: MailClient = {
   addCalendarAccount: () => complete("add_calendar_account"),
   reconnectCalendarAccount: (email) => complete("reconnect_calendar_account", { email }),
   removeCalendarAccount: (email) => complete("remove_calendar_account", { email }),
+  reorderCalendarAccounts: (emails) => complete("reorder_calendar_accounts", { emails }),
   listCalendarOptions: () => complete("list_calendar_options"),
   setCalendarSelection: (accountId, calendarIds) =>
     complete("set_calendar_selection", { accountId, calendarIds }),
