@@ -15,6 +15,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Collapsed emails in a conversation now use the same text sizes as the rest of the app, instead of larger type.
 - An unsent draft at the end of a conversation now lines up with the emails above it, with **Resume Draft** on the right.
 - You can now reorder accounts in **Settings → Calendar Accounts** with the up and down arrows, the same way as mail accounts. The **Calendar** sidebar follows the new order, and reconnecting an account no longer moves it to the bottom of the list.
+- Files you attach to a message now appear right above **Send** and the paperclip button, so you can see them as soon as you add them instead of having to scroll down past your signature.
 
 ### Fixed
 - Clicking a conversation in the message list while writing a new message now opens it. Your message is saved to **Drafts** so you can finish it later.

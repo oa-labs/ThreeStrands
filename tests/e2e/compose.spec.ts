@@ -519,6 +519,7 @@ test("attachment selection and removal survive autosave; invalid recipients keep
   await composer.getByRole("textbox", { name: "Subject" }).press("ControlOrMeta+Shift+a");
   await (await picker).setFiles({ name: "résumé.txt", mimeType: "text/plain", buffer: Buffer.from("attachment bytes") });
   await expect(composer.getByText("résumé.txt", { exact: false })).toBeVisible();
+  await expect(composer.getByRole("list", { name: "Attachments" })).toBeInViewport();
   await composer.getByRole("button", { name: "Remove résumé.txt" }).click();
   await expect(composer.getByText("résumé.txt", { exact: false })).not.toBeVisible();
   await composer.getByRole("button", { name: "Send", exact: true }).click();
