@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
 
 type OptionProps = {
@@ -54,13 +54,18 @@ export function FindOrCreatePicker<T>({
   const [query, setQuery] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const names = (item: T, text: string) => isExactMatch
+    ? isExactMatch(item, text.trim())
+    : getSearchText(item).toLowerCase() === text.trim().toLowerCase();
+  const itemsFor = (text: string) => {
+    const normalized = text.trim().toLowerCase();
+    return normalized
+      ? items.filter((item) => getSearchText(item).toLowerCase().includes(normalized) || names(item, text))
+      : items;
+  };
   const normalizedQuery = query.trim().toLowerCase();
-  const matches = (item: T) => isExactMatch
-    ? isExactMatch(item, query.trim())
-    : getSearchText(item).toLowerCase() === normalizedQuery;
-  const filteredItems = normalizedQuery
-    ? items.filter((item) => getSearchText(item).toLowerCase().includes(normalizedQuery) || matches(item))
-    : items;
+  const matches = (item: T) => names(item, query);
+  const filteredItems = itemsFor(query);
   const exactMatchExists = normalizedQuery.length > 0 && items.some(matches);
   const noticeContent = normalizedQuery ? notice?.(query.trim()) : null;
   const showCreateRow = normalizedQuery.length > 0 && !exactMatchExists && !noticeContent;
@@ -68,7 +73,10 @@ export function FindOrCreatePicker<T>({
   const activeIndex = rowCount === 0 ? -1 : Math.min(Math.max(highlightedIndex, 0), rowCount - 1);
 
   // A new query starts on the item it names exactly, so Enter picks it.
-  useEffect(() => setHighlightedIndex(normalizedQuery ? Math.max(filteredItems.findIndex(matches), 0) : 0), [query]);
+  const changeQuery = (next: string) => {
+    setQuery(next);
+    setHighlightedIndex(next.trim() ? Math.max(itemsFor(next).findIndex((item) => names(item, next)), 0) : 0);
+  };
 
   const optionProps = (index: number, click: () => void): OptionProps => ({
     id: `${listId}-option-${index}`,
@@ -77,12 +85,12 @@ export function FindOrCreatePicker<T>({
     onClick: click,
   });
   const create = () => {
-    if (onCreate(query.trim()) !== false && clearOnPick) setQuery("");
+    if (onCreate(query.trim()) !== false && clearOnPick) changeQuery("");
   };
   const selectRow = (index: number) => {
     if (index < filteredItems.length) {
       onSelect(filteredItems[index], query.trim());
-      if (clearOnPick) setQuery("");
+      if (clearOnPick) changeQuery("");
     } else if (showCreateRow) create();
   };
   const input = <input
@@ -90,7 +98,7 @@ export function FindOrCreatePicker<T>({
     ref={inputRef}
     autoFocus
     value={query}
-    onChange={(event) => setQuery(event.target.value)}
+    onChange={(event) => changeQuery(event.target.value)}
     placeholder={tokens ? undefined : placeholder}
     aria-label={ariaLabel}
     role="combobox"
