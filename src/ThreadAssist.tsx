@@ -4,6 +4,7 @@ import { Check, ChevronRight, Copy, MapPin, RefreshCw, RotateCcw, Sparkles, User
 import type { ActionProposal, AvailabilityCandidate, AvailabilityPreferences, MeetingProposal, ScheduleEvent, ThreadDetail } from "./domain";
 import type { CalendarAddition, ScheduleSlot } from "./MeetingScheduler";
 import { FindTimesCard } from "./FindTimesCard";
+import { MoreActionsMenu } from "./MoreActionsMenu";
 import { planMeeting } from "./scheduling";
 import { safeWebUrl } from "./calendarTime";
 import { HoverTooltip } from "./AppChrome";
@@ -158,9 +159,11 @@ export function meetingPlace(location: string | null, calendarConferenceUrl: str
 }
 
 /**
- * One suggestion. Once a meeting is on the calendar the scheduler shows when
- * it is, so the card drops the email's wording of the time and moves its own
- * actions into the scheduler's row: Dismiss beside Open in Calendar, Edit in ⋯.
+ * One suggestion. A meeting keeps Edit and Dismiss in the header's ⋯ so its
+ * only row of buttons is the scheduler's. Once it is on the calendar the
+ * scheduler shows when it is, so the card drops the email's wording of the
+ * time and moves its own actions into the scheduler's row: Dismiss beside
+ * Open in Calendar, Edit in ⋯.
  */
 function ProposalCard({ proposal, index, source, suggestions, scheduling }: {
   proposal: ActionProposal;
@@ -183,10 +186,17 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling }: {
     ? new Intl.ListFormat(undefined, { type: "conjunction" }).format(proposal.participants.map(participantName))
     : "";
   return <article className="action-proposal-card">
-    <div className="action-proposal-card-header"><span className="proposal-kind">{kind}</span>{uncertain || needsReview ? <span className="proposal-check">Check details</span> : null}</div>
+    <div className="action-proposal-card-top">
+      <div className="action-proposal-card-header">
+        <span className="proposal-kind">{kind}</span>
+        {uncertain || needsReview ? <button type="button" className="btn-link proposal-check" title="Some details may be wrong. Edit to check them." onClick={edit}>Check details</button> : null}
+      </div>
+      {proposal.type === "meeting" && !matched ? <MoreActionsMenu label="More actions" actions={[{ label: "Edit", onSelect: edit }, { label: "Dismiss", onSelect: () => suggestions.onDiscard(index) }]} /> : null}
+    </div>
     <strong>{proposal.title}</strong>
     {proposal.type === "meeting" ? <>
-      {matched ? null : <p>{proposal.rawTimeLanguage || "Time not specified"}</p>}
+      {/* The email's own words, quoted so they read as what was asked rather than as a description. */}
+      {matched ? null : proposal.rawTimeLanguage ? <p className="proposal-time-language">{proposal.rawTimeLanguage}</p> : <p>Time not specified</p>}
       {where?.joinUrl ? <p className="proposal-detail"><Video size={ICON_SIZE.sm} aria-hidden="true" /><span>
         {where.place ? <>{where.place} · </> : null}
         {/* The address shows on hover, since it came from the email or the calendar rather than from ThreeStrands. */}
@@ -211,12 +221,12 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling }: {
       matchedActions={dismiss}
       moreActions={[{ label: "Edit", onSelect: edit }]}
     /> : null}
-    {matched ? null : <div className="proposal-actions">
+    {proposal.type === "task" ? <div className="proposal-actions">
       {/* Icons mark the calendar actions only, so Edit and Dismiss stay plain. */}
       <button type="button" className="btn btn-sm" onClick={edit}>Edit</button>
-      {proposal.type === "task" ? <button type="button" className="btn btn-sm" onClick={() => suggestions.onReview(index, proposal, "accept")}>Review &amp; Add Task</button> : null}
+      <button type="button" className="btn btn-sm" onClick={() => suggestions.onReview(index, proposal, "accept")}>Review &amp; Add Task</button>
       {dismiss}
-    </div>}
+    </div> : null}
     <details className="proposal-evidence"><summary><ChevronRight className="proposal-evidence-chevron" size={ICON_SIZE.xs} aria-hidden="true" />From the email</summary><blockquote>{proposal.evidence.excerpt}</blockquote>{source ? <small>{source}</small> : null}</details>
   </article>;
 }

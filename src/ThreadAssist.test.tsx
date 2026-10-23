@@ -362,9 +362,14 @@ describe("ThreadAssist", () => {
       evidence: { sourceMessageId: "message-unknown", excerpt: "Let's meet next week." },
     };
     const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
-    render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [meeting] }, scheduling: { calendarConnected: true } })} />);
+    const onReview = vi.fn();
+    render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [meeting], onReview }, scheduling: { calendarConnected: true } })} />);
 
-    expect(screen.getByText("Check details")).toBeInTheDocument();
+    // The flag says where to look: it opens the editor.
+    fireEvent.click(screen.getByRole("button", { name: "Check details" }));
+    expect(onReview).toHaveBeenCalledWith(0, meeting, "edit");
+    // The email's wording of the time reads as a quote, not a description.
+    expect(screen.getByText("sometime next week")).toHaveClass("proposal-time-language");
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Find Times" })).not.toBeInTheDocument();
     const schedule = screen.getByRole("group", { name: "Schedule" });
@@ -519,14 +524,16 @@ describe("ThreadAssist", () => {
     const people = screen.getByText(/Joshua Dadeboe/);
     expect(people).toHaveTextContent(/^Joshua Dadeboe, Ana Rivera,? and Smith, Jr\.$/);
     expect(people.closest(".proposal-detail")?.querySelector("svg")).not.toBeNull();
-    // Before the calendar is checked, the card keeps its own actions, with the email excerpt last.
+    // Before the meeting is on the calendar, Edit and Dismiss wait in the header's ⋯, with the email excerpt last.
     const card = people.closest("article") as HTMLElement;
-    expect(within(card).getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    expect(card.querySelector(".proposal-actions")).toBeNull();
+    fireEvent.click(within(card).getByRole("button", { name: "More actions" }));
+    expect(within(card).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Edit", "Dismiss"]);
     expect(card.lastElementChild).toHaveClass("proposal-evidence");
     // The disclosure uses the app's chevron rather than the browser's triangle.
     expect(card.querySelector(".proposal-evidence > summary > svg.proposal-evidence-chevron")).not.toBeNull();
-    // Icons mark only the calendar actions.
-    expect(within(card).getByRole("button", { name: "Edit" }).querySelector("svg")).toBeNull();
   });
 
   it("explains unreadable provider output in plain language and keeps the details available", () => {

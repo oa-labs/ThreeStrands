@@ -1,4 +1,4 @@
-import { CalendarCheck, CalendarPlus, CircleCheck, CircleAlert, RotateCcw } from "lucide-react";
+import { CalendarCheck, CalendarPlus, Check, ChevronLeft, ChevronRight, CircleCheck, CircleAlert, RotateCcw } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import type { AvailabilityCandidate, AvailabilityPreferences, ProposedTimeCheck, ScheduleEvent } from "./domain";
 import { findCalendarMatch, findDayMatch, SAME_EVENT_START_TOLERANCE_MINUTES, type CalendarMatch, type EventIdentity } from "./eventMatching";
@@ -44,8 +44,14 @@ function formatSlot(slot: ScheduleSlot, timeZone: string): string {
   const start = new Date(slot.start);
   const end = new Date(slot.end);
   const day = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", timeZone }).format(start);
-  const time = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone });
-  return `${day} · ${time.format(start)}–${time.format(end)}`;
+  // A shared day period is named once, as in "9:00 – 9:30 AM".
+  const time = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone }).formatRange(start, end);
+  return `${day} · ${time}`;
+}
+
+/** A meeting length, such as "30 min" or "1 hr". */
+function formatLength(minutes: number): string {
+  return minutes >= 60 && minutes % 60 === 0 ? `${minutes / 60} hr` : `${minutes} min`;
 }
 
 function formatRange(query: ScheduleQuery, timeZone: string): string {
@@ -114,7 +120,7 @@ const sameEvent = (left: ScheduleEvent, right: ScheduleEvent) => left.accountId 
  * Checks a meeting against the user's calendar without involving AI: an
  * exact time is checked for conflicts, a range yields open slots spread
  * across its days. A range can be adjusted in place — mornings, afternoons,
- * or a later range — and shows more slots on request. Every outcome goes
+ * or earlier and later days — and shows more slots on request. Every outcome goes
  * through a review step: the event dialog or a reply in the composer.
  * Given what the event is called, a time or day already on the calendar
  * under that name reads as added rather than as a conflict. Once added,
@@ -279,12 +285,12 @@ export function MeetingScheduler({
   // A part of the day replaces any hours already set and keeps the weekdays; pressing it again clears the hours.
   const toggleHours = (hours: typeof MORNINGS | typeof AFTERNOONS, pressed: boolean) =>
     setBounds((current) => ({ ...current, ...(pressed ? { dayStart: null, dayEnd: null } : hours) }));
+  // Part of the day narrows the times shown; the arrows beside the range move to other days.
   const adjust = <div className="meeting-scheduler-adjust">
-    <div className="meeting-scheduler-adjust-chips" role="group" aria-label="Adjust times">
-      <button type="button" className="btn btn-sm" aria-pressed={mornings} onClick={() => toggleHours(MORNINGS, mornings)}>Mornings</button>
-      <button type="button" className="btn btn-sm" aria-pressed={afternoons} onClick={() => toggleHours(AFTERNOONS, afternoons)}>Afternoons</button>
-      {shift > 0 ? <button type="button" className="btn btn-sm" onClick={() => setShift((current) => current - 1)}>Earlier</button> : null}
-      <button type="button" className="btn btn-sm" onClick={() => setShift((current) => current + 1)}>Later</button>
+    <div className="segmented meeting-scheduler-hours" role="group" aria-label="Part of the day">
+      <button type="button" className="segment" aria-pressed={!bounds.dayStart && !bounds.dayEnd} onClick={() => setBounds((current) => ({ ...current, dayStart: null, dayEnd: null }))}>Any Time</button>
+      <button type="button" className="segment" aria-pressed={mornings} onClick={() => toggleHours(MORNINGS, mornings)}>Mornings</button>
+      <button type="button" className="segment" aria-pressed={afternoons} onClick={() => toggleHours(AFTERNOONS, afternoons)}>Afternoons</button>
     </div>
     {adjustInput}
   </div>;
@@ -365,7 +371,14 @@ export function MeetingScheduler({
       </div>
     </> : null}
     {state.phase === "range" && query.kind === "range" ? <>
-      <p className="meeting-scheduler-range">{[formatRange(query, timeZone), formatBounds(bounds)].filter(Boolean).join(" · ")}</p>
+      <div className="meeting-scheduler-range">
+        <button type="button" className="btn-icon btn-icon-sm" aria-label="Earlier" title="Earlier days" disabled={shift === 0} onClick={() => setShift((current) => current - 1)}><ChevronLeft size={ICON_SIZE.sm} /></button>
+        <p><span>{[formatRange(query, timeZone), formatBounds(bounds)].filter(Boolean).join(" · ")}</span> · {formatLength(plan.durationMinutes)}</p>
+        <button type="button" className="btn-icon btn-icon-sm" aria-label="Later" title="Later days" onClick={() => setShift((current) => current + 1)}><ChevronRight size={ICON_SIZE.sm} /></button>
+      </div>
+      {/* What the times mean comes before the times, and so do the ways to change them. */}
+      {assumedZone}
+      {adjust}
       {state.candidates.length === 0 ? <p className="context-status">No open times in your working hours for this range.</p> : <>
         <div className="meeting-slots" role="group" aria-label="Open times">
           {state.candidates.slice(0, visibleCount)
@@ -384,7 +397,7 @@ export function MeetingScheduler({
                   else next.add(key);
                   return next;
                 })}
-              >{formatSlot(candidate, timeZone)}</button>;
+              >{pressed ? <Check size={ICON_SIZE.xs} aria-hidden="true" /> : <span className="meeting-slot-spacer" aria-hidden="true" />}{formatSlot(candidate, timeZone)}</button>;
             })}
         </div>
         {(() => {
@@ -392,7 +405,7 @@ export function MeetingScheduler({
             .filter((candidate) => selected.has(slotKey(candidate)))
             .sort((left, right) => Date.parse(left.start) - Date.parse(right.start));
           return <div className="meeting-scheduler-actions">
-            <button type="button" className="btn btn-sm" disabled={chosen.length === 0} onClick={() => onReplyWithTimes(chosen)}>{intoDraft ? "Insert" : "Draft Reply With"} {chosen.length === 1 ? "This Time" : "These Times"}</button>
+            <button type="button" className="btn btn-sm btn-primary" disabled={chosen.length === 0} onClick={() => onReplyWithTimes(chosen)}>{intoDraft ? "Insert" : "Draft Reply With"} {chosen.length === 1 ? "This Time" : "These Times"}</button>
             {visibleCount < state.candidates.length
               ? <button type="button" className="btn btn-sm" onClick={() => setVisibleCount((current) => current + SUGGESTED_SLOT_COUNT)}>Show More</button>
               : null}
@@ -402,8 +415,7 @@ export function MeetingScheduler({
           ? "No calendar could be checked, so these times may conflict."
           : uncheckedNote(state.unchecked, "these times"))}
       </>}
-      {adjust}
     </> : null}
-    {assumedZone}
+    {state.phase === "range" ? null : assumedZone}
   </div>;
 }

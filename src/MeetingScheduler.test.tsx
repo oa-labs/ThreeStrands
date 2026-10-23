@@ -102,6 +102,12 @@ describe("MeetingScheduler", () => {
       preferences: { ...preferences, defaultDurationMinutes: 45 },
     });
     expect(screen.getByText("Times in Eastern Time (the email didn’t say)")).toBeInTheDocument();
+    expect(screen.getByText(/· 45 min$/)).toBeInTheDocument();
+    // The time zone and the ways to narrow the times come before the times; the reply is the main action.
+    const hours = screen.getByRole("group", { name: "Part of the day" });
+    expect(hours.compareDocumentPosition(screen.getByRole("group", { name: "Open times" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(hours).getByRole("button", { name: "Any Time" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Draft Reply With These Times" })).toHaveClass("btn-primary");
     // Every calendar answered, so nothing warns that a time may conflict.
     expect(screen.queryByRole("note")).not.toBeInTheDocument();
     expect(slots.every((slot) => slot.getAttribute("aria-pressed") === "true")).toBe(true);
@@ -409,6 +415,9 @@ describe("MeetingScheduler", () => {
     };
     const week: SchedulePlan = { query: { kind: "range", start: "2026-09-30T04:00:00.000Z", end: "2026-10-07T04:00:00.000Z" }, durationMinutes: 30, timeZoneAssumed: false };
     const label = (hour: number) => new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }).format(new Date(2026, 8, 1, hour));
+    // A slot's start, such as "9:00": a period its end shares is named once, after the end.
+    const startLabel = (hour: number) => new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })
+      .formatToParts(new Date(2026, 8, 1, hour)).filter((part) => part.type !== "dayPeriod").map((part) => part.value).join("").trim();
 
     it("spreads the first times across days, then shows each day's later times on request", async () => {
       pinClock();
@@ -422,12 +431,16 @@ describe("MeetingScheduler", () => {
       const group = await screen.findByRole("group", { name: "Open times" });
       // Sep 30's first slot, then Oct 1's first, before Sep 30's second.
       expect(within(group).getAllByRole("button").map((slot) => slot.textContent)).toEqual([
-        expect.stringContaining(label(9)), expect.stringContaining(label(10)), expect.stringContaining(label(9)),
+        expect.stringContaining(startLabel(9)), expect.stringContaining(startLabel(10)), expect.stringContaining(startLabel(9)),
       ]);
       expect(within(group).getAllByRole("button")[0]).toHaveTextContent("Sep 30");
       expect(within(group).getAllByRole("button")[2]).toHaveTextContent("Oct 1");
+      expect(within(group).getAllByRole("button")[0].textContent?.match(/[AP]M/g)).toHaveLength(1);
+      // Picked times carry a checkmark, so a full list still reads as chosen.
+      expect(within(group).getAllByRole("button")[0].querySelector("svg")).not.toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "Show More" }));
       const all = within(group).getAllByRole("button");
+      expect(all[2].querySelector("svg")).toBeNull();
       expect(all).toHaveLength(4);
       // Newly shown times start unselected; the first three stay selected.
       expect(all.map((slot) => slot.getAttribute("aria-pressed"))).toEqual(["true", "true", "false", "true"]);
@@ -501,8 +514,8 @@ describe("MeetingScheduler", () => {
       const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
       renderScheduler(week);
       expect(await screen.findByText("Wed, Sep 30 – Tue, Oct 6")).toBeInTheDocument();
-      // An empty range can still be adjusted.
-      expect(screen.queryByRole("button", { name: "Earlier" })).not.toBeInTheDocument();
+      // An empty range can still be adjusted; Earlier stays in place, unavailable before the first range.
+      expect(screen.getByRole("button", { name: "Earlier" })).toBeDisabled();
 
       fireEvent.click(screen.getByRole("button", { name: "Later" }));
       expect(await screen.findByText("Wed, Oct 7 – Tue, Oct 13")).toBeInTheDocument();
@@ -510,7 +523,7 @@ describe("MeetingScheduler", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Earlier" }));
       expect(await screen.findByText("Wed, Sep 30 – Tue, Oct 6")).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Earlier" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Earlier" })).toBeDisabled();
     });
   });
 });
