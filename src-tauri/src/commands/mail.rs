@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::models::{
     CreateLabelRequest, Label, MailboxUnreadCounts, SearchThreadsRequest, Thread, ThreadDetail,
-    ThreadMutation, ThreadPage, TriageEvent, TriageSenderStats, UpdateLabelRequest,
+    ThreadMutation, ThreadPage, TodayMailPage, TriageEvent, TriageSenderStats, UpdateLabelRequest,
 };
 use crate::sync::SyncService;
 use tauri::State;
@@ -90,6 +90,16 @@ pub(crate) async fn list_threads_page(
 pub(crate) async fn list_unread_counts(state: State<'_, AppState>) -> AppResult<HashMap<String, i64>> {
     let database = state.database.clone();
     run_database_task(move || database.list_unread_counts()).await
+}
+
+/// Unread mail for the Today view; see `Database::list_today_mail`.
+#[tauri::command]
+pub(crate) async fn list_today_mail(
+    account_id: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<TodayMailPage> {
+    let database = state.database.clone();
+    run_database_task(move || database.list_today_mail(account_id.as_deref())).await
 }
 
 #[tauri::command]

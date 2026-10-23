@@ -5,11 +5,12 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ## Unreleased
 
 ### New
+- The new **Today** view (press <kbd>0</kbd>) shows your day at a glance: your agenda with a **Join** button for the next meeting, unread mail sorted into **Needs a reply**, **From people**, and **Updates**, and tasks that are overdue or due today. To start the app there, choose **Today** under **Settings → Appearance → Start With**; when your inbox is empty, the side panel links to it.
 - You can now edit the message you're forwarding. Click **Edit** on the bar above the forwarded message to trim it or add notes. Some formatting and web images may be simplified, and **Restore Original** brings back the message as you received it.
 - Events suggested in the **Brief** now tell you when they're already on your calendar, instead of listing them as a conflict, including events you added from that email at a different time or under a new name. The card then shows the event's time from your calendar, with **Open in Calendar** to see it and **Dismiss** to clear the suggestion. If you really want a second copy, **Add Again** is in the **⋯** menu.
 - The header of an open email now shows who was copied, as in "to David Martinez, cc me", so you can tell whether a message was sent to you or you were only Cc'd. Your own address shows as "me".
 - Meeting details in the **Calendar** now show who has accepted or declined. The guest count adds a tally such as "2 going, 1 not going", and each guest is marked **Going**, **Not going**, **Maybe**, or **Awaiting**.
-- ThreeStrands now reopens where you left off. If you quit while in **Calendar**, **Tasks**, **Contacts**, or **Files**, that view is open the next time you start the app.
+- ThreeStrands now reopens where you left off. If you quit while in **Today**, **Calendar**, **Tasks**, **Contacts**, or **Files**, that view is open the next time you start the app.
 - **Settings → AI Provider** now lists recent **Activity**: which feature sent each request to your AI provider, the conversation's subject, how many messages, and the tokens used. Email text is never kept there.
 
 ### Improved

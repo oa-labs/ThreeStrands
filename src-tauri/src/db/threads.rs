@@ -380,7 +380,7 @@ pub(super) fn local_thread_id(account_id: &str, provider_thread_id: &str) -> Str
     format!("{account_id}:{provider_thread_id}")
 }
 
-fn thread_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
+pub(super) fn thread_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
     Ok(Thread {
         id: row.get(0)?,
         provider_thread_id: row.get(1)?,

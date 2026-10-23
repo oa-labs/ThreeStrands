@@ -279,13 +279,14 @@ describe("command registry", () => {
     expect(commands.find((command) => command.id === "tasks.previous")?.enabled(contactsContext)).toBe(false);
   });
 
-  it("registers direct primary-view shortcuts without a shortcut for 0", () => {
+  it("registers direct primary-view shortcuts, with 0 for Today", () => {
+    expect(commands.find((command) => command.id === "view.today")?.keys).toEqual(["0"]);
     expect(commands.find((command) => command.id === "view.mail")?.keys).toEqual(["1"]);
     expect(commands.find((command) => command.id === "view.calendar")?.keys).toEqual(["2"]);
     expect(commands.find((command) => command.id === "view.tasks")?.keys).toEqual(["3"]);
     expect(commands.find((command) => command.id === "view.contacts")?.keys).toEqual(["4"]);
     expect(commands.find((command) => command.id === "view.files")?.keys).toEqual(["5"]);
-    expect(commands.some((command) => command.keys.includes("0"))).toBe(false);
+    expect(commands.filter((command) => command.keys.includes("0")).map((command) => command.id)).toEqual(["view.today"]);
   });
 
   it("routes the Files shortcut and disables it during composition", async () => {

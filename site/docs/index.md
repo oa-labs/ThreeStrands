@@ -19,7 +19,7 @@ The app also has a **Getting Started** checklist in the sidebar that checks itse
 ## Guides
 
 - [Getting Started](getting-started.html) — installing, connecting mail, and the Settings you'll want first.
-- [Reading and Triage](triage.html) — archive, Split Inboxes, newsletter controls, Trust checks, and Inbox zero.
+- [Reading and Triage](triage.html) — archive, Split Inboxes, newsletter controls, Trust checks, Today, and Inbox zero.
 - [Writing Mail](compose.html) — rich text, signatures, snippets, Send Later, Sent, and checks before you send.
 - [Tasks and Goals](tasks-and-goals.html) — turn conversations into follow-ups and roll them up to goals.
 - [Calendar](calendar.html) — connect Google Calendar, plan your week, and share free times.

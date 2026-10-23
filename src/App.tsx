@@ -10,6 +10,7 @@ import {
   ContactRound,
   Files,
   Inbox,
+  LayoutDashboard,
   ListChecks,
   ListPlus,
   Mail,
@@ -138,6 +139,7 @@ export { formatMailTimestamp } from "./threadPresentation";
 // Rarely opened workspaces load on demand so they stay off the startup bundle.
 const Settings = lazy(() => import("./SettingsPanel").then((m) => ({ default: m.Settings })));
 const CalendarWeekView = lazy(() => import("./CalendarWeekView").then((m) => ({ default: m.CalendarWeekView })));
+const TodayWorkspace = lazy(() => import("./TodayWorkspace").then((m) => ({ default: m.TodayWorkspace })));
 const FilesWorkspace = lazy(() => import("./FilesWorkspace").then((m) => ({ default: m.FilesWorkspace })));
 const ContactsWorkspace = lazy(() => import("./ContactsWorkspace").then((m) => ({ default: m.ContactsWorkspace })));
 
@@ -607,13 +609,15 @@ export function App() {
 
   const showNoticeMessage = useCallback((message: string) => setNotice({ message }), [setNotice]);
 
+  // Mail shows with nothing over it, or with only the Today calendar panel beside it.
+  const mailInView = rightWorkspace === null || rightWorkspace === "calendar";
   const selectedThreads = threads.filter((thread) => checkedIds.has(thread.id));
   const allSelectedThreadsStarred = selectedThreads.length > 0
     && selectedThreads.every((thread) => thread.starred);
   const batchStarLabel = allSelectedThreadsStarred ? "Unstar" : "Star";
 
   return (
-    <main className={`app-shell${rightWorkspace === "files" ? " files-open" : rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : rightWorkspace ? " calendar-open" : ""}${rightWorkspace === "calendar" ? " mail-context-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
+    <main className={`app-shell${rightWorkspace === "today" ? " today-open" : rightWorkspace === "files" ? " files-open" : rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : rightWorkspace ? " calendar-open" : ""}${rightWorkspace === "calendar" ? " mail-context-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <AccountSwitcher
           accounts={accounts}
@@ -626,9 +630,10 @@ export function App() {
         <div className="sidebar-spacer" />
         <div className="sidebar-nav">
           <HoverTooltip title="New message (c)"><button className="nav-button" aria-label="New message (c)" onClick={() => executeById("draft.new")}><Pencil size={ICON_SIZE.lg} /></button></HoverTooltip>
+          <HoverTooltip label="Today" shortcut="0"><button className={`nav-button ${rightWorkspace === "today" ? "active" : ""}`} aria-label="Today (0)" onClick={() => executeById("view.today")}><LayoutDashboard size={ICON_SIZE.lg} /></button></HoverTooltip>
           <HoverTooltip label="Inbox" shortcut="1">
             <button
-              className={`nav-button ${rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" && rightWorkspace !== "files" ? "active" : ""}`}
+              className={`nav-button ${mailInView ? "active" : ""}`}
               aria-label="Inbox (1)"
               onClick={() => executeById("view.mail")}
             >
@@ -696,7 +701,7 @@ export function App() {
         </div>
       </nav>
 
-      {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" && rightWorkspace !== "files" ? <>
+      {mailInView ? <>
       <section id="inbox-panel" className="thread-column" aria-label="Inbox">
         <PanelResizeHandle {...inboxSize} label="Resize Inbox" controlsId="inbox-panel" title="Drag to resize inbox. Use arrow keys to adjust; double-click to reset." />
         <ErrorBoundary area="the inbox" resetKey={`${activeAccountId ?? "all"}:${mailbox}`}>
@@ -1308,7 +1313,7 @@ export function App() {
         />
         </ErrorBoundary>
       ) : null}
-      {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" && rightWorkspace !== "files" && composingApart && correspondence.liveDraft ? (
+      {mailInView && composingApart && correspondence.liveDraft ? (
         <ErrorBoundary area="this draft's context" variant="side" resetKey={correspondence.liveDraft.id}>
         <ComposeContext
           key={correspondence.liveDraft.id}
@@ -1334,22 +1339,12 @@ export function App() {
         />
         </ErrorBoundary>
       ) : null}
-      {rightWorkspace !== "tasks" && rightWorkspace !== "week" && rightWorkspace !== "contacts" && rightWorkspace !== "files" && !composingApart ? (
+      {mailInView && !composingApart ? (
         <ErrorBoundary area="the context panel" variant="side" resetKey={selectedId}>
         <ContextPanel
           detail={visibleDetail}
           idle={inboxZero ? (
-            <InboxZeroSections
-              accountId={activeAccountId}
-              taskRefreshKey={taskRevision}
-              calendarConnected={calendarConnected}
-              calendars={calendar.calendars}
-              onOpenEvent={(event) => openCalendarAt(eventDate(event))}
-              onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
-              onOpenTasks={openTasksView}
-              onOpenContact={contactCardActions.onOpenContact}
-              onOpenKeepInTouch={openKeepInTouchView}
-            />
+            <InboxZeroSections onOpenToday={() => executeById("view.today")} />
           ) : null}
           accounts={accounts}
           selectedEmail={contextPersonEmail}
@@ -1480,6 +1475,21 @@ export function App() {
         />
         </ErrorBoundary>
       ) : null}
+      {rightWorkspace === "today" ? <ErrorBoundary area="Today" variant="side" resetKey={activeAccountId}><Suspense fallback={null}><TodayWorkspace
+        accountId={activeAccountId}
+        refreshKey={syncStatus?.lastSuccessfulSync ?? ""}
+        taskRefreshKey={taskRevision}
+        calendarConnected={calendarConnected}
+        calendars={calendar.calendars}
+        onOpenThread={jumpToThread}
+        onOpenEvent={(event) => openCalendarView(eventDate(event), event)}
+        onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
+        onTasksChanged={() => { setTaskRevision((current) => current + 1); void refreshTaskIndicators(); }}
+        onOpenInbox={() => executeById("view.mail")}
+        onOpenTasks={openTasksView}
+        onOpenContact={contactCardActions.onOpenContact}
+        onOpenKeepInTouch={openKeepInTouchView}
+      /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "files" ? <ErrorBoundary area="Files" variant="side" resetKey={activeAccountId}><Suspense fallback={null}><FilesWorkspace refreshKey={syncStatus?.lastSuccessfulSync ?? ""} key={activeAccountId ?? "all"} sessions={fileSessions} accountId={activeAccountId} accountIds={accounts.map((account) => account.email)} onOpenThread={jumpToThread} onOpenContact={contactCardActions.onOpenContact} onReportSpam={markFileSourceSpam} /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "contacts" ? <ErrorBoundary area="Contacts" variant="side" resetKey={activeAccountId}><Suspense fallback={null}><ContactsWorkspace key={`${activeAccountId ?? "all"}:${contactAddressBookTarget ?? ""}`} accountId={activeAccountId} onOpenThread={jumpToThread} onCompose={(to) => { setRightWorkspace(null); correspondence.composeMailto({ to, cc: "", bcc: "", subject: "", body: "" }); }} onSaved={() => { setNotice({ message: "Contact saved" }); void refreshKeepInTouchCount(); }} initialContactId={contactAddressBookTarget} view={contactsView} onViewChange={setContactsView} onKeepInTouchChanged={() => void refreshKeepInTouchCount()} onOpenAiSettings={() => { setRightWorkspace(null); openSettingsAt("ai"); }} /></Suspense></ErrorBoundary> : null}
       {rightWorkspace === "tasks" ? (

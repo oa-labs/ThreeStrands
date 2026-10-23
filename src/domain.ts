@@ -563,6 +563,25 @@ export type ThreadPage = {
   hasMore: boolean;
 };
 
+/** An unread conversation for the Today view, with signals read from the newest message someone else sent. */
+export type TodayMail = {
+  thread: Thread;
+  /** That message's From header, or null when only the user wrote. */
+  sender: string | null;
+  /** It carries a List-Unsubscribe option. */
+  listUnsubscribe: boolean;
+  /** One of the account's own addresses is on its To line. */
+  addressedToMe: boolean;
+  /** The user has written in this conversation or to that sender before. */
+  corresponded: boolean;
+};
+
+export type TodayMailPage = {
+  threads: TodayMail[];
+  /** Every unread conversation in scope, including any past the listed ones. */
+  total: number;
+};
+
 export type SummaryResult = {
   summary: string;
   generatedAt: string;

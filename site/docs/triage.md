@@ -63,13 +63,17 @@ You can narrow a search with `from:`, `to:`, `subject:`, `before:` and `after:` 
 
 ## Moving Around
 
-- <kbd>1</kbd>–<kbd>5</kbd> switch between Mail, Calendar, Tasks, Contacts, and Files.
+- <kbd>0</kbd> opens Today, and <kbd>1</kbd>–<kbd>5</kbd> switch between Mail, Calendar, Tasks, Contacts, and Files.
 - <kbd>g</kbd> then <kbd>i</kbd>, <kbd>a</kbd>, <kbd>t</kbd>, <kbd>d</kbd>, <kbd>o</kbd>, or <kbd>s</kbd> goes to Inbox, All Mail, Trash, Drafts, Outbox, or Sent.
 - <kbd>Escape</kbd> goes back after you jump from one conversation to another, for example from a task or a contact.
 
+## Today
+
+Press <kbd>0</kbd> for your day at a glance. Today lists your agenda when a calendar is connected, with a **Join** button for your next online meeting. Unread mail is sorted into **Needs a reply** (written to you by someone you write to), **From people**, and **Updates** (newsletters, notifications, and no-reply senders). Tasks that are overdue or due today come first, followed by your other open tasks and people due for a **Keep in Touch** check-in. Mail and tasks follow the account you have selected. To open the app on Today, choose **Today** under **Settings → Appearance → Start With**.
+
 ## Inbox Zero
 
-An empty inbox shows **Inbox zero** and when that account was last checked, or whether it needs reconnecting or could not be checked. The side panel offers open tasks, people due for a **Keep in Touch** check-in, and today’s agenda when a calendar is connected. Click an item to open it. If filters hid every conversation, use **Clear Filters** to bring them back.
+An empty inbox shows **Inbox zero** and when that account was last checked, or whether it needs reconnecting or could not be checked. The side panel links to **Today** for your agenda, tasks, and Keep in Touch reminders. If filters hid every conversation, use **Clear Filters** to bring them back.
 
 <ts-shot scene="inbox-zero" alt="An empty inbox with last-check status and a side panel of open tasks, Keep in Touch reminders, and today’s agenda."></ts-shot>
 

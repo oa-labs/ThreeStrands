@@ -40,6 +40,16 @@ describe("demoClient split inbox exclusion", () => {
     expect(after.some((thread) => thread.id === "welcome")).toBe(true);
   });
 
+  it("keeps split-matched unread mail in Today, which lists all unread", async () => {
+    const before = await demoClient.listTodayMail();
+    expect(before.threads.every((item) => item.thread.unread && !item.thread.archived && !item.thread.trashed)).toBe(true);
+    expect(before.total).toBe(Object.values(await demoClient.listUnreadCounts()).reduce((sum, count) => sum + count, 0));
+
+    await demoClient.createSplitInbox("ThreeStrands", "pattern", "threestrands", DEMO_ACCOUNT_ID);
+    const after = await demoClient.listTodayMail();
+    expect(after.threads.map((item) => item.thread.id)).toEqual(before.threads.map((item) => item.thread.id));
+  });
+
   it("still surfaces the split-matched thread from its own split inbox page", async () => {
     const split = await demoClient.createSplitInbox("Product", "pattern", "product", DEMO_ACCOUNT_ID);
     const page = await demoClient.listSplitInboxPage(split.id, 0, 10);

@@ -35,6 +35,7 @@ mod snippets;
 mod split_inboxes;
 mod tasks;
 mod threads;
+mod today;
 mod triage;
 
 pub(crate) use labels::cache_label_listing;
