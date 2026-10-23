@@ -1571,26 +1571,36 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .action-proposal-card { display: grid; min-width: 0; gap: var(--space-1-5); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input); font-size: var(--text-secondary); overflow-wrap: anywhere; }
 .action-proposal-card-header { display: flex; justify-content: space-between; color: var(--muted); }
 .proposal-kind { color: var(--accent); }
-.proposal-check { color: var(--warning); }
+.action-proposal-card-top { display: flex; align-items: center; gap: var(--space-1-5); }
+.action-proposal-card-top .action-proposal-card-header { flex: 1; min-width: 0; }
+/* A link rather than a label, so it keeps sentence case beside the uppercase kind. */
+.proposal-check { color: var(--warning); font-size: var(--text-meta); text-transform: none; letter-spacing: normal; }
+.proposal-time-language { color: var(--muted); font-style: italic; }
+.proposal-time-language::before { content: "\201C"; }
+.proposal-time-language::after { content: "\201D"; }
 .meeting-scheduler { display: grid; gap: var(--space-1-5); margin-top: var(--space-1); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input); font-size: var(--text-meta); }
 .meeting-slot { margin: 0; color: var(--text); font-weight: var(--weight-semibold); }
 .meeting-slot-status { display: inline-flex; align-items: center; gap: var(--space-1); margin: 0; color: var(--muted); }
 .meeting-slot-free, .meeting-slot-added { color: var(--success); }
 .meeting-slot-conflicting { color: var(--error); }
 .meeting-slots { display: grid; gap: var(--space-1); }
-.meeting-slot-option { padding: var(--space-1-5) var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--secondary); background: var(--surface); font: inherit; text-align: left; cursor: pointer; }
+.meeting-slot-option { display: flex; align-items: center; gap: var(--space-1-5); padding: var(--space-1-5) var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--secondary); background: var(--surface); font: inherit; text-align: left; cursor: pointer; }
 .meeting-slot-option[aria-pressed="true"] { border-color: var(--accent); color: var(--text); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
 .meeting-slot-option small { color: var(--muted); }
+.meeting-slot-option > svg { flex: none; color: var(--accent); }
+/* Holds the 12px checkmark's place so picked and unpicked times line up. */
+.meeting-slot-spacer { flex: none; width: var(--space-3); }
 .meeting-scheduler-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1-5); }
 .meeting-scheduler-error p { margin: 0 0 var(--space-1); color: var(--text); }
 .meeting-scheduler-note { margin: 0; color: var(--muted); font-size: var(--text-meta); }
-.meeting-scheduler-range { margin: 0; color: var(--muted); }
-.meeting-scheduler-adjust { display: grid; gap: var(--space-1-5); padding-top: var(--space-1); border-top: 1px solid var(--border); }
-.meeting-scheduler-adjust-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.meeting-scheduler-range { display: flex; align-items: center; gap: var(--space-1); color: var(--muted); }
+.meeting-scheduler-range p { flex: 1; min-width: 0; margin: 0; text-align: center; }
+.meeting-scheduler-adjust { display: grid; gap: var(--space-1-5); }
+.meeting-scheduler-hours { display: flex; }
+.meeting-scheduler-hours .segment { flex: 1; }
 .find-times-reason { margin: 0 0 var(--space-1-5); color: var(--text); font-size: var(--text-meta); }
 .find-times-adjust { display: flex; gap: var(--space-1); }
 .find-times-adjust input { flex: 1; width: 100%; min-width: 0; height: var(--control-h-sm); padding: 0 var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background: var(--input); font-size: var(--text-body); }
-.meeting-scheduler-adjust .btn[aria-pressed="true"] { border-color: var(--accent); color: var(--text); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
 .ai-usage { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
 .ai-activity { display: grid; gap: var(--space-2); margin-top: var(--space-4); }
 .ai-activity h3 { margin: 0; }
