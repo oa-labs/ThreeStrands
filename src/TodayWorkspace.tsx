@@ -55,7 +55,8 @@ function ScheduledToday(props: TodayWorkspaceProps) {
   const start = startOfLocalDay(new Date());
   const schedule = useCalendarSchedule({
     timeMin: start.toISOString(),
-    timeMax: addDays(start, 1).toISOString(),
+    // Through tomorrow, for the Tomorrow section under today's agenda.
+    timeMax: addDays(start, 2).toISOString(),
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
   });
   return <TodayLayout {...props} schedule={schedule} />;
@@ -171,7 +172,10 @@ function TodayLayout({
     </header>
     <div className="today-columns">
       <div className="today-column" role="group" aria-label="Agenda">
-        {schedule ? <CalendarAgenda today={now} calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} />
+        {schedule ? <>
+          <CalendarAgenda today={now} now={now} calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} />
+          <CalendarAgenda today={addDays(startOfLocalDay(now), 1)} tomorrow calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} />
+        </>
           : <p className="context-status">Connect a calendar in Settings to see today's agenda here.</p>}
       </div>
       <div className="today-column" role="group" aria-label="Unread mail">

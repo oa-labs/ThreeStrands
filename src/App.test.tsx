@@ -1230,7 +1230,7 @@ describe("keyboard-first task and action workspaces", () => {
       expect(container.querySelector("main")).toHaveClass("tasks-open");
       await waitFor(() => expect(workspace.querySelector("#task-task-welcome")).toHaveAttribute("aria-current", "true"));
 
-      expect(screen.queryByRole("complementary", { name: "Calendar schedule" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("complementary", { name: "Schedule" })).not.toBeInTheDocument();
 
       fireEvent.keyDown(window, { key: "ArrowDown" });
       await waitFor(() => expect(workspace.querySelector("#task-task-roadmap")).toHaveAttribute("aria-current", "true"));

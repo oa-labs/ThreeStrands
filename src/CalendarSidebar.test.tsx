@@ -91,7 +91,7 @@ describe("calendar sidebar", () => {
 
     expect(await screen.findByRole("region", { name: "Calendar Accounts" })).toBeInTheDocument();
     expect(screen.getByText("No calendars connected")).toBeInTheDocument();
-    expect(screen.queryByRole("complementary", { name: "Calendar schedule" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Schedule" })).not.toBeInTheDocument();
   });
 
   it("loads live events in the right sidebar and closes it with Escape", async () => {
@@ -120,17 +120,17 @@ describe("calendar sidebar", () => {
 
     fireEvent.keyDown(window, { key: "T" });
 
-    const sidebar = await screen.findByRole("complementary", { name: "Calendar schedule" });
+    const sidebar = await screen.findByRole("complementary", { name: "Schedule" });
     await waitFor(() => expect(sidebar).toHaveTextContent("Product planning"));
     expect(dayRequests(listEvents)).toHaveLength(1);
 
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() =>
-      expect(screen.queryByRole("complementary", { name: "Calendar schedule" })).not.toBeInTheDocument(),
+      expect(screen.queryByRole("complementary", { name: "Schedule" })).not.toBeInTheDocument(),
     );
   });
 
-  it("opens the schedule beside the conversation context when T is pressed in Tasks", async () => {
+  it("returns to Mail with the schedule in place of the conversation context when T is pressed in Tasks", async () => {
     vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
       { email: "calendar@example.com", connectedAt: "2026-09-18T00:00:00Z", status: "connected" },
     ]);
@@ -141,12 +141,42 @@ describe("calendar sidebar", () => {
     expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "T" });
 
-    expect(await screen.findByRole("complementary", { name: "Calendar schedule" })).toBeInTheDocument();
-    expect(container.querySelector("main")).toHaveClass("mail-context-open");
+    expect(await screen.findByRole("complementary", { name: "Schedule" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Inbox" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Conversation" })).toBeInTheDocument();
-    expect(screen.getByRole("complementary", { name: "Conversation context" })).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Conversation context" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Tasks" })).not.toBeInTheDocument();
+    // Mail keeps one right column: no extra grid column is added for the schedule.
+    expect(container.querySelector("main")?.className).not.toMatch(/calendar-open|mail-context-open/);
+  });
+
+  it("remembers the schedule column across view changes and launches", async () => {
+    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
+      { email: "calendar@example.com", connectedAt: "2026-09-18T00:00:00Z", status: "connected" },
+    ]);
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+    const first = render(<App />);
+    await screen.findByRole("region", { name: "Inbox" });
+    fireEvent.keyDown(window, { key: "t" });
+    await screen.findByRole("complementary", { name: "Schedule" });
+
+    fireEvent.keyDown(window, { key: "3" });
+    expect(screen.queryByRole("complementary", { name: "Schedule" })).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "1" });
+    expect(await screen.findByRole("complementary", { name: "Schedule" })).toBeInTheDocument();
+    first.unmount();
+
+    render(<App />);
+    expect(await screen.findByRole("complementary", { name: "Schedule" })).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Conversation context" })).not.toBeInTheDocument();
+  });
+
+  it("shows the conversation context when a remembered schedule has no connected calendar", async () => {
+    localStorage.setItem("threestrands.workspace.sideColumn", "schedule");
+    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([]);
+    render(<App />);
+    expect(await screen.findByRole("complementary", { name: "Conversation context" })).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Schedule" })).not.toBeInTheDocument();
   });
 
   it("toggles the schedule sidebar closed when T is pressed again", async () => {
@@ -162,12 +192,13 @@ describe("calendar sidebar", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     fireEvent.keyDown(window, { key: "T" });
-    await screen.findByRole("complementary", { name: "Calendar schedule" });
+    await screen.findByRole("complementary", { name: "Schedule" });
 
     fireEvent.keyDown(window, { key: "T" });
     await waitFor(() =>
-      expect(screen.queryByRole("complementary", { name: "Calendar schedule" })).not.toBeInTheDocument(),
+      expect(screen.queryByRole("complementary", { name: "Schedule" })).not.toBeInTheDocument(),
     );
+    expect(screen.getByRole("complementary", { name: "Conversation context" })).toBeInTheDocument();
   });
 
   it("moves the schedule day with - and = shortcuts", async () => {
@@ -183,7 +214,7 @@ describe("calendar sidebar", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     fireEvent.keyDown(window, { key: "T" });
-    await screen.findByRole("complementary", { name: "Calendar schedule" });
+    await screen.findByRole("complementary", { name: "Schedule" });
     await waitFor(() => expect(dayRequests(listEvents)).toHaveLength(1));
     const initialTimeMin = dayRequests(listEvents)[0][0];
 
@@ -205,7 +236,7 @@ describe("calendar sidebar", () => {
         onOpenSettings={vi.fn()}
       />,
     );
-    const sidebar = screen.getByRole("complementary", { name: "Calendar schedule" });
+    const sidebar = screen.getByRole("complementary", { name: "Schedule" });
     const dayOf = (call: number) => new Date(listEvents.mock.calls[call][0]).getTime();
     return { listEvents, sidebar, dayOf };
   }
@@ -217,7 +248,7 @@ describe("calendar sidebar", () => {
     expect(within(sidebar).queryByText(/Calendar/)).not.toBeInTheDocument();
     cleanup();
     render(<CalendarSidebar onClose={vi.fn()} onOpenSettings={vi.fn()} selectedCalendarAccountIds={["personal@example.com", "work@example.com"]} />);
-    expect(screen.getByRole("complementary", { name: "Calendar schedule" }).querySelector(".calendar-sidebar-header")).toHaveTextContent("Calendar · personal@example.com, work@example.com");
+    expect(screen.getByRole("complementary", { name: "Schedule" }).querySelector(".calendar-sidebar-header")).toHaveTextContent("Calendar · personal@example.com, work@example.com");
   });
 
   it("moves one day per horizontal trackpad swipe", async () => {
@@ -312,7 +343,7 @@ describe("calendar sidebar", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     fireEvent.keyDown(window, { key: "T" });
-    await screen.findByRole("complementary", { name: "Calendar schedule" });
+    await screen.findByRole("complementary", { name: "Schedule" });
     await waitFor(() => expect(screen.getByText("Standup")).toBeInTheDocument());
 
     const standup = screen.getByText("Standup").closest("button");
@@ -371,7 +402,7 @@ describe("calendar sidebar", () => {
 
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Product planning details" })).not.toBeInTheDocument();
-    expect(screen.getByRole("complementary", { name: "Calendar schedule" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Schedule" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Product planning/ }));
     expect(screen.getByRole("dialog", { name: "Product planning details" })).toBeInTheDocument();
@@ -392,7 +423,7 @@ describe("calendar sidebar", () => {
     const firstRender = render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     fireEvent.keyDown(window, { key: "T" });
-    const firstSidebar = await screen.findByRole("complementary", { name: "Calendar schedule" });
+    const firstSidebar = await screen.findByRole("complementary", { name: "Schedule" });
     const firstGrid = firstSidebar.querySelector<HTMLElement>(".calendar-grid-scroll");
     expect(firstGrid).not.toBeNull();
     await waitFor(() => expect(firstGrid?.scrollTop).toBe(7 * 64));
@@ -404,10 +435,10 @@ describe("calendar sidebar", () => {
     expect(localStorage.getItem(CALENDAR_SCROLL_TOP_KEY)).toBe(String(9 * 64));
     firstRender.unmount();
 
+    // The schedule column itself is remembered, so it is back without pressing T.
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    fireEvent.keyDown(window, { key: "T" });
-    const restoredSidebar = await screen.findByRole("complementary", { name: "Calendar schedule" });
+    const restoredSidebar = await screen.findByRole("complementary", { name: "Schedule" });
     const restoredGrid = restoredSidebar.querySelector<HTMLElement>(".calendar-grid-scroll");
     await waitFor(() => expect(restoredGrid?.scrollTop).toBe(9 * 64));
   });
@@ -512,7 +543,7 @@ describe("calendar sidebar", () => {
     fireEvent.keyDown(window, { key: "?" });
 
     const dialog = await screen.findByRole("dialog", { name: "Keyboard Shortcuts" });
-    const title = within(dialog).getByText("Today in Calendar / Toggle Today’s Schedule", { selector: "dt" });
+    const title = within(dialog).getByText("Today in Calendar / Toggle Schedule", { selector: "dt" });
     expect(title.nextElementSibling?.querySelector("kbd")?.textContent).toBe("t");
   });
 
@@ -527,7 +558,7 @@ describe("calendar sidebar", () => {
       />,
     );
 
-    await screen.findByRole("complementary", { name: "Calendar schedule" });
+    await screen.findByRole("complementary", { name: "Schedule" });
     expect(screen.queryByRole("button", { name: "Close calendar" })).not.toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "Escape" });
@@ -555,7 +586,7 @@ describe("calendar sidebar opened on a day", () => {
     const day = new Date(2099, 8, 23, 12);
     render(<CalendarSidebar onClose={vi.fn()} onOpenSettings={vi.fn()} initialDate={day} />);
 
-    const sidebar = screen.getByRole("complementary", { name: "Calendar schedule" });
+    const sidebar = screen.getByRole("complementary", { name: "Schedule" });
     expect(within(sidebar).getByRole("heading", { level: 2 })).toHaveTextContent(new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(day));
     await waitFor(() => expect(within(sidebar).getByText("No events scheduled.")).toBeInTheDocument());
     expect(within(sidebar).queryByText("Find a time")).not.toBeInTheDocument();

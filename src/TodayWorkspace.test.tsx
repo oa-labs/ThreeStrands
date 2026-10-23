@@ -215,6 +215,35 @@ describe("TodayWorkspace", () => {
   });
 });
 
+describe("TodayWorkspace tomorrow", () => {
+  beforeEach(() => {
+    clearScheduleCache();
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listKeepInTouch").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listTodayMail").mockResolvedValue({ threads: [], total: 0 });
+  });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); });
+
+  it("loads through tomorrow and lists tomorrow under today's agenda, apart from today's count", async () => {
+    const tomorrowNoon = new Date();
+    tomorrowNoon.setDate(tomorrowNoon.getDate() + 1);
+    tomorrowNoon.setHours(12, 0, 0, 0);
+    const listEvents = vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ errors: [], events: [
+      event("dentist", (tomorrowNoon.getTime() - Date.now()) / 60_000, { title: "Dentist" }),
+    ] });
+    render(<TodayWorkspace accountId={null} refreshKey="" taskRefreshKey={0} calendarConnected calendars={calendars}
+      onOpenThread={vi.fn()} onOpenEvent={vi.fn()} onEditTask={vi.fn()} onTasksChanged={vi.fn()} onOpenInbox={vi.fn()}
+      onOpenTasks={vi.fn()} onOpenContact={vi.fn()} onOpenKeepInTouch={vi.fn()} />);
+
+    const tomorrow = await screen.findByRole("region", { name: "Tomorrow" });
+    expect(await within(tomorrow).findByText("Dentist")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Today's agenda" })).queryByText("Dentist")).not.toBeInTheDocument();
+    expect(screen.getByText(/0 meetings/, { selector: ".today-summary" })).toBeInTheDocument();
+    const [timeMin, timeMax] = listEvents.mock.calls[0];
+    expect(new Date(timeMax).getTime() - new Date(timeMin).getTime()).toBeGreaterThanOrEqual(47 * 3_600_000);
+  });
+});
+
 describe("nextMeeting", () => {
   const now = new Date("2026-10-23T12:00:00Z");
   const at = (id: string, start: string, end: string, allDay = false): ScheduleEvent =>

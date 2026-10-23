@@ -1,4 +1,5 @@
 import { CalendarDays } from "lucide-react";
+import type { ReactNode } from "react";
 import { ContextRow, ContextSection } from "./ContextSections";
 import { calendarColorStyle, useCalendarColors } from "./calendarColors";
 import { addDays, eventDate, formatEventTime, occursOnDay, startOfLocalDay } from "./calendarTime";
@@ -9,10 +10,21 @@ import { ICON_SIZE } from "./iconSizes";
 
 type Schedule = ReturnType<typeof useCalendarSchedule>;
 type AgendaProps = {
+  /** The day the agenda lists. */
   today: Date;
   calendars: CalendarOption[];
   onOpenEvent(event: ScheduleEvent): void;
+  /**
+   * The current time, for an agenda of the current day: finished events are
+   * dimmed and a Now divider sits before the rest.
+   */
+  now?: Date;
+  /** Lists the day as Tomorrow, showing its first few events before "Show more". */
+  tomorrow?: boolean;
 };
+
+/** Events Tomorrow shows before "Show more". */
+export const TOMORROW_AGENDA_ROWS = 3;
 
 /** Reuse the visible range when it includes today; otherwise load today's local day. */
 export function CalendarAgenda({ schedule, ...props }: AgendaProps & { schedule?: Schedule }) {
@@ -29,7 +41,12 @@ function TodayAgenda(props: AgendaProps) {
   return <Agenda {...props} schedule={schedule} />;
 }
 
-function Agenda({ today, calendars, onOpenEvent, schedule: { events, loading, error, reload } }: AgendaProps & { schedule: Schedule }) {
+/** A timed event that has ended by `now`; all-day events are never past during their day. */
+export function isPastEvent(event: ScheduleEvent, now: Date): boolean {
+  return !event.allDay && new Date(event.end).getTime() <= now.getTime();
+}
+
+function Agenda({ today, calendars, onOpenEvent, now, tomorrow = false, schedule: { events, loading, error, reload } }: AgendaProps & { schedule: Schedule }) {
   const colors = useCalendarColors();
   const selected = calendars.filter((calendar) => calendar.selected);
   const agenda = events.filter((event) => occursOnDay(event, today) && selected.some((calendar) =>
@@ -37,28 +54,42 @@ function Agenda({ today, calendars, onOpenEvent, schedule: { events, loading, er
     .sort((left, right) => Number(right.allDay) - Number(left.allDay)
       || eventDate(left).getTime() - eventDate(right).getTime() || left.title.localeCompare(right.title));
   const multipleAccounts = new Set(selected.map((calendar) => calendar.accountId)).size > 1;
-  const rows = agenda.map((event) => {
+  const pastCount = now ? agenda.filter((event) => isPastEvent(event, now)).length : 0;
+  // All-day events list first and are never past during their day, so the
+  // divider goes before the first timed event still to finish.
+  const upcomingIndex = now ? agenda.findIndex((event) => !event.allDay && !isPastEvent(event, now)) : -1;
+  const rows: ReactNode[] = [];
+  agenda.forEach((event, index) => {
+    if (now && pastCount > 0 && index === upcomingIndex) rows.push(<NowDivider key="now" now={now} />);
     const calendar = selected.find((calendar) => calendar.accountId === event.accountId && calendar.id === event.calendarId);
     const detail = [formatEventTime(event), event.location, calendar?.name, multipleAccounts ? event.accountId : null, responseLabel(event)].filter(Boolean).join(" · ");
-    return <ContextRow
+    rows.push(<ContextRow
       key={`${event.accountId}:${event.calendarId}:${event.id}`}
+      className={now && isPastEvent(event, now) ? "agenda-event-past" : undefined}
       icon={<CalendarDays size={ICON_SIZE.sm} style={{ ...calendarColorStyle(colors, event.accountId, event.calendarId), color: "var(--calendar-color, var(--accent))" }} />}
       title={event.title}
       detail={detail}
       onActivate={() => onOpenEvent(event)}
-    />;
+    />);
   });
+  if (now && pastCount > 0 && pastCount === agenda.length) rows.push(<NowDivider key="now" now={now} />);
+  const name = tomorrow ? "Tomorrow" : "Today's agenda";
   return <ContextSection
-    id="calendar-agenda"
-    title="Today's agenda"
+    id={tomorrow ? "calendar-agenda-tomorrow" : "calendar-agenda"}
+    title={name}
     note={today.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
     count={agenda.length}
     rows={rows}
-    limit={rows.length}
+    limit={tomorrow ? TOMORROW_AGENDA_ROWS : rows.length}
     footer={<>
-      {loading ? <p className="context-status" role="status">Loading today's agenda…</p> : null}
-      {error ? <p className="context-status">Today's agenda couldn't be fully loaded. <button type="button" className="btn-link" onClick={reload}>Retry agenda</button></p> : null}
-      {!loading && !error && agenda.length === 0 ? <p className="context-status">{selected.length ? "No events today." : "Select a calendar to see today's agenda."}</p> : null}
+      {loading ? <p className="context-status" role="status">Loading {tomorrow ? "tomorrow's" : "today's"} agenda…</p> : null}
+      {error ? <p className="context-status">{name} couldn't be fully loaded. <button type="button" className="btn-link" onClick={reload}>Retry agenda</button></p> : null}
+      {!loading && !error && agenda.length === 0 ? <p className="context-status">{selected.length ? `No events ${tomorrow ? "tomorrow" : "today"}.` : "Select a calendar to see today's agenda."}</p> : null}
     </>}
   />;
+}
+
+function NowDivider({ now }: { now: Date }) {
+  const time = now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return <div className="agenda-now" role="separator" aria-label={`Now, ${time}`}><span>Now · {time}</span></div>;
 }

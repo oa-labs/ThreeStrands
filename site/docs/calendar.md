@@ -14,11 +14,11 @@ Calendar connects separately from mail and works alongside Gmail or IMAP account
 
 Google Calendar is the only calendar provider today. CalDAV is not yet supported.
 
-## Today's Schedule
+## Schedule
 
-<ts-shot scene="today-schedule" alt="Today's schedule beside the inbox, with free time marked against working hours."></ts-shot>
+<ts-shot scene="today-schedule" alt="The day's schedule beside the inbox, with free time marked against working hours."></ts-shot>
 
-Press <kbd>t</kbd> to show today's schedule beside your mail, and <kbd>-</kbd> or <kbd>=</kbd> to move between days. Set your timezone and working hours in **Settings → Availability**. A day can have several blocks, such as 9:00–12:00 and 13:00–17:00; suggestions leave the lunch gap free. **Drive Time Buffer**, at the bottom of that page, reserves time before and after timed events with a location when suggesting times or checking conflicts.
+Press <kbd>t</kbd> to switch the column on the right of your mail between the conversation's details and the day's schedule, and <kbd>-</kbd> or <kbd>=</kbd> to move between days. ThreeStrands remembers which one you chose, even after you visit another view or restart the app. Set your timezone and working hours in **Settings → Availability**. A day can have several blocks, such as 9:00–12:00 and 13:00–17:00; suggestions leave the lunch gap free. **Drive Time Buffer**, at the bottom of that page, reserves time before and after timed events with a location when suggesting times or checking conflicts.
 
 ## Find Times Beside a Conversation
 

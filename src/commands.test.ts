@@ -95,7 +95,7 @@ function noopContext(): CommandContext {
     openShortcutHelp: () => {},
     openGettingStarted: () => {},
     openSettings: () => {},
-    openToday: () => {},
+    toggleSchedule: () => {},
     openTasks: () => {},
     openMailView: () => {},
     openTasksView: () => {},
@@ -129,7 +129,7 @@ describe("command registry", () => {
     expect(mislabelled).toEqual([]);
   });
 
-  it("toggles Today's Schedule with a plain t", () => {
+  it("toggles the Schedule column with a plain t", () => {
     const today = commands.find((command) => command.id === "calendar.today")!;
     expect(today.keys).toEqual(["t"]);
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "t" }), today.keys[0]!)).toBe(true);

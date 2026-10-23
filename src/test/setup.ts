@@ -9,6 +9,7 @@ import { afterEach } from "vitest";
 afterEach(() => {
   cleanup();
   localStorage.removeItem("threestrands.workspace.last");
+  localStorage.removeItem("threestrands.workspace.sideColumn");
 });
 
 Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {

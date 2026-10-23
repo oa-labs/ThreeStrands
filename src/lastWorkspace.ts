@@ -1,11 +1,13 @@
 import type { RightWorkspace } from "./useWorkspaces";
 
 // The views the navigation rail switches between; Mail is the absence of one.
-// The Today calendar panel beside Mail is left out: it is part of Mail and
-// needs a connected calendar account, so launch reopens plain Mail instead.
 const RESTORABLE_WORKSPACES: readonly RightWorkspace[] = ["today", "week", "tasks", "contacts", "files"];
 const LAST_WORKSPACE_KEY = "threestrands.workspace.last";
 const LAUNCH_VIEW_KEY = "threestrands.workspace.launch";
+const SIDE_COLUMN_KEY = "threestrands.workspace.sideColumn";
+
+/** What Mail's right column shows: the conversation context, or the day's schedule. */
+export type SideColumn = "context" | "schedule";
 
 /** What launch opens: the view in use when the app last closed, or Today. */
 export type LaunchView = "last" | "today";
@@ -46,5 +48,22 @@ export function writeLaunchView(view: LaunchView) {
     localStorage.setItem(LAUNCH_VIEW_KEY, view);
   } catch {
     // Launch keeps reopening the last view.
+  }
+}
+
+/** The right column chosen last, kept across views and launches. */
+export function readSideColumn(): SideColumn {
+  try {
+    return localStorage.getItem(SIDE_COLUMN_KEY) === "schedule" ? "schedule" : "context";
+  } catch {
+    return "context";
+  }
+}
+
+export function writeSideColumn(column: SideColumn) {
+  try {
+    localStorage.setItem(SIDE_COLUMN_KEY, column);
+  } catch {
+    // The column still applies for this session; launch shows the context.
   }
 }

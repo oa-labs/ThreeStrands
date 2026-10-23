@@ -295,43 +295,40 @@ describe("settings section headers", () => {
 });
 
 describe("mail workspace with the calendar schedule open", () => {
-  it("keeps the context panel and schedule in separate columns", () => {
-    let desktopColumns: string | undefined;
+  it("puts the schedule in the context panel's column instead of adding a fifth", () => {
     let scheduleColumn: string | undefined;
-    css.walkRules(".app-shell.mail-context-open", (rule) => {
-      if (rule.parent === css) rule.walkDecls("grid-template-columns", (declaration) => { desktopColumns = declaration.value; });
-    });
-    css.walkRules(".app-shell.mail-context-open > .calendar-sidebar", (rule) => {
+    css.walkRules(".app-shell > .calendar-sidebar", (rule) => {
       if (rule.parent === css) rule.walkDecls("grid-column", (declaration) => { scheduleColumn = declaration.value; });
     });
-    expect(desktopColumns?.split(" minmax(")).toHaveLength(5);
     expect(lastDeclaration(".context-panel", "grid-column")).toBe("4");
-    expect(scheduleColumn).toBe("5");
+    expect(scheduleColumn).toBe("4");
+    const fiveColumns: string[] = [];
+    css.walkDecls("grid-template-columns", (declaration) => {
+      if ((declaration.parent as { selector?: string }).selector?.startsWith(".app-shell") && declaration.value.split(" minmax(").length >= 5) {
+        fiveColumns.push((declaration.parent as { selector: string }).selector);
+      }
+    });
+    expect(fiveColumns).toEqual([]);
   });
 
-  it("keeps the context panel on the first row even though the schedule precedes it in the DOM", () => {
+  it("keeps the schedule on the first row, like the context panel it replaces", () => {
     let scheduleRow: string | undefined;
-    css.walkRules(".app-shell.mail-context-open > .calendar-sidebar", (rule) => {
+    css.walkRules(".app-shell > .calendar-sidebar", (rule) => {
       if (rule.parent === css) rule.walkDecls("grid-row", (declaration) => { scheduleRow = declaration.value; });
     });
     expect(scheduleRow).toBe("1");
     expect(lastDeclaration(".context-panel", "grid-row")).toBe("1");
   });
 
-  it("returns the schedule to fixed drawer positioning on narrow screens", () => {
-    let position: string | undefined;
-    let column: string | undefined;
+  it("keeps the schedule in its column on narrow screens rather than floating it over the reader", () => {
+    const floating: string[] = [];
     css.walkAtRules("media", (media) => {
       if (media.params !== "(max-width: 1100px)") return;
       media.walkRules((rule) => {
-        if (rule.selector === ".calendar-sidebar") rule.walkDecls("position", (declaration) => { position = declaration.value; });
-        if (rule.selector === ".app-shell.mail-context-open > .calendar-sidebar") {
-          rule.walkDecls("grid-column", (declaration) => { column = declaration.value; });
-        }
+        if (rule.selector.includes("calendar-sidebar")) rule.walkDecls("position", (declaration) => { floating.push(declaration.value); });
       });
     });
-    expect(position).toBe("fixed");
-    expect(column).toBe("auto");
+    expect(floating).toEqual([]);
   });
 });
 

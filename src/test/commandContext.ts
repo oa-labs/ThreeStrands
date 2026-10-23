@@ -98,7 +98,7 @@ export const commandContext = (overrides: Partial<CommandContext> = {}): Command
   openShortcutHelp: vi.fn(),
   openGettingStarted: vi.fn(),
   openSettings: vi.fn(),
-  openToday: vi.fn(),
+  toggleSchedule: vi.fn(),
   increaseFontSize: vi.fn(),
   decreaseFontSize: vi.fn(),
   undoLastAction: vi.fn(),

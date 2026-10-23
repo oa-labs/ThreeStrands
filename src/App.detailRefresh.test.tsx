@@ -436,7 +436,7 @@ describe("conversation brief", () => {
       expect(await within(schedule).findByText("No open times in your working hours for this range.")).toBeInTheDocument();
       expect(find).toHaveBeenCalledTimes(1);
       expect(within(schedule).queryByRole("button", { name: "More Times" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("complementary", { name: "Calendar schedule" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("complementary", { name: "Schedule" })).not.toBeInTheDocument();
     });
 
     it("keeps a failed chat suggestion reviewable, then opens the saved event and replaces the review link", async () => {
