@@ -365,6 +365,18 @@ Second line: no further action is required from you unless an export fails, in w
   centerWrappedInline: `
     <center><div class="centered" style="display:inline-block;width:320px;text-align:left"><img src="https://example.com/info.png" width="20" height="20" alt=""> Program FAQ</div></center>
   `,
+  // Typography carried only by <font>. Keep a styled <font> in a header-cell
+  // column layout (whose cells default to bold) and the legacy face/color/size
+  // attributes in paragraph flow covered.
+  fontStyledHeaderColumns: `
+    <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+      <th align="left" valign="top" width="100"><font style="font-family:Arial, sans-serif;font-size:72px;font-weight:normal;line-height:50px;color:#946e3a">2X</font></th>
+      <th align="left" width="450"><font style="font-size:15px;font-weight:normal;line-height:21px;color:#141414"><strong>Rewards</strong> on everyday purchases.<sup style="font-size:10px!important;line-height:0px!important">1</sup></font></th>
+    </tr></table>
+  `,
+  fontAttributesInFlow: `
+    <p><font face="Georgia, serif" color="#336699" size="2">Program details</font> and <font size="+2" color="red">key dates</font>.</p>
+  `,
   malformed: `
     <div style="position:fixed;top:0;left:0;z-index:99;animation:spin 1s;cursor:pointer">No overlay</div>
     <img src="javascript:alert(1)"><form action="https://example.com"><input value="bad"></form>

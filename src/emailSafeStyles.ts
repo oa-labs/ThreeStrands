@@ -12,4 +12,5 @@ export {
   safeStyleProperties,
   sanitizeCssDeclaration,
   sanitizeHtmlDimension,
+  sanitizeHtmlFontSize,
 } from "./emailRenderingPolicy";
