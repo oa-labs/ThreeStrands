@@ -1,6 +1,7 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CalendarAttachment, CalendarAttachmentGroup, calendarEventRange, isCalendarAttachment } from "./CalendarAttachment";
+import { CalendarAttachment, CalendarAttachmentGroup, CalendarEvent, calendarEventRange, isCalendarAttachment } from "./CalendarAttachment";
 import { mailClient } from "./data/client";
 
 const attachment = {
@@ -10,10 +11,13 @@ const attachment = {
   size: 512,
 };
 
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
+
 describe("CalendarAttachment", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    vi.mocked(openUrl).mockClear();
   });
 
   it("recognizes calendar MIME types and filenames", () => {
@@ -57,6 +61,43 @@ describe("CalendarAttachment", () => {
     render(<CalendarAttachment messageId="message-1" attachment={attachment} onError={vi.fn()} />);
 
     expect(await screen.findByRole("button", { name: "Open invite.ics" })).toBeVisible();
+  });
+
+  const event = {
+    uid: null, title: "Planning", start: null, end: null, allDay: false,
+    timeZone: null, location: null, description: null, organizer: null, attendeeCount: 0, recurring: false, status: null,
+  };
+
+  it("hides description separators and omits an empty cleaned description", () => {
+    const separator = "-::~:~::~:~:~:~:~:~:~:~:~:~::~:~::-";
+    const { container, rerender } = render(<CalendarEvent event={{ ...event, description: `${separator}\nAgenda\n${separator}` }} />);
+    expect(container.querySelector(".calendar-description")?.textContent).toBe("Agenda");
+    rerender(<CalendarEvent event={{ ...event, description: separator }} />);
+    expect(container.querySelector(".calendar-description")).toBeNull();
+  });
+
+  it.each([
+    ["https://video.example.com/planning?key=abc", "https://video.example.com/planning?key=abc"],
+    ["Room 4B (http://example.org/rooms/4b), floor 2", "http://example.org/rooms/4b"],
+  ])("opens a web location in the system browser: %s", (location, url) => {
+    const { container } = render(<CalendarEvent event={{ ...event, location }} />);
+    expect(container).toHaveTextContent(location);
+    const link = screen.getByRole("link", { name: url });
+    expect(link).toHaveAttribute("href", url);
+    expect(openUrl).not.toHaveBeenCalled();
+    fireEvent.click(link);
+    expect(openUrl).toHaveBeenCalledExactlyOnceWith(url);
+  });
+
+  it.each([
+    "Room 4B", "javascript:alert(1)", "data:text/html,<script>alert(1)</script>",
+    "file:///tmp/invite.ics", "//example.com/meeting", "https://", '<a href="javascript:alert(1)">Join</a>',
+  ])("keeps non-web locations as inert text: %s", (location) => {
+    const { container } = render(<CalendarEvent event={{ ...event, location }} />);
+    expect(container).toHaveTextContent(location);
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(container.querySelector("script")).toBeNull();
+    expect(openUrl).not.toHaveBeenCalled();
   });
 });
 

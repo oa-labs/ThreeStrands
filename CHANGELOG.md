@@ -13,6 +13,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - **Settings → AI Provider** now lists recent **Activity**: which feature sent each request to your AI provider, the conversation's subject, how many messages, and the tokens used. Email text is never kept there.
 
 ### Improved
+- Calendar invitation cards now make web addresses in the location clickable, opening them in your browser. Decorative separator lines no longer clutter invitation descriptions.
 - The **Brief** now sums up what's new since your last reply or your last brief, instead of the whole conversation again, and suggests tasks only from the new messages. When it helps, a last line recaps the earlier conversation, and a note says when the brief covers only the latest messages.
 - Meeting suggestions in the **Brief** are easier to act on. Ways to narrow the times (**Any Time**, **Mornings**, **Afternoons**) and the arrows for earlier or later days sit above the times, picked times show a checkmark, and **Draft Reply With These Times** stands out as the main button. **Edit** and **Dismiss** move to the card's **⋯** menu, and **Check details** now opens the editor.
 - Meetings suggested in the **Brief** show where and who with small icons, and list names in reading order, such as "Joshua Dadeboe" rather than "Dadeboe, Joshua". Online meetings get a **Join** link when the email or your calendar has the meeting address. **Discard** on a suggestion is now **Dismiss**, and the email excerpt sits at the bottom of the card.

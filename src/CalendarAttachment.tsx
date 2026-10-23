@@ -2,6 +2,7 @@ import { AttachmentChip } from "./AttachmentChip";
 import { FileStarButton } from "./FileStarButton";
 import { CalendarDays, Download, ExternalLink, MapPin, Repeat2, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { EventLocation } from "./EventLocation";
 import { calendarDescriptionText } from "./calendarDescription";
 import { mailClient } from "./data/client";
 import type { CalendarEventPreview, CalendarPreview, MessageAttachment } from "./domain";
@@ -180,6 +181,7 @@ export function CalendarAttachment({ messageId, threadId, attachment, onError, l
 
 export function CalendarEvent({ event }: { event: CalendarEventPreview }) {
   const status = event.status?.toLocaleLowerCase();
+  const description = event.description ? calendarDescriptionText(event.description) : "";
   return (
     <article className={`calendar-event${status === "cancelled" ? " calendar-event-cancelled" : ""}`}>
       <div className="calendar-date-tile" aria-hidden="true">
@@ -192,12 +194,12 @@ export function CalendarEvent({ event }: { event: CalendarEventPreview }) {
           {status === "cancelled" ? <span className="calendar-status">Cancelled</span> : null}
         </div>
         <p className="calendar-when">{formatEventTime(event)}</p>
-        {event.location ? <p><MapPin size={ICON_SIZE.sm} /><span>{event.location}</span></p> : null}
+        {event.location ? <p><MapPin size={ICON_SIZE.sm} /><span><EventLocation location={event.location} /></span></p> : null}
         {event.organizer || event.attendeeCount > 0 ? (
           <p><Users size={ICON_SIZE.sm} /><span>{peopleLabel(event)}</span></p>
         ) : null}
         {event.recurring ? <p><Repeat2 size={ICON_SIZE.sm} /><span>Recurring event</span></p> : null}
-        {event.description ? <p className="calendar-description">{calendarDescriptionText(event.description)}</p> : null}
+        {description ? <p className="calendar-description">{description}</p> : null}
       </div>
     </article>
   );

@@ -10,7 +10,13 @@ import { htmlToPlainText } from "./htmlPlainText";
 // plain-text descriptions like "Budget < $5k" or "R&D sync" stay verbatim.
 const HTML_MARKUP = /<\/?[a-z][a-z0-9-]*(?:\s[^<>]*)?\/?>|&(?:#\d+|#x[0-9a-f]+|[a-z]+);/i;
 
+// Decorative colon/tilde rules are presentation separators, regardless of the
+// calendar provider. Match whole lines only so inline punctuation stays intact.
+const SEPARATOR_LINE = /^[ \t]*[-:~]*:~:~[-:~]*[ \t]*(?:\r?\n|$)/gm;
+
 export function calendarDescriptionText(description: string): string {
-  if (!HTML_MARKUP.test(description)) return description.trim();
-  return htmlToPlainText(description, { whitespace: "collapse" });
+  const text = HTML_MARKUP.test(description)
+    ? htmlToPlainText(description, { whitespace: "collapse" })
+    : description;
+  return text.replace(SEPARATOR_LINE, "").trim();
 }

@@ -12,6 +12,7 @@ import {
   startOfLocalDay,
   timeZoneLabel,
 } from "./calendarTime";
+import { EventLocation } from "./EventLocation";
 import { calendarDescriptionText } from "./calendarDescription";
 import { attendeeResponseLabel, attendeeResponseSummary, responseLabel } from "./calendarResponse";
 import { calendarColorStyle, useCalendarColors } from "./calendarColors";
@@ -121,26 +122,6 @@ export function scheduleRequestFor(date: Date) {
     timeMax: end.toISOString(),
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
   };
-}
-
-const locationUrlPattern = /(https?:\/\/[^\s<>"]+)/;
-
-/** Renders a location with its http(s) URLs opened in the system browser. */
-function EventLocation({ location }: { location: string }) {
-  return location.split(locationUrlPattern).map((part, index) => {
-    // Odd indexes are captured URLs; trailing punctuation stays plain text.
-    const text = index % 2 === 1 ? part.replace(/[.,;:!?)\]]+$/, "") : part;
-    const url = index % 2 === 1 ? safeWebUrl(text) : null;
-    if (!url) return part;
-    return (
-      <span key={index}>
-        <a className="calendar-event-location-link" href={url} onClick={(clickEvent) => {
-          clickEvent.preventDefault();
-          void openUrl(url);
-        }}>{text}</a>{part.slice(text.length)}
-      </span>
-    );
-  });
 }
 
 function EventAttendees({ event, attendees }: { event: ScheduleEvent; attendees: string[] }) {

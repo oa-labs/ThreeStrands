@@ -34,6 +34,32 @@ describe("calendarDescriptionText", () => {
     );
   });
 
+  it("hides standalone colon/tilde separators while retaining meeting details", () => {
+    const separator = "-::~:~::~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~::~:~::-";
+    expect(calendarDescriptionText([
+      "Review the roadmap", separator,
+      "Join: https://video.example.com/planning", "PIN: 123456",
+      "Please do not edit this section.", separator, "Bring laptops",
+    ].join("\r\n"))).toBe([
+      "Review the roadmap", "Join: https://video.example.com/planning", "PIN: 123456",
+      "Please do not edit this section.", "Bring laptops",
+    ].join("\r\n"));
+  });
+
+  it("hides separators after flattening HTML blocks, line breaks, and entities", () => {
+    expect(calendarDescriptionText(
+      "<div>Agenda</div><div>&#58;&#58;~:~::~:~:~:~:</div>" +
+      '<p>Join <a href="https://video.example.org/review">review</a><br>Phone: +1 555 123 4567</p>' +
+      "<div> :~:~:~:~:~: </div><p>Bring notes</p>",
+    )).toBe("Agenda\nJoin review\nPhone: +1 555 123 4567\nBring notes");
+  });
+
+  it("preserves inline markers and other punctuation and handles separator-only descriptions", () => {
+    const text = "Keep :~:~:~: here\n12:30 — 13:30\n---\n:~\n~= approximate\nBudget notes";
+    expect(calendarDescriptionText(text)).toBe(text);
+    expect(calendarDescriptionText("  -::~:~::~:~:~::- \n:~:~:~:~:\n")).toBe("");
+  });
+
   it("drops script and style content without running it", () => {
     const text = calendarDescriptionText(
       "<style>body{background:url(https://tracker.example/bg.png)}</style>" +
