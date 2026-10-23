@@ -89,12 +89,13 @@ describe("TodayWorkspace", () => {
       const listTodayMail = mockMail([]);
       renderToday({ accountId: null });
       await waitFor(() => expect(listTodayMail).toHaveBeenCalledWith(undefined));
-      expect(screen.getByText("Today · All accounts")).toBeInTheDocument();
+      expect(screen.getByText("Today · Mail and tasks: All accounts")).toBeInTheDocument();
     });
 
     it("says when nothing is unread, and when only the newest are listed", async () => {
       renderToday();
-      expect(await screen.findByText("Nothing unread.")).toBeInTheDocument();
+      // The empty state keeps its heading, so the column lines up with the others.
+      expect(within(await screen.findByRole("region", { name: "Unread mail" })).getByText("Nothing unread.")).toBeInTheDocument();
       cleanup();
 
       mockMail([todayItem("one")], 250);
@@ -106,7 +107,7 @@ describe("TodayWorkspace", () => {
     it("shows a read failure instead of an empty inbox", async () => {
       vi.spyOn(mailClient, "listTodayMail").mockRejectedValue(new Error("Database is locked"));
       renderToday();
-      expect(await screen.findByRole("alert")).toHaveTextContent("Database is locked");
+      expect(within(await screen.findByRole("region", { name: "Unread mail" })).getByRole("alert")).toHaveTextContent("Database is locked");
       expect(screen.queryByText("Nothing unread.")).not.toBeInTheDocument();
     });
 
@@ -189,9 +190,37 @@ describe("TodayWorkspace", () => {
   describe("agenda", () => {
     it("points to Settings instead of loading a schedule when no calendar is connected", async () => {
       renderToday({ calendarConnected: false });
-      expect(await screen.findByText(/Connect a calendar in Settings/)).toBeInTheDocument();
+      expect(within(screen.getByRole("region", { name: "Today's agenda" })).getByText(/Connect a calendar in Settings/)).toBeInTheDocument();
+      expect(screen.getByText("Today · Mail and tasks: you@example.com")).toBeInTheDocument();
       expect(mailClient.listScheduleEvents).not.toHaveBeenCalled();
-      expect(screen.getByText(/^0 unread · 0 tasks due$/, { selector: ".today-summary" })).toBeInTheDocument();
+      expect(await screen.findByText(/^0 unread · 0 tasks due$/, { selector: ".today-summary" })).toBeInTheDocument();
+    });
+
+    it("says the agenda covers every calendar while mail and tasks follow the account", async () => {
+      renderToday({ calendarConnected: true });
+      expect(await screen.findByText("Today · Mail and tasks: you@example.com · All calendars")).toBeInTheDocument();
+    });
+
+    it("counts a meeting on two calendars once, and skips declined ones for the count and the next meeting", async () => {
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ errors: [], events: [
+        event("work", 30, { title: "Sync", accountId: "cal@example.com" }),
+        event("copy", 30, { title: "Sync", accountId: "cal@example.com", responseStatus: "declined" }),
+        event("skip", 10, { title: "Optional talk", responseStatus: "declined" }),
+      ] });
+      renderToday({ calendarConnected: true });
+
+      expect(await screen.findByRole("button", { name: /^Next: Sync in \d+ min$/ })).toBeInTheDocument();
+      expect(screen.getByText(/^1 meeting ·/, { selector: ".today-summary" })).toBeInTheDocument();
+      const agenda = screen.getByRole("region", { name: "Today's agenda" });
+      expect(within(agenda).getAllByText("Sync")).toHaveLength(1);
+      expect(within(agenda).getByText("Optional talk").closest(".context-row")).toHaveClass("agenda-event-declined");
+    });
+
+    it("names a meeting under way as now, with when it ends", async () => {
+      const ongoing = event("ongoing", -10, { title: "Standup" });
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ errors: [], events: [ongoing] });
+      renderToday({ calendarConnected: true });
+      expect(await screen.findByRole("button", { name: /^Now: Standup · until \d{1,2}:\d{2}/ })).toBeInTheDocument();
     });
 
     it("shows today's agenda, counts meetings, and offers to join the next one", async () => {

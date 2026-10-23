@@ -5,7 +5,8 @@ import { CalendarAgenda } from "./CalendarAgenda";
 import { ContextRow, ContextSection } from "./ContextSections";
 import { mailClient } from "./data/client";
 import type { CalendarOption, ContactProfile, ScheduleEvent, ThreadTask, TodayMail } from "./domain";
-import { addDays, eventDate, occursOnDay, startOfLocalDay } from "./calendarTime";
+import { agendaEventsFor, formatClockTime, isDeclined } from "./agendaEvents";
+import { addDays, eventDate, startOfLocalDay } from "./calendarTime";
 import { parseAddress } from "./emailAddress";
 import { errorMessage } from "./errors";
 import { HoverTooltip } from "./AppChrome";
@@ -121,9 +122,7 @@ function TodayLayout({
     }
   };
 
-  const selected = calendars.filter((calendar) => calendar.selected);
-  const todaysEvents = (schedule?.events ?? []).filter((event) => occursOnDay(event, now) && selected.some((calendar) =>
-    calendar.accountId === event.accountId && (!event.calendarId || calendar.id === event.calendarId)));
+  const todaysEvents = agendaEventsFor(schedule?.events ?? [], now, calendars);
   const next = nextMeeting(todaysEvents, now);
   const overdue = tasks.filter((task) => isActiveTaskStatus(task.status) && dueView(task, now) === "Overdue");
   const dueToday = tasks.filter((task) => dueView(task, now) === "Today");
@@ -131,7 +130,7 @@ function TodayLayout({
   const groups = groupTodayMail(mail?.threads ?? []);
 
   const summary = [
-    schedule ? plural(todaysEvents.filter((event) => !event.allDay).length, "meeting") : null,
+    schedule ? plural(todaysEvents.filter((event) => !event.allDay && !isDeclined(event)).length, "meeting") : null,
     mail ? `${mail.total} unread` : null,
     plural(overdue.length + dueToday.length, "task") + " due",
   ].filter(Boolean).join(" · ");
@@ -162,9 +161,11 @@ function TodayLayout({
   };
 
   return <section className="today-workspace" aria-label="Today">
+    <div className="today-page">
     <header className="today-header">
       <div>
-        <span className="eyebrow">Today · {accountId ?? "All accounts"}</span>
+        {/* Mail and tasks follow the account in view; the agenda shows every selected calendar, as Calendar does. */}
+        <span className="eyebrow">Today · Mail and tasks: {accountId ?? "All accounts"}{schedule ? " · All calendars" : ""}</span>
         <h1>{now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</h1>
         <p className="today-summary">{summary}</p>
       </div>
@@ -176,7 +177,8 @@ function TodayLayout({
           <CalendarAgenda today={now} now={now} calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} />
           <CalendarAgenda today={addDays(startOfLocalDay(now), 1)} tomorrow calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} />
         </>
-          : <p className="context-status">Connect a calendar in Settings to see today's agenda here.</p>}
+          : <ContextSection id="calendar-agenda" title="Today's agenda" rows={[]}
+            footer={<p className="context-status">Connect a calendar in Settings to see today's agenda here.</p>} />}
       </div>
       <div className="today-column" role="group" aria-label="Unread mail">
         {MAIL_GROUPS.map(({ group, title, limit }) => groups[group].length > 0 ? <ContextSection
@@ -194,8 +196,8 @@ function TodayLayout({
             onActivate={() => onOpenThread(item.thread.id)}
           />)}
         /> : null)}
-        {mailError ? <p className="form-error" role="alert">{mailError}</p> : null}
-        {mail && mail.total === 0 ? <p className="context-status">Nothing unread.</p> : null}
+        {mailError || mail?.total === 0 ? <ContextSection id="today-mail-empty" title="Unread mail" rows={[]}
+          footer={mailError ? <p className="form-error" role="alert">{mailError}</p> : <p className="context-status">Nothing unread.</p>} /> : null}
         {mail && mail.total > mail.threads.length ? <p className="context-status">Showing the newest {mail.threads.length} of {mail.total} unread.</p> : null}
         <p className="today-column-link"><button type="button" className="btn-link" onClick={onOpenInbox}>Open Inbox</button></p>
       </div>
@@ -203,7 +205,7 @@ function TodayLayout({
         {overdue.length > 0 ? <ContextSection id="today-tasks-overdue" title="Overdue" count={overdue.length} rows={overdue.map(taskRow)} /> : null}
         {dueToday.length > 0 ? <ContextSection id="today-tasks-due" title="Due today" count={dueToday.length} rows={dueToday.map(taskRow)} /> : null}
         {open.length > 0 ? <ContextSection id="today-tasks-open" title="Open tasks" count={open.length} limit={3} rows={open.map(taskRow)} /> : null}
-        {tasks.length === 0 ? <p className="context-status">No open tasks.</p> : null}
+        {tasks.length === 0 ? <ContextSection id="today-tasks-none" title="Tasks" rows={[]} footer={<p className="context-status">No open tasks.</p>} /> : null}
         {reconnect.length > 0 ? <ContextSection
           id="today-keep-in-touch"
           title="Keep in touch"
@@ -221,6 +223,7 @@ function TodayLayout({
         <p className="today-column-link"><button type="button" className="btn-link" onClick={onOpenTasks}>Open Tasks</button></p>
       </div>
     </div>
+    </div>
     <p className="sr-only" aria-live="polite">{announcement}</p>
   </section>;
 }
@@ -228,17 +231,19 @@ function TodayLayout({
 function NextMeeting({ event, now, onOpenEvent }: { event: ScheduleEvent; now: Date; onOpenEvent(event: ScheduleEvent): void }) {
   const { joinUrl } = meetingPlace(event.location ?? null, event.conferenceUrl);
   const minutes = Math.round((eventDate(event).getTime() - now.getTime()) / 60_000);
-  const when = minutes <= 0 ? "now" : minutes < 60 ? `in ${minutes} min` : `at ${eventDate(event).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+  const label = minutes <= 0
+    ? `Now: ${event.title} · until ${formatClockTime(new Date(event.end))}`
+    : `Next: ${event.title} ${minutes < 60 ? `in ${minutes} min` : `at ${formatClockTime(eventDate(event))}`}`;
   return <div className="today-next">
-    <button type="button" className="btn-link" onClick={() => onOpenEvent(event)}>Next: {event.title} {when}</button>
+    <button type="button" className="btn-link" onClick={() => onOpenEvent(event)}>{label}</button>
     {joinUrl ? <button type="button" className="btn btn-sm" onClick={() => void openUrl(joinUrl)}><Video size={ICON_SIZE.sm} />Join</button> : null}
   </div>;
 }
 
-/** The timed meeting under way, or else the next one to start today. */
+/** The timed meeting under way, or else the next one to start today; declined ones are skipped. */
 export function nextMeeting(events: readonly ScheduleEvent[], now: Date): ScheduleEvent | null {
   return events
-    .filter((event) => !event.allDay && new Date(event.end).getTime() > now.getTime())
+    .filter((event) => !event.allDay && !isDeclined(event) && new Date(event.end).getTime() > now.getTime())
     .sort((left, right) => eventDate(left).getTime() - eventDate(right).getTime())[0] ?? null;
 }
 

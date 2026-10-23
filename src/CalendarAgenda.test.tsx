@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CalendarAgenda, isPastEvent, TOMORROW_AGENDA_ROWS } from "./CalendarAgenda";
+import { isPastEvent } from "./agendaEvents";
+import { CalendarAgenda, TOMORROW_AGENDA_ROWS } from "./CalendarAgenda";
 import type { CalendarOption, ScheduleEvent } from "./domain";
 
 const calendars: CalendarOption[] = [{ id: "primary", accountId: "cal@example.com", name: "Work", primary: true, selected: true, writable: true }];
@@ -92,5 +93,39 @@ describe("CalendarAgenda for tomorrow", () => {
   it("says when tomorrow is free", () => {
     renderAgenda([], { today: new Date(2026, 9, 24), tomorrow: true });
     expect(within(screen.getByRole("region", { name: "Tomorrow" })).getByText("No events tomorrow.")).toBeInTheDocument();
+  });
+});
+
+describe("CalendarAgenda rows", () => {
+  afterEach(cleanup);
+
+  it("leaves out the account when the calendar is already named after it", () => {
+    const twoAccounts: CalendarOption[] = [
+      { id: "primary", accountId: "me@work.example", name: "me@work.example", primary: true, selected: true, writable: true },
+      { id: "family", accountId: "me@home.example", name: "Family", primary: false, selected: true, writable: true },
+    ];
+    render(<CalendarAgenda today={day} calendars={twoAccounts} onOpenEvent={vi.fn()} schedule={{ loading: false, error: null, reload: vi.fn(), events: [
+      event("Standup", 9, 10, { accountId: "me@work.example", calendarId: "primary" }),
+      event("Dinner", 18, 19, { accountId: "me@home.example", calendarId: "family" }),
+    ] }} />);
+    expect(screen.getByText(/· me@work\.example$/)).not.toHaveTextContent("me@work.example · me@work.example");
+    expect(screen.getByText(/· Family · me@home\.example$/)).toBeInTheDocument();
+  });
+
+  it("shows a meeting on two calendars once, as the copy you haven't declined", () => {
+    renderAgenda([
+      event("Sync", 9, 10, { responseStatus: "declined" }),
+      event("Sync", 9, 10, { id: "work-copy", responseStatus: "accepted" }),
+    ]);
+    const row = screen.getByText("Sync").closest(".context-row")!;
+    expect(screen.getAllByText("Sync")).toHaveLength(1);
+    expect(row).not.toHaveClass("agenda-event-declined");
+    expect(row).toHaveTextContent("Going");
+  });
+
+  it("writes the Now time the way event times are written", () => {
+    renderAgenda([event("Standup", 9, 10), event("Review", 15, 16)], { now: at(12, 5) });
+    const label = screen.getByRole("separator").getAttribute("aria-label")!;
+    expect(label).toBe(`Now, ${new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).formatToParts(at(12, 5)).map((part) => part.type === "dayPeriod" ? part.value.toLocaleLowerCase() : part.value).join("")}`);
   });
 });
