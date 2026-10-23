@@ -29,7 +29,7 @@ import { ReplicatedSyncSettings } from "./ReplicatedSyncSettings";
 import { PendingRecoveryPhraseDialog } from "./RecoveryPhraseDialog";
 import { ICON_SIZE } from "./iconSizes";
 import { DiagnosticsSettings } from "./DiagnosticsSettings";
-import { AppearanceSettings, ReadingSettings } from "./AppearanceSettings";
+import { AppearanceSettings, ReadingSettings, StartupSettings } from "./AppearanceSettings";
 import { AccountsSettings } from "./AccountsSettings";
 import { AvailabilitySettings } from "./AvailabilitySettings";
 import { CalendarAccountsSettings } from "./CalendarAccountsSettings";
@@ -67,7 +67,7 @@ type SettingsSectionDefinition = {
 const SETTINGS_GROUPS: SettingsGroup[] = ["General", "Accounts", "Workflow", "Integrations", "System"];
 
 const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
-  { id: "appearance", label: "Appearance", group: "General", description: "Choose how ThreeStrands looks and when conversations are marked read.", keywords: "theme light dark accent color font size family minimum email font size accessibility reading mark read delay conversation", icon: Palette, autosaves: true },
+  { id: "appearance", label: "Appearance", group: "General", description: "Choose how ThreeStrands looks, what it opens to, and when conversations are marked read.", keywords: "theme light dark accent color font size family minimum email font size accessibility reading mark read delay conversation start startup launch open today", icon: Palette, autosaves: true },
   { id: "defaultApps", label: "Default Apps", group: "General", description: "Open email links and calendar invitations in ThreeStrands.", keywords: "mailto default email reader mail client ics calendar invitation handler macos", icon: AppWindow },
   { id: "accounts", label: "Mail Accounts", group: "Accounts", description: "Connect mail accounts and manage their identity and order.", keywords: "gmail imap smtp sender name color reconnect disconnect", icon: Mail },
   { id: "calendarAccounts", label: "Calendar Accounts", group: "Accounts", description: "Connect calendars and choose which ones appear in the sidebar.", keywords: "google calendar connect selection", icon: CalendarDays },
@@ -253,6 +253,7 @@ export function Settings({
               onAutoReadDelayChange={preferences.setAutoReadDelaySeconds}
             />
           ) : null}
+          {section === "appearance" ? <StartupSettings /> : null}
           {section === "defaultApps" ? <DefaultAppsSettings /> : null}
           {section === "accounts" ? (
             <AccountsSettings

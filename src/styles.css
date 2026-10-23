@@ -2456,7 +2456,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .task-status-button { align-self: center; margin-right: var(--space-1); }
 .task-follow-up-button { align-self: center; margin-right: var(--space-1); }
 @media (max-width: 1100px) {
-  .app-shell:not(.calendar-open):not(.tasks-open):not(.contacts-open):not(.week-open):not(.files-open) {
+  .app-shell:not(.calendar-open):not(.tasks-open):not(.contacts-open):not(.week-open):not(.files-open):not(.today-open) {
     grid-template-columns: 58px minmax(220px, 32vw) minmax(0, 1fr) minmax(260px, 280px);
   }
   .app-shell.calendar-open {
@@ -3424,6 +3424,19 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .calendar-week-days, .calendar-week-all-day, .calendar-week-grid { grid-template-columns: 72px repeat(var(--calendar-day-count, 7), minmax(0, 1fr)); }
 .calendar-week-controls { flex-wrap: wrap; justify-content: flex-end; }
 .calendar-visible-range { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--text-meta); }
+/* Today: three columns of context rows under a page header; they stack when the window is narrow. */
+.app-shell.today-open { grid-template-columns: 58px minmax(0, 1fr); }
+.today-workspace { grid-column: 2; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--background); }
+.today-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--space-4); padding: var(--pane-header-padding); border-bottom: 1px solid var(--border); }
+.today-header h1 { margin: var(--space-1) 0 0; font-size: var(--text-page-title); }
+.today-summary { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--text-meta); }
+.today-next { display: flex; align-items: center; gap: var(--space-2); }
+.today-columns { flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); align-items: start; gap: var(--space-6); padding: var(--space-4) var(--pane-inset); }
+.today-column { min-width: 0; }
+.today-column > .context-status { padding: var(--space-3) var(--context-row-inset); }
+.today-column-link { margin: 0; padding: var(--space-3) var(--context-row-inset); }
+.inbox-zero-next > .context-status { margin-bottom: var(--space-2); padding-inline: var(--context-row-inset); }
+.inbox-zero-next .btn { margin-left: var(--context-row-inset); }
 .files-workspace { grid-column: 2; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--background); }
 .files-header { display: flex; justify-content: space-between; align-items: center; gap: var(--space-4); padding: var(--pane-header-padding); border-bottom: 1px solid var(--border); }
 .files-header h1 { margin: var(--space-1) 0 0; font-size: var(--text-page-title); }

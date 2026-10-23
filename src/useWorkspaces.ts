@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type RefObject } from "react
 import type { ScheduleEvent, ThreadDetail } from "./domain";
 import type { ContactCardActions } from "./ContactCard";
 import { readContactsView, writeContactsView, type ContactsView } from "./contactsView";
-import { readLastWorkspace, writeLastWorkspace } from "./lastWorkspace";
+import { readLaunchWorkspace, writeLastWorkspace } from "./lastWorkspace";
 import { startOfLocalDay } from "./calendarTime";
 import { useCalendarAccounts } from "./useCalendarAccounts";
 import { mailClient } from "./data/client";
@@ -11,7 +11,7 @@ import { errorMessage, logBackgroundFailure } from "./errors";
 import type { SettingsSection } from "./settingsPanelTypes";
 import type { Notice } from "./useNotice";
 
-export type RightWorkspace = "calendar" | "contacts" | "tasks" | "week" | "files" | null;
+export type RightWorkspace = "calendar" | "contacts" | "tasks" | "week" | "files" | "today" | null;
 // Keep-in-touch reminders fall due as time passes and as mail arrives,
 // without any local edit, so the Contacts badge is re-read on this cadence.
 const KEEP_IN_TOUCH_REFRESH_MS = 5 * 60_000;
@@ -29,7 +29,7 @@ type Options = {
 
 /** Owns the selected workspace and calendar/contact entry points. */
 export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, readingMessageId, readingMessageIdRef, openSettingsAt, setNotice }: Options) {
-  const [rightWorkspace, setRightWorkspace] = useState<RightWorkspace>(readLastWorkspace);
+  const [rightWorkspace, setRightWorkspace] = useState<RightWorkspace>(readLaunchWorkspace);
   useEffect(() => { writeLastWorkspace(rightWorkspace); }, [rightWorkspace]);
   const [calendarWeekAnchor, setCalendarWeekAnchor] = useState<Date | null>(null);
   const [calendarEventToOpen, setCalendarEventToOpen] = useState<ScheduleEvent | null>(null);
@@ -95,6 +95,7 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
   }, []);
 
   const openFilesView = useCallback(() => setRightWorkspace("files"), []);
+  const openTodayView = useCallback(() => setRightWorkspace("today"), []);
 
   const openTasksView = useCallback(() => {
     setRightWorkspace("tasks");
@@ -118,7 +119,7 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
       if (!visibleThreadId) return;
       setContextPersonPick({ threadId: visibleThreadId, messageId: readingMessageIdRef.current, email });
       // Picking a person asks to see them, so bring the context panel back from another workspace.
-      setRightWorkspace((current) => current === "tasks" || current === "week" || current === "contacts" || current === "files" ? null : current);
+      setRightWorkspace((current) => current === "tasks" || current === "week" || current === "contacts" || current === "files" || current === "today" ? null : current);
     },
     selectedEmail: contextPersonEmail,
   }), [openContactInAddressBook, visibleThreadId, contextPersonEmail, readingMessageIdRef]);
@@ -136,7 +137,7 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     setContactAddressBookTarget, contactsView, setContactsView, keepInTouchDueCount,
     refreshKeepInTouchCount, calendar, refreshCalendarOptions,
     calendarConnected, calendarSidebarStart, openCalendarAt, openToday, openTasks, openTasksView,
-    openFilesView, openContactsView, openKeepInTouchView, openContactGroupsView, contactCardActions,
+    openFilesView, openTodayView, openContactsView, openKeepInTouchView, openContactGroupsView, contactCardActions,
     contextPersonEmail, openCalendarView,
   };
 }

@@ -1036,16 +1036,18 @@ describe("keyboard-first task and action workspaces", () => {
     fireEvent.click(within(quickAdd).getByRole("button", { name: "Done" }));
     expect(screen.queryByRole("dialog", { name: "Add Task" })).not.toBeInTheDocument();
 
+    // 0 opens Today from any view, and 1 returns to Mail.
     fireEvent.keyDown(window, { key: "0" });
-    expect(screen.getByRole("region", { name: "Tasks" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Today" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Tasks" })).not.toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "1" });
     expect(screen.getByRole("region", { name: "Inbox" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Tasks" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Today" })).not.toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "0" });
-    expect(screen.getByRole("region", { name: "Inbox" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Tasks" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Today" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Inbox" })).not.toBeInTheDocument();
     } finally {
       listTasks.mockRestore();
       createTask.mockRestore();
@@ -2206,7 +2208,7 @@ describe("empty mail states", () => {
     expect(list).not.toHaveTextContent(/Inbox zero|No conversations/);
   });
 
-  it("fills the context panel with what's next at inbox zero, and not while a conversation is open", async () => {
+  it("points the context panel to Today at inbox zero, and not while a conversation is open", async () => {
     const dueContact = {
       id: "ada", displayName: "Ada Lovelace", role: null, company: null, location: null, bio: null, notes: null, links: [],
       photoData: null, favorite: false, addresses: ["ada@example.com"], sentCount: 0, receivedCount: 0, lastInteractedAt: null,
@@ -2217,13 +2219,20 @@ describe("empty mail states", () => {
     const listPage = vi.spyOn(mailClient, "listThreadsPage").mockResolvedValue({ threads: [], hasMore: false });
     const first = render(<App />);
     const panel = screen.getByRole("complementary", { name: "Conversation context" });
-    expect(await within(panel).findByRole("region", { name: "Keep in touch" })).toBeInTheDocument();
+    const next = await within(panel).findByRole("region", { name: "What's next" });
+    // The sections themselves live in Today, not beside the empty inbox.
+    expect(within(panel).queryByRole("region", { name: "Keep in touch" })).not.toBeInTheDocument();
+    fireEvent.click(within(next).getByRole("button", { name: "Open Today" }));
+    const today = await screen.findByRole("region", { name: "Today" });
+    expect(await within(today).findByRole("region", { name: "Keep in touch" })).toBeInTheDocument();
+    // Launch reopens the last view, so return to Mail before relaunching.
+    fireEvent.keyDown(window, { key: "1" });
     first.unmount();
 
     listPage.mockRestore();
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    expect(within(screen.getByRole("complementary", { name: "Conversation context" })).queryByRole("region", { name: "Keep in touch" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("complementary", { name: "Conversation context" })).queryByRole("region", { name: "What's next" })).not.toBeInTheDocument();
   });
 
   it("does not call the inbox current when the account in view could not be checked", async () => {

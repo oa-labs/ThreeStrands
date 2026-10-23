@@ -435,6 +435,30 @@ pub struct ThreadPage {
     pub has_more: bool,
 }
 
+/// An unread conversation for the Today view, with what its grouping reads
+/// from the newest message someone else sent.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodayMail {
+    pub thread: Thread,
+    /// That message's From header, or None when only the user wrote.
+    pub sender: Option<String>,
+    /// It carries a List-Unsubscribe option.
+    pub list_unsubscribe: bool,
+    /// One of the account's own addresses is on its To line.
+    pub addressed_to_me: bool,
+    /// The user has written in this conversation or to that sender before.
+    pub corresponded: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodayMailPage {
+    pub threads: Vec<TodayMail>,
+    /// Every unread conversation in scope, including any past the listed ones.
+    pub total: i64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {

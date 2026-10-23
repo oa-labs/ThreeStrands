@@ -1,7 +1,7 @@
 import type { MailboxKind } from "./commands";
 
 /** Workspaces that can cover the mail reader, as App tracks them. */
-export type ReturnWorkspace = "calendar" | "contacts" | "tasks" | "week" | "files" | null;
+export type ReturnWorkspace = "calendar" | "contacts" | "tasks" | "week" | "files" | "today" | null;
 
 /** Where the reader was scrolled: a message and how far past its top edge. */
 export type ReaderAnchor = { messageId: string; offset: number };

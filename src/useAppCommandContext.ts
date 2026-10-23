@@ -86,7 +86,7 @@ export function useAppCommandContext({
   const { messageStackRef, setMessageExpansionOverrides, activeMessageIdRef } = reader;
   const {
     rightWorkspace, setRightWorkspace, setContactsView, openToday, openTasks, openTasksView,
-    openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView,
+    openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView, openTodayView,
   } = workspaces;
   const {
     accountSplitInboxes, returnStep, goBack, goToInboxTab, openMailView, goToSplitTab,
@@ -109,7 +109,7 @@ export function useAppCommandContext({
     ...correspondence.context,
     toggleContextPanelFocus,
     interactionScope,
-    focusedPane: rightWorkspace === "files" ? "files" : rightWorkspace === "week" ? "calendar" : rightWorkspace === "tasks" ? "tasks" : rightWorkspace === "contacts" ? "contacts" : "mail",
+    focusedPane: rightWorkspace === "today" ? "today" : rightWorkspace === "files" ? "files" : rightWorkspace === "week" ? "calendar" : rightWorkspace === "tasks" ? "tasks" : rightWorkspace === "contacts" ? "contacts" : "mail",
     compose: () => {
       setRightWorkspace(null);
       correspondence.context.compose();
@@ -292,6 +292,7 @@ export function useAppCommandContext({
     openMailView,
     openTasksView,
     openFilesView,
+    openTodayView,
     openContactsView,
     openKeepInTouchView,
     openContactGroupsView,
@@ -316,7 +317,7 @@ export function useAppCommandContext({
     composerBelongsToVisibleThread, outboxSelection, outboxEditSource, goToInboxTab, accountSplitInboxes.length, goToNextSplitTab,
     goToPreviousSplitTab, goToSplitTab, taskLayout, selectedTaskStatus, selectedTaskHasThread,
     aiSummaryAvailable, aiBriefEnabled, aiChatEnabled, aiDraftEnabled, correspondence.activeDraft?.mode, refreshMail, openToday, openTasks, openMailView, openTasksView,
-    openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView, getSuggestions,
+    openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView, openTodayView, getSuggestions,
     openThreadChat, newTask, canUndoAction, canUndoArchive, switchAccount, toggleMessageFilter, setRightWorkspace,
     mutateIds, openFolder, selectedIndex, visibleThreads, setSelectedId, selectAdjacentMessage,
     taskWorkspaceRef, setContactsView, latestMessage, setUnsubscribeMessageId, labelTargetIds,

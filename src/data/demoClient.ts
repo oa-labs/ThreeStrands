@@ -8,6 +8,7 @@ import type { MailClient } from "./client";
 import { DEMO_ACCOUNT_ID, defaultDemoDataset, type DemoDataset } from "./demoDataset";
 import { buildShowcaseDataset } from "./showcaseDataset";
 import { parseAddress, splitAddressList } from "../emailAddress";
+import { TODAY_MAIL_LIMIT } from "../todayMail";
 import { isCalendarAttachment } from "../CalendarAttachment";
 import { MAX_KEEP_IN_TOUCH_DAYS } from "../keepInTouch";
 import { MAX_CONTACT_GROUP_MEMBERS, MAX_CONTACT_GROUP_NAME, MAX_CONTACT_GROUPS } from "../contactGroups";
@@ -51,6 +52,7 @@ import type {
   ThreadTask,
   ProposedTimeCheck,
   ThreadPage,
+  TodayMail,
   ThreadMutation,
   TriageEvent,
   TriageSenderStats,
@@ -412,6 +414,26 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         }
         return counts;
       }, {});
+    },
+    /** Mirrors `list_today_mail` in `src-tauri/src/db/today.rs`. */
+    async listTodayMail(accountId) {
+      const own = new Set(accounts.map((account) => account.email.toLocaleLowerCase()));
+      const isOwn = (address: string) => own.has(parseAddress(address).email.toLocaleLowerCase());
+      const wroteTo = new Set(threads.flatMap(messagesFor).filter((message) => isOwn(message.sender))
+        .flatMap((message) => message.recipients.map((recipient) => parseAddress(recipient).email.toLocaleLowerCase())));
+      const unread = visible(accountId).filter((thread) => thread.unread);
+      const items = unread.slice(0, TODAY_MAIL_LIMIT).map((thread): TodayMail => {
+        const inbound = [...messagesFor(thread)].reverse().find((message) => !isOwn(message.sender));
+        const repliedHere = thread.labels.includes("SENT");
+        return {
+          thread: structuredClone(thread),
+          sender: inbound?.sender ?? null,
+          listUnsubscribe: Boolean(inbound?.unsubscribe?.methods.length),
+          addressedToMe: inbound ? inbound.recipients.some(isOwn) : false,
+          corresponded: repliedHere || (inbound ? wroteTo.has(parseAddress(inbound.sender).email.toLocaleLowerCase()) : false),
+        };
+      });
+      return { threads: items, total: unread.length };
     },
     async mailboxUnreadCounts(accountId) {
       const splits: Record<string, number> = {};

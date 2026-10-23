@@ -5,7 +5,7 @@ import { adjacentTaskStatus, isActiveTaskStatus } from "./taskViews";
 
 export type MailboxKind = "inbox" | "allMail" | "sent" | "trash" | "drafts" | "outbox" | "split";
 export type InteractionScope = "read" | "compose" | "search" | "modal" | "palette";
-export type FocusedPane = "mail" | "tasks" | "contacts" | "files" | "calendar";
+export type FocusedPane = "mail" | "tasks" | "contacts" | "files" | "calendar" | "today";
 
 export type CommandContext = {
   interactionScope: InteractionScope;
@@ -115,6 +115,7 @@ export type CommandContext = {
   openMailView(): void;
   openTasksView(): void;
   openFilesView?(): void;
+  openTodayView?(): void;
   openContactsView(): void;
   openKeepInTouchView(): void;
   openContactGroupsView(): void;
@@ -583,6 +584,15 @@ export const commands: Command[] = [
     group: "Application",
     enabled: (context) => !context.composerActive,
     run: (context) => complete(() => context.focusedPane === "calendar" ? runWorkspaceCommand("calendar.goToday") : context.openToday()),
+  },
+  {
+    id: "view.today",
+    title: "Go to Today View",
+    keywords: ["overview", "agenda", "dashboard", "home"],
+    keys: ["0"],
+    group: "Navigation",
+    enabled: (context) => !context.composerActive,
+    run: (context) => complete(() => context.openTodayView?.()),
   },
   {
     id: "view.mail",

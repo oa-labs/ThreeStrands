@@ -22,7 +22,7 @@ Click **New Group** to create one, then **Add Members**. **Email Group** starts 
 
 Set a **Keep in Touch** frequency on a profile, from weekly to yearly or a custom number of days. Email in either direction counts as being in touch. The Keep in Touch view groups people as Overdue, Due Today, This Week, and Later, and shows upcoming birthdays.
 
-Use **Mark Contacted** when you've talked another way, or **Snooze** a reminder for a while. The Contacts icon in the sidebar shows how many people are due. At Inbox zero, due reminders also appear beside your open tasks and today’s agenda; click a person to open their profile.
+Use **Mark Contacted** when you've talked another way, or **Snooze** a reminder for a while. The Contacts icon in the sidebar shows how many people are due. Due reminders also appear in **Today** (<kbd>0</kbd>) beside your tasks and agenda; click a person to open their profile.
 
 ## Merge Duplicates
 

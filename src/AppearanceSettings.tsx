@@ -10,6 +10,7 @@ import {
   MIN_AUTO_READ_DELAY_SECONDS,
   type FontFamily,
 } from "./settings";
+import { readLaunchView, writeLaunchView, type LaunchView } from "./lastWorkspace";
 import { EMAIL_MINIMUM_FONT_SIZE } from "./emailRenderingPolicy";
 import { listSystemFontFamilies } from "./systemFonts";
 import { ICON_SIZE } from "./iconSizes";
@@ -230,6 +231,34 @@ export function AppearanceSettings({
           </div>
         ) : null}
       </div>
+    </section>
+  );
+}
+
+/** Device-only, like the rest of Appearance: each computer can start where its user prefers. */
+export function StartupSettings() {
+  const [view, setView] = useState<LaunchView>(readLaunchView);
+  const options: { value: LaunchView; label: string }[] = [
+    { value: "last", label: "Last View Used" },
+    { value: "today", label: "Today" },
+  ];
+  return (
+    <section className="settings-section" aria-label="Startup">
+      <h3>Start With</h3>
+      <div className="settings-radio-row" role="radiogroup" aria-label="Start with">
+        {options.map((option) => (
+          <label key={option.value}>
+            <input
+              type="radio"
+              name="launch-view"
+              checked={view === option.value}
+              onChange={() => { setView(option.value); writeLaunchView(option.value); }}
+            />
+            {option.label}
+          </label>
+        ))}
+      </div>
+      <p className="settings-hint">Today shows your agenda, unread mail, and tasks due. Press 0 to open it any time.</p>
     </section>
   );
 }
