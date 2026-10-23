@@ -58,7 +58,7 @@ export type ContextPerson = {
  * sender's history and one-click decisions first in the person group. Other
  * conversations show Trust only when something needs a look.
  */
-export function ContextPanel({ detail, accounts, selectedEmail = null, readingMessageId = null, onSelectPerson, reply = null, onOpenThread, onShowMessage, onShowLink, availability, assist, related, chat, sender, idle = null, onKeyDown }: {
+export function ContextPanel({ detail, accounts, selectedEmail = null, readingMessageId = null, onSelectPerson, reply = null, onOpenThread, onShowMessage, onShowLink, availability, assist, invitation, related, chat, sender, idle = null, onKeyDown }: {
   detail: ThreadDetail | null;
   accounts: Account[];
   /** A participant the reader picked from a message header; ignored if not on the conversation. */
@@ -80,6 +80,8 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, readingMe
   /** Open times from the calendar to offer in a reply. */
   availability?: ReactNode;
   assist?: ReactNode;
+  /** Native response controls for an invitation in this conversation. */
+  invitation?: ReactNode;
   /** Sections about the conversation and the selected person. */
   related?(person: ContextPerson | null, meetingPeople: { email: string; name: string }[]): ReactNode;
   /** The question box, kept at the bottom of the panel. */
@@ -274,6 +276,7 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, readingMe
       {detail && reply ? reply.checks : null}
       {detail ? null : idle}
       {detail ? <div className="context-ai-row">{bulk && !reply ? null : availability}{assist}</div> : null}
+      {detail ? invitation : null}
       {detail && related ? related(person, [...meetingPeople.values()]) : null}
       {inbound ? <TrustSection key={inbound.id} message={inbound} subject={detail?.thread.subject ?? ""} bulk={Boolean(bulk)} prior={inboundPrior}
         onShowLink={onShowLink && detail ? (link) => onShowLink(detail.thread.id, inbound.id, link) : undefined} /> : null}

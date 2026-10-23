@@ -85,6 +85,8 @@ import { readSettingsSection, saveSettingsSection } from "./settingsNavigation";
 import { TaskEditorDialog } from "./TaskEditorDialog";
 import { TaskSidebar, type TaskWorkspaceSnapshot } from "./TaskSidebar";
 import { THREAD_ASSIST_ID, ThreadAssist } from "./ThreadAssist";
+import { InvitationSection } from "./InvitationSection";
+import { latestInvitationMessage } from "./calendarInvitations";
 import { sharedChatAttachments, ThreadChat } from "./ThreadChat";
 import { ThreadList, ThreadRow } from "./ThreadList";
 import { ThreadTasks } from "./ThreadTasks";
@@ -374,6 +376,7 @@ export function App() {
     [accounts],
   );
   const latestMessage = visibleDetail?.messages.at(-1) ?? null;
+  const invitationMessage = visibleDetail ? latestInvitationMessage(visibleDetail) : null;
   const canUnsubscribe = Boolean(latestMessage?.unsubscribe?.methods.length);
   const unsubscribeMessage = visibleDetail?.messages.find((message) => message.id === unsubscribeMessageId) ?? null;
   const intelligence = useThreadIntelligence({
@@ -1368,7 +1371,7 @@ export function App() {
           onOpenThread={jumpToThread}
           onShowMessage={showMessage}
           onShowLink={showMessageLink}
-          availability={calendarConnected && visibleDetail ? (
+          availability={calendarConnected && visibleDetail && !invitationMessage ? (
             // While reading, Find Times reads the conversation, and choosing times starts a reply.
             <AvailabilitySection
               key={visibleDetail.thread.id}
@@ -1384,6 +1387,15 @@ export function App() {
               onOpenCalendarSettings={() => openSettingsAt("calendarAccounts")}
             />
           ) : null}
+          invitation={invitationMessage ? <InvitationSection
+            message={invitationMessage}
+            calendarConnected={calendarConnected}
+            preferences={availabilityPreferences}
+            ai={aiDraftAvailable}
+            intoDraft={Boolean(composerBelongsToVisibleThread && correspondence.liveDraft)}
+            onReplyWithTimes={draftAvailabilityReply}
+            onOpenCalendarSettings={() => openSettingsAt("calendarAccounts")}
+          /> : null}
           assist={visibleDetail ? (<>
             <ThreadAssist
               detail={visibleDetail}

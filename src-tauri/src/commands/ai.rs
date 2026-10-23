@@ -212,6 +212,8 @@ fn cache_thread_analysis(
     replace_same_revision: bool,
     focus_from: Option<&str>,
 ) -> AppResult<ActionAnalysis> {
+    let messages = state.database.get_thread(thread_id)?.messages;
+    let analysis = without_invitation_meetings(analysis, &messages);
     let saved = database_result(state.database.save_thread_analysis(
         thread_id,
         revision,
@@ -223,7 +225,24 @@ fn cache_thread_analysis(
     if saved {
         return Ok(analysis);
     }
-    Ok(state.database.thread_analysis(thread_id, revision)?.unwrap_or(analysis))
+    Ok(without_invitation_meetings(state.database.thread_analysis(thread_id, revision)?.unwrap_or(analysis), &messages))
+}
+
+/// A calendar invitation already defines its event. This applies to fresh
+/// briefs, saved analyses from older builds, and chat, independently of what
+/// the model calls the event. Tasks and meetings from other messages remain.
+fn without_invitation_meetings(mut analysis: ActionAnalysis, messages: &[crate::models::Message]) -> ActionAnalysis {
+    let invitations: HashSet<&str> = messages.iter().filter(|message| {
+        message.attachments.iter().any(|attachment| {
+            attachment.mime_type.split(';').next().unwrap_or("").trim().eq_ignore_ascii_case("text/calendar")
+                || attachment.filename.to_ascii_lowercase().ends_with(".ics")
+        })
+    }).map(|message| message.id.as_str()).collect();
+    analysis.proposals.retain(|proposal| match proposal {
+        ActionProposal::Meeting(meeting) => !invitations.contains(meeting.evidence.source_message_id.as_str()),
+        ActionProposal::Task(_) => true,
+    });
+    analysis
 }
 
 #[tauri::command]
@@ -245,7 +264,7 @@ pub(crate) async fn ai_analyze_thread(
     )
     .await?;
     if let Some(saved) = state.database.thread_analysis(&thread_id, &revision)? {
-        return Ok(saved);
+        return Ok(without_invitation_meetings(saved, &state.database.get_thread(&thread_id)?.messages));
     }
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
     log::info!(
@@ -442,6 +461,61 @@ mod chat_attachment_tests {
     }
 }
 
+#[cfg(test)]
+mod invitation_proposal_tests {
+    use super::*;
+    use crate::models::{Message, MessageAttachment};
+    use serde_json::json;
+
+    fn message(id: &str, filename: &str, mime_type: &str) -> Message {
+        Message {
+            id: id.into(), thread_id: "thread".into(), sender: "organizer@example.com".into(),
+            recipients: vec!["you@example.com".into()], cc: vec![], sent_at: "2026-10-23T12:00:00Z".into(),
+            body_html: String::new(), body_text: "You are invited".into(), unread: false, unsubscribe: None,
+            attachments: vec![MessageAttachment {
+                id: "attachment".into(), filename: filename.into(), mime_type: mime_type.into(),
+                size: 100, content_id: None, inline: false,
+            }],
+        }
+    }
+
+    fn analysis() -> ActionAnalysis {
+        serde_json::from_value(json!({
+            "proposals": [
+                {"type": "meeting", "intent": "attend", "title": "Invitation", "participants": [],
+                 "rawTimeLanguage": "Tuesday at 1pm", "confidence": 1,
+                 "evidence": {"sourceMessageId": "invite", "excerpt": "You are invited"}},
+                {"type": "task", "kind": "action", "title": "Prepare agenda", "confidence": 1,
+                 "evidence": {"sourceMessageId": "invite", "excerpt": "Prepare agenda"}},
+                {"type": "meeting", "intent": "schedule", "title": "Separate follow-up", "participants": [],
+                 "rawTimeLanguage": "Next week", "confidence": 1,
+                 "evidence": {"sourceMessageId": "follow-up", "excerpt": "Next week"}}
+            ], "hiddenCount": 2, "extraCount": 1
+        })).unwrap()
+    }
+
+    #[test]
+    fn invitations_never_produce_ai_events_but_tasks_and_other_messages_remain() {
+        for (filename, mime_type) in [("INVITE.ICS", "application/octet-stream"), ("", " TEXT/CALENDAR ; method=REQUEST")] {
+            let messages = [message("invite", filename, mime_type), message("follow-up", "notes.txt", "text/plain")];
+            let filtered = without_invitation_meetings(analysis(), &messages);
+            assert_eq!(filtered.proposals.len(), 2);
+            assert!(matches!(&filtered.proposals[0], ActionProposal::Task(task) if task.title == "Prepare agenda"));
+            assert!(matches!(&filtered.proposals[1], ActionProposal::Meeting(meeting) if meeting.title == "Separate follow-up"));
+            assert_eq!(filtered.hidden_count, 2);
+            assert_eq!(filtered.extra_count, 1);
+            // The same rule applies when an old cached analysis is filtered again.
+            assert_eq!(without_invitation_meetings(filtered, &messages).proposals.len(), 2);
+        }
+    }
+
+    #[test]
+    fn ordinary_email_keeps_its_meeting_suggestions() {
+        let filtered = without_invitation_meetings(analysis(), &[message("invite", "invite.txt", "text/plain")]);
+        assert_eq!(filtered.proposals.len(), 3);
+    }
+}
+
 /// Answers a question about the open conversation. The context is the
 /// conversation itself, open tasks linked to it or to the selected person,
 /// the text of any attachments the user shared for the question, and, only
@@ -564,7 +638,7 @@ pub(crate) async fn ai_thread_chat(
         .collect();
     Ok(ThreadChatReply {
         answer: answer.answer,
-        analysis: answer.analysis,
+        analysis: without_invitation_meetings(answer.analysis, &state.database.get_thread(&thread_id)?.messages),
         reply_draft: answer.reply_draft,
         sources,
         searched,

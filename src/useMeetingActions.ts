@@ -50,12 +50,12 @@ export function useMeetingActions({
     setCalendarEventToOpen,
   } = workspaces;
   const [meetingEditor, setMeetingEditor] = useState<MeetingEditorState | null>(null);
-  const draftAvailabilityReply = useCallback((candidates: AvailabilityCandidate[]) => {
+  const draftAvailabilityReply = useCallback((candidates: AvailabilityCandidate[], sourceMessageId?: string) => {
     if (candidates.length === 0) return;
     const text = formatAvailabilityText(candidates, availabilityPreferences.timeZone);
     // An open draft, new or a reply, takes the times at the caret.
     if (correspondence.activeDraft) correspondence.insertIntoDraft(text);
-    else correspondence.replyWithAvailability(text, visibleDetail?.messages.at(-1)?.id);
+    else correspondence.replyWithAvailability(text, sourceMessageId ?? visibleDetail?.messages.at(-1)?.id);
     setRightWorkspace(null);
   }, [availabilityPreferences.timeZone, correspondence, setRightWorkspace, visibleDetail?.messages]);
 

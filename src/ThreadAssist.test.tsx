@@ -344,6 +344,31 @@ describe("ThreadAssist", () => {
     expect(document.querySelector("pre")).toBeNull();
   });
 
+  it.each([
+    { id: "invite", filename: "invite.ics", mimeType: "application/octet-stream", size: 100 },
+    { id: "invite", filename: "", mimeType: "TEXT/CALENDAR; method=REQUEST", size: 100 },
+  ])("never shows an AI meeting from an invitation, while preserving task actions", (attachment) => {
+    const invitationDetail = { ...summarized, messages: [{ ...detail.messages[0], attachments: [attachment] }] };
+    const meeting: ActionProposal = {
+      type: "meeting", intent: "attend", title: "Duplicate invitation", participants: [], location: null,
+      rawTimeLanguage: "Tuesday at 1pm", normalizedStart: null, normalizedEnd: null,
+      searchRangeStart: null, searchRangeEnd: null, durationMinutes: 30, timeZone: null, confidence: 1,
+      evidence: taskProposal.evidence,
+    };
+    const onReview = vi.fn();
+    const onDiscard = vi.fn();
+    const { rerender } = render(<ThreadAssist {...props({ detail: invitationDetail, suggestions: { requested: true, proposals: [meeting, taskProposal], onReview, onDiscard } })} />);
+    expect(screen.queryByText("Duplicate invitation")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add to Calendar" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review & Add Task" }));
+    expect(onReview).toHaveBeenCalledWith(1, taskProposal, "accept");
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(onDiscard).toHaveBeenCalledWith(1);
+    rerender(<ThreadAssist {...props({ detail: invitationDetail, suggestions: { requested: true, proposals: [meeting] } })} />);
+    expect(screen.queryByRole("heading", { name: "Suggested" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Nothing to schedule or follow up on.")).not.toBeInTheDocument();
+  });
+
   it("flags uncertain suggestions for a closer look and schedules an unzoned meeting in the user's time zone", async () => {
     const meeting: ActionProposal = {
       type: "meeting",

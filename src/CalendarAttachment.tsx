@@ -9,11 +9,7 @@ import type { CalendarEventPreview, CalendarPreview, MessageAttachment } from ".
 import { errorMessage } from "./errors";
 import { HoverTooltip } from "./AppChrome";
 import { ICON_SIZE } from "./iconSizes";
-
-export function isCalendarAttachment(attachment: MessageAttachment): boolean {
-  return attachment.mimeType.split(";", 1)[0]?.trim().toLocaleLowerCase() === "text/calendar"
-    || attachment.filename.toLocaleLowerCase().endsWith(".ics");
-}
+export { isCalendarAttachment } from "./calendarInvitations";
 
 const MAX_PREVIEWABLE_SIZE = 2 * 1024 * 1024;
 

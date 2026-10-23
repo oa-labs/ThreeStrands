@@ -218,6 +218,62 @@ describe("conversation brief", () => {
     await clearAiApiKey();
   });
 
+  it.each(["none", "brief", "suggestions", "chat"] as const)("shows native invitation actions and suppresses AI event suggestions (%s)", async (mode) => {
+    clearScheduleCache();
+    if (mode !== "none") await enableAi({ summarize: mode === "brief", actionExtraction: true, threadChat: mode === "chat" });
+    const originalGetThread = mailClient.getThread.bind(mailClient);
+    vi.spyOn(mailClient, "getThread").mockImplementation(async (id) => {
+      const detail = await originalGetThread(id);
+      return id === "welcome" ? { ...detail, messages: detail.messages.map((message) => ({ ...message,
+        attachments: [{ id: "invite", filename: "invite.ics", mimeType: "text/calendar; method=REQUEST", size: 100 }],
+      })) } : detail;
+    });
+    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([{ email: "calendar@example.com", connectedAt: "2026-10-01T00:00:00Z", status: "connected" }]);
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+    vi.spyOn(mailClient, "previewCalendarAttachment").mockResolvedValue({ events: [{ uid: "invitation@example.com", title: "Existing invitation",
+      start: "2030-01-08T18:00:00Z", end: "2030-01-08T20:00:00Z", allDay: false, timeZone: null,
+      location: null, description: null, organizer: "Taylor", attendeeCount: 3, recurring: false, status: "CONFIRMED" }], truncated: false });
+    vi.spyOn(mailClient, "findCalendarInvitation").mockResolvedValue({ id: "existing", accountId: "calendar@example.com", title: "Existing invitation",
+      start: "2030-01-08T18:00:00Z", end: "2030-01-08T20:00:00Z", allDay: false, canRespond: true, responseStatus: "needsAction" });
+    const meeting: MeetingProposal = { type: "meeting", intent: "attend", title: "Duplicate AI event", participants: [], location: null,
+      rawTimeLanguage: "Tuesday", normalizedStart: null, normalizedEnd: null, searchRangeStart: null, searchRangeEnd: null,
+      durationMinutes: 120, timeZone: null, confidence: 1, evidence: { sourceMessageId: "welcome-message", excerpt: "command palette" } };
+    const analysis = { proposals: [meeting], hiddenCount: 0 };
+    const brief = vi.spyOn(mailClient, "briefThread").mockResolvedValue({ ...briefResult, analysis });
+    const analyze = vi.spyOn(mailClient, "analyzeThread").mockResolvedValue(analysis);
+    const chat = vi.spyOn(mailClient, "threadChat").mockResolvedValue({ answer: "Here is the invitation.", analysis,
+      replyDraft: null, sources: [], searched: [], attachments: [], availability: null });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const panel = screen.getByRole("complementary", { name: "Conversation context" });
+    const invitation = await within(panel).findByRole("region", { name: "Invitation" });
+    expect(await within(invitation).findByRole("button", { name: "Accept" })).toBeEnabled();
+    expect(within(invitation).getByRole("button", { name: "Maybe" })).toBeEnabled();
+    expect(within(invitation).getByRole("button", { name: "Decline" })).toBeEnabled();
+    expect(within(panel).queryByRole("button", { name: "Find Times" })).not.toBeInTheDocument();
+    if (mode === "brief") {
+      fireEvent.click(await within(panel).findByRole("button", { name: "Get Brief" }));
+      await within(panel).findByText("Welcome to the app.");
+      expect(brief).toHaveBeenCalledTimes(1);
+    } else if (mode === "suggestions") {
+      fireEvent.click(await within(panel).findByRole("button", { name: "Get Suggestions" }));
+      await waitFor(() => expect(analyze).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(within(panel).queryByText("Reading the conversation…")).not.toBeInTheDocument());
+    } else if (mode === "chat") {
+      fireEvent.click(within(panel).getByRole("button", { name: /Ask about this conversation/ }));
+      const input = within(panel).getByRole("textbox", { name: "Ask About This Conversation" });
+      fireEvent.change(input, { target: { value: "What should I do with this invitation?" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await within(panel).findByText("Here is the invitation.");
+      expect(chat).toHaveBeenCalledTimes(1);
+      expect(within(panel).queryByRole("button", { name: /Added 1 suggestion/ })).not.toBeInTheDocument();
+    }
+    expect(within(panel).queryByText("Duplicate AI event")).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "Add to Calendar" })).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("heading", { name: "Suggested" })).not.toBeInTheDocument();
+    expect(within(invitation).getByRole("button", { name: "Suggest a different time" })).toBeEnabled();
+  });
+
   it("gets the summary and suggestions in one request, then only calls again on refresh", async () => {
     await enableAi({ summarize: true, actionExtraction: true });
     const briefThread = vi.spyOn(mailClient, "briefThread").mockResolvedValue(briefResult);
