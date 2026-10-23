@@ -1,7 +1,7 @@
 // The one card for offering open times: compose's Find Times, meeting
 // suggestions, and Thread Chat's availability answers all show it.
 
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 import type { AvailabilityCandidate, AvailabilityPreferences, ScheduleEvent, TimeSearch } from "./domain";
 import type { EventIdentity } from "./eventMatching";
@@ -9,6 +9,7 @@ import { readAiRequestConfig } from "./aiSettings";
 import { mailClient } from "./data/client";
 import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
+import type { MoreAction } from "./MoreActionsMenu";
 import { MeetingScheduler, type CalendarAddition, type EffectiveSearch, type ScheduleSlot } from "./MeetingScheduler";
 import { FIND_TIMES_INSTRUCTION_MAX_CHARS, planTimeSearch, type SchedulePlan } from "./scheduling";
 
@@ -43,6 +44,7 @@ export function askFindTimes(
 export function FindTimesCard({
   plan, reason = null, preferences, calendarConnected, ai, intoDraft,
   onAddToCalendar, onReplyWithTimes, onConfirmTime, onOpenCalendarSettings, identity, onOpenCalendarEvent,
+  onMatchChange, matchedActions, moreActions,
 }: {
   plan: SchedulePlan;
   /** Why these days were chosen, shown above the times. */
@@ -59,6 +61,10 @@ export function FindTimesCard({
   /** What the event is called and where, to recognize it already on the calendar. */
   identity?: EventIdentity;
   onOpenCalendarEvent?(event: ScheduleEvent): void;
+  onMatchChange?(event: ScheduleEvent | null): void;
+  /** Shown with Open in Calendar once the event is on the calendar. */
+  matchedActions?: ReactNode;
+  moreActions?: MoreAction[];
 }) {
   const [adjusted, setAdjusted] = useState<{ key: number; plan: SchedulePlan; reason: string } | null>(null);
   const [instruction, setInstruction] = useState("");
@@ -124,6 +130,9 @@ export function FindTimesCard({
       onOpenCalendarSettings={onOpenCalendarSettings}
       identity={identity}
       onOpenCalendarEvent={onOpenCalendarEvent}
+      onMatchChange={onMatchChange}
+      matchedActions={matchedActions}
+      moreActions={moreActions}
       onSearchChange={(effective) => { shown.current = effective; }}
       adjustInput={adjustInput}
     />

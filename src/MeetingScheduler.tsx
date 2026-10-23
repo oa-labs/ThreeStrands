@@ -11,6 +11,7 @@ import {
   windowsWithin, type DayBounds, type SchedulePlan, type ScheduleQuery,
 } from "./scheduling";
 import { ICON_SIZE } from "./iconSizes";
+import { MoreActionsMenu, type MoreAction } from "./MoreActionsMenu";
 
 export type ScheduleSlot = Pick<AvailabilityCandidate, "start" | "end">;
 /** A time to add to the calendar; an all-day addition carries inclusive `YYYY-MM-DD` days. */
@@ -100,6 +101,12 @@ function addedText(match: CalendarMatch, slot: ScheduleSlot, timeZone: string): 
   return `Already on your calendar at ${time}`;
 }
 
+/** When a matched event happens on its day, such as "10:00 AM" or "All day". */
+function matchedTime(event: ScheduleEvent, timeZone: string): string {
+  if (event.allDay) return "All day";
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone }).format(new Date(event.start));
+}
+
 /** Whether two schedule entries are the same event. */
 const sameEvent = (left: ScheduleEvent, right: ScheduleEvent) => left.accountId === right.accountId && left.id === right.id;
 
@@ -110,7 +117,8 @@ const sameEvent = (left: ScheduleEvent, right: ScheduleEvent) => left.accountId 
  * or a later range — and shows more slots on request. Every outcome goes
  * through a review step: the event dialog or a reply in the composer.
  * Given what the event is called, a time or day already on the calendar
- * under that name reads as added rather than as a conflict.
+ * under that name reads as added rather than as a conflict. Once added,
+ * opening it is the main action and adding it again moves to the ⋯ menu.
  */
 export function MeetingScheduler({
   plan: initialPlan,
@@ -124,6 +132,9 @@ export function MeetingScheduler({
   adjustInput,
   identity: latestIdentity,
   onOpenCalendarEvent,
+  onMatchChange,
+  matchedActions,
+  moreActions = [],
   intoDraft = false,
 }: {
   plan: SchedulePlan;
@@ -143,6 +154,12 @@ export function MeetingScheduler({
   identity?: EventIdentity;
   /** Opens a calendar event the suggestion already appears as. */
   onOpenCalendarEvent?(event: ScheduleEvent): void;
+  /** Told the calendar event this one already is, or null, so the caller can drop what the scheduler now covers. */
+  onMatchChange?(event: ScheduleEvent | null): void;
+  /** The caller's own actions, shown in the scheduler's row once the event is on the calendar. */
+  matchedActions?: ReactNode;
+  /** The caller's less common actions, added to the ⋯ menu once the event is on the calendar. */
+  moreActions?: MoreAction[];
 }) {
   // Plans computed from "now" differ on every render; keep the one this
   // scheduler mounted with. Callers key the scheduler by what it schedules.
@@ -236,6 +253,16 @@ export function MeetingScheduler({
     // A bare day has no query; `queryKey` stays "none" while it shows.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [calendarConnected, plan.day, queryKey, identity]);
+  const matchedEvent = query
+    ? (state.phase === "specific" && state.match?.kind === "same" ? state.match.event : null)
+    : (plan.day ? dayMatch?.event ?? null : null);
+  const matched = matchedEvent !== null;
+  const matchedKey = matchedEvent ? `${matchedEvent.accountId}|${matchedEvent.id}|${matchedEvent.conferenceUrl ?? ""}` : "";
+  useEffect(() => {
+    onMatchChange?.(matchedEvent);
+    // Reported when the matched event changes, not when the caller's callback does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchedKey]);
   useEffect(() => {
     if (query?.kind === "range") onSearchChange?.({ query, durationMinutes: plan.durationMinutes, bounds });
     // Reported once per distinct search, identified by `queryKey`.
@@ -276,12 +303,16 @@ export function MeetingScheduler({
   const day = plan.day;
   if (!query && day) {
     return <div className="meeting-scheduler" role="group" aria-label="Schedule">
-      <p className="meeting-slot">{formatDay(day)} · Time not set</p>
+      {/* The calendar copy says when it happens, which the email did not. */}
+      <p className="meeting-slot">{formatDay(day)} · {dayMatch ? matchedTime(dayMatch.event, timeZone) : "Time not set"}</p>
       {dayMatch ? <p className="meeting-slot-status meeting-slot-added"><CircleCheck size={ICON_SIZE.xs} aria-hidden="true" /> Already on your calendar</p> : null}
-      <div className="meeting-scheduler-actions">
-        {dayMatch && onOpenCalendarEvent ? <button type="button" className="btn btn-sm" onClick={() => onOpenCalendarEvent(dayMatch.event)}><CalendarCheck size={ICON_SIZE.sm} /> Open in Calendar</button> : null}
-        <button type="button" className="btn btn-sm" onClick={() => onAddToCalendar({ start: day, end: day, allDay: true })}>{dayMatch ? "Add Again" : <><CalendarPlus size={ICON_SIZE.sm} /> Add to Calendar</>}</button>
-      </div>
+      {dayMatch ? <div className="meeting-scheduler-actions">
+        {onOpenCalendarEvent ? <button type="button" className="btn btn-sm btn-primary" onClick={() => onOpenCalendarEvent(dayMatch.event)}><CalendarCheck size={ICON_SIZE.sm} /> Open in Calendar</button> : null}
+        {matchedActions}
+        <MoreActionsMenu label="More actions" actions={[{ label: "Add Again", onSelect: () => onAddToCalendar({ start: day, end: day, allDay: true }) }, ...moreActions]} />
+      </div> : <div className="meeting-scheduler-actions">
+        <button type="button" className={`btn btn-sm${announced ? " btn-primary" : ""}`} onClick={() => onAddToCalendar({ start: day, end: day, allDay: true })}><CalendarPlus size={ICON_SIZE.sm} /> Add to Calendar</button>
+      </div>}
     </div>;
   }
   if (!query && plan.undated) {
@@ -320,13 +351,17 @@ export function MeetingScheduler({
       </p>}
       {state.check.status === "partiallyChecked" ? coverageNote(uncheckedNote(state.check.uncheckedCalendars, "this time")) : null}
       <div className="meeting-scheduler-actions">
-        {state.match && onOpenCalendarEvent ? <button type="button" className="btn btn-sm" onClick={() => onOpenCalendarEvent(state.match!.event)}><CalendarCheck size={ICON_SIZE.sm} /> Open in Calendar</button> : null}
-        {/* Adding a second copy of an event already there takes a deliberate choice. */}
-        <button type="button" className="btn btn-sm" onClick={() => onAddToCalendar(query)}>{state.match?.kind === "same" ? "Add Again" : <><CalendarPlus size={ICON_SIZE.sm} /> Add to Calendar</>}</button>
+        {state.match && onOpenCalendarEvent ? <button type="button" className={`btn btn-sm${matched ? " btn-primary" : ""}`} onClick={() => onOpenCalendarEvent(state.match!.event)}><CalendarCheck size={ICON_SIZE.sm} /> Open in Calendar</button> : null}
+        {/* Adding a second copy of an event already there takes a deliberate choice, so it waits in the ⋯ menu. */}
+        {matched ? null : <button type="button" className={`btn btn-sm${announced && !state.match ? " btn-primary" : ""}`} onClick={() => onAddToCalendar(query)}><CalendarPlus size={ICON_SIZE.sm} /> Add to Calendar</button>}
         {/* The matched event is this one, so only other overlaps rule out a reply that the time works. */}
         {announced || (state.check.status === "conflicting" && !(state.match?.kind === "same" && state.conflictTitles.length === 0)) ? null
           : <button type="button" className="btn btn-sm" onClick={() => onConfirmTime(query)}>Reply &ldquo;That Works&rdquo;</button>}
         {announced ? null : <button type="button" className="btn btn-sm" onClick={() => findOtherTimes(query.start)}>Find Other Times</button>}
+        {matched ? <>
+          {matchedActions}
+          <MoreActionsMenu label="More actions" actions={[{ label: "Add Again", onSelect: () => onAddToCalendar(query) }, ...moreActions]} />
+        </> : null}
       </div>
     </> : null}
     {state.phase === "range" && query.kind === "range" ? <>
