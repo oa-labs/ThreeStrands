@@ -43,7 +43,9 @@ export function createEmailFontSizeController(doc: Document): (value: number) =>
       // Pin larger descendants too, so relative headings do not grow when
       // a text-bearing ancestor is enlarged. Larger text keeps its size.
       element.style.setProperty("font-size", `${Math.max(size, minimum)}px`, "important");
-      if (size < minimum && Number.isFinite(lineHeight)) {
+      // A zero line-height keeps text such as a footnote marker from
+      // growing its line box; enlarging the text does not change that.
+      if (size < minimum && Number.isFinite(lineHeight) && lineHeight > 0) {
         element.style.setProperty("line-height", `${Math.max(
           lineHeight,
           minimum * EMAIL_MINIMUM_FONT_SIZE.minLineHeightRatio,

@@ -127,6 +127,14 @@ describe("SafeMessage", () => {
     expect(Array.from(doc.querySelectorAll("span")).map((span) => span.style.fontSize)).toEqual(["18px", "18px"]);
   });
 
+  it("enlarges zero line-height text without growing its line", () => {
+    const html = '<p style="font-size:15px;line-height:21px">Terms apply.<sup style="font-size:10px !important;line-height:0px !important">2</sup></p>';
+    render(<SafeMessage html={html} emailMinimumFontSize={18} />);
+    const sup = loadFrame(screen.getByTestId("message-body") as HTMLIFrameElement).querySelector("sup")!;
+    expect(sup.style.fontSize).toBe("18px");
+    expect(sup.style.lineHeight).toBe("0px");
+  });
+
   it("applies the font floor over important sender text and restores its priority", () => {
     const html = '<p style="font-size:10px !important;line-height:12px !important">Small</p>';
     const { rerender } = render(<SafeMessage html={html} emailMinimumFontSize={18} />);
@@ -182,6 +190,41 @@ describe("SafeMessage", () => {
     expect(table.getAttribute("cellspacing")).toBe("4");
     expect(table.querySelector("th")!.getAttribute("align")).toBe("left");
     expect(table.querySelector("td[align='right']")?.textContent).toBe("$24");
+  });
+
+  it("keeps <font> typography so header-cell text does not fall back to bold", () => {
+    const body = parseSanitized("fontStyledHeaderColumns");
+    const [figure, copy] = Array.from(body.querySelectorAll<HTMLElement>("th > font"));
+    expect(figure.style.fontSize).toBe("72px");
+    expect(figure.style.fontWeight).toBe("normal");
+    expect(figure.style.color).toBe("rgb(148, 110, 58)");
+    expect(copy.style.fontWeight).toBe("normal");
+    const footnote = copy.querySelector<HTMLElement>("sup")!;
+    expect(footnote.style.fontSize).toBe("10px");
+    expect(footnote.style.getPropertyPriority("line-height")).toBe("important");
+  });
+
+  it("keeps <font> face, color and size attributes in paragraph flow", () => {
+    const [details, dates] = Array.from(parseSanitized("fontAttributesInFlow").querySelectorAll("p > font"));
+    expect(details.getAttribute("face")).toBe("georgia, serif");
+    expect(details.getAttribute("color")).toBe("#336699");
+    expect(details.getAttribute("size")).toBe("2");
+    expect(dates.getAttribute("size")).toBe("5");
+    expect(dates.getAttribute("color")).toBe("red");
+  });
+
+  it("strips unsafe styles and attributes from <font> and its attributes from other elements", () => {
+    const sanitized = sanitizeMessageHtml(`
+      <font onclick="alert(1)" color="expression(alert(2))" face="x;background:url(https://tracker.invalid)" size="9" style="position:fixed;background-image:url(javascript:alert(3));color:#111">Safe text</font>
+      <p color="#336699" face="Georgia" size="2">Paragraph</p>
+    `);
+    const body = new DOMParser().parseFromString(sanitized, "text/html").body;
+    const font = body.querySelector("font")!;
+    expect(font.getAttributeNames()).toEqual(["style"]);
+    expect(font.getAttribute("style")).toBe("color: rgb(17, 17, 17)");
+    expect(body.querySelector("p")!.getAttributeNames()).toEqual([]);
+    expect(sanitized).not.toMatch(/alert|tracker|expression|fixed|javascript:/);
+    expect(font.textContent).toBe("Safe text");
   });
 
   it("keeps inline !important so a table button outranks the sender's !important stylesheet reset", () => {

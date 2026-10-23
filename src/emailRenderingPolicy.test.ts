@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EMAIL_MINIMUM_FONT_SIZE, parseEmailMinimumFontSize, EMAIL_CSS_LIMITS, EMAIL_IMAGE_LIMITS, preservedImageMinWidth, emailFrameHeight, sanitizeCssDeclaration, sanitizeHtmlCellPadding, sanitizeHtmlDimension } from "./emailRenderingPolicy";
+import { EMAIL_MINIMUM_FONT_SIZE, parseEmailMinimumFontSize, EMAIL_CSS_LIMITS, EMAIL_IMAGE_LIMITS, preservedImageMinWidth, emailFrameHeight, sanitizeCssDeclaration, sanitizeHtmlCellPadding, sanitizeHtmlDimension, sanitizeHtmlFontSize, EMAIL_LEGACY_FONT_SIZE } from "./emailRenderingPolicy";
 
 describe("email rendering numeric policy", () => {
   it("validates the reader font floor at both boundaries without silently clamping", () => {
@@ -15,6 +15,25 @@ describe("email rendering numeric policy", () => {
       expect(parseEmailMinimumFontSize(value)).toBe(0);
     }
   });
+  it("reads <font size> absolute and relative values within the legacy scale without clamping", () => {
+    const { min, max, relativeBase } = EMAIL_LEGACY_FONT_SIZE;
+    expect(sanitizeHtmlFontSize(String(min - 1))).toBeNull();
+    expect(sanitizeHtmlFontSize(String(min))).toBe(String(min));
+    expect(sanitizeHtmlFontSize(String(min + 1))).toBe(String(min + 1));
+    expect(sanitizeHtmlFontSize(String(max - 1))).toBe(String(max - 1));
+    expect(sanitizeHtmlFontSize(String(max))).toBe(String(max));
+    expect(sanitizeHtmlFontSize(String(max + 1))).toBeNull();
+    expect(sanitizeHtmlFontSize(`+${max - relativeBase}`)).toBe(String(max));
+    expect(sanitizeHtmlFontSize(`+${max - relativeBase + 1}`)).toBeNull();
+    expect(sanitizeHtmlFontSize(`-${relativeBase - min}`)).toBe(String(min));
+    expect(sanitizeHtmlFontSize(`-${relativeBase - min + 1}`)).toBeNull();
+    expect(sanitizeHtmlFontSize(" 2px")).toBe("2");
+    expect(sanitizeHtmlFontSize("2;color:red")).toBe("2");
+    for (const value of ["", "+", "large", "x2", "99999999999999999999"]) {
+      expect([value, sanitizeHtmlFontSize(value)]).toEqual([value, null]);
+    }
+  });
+
   it("preserves declared image widths only up to the preserved-width limit", () => {
     const max = EMAIL_IMAGE_LIMITS.maxPreservedImageWidthPx;
     expect(preservedImageMinWidth(null, String(max - 1))).toBe(`${max - 1}px`);

@@ -14,6 +14,7 @@ import {
   sanitizeCssDeclaration,
   sanitizeHtmlCellPadding,
   sanitizeHtmlDimension,
+  sanitizeHtmlFontSize,
   parseEmailMinimumFontSize,
 } from "./emailRenderingPolicy";
 import { createEmailFontSizeController } from "./emailMinimumFontSize";
@@ -221,10 +222,12 @@ export function extractSafeStyleSheet(html: string, theme?: "light" | "dark"): s
 
 // <center> and <section> are pure layout wrappers. Templates often center
 // their outermost table with <center> alone; dropping the tag keeps its
-// content but pins that table to the left edge.
+// content but pins that table to the left edge. <font> is typography only:
+// templates set a block's size, color and weight on it, and unwrapping it
+// leaves the text with whatever its parent defaults to (a <th>'s bold).
 const allowedTags = [
   "a", "b", "blockquote", "br", "caption", "center", "code", "col", "colgroup",
-  "dd", "del", "div", "dl", "dt", "em", "h1", "h2", "h3", "h4",
+  "dd", "del", "div", "dl", "dt", "em", "font", "h1", "h2", "h3", "h4",
   "h5", "h6", "hr", "i", "img", "kbd", "li", "ol", "p", "pre", "s",
   "section", "small", "span", "strong", "sub", "sup", "table", "tbody", "td",
   "tfoot", "th", "thead", "tr", "u", "ul",
@@ -334,7 +337,7 @@ export function sanitizeMessageHtml(html: string): string {
     // else in this file: DOMPurify already keeps them from carrying
     // markup, and the iframe never loads the app's own stylesheet, so a
     // sender's class name can't collide with anything of ours.
-    ALLOWED_ATTR: ["align", "alt", "bgcolor", "cellpadding", "cellspacing", "class", "colspan", "dir", "height", "hidden", "href", "id", "rowspan", "src", "start", "style", "title", "valign", "width"],
+    ALLOWED_ATTR: ["align", "alt", "bgcolor", "cellpadding", "cellspacing", "class", "color", "colspan", "dir", "face", "height", "hidden", "href", "id", "rowspan", "size", "src", "start", "style", "title", "valign", "width"],
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
     FORBID_TAGS: ["form", "script", "style", "svg"],
@@ -400,6 +403,18 @@ export function sanitizeMessageHtml(html: string): string {
         if (safeValue === null) element.removeAttribute(attr);
         else element.setAttribute(attr, safeValue);
       }
+    }
+    // <font>'s legacy attributes go through the same validators as the
+    // color, font-family and font-size declarations they stand for.
+    for (const attr of ["color", "face", "size"]) {
+      const value = element.getAttribute(attr);
+      if (value === null) continue;
+      const safeValue = tag !== "font" ? null
+        : attr === "color" ? (safeColor.test(value.trim()) ? value.trim().toLowerCase() : null)
+        : attr === "face" ? sanitizeCssDeclaration("font-family", value)
+        : sanitizeHtmlFontSize(value);
+      if (safeValue === null) element.removeAttribute(attr);
+      else element.setAttribute(attr, safeValue);
     }
     const bgcolor = element.getAttribute("bgcolor");
     if (bgcolor !== null) {

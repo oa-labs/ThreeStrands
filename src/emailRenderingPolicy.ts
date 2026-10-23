@@ -468,6 +468,25 @@ export function sanitizeHtmlCellPadding(value: string): string | null {
   return Number(number) <= EMAIL_CSS_LIMITS.maxAbsolutePx ? number : null;
 }
 
+/** `<font size>` keywords: 1–7, the legacy scale browsers map to CSS sizes. */
+export const EMAIL_LEGACY_FONT_SIZE = { min: 1, max: 7, relativeBase: 3 } as const;
+
+/**
+ * Sanitizes a `<font size>` attribute the way browsers read it: a whole
+ * number, absolute or (with a sign) relative to size 3, trailing text
+ * ignored. Returns the absolute size, or null — remove the attribute — for
+ * a value with no digits or one whose size falls outside 1–7.
+ */
+export function sanitizeHtmlFontSize(value: string): string | null {
+  const [, sign, digits] = LEGACY_INTEGER.exec(value)!;
+  if (!digits) return null;
+  const amount = Number(digits);
+  const size = sign === "+" ? EMAIL_LEGACY_FONT_SIZE.relativeBase + amount
+    : sign === "-" ? EMAIL_LEGACY_FONT_SIZE.relativeBase - amount
+    : amount;
+  return size >= EMAIL_LEGACY_FONT_SIZE.min && size <= EMAIL_LEGACY_FONT_SIZE.max ? String(size) : null;
+}
+
 /**
  * The minimum width that keeps a small image at its declared size, taken from
  * its sanitized inline CSS width when present and otherwise from its sanitized
