@@ -22,6 +22,9 @@ use url::Url;
 
 use crate::net_safety::{self, is_disallowed_url_host};
 
+#[cfg(target_os = "macos")]
+mod urlsession;
+
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_CACHE_BYTES: usize = 32 * 1024 * 1024;
@@ -182,37 +185,32 @@ async fn download(parsed: Url, cache: &ImageCache) -> Result<String, String> {
 
     let mut response = cache
         .client
-        .get(parsed)
+        .get(parsed.clone())
         .send()
         .await
         .map_err(|error| format!("Image request failed: {error}"))?;
 
+    let content_type = media_type(
+        response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or(""),
+    );
+
     if !response.status().is_success() {
+        #[cfg(target_os = "macos")]
+        if should_retry_with_platform_stack(&parsed, response.status(), &content_type) {
+            drop(response);
+            return download_with_platform_stack(parsed).await;
+        }
         return Err(format!(
             "Image endpoint returned HTTP {}",
             response.status()
         ));
     }
 
-    let content_type = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("")
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
-    // Some CDNs label real images as generic binary; those are identified
-    // from their bytes below. Every other non-raster type is refused here.
-    if !crate::image_format::is_supported_raster_mime(&content_type)
-        && !crate::image_format::is_generic_binary_mime(&content_type)
-    {
-        return Err(format!(
-            "Refusing unsupported image content-type: {content_type}"
-        ));
-    }
+    check_declared_type(&content_type)?;
 
     if let Some(claimed_len) = response.content_length() {
         if claimed_len > crate::image_format::MAX_RASTER_BYTES as u64 {
@@ -236,16 +234,120 @@ async fn download(parsed: Url, cache: &ImageCache) -> Result<String, String> {
         append_bounded(&mut bytes, &chunk)?;
     }
 
-    let mime_type = if crate::image_format::is_supported_raster_mime(&content_type) {
-        content_type.as_str()
+    raster_data_uri(&content_type, &bytes)
+}
+
+/// A `Content-Type` header's media type, lowercased, without parameters.
+fn media_type(header: &str) -> String {
+    header
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase()
+}
+
+/// Some CDNs label real images as generic binary; those are identified from
+/// their bytes in [`raster_data_uri`]. Every other non-raster type is
+/// refused before the body is read.
+fn check_declared_type(content_type: &str) -> Result<(), String> {
+    if !crate::image_format::is_supported_raster_mime(content_type)
+        && !crate::image_format::is_generic_binary_mime(content_type)
+    {
+        return Err(format!(
+            "Refusing unsupported image content-type: {content_type}"
+        ));
+    }
+    Ok(())
+}
+
+fn raster_data_uri(content_type: &str, bytes: &[u8]) -> Result<String, String> {
+    let mime_type = if crate::image_format::is_supported_raster_mime(content_type) {
+        content_type
     } else {
-        crate::image_format::sniff_raster_mime(&bytes).ok_or_else(|| {
+        crate::image_format::sniff_raster_mime(bytes).ok_or_else(|| {
             format!("Refusing unrecognized image data labelled as content-type: {content_type}")
         })?
     };
-    crate::image_format::validate_raster(&bytes)?;
+    crate::image_format::validate_raster(bytes)?;
 
-    Ok(format!("data:{mime_type};base64,{}", STANDARD.encode(&bytes)))
+    Ok(format!(
+        "data:{mime_type};base64,{}",
+        STANDARD.encode(bytes)
+    ))
+}
+
+/// A bot filter that judges the TLS handshake answers the reqwest client
+/// with a 403 page instead of the image, whatever its headers. Only that
+/// shape earns a second attempt through the system network stack: other
+/// failures, and a 403 that is itself an image, are final. HTTPS only, since
+/// App Transport Security blocks plain-HTTP URLSession loads in the app.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn should_retry_with_platform_stack(
+    url: &Url,
+    status: reqwest::StatusCode,
+    content_type: &str,
+) -> bool {
+    status == reqwest::StatusCode::FORBIDDEN
+        && url.scheme() == "https"
+        && !crate::image_format::is_supported_raster_mime(content_type)
+        && !crate::image_format::is_generic_binary_mime(content_type)
+}
+
+/// Every resolved address must be public: URLSession picks among them
+/// itself, so a single private answer could be the one it connects to.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn addresses_are_public(addresses: &[std::net::IpAddr]) -> bool {
+    !addresses.is_empty()
+        && addresses
+            .iter()
+            .all(|address| !net_safety::is_private_ip(*address))
+}
+
+/// The proxy's public-host rules for the URLSession fallback, applied to
+/// the first URL and to every redirect target. Blocks on DNS, which
+/// [`urlsession`] allows for.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn check_platform_fallback_target(url: &Url) -> Result<(), String> {
+    let url = validate_public_image_url(url.as_str())?;
+    if url.scheme() != "https" {
+        return Err("Image URL must use HTTPS".to_string());
+    }
+    if let Some(url::Host::Domain(domain)) = url.host() {
+        use std::net::ToSocketAddrs;
+        let addresses: Vec<std::net::IpAddr> = (domain, url.port_or_known_default().unwrap_or(443))
+            .to_socket_addrs()
+            .map_err(|error| format!("Image request failed: {error}"))?
+            .map(|address| address.ip())
+            .collect();
+        if !addresses_are_public(&addresses) {
+            return Err("Image URL points to a local or private host".to_string());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+async fn download_with_platform_stack(parsed: Url) -> Result<String, String> {
+    const POLICY: urlsession::PeerPolicy = urlsession::PeerPolicy {
+        check_target: check_platform_fallback_target,
+        allows_peer: |address| !net_safety::is_private_ip(address),
+    };
+    let response = urlsession::fetch(
+        &parsed,
+        POLICY,
+        IMAGE_PROXY_USER_AGENT,
+        &IMAGE_PROXY_HEADERS,
+        REQUEST_TIMEOUT,
+        crate::image_format::MAX_RASTER_BYTES,
+    )
+    .await?;
+    if !(200..300).contains(&response.status) {
+        return Err(format!("Image endpoint returned HTTP {}", response.status));
+    }
+    let content_type = media_type(&response.content_type);
+    check_declared_type(&content_type)?;
+    raster_data_uri(&content_type, &response.bytes)
 }
 
 #[cfg(test)]
@@ -408,7 +510,8 @@ mod tests {
     const TINY_PNG: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\
         \x00\x00\x00\x02\x00\x00\x00\x03\x08\x06\x00\x00\x00\x00\x00\x00\x00";
     /// A JFIF APP0 segment followed by a 3×2 baseline SOF0 frame header.
-    const TINY_JPEG: &[u8] = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\
+    const TINY_JPEG: &[u8] =
+        b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\
         \xff\xc0\x00\x11\x08\x00\x02\x00\x03\x03\x01\x11\x00\x02\x11\x01\x03\x11\x01\xff\xd9";
 
     /// A JFIF APP0 segment followed by a baseline SOF0 frame header.
@@ -476,7 +579,10 @@ mod tests {
             let error = download_served(Some("application/octet-stream"), body)
                 .await
                 .unwrap_err();
-            assert!(error.starts_with("Refusing unrecognized image data"), "{error}");
+            assert!(
+                error.starts_with("Refusing unrecognized image data"),
+                "{error}"
+            );
         }
     }
 
@@ -491,6 +597,102 @@ mod tests {
                 "{content_type}: {error}"
             );
         }
+    }
+
+    #[test]
+    fn retries_only_a_non_image_403_over_https() {
+        let https = Url::parse("https://example.com/a.png").unwrap();
+        let http = Url::parse("http://example.com/a.png").unwrap();
+        let forbidden = reqwest::StatusCode::FORBIDDEN;
+        assert!(should_retry_with_platform_stack(
+            &https,
+            forbidden,
+            "text/html"
+        ));
+        assert!(!should_retry_with_platform_stack(
+            &http,
+            forbidden,
+            "text/html"
+        ));
+        assert!(!should_retry_with_platform_stack(
+            &https,
+            forbidden,
+            "image/png"
+        ));
+        assert!(!should_retry_with_platform_stack(
+            &https,
+            forbidden,
+            "application/octet-stream"
+        ));
+        // No type at all may still be an image, so it is treated like one.
+        assert!(!should_retry_with_platform_stack(&https, forbidden, ""));
+        for status in [
+            reqwest::StatusCode::UNAUTHORIZED,
+            reqwest::StatusCode::NOT_FOUND,
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        ] {
+            assert!(
+                !should_retry_with_platform_stack(&https, status, "text/html"),
+                "{status}"
+            );
+        }
+    }
+
+    #[test]
+    fn platform_fallback_requires_every_resolved_address_to_be_public() {
+        let parse = |values: &[&str]| -> Vec<std::net::IpAddr> {
+            values.iter().map(|value| value.parse().unwrap()).collect()
+        };
+        assert!(addresses_are_public(&parse(&[
+            "93.184.216.34",
+            "2606:4700::1111"
+        ])));
+        assert!(!addresses_are_public(&parse(&[
+            "93.184.216.34",
+            "10.0.0.1"
+        ])));
+        assert!(!addresses_are_public(&parse(&["::ffff:127.0.0.1"])));
+        assert!(!addresses_are_public(&[]));
+    }
+
+    #[test]
+    fn platform_fallback_targets_are_public_https_urls() {
+        for url in [
+            "http://93.184.216.34/a.png",
+            "https://127.0.0.1/a.png",
+            "https://169.254.169.254/a.png",
+            "https://[::1]/a.png",
+            "https://localhost/a.png",
+            "https://printer.local/a.png",
+            "https://user:pass@93.184.216.34/a.png",
+        ] {
+            assert!(
+                check_platform_fallback_target(&Url::parse(url).unwrap()).is_err(),
+                "{url} must be refused"
+            );
+        }
+        assert!(check_platform_fallback_target(
+            &Url::parse("https://93.184.216.34/a.png").unwrap()
+        )
+        .is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_plain_http_403_page_is_final() {
+        let body = b"<html>challenge</html>";
+        let mut response = format!(
+            "HTTP/1.1 403 Forbidden\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        response.extend_from_slice(body);
+        let (port, server) = serve_once(response);
+        let cache = ImageCache::new().unwrap();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/image")).unwrap();
+        let error = download(url, &cache).await.unwrap_err();
+        server.join().unwrap();
+        assert_eq!(error, "Image endpoint returned HTTP 403 Forbidden");
     }
 
     #[test]
