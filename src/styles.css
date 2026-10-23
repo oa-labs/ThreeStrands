@@ -1615,6 +1615,14 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .proposal-evidence blockquote { margin: var(--space-1) 0; padding-left: var(--space-2); border-left: 2px solid var(--border-strong); color: var(--text); }
 .proposal-evidence small { overflow-wrap: anywhere; }
 .proposal-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); }
+.proposal-detail { display: flex; align-items: flex-start; gap: var(--space-1); }
+.proposal-detail svg { flex-shrink: 0; margin-top: var(--space-0-5); }
+/* A suggestion card already frames its scheduler; a rule separates them instead of a second box. */
+.action-proposal-card .meeting-scheduler { margin-top: 0; padding: var(--space-2) 0 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; background: none; }
+.more-actions { position: relative; }
+.more-actions-menu { position: absolute; z-index: var(--z-local-popover); top: calc(100% + var(--space-1)); right: 0; width: max-content; padding: var(--space-1); border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--raised); box-shadow: var(--shadow-popover); }
+.more-actions-item { display: flex; align-items: center; width: 100%; min-height: var(--control-h); padding: var(--space-2); border: 0; border-radius: var(--radius-sm); color: var(--text); background: transparent; font-size: var(--text-control); text-align: left; cursor: pointer; }
+.more-actions-item:hover, .more-actions-item:focus-visible { background: var(--hover); }
 .availability-windows { display: grid; gap: var(--space-1-5); }
 .availability-window { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: start; gap: var(--space-1-5); font-size: var(--text-secondary); }
 .availability-window > label { display: flex; min-height: var(--control-h); align-items: center; gap: var(--space-1); }

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import { SLOTS_PER_DAY } from "./scheduling";
-import { briefScope, ThreadAssist, type ThreadAssistProps } from "./ThreadAssist";
+import { briefScope, participantName, ThreadAssist, type ThreadAssistProps } from "./ThreadAssist";
 import type { ActionProposal, ThreadDetail } from "./domain";
 
 const detail: ThreadDetail = {
@@ -95,6 +95,19 @@ function props(overrides: Partial<Omit<ThreadAssistProps, "summary" | "suggestio
     },
   };
 }
+
+describe("participantName", () => {
+  it("reverses a directory-style name and leaves everything else as written", () => {
+    expect(participantName("Dadeboe, Joshua")).toBe("Joshua Dadeboe");
+    expect(participantName("Rivera, Ana María")).toBe("Ana María Rivera");
+    expect(participantName("Joshua Dadeboe")).toBe("Joshua Dadeboe");
+    expect(participantName("Smith, Jr.")).toBe("Smith, Jr.");
+    expect(participantName("Acme, Inc")).toBe("Acme, Inc");
+    expect(participantName("Van Dyke, Dick")).toBe("Van Dyke, Dick");
+    expect(participantName("a, b, c")).toBe("a, b, c");
+    expect(participantName("Finance team,")).toBe("Finance team,");
+  });
+});
 
 describe("ThreadAssist", () => {
   beforeEach(() => localStorage.clear());
@@ -302,7 +315,7 @@ describe("ThreadAssist", () => {
     expect(onReview).toHaveBeenCalledWith(0, taskProposal, "accept");
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     expect(onReview).toHaveBeenLastCalledWith(0, taskProposal, "edit");
-    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(onDiscard).toHaveBeenCalledWith(0);
     // What was sent is said in words; the request itself is in Settings → AI.
     expect(screen.queryByText("What was shared with AI")).not.toBeInTheDocument();
@@ -412,10 +425,44 @@ describe("ThreadAssist", () => {
       timeZone: "America/New_York", confidence: 0.9, evidence: { sourceMessageId: "message-1", excerpt: "You're invited to Entrepreneur Day 2026" },
     };
     const onOpenCalendarEvent = vi.fn();
-    render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [event] }, scheduling: { calendarConnected: true, onOpenCalendarEvent } })} />);
+    const onReview = vi.fn();
+    const onDiscard = vi.fn();
+    render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [event], onReview, onDiscard }, scheduling: { calendarConnected: true, onOpenCalendarEvent } })} />);
     expect(await screen.findByText("Already on your calendar")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Open in Calendar" }));
+    const open = screen.getByRole("button", { name: "Open in Calendar" });
+    fireEvent.click(open);
     expect(onOpenCalendarEvent).toHaveBeenCalledWith(added);
+
+    // The scheduler's line says when; the email's wording of it would repeat it.
+    await waitFor(() => expect(screen.queryByText("November 17 at 4:00 PM")).not.toBeInTheDocument());
+    // One row of actions: Edit waits in ⋯ with Add Again, and Dismiss sits beside Open in Calendar.
+    const card = open.closest("article") as HTMLElement;
+    expect(card.querySelectorAll(".proposal-actions")).toHaveLength(0);
+    expect(within(card).queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    fireEvent.click(within(card).getByRole("button", { name: "More actions" }));
+    fireEvent.click(within(card).getByRole("menuitem", { name: "Edit" }));
+    expect(onReview).toHaveBeenCalledWith(0, event, "edit");
+    fireEvent.click(within(card).getByRole("button", { name: "Dismiss" }));
+    expect(onDiscard).toHaveBeenCalledWith(0);
+  });
+
+  it("shows a meeting's place and people with icons, names in reading order", () => {
+    const meeting: ActionProposal = {
+      type: "meeting", intent: "attend", title: "Finance Council", participants: ["Dadeboe, Joshua", "Rivera, Ana", "Smith, Jr."],
+      location: "Microsoft Teams", rawTimeLanguage: "December 9th", normalizedStart: null, normalizedEnd: null, eventDate: null,
+      searchRangeStart: null, searchRangeEnd: null, durationMinutes: 60, timeZone: null, confidence: 0.9,
+      evidence: { sourceMessageId: "message-1", excerpt: "Finance Council on December 9th" },
+    };
+    render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [meeting] } })} />);
+    expect(screen.getByText("December 9th")).toBeInTheDocument();
+    expect(screen.getByText("Microsoft Teams").closest(".proposal-detail")?.querySelector("svg")).not.toBeNull();
+    const people = screen.getByText(/Joshua Dadeboe/);
+    expect(people).toHaveTextContent(/^Joshua Dadeboe, Ana Rivera,? and Smith, Jr\.$/);
+    expect(people.closest(".proposal-detail")?.querySelector("svg")).not.toBeNull();
+    // Before the calendar is checked, the card keeps its own actions, with the email excerpt last.
+    const card = people.closest("article") as HTMLElement;
+    expect(within(card).getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+    expect(card.lastElementChild).toHaveClass("proposal-evidence");
   });
 
   it("explains unreadable provider output in plain language and keeps the details available", () => {

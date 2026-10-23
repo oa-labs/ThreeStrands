@@ -6,7 +6,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ### New
 - You can now edit the message you're forwarding. Click **Edit** on the bar above the forwarded message to trim it or add notes. Some formatting and web images may be simplified, and **Restore Original** brings back the message as you received it.
-- Events suggested in the **Brief** now tell you when they're already on your calendar, instead of listing them as a conflict, including events you added from that email at a different time or under a new name. Click **Open in Calendar** to see the event, or **Add Again** if you really want a second copy.
+- Events suggested in the **Brief** now tell you when they're already on your calendar, instead of listing them as a conflict, including events you added from that email at a different time or under a new name. The card then shows the event's time from your calendar, with **Open in Calendar** to see it and **Dismiss** to clear the suggestion. If you really want a second copy, **Add Again** is in the **⋯** menu.
 - The header of an open email now shows who was copied, as in "to David Martinez, cc me", so you can tell whether a message was sent to you or you were only Cc'd. Your own address shows as "me".
 - Meeting details in the **Calendar** now show who has accepted or declined. The guest count adds a tally such as "2 going, 1 not going", and each guest is marked **Going**, **Not going**, **Maybe**, or **Awaiting**.
 - ThreeStrands now reopens where you left off. If you quit while in **Calendar**, **Tasks**, **Contacts**, or **Files**, that view is open the next time you start the app.
@@ -14,6 +14,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ### Improved
 - The **Brief** now sums up what's new since your last reply or your last brief, instead of the whole conversation again, and suggests tasks only from the new messages. When it helps, a last line recaps the earlier conversation, and a note says when the brief covers only the latest messages.
+- Meetings suggested in the **Brief** show where and who with small icons, and list names in reading order, such as "Joshua Dadeboe" rather than "Dadeboe, Joshua". **Discard** on a suggestion is now **Dismiss**, and the email excerpt sits at the bottom of the card.
 - The **Brief** section collapses from its heading like the rest of the side panel. Instead of the raw data that was shared with AI, it now says how many messages were shared and with which provider.
 - Discarding drafts, or failed messages in **Outbox**, now works like moving conversations to Trash: it happens right away, and **Undo** in the notice (or <kbd>z</kbd>) brings them back, attachments included, for up to an hour. Failed messages come back to **Drafts**.
 - Collapsed emails in a conversation now use the same text sizes as the rest of the app, instead of larger type.

@@ -587,7 +587,7 @@ describe("conversation brief", () => {
 
       const discardCard = (await within(panel).findByText("Star a conversation")).closest("article") as HTMLElement;
       const suggestions = within(panel).getByRole("region", { name: "Suggestions" });
-      fireEvent.click(within(discardCard).getByRole("button", { name: "Discard" }));
+      fireEvent.click(within(discardCard).getByRole("button", { name: "Dismiss" }));
       await waitFor(() => expect(remove).toHaveBeenCalledWith("welcome", revision, discardMe));
 
       // Edit first, then add: the saved copy still holds the provider's original wording.
@@ -637,11 +637,11 @@ describe("conversation brief", () => {
       const editor = await screen.findByRole("dialog", { name: "Edit Task Proposal" });
       fireEvent.change(within(editor).getByLabelText("Task"), { target: { value: "Edited task" } });
       fireEvent.click(within(editor).getByRole("button", { name: "Save Proposal" }));
-      fireEvent.click(within(within(panel).getByText("Edited task").closest("article")!).getByRole("button", { name: "Discard" }));
+      fireEvent.click(within(within(panel).getByText("Edited task").closest("article")!).getByRole("button", { name: "Dismiss" }));
       expect(within(panel).queryByRole("button", { name: "Added 2 suggestions to review" })).not.toBeInTheDocument();
       expect(within(panel).getAllByRole("button", { name: "Added 1 suggestion to review" })).toHaveLength(2);
       expect(remove).toHaveBeenCalledWith("welcome", expect.any(String), chatProposal);
-      fireEvent.click(within(within(panel).getByText("Another task").closest("article")!).getByRole("button", { name: "Discard" }));
+      fireEvent.click(within(within(panel).getByText("Another task").closest("article")!).getByRole("button", { name: "Dismiss" }));
       expect(within(panel).getAllByRole("button", { name: "Added 1 suggestion to review" })).toHaveLength(1);
       expect(within(panel).getByText("Suggestions reviewed")).toBeInTheDocument();
     });

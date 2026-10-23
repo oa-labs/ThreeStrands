@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import { Check, Copy, Pencil, RefreshCw, RotateCcw, Sparkles } from "lucide-react";
+import { Check, Copy, MapPin, Pencil, RefreshCw, RotateCcw, Sparkles, Users } from "lucide-react";
 import type { ActionProposal, AvailabilityCandidate, AvailabilityPreferences, MeetingProposal, ScheduleEvent, ThreadDetail } from "./domain";
 import type { CalendarAddition, ScheduleSlot } from "./MeetingScheduler";
 import { FindTimesCard } from "./FindTimesCard";
@@ -124,6 +124,75 @@ export function summaryClipboardText(summary: string): string {
     .join("\n");
 }
 
+// Suffixes and company forms that follow a comma without reversing a name.
+const NAME_SUFFIX = /^(jr|sr|ii|iii|iv|phd|md|esq|inc|llc|ltd|co|corp)\.?$/i;
+
+/** Turns a directory-style "Last, First" into "First Last"; anything else stays as written. */
+export function participantName(name: string): string {
+  const parts = name.split(",").map((part) => part.trim());
+  if (parts.length !== 2) return name;
+  const [last, first] = parts;
+  if (!last || !first || /\s/.test(last) || NAME_SUFFIX.test(first)) return name;
+  return `${first} ${last}`;
+}
+
+/**
+ * One suggestion. Once a meeting is on the calendar the scheduler shows when
+ * it is, so the card drops the email's wording of the time and moves its own
+ * actions into the scheduler's row: Dismiss beside Open in Calendar, Edit in ⋯.
+ */
+function ProposalCard({ proposal, index, source, suggestions, scheduling }: {
+  proposal: ActionProposal;
+  index: number;
+  source: string | null;
+  suggestions: Pick<ThreadAssistProps["suggestions"], "onDiscard" | "onReview">;
+  scheduling: ThreadAssistProps["scheduling"];
+}) {
+  const [matched, setMatched] = useState(false);
+  // Meetings default to the user's timezone and the next week, so only
+  // a task with an unzoned time needs review before use.
+  const needsReview = proposal.type === "task" && proposal.dueKind === "datetime" && !proposal.timeZone;
+  const uncertain = proposal.confidence < 0.75;
+  const kind = proposal.type === "task" ? "Task" : proposal.intent === "attend" ? "Event" : "Meeting";
+  const edit = () => suggestions.onReview(index, proposal, "edit");
+  const dismiss = <button type="button" className="btn btn-sm" onClick={() => suggestions.onDiscard(index)}>Dismiss</button>;
+  const people = proposal.type === "meeting" && proposal.participants.length > 0
+    ? new Intl.ListFormat(undefined, { type: "conjunction" }).format(proposal.participants.map(participantName))
+    : "";
+  return <article className="action-proposal-card">
+    <div className="action-proposal-card-header"><span className="proposal-kind">{kind}</span>{uncertain || needsReview ? <span className="proposal-check">Check details</span> : null}</div>
+    <strong>{proposal.title}</strong>
+    {proposal.type === "meeting" ? <>
+      {matched ? null : <p>{proposal.rawTimeLanguage || "Time not specified"}</p>}
+      {proposal.location ? <p className="proposal-detail"><MapPin size={ICON_SIZE.sm} aria-hidden="true" /><span>{proposal.location}</span></p> : null}
+      {people ? <p className="proposal-detail"><Users size={ICON_SIZE.sm} aria-hidden="true" /><span>{people}</span></p> : null}
+    </> : <p>{proposal.notes || proposal.kind.replace("_", " ")}{proposal.dueValue ? ` · Due ${proposal.dueValue}` : ""}</p>}
+    {proposal.type === "meeting" ? <FindTimesCard
+      key={[proposal.intent, proposal.normalizedStart, proposal.normalizedEnd, proposal.eventDate, proposal.searchRangeStart, proposal.searchRangeEnd, proposal.durationMinutes, proposal.timeZone].join("|")}
+      plan={planMeeting(proposal, new Date(), scheduling.preferences.defaultDurationMinutes)}
+      preferences={scheduling.preferences}
+      calendarConnected={scheduling.calendarConnected}
+      // The AI section stays read-only; Thread Chat is where to ask for other days in words.
+      ai={null}
+      onAddToCalendar={(slot) => scheduling.onAddToCalendar(index, proposal, slot)}
+      onReplyWithTimes={scheduling.onReplyWithTimes}
+      onConfirmTime={scheduling.onConfirmTime}
+      onOpenCalendarSettings={scheduling.onOpenCalendarSettings}
+      identity={{ title: proposal.title, location: proposal.location, sourceMessageId: proposal.evidence.sourceMessageId }}
+      onOpenCalendarEvent={scheduling.onOpenCalendarEvent}
+      onMatchChange={setMatched}
+      matchedActions={dismiss}
+      moreActions={[{ label: "Edit", onSelect: edit }]}
+    /> : null}
+    {matched ? null : <div className="proposal-actions">
+      <button type="button" className="btn btn-sm" onClick={edit}><Pencil size={ICON_SIZE.sm} /> Edit</button>
+      {proposal.type === "task" ? <button type="button" className="btn btn-sm" onClick={() => suggestions.onReview(index, proposal, "accept")}>Review &amp; Add Task</button> : null}
+      {dismiss}
+    </div>}
+    <details className="proposal-evidence"><summary>From the email</summary><blockquote>{proposal.evidence.excerpt}</blockquote>{source ? <small>{source}</small> : null}</details>
+  </article>;
+}
+
 export function ThreadAssist({ detail, providerChosen, summary, suggestions, scheduling, loading, error, providerName, onRun, onOpenSettings }: ThreadAssistProps) {
   const { thread } = detail;
   const [copiedSummary, setCopiedSummary] = useState<string | null>(null);
@@ -231,39 +300,14 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
         {!busy && suggestions.hiddenCount > 0 ? <p className="context-status">{suggestions.hiddenCount === 1 ? "1 suggestion" : `${suggestions.hiddenCount} suggestions`} couldn&rsquo;t be matched to the email, so {suggestions.hiddenCount === 1 ? "it was" : "they were"} hidden.</p> : null}
         {!busy && suggestions.extraCount ? <p className="context-status">{extraSuggestionsText(suggestions.extraCount)}</p> : null}
         <div className="action-proposals">
-          {suggestions.proposals.map((proposal, index) => {
-            const source = messageSource(proposal.evidence.sourceMessageId);
-            // Meetings default to the user's timezone and the next week, so only
-            // a task with an unzoned time needs review before use.
-            const needsReview = proposal.type === "task" && proposal.dueKind === "datetime" && !proposal.timeZone;
-            const uncertain = proposal.confidence < 0.75;
-            const kind = proposal.type === "task" ? "Task" : proposal.intent === "attend" ? "Event" : "Meeting";
-            return <article className="action-proposal-card" key={proposalKey(proposal)}>
-              <div className="action-proposal-card-header"><span className="proposal-kind">{kind}</span>{uncertain || needsReview ? <span className="proposal-check">Check details</span> : null}</div>
-              <strong>{proposal.title}</strong>
-              {proposal.type === "meeting" ? <><p>{proposal.rawTimeLanguage || "Time not specified"}</p>{proposal.location ? <p>{proposal.location}</p> : null}{proposal.participants.length > 0 ? <p>{proposal.participants.join(", ")}</p> : null}</> : <p>{proposal.notes || proposal.kind.replace("_", " ")}{proposal.dueValue ? ` · Due ${proposal.dueValue}` : ""}</p>}
-              {proposal.type === "meeting" ? <FindTimesCard
-                key={[proposal.intent, proposal.normalizedStart, proposal.normalizedEnd, proposal.eventDate, proposal.searchRangeStart, proposal.searchRangeEnd, proposal.durationMinutes, proposal.timeZone].join("|")}
-                plan={planMeeting(proposal, new Date(), scheduling.preferences.defaultDurationMinutes)}
-                preferences={scheduling.preferences}
-                calendarConnected={scheduling.calendarConnected}
-                // The AI section stays read-only; Thread Chat is where to ask for other days in words.
-                ai={null}
-                onAddToCalendar={(slot) => scheduling.onAddToCalendar(index, proposal, slot)}
-                onReplyWithTimes={scheduling.onReplyWithTimes}
-                onConfirmTime={scheduling.onConfirmTime}
-                onOpenCalendarSettings={scheduling.onOpenCalendarSettings}
-                identity={{ title: proposal.title, location: proposal.location, sourceMessageId: proposal.evidence.sourceMessageId }}
-                onOpenCalendarEvent={scheduling.onOpenCalendarEvent}
-              /> : null}
-              <details className="proposal-evidence"><summary>From the email</summary><blockquote>{proposal.evidence.excerpt}</blockquote>{source ? <small>{source}</small> : null}</details>
-              <div className="proposal-actions">
-                <button type="button" className="btn btn-sm" onClick={() => suggestions.onReview(index, proposal, "edit")}><Pencil size={ICON_SIZE.sm} /> Edit</button>
-                {proposal.type === "task" ? <button type="button" className="btn btn-sm" onClick={() => suggestions.onReview(index, proposal, "accept")}>Review &amp; Add Task</button> : null}
-                <button type="button" className="btn btn-sm" onClick={() => suggestions.onDiscard(index)}>Discard</button>
-              </div>
-            </article>;
-          })}
+          {suggestions.proposals.map((proposal, index) => <ProposalCard
+            key={proposalKey(proposal)}
+            proposal={proposal}
+            index={index}
+            source={messageSource(proposal.evidence.sourceMessageId)}
+            suggestions={suggestions}
+            scheduling={scheduling}
+          />)}
         </div>
       </div> : null}
       {generated && !busy && providerName ? <p className="thread-assist-shared">

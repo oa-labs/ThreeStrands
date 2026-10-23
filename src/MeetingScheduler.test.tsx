@@ -260,10 +260,15 @@ describe("MeetingScheduler", () => {
       expect(screen.getByText("Also overlaps Premier Labs Bi-Weekly Member Meeting")).toBeInTheDocument();
       expect(screen.queryByText(/Conflicts with/)).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Add to Calendar" })).not.toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Open in Calendar" }));
+      expect(screen.queryByRole("button", { name: "Add Again" })).not.toBeInTheDocument();
+      const open = screen.getByRole("button", { name: "Open in Calendar" });
+      expect(open).toHaveClass("btn-primary");
+      fireEvent.click(open);
       expect(onOpenCalendarEvent).toHaveBeenCalledWith(added);
-      fireEvent.click(screen.getByRole("button", { name: "Add Again" }));
+      fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Add Again" }));
       expect(handlers.onAddToCalendar).toHaveBeenCalledWith(announcedPlan.query);
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     });
 
     it("lets a proposed meeting already on the calendar be confirmed when nothing else overlaps", async () => {
@@ -310,7 +315,9 @@ describe("MeetingScheduler", () => {
       });
       const handlers = renderScheduler(dayPlan, { identity: { title: "Pittsburgh Marathon 2026" } });
       expect(await screen.findByText("Already on your calendar")).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Add Again" }));
+      expect(screen.getByText("Sat, Nov 7 · All day")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Add Again" }));
       expect(handlers.onAddToCalendar).toHaveBeenCalledWith({ start: "2026-11-07", end: "2026-11-07", allDay: true });
       expect(check).not.toHaveBeenCalled();
       cleanup();
@@ -329,7 +336,49 @@ describe("MeetingScheduler", () => {
       renderScheduler(announcedPlan, { identity: { ...identity, sourceMessageId: "message-1" } });
       expect(await screen.findByText("Already on your calendar at 6:00 PM")).toBeInTheDocument();
       expect(screen.queryByText("You’re free")).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Add Again" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+      expect(screen.getByRole("menuitem", { name: "Add Again" })).toBeInTheDocument();
+    });
+
+    it("gives a date-only event the time of the calendar copy it matched", async () => {
+      // 15:00Z is 10:00 AM in America/New_York.
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
+        events: [{ id: "council", accountId: "you@example.com", title: "Finance Council Meeting", allDay: false, start: "2026-11-07T15:00:00.000Z", end: "2026-11-07T16:00:00.000Z" }],
+        errors: [],
+      });
+      renderScheduler({ query: null, day: "2026-11-07", durationMinutes: 30, timeZoneAssumed: false, announced: true }, { identity: { title: "Finance Council Meeting" } });
+      expect(await screen.findByText("Sat, Nov 7 · 10:00 AM")).toBeInTheDocument();
+      expect(screen.queryByText(/Time not set/)).not.toBeInTheDocument();
+    });
+
+    it("tells its caller about a match and puts the caller's actions in its row and menu", async () => {
+      conflicting();
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [added], errors: [] });
+      const onMatchChange = vi.fn();
+      const onEdit = vi.fn();
+      renderScheduler(announcedPlan, {
+        identity,
+        onMatchChange,
+        matchedActions: <button type="button" className="btn btn-sm">Dismiss</button>,
+        moreActions: [{ label: "Edit", onSelect: onEdit }],
+      });
+      expect(await screen.findByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+      expect(onMatchChange).toHaveBeenLastCalledWith(true);
+      fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+      expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Add Again", "Edit"]);
+      fireEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
+      expect(onEdit).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the caller's actions out of its row while the event is not on the calendar", async () => {
+      vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "free", conflicts: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
+      const onMatchChange = vi.fn();
+      renderScheduler(announcedPlan, { identity, onMatchChange, matchedActions: <button type="button" className="btn btn-sm">Dismiss</button> });
+      expect(await screen.findByText("You’re free")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Add to Calendar" })).toHaveClass("btn-primary");
+      expect(screen.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "More actions" })).not.toBeInTheDocument();
+      expect(onMatchChange).not.toHaveBeenCalledWith(true);
     });
 
     it("does not read the day for a free time with no email to look for", async () => {
