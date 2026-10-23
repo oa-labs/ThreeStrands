@@ -2,7 +2,8 @@ import { CalendarDays } from "lucide-react";
 import type { ReactNode } from "react";
 import { ContextRow, ContextSection } from "./ContextSections";
 import { calendarColorStyle, useCalendarColors } from "./calendarColors";
-import { addDays, eventDate, formatEventTime, occursOnDay, startOfLocalDay } from "./calendarTime";
+import { addDays, formatEventTime, startOfLocalDay } from "./calendarTime";
+import { agendaEventsFor, formatClockTime, isDeclined, isPastEvent } from "./agendaEvents";
 import { responseLabel } from "./calendarResponse";
 import { useCalendarSchedule } from "./useCalendarSchedule";
 import type { CalendarOption, ScheduleEvent } from "./domain";
@@ -41,18 +42,10 @@ function TodayAgenda(props: AgendaProps) {
   return <Agenda {...props} schedule={schedule} />;
 }
 
-/** A timed event that has ended by `now`; all-day events are never past during their day. */
-export function isPastEvent(event: ScheduleEvent, now: Date): boolean {
-  return !event.allDay && new Date(event.end).getTime() <= now.getTime();
-}
-
 function Agenda({ today, calendars, onOpenEvent, now, tomorrow = false, schedule: { events, loading, error, reload } }: AgendaProps & { schedule: Schedule }) {
   const colors = useCalendarColors();
   const selected = calendars.filter((calendar) => calendar.selected);
-  const agenda = events.filter((event) => occursOnDay(event, today) && selected.some((calendar) =>
-    calendar.accountId === event.accountId && (!event.calendarId || calendar.id === event.calendarId)))
-    .sort((left, right) => Number(right.allDay) - Number(left.allDay)
-      || eventDate(left).getTime() - eventDate(right).getTime() || left.title.localeCompare(right.title));
+  const agenda = agendaEventsFor(events, today, calendars);
   const multipleAccounts = new Set(selected.map((calendar) => calendar.accountId)).size > 1;
   const pastCount = now ? agenda.filter((event) => isPastEvent(event, now)).length : 0;
   // All-day events list first and are never past during their day, so the
@@ -62,10 +55,12 @@ function Agenda({ today, calendars, onOpenEvent, now, tomorrow = false, schedule
   agenda.forEach((event, index) => {
     if (now && pastCount > 0 && index === upcomingIndex) rows.push(<NowDivider key="now" now={now} />);
     const calendar = selected.find((calendar) => calendar.accountId === event.accountId && calendar.id === event.calendarId);
-    const detail = [formatEventTime(event), event.location, calendar?.name, multipleAccounts ? event.accountId : null, responseLabel(event)].filter(Boolean).join(" · ");
+    // A calendar named after its account already says which account it is.
+    const account = multipleAccounts && calendar?.name.toLocaleLowerCase() !== event.accountId.toLocaleLowerCase() ? event.accountId : null;
+    const detail = [formatEventTime(event), event.location, calendar?.name, account, responseLabel(event)].filter(Boolean).join(" · ");
     rows.push(<ContextRow
       key={`${event.accountId}:${event.calendarId}:${event.id}`}
-      className={now && isPastEvent(event, now) ? "agenda-event-past" : undefined}
+      className={[now && isPastEvent(event, now) ? "agenda-event-past" : "", isDeclined(event) ? "agenda-event-declined" : ""].filter(Boolean).join(" ") || undefined}
       icon={<CalendarDays size={ICON_SIZE.sm} style={{ ...calendarColorStyle(colors, event.accountId, event.calendarId), color: "var(--calendar-color, var(--accent))" }} />}
       title={event.title}
       detail={detail}
@@ -90,6 +85,6 @@ function Agenda({ today, calendars, onOpenEvent, now, tomorrow = false, schedule
 }
 
 function NowDivider({ now }: { now: Date }) {
-  const time = now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const time = formatClockTime(now);
   return <div className="agenda-now" role="separator" aria-label={`Now, ${time}`}><span>Now · {time}</span></div>;
 }

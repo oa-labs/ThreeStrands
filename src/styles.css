@@ -3403,16 +3403,18 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .calendar-visible-range { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--text-meta); }
 /* Today: three columns of context rows under a page header; they stack when the window is narrow. */
 .app-shell.today-open { grid-template-columns: 58px minmax(0, 1fr); }
-.today-workspace { grid-column: 2; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--background); }
+.today-workspace { grid-column: 2; min-width: 0; min-height: 0; overflow: auto; background: var(--background); }
+/* Wide windows center the page so the three columns stay a readable width. */
+.today-page { width: 100%; max-width: 1400px; margin-inline: auto; }
 .today-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--space-4); padding: var(--pane-header-padding); border-bottom: 1px solid var(--border); }
 .today-header h1 { margin: var(--space-1) 0 0; font-size: var(--text-page-title); }
 .today-summary { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--text-meta); }
 .today-next { display: flex; align-items: center; gap: var(--space-2); }
-.today-columns { flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); align-items: start; gap: var(--space-6); padding: var(--space-4) var(--pane-inset); }
+.today-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); align-items: start; gap: var(--space-6); padding: var(--space-4) var(--pane-inset); }
 .today-column { min-width: 0; }
 .today-column > .context-status { padding: var(--space-3) var(--context-row-inset); }
 /* Agenda of the current day: finished events dim, and a Now rule sits before the rest. */
-.agenda-event-past { opacity: var(--opacity-dimmed); }
+.agenda-event-past, .agenda-event-declined { opacity: var(--opacity-dimmed); }
 .agenda-now { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-1) 0; padding-inline: var(--context-row-inset); color: var(--accent); font-size: var(--text-meta); }
 .agenda-now::after { content: ""; flex: 1; border-top: 1px solid currentColor; }
 .today-column-link { margin: 0; padding: var(--space-3) var(--context-row-inset); }
