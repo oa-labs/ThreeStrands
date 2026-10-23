@@ -14,7 +14,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ### Improved
 - The **Brief** now sums up what's new since your last reply or your last brief, instead of the whole conversation again, and suggests tasks only from the new messages. When it helps, a last line recaps the earlier conversation, and a note says when the brief covers only the latest messages.
-- Meetings suggested in the **Brief** show where and who with small icons, and list names in reading order, such as "Joshua Dadeboe" rather than "Dadeboe, Joshua". **Discard** on a suggestion is now **Dismiss**, and the email excerpt sits at the bottom of the card.
+- Meetings suggested in the **Brief** show where and who with small icons, and list names in reading order, such as "Joshua Dadeboe" rather than "Dadeboe, Joshua". Online meetings get a **Join** link when the email or your calendar has the meeting address. **Discard** on a suggestion is now **Dismiss**, and the email excerpt sits at the bottom of the card.
 - The **Brief** section collapses from its heading like the rest of the side panel. Instead of the raw data that was shared with AI, it now says how many messages were shared and with which provider.
 - Discarding drafts, or failed messages in **Outbox**, now works like moving conversations to Trash: it happens right away, and **Undo** in the notice (or <kbd>z</kbd>) brings them back, attachments included, for up to an hour. Failed messages come back to **Drafts**.
 - Collapsed emails in a conversation now use the same text sizes as the rest of the app, instead of larger type.

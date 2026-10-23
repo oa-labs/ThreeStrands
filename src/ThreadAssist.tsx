@@ -1,9 +1,11 @@
 import { useId, useState } from "react";
-import { Check, Copy, MapPin, Pencil, RefreshCw, RotateCcw, Sparkles, Users } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { Check, ChevronRight, Copy, MapPin, RefreshCw, RotateCcw, Sparkles, Users, Video } from "lucide-react";
 import type { ActionProposal, AvailabilityCandidate, AvailabilityPreferences, MeetingProposal, ScheduleEvent, ThreadDetail } from "./domain";
 import type { CalendarAddition, ScheduleSlot } from "./MeetingScheduler";
 import { FindTimesCard } from "./FindTimesCard";
 import { planMeeting } from "./scheduling";
+import { safeWebUrl } from "./calendarTime";
 import { HoverTooltip } from "./AppChrome";
 import { parseAddress } from "./emailAddress";
 import { isSummaryStale } from "./threadPresentation";
@@ -136,6 +138,25 @@ export function participantName(name: string): string {
   return `${first} ${last}`;
 }
 
+const LOCATION_URL = /https?:\/\/[^\s<>"]+/;
+
+/**
+ * Where a meeting happens, split into its place and a link to join it. The
+ * link comes from the calendar copy when there is one, otherwise from a web
+ * address written in the location; the place keeps any other words.
+ */
+export function meetingPlace(location: string | null, calendarConferenceUrl: string | null | undefined): { place: string; joinUrl: string | null } {
+  const text = location ?? "";
+  // Trailing punctuation belongs to the sentence, not the address.
+  const written = text.match(LOCATION_URL)?.[0].replace(/[.,;:!?)\]]+$/, "") ?? null;
+  const joinUrl = safeWebUrl(calendarConferenceUrl) ?? safeWebUrl(written);
+  // Only words left around a removed address lose their joining punctuation; "Main St." keeps its period.
+  const place = written && joinUrl === safeWebUrl(written)
+    ? text.replace(LOCATION_URL, "").replace(/\s+/g, " ").replace(/^[\s,;:·.-]+|[\s,;:·.-]+$/g, "")
+    : text.trim();
+  return { place, joinUrl };
+}
+
 /**
  * One suggestion. Once a meeting is on the calendar the scheduler shows when
  * it is, so the card drops the email's wording of the time and moves its own
@@ -148,7 +169,8 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling }: {
   suggestions: Pick<ThreadAssistProps["suggestions"], "onDiscard" | "onReview">;
   scheduling: ThreadAssistProps["scheduling"];
 }) {
-  const [matched, setMatched] = useState(false);
+  const [matchedEvent, setMatchedEvent] = useState<ScheduleEvent | null>(null);
+  const matched = matchedEvent !== null;
   // Meetings default to the user's timezone and the next week, so only
   // a task with an unzoned time needs review before use.
   const needsReview = proposal.type === "task" && proposal.dueKind === "datetime" && !proposal.timeZone;
@@ -156,6 +178,7 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling }: {
   const kind = proposal.type === "task" ? "Task" : proposal.intent === "attend" ? "Event" : "Meeting";
   const edit = () => suggestions.onReview(index, proposal, "edit");
   const dismiss = <button type="button" className="btn btn-sm" onClick={() => suggestions.onDiscard(index)}>Dismiss</button>;
+  const where = proposal.type === "meeting" ? meetingPlace(proposal.location, matchedEvent?.conferenceUrl) : null;
   const people = proposal.type === "meeting" && proposal.participants.length > 0
     ? new Intl.ListFormat(undefined, { type: "conjunction" }).format(proposal.participants.map(participantName))
     : "";
@@ -164,7 +187,11 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling }: {
     <strong>{proposal.title}</strong>
     {proposal.type === "meeting" ? <>
       {matched ? null : <p>{proposal.rawTimeLanguage || "Time not specified"}</p>}
-      {proposal.location ? <p className="proposal-detail"><MapPin size={ICON_SIZE.sm} aria-hidden="true" /><span>{proposal.location}</span></p> : null}
+      {where?.joinUrl ? <p className="proposal-detail"><Video size={ICON_SIZE.sm} aria-hidden="true" /><span>
+        {where.place ? <>{where.place} · </> : null}
+        {/* The address shows on hover, since it came from the email or the calendar rather than from ThreeStrands. */}
+        <a href={where.joinUrl} title={where.joinUrl} onClick={(event) => { event.preventDefault(); void openUrl(where.joinUrl!); }}>{where.place ? "Join" : "Join video meeting"}</a>
+      </span></p> : where?.place ? <p className="proposal-detail"><MapPin size={ICON_SIZE.sm} aria-hidden="true" /><span>{where.place}</span></p> : null}
       {people ? <p className="proposal-detail"><Users size={ICON_SIZE.sm} aria-hidden="true" /><span>{people}</span></p> : null}
     </> : <p>{proposal.notes || proposal.kind.replace("_", " ")}{proposal.dueValue ? ` · Due ${proposal.dueValue}` : ""}</p>}
     {proposal.type === "meeting" ? <FindTimesCard
@@ -180,16 +207,17 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling }: {
       onOpenCalendarSettings={scheduling.onOpenCalendarSettings}
       identity={{ title: proposal.title, location: proposal.location, sourceMessageId: proposal.evidence.sourceMessageId }}
       onOpenCalendarEvent={scheduling.onOpenCalendarEvent}
-      onMatchChange={setMatched}
+      onMatchChange={setMatchedEvent}
       matchedActions={dismiss}
       moreActions={[{ label: "Edit", onSelect: edit }]}
     /> : null}
     {matched ? null : <div className="proposal-actions">
-      <button type="button" className="btn btn-sm" onClick={edit}><Pencil size={ICON_SIZE.sm} /> Edit</button>
+      {/* Icons mark the calendar actions only, so Edit and Dismiss stay plain. */}
+      <button type="button" className="btn btn-sm" onClick={edit}>Edit</button>
       {proposal.type === "task" ? <button type="button" className="btn btn-sm" onClick={() => suggestions.onReview(index, proposal, "accept")}>Review &amp; Add Task</button> : null}
       {dismiss}
     </div>}
-    <details className="proposal-evidence"><summary>From the email</summary><blockquote>{proposal.evidence.excerpt}</blockquote>{source ? <small>{source}</small> : null}</details>
+    <details className="proposal-evidence"><summary><ChevronRight className="proposal-evidence-chevron" size={ICON_SIZE.xs} aria-hidden="true" />From the email</summary><blockquote>{proposal.evidence.excerpt}</blockquote>{source ? <small>{source}</small> : null}</details>
   </article>;
 }
 

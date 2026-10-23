@@ -1,10 +1,13 @@
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
 import { SLOTS_PER_DAY } from "./scheduling";
-import { briefScope, participantName, ThreadAssist, type ThreadAssistProps } from "./ThreadAssist";
+import { briefScope, meetingPlace, participantName, ThreadAssist, type ThreadAssistProps } from "./ThreadAssist";
 import type { ActionProposal, ThreadDetail } from "./domain";
+
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
 const detail: ThreadDetail = {
   thread: {
@@ -95,6 +98,25 @@ function props(overrides: Partial<Omit<ThreadAssistProps, "summary" | "suggestio
     },
   };
 }
+
+describe("meetingPlace", () => {
+  it("prefers the calendar copy's meeting link and keeps the place's own words", () => {
+    expect(meetingPlace("Microsoft Teams", "https://meet.example.com/abc")).toEqual({ place: "Microsoft Teams", joinUrl: "https://meet.example.com/abc" });
+    expect(meetingPlace("Room 4", null)).toEqual({ place: "Room 4", joinUrl: null });
+    expect(meetingPlace("224 Fairoaks St.", null)).toEqual({ place: "224 Fairoaks St.", joinUrl: null });
+    expect(meetingPlace(null, null)).toEqual({ place: "", joinUrl: null });
+  });
+
+  it("takes a web address written in the location as the link, without its trailing punctuation", () => {
+    expect(meetingPlace("Video call: https://video.example.org/j/123.", null)).toEqual({ place: "Video call", joinUrl: "https://video.example.org/j/123" });
+    expect(meetingPlace("https://video.example.org/j/123", undefined)).toEqual({ place: "", joinUrl: "https://video.example.org/j/123" });
+  });
+
+  it("never links anything but a web address", () => {
+    expect(meetingPlace("Room 4", "javascript:alert(1)")).toEqual({ place: "Room 4", joinUrl: null });
+    expect(meetingPlace("file:///etc/passwd", "ftp://files.example.com")).toEqual({ place: "file:///etc/passwd", joinUrl: null });
+  });
+});
 
 describe("participantName", () => {
   it("reverses a directory-style name and leaves everything else as written", () => {
@@ -446,6 +468,44 @@ describe("ThreadAssist", () => {
     expect(onDiscard).toHaveBeenCalledWith(0);
   });
 
+  it("offers to join an online meeting from the link on its calendar copy", async () => {
+    clearScheduleCache();
+    const start = new Date(Date.now() + 4 * 86_400_000).toISOString();
+    const end = new Date(Date.parse(start) + 3_600_000).toISOString();
+    vi.spyOn(mailClient, "checkProposedTime").mockResolvedValue({ status: "conflicting", conflicts: [{ start, end }], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
+      events: [{ id: "council", accountId: "you@example.com", title: "Finance Council", allDay: false, start, end, conferenceUrl: "https://meet.example.com/council" }],
+      errors: [],
+    });
+    const event: ActionProposal = {
+      type: "meeting", intent: "attend", title: "Finance Council", participants: [], location: "Microsoft Teams",
+      rawTimeLanguage: "next week", normalizedStart: start, normalizedEnd: end, eventDate: null,
+      searchRangeStart: null, searchRangeEnd: null, durationMinutes: 60,
+      timeZone: "America/New_York", confidence: 0.9, evidence: { sourceMessageId: "message-1", excerpt: "Finance Council on Teams" },
+    };
+    render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [event] }, scheduling: { calendarConnected: true } })} />);
+    // Before the calendar copy is found, a place with no address is only a place.
+    expect(screen.queryByRole("link", { name: "Join" })).not.toBeInTheDocument();
+    const join = await screen.findByRole("link", { name: "Join" });
+    expect(join).toHaveAttribute("title", "https://meet.example.com/council");
+    expect(join.closest(".proposal-detail")).toHaveTextContent("Microsoft Teams · Join");
+    fireEvent.click(join);
+    expect(openUrl).toHaveBeenCalledWith("https://meet.example.com/council");
+  });
+
+  it("offers to join from a web address written as the location", () => {
+    const meeting: ActionProposal = {
+      type: "meeting", intent: "attend", title: "Office hours", participants: [], location: "https://video.example.org/j/123",
+      rawTimeLanguage: "Thursday", normalizedStart: null, normalizedEnd: null, eventDate: null,
+      searchRangeStart: null, searchRangeEnd: null, durationMinutes: 30, timeZone: null, confidence: 0.9,
+      evidence: { sourceMessageId: "message-1", excerpt: "Office hours Thursday" },
+    };
+    render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [meeting] } })} />);
+    expect(screen.queryByText("https://video.example.org/j/123")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link", { name: "Join video meeting" }));
+    expect(openUrl).toHaveBeenCalledWith("https://video.example.org/j/123");
+  });
+
   it("shows a meeting's place and people with icons, names in reading order", () => {
     const meeting: ActionProposal = {
       type: "meeting", intent: "attend", title: "Finance Council", participants: ["Dadeboe, Joshua", "Rivera, Ana", "Smith, Jr."],
@@ -463,6 +523,10 @@ describe("ThreadAssist", () => {
     const card = people.closest("article") as HTMLElement;
     expect(within(card).getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
     expect(card.lastElementChild).toHaveClass("proposal-evidence");
+    // The disclosure uses the app's chevron rather than the browser's triangle.
+    expect(card.querySelector(".proposal-evidence > summary > svg.proposal-evidence-chevron")).not.toBeNull();
+    // Icons mark only the calendar actions.
+    expect(within(card).getByRole("button", { name: "Edit" }).querySelector("svg")).toBeNull();
   });
 
   it("explains unreadable provider output in plain language and keeps the details available", () => {

@@ -154,8 +154,8 @@ export function MeetingScheduler({
   identity?: EventIdentity;
   /** Opens a calendar event the suggestion already appears as. */
   onOpenCalendarEvent?(event: ScheduleEvent): void;
-  /** Told whether the event is already on the calendar, so the caller can drop what the scheduler now covers. */
-  onMatchChange?(matched: boolean): void;
+  /** Told the calendar event this one already is, or null, so the caller can drop what the scheduler now covers. */
+  onMatchChange?(event: ScheduleEvent | null): void;
   /** The caller's own actions, shown in the scheduler's row once the event is on the calendar. */
   matchedActions?: ReactNode;
   /** The caller's less common actions, added to the ⋯ menu once the event is on the calendar. */
@@ -253,12 +253,16 @@ export function MeetingScheduler({
     // A bare day has no query; `queryKey` stays "none" while it shows.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [calendarConnected, plan.day, queryKey, identity]);
-  const matched = query ? state.phase === "specific" && state.match?.kind === "same" : Boolean(plan.day && dayMatch);
+  const matchedEvent = query
+    ? (state.phase === "specific" && state.match?.kind === "same" ? state.match.event : null)
+    : (plan.day ? dayMatch?.event ?? null : null);
+  const matched = matchedEvent !== null;
+  const matchedKey = matchedEvent ? `${matchedEvent.accountId}|${matchedEvent.id}|${matchedEvent.conferenceUrl ?? ""}` : "";
   useEffect(() => {
-    onMatchChange?.(matched);
-    // Reported when the answer changes, not when the caller's callback does.
+    onMatchChange?.(matchedEvent);
+    // Reported when the matched event changes, not when the caller's callback does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matched]);
+  }, [matchedKey]);
   useEffect(() => {
     if (query?.kind === "range") onSearchChange?.({ query, durationMinutes: plan.durationMinutes, bounds });
     // Reported once per distinct search, identified by `queryKey`.

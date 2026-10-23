@@ -363,7 +363,7 @@ describe("MeetingScheduler", () => {
         moreActions: [{ label: "Edit", onSelect: onEdit }],
       });
       expect(await screen.findByRole("button", { name: "Dismiss" })).toBeInTheDocument();
-      expect(onMatchChange).toHaveBeenLastCalledWith(true);
+      expect(onMatchChange).toHaveBeenLastCalledWith(added);
       fireEvent.click(screen.getByRole("button", { name: "More actions" }));
       expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Add Again", "Edit"]);
       fireEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
@@ -378,7 +378,7 @@ describe("MeetingScheduler", () => {
       expect(screen.getByRole("button", { name: "Add to Calendar" })).toHaveClass("btn-primary");
       expect(screen.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "More actions" })).not.toBeInTheDocument();
-      expect(onMatchChange).not.toHaveBeenCalledWith(true);
+      expect(onMatchChange).not.toHaveBeenCalledWith(expect.objectContaining({ id: "added" }));
     });
 
     it("does not read the day for a free time with no email to look for", async () => {

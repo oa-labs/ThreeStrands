@@ -61,7 +61,7 @@ export function FindTimesCard({
   /** What the event is called and where, to recognize it already on the calendar. */
   identity?: EventIdentity;
   onOpenCalendarEvent?(event: ScheduleEvent): void;
-  onMatchChange?(matched: boolean): void;
+  onMatchChange?(event: ScheduleEvent | null): void;
   /** Shown with Open in Calendar once the event is on the calendar. */
   matchedActions?: ReactNode;
   moreActions?: MoreAction[];
