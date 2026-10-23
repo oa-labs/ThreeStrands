@@ -6,9 +6,10 @@ import type { ScheduleEvent } from "./domain";
 import { errorMessage } from "./errors";
 
 const RESPONSES = [["accepted", "Yes"], ["declined", "No"], ["tentative", "Maybe"]] as const;
+const INVITATION_RESPONSES = [["accepted", "Accept"], ["tentative", "Maybe"], ["declined", "Decline"]] as const;
 
 /** The user's RSVP to a calendar event, with Yes / No / Maybe when they can answer it. */
-export function CalendarResponseControls({ event, onUpdated }: { event: ScheduleEvent; onUpdated(event: ScheduleEvent): void }) {
+export function CalendarResponseControls({ event, onUpdated, invitation = false }: { event: ScheduleEvent; onUpdated(event: ScheduleEvent): void; invitation?: boolean }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const label = responseLabel(event);
@@ -30,7 +31,7 @@ export function CalendarResponseControls({ event, onUpdated }: { event: Schedule
     <div className="calendar-event-response">
       <span>Your response: <strong>{label}</strong></span>
       {event.canRespond ? <div className="segmented calendar-response-actions" role="group" aria-label="Going?">
-        {RESPONSES.map(([status, title]) => (
+        {(invitation ? INVITATION_RESPONSES : RESPONSES).map(([status, title]) => (
           <button key={status} type="button" className="segment" aria-pressed={event.responseStatus === status} disabled={pending} onClick={() => void respond(status)}>{title}</button>
         ))}
       </div> : null}

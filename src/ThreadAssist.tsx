@@ -13,6 +13,7 @@ import { isSummaryStale } from "./threadPresentation";
 import { ICON_SIZE } from "./iconSizes";
 import { ContextSectionHeader, useRememberedCollapse } from "./ContextSections";
 import { plural } from "./plural";
+import { latestInvitationMessage, withoutInvitationMeetings } from "./calendarInvitations";
 
 export const THREAD_ASSIST_ID = "thread-assist";
 
@@ -258,7 +259,9 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
   const stale = Boolean(summaryText) && isSummaryStale(thread);
   const busy = loading || summary.pending;
   const generated = Boolean(summaryText) || suggestions.requested;
-  const showSuggestions = suggestions.available && (suggestions.requested || suggestions.proposals.length > 0);
+  const visibleProposals = withoutInvitationMeetings(suggestions.proposals, detail);
+  const showSuggestions = suggestions.available && (suggestions.requested || visibleProposals.length > 0)
+    && (visibleProposals.length > 0 || !latestInvitationMessage(detail) || suggestions.hiddenCount > 0 || Boolean(suggestions.extraCount));
   const missingSummary = summary.available && !summaryText;
   const missingSuggestions = suggestions.available && !suggestions.requested;
   const failure = error ? describeAnalysisError(error) : null;
@@ -319,10 +322,10 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
       {summaryText && scope.newCount < scope.coveredCount ? <p className="context-section-note">
         {scope.newCount === 1 ? "From the latest message" : `From the ${scope.newCount} latest messages`}
       </p> : null}
-      {summaryText ? <ul className="thread-assist-summary">
-        {orderedLines.map((line, index) => EARLIER_PREFIX.test(line)
-          ? <li key={index} className="thread-assist-summary-earlier">{line}</li>
-          : <li key={index}>{line}</li>)}
+      {summaryText ? <ul className="thread-assist-summary" role="list">
+        {orderedLines.map((line, index) => <li key={index} className={EARLIER_PREFIX.test(line) ? "thread-assist-summary-earlier" : undefined}>
+          <span className="context-row-glyph thread-assist-summary-marker" aria-hidden="true"><svg width={ICON_SIZE.xs} height={ICON_SIZE.xs} viewBox="0 0 12 12"><circle cx="6" cy="6" r="2" fill="currentColor" /></svg></span><span>{line}</span>
+        </li>)}
       </ul> : null}
       {stale ? <p className="context-status">New messages since this brief.</p> : null}
       {failure ? <div className="action-analysis-error" role="alert">
@@ -338,10 +341,10 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
         {!busy && suggestions.hiddenCount > 0 ? <p className="context-status">{suggestions.hiddenCount === 1 ? "1 suggestion" : `${suggestions.hiddenCount} suggestions`} couldn&rsquo;t be matched to the email, so {suggestions.hiddenCount === 1 ? "it was" : "they were"} hidden.</p> : null}
         {!busy && suggestions.extraCount ? <p className="context-status">{extraSuggestionsText(suggestions.extraCount)}</p> : null}
         <div className="action-proposals">
-          {suggestions.proposals.map((proposal, index) => <ProposalCard
+          {visibleProposals.map((proposal) => <ProposalCard
             key={proposalKey(proposal)}
             proposal={proposal}
-            index={index}
+            index={suggestions.proposals.indexOf(proposal)}
             source={messageSource(proposal.evidence.sourceMessageId)}
             suggestions={suggestions}
             scheduling={scheduling}

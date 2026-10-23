@@ -2235,9 +2235,15 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-count { display:inline-grid; place-items:center; min-width:1.6em; margin-right:var(--space-0-5); padding:var(--space-0-5) var(--space-1-5) var(--space-0-5); border:1px solid var(--border); border-radius:var(--radius-xs); color:var(--muted); font-size:var(--text-micro); font-weight:var(--weight-medium); letter-spacing:normal; line-height:var(--leading-snug); font-variant-numeric:tabular-nums; }
 .context-status { margin:0; color:var(--muted); font-size:var(--text-meta); line-height:var(--leading-normal); }
 .context-link-button { margin-top: var(--space-1-5); }
-.thread-assist-summary { margin:0 0 var(--space-1-5); padding-left:var(--space-4); color:var(--secondary); font-size:var(--text-body); line-height:var(--leading-normal); }
-.thread-assist-summary li { margin:var(--space-1) 0; }
+.thread-assist-summary { margin:0 0 var(--space-1-5); padding:0 var(--context-row-inset); list-style:none; color:var(--secondary); font-size:var(--text-body); line-height:var(--leading-normal); }
+.thread-assist-summary li { display:grid; grid-template-columns:var(--context-glyph-column) minmax(0,1fr); margin:var(--space-1) 0; overflow-wrap:anywhere; }
+/* The marker and chevron share an icon width inside the same glyph column. */
+.thread-assist-summary-marker { height:calc(var(--text-body) * var(--leading-normal)); }
 .thread-assist-summary .thread-assist-summary-earlier { color:var(--muted); }
+.context-invitation-body { display:grid; gap:var(--space-2); margin-inline:calc(var(--context-row-inset) + var(--context-glyph-column)) var(--context-row-inset); }
+.context-invitation-response { display:grid; min-width:0; gap:var(--space-2); }
+.context-invitation-body .btn-link { justify-self:start; text-align:left; }
+.context-invitation-body > .btn { justify-self:start; }
 .thread-assist-run { white-space: nowrap; }
 .context-section-header-actions .thread-assist-run { margin-right:var(--space-1); }
 .thread-assist-suggestions { display:grid; grid-template-columns:minmax(0,1fr); min-width:0; gap:var(--space-2); margin-top:var(--space-2-5); }

@@ -2,6 +2,70 @@ import { expect, test } from "@playwright/test";
 
 const threadOptions = (page: import("@playwright/test").Page) => page.getByRole("listbox").getByRole("option");
 
+for (const count of [1, 3]) {
+  test(`aligns ${count} brief bullet(s), wrapped text, and the section header with Find Times`, async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator(".context-panel")).toBeVisible();
+    // Render the production components together, with a long brief that wraps
+    // at the panel's normal width. No screenshot or visual judgement is needed.
+    await page.evaluate(async (lineCount) => {
+      const resources = performance.getEntriesByType("resource");
+      const reactPath = resources.find((entry) => new URL(entry.name).pathname.endsWith("/react.js"))!.name;
+      const domPath = resources.find((entry) => new URL(entry.name).pathname.endsWith("/react-dom_client.js"))!.name;
+      const assistPath = "/src/ThreadAssist.tsx";
+      const availabilityPath = "/src/RecipientSections.tsx";
+      const clientPath = "/src/data/client.ts";
+      const [{ default: React }, { default: ReactDOM }, { ThreadAssist }, { AvailabilitySection }, { mailClient }] = await Promise.all([
+        import(reactPath), import(domPath), import(assistPath), import(availabilityPath), import(clientPath),
+      ]);
+      const { createElement, Fragment } = React;
+      const { createRoot } = ReactDOM;
+      const detail = await mailClient.getThread("welcome");
+      detail.thread.summary = Array.from({ length: lineCount }, () => "Building Tours is on Tuesday, October 27, from 1–3pm Eastern, organized by Taylor Collins with you and Bethany Simon as guests.").join("\n");
+      const preferences = { timeZone: "America/New_York", workingWindows: [], defaultDurationMinutes: 30, slotIncrementMinutes: 30, driveTimeBufferMinutes: 0 };
+      const noop = () => {};
+      const panel = document.createElement("aside");
+      panel.id = "brief-layout-fixture";
+      panel.className = "context-panel";
+      Object.assign(panel.style, { position: "fixed", top: "0", left: "0", bottom: "0", width: "360px" });
+      document.body.append(panel);
+      createRoot(panel).render(createElement("div", { className: "context-ai-row" }, createElement(Fragment, null,
+        createElement(AvailabilitySection, { preferences, ai: false, compact: true, draft: { sourceId: null, subject: "Invitation", body: "" }, onInsertTimes: noop, onOpenCalendarSettings: noop }),
+        createElement(ThreadAssist, { detail, providerChosen: true,
+          summary: { enabled: true, available: true, pending: false },
+          suggestions: { enabled: false, available: false, requested: false, proposals: [], hiddenCount: 0, onDiscard: noop, onReview: noop },
+          scheduling: { preferences, calendarConnected: true, onAddToCalendar: noop, onReplyWithTimes: noop, onConfirmTime: noop, onOpenCalendarSettings: noop },
+          loading: false, error: null, providerName: null, onRun: noop, onOpenSettings: noop }),
+      )));
+    }, count);
+    const fixture = page.locator("#brief-layout-fixture");
+    await expect(fixture.locator(".thread-assist-summary li")).toHaveCount(count);
+    for (const scale of [1, 1.4]) {
+      await page.evaluate((value) => document.documentElement.style.setProperty("--font-scale", String(value)), scale);
+      const layout = await fixture.evaluate((panel) => {
+        const chevron = panel.querySelector(".context-section-toggle svg")!.getBoundingClientRect();
+        const heading = panel.querySelector(".context-section-toggle > span:last-child")!.getBoundingClientRect();
+        const button = panel.querySelector(".compose-availability button")!.getBoundingClientRect();
+        const rows = [...panel.querySelectorAll(".thread-assist-summary li")].map((row) => {
+          const marker = row.querySelector("svg")!.getBoundingClientRect();
+          const text = row.lastElementChild!;
+          const range = document.createRange();
+          range.selectNodeContents(text);
+          return { markerX: marker.x, textX: text.getBoundingClientRect().x, lines: [...range.getClientRects()].map((rect) => rect.x) };
+        });
+        return { chevronX: chevron.x, headingX: heading.x, buttonX: button.x, rows };
+      });
+      for (const row of layout.rows) {
+        expect(row.markerX).toBeCloseTo(layout.chevronX, 0);
+        expect(row.markerX).toBeCloseTo(layout.buttonX, 0);
+        expect(row.textX).toBeCloseTo(layout.headingX, 0);
+        expect(row.lines.length).toBeGreaterThan(1);
+        for (const left of row.lines) expect(left).toBeCloseTo(row.textX, 0);
+      }
+    }
+  });
+}
+
 test("keeps a long suggested task inside the right panel", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".context-panel")).toBeVisible();

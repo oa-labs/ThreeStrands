@@ -10,6 +10,7 @@ import { sharedChatAttachments, type ChatEntry } from "./ThreadChat";
 import { isSummaryStale } from "./threadPresentation";
 import type { useAiAvailability } from "./useAiAvailability";
 import type { useAppPreferences } from "./useAppPreferences";
+import { withoutInvitationMeetings } from "./calendarInvitations";
 
 /** Where a suggestion set lives: its state key, and the thread revision its saved copy is stored under. */
 export type ProposalSource = { key: string; threadId: string; revision: string };
@@ -119,8 +120,8 @@ export function useThreadIntelligence({
     ? { key: actionProposalKey, threadId: visibleDetail.thread.id, revision: visibleDetail.thread.lastMessageAt }
     : null, [actionProposalKey, visibleDetail]);
   const actionProposals = useMemo(
-    () => actionProposalKey ? actionProposalSets[actionProposalKey] ?? [] : [],
-    [actionProposalKey, actionProposalSets],
+    () => actionProposalKey && visibleDetail ? withoutInvitationMeetings(actionProposalSets[actionProposalKey] ?? [], visibleDetail) : [],
+    [actionProposalKey, actionProposalSets, visibleDetail],
   );
   const actionHiddenCount = actionProposalKey ? actionHiddenCounts[actionProposalKey] ?? 0 : 0;
   const actionExtraCount = actionProposalKey ? actionExtraCounts[actionProposalKey] ?? 0 : 0;
@@ -155,7 +156,7 @@ export function useThreadIntelligence({
         model,
         endpoint,
       );
-      setActionProposalSets((current) => ({ ...current, [proposalKey]: proposals }));
+      setActionProposalSets((current) => ({ ...current, [proposalKey]: withoutInvitationMeetings(proposals, visibleDetail) }));
       markSuggestionsFetched(proposalKey);
       setActionHiddenCounts((current) => ({ ...current, [proposalKey]: hiddenCount }));
       setActionExtraCounts((current) => ({ ...current, [proposalKey]: extraCount }));
@@ -180,7 +181,7 @@ export function useThreadIntelligence({
       const { provider, model, endpoint } = readAiRequestConfig("getting a brief", "brief");
       const { summary, analysis } = await mailClient.briefThread(threadId, availabilityPreferences.timeZone, provider, model, endpoint);
       applyThreadSummary(threadId, summary);
-      setActionProposalSets((current) => ({ ...current, [proposalKey]: analysis.proposals }));
+      setActionProposalSets((current) => ({ ...current, [proposalKey]: withoutInvitationMeetings(analysis.proposals, visibleDetail) }));
       markSuggestionsFetched(proposalKey);
       setActionHiddenCounts((current) => ({ ...current, [proposalKey]: analysis.hiddenCount }));
       setActionExtraCounts((current) => ({ ...current, [proposalKey]: analysis.extraCount ?? 0 }));
@@ -286,15 +287,16 @@ export function useThreadIntelligence({
         userTimeZone: availabilityPreferences.timeZone,
         attachments: [...shared.values()].map(({ messageId, attachmentId }) => ({ messageId, attachmentId })),
       }, provider, model, endpoint);
-      if (reply.analysis.proposals.length > 0) {
-        setActionProposalSets((current) => ({ ...current, [proposalKey]: [...(current[proposalKey] ?? []), ...reply.analysis.proposals] }));
+      const proposals = withoutInvitationMeetings(reply.analysis.proposals, visibleDetail);
+      if (proposals.length > 0) {
+        setActionProposalSets((current) => ({ ...current, [proposalKey]: [...(current[proposalKey] ?? []), ...proposals] }));
       }
       const answer: ChatEntry = {
         id: nextId(),
         role: "assistant",
         content: reply.answer,
         replyDraft: reply.replyDraft,
-        addedSuggestions: reply.analysis.proposals.length,
+        addedSuggestions: proposals.length,
         hiddenSuggestions: reply.analysis.hiddenCount,
         extraSuggestions: reply.analysis.extraCount ?? 0,
         availability: reply.availability,
@@ -302,7 +304,7 @@ export function useThreadIntelligence({
         searched: reply.searched,
         attachments: reply.attachments,
       };
-      for (const proposal of reply.analysis.proposals) {
+      for (const proposal of proposals) {
         chatSuggestionOrigins.current.set(proposal, { threadId, entryId: answer.id });
       }
       setChatByThread((current) => ({ ...current, [threadId]: [...(current[threadId] ?? []), answer] }));
@@ -323,15 +325,16 @@ export function useThreadIntelligence({
   const proposalOrigins = useRef(new WeakMap<ActionProposal, ActionProposal>());
   const updateActionProposal = useCallback((index: number, proposal: ActionProposal) => {
     if (!actionProposalKey) return;
+    const original = actionProposals[index];
     setActionProposalSets((current) => ({
       ...current,
-      [actionProposalKey]: (current[actionProposalKey] ?? []).map((item, itemIndex) => {
-        if (itemIndex !== index) return item;
+      [actionProposalKey]: (current[actionProposalKey] ?? []).map((item) => {
+        if (item !== original) return item;
         proposalOrigins.current.set(proposal, proposalOrigins.current.get(item) ?? item);
         return proposal;
       }),
     }));
-  }, [actionProposalKey]);
+  }, [actionProposalKey, actionProposals]);
 
   // Removes a handled suggestion by identity, so it still matches if the list
   // changed while a dialog was open, and drops it from the saved suggestions
