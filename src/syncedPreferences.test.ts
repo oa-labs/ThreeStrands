@@ -25,6 +25,9 @@ describe("synced preferences data boundary", () => {
     localStorage.setItem("threestrands.settings.selectedAccountId", "private@example.com");
     localStorage.setItem("threestrands.theme", "dark");
     localStorage.setItem("threestrands.accent", "green");
+    localStorage.setItem("threestrands.fontScale", "120");
+    localStorage.setItem("threestrands.settings.fontFamily", "Georgia");
+    localStorage.setItem("threestrands.settings.emailMinimumFontSize", "16");
 
     queuePortablePreferences();
 
@@ -32,6 +35,9 @@ describe("synced preferences data boundary", () => {
     expect(preferences).not.toHaveProperty("selectedAccountId");
     expect(preferences).not.toHaveProperty("theme");
     expect(preferences).not.toHaveProperty("accent");
+    expect(preferences).not.toHaveProperty("fontScale");
+    expect(preferences).not.toHaveProperty("fontFamily");
+    expect(preferences).not.toHaveProperty("emailMinimumFontSize");
   });
 
   it("does not queue or pull preferences outside the native app", async () => {
@@ -59,9 +65,6 @@ describe("synced preferences data boundary", () => {
       "autoReadDelaySeconds",
       "availabilityPreferences",
       "calendarColors",
-      "emailMinimumFontSize",
-      "fontFamily",
-      "fontScale",
       "loadRemoteImages",
     ]);
     const serialized = JSON.stringify(preferences);
@@ -69,17 +72,21 @@ describe("synced preferences data boundary", () => {
     expect(serialized).not.toContain("private diagnostics");
   });
 
-  it("applies synced preferences without replacing local appearance or navigation", async () => {
+  it("applies synced preferences without replacing local appearance, fonts, or navigation", async () => {
     localStorage.setItem("threestrands.settings.selectedAccountId", "local@example.com");
     localStorage.setItem("threestrands.theme", "dark");
     localStorage.setItem("threestrands.accent", "teal");
+    localStorage.setItem("threestrands.fontScale", "90");
+    localStorage.setItem("threestrands.settings.fontFamily", "Helvetica");
+    localStorage.setItem("threestrands.settings.emailMinimumFontSize", "12");
     vi.mocked(invoke).mockResolvedValue({
-      theme: "light", // Legacy replica field from an older app version.
-      accent: "rose", // Legacy replica field from an older app version.
-      selectedAccountId: "remote@example.com",
+      // Older app versions replicated appearance fields.
+      theme: "light",
+      accent: "rose",
       fontScale: 110,
       emailMinimumFontSize: 18,
       fontFamily: "Georgia",
+      selectedAccountId: "remote@example.com",
       autoReadDelaySeconds: 4,
       loadRemoteImages: false,
       aiProvider: "none",
@@ -102,8 +109,10 @@ describe("synced preferences data boundary", () => {
     expect(localStorage.getItem("threestrands.accent")).toBe("teal");
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(document.documentElement.dataset.accent).toBe("teal");
-    expect(localStorage.getItem("threestrands.fontScale")).toBe("110");
-    expect(localStorage.getItem("threestrands.settings.emailMinimumFontSize")).toBe("18");
+    expect(localStorage.getItem("threestrands.fontScale")).toBe("90");
+    expect(localStorage.getItem("threestrands.settings.fontFamily")).toBe("Helvetica");
+    expect(localStorage.getItem("threestrands.settings.emailMinimumFontSize")).toBe("12");
+    expect(localStorage.getItem("threestrands.settings.autoReadDelaySeconds")).toBe("4");
     expect(localStorage.getItem("threestrands.crash-reports")).toBeNull();
   });
 
@@ -142,15 +151,17 @@ describe("synced preferences data boundary", () => {
     expect(readCalendarColors()).toEqual({ "me@example.com": { team: "sky" } });
   });
 
-  it("preserves the device theme when a new replica omits it", async () => {
+  it("preserves the device appearance when a new replica omits it", async () => {
     localStorage.setItem("threestrands.theme", "light");
     localStorage.setItem("threestrands.accent", "graphite");
-    vi.mocked(invoke).mockResolvedValue({ fontScale: 120 });
+    localStorage.setItem("threestrands.fontScale", "90");
+    vi.mocked(invoke).mockResolvedValue({ autoReadDelaySeconds: 4 });
 
     expect(await pullSyncedPreferences()).toBe(true);
     expect(localStorage.getItem("threestrands.theme")).toBe("light");
     expect(localStorage.getItem("threestrands.accent")).toBe("graphite");
-    expect(localStorage.getItem("threestrands.fontScale")).toBe("120");
+    expect(localStorage.getItem("threestrands.fontScale")).toBe("90");
+    expect(localStorage.getItem("threestrands.settings.autoReadDelaySeconds")).toBe("4");
   });
 
   it("keeps contact enrichment on when an older replica omits that feature", async () => {
@@ -189,13 +200,13 @@ describe("synced preferences data boundary", () => {
     // Contact Enrichment starts on, so switching it off is the local change.
     saveAiFeatures({ ...DEFAULT_AI_FEATURES, contactEnrichment: false });
     resolvePreferences({
-      fontScale: 120,
+      autoReadDelaySeconds: 4,
       aiFeatures: { ...DEFAULT_AI_FEATURES, contactEnrichment: true },
     });
 
     expect(await pulling).toBe(true);
     expect(readAiFeatures().contactEnrichment).toBe(false);
-    expect(localStorage.getItem("threestrands.fontScale")).toBe("120");
+    expect(localStorage.getItem("threestrands.settings.autoReadDelaySeconds")).toBe("4");
   });
 
   it("waits for a queued feature change before reading synced preferences", async () => {

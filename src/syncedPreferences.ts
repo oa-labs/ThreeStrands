@@ -10,7 +10,8 @@ const pendingWrites = new Set<Promise<void>>();
 /**
  * Records this device's portable preferences for cross-device sync. The
  * backend ignores the call unless replicated sync is active. Appearance and
- * device navigation stay on this device.
+ * device navigation stay on this device: text size and fonts depend on the
+ * display and the fonts installed on it.
  */
 export function queuePortablePreferences(): void {
   if (!isDesktop()) return;
@@ -24,6 +25,9 @@ export async function queuePortablePreferencesAndWait(): Promise<void> {
     selectedAccountId: _deviceNavigation,
     theme: _deviceTheme,
     accent: _deviceAccent,
+    fontScale: _deviceFontScale,
+    fontFamily: _deviceFontFamily,
+    emailMinimumFontSize: _deviceEmailMinimumFontSize,
     ...preferences
   } = readExportablePreferences();
   const earlierWrites = [...pendingWrites];
@@ -47,9 +51,9 @@ export async function pullSyncedPreferences(): Promise<boolean> {
   // Read after that write, so the pull cannot restore the previous value.
   while (pendingWrites.size) await Promise.allSettled([...pendingWrites]);
   const beforePull = readExportablePreferences();
-  // Older replicas may still contain theme, accent, and selectedAccountId.
-  // Keep all three local even when reading a preference record produced
-  // before this change.
+  // Older replicas may still contain appearance fields and selectedAccountId.
+  // Keep them local even when reading a preference record produced by an
+  // earlier version.
   const preferences = await invoke<Partial<ExportablePreferences> | null>("synced_preferences");
   if (!preferences) return false;
   const local = readExportablePreferences();
@@ -63,6 +67,9 @@ export async function pullSyncedPreferences(): Promise<boolean> {
     ...preferences,
     theme: local.theme,
     accent: local.accent,
+    fontScale: local.fontScale,
+    fontFamily: local.fontFamily,
+    emailMinimumFontSize: local.emailMinimumFontSize,
     selectedAccountId: local.selectedAccountId,
   };
   // Older devices may send an aiFeatures object without newer flags. An

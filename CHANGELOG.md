@@ -23,6 +23,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - When suggested meeting times can't be checked against one of your calendars, a single note under the times now names that calendar and links to **Calendar Settings**, instead of "not every calendar checked" on every time. Times for an email that doesn't give a time zone now say which zone they use in familiar terms, such as "Eastern Time".
 
 ### Fixed
+- **Settings → Appearance** text size, font, and minimum email font size now stay on each Mac instead of syncing to your other devices, so you can use larger text on a laptop without changing it on a big monitor.
 - Emails that set their text size, color, or weight with older-style formatting now look the way the sender designed them, instead of showing headline figures as small bold text. With a minimum font size set in **Settings**, footnote numbers no longer push their line apart.
 - Gmail drafts now stay in step for accounts with no drafts. Before, if you sent or deleted your last draft in Gmail or on another device, it could stay behind in **Drafts** here.
 - A message you forward now shows in its conversation as soon as you click **Send**, the way replies do, instead of appearing only after it finishes sending.
