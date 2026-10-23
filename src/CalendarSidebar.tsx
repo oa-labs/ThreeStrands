@@ -290,7 +290,7 @@ export function CalendarSidebar({
   useDaySwipe(sidebarRef, moveDay);
 
   return (
-    <aside className="calendar-sidebar" aria-label="Calendar schedule" ref={sidebarRef}>
+    <aside className="calendar-sidebar" aria-label="Schedule" ref={sidebarRef}>
       <header className="calendar-sidebar-header">
         <div className="calendar-sidebar-heading">
           {selectedCalendarAccountIds ? <span className="eyebrow">Calendar <span className="eyebrow-account">· {selectedCalendarAccountIds.length ? selectedCalendarAccountIds.join(", ") : "None selected"}</span></span> : null}
@@ -308,7 +308,7 @@ export function CalendarSidebar({
             <ChevronRight size={ICON_SIZE.lg} />
           </button></HoverTooltip>
           {!embedded ? (
-            <button type="button" className="btn-icon" aria-label="Close Calendar" onClick={onClose}>
+            <button type="button" className="btn-icon" aria-label="Close Schedule" onClick={onClose}>
               <X size={ICON_SIZE.lg} />
             </button>
           ) : null}

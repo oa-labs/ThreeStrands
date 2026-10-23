@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type RefObject } from "react
 import type { ScheduleEvent, ThreadDetail } from "./domain";
 import type { ContactCardActions } from "./ContactCard";
 import { readContactsView, writeContactsView, type ContactsView } from "./contactsView";
-import { readLaunchWorkspace, writeLastWorkspace } from "./lastWorkspace";
+import { readLaunchWorkspace, readSideColumn, writeLastWorkspace, writeSideColumn, type SideColumn } from "./lastWorkspace";
 import { startOfLocalDay } from "./calendarTime";
 import { useCalendarAccounts } from "./useCalendarAccounts";
 import { mailClient } from "./data/client";
@@ -11,7 +11,7 @@ import { errorMessage, logBackgroundFailure } from "./errors";
 import type { SettingsSection } from "./settingsPanelTypes";
 import type { Notice } from "./useNotice";
 
-export type RightWorkspace = "calendar" | "contacts" | "tasks" | "week" | "files" | "today" | null;
+export type RightWorkspace = "contacts" | "tasks" | "week" | "files" | "today" | null;
 // Keep-in-touch reminders fall due as time passes and as mail arrives,
 // without any local edit, so the Contacts badge is re-read on this cadence.
 const KEEP_IN_TOUCH_REFRESH_MS = 5 * 60_000;
@@ -31,6 +31,8 @@ type Options = {
 export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, readingMessageId, readingMessageIdRef, openSettingsAt, setNotice }: Options) {
   const [rightWorkspace, setRightWorkspace] = useState<RightWorkspace>(readLaunchWorkspace);
   useEffect(() => { writeLastWorkspace(rightWorkspace); }, [rightWorkspace]);
+  const [sideColumn, setSideColumn] = useState<SideColumn>(readSideColumn);
+  useEffect(() => { writeSideColumn(sideColumn); }, [sideColumn]);
   const [calendarWeekAnchor, setCalendarWeekAnchor] = useState<Date | null>(null);
   const [calendarEventToOpen, setCalendarEventToOpen] = useState<ScheduleEvent | null>(null);
   const [contactAddressBookTarget, setContactAddressBookTarget] = useState<string | null>(null);
@@ -49,8 +51,8 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     const timer = window.setInterval(() => void refreshKeepInTouchCount(), KEEP_IN_TOUCH_REFRESH_MS);
     return () => window.clearInterval(timer);
   }, [refreshKeepInTouchCount]);
-  const closeRightWorkspace = useCallback(() => setRightWorkspace(null), []);
-  const calendar = useCalendarAccounts({ onLastAccountRemoved: closeRightWorkspace });
+  const showContextColumn = useCallback(() => setSideColumn("context"), []);
+  const calendar = useCalendarAccounts({ onLastAccountRemoved: showContextColumn });
   const { refreshAccounts: refreshCalendarAccounts, refreshCalendars: refreshCalendarOptions } = calendar;
   // Replicated sync can add or remove calendar accounts while the app runs,
   // so re-read them each time Settings opens, as mail accounts are.
@@ -62,24 +64,6 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
       void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"));
     }
   }, [calendar.accounts.length, refreshCalendarOptions, settingsOpen, settingsSection]);
-  const openToday = useCallback(() => {
-    if (rightWorkspace === "calendar") {
-      setRightWorkspace(null);
-      return;
-    }
-    setRightWorkspace(null);
-    void refreshCalendarAccounts()
-      .then((connected) => {
-        if (!connected.some((account) => account.status === "connected")) {
-          openSettingsAt("calendarAccounts");
-          return;
-        }
-        setRightWorkspace("calendar");
-      })
-      .catch((reason: unknown) => {
-        setNotice({ message: errorMessage(reason) });
-      });
-  }, [openSettingsAt, refreshCalendarAccounts, rightWorkspace, setNotice]);
 
   const openTasks = useCallback(() => {
     setRightWorkspace((current) => current === "tasks" ? null : "tasks");
@@ -88,10 +72,42 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
   // Opening the Calendar sidebar on an event starts it on that day; the key
   // remounts the sidebar for each request.
   const calendarConnected = calendar.accounts.some((account) => account.status === "connected");
+  // A remembered schedule needs a connected calendar; without one the column shows the context.
+  const scheduleShown = sideColumn === "schedule" && calendarConnected;
+  /**
+   * Swaps Mail's right column between the context and the schedule. From
+   * another view it returns to Mail with the schedule showing, and with no
+   * calendar connected it opens Calendar Accounts instead.
+   */
+  const toggleSchedule = useCallback(() => {
+    const inMail = rightWorkspace === null;
+    setRightWorkspace(null);
+    if (inMail && scheduleShown) {
+      setSideColumn("context");
+      return;
+    }
+    void refreshCalendarAccounts()
+      .then((connected) => {
+        if (!connected.some((account) => account.status === "connected")) {
+          openSettingsAt("calendarAccounts");
+          return;
+        }
+        setSideColumn("schedule");
+      })
+      .catch((reason: unknown) => {
+        setNotice({ message: errorMessage(reason) });
+      });
+  }, [openSettingsAt, refreshCalendarAccounts, rightWorkspace, scheduleShown, setNotice]);
+  /** Brings Mail back with the context column, for actions that show something in it. */
+  const showMailContext = useCallback(() => {
+    setRightWorkspace(null);
+    setSideColumn("context");
+  }, []);
   const [calendarSidebarStart, setCalendarSidebarStart] = useState<{ key: number; date: Date } | null>(null);
   const openCalendarAt = useCallback((date: Date) => {
     setCalendarSidebarStart((current) => ({ key: (current?.key ?? 0) + 1, date }));
-    setRightWorkspace("calendar");
+    setRightWorkspace(null);
+    setSideColumn("schedule");
   }, []);
 
   const openFilesView = useCallback(() => setRightWorkspace("files"), []);
@@ -118,11 +134,11 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     onSelectPerson: (email) => {
       if (!visibleThreadId) return;
       setContextPersonPick({ threadId: visibleThreadId, messageId: readingMessageIdRef.current, email });
-      // Picking a person asks to see them, so bring the context panel back from another workspace.
-      setRightWorkspace((current) => current === "tasks" || current === "week" || current === "contacts" || current === "files" || current === "today" ? null : current);
+      // Picking a person asks to see them, so bring the context column back.
+      showMailContext();
     },
     selectedEmail: contextPersonEmail,
-  }), [openContactInAddressBook, visibleThreadId, contextPersonEmail, readingMessageIdRef]);
+  }), [openContactInAddressBook, visibleThreadId, contextPersonEmail, readingMessageIdRef, showMailContext]);
   const openCalendarView = useCallback((day?: Date, event?: ScheduleEvent) => {
     setCalendarWeekAnchor((current) => day ? startOfLocalDay(day) : current ?? startOfLocalDay(new Date()));
     setCalendarEventToOpen(event ?? null);
@@ -136,7 +152,8 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     calendarEventToOpen, setCalendarEventToOpen, contactAddressBookTarget,
     setContactAddressBookTarget, contactsView, setContactsView, keepInTouchDueCount,
     refreshKeepInTouchCount, calendar, refreshCalendarOptions,
-    calendarConnected, calendarSidebarStart, openCalendarAt, openToday, openTasks, openTasksView,
+    calendarConnected, calendarSidebarStart, openCalendarAt, toggleSchedule, openTasks,
+    sideColumn, setSideColumn, scheduleShown, showMailContext, openTasksView,
     openFilesView, openTodayView, openContactsView, openKeepInTouchView, openContactGroupsView, contactCardActions,
     contextPersonEmail, openCalendarView,
   };

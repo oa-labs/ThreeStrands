@@ -284,6 +284,7 @@ export function App() {
     calendarEventToOpen, openCalendarAt, contactAddressBookTarget, contactsView, setContactsView,
     keepInTouchDueCount, refreshKeepInTouchCount, calendar, refreshCalendarOptions,
     calendarConnected, calendarSidebarStart, openContactsView, contactCardActions,
+    scheduleShown, setSideColumn, showMailContext,
     contextPersonEmail, openCalendarView, openTasksView, openKeepInTouchView,
   } = workspaces;
   const { openTaskThreadIds, taskRevision, setTaskRevision, refreshTaskIndicators } = useTaskIndicators(activeAccountId);
@@ -425,16 +426,16 @@ export function App() {
 
   /** Shows the context panel and moves focus into its question box. */
   const openThreadChat = useCallback(() => {
-    setRightWorkspace((current) => current === "calendar" ? current : null);
+    showMailContext();
     focusThreadChat();
-  }, [focusThreadChat, setRightWorkspace]);
+  }, [focusThreadChat, showMailContext]);
 
   /** Shows the context panel's AI section and fetches suggestions if missing. */
   const getSuggestions = useCallback(() => {
-    setRightWorkspace((current) => current === "calendar" ? current : null);
+    showMailContext();
     window.requestAnimationFrame(() => document.getElementById(THREAD_ASSIST_ID)?.scrollIntoView?.({ block: "nearest" }));
     void runBrief({ only: "suggestions" });
-  }, [runBrief, setRightWorkspace]);
+  }, [runBrief, showMailContext]);
 
   const reviewActionProposal = useCallback((index: number, proposal: ActionProposal, intent: "edit" | "accept") => {
     if (!visibleDetail || !actionProposalSource) return;
@@ -609,15 +610,14 @@ export function App() {
 
   const showNoticeMessage = useCallback((message: string) => setNotice({ message }), [setNotice]);
 
-  // Mail shows with nothing over it, or with only the Today calendar panel beside it.
-  const mailInView = rightWorkspace === null || rightWorkspace === "calendar";
+  const mailInView = rightWorkspace === null;
   const selectedThreads = threads.filter((thread) => checkedIds.has(thread.id));
   const allSelectedThreadsStarred = selectedThreads.length > 0
     && selectedThreads.every((thread) => thread.starred);
   const batchStarLabel = allSelectedThreadsStarred ? "Unstar" : "Star";
 
   return (
-    <main className={`app-shell${rightWorkspace === "today" ? " today-open" : rightWorkspace === "files" ? " files-open" : rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : rightWorkspace ? " calendar-open" : ""}${rightWorkspace === "calendar" ? " mail-context-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
+    <main className={`app-shell${rightWorkspace === "today" ? " today-open" : rightWorkspace === "files" ? " files-open" : rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <AccountSwitcher
           accounts={accounts}
@@ -1299,21 +1299,21 @@ export function App() {
         </Suspense>
         </ErrorBoundary>
       ) : null}
-      {rightWorkspace === "calendar" ? (
+      {mailInView && scheduleShown ? (
         <ErrorBoundary area="the calendar" variant="side">
         <CalendarSidebar
           key={calendarSidebarStart?.key ?? 0}
           initialDate={calendarSidebarStart?.date}
-          onClose={() => setRightWorkspace(null)}
+          onClose={() => setSideColumn("context")}
           selectedCalendarAccountIds={[...new Set(calendar.calendars.filter((option) => option.selected).map((option) => option.accountId))]}
           onOpenSettings={() => {
-            setRightWorkspace(null);
+            setSideColumn("context");
             openSettingsAt("calendarAccounts");
           }}
         />
         </ErrorBoundary>
       ) : null}
-      {mailInView && composingApart && correspondence.liveDraft ? (
+      {mailInView && !scheduleShown && composingApart && correspondence.liveDraft ? (
         <ErrorBoundary area="this draft's context" variant="side" resetKey={correspondence.liveDraft.id}>
         <ComposeContext
           key={correspondence.liveDraft.id}
@@ -1339,7 +1339,7 @@ export function App() {
         />
         </ErrorBoundary>
       ) : null}
-      {mailInView && !composingApart ? (
+      {mailInView && !scheduleShown && !composingApart ? (
         <ErrorBoundary area="the context panel" variant="side" resetKey={selectedId}>
         <ContextPanel
           detail={visibleDetail}

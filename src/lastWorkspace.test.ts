@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { readLastWorkspace, readLaunchView, readLaunchWorkspace, writeLastWorkspace, writeLaunchView } from "./lastWorkspace";
+import { readLastWorkspace, readLaunchView, readLaunchWorkspace, readSideColumn, writeLastWorkspace, writeLaunchView, writeSideColumn } from "./lastWorkspace";
 
 describe("lastWorkspace", () => {
   afterEach(() => {
     localStorage.removeItem("threestrands.workspace.last");
     localStorage.removeItem("threestrands.workspace.launch");
+    localStorage.removeItem("threestrands.workspace.sideColumn");
   });
 
   it("starts in Mail when nothing has been remembered", () => {
@@ -20,10 +21,17 @@ describe("lastWorkspace", () => {
     expect(readLastWorkspace()).toBeNull();
   });
 
-  it("reopens Mail rather than the Today calendar panel beside it", () => {
+  it("remembers Mail's right column apart from the view, so Mail reopens with the schedule", () => {
+    expect(readSideColumn()).toBe("context");
     writeLastWorkspace("files");
-    writeLastWorkspace("calendar");
+    writeSideColumn("schedule");
+    writeLastWorkspace(null);
     expect(readLastWorkspace()).toBeNull();
+    expect(readSideColumn()).toBe("schedule");
+    writeSideColumn("context");
+    expect(readSideColumn()).toBe("context");
+    localStorage.setItem("threestrands.workspace.sideColumn", "calendar");
+    expect(readSideColumn()).toBe("context");
   });
 
   it("ignores unknown stored values", () => {

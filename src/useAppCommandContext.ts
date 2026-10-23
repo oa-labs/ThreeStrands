@@ -85,7 +85,7 @@ export function useAppCommandContext({
   const outboxEditSource = useMemo(() => outboxEditAsNewSource(outboxSelection.selectedEntry), [outboxSelection.selectedEntry]);
   const { messageStackRef, setMessageExpansionOverrides, activeMessageIdRef } = reader;
   const {
-    rightWorkspace, setRightWorkspace, setContactsView, openToday, openTasks, openTasksView,
+    rightWorkspace, setRightWorkspace, setContactsView, toggleSchedule, showMailContext, openTasks, openTasksView,
     openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView, openTodayView,
   } = workspaces;
   const {
@@ -265,7 +265,7 @@ export function useAppCommandContext({
     aiReplyAssistEnabled: aiDraftEnabled && (correspondence.activeDraft?.mode === "reply" || correspondence.activeDraft?.mode === "replyAll"),
     summarizeSelected: async () => {
       if (!selected) return {};
-      setRightWorkspace((current) => current === "calendar" ? current : null);
+      showMailContext();
       await runBrief({ only: "summary" });
       return {};
     },
@@ -287,7 +287,7 @@ export function useAppCommandContext({
     openShortcutHelp: () => setShortcutHelpOpen(true),
     openGettingStarted: () => setGettingStartedOpen(true),
     openSettings: () => openSettingsAt(),
-    openToday,
+    toggleSchedule,
     openTasks,
     openMailView,
     openTasksView,
@@ -316,7 +316,7 @@ export function useAppCommandContext({
     selectedId, selected, canUnsubscribe, returnStep, goBack, displayedMessages,
     composerBelongsToVisibleThread, outboxSelection, outboxEditSource, goToInboxTab, accountSplitInboxes.length, goToNextSplitTab,
     goToPreviousSplitTab, goToSplitTab, taskLayout, selectedTaskStatus, selectedTaskHasThread,
-    aiSummaryAvailable, aiBriefEnabled, aiChatEnabled, aiDraftEnabled, correspondence.activeDraft?.mode, refreshMail, openToday, openTasks, openMailView, openTasksView,
+    aiSummaryAvailable, aiBriefEnabled, aiChatEnabled, aiDraftEnabled, correspondence.activeDraft?.mode, refreshMail, toggleSchedule, showMailContext, openTasks, openMailView, openTasksView,
     openContactsView, openKeepInTouchView, openContactGroupsView, openCalendarView, openFilesView, openTodayView, getSuggestions,
     openThreadChat, newTask, canUndoAction, canUndoArchive, switchAccount, toggleMessageFilter, setRightWorkspace,
     mutateIds, openFolder, selectedIndex, visibleThreads, setSelectedId, selectAdjacentMessage,

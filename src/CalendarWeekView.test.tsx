@@ -71,11 +71,11 @@ describe("CalendarWeekView", () => {
   it("returns to today with t and opens a new event with Shift+N, leaving dialogs and editing fields alone", async () => {
     const onCreated = vi.fn();
     renderWeek({ onCreated });
-    const openToday = vi.fn();
-    installTestShortcuts({ focusedPane: "calendar", calendarWeekActive: true, openToday });
+    const toggleSchedule = vi.fn();
+    installTestShortcuts({ focusedPane: "calendar", calendarWeekActive: true, toggleSchedule });
     fireEvent.keyDown(document.body, { key: "=" });
     fireEvent.keyDown(document.body, { key: "t" });
-    expect(openToday).not.toHaveBeenCalled();
+    expect(toggleSchedule).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { name: "September 2026", level: 1 })).toBeInTheDocument();
     fireEvent.keyDown(document.body, { key: "N", shiftKey: true });
     const dialog = screen.getByRole("dialog", { name: "New event" });

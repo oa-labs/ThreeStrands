@@ -101,3 +101,61 @@ describe("the remembered workspace", () => {
     expect(render().result.current.rightWorkspace).toBeNull();
   });
 });
+
+describe("Mail's right column", () => {
+  const connected = [{ email: "cal@example.com", connectedAt: "2026-10-19T00:00:00Z", status: "connected" as const }];
+  const render = (detail: ThreadDetail | null = null) => renderHook(() => useWorkspaces({
+    settingsOpen: false,
+    settingsSection: "general" as never,
+    visibleDetail: detail,
+    readingMessageId: null,
+    readingMessageIdRef: { current: null },
+    openSettingsAt: vi.fn(),
+    setNotice: vi.fn(),
+  }));
+
+  afterEach(() => {
+    localStorage.removeItem("threestrands.workspace.last");
+    localStorage.removeItem("threestrands.workspace.sideColumn");
+  });
+
+  it("swaps between the context and the schedule, and returns to Mail from another view", async () => {
+    vi.mocked(mailClient.listCalendarAccounts).mockResolvedValue(connected);
+    const hook = render();
+    await waitFor(() => expect(hook.result.current.calendarConnected).toBe(true));
+
+    act(() => hook.result.current.openTasksView());
+    act(() => hook.result.current.toggleSchedule());
+    await waitFor(() => expect(hook.result.current.scheduleShown).toBe(true));
+    expect(hook.result.current.rightWorkspace).toBeNull();
+
+    act(() => hook.result.current.toggleSchedule());
+    expect(hook.result.current.sideColumn).toBe("context");
+    vi.mocked(mailClient.listCalendarAccounts).mockResolvedValue([]);
+  });
+
+  it("brings the context back for actions that show something in it, such as picking a person", async () => {
+    vi.mocked(mailClient.listCalendarAccounts).mockResolvedValue(connected);
+    const hook = render(thread("t1"));
+    await waitFor(() => expect(hook.result.current.calendarConnected).toBe(true));
+    act(() => hook.result.current.setSideColumn("schedule"));
+    act(() => hook.result.current.openTodayView());
+
+    act(() => hook.result.current.contactCardActions.onSelectPerson("ana@partner.org"));
+    expect(hook.result.current.sideColumn).toBe("context");
+    expect(hook.result.current.rightWorkspace).toBeNull();
+
+    act(() => hook.result.current.setSideColumn("schedule"));
+    act(() => hook.result.current.showMailContext());
+    expect(hook.result.current.sideColumn).toBe("context");
+    vi.mocked(mailClient.listCalendarAccounts).mockResolvedValue([]);
+  });
+
+  it("opens the schedule on a requested day", () => {
+    const hook = render();
+    const day = new Date(2026, 9, 30);
+    act(() => hook.result.current.openCalendarAt(day));
+    expect(hook.result.current.sideColumn).toBe("schedule");
+    expect(hook.result.current.calendarSidebarStart?.date).toBe(day);
+  });
+});

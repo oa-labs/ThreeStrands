@@ -110,7 +110,7 @@ export type CommandContext = {
   openShortcutHelp(): void;
   openGettingStarted(): void;
   openSettings(): void;
-  openToday(): void;
+  toggleSchedule(): void;
   openTasks(): void;
   openMailView(): void;
   openTasksView(): void;
@@ -579,11 +579,11 @@ export const commands: Command[] = [
   },
   {
     id: "calendar.today",
-    title: "Today in Calendar / Toggle Today’s Schedule",
+    title: "Today in Calendar / Toggle Schedule",
     keys: ["t"],
     group: "Application",
     enabled: (context) => !context.composerActive,
-    run: (context) => complete(() => context.focusedPane === "calendar" ? runWorkspaceCommand("calendar.goToday") : context.openToday()),
+    run: (context) => complete(() => context.focusedPane === "calendar" ? runWorkspaceCommand("calendar.goToday") : context.toggleSchedule()),
   },
   {
     id: "view.today",

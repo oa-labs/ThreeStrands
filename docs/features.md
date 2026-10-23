@@ -50,7 +50,8 @@ and message rendering each have their own document in this folder.
 - Local Trust checks explain suspicious sender names, lookalike domains,
   misleading links, and risky attachments. Show link reveals the link in the
   message; sender verification, linked sites, and tracking images are in Details.
-- Today (key 0) shows the agenda with a Join button for the next meeting,
+- Today (key 0) shows the agenda (finished events dimmed, a Now divider,
+  tomorrow's first events) with a Join button for the next meeting,
   unread mail grouped by heuristics (needs a reply, from people, updates), tasks
   overdue or due today, and due Keep in Touch reminders. Settings → Appearance →
   Start With can open the app on Today.

@@ -122,7 +122,6 @@
   --z-local-front: 2;
   --z-local-panel: 4;
   --z-local-popover: 5;
-  --z-drawer: 5;
   --z-modal: 10;
   --z-tooltip: 20;
   --z-toast: 20;
@@ -135,7 +134,6 @@
   --shadow-popover: 0 8px 24px var(--shadow); /* menus, tooltips, suggestion lists */
   --shadow-floating: 0 12px 32px var(--shadow); /* toasts, notices, save bars, drag previews, event cards */
   --shadow-dialog: 0 24px 80px var(--shadow); /* modals, the composer window, the lightbox */
-  --shadow-drawer: -12px 0 36px var(--shadow); /* a panel sliding over from the right */
   --focus-ring: 0 0 0 2px var(--focus-glow);
   /* State opacity. */
   --opacity-disabled: .55;
@@ -383,12 +381,6 @@ select:disabled { opacity: var(--opacity-disabled); cursor: default; }
   height: 100vh;
   background: var(--background);
   font-size: var(--text-root);
-}
-.app-shell.calendar-open {
-  grid-template-columns: 58px var(--inbox-width, 400px) minmax(0, 1fr) minmax(320px, 360px);
-}
-.app-shell.mail-context-open {
-  grid-template-columns: 58px minmax(240px, var(--inbox-width, 400px)) minmax(0, 1fr) minmax(280px, 320px) minmax(300px, 340px);
 }
 .app-shell.tasks-open { grid-template-columns: 58px minmax(0, 1fr); }
 .app-shell.contacts-open { grid-template-columns: 58px minmax(0, 1fr); }
@@ -1505,9 +1497,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
   background: var(--surface);
   touch-action: pan-y;
 }
-/* Pin the row too: the schedule precedes the context panel in the DOM, and
-   auto-placement would otherwise wrap the panel (column 4) onto a new row. */
-.app-shell.mail-context-open > .calendar-sidebar { grid-column: 5; grid-row: 1; }
+/* The schedule takes Mail's right column in place of the context panel. */
+.app-shell > .calendar-sidebar { grid-column: 4; grid-row: 1; }
 .calendar-sidebar-header {
   min-height: 90px;
   display: flex;
@@ -2456,26 +2447,12 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .task-status-button { align-self: center; margin-right: var(--space-1); }
 .task-follow-up-button { align-self: center; margin-right: var(--space-1); }
 @media (max-width: 1100px) {
-  .app-shell:not(.calendar-open):not(.tasks-open):not(.contacts-open):not(.week-open):not(.files-open):not(.today-open) {
+  .app-shell:not(.tasks-open):not(.contacts-open):not(.week-open):not(.files-open):not(.today-open) {
     grid-template-columns: 58px minmax(220px, 32vw) minmax(0, 1fr) minmax(260px, 280px);
-  }
-  .app-shell.calendar-open {
-    grid-template-columns: 58px var(--inbox-width, 400px) minmax(0, 1fr);
-  }
-  .app-shell.calendar-open.mail-context-open {
-    grid-template-columns: 58px minmax(200px, 31vw) minmax(0, 1fr) minmax(260px, 280px);
   }
   .app-shell.contacts-open { grid-template-columns:58px minmax(0,1fr); }
   .calendar-week { grid-template-columns: minmax(0, 1fr); }
   .calendar-week-side { display: none; }
-  .calendar-sidebar {
-    position: fixed;
-    inset: 0 0 0 auto;
-    z-index: var(--z-drawer);
-    width: min(360px, calc(100vw - 58px));
-    box-shadow: var(--shadow-drawer);
-  }
-  .app-shell.mail-context-open > .calendar-sidebar { grid-column: auto; }
 }
 @media (hover: none) {
   .contact-sidebar-email-copy { opacity:1; }
@@ -3434,6 +3411,10 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .today-columns { flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); align-items: start; gap: var(--space-6); padding: var(--space-4) var(--pane-inset); }
 .today-column { min-width: 0; }
 .today-column > .context-status { padding: var(--space-3) var(--context-row-inset); }
+/* Agenda of the current day: finished events dim, and a Now rule sits before the rest. */
+.agenda-event-past { opacity: var(--opacity-dimmed); }
+.agenda-now { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-1) 0; padding-inline: var(--context-row-inset); color: var(--accent); font-size: var(--text-meta); }
+.agenda-now::after { content: ""; flex: 1; border-top: 1px solid currentColor; }
 .today-column-link { margin: 0; padding: var(--space-3) var(--context-row-inset); }
 .inbox-zero-next > .context-status { margin-bottom: var(--space-2); padding-inline: var(--context-row-inset); }
 .inbox-zero-next .btn { margin-left: var(--context-row-inset); }
