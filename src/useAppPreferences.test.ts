@@ -31,6 +31,7 @@ describe("useAppPreferences", () => {
     act(() => result.current.setFontScale(140));
     act(() => result.current.setFontFamily("Georgia"));
     act(() => result.current.setEmailMinimumFontSize(18));
+    act(() => result.current.setEmailZoom(125));
     act(() => result.current.setAutoReadDelaySeconds(10));
     act(() => result.current.setLoadRemoteImages(true));
 
@@ -39,6 +40,8 @@ describe("useAppPreferences", () => {
     expect(result.current.fontScale).toBe(140);
     expect(result.current.fontFamily).toBe("Georgia");
     expect(result.current.emailMinimumFontSize).toBe(18);
+    expect(result.current.emailZoom).toBe(125);
+    expect(localStorage.getItem("threestrands.settings.emailZoom")).toBe("125");
     expect(localStorage.getItem("threestrands.settings.emailMinimumFontSize")).toBe("18");
     expect(result.current.autoReadDelaySeconds).toBe(10);
     expect(result.current.loadRemoteImages).toBe(true);

@@ -51,6 +51,19 @@ const legacyDimensionAttributes = "<p>Legacy dimension attributes</p>" + legacyD
 
 export const emailRenderingFixtures = {
   legacyDimensionAttributes,
+  zoomTable: `
+    <table cellpadding="0" cellspacing="0" style="width:240px;font-family:Arial;font-size:12px;line-height:18px"><tr>
+      <td style="padding:8px"><span>Oct 24, 2026</span></td>
+      <td style="padding:8px"><a href="https://example.com/read">Read in Browser</a></td>
+    </tr><tr><td colspan="2"><img src="https://example.com/icon.png" width="24" height="24" alt="Zoom icon"></td></tr></table>
+    <p>On Monday, A. Sender wrote:</p><blockquote><p>Earlier quoted message.</p></blockquote>
+  `,
+  zoomFlow: `
+    <style>.zoom-row { display:flex;gap:16px;width:240px;font-family:Arial;font-size:12px;line-height:18px;padding:8px; }</style>
+    <div class="zoom-row"><span>Oct 24, 2026</span><a href="https://example.com/read">Read in Browser</a></div>
+    <img src="https://example.com/icon.png" width="24" height="24" alt="Zoom icon">
+    <p>On Monday, A. Sender wrote:</p><blockquote><p>Earlier quoted message.</p></blockquote>
+  `,
   earlierTableReport: `<p>Your first report is ready.</p>${tableReportFooter}`,
   repeatedTableFooter: `<p>Your latest report includes new results.</p>${tableReportFooter}`,
   earlierFlowReport: `<p>Your previous account update.</p>${flowReportFooter}`,

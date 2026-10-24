@@ -11,7 +11,7 @@ import {
   type FontFamily,
 } from "./settings";
 import { readLaunchView, writeLaunchView, type LaunchView } from "./lastWorkspace";
-import { EMAIL_MINIMUM_FONT_SIZE } from "./emailRenderingPolicy";
+import { EMAIL_MINIMUM_FONT_SIZE, EMAIL_ZOOM } from "./emailRenderingPolicy";
 import { listSystemFontFamilies } from "./systemFonts";
 import { ICON_SIZE } from "./iconSizes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
@@ -23,6 +23,8 @@ export function AppearanceSettings({
   onAccentChange,
   fontScale,
   onFontScaleChange,
+  emailZoom,
+  onEmailZoomChange,
   emailMinimumFontSize,
   onEmailMinimumFontSizeChange,
   fontFamily,
@@ -34,6 +36,8 @@ export function AppearanceSettings({
   onAccentChange(accent: Accent): void;
   fontScale: number;
   onFontScaleChange(value: number): void;
+  emailZoom: number;
+  onEmailZoomChange(value: number): void;
   emailMinimumFontSize: number;
   onEmailMinimumFontSizeChange(value: number): void;
   fontFamily: FontFamily;
@@ -142,6 +146,7 @@ export function AppearanceSettings({
       </div>
 
       <h3>Font Size</h3>
+      <p className="settings-hint" id="font-size-hint">Changes text throughout the app and in unformatted emails. Use Email Zoom to enlarge sender-formatted emails, including their images and spacing.</p>
       <div className="settings-row">
         <input
           type="range"
@@ -150,13 +155,32 @@ export function AppearanceSettings({
           step={FONT_SCALE_STEP}
           value={fontScale}
           aria-label="Font Size"
+          aria-describedby="font-size-hint"
           onChange={(event) => onFontScaleChange(Number(event.target.value))}
         />
         <span>{fontScale}%</span>
       </div>
 
+      <h3>Email Zoom</h3>
+      <p className="settings-hint" id="email-zoom-hint">Scales email text, images, and spacing together without enlarging app controls. Try 125% for easier reading. For the sender’s original proportions, turn Minimum Email Font Size off. Higher zoom may wrap content or require sideways scrolling.</p>
+      <div className="settings-row">
+        <input
+          type="range"
+          min={EMAIL_ZOOM.minPercent}
+          max={EMAIL_ZOOM.maxPercent}
+          step={EMAIL_ZOOM.stepPercent}
+          value={emailZoom}
+          aria-label="Email Zoom"
+          aria-describedby="email-zoom-hint"
+          aria-valuetext={`${emailZoom}%`}
+          onChange={(event) => onEmailZoomChange(Number(event.target.value))}
+        />
+        <span>{emailZoom}%</span>
+        <button type="button" className="btn btn-sm" disabled={emailZoom === EMAIL_ZOOM.defaultPercent} onClick={() => onEmailZoomChange(EMAIL_ZOOM.defaultPercent)}>Reset Email Zoom</button>
+      </div>
+
       <h3>Minimum Email Font Size</h3>
-      <p className="settings-hint" id="email-minimum-font-size-hint">Enlarges small text in received emails while keeping larger text at its original size. Try 18 px for easier reading. Text inside images is unchanged.</p>
+      <p className="settings-hint" id="email-minimum-font-size-hint">Raises only text smaller than your chosen size, before Email Zoom is applied. This can change line breaks and spacing; text inside images is unchanged. Leave this off to preserve the sender’s proportions, or use it with zoom when small print still needs help. These reading preferences stay on this device.</p>
       <div className="settings-row">
         <select
           aria-label="Minimum Email Font Size"

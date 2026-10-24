@@ -43,5 +43,6 @@
       "person@example.com": "teal",
       "family@group.calendar.google.com": "pink"
     }
-  }
+  },
+  "emailZoom": 125
 }

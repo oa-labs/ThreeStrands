@@ -47,6 +47,7 @@ describe("settings import navigation", () => {
         fontScale: 110,
         fontFamily: "Georgia",
         emailMinimumFontSize: 18,
+        emailZoom: 125,
         autoReadDelaySeconds: 8,
         loadRemoteImages: true,
         selectedAccountId: null,
@@ -102,6 +103,7 @@ describe("settings import navigation", () => {
     );
     expect(previewSettingsImport).toHaveBeenCalledWith("password123");
     expect(applySettingsImport).toHaveBeenCalledWith([]);
+    expect(localStorage.getItem("threestrands.settings.emailZoom")).toBe("125");
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
     expect(document.documentElement).toHaveAttribute("data-accent", "rose");
   });
@@ -321,6 +323,7 @@ describe("settings section keyboard navigation", () => {
     fireEvent.change(search, { target: { value: "minimum email font size" } });
     expect(within(dialog).getByRole("button", { name: "Appearance" })).toHaveAttribute("aria-current", "true");
     expect(within(dialog).getByRole("combobox", { name: "Minimum Email Font Size" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("slider", { name: "Email Zoom" })).toBeInTheDocument();
     fireEvent.change(search, {
       target: { value: "remote images" },
     });

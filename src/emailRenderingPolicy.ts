@@ -21,6 +21,15 @@ export const EMAIL_CSS_LIMITS = {
   maxFrameHeightPx: 50_000,
 } as const;
 
+/** Reader-owned magnification; sender CSS cannot opt into this capability. */
+export const EMAIL_ZOOM = { defaultPercent: 100, minPercent: 50, maxPercent: 200, stepPercent: 5 } as const;
+
+export function parseEmailZoom(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value)
+    && value >= EMAIL_ZOOM.minPercent && value <= EMAIL_ZOOM.maxPercent
+    ? value : EMAIL_ZOOM.defaultPercent;
+}
+
 /** Reader-owned accessibility preference; zero preserves sender typography. */
 export const EMAIL_MINIMUM_FONT_SIZE = {
   disabled: 0,

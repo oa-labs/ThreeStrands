@@ -54,3 +54,25 @@ Changes and responsive resizing restore author styles before recalculation; off
 restores author typography. Plain-text emails also respect the floor. Raster text
 inside images cannot be enlarged independently, and sender fixed-size boxes may
 wrap or overflow when text grows.
+
+## Reader email zoom
+
+Email zoom is a device-local reader preference, independent of interface text
+size and the minimum email font size. The shared `EMAIL_ZOOM` policy accepts
+whole percentages from 50 through 200, defaults to 100, and rejects invalid
+values rather than clamping. The control moves in five-point increments.
+The minimum font size applies before magnification, so an 18px floor at 125%
+zoom displays at approximately 22.5px. Enlarging only small text may still
+change sender proportions; leaving the floor off retains sender typography.
+
+For HTML, trusted parent code applies CSS zoom to the isolated document body,
+above the scoped sender root. It scales text, images, and spacing together;
+changes update the existing document and recalculate frame height and quote
+marker placement. Wide layouts can wrap or scroll horizontally at higher
+zoom. Plain text uses the same magnification on its text blocks, keeping the quote
+toggle and link destination indicator outside the zoomed content. This grants
+no sender CSS capability: `zoom` remains disallowed in sender declarations,
+and sandbox, CSP, link interception, image budgets, and proxy gating stay in
+force. No resource, execution, navigation, or external interaction path is
+added. Settings exports accept the new optional field with a 100% default
+for preceding exports; automatic preference sync keeps it on this device.
