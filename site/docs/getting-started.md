@@ -54,6 +54,6 @@ In **Settings → Mail Accounts**, each account has:
 - **Signatures** — formatted sign-offs with logos, Gmail import, and separate defaults for new messages and replies.
 - **Muted Senders** — review senders whose new mail is marked read and archived automatically.
 - **Privacy** — remote images are blocked by default; turn on **Load Remote Images Automatically** here, or click **Load images** on a single message. You can also choose how long to keep mail on this device.
-- **Default Apps** (macOS) — open email links and `.ics` invitations in ThreeStrands.
+- **Default Apps** — open email links and `.ics` invitations in ThreeStrands.
 
 Next: [learn the triage loop](triage.html).

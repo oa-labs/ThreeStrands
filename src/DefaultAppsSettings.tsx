@@ -12,8 +12,9 @@ const ROLES: { role: DefaultAppRole; label: string; hint: string }[] = [
 ];
 
 /**
- * Makes ThreeStrands the macOS default for email links and calendar
- * invitations. macOS confirms each change with the user.
+ * Makes ThreeStrands the default for email links and calendar invitations.
+ * macOS confirms each change with the user; Windows only lets the user make
+ * it, so the button opens the page in Windows Settings where they do.
  */
 export function DefaultAppsSettings() {
   const [status, setStatus] = useState<DefaultAppStatus | null>(null);
@@ -23,7 +24,8 @@ export function DefaultAppsSettings() {
     .then((next) => { setStatus(next); setLoadError(null); })
     .catch((reason: unknown) => setLoadError(errorMessage(reason))), []);
 
-  // The default can also change in Finder or Mail, so check again on return.
+  // The default can also change in the system's settings or another app, so
+  // check again on return.
   useEffect(() => {
     void refresh();
     window.addEventListener("focus", refresh);
@@ -35,7 +37,10 @@ export function DefaultAppsSettings() {
       <h3>Open in ThreeStrands</h3>
       {loadError ? <p className="form-error" role="alert">{loadError}</p> : null}
       {status && !status.supported ? (
-        <p className="settings-hint">Default apps can be set from the installed ThreeStrands app on macOS.</p>
+        <p className="settings-hint">Default apps can be set from an installed copy of ThreeStrands.</p>
+      ) : null}
+      {status?.supported && status.opensSystemSettings ? (
+        <p className="settings-hint">Windows lets only you change default apps. Choose ThreeStrands on the page that opens, then come back here.</p>
       ) : null}
       {status?.supported ? ROLES.map(({ role, label, hint }) => (
         <div key={role} className="settings-default-app-row">
@@ -54,7 +59,7 @@ export function DefaultAppsSettings() {
                   disabled={pending !== null}
                   onClick={() => runFor(role, async () => setStatus(await mailClient.makeDefaultApp(role)))}
                 >
-                  {pending === role ? "Waiting for macOS…" : "Make Default"}
+                  {pending === role ? "Waiting…" : status.opensSystemSettings ? "Open Windows Settings" : "Make Default"}
                 </button>
               )}
             </div>
