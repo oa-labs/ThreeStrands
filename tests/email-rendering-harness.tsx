@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { SafeMessage } from "../src/SafeMessage";
+import { parseEmailTextColors } from "../src/emailRenderingPolicy";
 import { emailRenderingFixtures } from "../src/test/emailRenderingFixtures";
 import { threadTextIndex } from "../src/threadTextIndex";
 import "../src/styles.css";
@@ -46,6 +47,7 @@ function RenderingHarness() {
   const [zoom, setZoom] = useState(Number(params.get("zoom") ?? 100));
   const [minimum, setMinimum] = useState(Number(params.get("minimumFontSize") ?? 0));
   const [tone, setTone] = useState<"default" | "current" | "muted">("default");
+  const [textColors, setTextColors] = useState(parseEmailTextColors(params.get("textColors")));
   return (
     <div style={{ width: "100%", maxWidth: 760, margin: "0 auto" }}>
       {params.has("zoom") ? <select aria-label="Email zoom" value={zoom} onChange={(event) => setZoom(Number(event.target.value))}>
@@ -57,7 +59,10 @@ function RenderingHarness() {
       {params.has("tone") ? <select aria-label="Message tone" value={tone} onChange={(event) => setTone(event.target.value as typeof tone)}>
         <option value="default">Unread</option><option value="muted">Read</option><option value="current">Latest</option>
       </select> : null}
-      <SafeMessage html={params.has("plain") ? "" : fixture} text="Plain text message" theme={theme} loadImages={params.has("images")} resolveImage={resolveFixtureImage} emailZoom={zoom} emailMinimumFontSize={minimum} priorThreadText={priorThreadText} tone={tone} />
+      {params.has("textColors") ? <select aria-label="Email text colors" value={textColors} onChange={(event) => setTextColors(parseEmailTextColors(event.target.value))}>
+        <option value="contrast">Improve Contrast</option><option value="sender">Keep Sender Colors</option><option value="app">Use App Colors</option>
+      </select> : null}
+      <SafeMessage html={params.has("plain") ? "" : fixture} text="Plain text message" theme={theme} loadImages={params.has("images")} resolveImage={resolveFixtureImage} emailZoom={zoom} emailMinimumFontSize={minimum} priorThreadText={priorThreadText} tone={tone} emailTextColors={textColors} />
     </div>
   );
 }

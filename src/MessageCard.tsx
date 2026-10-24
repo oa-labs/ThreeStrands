@@ -15,6 +15,7 @@ import { errorMessage } from "./errors";
 import { isInlineImageAttachment, normalizeContentId, referencedImageContentIds } from "./inlineAttachments";
 import { decodeHtmlEntities, SafeMessage, type LinkReveal } from "./SafeMessage";
 import type { ThreadTextIndex } from "./quotedHistory";
+import type { EmailTextColors } from "./emailRenderingPolicy";
 import type { FontFamily } from "./settings";
 import { formatMailTimestamp } from "./threadPresentation";
 import { ICON_SIZE } from "./iconSizes";
@@ -41,6 +42,7 @@ type MessageCardProps = {
   fontFamily: FontFamily;
   emailZoom?: number;
   emailMinimumFontSize?: number;
+  emailTextColors?: EmailTextColors;
   /** The conversation's text index; this card folds text repeated from messages before `index`. */
   threadText?: ThreadTextIndex;
   onActivate: (messageId: string) => void;
@@ -74,6 +76,7 @@ export const MessageCard = memo(function MessageCard({
   fontFamily,
   emailZoom,
   emailMinimumFontSize = 0,
+  emailTextColors,
   threadText,
   onActivate,
   onToggle,
@@ -286,6 +289,7 @@ export const MessageCard = memo(function MessageCard({
           fontFamily={fontFamily}
           emailZoom={emailZoom}
           emailMinimumFontSize={emailMinimumFontSize}
+          emailTextColors={emailTextColors}
           tone={isLatest ? "current" : message.unread ? "default" : "muted"}
           priorThreadText={priorThreadText}
           revealLink={revealLink}

@@ -1,3 +1,4 @@
+import type { EmailTextColors } from "./emailRenderingPolicy";
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -11,6 +12,7 @@ import {
   readAutoReadDelaySeconds,
   readFontFamily,
   readEmailMinimumFontSize,
+  readEmailTextColors,
   readEmailZoom,
   readLoadRemoteImages,
   readAvailabilityPreferences,
@@ -18,6 +20,7 @@ import {
   saveAutoReadDelaySeconds,
   saveFontFamily,
   saveEmailMinimumFontSize,
+  saveEmailTextColors,
   saveEmailZoom,
   saveLoadRemoteImages,
   type FontFamily,
@@ -50,6 +53,7 @@ export function useAppPreferences() {
   const [fontScale, setFontScaleState] = useState(readFontScale);
   const [emailZoom, setEmailZoomState] = useState(readEmailZoom);
   const [emailMinimumFontSize, setEmailMinimumFontSizeState] = useState(readEmailMinimumFontSize);
+  const [emailTextColors, setEmailTextColorsState] = useState(readEmailTextColors);
   const [fontFamily, setFontFamilyState] = useState(readFontFamily);
   const [autoReadDelaySeconds, setAutoReadDelayState] = useState(readAutoReadDelaySeconds);
   const [loadRemoteImages, setLoadRemoteImagesState] = useState(readLoadRemoteImages);
@@ -124,6 +128,9 @@ export function useAppPreferences() {
   const setEmailZoom = useCallback((value: number) => {
     setEmailZoomState(saveEmailZoom(value));
   }, []);
+  const setEmailTextColors = useCallback((value: EmailTextColors) => {
+    setEmailTextColorsState(saveEmailTextColors(value));
+  }, []);
   const setEmailMinimumFontSize = useCallback((value: number) => {
     setEmailMinimumFontSizeState(saveEmailMinimumFontSize(value));
     queuePortablePreferences();
@@ -161,6 +168,8 @@ export function useAppPreferences() {
     setEmailZoom,
     emailMinimumFontSize,
     setEmailMinimumFontSize,
+    emailTextColors,
+    setEmailTextColors,
     autoReadDelaySeconds,
     setAutoReadDelaySeconds,
     loadRemoteImages,

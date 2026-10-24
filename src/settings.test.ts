@@ -13,6 +13,7 @@ import {
   readAvailabilityPreferences,
   readFontFamily,
   readEmailMinimumFontSize,
+  readEmailTextColors,
   readEmailZoom,
   readLabelUsage,
   readLoadRemoteImages,
@@ -26,6 +27,7 @@ import {
   saveAvailabilityPreferences,
   saveFontFamily,
   saveEmailMinimumFontSize,
+  saveEmailTextColors,
   saveEmailZoom,
   saveLoadRemoteImages,
   saveSelectedAccountId,
@@ -328,6 +330,29 @@ describe("minimum email font size preference", () => {
     get.mockRestore();
     const set = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("unavailable"); });
     expect(saveEmailMinimumFontSize(18)).toBe(18);
+    set.mockRestore();
+  });
+});
+
+describe("email text colors preference", () => {
+  afterEach(() => localStorage.clear());
+
+  it("defaults to improved contrast and restores a saved mode", () => {
+    expect(readEmailTextColors()).toBe("contrast");
+    expect(saveEmailTextColors("app")).toBe("app");
+    expect(readEmailTextColors()).toBe("app");
+    saveEmailTextColors("sender");
+    expect(readEmailTextColors()).toBe("sender");
+  });
+
+  it("rejects invalid stored values and handles unavailable storage", () => {
+    localStorage.setItem("threestrands.settings.emailTextColors", "invert");
+    expect(readEmailTextColors()).toBe("contrast");
+    const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("unavailable"); });
+    expect(readEmailTextColors()).toBe("contrast");
+    get.mockRestore();
+    const set = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("unavailable"); });
+    expect(saveEmailTextColors("app")).toBe("app");
     set.mockRestore();
   });
 });

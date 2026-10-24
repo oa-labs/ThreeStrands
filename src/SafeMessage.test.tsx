@@ -36,6 +36,16 @@ function loadFrame(frame: HTMLIFrameElement) {
   return frame.contentDocument!;
 }
 
+/** Like loadFrame, with the document's theme tokens so computed colors resolve as in a browser. */
+function loadFrameWithHead(frame: HTMLIFrameElement) {
+  const parsed = new DOMParser().parseFromString(frame.srcdoc, "text/html");
+  const doc = frame.contentDocument!;
+  doc.documentElement.dataset.theme = parsed.documentElement.dataset.theme;
+  doc.documentElement.innerHTML = parsed.documentElement.innerHTML;
+  fireEvent.load(frame);
+  return doc;
+}
+
 describe("SafeMessage", () => {
   it.each(["zoomTable", "zoomFlow"] as const)("changes %s zoom in place without changing sender styles or selection", (fixture) => {
     const html = emailRenderingFixtures[fixture];
@@ -200,6 +210,43 @@ describe("SafeMessage", () => {
     expect(screen.getByTestId("message-body")).toHaveStyle({ fontSize: "max(18px, var(--text-reading))" });
     rerender(<SafeMessage html="" text="Plain message" emailMinimumFontSize={9000} />);
     expect(screen.getByTestId("message-body").style.fontSize).toBe("");
+  });
+
+  it("switches email text colors in place without reloading the message document", () => {
+    const html = '<p style="color:#0000ee">Only examples</p><p style="color:#666666">Vice President of IT</p>';
+    const { rerender } = render(<SafeMessage html={html} theme="dark" />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    const doc = loadFrameWithHead(frame);
+    const srcdoc = frame.srcdoc;
+    const [body, signature] = Array.from(doc.querySelectorAll("p"));
+    // Improve Contrast is the default.
+    expect(body.style.color).not.toBe("rgb(0, 0, 238)");
+    expect(body.style.getPropertyPriority("color")).toBe("important");
+    expect(signature.style.color).not.toBe("rgb(102, 102, 102)");
+    rerender(<SafeMessage html={html} theme="dark" emailTextColors="sender" />);
+    expect(body.style.color).toBe("rgb(0, 0, 238)");
+    expect(body.style.getPropertyPriority("color")).toBe("");
+    rerender(<SafeMessage html={html} theme="dark" emailTextColors="app" />);
+    expect(body.style.color).toBe("inherit");
+    expect(frame.srcdoc).toBe(srcdoc);
+    expect(frame.contentDocument).toBe(doc);
+  });
+
+  it("keeps the script and remote-resource boundary with text colors overridden", () => {
+    const html = '<p style="color:#0000ee;background:url(https://tracker.invalid)">Read me</p><img src="https://tracker.invalid/image"><script>parent.compromised=true</script><a href="javascript:alert(1)" style="color:#000">Bad link</a>';
+    for (const mode of ["contrast", "app"] as const) {
+      const resolveImage = vi.fn();
+      const { unmount } = render(<SafeMessage html={html} emailTextColors={mode} resolveImage={resolveImage} />);
+      const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+      const doc = loadFrameWithHead(frame);
+      expect(frame.srcdoc).toContain("script-src 'none'");
+      expect(doc.querySelector("script")).toBeNull();
+      expect(doc.querySelector("img")!.hasAttribute("src")).toBe(false);
+      expect(doc.querySelector("a")!.hasAttribute("href")).toBe(false);
+      expect(doc.querySelector("[data-email-root]")!.innerHTML).not.toMatch(/url\(/i);
+      expect(resolveImage).not.toHaveBeenCalled();
+      unmount();
+    }
   });
 
   it("keeps the script and remote-resource boundary with a font floor enabled", () => {

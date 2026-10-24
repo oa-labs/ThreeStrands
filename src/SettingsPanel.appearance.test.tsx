@@ -17,6 +17,8 @@ function Appearance() {
     emailZoom={preferences.emailZoom} onEmailZoomChange={preferences.setEmailZoom}
     emailMinimumFontSize={preferences.emailMinimumFontSize}
     onEmailMinimumFontSizeChange={preferences.setEmailMinimumFontSize}
+    emailTextColors={preferences.emailTextColors}
+    onEmailTextColorsChange={preferences.setEmailTextColors}
   />;
 }
 
@@ -60,5 +62,22 @@ describe("appearance settings", () => {
     expect(restored).toHaveValue("18");
     fireEvent.change(restored, { target: { value: "0" } });
     expect(localStorage.getItem("threestrands.settings.emailMinimumFontSize")).toBe("0");
+  });
+  it("defaults email text colors to improved contrast and saves each mode on this device", async () => {
+    const { unmount } = render(<Appearance />);
+    const select = screen.getByRole("combobox", { name: "Email Text Colors" });
+    expect(select).toHaveValue("contrast");
+    expect(select).toHaveAccessibleDescription(/only text that is hard to read/);
+    expect(localStorage.getItem("threestrands.settings.emailTextColors")).toBeNull();
+    fireEvent.change(select, { target: { value: "app" } });
+    expect(select).toHaveValue("app");
+    expect(localStorage.getItem("threestrands.settings.emailTextColors")).toBe("app");
+    await screen.findByRole("button", { name: "Default font: System Default" });
+    unmount();
+    render(<Appearance />);
+    const restored = screen.getByRole("combobox", { name: "Email Text Colors" });
+    expect(restored).toHaveValue("app");
+    fireEvent.change(restored, { target: { value: "sender" } });
+    expect(localStorage.getItem("threestrands.settings.emailTextColors")).toBe("sender");
   });
 });

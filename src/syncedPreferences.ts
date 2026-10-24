@@ -29,6 +29,7 @@ export async function queuePortablePreferencesAndWait(): Promise<void> {
     fontFamily: _deviceFontFamily,
     emailMinimumFontSize: _deviceEmailMinimumFontSize,
     emailZoom: _deviceEmailZoom,
+    emailTextColors: _deviceEmailTextColors,
     ...preferences
   } = readExportablePreferences();
   const earlierWrites = [...pendingWrites];
@@ -72,6 +73,7 @@ export async function pullSyncedPreferences(): Promise<boolean> {
     fontFamily: local.fontFamily,
     emailMinimumFontSize: local.emailMinimumFontSize,
     emailZoom: local.emailZoom,
+    emailTextColors: local.emailTextColors,
     selectedAccountId: local.selectedAccountId,
   };
   // Older devices may send an aiFeatures object without newer flags. An

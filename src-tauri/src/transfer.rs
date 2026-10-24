@@ -92,6 +92,9 @@ pub struct TransferPreferences {
     // Added in 0.163; preceding exports import at 100% zoom.
     #[serde(default = "default_email_zoom", skip_serializing_if = "is_default_email_zoom")]
     pub email_zoom: i64,
+    // Added in 0.164; preceding exports import with the contrast floor on.
+    #[serde(default = "default_email_text_colors", skip_serializing_if = "is_default_email_text_colors")]
+    pub email_text_colors: String,
     pub auto_read_delay_seconds: i64,
     pub load_remote_images: bool,
     pub selected_account_id: Option<String>,
@@ -118,6 +121,14 @@ fn default_email_zoom() -> i64 {
 
 fn is_default_email_zoom(value: &i64) -> bool {
     *value == default_email_zoom()
+}
+
+fn default_email_text_colors() -> String {
+    "contrast".to_string()
+}
+
+fn is_default_email_text_colors(value: &String) -> bool {
+    *value == default_email_text_colors()
 }
 
 fn default_accent() -> String {
@@ -162,6 +173,10 @@ impl TransferPreferences {
         // Mirrors EMAIL_ZOOM in emailRenderingPolicy.ts at the native boundary.
         if !(50..=200).contains(&self.email_zoom) {
             return Err("The transfer contains an invalid email zoom".to_string());
+        }
+        // Mirrors EMAIL_TEXT_COLORS in emailRenderingPolicy.ts.
+        if !matches!(self.email_text_colors.as_str(), "sender" | "contrast" | "app") {
+            return Err("The transfer contains an invalid email text color mode".to_string());
         }
         if !(0..=60).contains(&self.auto_read_delay_seconds) {
             return Err("The transfer contains an invalid read delay".to_string());
@@ -928,6 +943,7 @@ mod tests {
                 font_family: "system".to_string(),
                 email_minimum_font_size: 18,
                 email_zoom: default_email_zoom(),
+                email_text_colors: default_email_text_colors(),
                 auto_read_delay_seconds: 2,
                 load_remote_images: false,
                 selected_account_id: Some("person@example.com".to_string()),
@@ -1537,6 +1553,29 @@ mod tests {
     }
 
     #[test]
+    fn preceding_export_defaults_email_text_colors_to_contrast() {
+        let (_, result) = import_fixture(fixtures::V4_CURRENT);
+        assert_eq!(result.preferences.email_text_colors, "contrast");
+        // The preceding schema is preserved when the default is kept.
+        let serialized = serde_json::to_value(&result.preferences).unwrap();
+        assert!(serialized.get("emailTextColors").is_none());
+    }
+
+    #[test]
+    fn email_text_colors_round_trip_and_reject_unknown_modes() {
+        let mut payload = decrypt(fixtures::V4_CURRENT, fixtures::PASSWORD).unwrap();
+        for value in ["sender", "contrast", "app"] {
+            payload.preferences.email_text_colors = value.to_string();
+            let result = decrypt(&encrypt(&payload, fixtures::PASSWORD).unwrap(), fixtures::PASSWORD).unwrap();
+            assert_eq!(result.preferences.email_text_colors, value);
+        }
+        for value in ["", "invert", "Contrast"] {
+            payload.preferences.email_text_colors = value.to_string();
+            assert!(payload.preferences.validate().is_err());
+        }
+    }
+
+    #[test]
     fn minimum_email_font_size_round_trips_and_rejects_invalid_bounds() {
         let mut payload = decrypt(fixtures::V4_CURRENT, fixtures::PASSWORD).unwrap();
         for value in [0, 12, 18, 32] {
@@ -1742,6 +1781,7 @@ mod tests {
                 font_family: "Iowan Old Style".to_string(),
                 email_minimum_font_size: 18,
                 email_zoom: default_email_zoom(),
+                email_text_colors: default_email_text_colors(),
                 auto_read_delay_seconds: 15,
                 load_remote_images: true,
                 selected_account_id: Some("current@example.com".to_string()),

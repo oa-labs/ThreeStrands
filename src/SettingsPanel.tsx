@@ -245,6 +245,8 @@ export function Settings({
               onEmailZoomChange={preferences.setEmailZoom}
               emailMinimumFontSize={preferences.emailMinimumFontSize}
               onEmailMinimumFontSizeChange={preferences.setEmailMinimumFontSize}
+              emailTextColors={preferences.emailTextColors}
+              onEmailTextColorsChange={preferences.setEmailTextColors}
               fontFamily={preferences.fontFamily}
               onFontFamilyChange={preferences.setFontFamily}
             />

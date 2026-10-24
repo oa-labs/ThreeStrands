@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { emailRenderingFixtures } from "../../src/test/emailRenderingFixtures";
+import { composite, contrastRatio, parseComputedColor } from "../../src/emailTextColors";
+import { EMAIL_TEXT_COLORS } from "../../src/emailRenderingPolicy";
 
 test.describe("email rendering fixtures", () => {
   for (const fixture of ["zoomTable", "zoomFlow"]) {
@@ -122,6 +124,61 @@ test.describe("email rendering fixtures", () => {
       }
       await originalDocument.dispose();
     });
+  }
+
+  for (const fixture of ["lowContrastSignatureFlow", "lowContrastTableCard"]) {
+    for (const theme of ["light", "dark"]) {
+      test(`${fixture} text colors meet the contrast floor and switch modes in place in ${theme}`, async ({ page }) => {
+        await page.goto(`/tests/email-rendering.html?theme=${theme}&fixture=${fixture}&textColors`);
+        const frame = page.locator("iframe.message-body");
+        const root = frame.contentFrame().locator("[data-email-root]");
+        await expect(root).toContainText(fixture === "lowContrastTableCard" ? "white card" : "Example Lab");
+        const originalSrcdoc = await frame.getAttribute("srcdoc");
+        // Each visible text element's color over the backgrounds stacked beneath it.
+        const measure = () => root.evaluate((element) => {
+          const view = element.ownerDocument.defaultView!;
+          const canvas = view.getComputedStyle(element.ownerDocument.documentElement).getPropertyValue("--canvas");
+          return Array.from(element.querySelectorAll<HTMLElement>("*"))
+            .filter((node) => Array.from(node.childNodes).some((child) => child.nodeType === Node.TEXT_NODE && child.textContent?.trim()))
+            .map((node) => {
+              const layers: string[] = [];
+              for (let current: Element | null = node; current; current = current.parentElement) layers.push(view.getComputedStyle(current).backgroundColor);
+              return { text: node.textContent!.trim(), color: view.getComputedStyle(node).color, layers, canvas };
+            });
+        });
+        const contrastOf = (sample: Awaited<ReturnType<typeof measure>>[number]) => {
+          const background = sample.layers.reduceRight((under, layer) => composite(parseComputedColor(layer)!, under), parseComputedColor(sample.canvas)!);
+          return contrastRatio(composite(parseComputedColor(sample.color)!, background), background);
+        };
+        const isFiller = (text: string) => text === "preview filler";
+
+        // Improve Contrast: every visible text element is readable, sender
+        // colors that already were are kept, and deliberately hidden text stays hidden.
+        const samples = await measure();
+        expect(samples.length).toBeGreaterThanOrEqual(4);
+        for (const sample of samples) {
+          if (isFiller(sample.text)) expect(sample.color).toBe("rgb(255, 255, 255)");
+          else expect(contrastOf(sample), sample.text).toBeGreaterThanOrEqual(EMAIL_TEXT_COLORS.minContrastRatio);
+        }
+        if (fixture === "lowContrastTableCard") {
+          await expect(root.getByText("Blue on the sender's white card")).toHaveCSS("color", "rgb(0, 0, 238)");
+        }
+
+        const control = page.getByRole("combobox", { name: "Email text colors" });
+        await control.selectOption("sender");
+        const blue = fixture === "lowContrastTableCard" ? root.getByText("Blue on the sender's white card") : root.locator("font");
+        await expect(blue).toHaveCSS("color", "rgb(0, 0, 238)");
+        await expect(root.getByText(fixture === "lowContrastTableCard" ? "Text written for a white page." : "Sample Person")).toHaveCSS(
+          "color", fixture === "lowContrastTableCard" ? "rgb(51, 51, 51)" : "rgb(119, 119, 119)");
+
+        await control.selectOption("app");
+        for (const sample of await measure()) {
+          if (!isFiller(sample.text)) expect(contrastOf(sample), sample.text).toBeGreaterThanOrEqual(EMAIL_TEXT_COLORS.minContrastRatio);
+        }
+        if (fixture === "lowContrastTableCard") await expect(root.locator("td[bgcolor]")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+        expect(await frame.getAttribute("srcdoc")).toBe(originalSrcdoc);
+      });
+    }
   }
 
   test("plain text respects the floor and keeps a larger app font scale", async ({ page }) => {

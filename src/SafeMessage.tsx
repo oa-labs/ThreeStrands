@@ -16,10 +16,14 @@ import {
   sanitizeHtmlDimension,
   sanitizeHtmlFontSize,
   parseEmailMinimumFontSize,
+  parseEmailTextColors,
   parseEmailZoom,
+  EMAIL_TEXT_COLORS,
   EMAIL_ZOOM,
+  type EmailTextColors,
 } from "./emailRenderingPolicy";
 import { createEmailFontSizeController } from "./emailMinimumFontSize";
+import { createEmailTextColorController } from "./emailTextColors";
 import { sanitizeStyleSheet } from "./emailStyleSheet";
 import {
   collapseQuotedHistoryHtml,
@@ -54,6 +58,7 @@ type SafeMessageProps = {
   fontScale?: number;
   emailZoom?: number;
   emailMinimumFontSize?: number;
+  emailTextColors?: EmailTextColors;
   fontFamily?: FontFamily;
   tone?: "default" | "current" | "muted";
   /** Text from earlier messages in the conversation; lets repeated text (such as a signature) fold. */
@@ -75,7 +80,7 @@ type SafeMessageProps = {
   onEnterKey?: () => void;
 };
 
-export type MessageAppearance = Pick<SafeMessageProps, "theme" | "fontScale" | "fontFamily" | "emailZoom" | "emailMinimumFontSize" | "loadImages">;
+export type MessageAppearance = Pick<SafeMessageProps, "theme" | "fontScale" | "fontFamily" | "emailZoom" | "emailMinimumFontSize" | "emailTextColors" | "loadImages">;
 
 async function defaultResolveImage(): Promise<string> {
   throw new Error("Image loading is not configured for this SafeMessage instance");
@@ -101,6 +106,9 @@ const QUOTED_HISTORY_FOLD_HEIGHT = 28;
 const MESSAGE_DOCUMENT_STYLES = `
 :root {
   color-scheme: dark;
+  /* The message card (--raised) the transparent frame is painted over; the
+     text color controller measures contrast against it. Not painted here. */
+  --canvas: rgb(29, 29, 33);
   --text: #e8e8eb;
   --hover: #24242a;
   --code: #1b1b20;
@@ -113,6 +121,7 @@ const MESSAGE_DOCUMENT_STYLES = `
 }
 :root[data-theme="light"] {
   color-scheme: light;
+  --canvas: rgb(255, 255, 255);
   --text: #24242c;
   --hover: #e9e9f1;
   --code: #f1f1f6;
@@ -601,6 +610,7 @@ export function SafeMessage({
   fontScale = 1,
   emailZoom = EMAIL_ZOOM.defaultPercent,
   emailMinimumFontSize = 0,
+  emailTextColors = EMAIL_TEXT_COLORS.defaultMode,
   fontFamily = "system",
   tone = "default",
   priorThreadText,
@@ -618,6 +628,11 @@ export function SafeMessage({
   minimumFontSizeRef.current = minimumFontSize;
   const fontSizeControllerRef = useRef<((value: number) => void) | null>(null);
   useEffect(() => { fontSizeControllerRef.current?.(minimumFontSize); }, [minimumFontSize]);
+  const textColors = parseEmailTextColors(emailTextColors);
+  const textColorsRef = useRef(textColors);
+  textColorsRef.current = textColors;
+  const textColorControllerRef = useRef<((value: EmailTextColors) => void) | null>(null);
+  useEffect(() => { textColorControllerRef.current?.(textColors); }, [textColors]);
   const onImageClickRef = useRef(onImageClick);
   onImageClickRef.current = onImageClick;
   // Callers typically pass an inline resolver; reading it through a ref
@@ -753,6 +768,11 @@ export function SafeMessage({
     const updateFontSize = createEmailFontSizeController(frameDoc);
     fontSizeControllerRef.current = updateFontSize;
     updateFontSize(minimumFontSizeRef.current);
+    // Reader-owned color overrides, like the font floor, replace inline
+    // values in place and restore them when the setting changes.
+    const updateTextColors = createEmailTextColorController(frameDoc);
+    textColorControllerRef.current = updateTextColors;
+    updateTextColors(textColorsRef.current);
     // A reload (theme change, quote expansion) starts from the blocked
     // markup again, so re-apply everything resolved so far.
     fillResolvedImages(frameDoc, resolvedImagesRef.current);
@@ -779,6 +799,8 @@ export function SafeMessage({
     resize();
     const onResize = () => {
       updateFontSize(minimumFontSizeRef.current);
+      // Width media queries can change sender colors as well as sizes.
+      updateTextColors(textColorsRef.current);
       resize();
     };
     frameDoc.defaultView?.addEventListener("resize", onResize);

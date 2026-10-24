@@ -29,6 +29,7 @@ describe("synced preferences data boundary", () => {
     localStorage.setItem("threestrands.settings.fontFamily", "Georgia");
     localStorage.setItem("threestrands.settings.emailMinimumFontSize", "16");
     localStorage.setItem("threestrands.settings.emailZoom", "125");
+    localStorage.setItem("threestrands.settings.emailTextColors", "app");
 
     queuePortablePreferences();
 
@@ -40,6 +41,7 @@ describe("synced preferences data boundary", () => {
     expect(preferences).not.toHaveProperty("fontFamily");
     expect(preferences).not.toHaveProperty("emailMinimumFontSize");
     expect(preferences).not.toHaveProperty("emailZoom");
+    expect(preferences).not.toHaveProperty("emailTextColors");
   });
 
   it("does not queue or pull preferences outside the native app", async () => {
@@ -82,6 +84,7 @@ describe("synced preferences data boundary", () => {
     localStorage.setItem("threestrands.settings.fontFamily", "Helvetica");
     localStorage.setItem("threestrands.settings.emailMinimumFontSize", "12");
     localStorage.setItem("threestrands.settings.emailZoom", "125");
+    localStorage.setItem("threestrands.settings.emailTextColors", "sender");
     vi.mocked(invoke).mockResolvedValue({
       // Older app versions replicated appearance fields.
       theme: "light",
@@ -89,6 +92,7 @@ describe("synced preferences data boundary", () => {
       fontScale: 110,
       emailMinimumFontSize: 18,
       emailZoom: 150,
+      emailTextColors: "app",
       fontFamily: "Georgia",
       selectedAccountId: "remote@example.com",
       autoReadDelaySeconds: 4,
@@ -117,6 +121,7 @@ describe("synced preferences data boundary", () => {
     expect(localStorage.getItem("threestrands.settings.fontFamily")).toBe("Helvetica");
     expect(localStorage.getItem("threestrands.settings.emailMinimumFontSize")).toBe("12");
     expect(localStorage.getItem("threestrands.settings.emailZoom")).toBe("125");
+    expect(localStorage.getItem("threestrands.settings.emailTextColors")).toBe("sender");
     expect(localStorage.getItem("threestrands.settings.autoReadDelaySeconds")).toBe("4");
     expect(localStorage.getItem("threestrands.crash-reports")).toBeNull();
   });

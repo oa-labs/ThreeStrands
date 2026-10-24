@@ -46,6 +46,37 @@ export function parseEmailMinimumFontSize(value: unknown): number {
 }
 
 /**
+ * Reader-owned text color handling. `sender` keeps sender colors verbatim,
+ * `contrast` changes only text below the minimum contrast ratio against the
+ * background it is painted on, and `app` replaces sender text and background
+ * colors with the reader's theme. Text within `hiddenTextMaxContrast` of a
+ * background the sender painted is treated as deliberately hidden (preheader
+ * filler, spacer text) and keeps its color.
+ */
+export const EMAIL_TEXT_COLORS = {
+  modes: ["sender", "contrast", "app"],
+  defaultMode: "contrast",
+  minContrastRatio: 4.5,
+  hiddenTextMaxContrast: 1.2,
+} as const;
+
+export type EmailTextColors = typeof EMAIL_TEXT_COLORS.modes[number];
+
+export function parseEmailTextColors(value: unknown): EmailTextColors {
+  return EMAIL_TEXT_COLORS.modes.find((mode) => mode === value) ?? EMAIL_TEXT_COLORS.defaultMode;
+}
+
+/** True when text must change to reach the reader's minimum contrast. */
+export function belowMinimumContrast(ratio: number): boolean {
+  return ratio < EMAIL_TEXT_COLORS.minContrastRatio;
+}
+
+/** True when text is close enough to a sender-painted background to be deliberately hidden. */
+export function isDeliberatelyHiddenText(ratio: number): boolean {
+  return ratio <= EMAIL_TEXT_COLORS.hiddenTextMaxContrast;
+}
+
+/**
  * Resource budgets for remote and embedded images. These are kept beside the
  * other sender-controlled rendering limits so components do not invent local
  * caps. The native proxy independently enforces its byte/pixel/cache bounds at

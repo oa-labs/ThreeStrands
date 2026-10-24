@@ -44,5 +44,6 @@
       "family@group.calendar.google.com": "pink"
     }
   },
-  "emailZoom": 125
+  "emailZoom": 125,
+  "emailTextColors": "app"
 }

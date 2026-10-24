@@ -390,6 +390,21 @@ Second line: no further action is required from you unless an export fails, in w
   fontAttributesInFlow: `
     <p><font face="Georgia, serif" color="#336699" size="2">Program details</font> and <font size="+2" color="red">key dates</font>.</p>
   `,
+  // Colors chosen for a white page. Keep a flow signature (legacy <font>
+  // color, inline spans) and a table with a sender-painted card covered.
+  lowContrastSignatureFlow: `
+    <div><font color="#0000ee">These are only examples of employees with multiple jobs at the same location.</font></div>
+    <p style="color:#777777;font-weight:bold;margin-bottom:0">Sample Person</p>
+    <p style="color:#999999;margin:0"><i>Vice President of IT</i> | <span style="color:#555555">Example Lab</span></p>
+    <p style="color:#f2f2f2">Pale footer note</p>
+  `,
+  lowContrastTableCard: `
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr><td style="padding:16px;color:#333333">Text written for a white page.</td></tr>
+      <tr><td bgcolor="#ffffff" style="padding:16px"><span style="color:#0000ee">Blue on the sender's white card</span><span style="color:#ffffff;font-size:1px">preview filler</span></td></tr>
+      <tr><td style="padding:16px;background-color:#f4f4f4">Reader-colored text on a light panel</td></tr>
+    </table>
+  `,
   malformed: `
     <div style="position:fixed;top:0;left:0;z-index:99;animation:spin 1s;cursor:pointer">No overlay</div>
     <img src="javascript:alert(1)"><form action="https://example.com"><input value="bad"></form>

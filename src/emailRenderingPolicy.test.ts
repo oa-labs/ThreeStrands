@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EMAIL_ZOOM, parseEmailZoom, EMAIL_MINIMUM_FONT_SIZE, parseEmailMinimumFontSize, EMAIL_CSS_LIMITS, EMAIL_IMAGE_LIMITS, preservedImageMinWidth, emailFrameHeight, sanitizeCssDeclaration, sanitizeHtmlCellPadding, sanitizeHtmlDimension, sanitizeHtmlFontSize, EMAIL_LEGACY_FONT_SIZE } from "./emailRenderingPolicy";
+import { EMAIL_ZOOM, parseEmailZoom, EMAIL_MINIMUM_FONT_SIZE, parseEmailMinimumFontSize, EMAIL_TEXT_COLORS, parseEmailTextColors, belowMinimumContrast, isDeliberatelyHiddenText, EMAIL_CSS_LIMITS, EMAIL_IMAGE_LIMITS, preservedImageMinWidth, emailFrameHeight, sanitizeCssDeclaration, sanitizeHtmlCellPadding, sanitizeHtmlDimension, sanitizeHtmlFontSize, EMAIL_LEGACY_FONT_SIZE } from "./emailRenderingPolicy";
 
 describe("email rendering numeric policy", () => {
   it("validates email zoom at both bounds without clamping or accepting CSS", () => {
@@ -25,6 +25,21 @@ describe("email rendering numeric policy", () => {
     for (const value of [-1, 18.5, NaN, Infinity, "18", "18px; background:url(https://tracker.invalid)"]) {
       expect(parseEmailMinimumFontSize(value)).toBe(0);
     }
+  });
+  it("accepts only the known text color modes and defaults to the contrast floor", () => {
+    for (const mode of EMAIL_TEXT_COLORS.modes) expect(parseEmailTextColors(mode)).toBe(mode);
+    for (const value of [undefined, null, "", "invert", "APP", 1, "app;color:red"]) {
+      expect(parseEmailTextColors(value)).toBe("contrast");
+    }
+  });
+  it("applies the text contrast thresholds below, at, and above each limit", () => {
+    const { minContrastRatio, hiddenTextMaxContrast } = EMAIL_TEXT_COLORS;
+    expect(belowMinimumContrast(minContrastRatio - 0.01)).toBe(true);
+    expect(belowMinimumContrast(minContrastRatio)).toBe(false);
+    expect(belowMinimumContrast(minContrastRatio + 0.01)).toBe(false);
+    expect(isDeliberatelyHiddenText(hiddenTextMaxContrast - 0.01)).toBe(true);
+    expect(isDeliberatelyHiddenText(hiddenTextMaxContrast)).toBe(true);
+    expect(isDeliberatelyHiddenText(hiddenTextMaxContrast + 0.01)).toBe(false);
   });
   it("reads <font size> absolute and relative values within the legacy scale without clamping", () => {
     const { min, max, relativeBase } = EMAIL_LEGACY_FONT_SIZE;

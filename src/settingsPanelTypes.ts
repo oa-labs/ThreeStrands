@@ -1,3 +1,4 @@
+import type { EmailTextColors } from "./emailRenderingPolicy";
 import type {
   Account,
   AuthStatus,
@@ -38,6 +39,8 @@ export type SettingsPreferences = {
   setEmailZoom(value: number): void;
   emailMinimumFontSize: number;
   setEmailMinimumFontSize(value: number): void;
+  emailTextColors: EmailTextColors;
+  setEmailTextColors(value: EmailTextColors): void;
   fontFamily: FontFamily;
   setFontFamily(value: FontFamily): void;
   autoReadDelaySeconds: number;

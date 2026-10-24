@@ -4,6 +4,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### New
+- Email text that's hard to read, such as dark blue on a dark background or pale gray in a signature, is now lightened or darkened just enough to read while keeping its color. Choose **Use App Colors** under **Settings → Appearance → Email Text Colors** to replace sender colors with your theme's, or **Keep Sender Colors** to turn this off.
+
 ### Fixed
 - Meeting suggestions now prefer the full conferencing join link over a generic location such as “Microsoft Teams.” Emails offering multiple sessions keep each session paired with its own join link.
 

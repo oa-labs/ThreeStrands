@@ -11,7 +11,7 @@ import {
   type FontFamily,
 } from "./settings";
 import { readLaunchView, writeLaunchView, type LaunchView } from "./lastWorkspace";
-import { EMAIL_MINIMUM_FONT_SIZE, EMAIL_ZOOM } from "./emailRenderingPolicy";
+import { EMAIL_MINIMUM_FONT_SIZE, EMAIL_ZOOM, parseEmailTextColors, type EmailTextColors } from "./emailRenderingPolicy";
 import { listSystemFontFamilies } from "./systemFonts";
 import { ICON_SIZE } from "./iconSizes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
@@ -27,6 +27,8 @@ export function AppearanceSettings({
   onEmailZoomChange,
   emailMinimumFontSize,
   onEmailMinimumFontSizeChange,
+  emailTextColors,
+  onEmailTextColorsChange,
   fontFamily,
   onFontFamilyChange,
 }: {
@@ -40,6 +42,8 @@ export function AppearanceSettings({
   onEmailZoomChange(value: number): void;
   emailMinimumFontSize: number;
   onEmailMinimumFontSizeChange(value: number): void;
+  emailTextColors: EmailTextColors;
+  onEmailTextColorsChange(value: EmailTextColors): void;
   fontFamily: FontFamily;
   onFontFamilyChange(value: FontFamily): void;
 }) {
@@ -191,6 +195,21 @@ export function AppearanceSettings({
           <option value={EMAIL_MINIMUM_FONT_SIZE.disabled}>Off — Use Sender Sizes</option>
           {Array.from({ length: EMAIL_MINIMUM_FONT_SIZE.maxPx - EMAIL_MINIMUM_FONT_SIZE.minPx + 1 }, (_, index) => EMAIL_MINIMUM_FONT_SIZE.minPx + index)
             .map((size) => <option key={size} value={size}>{size} px</option>)}
+        </select>
+      </div>
+
+      <h3>Email Text Colors</h3>
+      <p className="settings-hint" id="email-text-colors-hint">Senders often pick colors for a white page. Improve Contrast lightens or darkens only text that is hard to read against its background and keeps its hue. Use App Colors replaces sender text and background colors with this theme’s. Text over images keeps the sender’s colors.</p>
+      <div className="settings-row">
+        <select
+          aria-label="Email Text Colors"
+          aria-describedby="email-text-colors-hint"
+          value={emailTextColors}
+          onChange={(event) => onEmailTextColorsChange(parseEmailTextColors(event.target.value))}
+        >
+          <option value="contrast">Improve Contrast</option>
+          <option value="sender">Keep Sender Colors</option>
+          <option value="app">Use App Colors</option>
         </select>
       </div>
 

@@ -1,4 +1,4 @@
-import { EMAIL_ZOOM, parseEmailZoom, parseEmailMinimumFontSize } from "./emailRenderingPolicy";
+import { EMAIL_ZOOM, parseEmailZoom, parseEmailMinimumFontSize, parseEmailTextColors, type EmailTextColors } from "./emailRenderingPolicy";
 
 export type FontFamily = string;
 
@@ -461,6 +461,22 @@ export function readEmailMinimumFontSize(): number {
 export function saveEmailMinimumFontSize(value: number): number {
   const next = parseEmailMinimumFontSize(value);
   try { localStorage.setItem(EMAIL_MINIMUM_FONT_SIZE_KEY, String(next)); } catch { /* session preference still applies */ }
+  return next;
+}
+
+const EMAIL_TEXT_COLORS_KEY = "threestrands.settings.emailTextColors";
+
+export function readEmailTextColors(): EmailTextColors {
+  try {
+    return parseEmailTextColors(localStorage.getItem(EMAIL_TEXT_COLORS_KEY));
+  } catch {
+    return parseEmailTextColors(null);
+  }
+}
+
+export function saveEmailTextColors(value: EmailTextColors): EmailTextColors {
+  const next = parseEmailTextColors(value);
+  try { localStorage.setItem(EMAIL_TEXT_COLORS_KEY, next); } catch { /* session preference still applies */ }
   return next;
 }
 
