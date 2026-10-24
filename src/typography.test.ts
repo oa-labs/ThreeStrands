@@ -162,6 +162,17 @@ describe("component typography", () => {
     expect(sizeOf(".context-section-header h3")).toBe("--text-label");
   });
 
+  it("sets Today's rows at the email list's UI size, like Files, rather than the side panel's", () => {
+    const emailSize = sizeOf(".thread-subject");
+    expect(sizeOf(".today-column .context-row-title")).toBe(emailSize);
+    expect(rolePx(sizeOf(".context-row-title")!)).toBeLessThan(rolePx(emailSize!));
+    for (const selector of [".today-column .context-row-detail", ".today-column .context-row-date"]) {
+      expect(rolePx(sizeOf(selector)!), selector).toBeLessThan(rolePx(emailSize!));
+      expect(rolePx(sizeOf(selector)!), selector).toBeGreaterThan(rolePx(sizeOf(".context-row-detail")!));
+    }
+    expect(sizeOf(".context-section-header h3")).toBe("--text-label");
+  });
+
   it("keeps the micro size for badges, key hints, and dense calendar blocks", () => {
     const micro = componentDeclarations("font-size").filter((declaration) => declaration.value === "var(--text-micro)");
     expect(micro.length).toBeGreaterThan(0);
