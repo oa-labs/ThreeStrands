@@ -140,7 +140,7 @@ function InvitationConflicts({ event, timeZone }: { event: ScheduleEvent; timeZo
     return () => { active = false; };
   }, [start, end, id, accountId, allDay, timeZone, generation]);
   return <>
-    {conflicts.length > 0 ? <p className="context-status">Conflicts with {new Intl.ListFormat(undefined, { type: "conjunction" }).format(conflicts)}</p> : null}
+    {conflicts.length > 0 ? <p className="context-status">Conflicts with {new Intl.ListFormat(undefined, { type: "conjunction" }).format(conflicts.map((title) => `“${title}”`))}</p> : null}
     {error ? <p className="context-status">Some calendars couldn’t be checked for conflicts.</p> : null}
   </>;
 }
