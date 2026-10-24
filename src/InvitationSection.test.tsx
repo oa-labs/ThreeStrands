@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { InvitationSection } from "./InvitationSection";
 import { mailClient } from "./data/client";
@@ -35,6 +35,30 @@ describe("InvitationSection", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
+  it.each(["needsAction", null, undefined] as const)("shows a quiet unanswered status for %s", async (responseStatus) => {
+    vi.mocked(mailClient.findCalendarInvitation).mockResolvedValue({ ...event, responseStatus });
+    render(<InvitationSection {...props()} />);
+    const status = await screen.findByText("Not responded.");
+    expect(status).toHaveClass("context-status");
+    expect(status.tagName).toBe("SPAN");
+    expect(screen.queryByText(/Your response:/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Awaiting response")).not.toBeInTheDocument();
+  });
+
+  it("offers separate response buttons in Accept, Maybe, Decline order", async () => {
+    render(<InvitationSection {...props()} />);
+    const actions = await screen.findByRole("group", { name: "Going?" });
+    expect(actions).toHaveClass("calendar-invitation-response-actions");
+    expect(actions).not.toHaveClass("segmented");
+    const buttons = within(actions).getAllByRole("button");
+    expect(buttons.map((button) => button.textContent)).toEqual(["Accept", "Maybe", "Decline"]);
+    for (const button of buttons) {
+      expect(button).toHaveClass("btn");
+      expect(button).not.toHaveClass("segment");
+      expect(button).toHaveAttribute("aria-pressed", "false");
+    }
+  });
+
   it.each([
     ["Accept", "accepted", "Going"], ["Maybe", "tentative", "Maybe"], ["Decline", "declined", "Not going"],
   ] as const)("answers the existing invitation with %s", async (label, status, result) => {
@@ -43,7 +67,7 @@ describe("InvitationSection", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Reading invitation");
     const button = await screen.findByRole("button", { name: label });
     expect(mailClient.findCalendarInvitation).toHaveBeenCalledWith(invitation.uid);
-    expect(screen.getByText("Awaiting response")).toBeInTheDocument();
+    expect(screen.getByText("Not responded.")).toBeInTheDocument();
     fireEvent.click(button);
     await waitFor(() => expect(button).toHaveAttribute("aria-pressed", "true"));
     expect(update).toHaveBeenCalledWith(event, status);
@@ -57,10 +81,10 @@ describe("InvitationSection", () => {
     vi.spyOn(mailClient, "updateCalendarResponse").mockReturnValue(new Promise((_resolve, fail) => { reject = fail; }));
     render(<InvitationSection {...props()} />);
     fireEvent.click(await screen.findByRole("button", { name: "Accept" }));
-    expect(screen.getByRole("button", { name: "Decline" })).toBeDisabled();
+    for (const label of ["Accept", "Maybe", "Decline"]) expect(screen.getByRole("button", { name: label })).toBeDisabled();
     await act(async () => reject(new Error("Calendar is unavailable")));
     expect(screen.getByRole("alert")).toHaveTextContent("Calendar is unavailable");
-    expect(screen.getByText("Awaiting response")).toBeInTheDocument();
+    expect(screen.getByText("Not responded.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Accept" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Accept" })).toHaveAttribute("aria-pressed", "false");
   });
@@ -76,8 +100,18 @@ describe("InvitationSection", () => {
   it("lists real overlaps and excludes the invitation itself", async () => {
     vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [event, { ...event, id: "other", title: "Josh / Joel" }, { ...event, id: "later", title: "Later", start: event.end, end: "2030-01-08T21:00:00Z" }], errors: [] });
     render(<InvitationSection {...props()} />);
-    expect(await screen.findByText("Conflicts with Josh / Joel")).toBeInTheDocument();
-    expect(screen.queryByText(/Conflicts with Building Tours|Conflicts with Later/)).not.toBeInTheDocument();
+    expect(await screen.findByText("Conflicts with “Josh / Joel”")).toBeInTheDocument();
+    expect(screen.queryByText(/Conflicts with “Building Tours”|Conflicts with “Later”/)).not.toBeInTheDocument();
+  });
+
+  it("quotes each distinct title when multiple meetings conflict", async () => {
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [
+      event, { ...event, id: "other", title: "Josh / Joel" },
+      { ...event, id: "another", title: "Design & Planning" },
+      { ...event, id: "duplicate", title: "Design & Planning" },
+    ], errors: [] });
+    render(<InvitationSection {...props()} />);
+    expect(await screen.findByText("Conflicts with “Josh / Joel” and “Design & Planning”")).toBeInTheDocument();
   });
 
   it("does not report a self-conflict when the invitation is the only event", async () => {

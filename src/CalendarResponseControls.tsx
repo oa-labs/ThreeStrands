@@ -14,6 +14,7 @@ export function CalendarResponseControls({ event, onUpdated, invitation = false 
   const [error, setError] = useState<string | null>(null);
   const label = responseLabel(event);
   if (!label) return null;
+  const unanswered = event.responseStatus === "needsAction" || event.responseStatus == null;
   const respond = async (status: (typeof RESPONSES)[number][0]) => {
     setPending(true);
     setError(null);
@@ -29,10 +30,10 @@ export function CalendarResponseControls({ event, onUpdated, invitation = false 
   };
   return (
     <div className="calendar-event-response">
-      <span>Your response: <strong>{label}</strong></span>
-      {event.canRespond ? <div className="segmented calendar-response-actions" role="group" aria-label="Going?">
+      {invitation && unanswered ? <span className="context-status">Not responded.</span> : <span>Your response: <strong>{label}</strong></span>}
+      {event.canRespond ? <div className={invitation ? "calendar-invitation-response-actions" : "segmented calendar-response-actions"} role="group" aria-label="Going?">
         {(invitation ? INVITATION_RESPONSES : RESPONSES).map(([status, title]) => (
-          <button key={status} type="button" className="segment" aria-pressed={event.responseStatus === status} disabled={pending} onClick={() => void respond(status)}>{title}</button>
+          <button key={status} type="button" className={invitation ? "btn" : "segment"} aria-pressed={event.responseStatus === status} disabled={pending} onClick={() => void respond(status)}>{title}</button>
         ))}
       </div> : null}
       {error ? <p role="alert">{error}</p> : null}
