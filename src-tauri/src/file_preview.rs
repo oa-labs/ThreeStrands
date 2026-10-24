@@ -20,6 +20,9 @@ pub(crate) const PREVIEW_SCALE: f64 = 2.0;
 pub(crate) const PREVIEW_MAX_SOURCE_BYTES: usize = 50 * 1024 * 1024;
 /// A thumbnail extension that takes longer than this is abandoned.
 pub(crate) const PREVIEW_TIMEOUT: Duration = Duration::from_secs(10);
+/// Whether this platform has a thumbnail backend. Elsewhere the attachment is
+/// never written to scratch space, since nothing could draw it.
+pub(crate) const HAS_BACKEND: bool = cfg!(any(target_os = "macos", target_os = "windows"));
 
 /// Whether a file may be handed to Quick Look at all: within the size limit
 /// and with nothing the opening check would warn about.

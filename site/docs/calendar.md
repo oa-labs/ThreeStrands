@@ -44,4 +44,4 @@ Open an event you manage to edit or delete it. Guests are notified of changes.
 
 Open an event and choose **Yes**, **No**, or **Maybe** under **Going?**.
 
-On macOS, you can make ThreeStrands the app that opens `.ics` invitation files in **Settings → Default Apps**. An opened invitation shows whether it's already on your calendar, lets you answer it, or offers **Add to Calendar**.
+You can make ThreeStrands the app that opens `.ics` invitation files in **Settings → Default Apps**. On Windows, that opens Windows Settings, where you choose ThreeStrands. An opened invitation shows whether it's already on your calendar, lets you answer it, or offers **Add to Calendar**.

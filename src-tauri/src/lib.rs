@@ -28,6 +28,7 @@ mod http_client;
 mod image_format;
 mod image_proxy;
 mod ipfs_transport;
+mod launch_args;
 mod limits;
 mod mail_links;
 mod models;
@@ -929,7 +930,15 @@ fn record_synced_value<T: serde::Serialize>(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Registered first so a second launch forwards its link or file and exits
+    // before any other plugin or the database starts.
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|handle, args, cwd| {
+        launch_args::deliver(handle, &args, std::path::Path::new(&cwd));
+        focus_main_window(handle);
+    }));
+    builder
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
@@ -965,6 +974,14 @@ pub fn run() {
 /// Opens (or recovers) the local database, starts every background loop, and
 /// registers `AppState` before the first command can run.
 fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    // The link or file that launched this copy; the webview drains both
+    // queues once it loads.
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    launch_args::deliver(
+        app.handle(),
+        &std::env::args_os().map(|arg| arg.to_string_lossy().into_owned()).collect::<Vec<_>>(),
+        &std::env::current_dir().unwrap_or_default(),
+    );
     let data_dir = app
         .path()
         .app_data_dir()
@@ -1582,7 +1599,8 @@ fn handle_run_event(handle: &tauri::AppHandle, event: tauri::RunEvent) {
         },
         // macOS opens `mailto:` links and `.ics` files here when ThreeStrands
         // handles them (Info.plist declares both), including the one that
-        // launched it.
+        // launched it. Windows and Linux pass them as arguments; see
+        // launch_args.rs.
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Opened { urls } => {
             for url in urls {

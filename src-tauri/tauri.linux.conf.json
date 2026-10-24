@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "linux": {
+      "deb": {
+        "desktopTemplate": "linux/threestrands.desktop"
+      },
+      "rpm": {
+        "desktopTemplate": "linux/threestrands.desktop"
+      }
+    }
+  }
+}

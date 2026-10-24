@@ -68,7 +68,7 @@ const SETTINGS_GROUPS: SettingsGroup[] = ["General", "Accounts", "Workflow", "In
 
 const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   { id: "appearance", label: "Appearance", group: "General", description: "Choose how ThreeStrands looks, what it opens to, and when conversations are marked read.", keywords: "theme light dark accent color font size family email zoom magnification minimum email font size accessibility reading mark read delay conversation start startup launch open today", icon: Palette, autosaves: true },
-  { id: "defaultApps", label: "Default Apps", group: "General", description: "Open email links and calendar invitations in ThreeStrands.", keywords: "mailto default email reader mail client ics calendar invitation handler macos", icon: AppWindow },
+  { id: "defaultApps", label: "Default Apps", group: "General", description: "Open email links and calendar invitations in ThreeStrands.", keywords: "mailto default email reader mail client ics calendar invitation handler macos windows linux", icon: AppWindow },
   { id: "accounts", label: "Mail Accounts", group: "Accounts", description: "Connect mail accounts and manage their identity and order.", keywords: "gmail imap smtp sender name color reconnect disconnect", icon: Mail },
   { id: "calendarAccounts", label: "Calendar Accounts", group: "Accounts", description: "Connect calendars and choose which ones appear in the sidebar.", keywords: "google calendar connect selection", icon: CalendarDays },
   { id: "availability", label: "Availability", group: "Workflow", description: "Set your timezone, working hours, and meeting defaults.", keywords: "timezone working hours duration slots meetings", icon: Clock, autosaves: true },

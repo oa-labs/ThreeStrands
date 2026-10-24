@@ -1412,10 +1412,10 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       return null;
     },
     async defaultAppStatus() {
-      return { supported: false, mail: false, calendar: false };
+      return { supported: false, mail: false, calendar: false, opensSystemSettings: false };
     },
     async makeDefaultApp(_role) {
-      throw new Error("Default apps can only be set from the installed ThreeStrands app on macOS");
+      throw new Error("Default apps can only be set from an installed copy of ThreeStrands.");
     },
     async createCalendarEvent(request) {
       const calendar = calendarOptions.find((option) => option.id === request.calendarId && option.accountId === request.accountId && option.writable);

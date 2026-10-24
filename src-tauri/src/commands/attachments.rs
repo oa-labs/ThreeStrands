@@ -86,14 +86,14 @@ pub(crate) async fn fetch_attachment_image(
 }
 
 /// A picture of the attachment for Files, or `None` when it has none. A
-/// preview is optional, so a file Quick Look cannot draw is not an error.
+/// preview is optional, so a file the platform cannot draw is not an error.
 #[tauri::command]
 pub(crate) async fn file_preview(
     message_id: String,
     attachment_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<Option<String>> {
-    if !cfg!(target_os = "macos") {
+    if !file_preview::HAS_BACKEND {
         return Ok(None);
     }
     let (filename, _, bytes) = load_attachment(&message_id, &attachment_id, &state).await?;

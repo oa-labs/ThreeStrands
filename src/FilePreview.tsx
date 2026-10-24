@@ -26,7 +26,8 @@ export function wantsFilePreview(file: WorkspaceFile, online: boolean): boolean 
 }
 
 /**
- * A picture of the selected file, drawn natively by Quick Look on macOS.
+ * A picture of the selected file, drawn natively by Quick Look on macOS or
+ * the Shell thumbnail provider on Windows.
  * Nothing shows until one arrives, and nothing at all when the file has none,
  * so the details never jump for files without previews. Clicking it opens
  * the file like the Open button, which stays the accessible way to do so.
