@@ -32,12 +32,14 @@ export type TodayWorkspaceProps = {
   onEditTask(task: ThreadTask): void;
   onTasksChanged(): void;
   onOpenInbox(): void;
+  onOpenCalendar(): void;
   onOpenTasks(): void;
   onOpenContact(contactId: string): void;
   onOpenKeepInTouch(): void;
 };
 
 const MAIL_GROUPS: { group: TodayMailGroup; title: string; limit: number }[] = [
+  { group: "invitations", title: "Invitations", limit: 5 },
   { group: "reply", title: "Needs a reply", limit: 8 },
   { group: "people", title: "From people", limit: 8 },
   { group: "updates", title: "Updates", limit: 3 },
@@ -65,7 +67,7 @@ function ScheduledToday(props: TodayWorkspaceProps) {
 
 function TodayLayout({
   accountId, refreshKey, taskRefreshKey, calendars, schedule,
-  onOpenThread, onOpenEvent, onEditTask, onTasksChanged, onOpenInbox, onOpenTasks, onOpenContact, onOpenKeepInTouch,
+  onOpenThread, onOpenEvent, onEditTask, onTasksChanged, onOpenInbox, onOpenCalendar, onOpenTasks, onOpenContact, onOpenKeepInTouch,
 }: TodayWorkspaceProps & { schedule: Schedule | null }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -132,9 +134,9 @@ function TodayLayout({
   const groups = groupTodayMail(mail?.threads ?? []);
 
   const summary = [
-    schedule ? plural(todaysEvents.filter((event) => !event.allDay && !isDeclined(event)).length, "meeting") : null,
+    schedule ? count(todaysEvents.filter((event) => !event.allDay && !isDeclined(event)).length, "meeting") : null,
     mail ? `${mail.total} unread` : null,
-    plural(overdue.length + dueToday.length, "task") + " due",
+    count(overdue.length + dueToday.length, "task") + " due",
   ].filter(Boolean).join(" · ");
 
   const taskRow = (task: ThreadTask) => {
@@ -176,11 +178,13 @@ function TodayLayout({
     <div className="today-columns">
       <div className="today-column" role="group" aria-label="Agenda">
         {schedule ? <>
-          <CalendarAgenda today={now} now={now} calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} />
+          {/* The page heading already names today, so its agenda leaves the date out. */}
+          <CalendarAgenda today={now} now={now} showDate={false} calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} />
           <CalendarAgenda today={addDays(startOfLocalDay(now), 1)} tomorrow calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} />
         </>
           : <ContextSection id="calendar-agenda" title="Today's agenda" rows={[]}
             footer={<p className="context-status">Connect a calendar in Settings to see today's agenda here.</p>} />}
+        <p className="today-column-link"><button type="button" className="btn-link" onClick={onOpenCalendar}>Open Calendar</button></p>
       </div>
       <div className="today-column" role="group" aria-label="Unread mail">
         {MAIL_GROUPS.map(({ group, title, limit }) => groups[group].length > 0 ? <ContextSection
@@ -258,10 +262,11 @@ function senderName(item: TodayMail): string {
 function formatArrival(iso: string, now: Date): string {
   const date = new Date(iso);
   return startOfLocalDay(date).getTime() === startOfLocalDay(now).getTime()
-    ? date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+    ? formatClockTime(date)
     : date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function plural(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+/** "No meetings", "1 meeting", "3 meetings". */
+function count(total: number, noun: string): string {
+  return total === 0 ? `No ${noun}s` : `${total} ${noun}${total === 1 ? "" : "s"}`;
 }

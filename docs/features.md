@@ -52,7 +52,8 @@ and message rendering each have their own document in this folder.
   message; sender verification, linked sites, and tracking images are in Details.
 - Today (key 0) shows the agenda (finished events dimmed, a Now divider,
   tomorrow's first events) with a Join button for the next meeting,
-  unread mail grouped by heuristics (needs a reply, from people, updates), tasks
+  unread mail grouped by heuristics (invitations, needs a reply when To has at
+  most 3 addresses, from people, updates), tasks
   overdue or due today, and due Keep in Touch reminders. Settings → Appearance →
   Start With can open the app on Today.
 - Inbox zero shows the account’s last-check status and links to Today.

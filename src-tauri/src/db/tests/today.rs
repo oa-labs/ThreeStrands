@@ -82,3 +82,32 @@ fn today_mail_counts_mail_the_user_sent_the_sender_elsewhere_as_corresponded() {
     assert_eq!(page.threads.len(), 1);
     assert!(page.threads[0].corresponded);
 }
+
+fn attachment(filename: &str, mime_type: &str) -> crate::models::MessageAttachment {
+    crate::models::MessageAttachment { id: filename.into(), filename: filename.into(), mime_type: mime_type.into(), size: 10, content_id: None, inline: false }
+}
+
+#[test]
+fn today_mail_reports_invitations_and_the_size_of_the_to_line() {
+    let database = database();
+    clear_seed_threads(&database);
+    // A request sent as a calendar part with parameters, and one sent as a plain .ics file.
+    let mut part = unread("i1", "part", "2026-10-22T09:00:00Z", "Meredith <m@example.org>", &[ME]);
+    part.attachments = vec![attachment("invite", "text/calendar; method=REQUEST; charset=UTF-8")];
+    database.upsert_thread(ME, &[part]).unwrap();
+    let mut file = unread("i2", "file", "2026-10-22T08:00:00Z", "Organizer <o@example.net>", &[ME, "a@example.org"]);
+    file.attachments = vec![attachment("Meeting.ICS", "application/octet-stream")];
+    database.upsert_thread(ME, &[file]).unwrap();
+    let mut pdf = unread("p1", "pdf", "2026-10-22T07:00:00Z", "Pat <p@example.org>", &[ME, "a@example.org", "b@example.org", "c@example.org"]);
+    pdf.attachments = vec![attachment("agenda.pdf", "application/pdf")];
+    database.upsert_thread(ME, &[pdf]).unwrap();
+
+    let page = database.list_today_mail(Some(ME)).unwrap();
+    let find = |id: &str| page.threads.iter().find(|item| item.thread.provider_thread_id == id).unwrap();
+    assert!(find("part").has_invitation);
+    assert!(find("file").has_invitation);
+    assert!(!find("pdf").has_invitation);
+    assert_eq!(find("part").to_count, 1);
+    assert_eq!(find("file").to_count, 2);
+    assert_eq!(find("pdf").to_count, 4);
+}
