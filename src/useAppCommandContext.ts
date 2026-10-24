@@ -68,6 +68,7 @@ type Options = {
     setGettingStartedOpen: Dispatch<SetStateAction<boolean>>;
     openSettingsAt: (section?: SettingsSection) => void;
     adjustFontScale: (direction: 1 | -1) => void;
+    toggleTheme: () => void;
     toggleContextPanelFocus: () => void;
     selectAdjacentMessage: (direction: -1 | 1) => void;
     getSuggestions: () => void;
@@ -102,7 +103,7 @@ export function useAppCommandContext({
   const {
     interactionScope, canUnsubscribe, latestMessage, aiSummaryAvailable, aiBriefEnabled, aiChatEnabled, aiDraftEnabled, labelTargetIds,
     setLabelTargetIds, setUnsubscribeMessageId, setPaletteOpen, setShortcutHelpOpen, setGettingStartedOpen,
-    openSettingsAt, adjustFontScale, toggleContextPanelFocus, selectAdjacentMessage,
+    openSettingsAt, adjustFontScale, toggleTheme, toggleContextPanelFocus, selectAdjacentMessage,
     getSuggestions, openThreadChat, refreshMail, closeSearch,
   } = ui;
   const context = useMemo<CommandContext>(() => ({
@@ -302,6 +303,7 @@ export function useAppCommandContext({
     newTask,
     increaseFontSize: () => adjustFontScale(1),
     decreaseFontSize: () => adjustFontScale(-1),
+    toggleTheme,
     canUndoAction,
     canUndoArchive,
     undoLastAction: () => {
@@ -324,7 +326,7 @@ export function useAppCommandContext({
     recordTriageEvent, includeArchived, toggleChecked, setMessageExpansionOverrides,
     messageStackRef, activeMessageIdRef, runBrief, isTabbedMailbox, searchOpen, setSearchOpen, closeSearch, setMailbox, activeAccountId,
     setActiveSplitInboxId, setLabelTargetIds, setPaletteOpen, setShortcutHelpOpen, setGettingStartedOpen, openSettingsAt,
-    adjustFontScale, undoLastAction,
+    adjustFontScale, toggleTheme, undoLastAction,
   ]);
 
   return context;

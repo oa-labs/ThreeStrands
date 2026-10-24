@@ -108,6 +108,7 @@ function noopContext(): CommandContext {
     newTask: () => {},
     increaseFontSize: () => {},
     decreaseFontSize: () => {},
+    toggleTheme: () => {},
     canUndoAction: false,
     canUndoArchive: false,
     undoLastAction: () => {},

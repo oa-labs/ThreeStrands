@@ -61,6 +61,22 @@ describe("useShortcutHandler", () => {
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ id: "mail.refresh" }));
   });
 
+  it("toggles light and dark mode with Mod+D anywhere, including text fields and the composer, but not on held keys", () => {
+    const execute = vi.fn();
+    renderHook(() => useShortcutHandler(context({ composerActive: true, interactionScope: "compose" }), execute));
+    const composer = document.createElement("div"); composer.className = "composer"; composer.dataset.shortcutScope = "compose";
+    const draft = document.createElement("textarea"); composer.append(draft);
+    const search = document.createElement("input"); search.dataset.shortcutScope = "search";
+    document.body.append(composer, search);
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "d", metaKey: true }));
+    draft.dispatchEvent(new KeyboardEvent("keydown", { key: "d", ctrlKey: true, bubbles: true }));
+    search.dispatchEvent(new KeyboardEvent("keydown", { key: "D", metaKey: true, bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "d", metaKey: true, repeat: true }));
+    for (const extra of [{ shiftKey: true }, { altKey: true }, { isComposing: true }]) window.dispatchEvent(new KeyboardEvent("keydown", { key: "d", metaKey: true, ...extra }));
+    draft.dispatchEvent(new KeyboardEvent("keydown", { key: "d", bubbles: true }));
+    expect(execute.mock.calls.map(([command]) => command.id)).toEqual(["theme.toggle", "theme.toggle", "theme.toggle"]);
+  });
+
   it("opens Send later from compose fields with Mod+Shift+L and respects overlays, IME, and repeats", () => {
     const current = context({ interactionScope: "compose", composerActive: true });
     const execute = vi.fn();

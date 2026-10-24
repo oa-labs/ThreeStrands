@@ -70,6 +70,7 @@ export function useShortcutHandler(
       // In Drafts, "#" discards the open draft unless focus is somewhere "#" is text.
       const discardDraftShortcut = interactionScope === "compose" && currentContext.composerActive && currentContext.mailbox === "drafts" && !isEditableTarget(event.target) && matchesShortcut(event, "#");
       const fontShortcut = (event.metaKey || event.ctrlKey) && ["=", "+", "-"].includes(event.key);
+      const themeShortcut = matchesShortcut(event, "Mod+d");
       // Moves between the draft and the context panel, so it must work from inside the draft's fields.
       const contextPanelShortcut = currentContext.composerActive && (matchesShortcut(event, "F6") || matchesShortcut(event, "Mod+Shift+p"));
       const allowsMailboxTabShortcut = event.key === "Tab"
@@ -82,7 +83,7 @@ export function useShortcutHandler(
       const entryScope = interactionScope !== "read";
       if (
         reservesNativeActivation(event)
-        || (!editableCommand && !attachShortcut && !sendShortcut && !replyAssistShortcut && !scheduleShortcut && !discardDraftShortcut && !fontShortcut && !contextPanelShortcut && !allowsMailboxTabShortcut
+        || (!editableCommand && !attachShortcut && !sendShortcut && !replyAssistShortcut && !scheduleShortcut && !discardDraftShortcut && !fontShortcut && !themeShortcut && !contextPanelShortcut && !allowsMailboxTabShortcut
           && (entryScope || isEditableTarget(event.target) || focusedControl))
       ) {
         clearPendingStep();

@@ -7,6 +7,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ### New
 - Email text that's hard to read, such as dark blue on a dark background or pale gray in a signature, is now lightened or darkened just enough to read while keeping its color. Choose **Use App Colors** under **Settings → Appearance → Email Text Colors** to replace sender colors with your theme's, or **Keep Sender Colors** to turn this off.
 - On Windows and Linux, ThreeStrands can now open email links and `.ics` calendar invitations. Set it up in **Settings → Default Apps**: Linux makes the change right away, and on Windows the button opens Windows Settings, where you choose ThreeStrands. A link or invitation opened while ThreeStrands is running goes to the open window instead of starting a second copy.
+- Press **⌘D** (**Ctrl+D** on Windows and Linux) to switch between light and dark mode from anywhere in the app, including while writing a message.
 
 ### Improved
 - On Windows, **Files** now shows a preview picture of PDFs, images, and other documents, as it already did on macOS.

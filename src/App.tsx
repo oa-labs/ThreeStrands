@@ -507,7 +507,7 @@ export function App() {
     view: { mailbox, setMailbox, setActiveSplitInboxId, activeAccountId, selectedId, setSelectedId, isTabbedMailbox },
     ui: { interactionScope, canUnsubscribe, latestMessage, aiSummaryAvailable,
       aiBriefEnabled: aiSummaryFeatureEnabled || aiActionFeatureEnabled, aiChatEnabled: aiChatFeatureEnabled, aiDraftEnabled: aiDraftFeatureEnabled,
-      labelTargetIds, setLabelTargetIds, setUnsubscribeMessageId, setPaletteOpen, setShortcutHelpOpen, setGettingStartedOpen, openSettingsAt, adjustFontScale, toggleContextPanelFocus, selectAdjacentMessage, getSuggestions, openThreadChat, refreshMail, closeSearch },
+      labelTargetIds, setLabelTargetIds, setUnsubscribeMessageId, setPaletteOpen, setShortcutHelpOpen, setGettingStartedOpen, openSettingsAt, adjustFontScale, toggleTheme, toggleContextPanelFocus, selectAdjacentMessage, getSuggestions, openThreadChat, refreshMail, closeSearch },
   });
 
   const {
@@ -678,8 +678,8 @@ export function App() {
           <HoverTooltip title={checkingMail ? "Checking for mail…" : "Refresh mail (⌘/Ctrl+R)"}><button className="nav-button" aria-label="Refresh mail" aria-keyshortcuts="Meta+R Control+R" aria-busy={checkingMail} onClick={() => executeById("mail.refresh")}>
             <RefreshCw size={ICON_SIZE.lg} className={checkingMail ? "spin" : ""} />
           </button></HoverTooltip>
-          <HoverTooltip title={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`}>
-            <button className="nav-button" aria-label={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`} onClick={toggleTheme}>
+          <HoverTooltip label={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`} shortcut="⌘D">
+            <button className="nav-button" aria-label={`Switch to ${effectiveThemeValue === "dark" ? "light" : "dark"} mode`} aria-keyshortcuts="Meta+D Control+D" onClick={() => executeById("theme.toggle")}>
               {effectiveThemeValue === "dark" ? <Sun size={ICON_SIZE.lg} /> : <Moon size={ICON_SIZE.lg} />}
             </button>
           </HoverTooltip>

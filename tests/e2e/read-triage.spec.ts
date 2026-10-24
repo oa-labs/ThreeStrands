@@ -755,6 +755,13 @@ test("switches themes and remembers the choice after reload", async ({ page }) =
   await expect(page.locator(".reader")).toHaveCSS("background-color", "rgb(18, 18, 20)");
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.keyboard.press("ControlOrMeta+d");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(page.getByRole("button", { name: "Switch to dark mode" })).toBeVisible();
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await page.keyboard.press("ControlOrMeta+d");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 });
 
 test("resizes the inbox with pointer and keyboard and restores the preferred width", async ({ page }) => {

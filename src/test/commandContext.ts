@@ -101,6 +101,7 @@ export const commandContext = (overrides: Partial<CommandContext> = {}): Command
   toggleSchedule: vi.fn(),
   increaseFontSize: vi.fn(),
   decreaseFontSize: vi.fn(),
+  toggleTheme: vi.fn(),
   undoLastAction: vi.fn(),
   showAllAccounts: vi.fn(),
   switchAccount: vi.fn(),

@@ -127,6 +127,8 @@ export type CommandContext = {
   newTask(): void;
   increaseFontSize(): void;
   decreaseFontSize(): void;
+  /** Switches between light and dark appearance. */
+  toggleTheme(): void;
   canUndoAction: boolean;
   canUndoArchive: boolean;
   undoLastAction(): void;
@@ -745,6 +747,15 @@ export const commands: Command[] = [
     repeatable: true,
     enabled: () => true,
     run: (context) => complete(context.decreaseFontSize),
+  },
+  {
+    id: "theme.toggle",
+    title: "Toggle Light/Dark Mode",
+    keywords: ["theme", "appearance", "dark mode", "light mode"],
+    keys: ["Mod+d"],
+    group: "Application",
+    enabled: () => true,
+    run: (context) => complete(context.toggleTheme),
   },
   {
     id: "action.undo",
