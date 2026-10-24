@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupTodayMail, todayMailGroup } from "./todayMail";
+import { DIRECT_TO_LIMIT, groupTodayMail, todayMailGroup } from "./todayMail";
 import { todayItem } from "./test/todayMail";
 
 describe("todayMailGroup", () => {
@@ -23,6 +23,17 @@ describe("todayMailGroup", () => {
     expect(todayMailGroup(todayItem("n2", { sender: "DoNotReply@bank.example" }))).toBe("updates");
     expect(todayMailGroup(todayItem("n3", { sender: "noreply+alerts@service.example" }))).toBe("updates");
     expect(todayMailGroup(todayItem("n4", { sender: "Norma Replyford <noreplyford@example.org>" }))).toBe("reply");
+  });
+
+  it("files invitations on their own, whether sent to you alone or to a list", () => {
+    expect(todayMailGroup(todayItem("one", { hasInvitation: true }))).toBe("invitations");
+    expect(todayMailGroup(todayItem("list", { hasInvitation: true, listUnsubscribe: true, addressedToMe: false, toCount: 40 }))).toBe("invitations");
+  });
+
+  it(`asks for a reply only when at most ${DIRECT_TO_LIMIT} people are on the To line`, () => {
+    expect(todayMailGroup(todayItem("few", { toCount: DIRECT_TO_LIMIT }))).toBe("reply");
+    expect(todayMailGroup(todayItem("many", { toCount: DIRECT_TO_LIMIT + 1 }))).toBe("people");
+    expect(todayMailGroup(todayItem("crowd", { toCount: 25, corresponded: false }))).toBe("people");
   });
 
   it("keeps a conversation only you wrote in out of Updates", () => {

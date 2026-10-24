@@ -1501,6 +1501,7 @@ export function App() {
         onEditTask={(task) => setTaskEditor({ kind: "edit", task })}
         onTasksChanged={() => { setTaskRevision((current) => current + 1); void refreshTaskIndicators(); }}
         onOpenInbox={() => executeById("view.mail")}
+        onOpenCalendar={() => executeById("view.calendar")}
         onOpenTasks={openTasksView}
         onOpenContact={contactCardActions.onOpenContact}
         onOpenKeepInTouch={openKeepInTouchView}

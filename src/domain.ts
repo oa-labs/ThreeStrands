@@ -572,6 +572,10 @@ export type TodayMail = {
   listUnsubscribe: boolean;
   /** One of the account's own addresses is on its To line. */
   addressedToMe: boolean;
+  /** How many addresses its To line has. */
+  toCount: number;
+  /** It carries a calendar invitation (a text/calendar part or .ics file). */
+  hasInvitation: boolean;
   /** The user has written in this conversation or to that sender before. */
   corresponded: boolean;
 };
