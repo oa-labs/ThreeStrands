@@ -995,7 +995,7 @@ describe("keyboard-first task and action workspaces", () => {
     expect(screen.queryByRole("dialog", { name: "Add Task" })).not.toBeInTheDocument();
   });
 
-  it("switches directly between mail and task views while 0 has no effect", async () => {
+  it("switches directly between mail and task views, with 0 opening Today", async () => {
     let taskStore: ThreadTask[] = [];
     const listTasks = vi.spyOn(mailClient, "listTasks").mockImplementation(async () => taskStore);
     const createTask = vi.spyOn(mailClient, "createTask").mockImplementation(async (request) => {

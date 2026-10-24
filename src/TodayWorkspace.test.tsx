@@ -176,6 +176,18 @@ describe("TodayWorkspace", () => {
       expect(onOpenKeepInTouch).toHaveBeenCalled();
     });
 
+    it("says there are no open tasks only once they have been read", async () => {
+      let resolve: (tasks: ThreadTask[]) => void = () => {};
+      vi.spyOn(mailClient, "listTasks").mockReturnValue(new Promise((done) => { resolve = done; }));
+      renderToday();
+      await waitFor(() => expect(mailClient.listTasks).toHaveBeenCalled());
+      expect(screen.queryByText("No open tasks.")).not.toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: "Tasks" })).not.toBeInTheDocument();
+
+      resolve([]);
+      expect(within(await screen.findByRole("region", { name: "Open tasks" })).getByText("No open tasks.")).toBeInTheDocument();
+    });
+
     it("leaves sections out when their data cannot be read", async () => {
       vi.spyOn(mailClient, "listTasks").mockRejectedValue(new Error("locked"));
       vi.spyOn(mailClient, "listKeepInTouch").mockRejectedValue(new Error("locked"));
