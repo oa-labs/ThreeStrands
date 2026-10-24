@@ -7,7 +7,8 @@
         "type": "downloadBootstrapper"
       },
       "nsis": {
-        "installMode": "perMachine"
+        "installMode": "perMachine",
+        "installerHooks": "windows/hooks.nsh"
       }
     }
   }

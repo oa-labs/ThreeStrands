@@ -92,7 +92,7 @@ pub struct TransferPreferences {
     // Added in 0.163; preceding exports import at 100% zoom.
     #[serde(default = "default_email_zoom", skip_serializing_if = "is_default_email_zoom")]
     pub email_zoom: i64,
-    // Added in 0.164; preceding exports import with the contrast floor on.
+    // Added in 0.165; preceding exports import with the contrast floor on.
     #[serde(default = "default_email_text_colors", skip_serializing_if = "is_default_email_text_colors")]
     pub email_text_colors: String,
     pub auto_read_delay_seconds: i64,

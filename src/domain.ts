@@ -71,12 +71,14 @@ export type OpenedCalendarFile = {
 
 export type DefaultAppRole = "mail" | "calendar";
 
-/** Whether ThreeStrands is the macOS default for each role. */
+/** Whether ThreeStrands is the system default for each role. */
 export type DefaultAppStatus = {
-  /** False outside an installed macOS copy, where defaults cannot be set. */
+  /** False outside an installed copy, where defaults cannot be set. */
   supported: boolean;
   mail: boolean;
   calendar: boolean;
+  /** True on Windows, where the user makes the change in Windows Settings. */
+  opensSystemSettings: boolean;
 };
 
 export type CalendarAccount = {

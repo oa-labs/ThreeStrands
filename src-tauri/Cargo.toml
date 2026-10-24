@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.164.0"
+version = "0.165.0"
 description = "A local-first, keyboard-driven email client"
 authors = ["OpenArc LLC"]
 license-file = "../LICENSE"
@@ -113,6 +113,12 @@ smtp-proto = "=0.2.5"
 [target.'cfg(unix)'.dependencies]
 xattr = "1"
 
+# Windows and Linux open email links and calendar files by launching the app
+# with them as arguments; this forwards a second launch to the running copy
+# (launch_args.rs). macOS delivers them to the running app itself.
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2"
+
 # Default-app registration (Settings → Default Apps) and relaunching after an
 # update, both through NSWorkspace; Files previews through Quick Look; the
 # remote image proxy's URLSession fallback for hosts that refuse reqwest.
@@ -131,9 +137,11 @@ objc2-quick-look-thumbnailing = { version = "0.3", default-features = false, fea
 # we read back with GDI GetDIBits and re-encode as PNG. Pinned to the `windows`
 # version Tauri already resolves so no second copy enters the tree; `png` is
 # already present transitively (via the image stack) and only declared directly
-# here, like `smtp-proto` above — no new crate download.
+# here, like `smtp-proto` above — no new crate download. Settings → Default
+# Apps reads the installer's registration and the current associations
+# through the Registry and Shell APIs of the same crate.
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_Graphics_Gdi"] }
+windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_Graphics_Gdi"] }
 png = "=0.17.16"
 
 [dev-dependencies]
