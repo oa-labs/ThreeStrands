@@ -447,6 +447,10 @@ pub struct TodayMail {
     pub list_unsubscribe: bool,
     /// One of the account's own addresses is on its To line.
     pub addressed_to_me: bool,
+    /// How many addresses its To line has.
+    pub to_count: usize,
+    /// It carries a calendar invitation (a text/calendar part or .ics file).
+    pub has_invitation: bool,
     /// The user has written in this conversation or to that sender before.
     pub corresponded: bool,
 }

@@ -44,7 +44,7 @@ const localDate = (days: number) => {
 
 function renderToday(overrides: Partial<Parameters<typeof TodayWorkspace>[0]> = {}) {
   const handlers = {
-    onOpenThread: vi.fn(), onOpenEvent: vi.fn(), onEditTask: vi.fn(), onTasksChanged: vi.fn(), onOpenInbox: vi.fn(),
+    onOpenThread: vi.fn(), onOpenEvent: vi.fn(), onEditTask: vi.fn(), onTasksChanged: vi.fn(), onOpenInbox: vi.fn(), onOpenCalendar: vi.fn(),
     onOpenTasks: vi.fn(), onOpenContact: vi.fn(), onOpenKeepInTouch: vi.fn(),
   };
   render(<TodayWorkspace accountId="you@example.com" refreshKey="" taskRefreshKey={0} calendarConnected={false} calendars={calendars} {...handlers} {...overrides} />);
@@ -85,6 +85,34 @@ describe("TodayWorkspace", () => {
       expect(onOpenThread).toHaveBeenCalledWith("ask");
     });
 
+    it("puts invitations in their own group, and group mail to many people under From people", async () => {
+      mockMail([
+        todayItem("invite", { sender: "Meredith Reed <m@example.org>", hasInvitation: true }, { subject: "Invitation: Moving day" }),
+        todayItem("group", { sender: "Devin <d@example.org>", toCount: 12 }, { subject: "Prayer at noon" }),
+        todayItem("direct", { sender: "Dana <dana@example.org>", toCount: 2 }),
+      ]);
+      renderToday();
+
+      const invitations = await screen.findByRole("region", { name: "Invitations" });
+      expect(within(invitations).getByText("Invitation: Moving day")).toBeInTheDocument();
+      expect(within(screen.getByRole("region", { name: "From people" })).getByText("Prayer at noon")).toBeInTheDocument();
+      const reply = screen.getByRole("region", { name: "Needs a reply" });
+      expect(within(reply).getByText("Dana")).toBeInTheDocument();
+      expect(within(reply).queryByText("Meredith Reed")).not.toBeInTheDocument();
+      // Groups list in this order: invitations first.
+      const headings = screen.getAllByRole("region").map((region) => region.getAttribute("aria-labelledby") && region.querySelector("h3")?.textContent);
+      expect(headings.indexOf("Invitations")).toBeLessThan(headings.indexOf("Needs a reply"));
+    });
+
+    it("writes arrival times the way event times are written", async () => {
+      const today = new Date();
+      today.setHours(11, 8, 0, 0);
+      mockMail([todayItem("a", {}, { lastReceivedAt: today.toISOString() })]);
+      renderToday();
+      const reply = await screen.findByRole("region", { name: "Needs a reply" });
+      expect(within(reply).getByText(/^\d{1,2}:08/).textContent).not.toMatch(/[AP]M/);
+    });
+
     it("merges every account when none is selected", async () => {
       const listTodayMail = mockMail([]);
       renderToday({ accountId: null });
@@ -111,10 +139,14 @@ describe("TodayWorkspace", () => {
       expect(screen.queryByText("Nothing unread.")).not.toBeInTheDocument();
     });
 
-    it("opens the Inbox from the mail column", async () => {
-      const { onOpenInbox } = renderToday();
+    it("opens the Inbox, Calendar, and Tasks from the foot of their columns", async () => {
+      const { onOpenInbox, onOpenCalendar, onOpenTasks } = renderToday();
       fireEvent.click(await screen.findByRole("button", { name: "Open Inbox" }));
       expect(onOpenInbox).toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Open Calendar" }));
+      expect(onOpenCalendar).toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Open Tasks" }));
+      expect(onOpenTasks).toHaveBeenCalled();
     });
   });
 
@@ -205,7 +237,7 @@ describe("TodayWorkspace", () => {
       expect(within(screen.getByRole("region", { name: "Today's agenda" })).getByText(/Connect a calendar in Settings/)).toBeInTheDocument();
       expect(screen.getByText("Today · Mail and tasks: you@example.com")).toBeInTheDocument();
       expect(mailClient.listScheduleEvents).not.toHaveBeenCalled();
-      expect(await screen.findByText(/^0 unread · 0 tasks due$/, { selector: ".today-summary" })).toBeInTheDocument();
+      expect(await screen.findByText(/^0 unread · No tasks due$/, { selector: ".today-summary" })).toBeInTheDocument();
     });
 
     it("says the agenda covers every calendar while mail and tasks follow the account", async () => {
@@ -245,6 +277,8 @@ describe("TodayWorkspace", () => {
 
       const agenda = await screen.findByRole("region", { name: "Today's agenda" });
       await within(agenda).findByText("Design sync");
+      // The page heading already gives today's date.
+      expect(agenda.querySelector(".context-section-note")).toBeNull();
       const next = await screen.findByRole("button", { name: /^Next: Design sync in \d+ min$/ });
       expect(screen.getByText(/2 meetings/, { selector: ".today-summary" })).toBeInTheDocument();
 
@@ -274,12 +308,12 @@ describe("TodayWorkspace tomorrow", () => {
     ] });
     render(<TodayWorkspace accountId={null} refreshKey="" taskRefreshKey={0} calendarConnected calendars={calendars}
       onOpenThread={vi.fn()} onOpenEvent={vi.fn()} onEditTask={vi.fn()} onTasksChanged={vi.fn()} onOpenInbox={vi.fn()}
-      onOpenTasks={vi.fn()} onOpenContact={vi.fn()} onOpenKeepInTouch={vi.fn()} />);
+      onOpenTasks={vi.fn()} onOpenContact={vi.fn()} onOpenKeepInTouch={vi.fn()} onOpenCalendar={vi.fn()} />);
 
     const tomorrow = await screen.findByRole("region", { name: "Tomorrow" });
     expect(await within(tomorrow).findByText("Dentist")).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Today's agenda" })).queryByText("Dentist")).not.toBeInTheDocument();
-    expect(screen.getByText(/0 meetings/, { selector: ".today-summary" })).toBeInTheDocument();
+    expect(screen.getByText(/^No meetings ·/, { selector: ".today-summary" })).toBeInTheDocument();
     const [timeMin, timeMax] = listEvents.mock.calls[0];
     expect(new Date(timeMax).getTime() - new Date(timeMin).getTime()).toBeGreaterThanOrEqual(47 * 3_600_000);
   });

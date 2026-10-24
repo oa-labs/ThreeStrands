@@ -2335,6 +2335,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-file .context-row-title { display:flex; }
 /* Notes and links under a heading start at the row text edge. */
 .context-collapsible > div > .context-section-note,
+.context-collapsible > div > .context-status,
 .context-collapsible > div > .context-link-button { margin-left:calc(var(--context-row-inset) + var(--context-glyph-column)); }
 .context-section-note { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--space-1) var(--space-2); margin:0 0 var(--space-1-5); color:var(--muted); font-size:var(--text-meta); line-height:var(--leading-normal); }
 .context-file-base { min-width:0; overflow:hidden; text-overflow:ellipsis; }

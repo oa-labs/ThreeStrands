@@ -430,6 +430,8 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
           sender: inbound?.sender ?? null,
           listUnsubscribe: Boolean(inbound?.unsubscribe?.methods.length),
           addressedToMe: inbound ? inbound.recipients.some(isOwn) : false,
+          toCount: inbound?.recipients.length ?? 0,
+          hasInvitation: inbound ? inbound.attachments.some(isCalendarAttachment) : false,
           corresponded: repliedHere || (inbound ? wroteTo.has(parseAddress(inbound.sender).email.toLocaleLowerCase()) : false),
         };
       });

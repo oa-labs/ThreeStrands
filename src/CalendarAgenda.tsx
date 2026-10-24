@@ -22,6 +22,8 @@ type AgendaProps = {
   now?: Date;
   /** Lists the day as Tomorrow, showing its first few events before "Show more". */
   tomorrow?: boolean;
+  /** Names the day under the heading; left out where the page already says which day it is. */
+  showDate?: boolean;
 };
 
 /** Events Tomorrow shows before "Show more". */
@@ -42,7 +44,7 @@ function TodayAgenda(props: AgendaProps) {
   return <Agenda {...props} schedule={schedule} />;
 }
 
-function Agenda({ today, calendars, onOpenEvent, now, tomorrow = false, schedule: { events, loading, error, reload } }: AgendaProps & { schedule: Schedule }) {
+function Agenda({ today, calendars, onOpenEvent, now, tomorrow = false, showDate = true, schedule: { events, loading, error, reload } }: AgendaProps & { schedule: Schedule }) {
   const colors = useCalendarColors();
   const selected = calendars.filter((calendar) => calendar.selected);
   const agenda = agendaEventsFor(events, today, calendars);
@@ -72,7 +74,7 @@ function Agenda({ today, calendars, onOpenEvent, now, tomorrow = false, schedule
   return <ContextSection
     id={tomorrow ? "calendar-agenda-tomorrow" : "calendar-agenda"}
     title={name}
-    note={today.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+    note={showDate ? today.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) : undefined}
     count={agenda.length}
     rows={rows}
     limit={tomorrow ? TOMORROW_AGENDA_ROWS : rows.length}

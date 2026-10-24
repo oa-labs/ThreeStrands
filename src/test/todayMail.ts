@@ -12,6 +12,6 @@ export function todayThread(id: string, overrides: Partial<Thread> = {}): Thread
 export function todayItem(id: string, overrides: Partial<TodayMail> = {}, thread: Partial<Thread> = {}): TodayMail {
   return {
     thread: todayThread(id, thread), sender: `Person ${id} <${id}@example.org>`,
-    listUnsubscribe: false, addressedToMe: true, corresponded: true, ...overrides,
+    listUnsubscribe: false, addressedToMe: true, toCount: 1, hasInvitation: false, corresponded: true, ...overrides,
   };
 }
