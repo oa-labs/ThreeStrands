@@ -11,12 +11,14 @@ import {
   readAutoReadDelaySeconds,
   readFontFamily,
   readEmailMinimumFontSize,
+  readEmailZoom,
   readLoadRemoteImages,
   readAvailabilityPreferences,
   saveAvailabilityPreferences,
   saveAutoReadDelaySeconds,
   saveFontFamily,
   saveEmailMinimumFontSize,
+  saveEmailZoom,
   saveLoadRemoteImages,
   type FontFamily,
 } from "./settings";
@@ -46,6 +48,7 @@ export function useAppPreferences() {
   const [theme, setThemeState] = useState(readTheme);
   const [accent, setAccentState] = useState(readAccent);
   const [fontScale, setFontScaleState] = useState(readFontScale);
+  const [emailZoom, setEmailZoomState] = useState(readEmailZoom);
   const [emailMinimumFontSize, setEmailMinimumFontSizeState] = useState(readEmailMinimumFontSize);
   const [fontFamily, setFontFamilyState] = useState(readFontFamily);
   const [autoReadDelaySeconds, setAutoReadDelayState] = useState(readAutoReadDelaySeconds);
@@ -118,6 +121,9 @@ export function useAppPreferences() {
     setFontScaleState((current) => saveFontScale(changeFontScale(current, direction)));
     queuePortablePreferences();
   }, []);
+  const setEmailZoom = useCallback((value: number) => {
+    setEmailZoomState(saveEmailZoom(value));
+  }, []);
   const setEmailMinimumFontSize = useCallback((value: number) => {
     setEmailMinimumFontSizeState(saveEmailMinimumFontSize(value));
     queuePortablePreferences();
@@ -151,6 +157,8 @@ export function useAppPreferences() {
     adjustFontScale,
     fontFamily,
     setFontFamily,
+    emailZoom,
+    setEmailZoom,
     emailMinimumFontSize,
     setEmailMinimumFontSize,
     autoReadDelaySeconds,

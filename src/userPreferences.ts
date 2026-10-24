@@ -1,3 +1,4 @@
+import { EMAIL_ZOOM } from "./emailRenderingPolicy";
 import { invoke } from "@tauri-apps/api/core";
 import {
   readAiEndpoint,
@@ -21,12 +22,14 @@ import {
   readAvailabilityPreferences,
   readFontFamily,
   readEmailMinimumFontSize,
+  readEmailZoom,
   readLoadRemoteImages,
   readSelectedAccountId,
   saveAutoReadDelaySeconds,
   saveAvailabilityPreferences,
   saveFontFamily,
   saveEmailMinimumFontSize,
+  saveEmailZoom,
   saveLoadRemoteImages,
   saveSelectedAccountId,
 } from "./settings";
@@ -44,6 +47,8 @@ export type ExportablePreferences = {
   accent: Accent;
   fontScale: number;
   fontFamily: string;
+  /** Absent in exports made before email zoom; defaults to 100%. */
+  emailZoom?: number;
   emailMinimumFontSize: number;
   autoReadDelaySeconds: number;
   loadRemoteImages: boolean;
@@ -74,6 +79,7 @@ export function readExportablePreferences(): ExportablePreferences {
     accent: readAccent(),
     fontScale: readFontScale(),
     fontFamily: readFontFamily(),
+    emailZoom: readEmailZoom(),
     emailMinimumFontSize: readEmailMinimumFontSize(),
     autoReadDelaySeconds: readAutoReadDelaySeconds(),
     loadRemoteImages: readLoadRemoteImages(),
@@ -93,6 +99,7 @@ export function applyExportablePreferences(preferences: ExportablePreferences): 
   saveAccent(preferences.accent);
   saveFontScale(preferences.fontScale);
   saveFontFamily(preferences.fontFamily);
+  saveEmailZoom(preferences.emailZoom ?? EMAIL_ZOOM.defaultPercent);
   saveEmailMinimumFontSize(preferences.emailMinimumFontSize ?? 0);
   saveAutoReadDelaySeconds(preferences.autoReadDelaySeconds);
   saveLoadRemoteImages(preferences.loadRemoteImages);

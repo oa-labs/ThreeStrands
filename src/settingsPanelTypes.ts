@@ -34,6 +34,8 @@ export type SettingsPreferences = {
   setAccent(accent: Accent): void;
   fontScale: number;
   setFontScale(value: number): void;
+  emailZoom: number;
+  setEmailZoom(value: number): void;
   emailMinimumFontSize: number;
   setEmailMinimumFontSize(value: number): void;
   fontFamily: FontFamily;

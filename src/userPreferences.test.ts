@@ -43,6 +43,7 @@ describe("exportable preferences", () => {
       fontScale: 120,
       fontFamily: "Georgia",
       emailMinimumFontSize: 18,
+      emailZoom: 125,
       autoReadDelaySeconds: 8,
       loadRemoteImages: true,
       selectedAccountId: "person@example.com",
@@ -85,6 +86,14 @@ describe("exportable preferences", () => {
     applyExportablePreferences(nativeContractFixture);
     applyExportablePreferences({ ...nativeContractFixture, availabilityPreferences: previous } as ExportablePreferences);
     expect(readExportablePreferences().availabilityPreferences).toEqual({ ...previous, driveTimeBufferMinutes: 0 });
+  });
+
+  it("imports the preceding preference schema at 100% email zoom", () => {
+    const { emailZoom: _zoom, ...previous } = nativeContractFixture;
+    applyExportablePreferences({ ...nativeContractFixture, emailZoom: 150 });
+    applyExportablePreferences(previous);
+    expect(readExportablePreferences().emailZoom).toBe(100);
+    expect(readExportablePreferences().emailMinimumFontSize).toBe(previous.emailMinimumFontSize);
   });
 
   it("imports the preceding preference schema with the email font floor off", () => {

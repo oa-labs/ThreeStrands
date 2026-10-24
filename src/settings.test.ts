@@ -13,6 +13,7 @@ import {
   readAvailabilityPreferences,
   readFontFamily,
   readEmailMinimumFontSize,
+  readEmailZoom,
   readLabelUsage,
   readLoadRemoteImages,
   readSelectedAccountId,
@@ -25,6 +26,7 @@ import {
   saveAvailabilityPreferences,
   saveFontFamily,
   saveEmailMinimumFontSize,
+  saveEmailZoom,
   saveLoadRemoteImages,
   saveSelectedAccountId,
   saveSelectedMailboxForAccount,
@@ -326,6 +328,29 @@ describe("minimum email font size preference", () => {
     get.mockRestore();
     const set = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("unavailable"); });
     expect(saveEmailMinimumFontSize(18)).toBe(18);
+    set.mockRestore();
+  });
+});
+
+describe("email zoom preference", () => {
+  afterEach(() => localStorage.clear());
+
+  it("defaults to 100%, restores saved zoom, and rejects corrupted values", () => {
+    expect(readEmailZoom()).toBe(100);
+    expect(saveEmailZoom(125)).toBe(125);
+    expect(readEmailZoom()).toBe(125);
+    for (const value of ["", "NaN", "201", "49", "125%;color:red"]) {
+      localStorage.setItem("threestrands.settings.emailZoom", value);
+      expect(readEmailZoom()).toBe(100);
+    }
+  });
+
+  it("keeps a session preference when storage is unavailable", () => {
+    const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("unavailable"); });
+    expect(readEmailZoom()).toBe(100);
+    get.mockRestore();
+    const set = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("unavailable"); });
+    expect(saveEmailZoom(125)).toBe(125);
     set.mockRestore();
   });
 });

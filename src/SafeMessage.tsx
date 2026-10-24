@@ -16,6 +16,8 @@ import {
   sanitizeHtmlDimension,
   sanitizeHtmlFontSize,
   parseEmailMinimumFontSize,
+  parseEmailZoom,
+  EMAIL_ZOOM,
 } from "./emailRenderingPolicy";
 import { createEmailFontSizeController } from "./emailMinimumFontSize";
 import { sanitizeStyleSheet } from "./emailStyleSheet";
@@ -50,6 +52,7 @@ type SafeMessageProps = {
   imageCacheKey?: string;
   theme?: "light" | "dark";
   fontScale?: number;
+  emailZoom?: number;
   emailMinimumFontSize?: number;
   fontFamily?: FontFamily;
   tone?: "default" | "current" | "muted";
@@ -72,7 +75,7 @@ type SafeMessageProps = {
   onEnterKey?: () => void;
 };
 
-export type MessageAppearance = Pick<SafeMessageProps, "theme" | "fontScale" | "fontFamily" | "emailMinimumFontSize" | "loadImages">;
+export type MessageAppearance = Pick<SafeMessageProps, "theme" | "fontScale" | "fontFamily" | "emailZoom" | "emailMinimumFontSize" | "loadImages">;
 
 async function defaultResolveImage(): Promise<string> {
   throw new Error("Image loading is not configured for this SafeMessage instance");
@@ -596,6 +599,7 @@ export function SafeMessage({
   imageCacheKey = "",
   theme = "dark",
   fontScale = 1,
+  emailZoom = EMAIL_ZOOM.defaultPercent,
   emailMinimumFontSize = 0,
   fontFamily = "system",
   tone = "default",
@@ -605,6 +609,10 @@ export function SafeMessage({
   onEnterKey,
   revealLink = null,
 }: SafeMessageProps) {
+  const zoom = parseEmailZoom(emailZoom) / EMAIL_ZOOM.defaultPercent;
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const resizeFrameRef = useRef<(() => void) | null>(null);
   const minimumFontSize = parseEmailMinimumFontSize(emailMinimumFontSize);
   const minimumFontSizeRef = useRef(minimumFontSize);
   minimumFontSizeRef.current = minimumFontSize;
@@ -693,6 +701,13 @@ export function SafeMessage({
   );
 
   const frameRef = useRef<HTMLIFrameElement | null>(null);
+  useEffect(() => {
+    const body = frameRef.current?.contentDocument?.body;
+    if (body) body.style.zoom = String(zoom);
+    // Update immediately even when shrinking; do not reload the frame or
+    // discard selection, resolved images, or expanded quoted history.
+    resizeFrameRef.current?.();
+  }, [zoom]);
   const toneRef = useRef(tone);
   toneRef.current = tone;
   // Read-status styling is a trusted body attribute. Patch it in place so a
@@ -731,6 +746,10 @@ export function SafeMessage({
     const frameDoc = frame?.contentDocument;
     if (!frameDoc) return;
     frameDoc.body.dataset.tone = toneRef.current;
+    // Reader-owned zoom scales the whole isolated document. Sender CSS is
+    // still scoped below the body and cannot set zoom or override this value.
+    // This adds no URL, execution, navigation, or iframe capabilities.
+    frameDoc.body.style.zoom = String(zoomRef.current);
     const updateFontSize = createEmailFontSizeController(frameDoc);
     fontSizeControllerRef.current = updateFontSize;
     updateFontSize(minimumFontSizeRef.current);
@@ -739,8 +758,16 @@ export function SafeMessage({
     fillResolvedImages(frameDoc, resolvedImagesRef.current);
 
     const resize = () => {
-      const height = frameDoc.documentElement?.scrollHeight ?? frameDoc.body?.scrollHeight ?? 0;
-      const nextHeight = emailFrameHeight(height);
+      // Root scrollHeight is at least the current iframe viewport height,
+      // so it cannot shrink after zooming out. Root offsetHeight measures
+      // flow content (including collapsed margins); body scrollHeight adds
+      // overflowing content in unzoomed units. Use the larger content size.
+      const contentHeight = Math.max(
+        frameDoc.documentElement?.offsetHeight ?? 0,
+        (frameDoc.body?.scrollHeight ?? 0) * zoomRef.current,
+      );
+      const height = contentHeight || frameDoc.documentElement?.scrollHeight || 0;
+      const nextHeight = emailFrameHeight(Math.ceil(height));
       setFrameHeight((previous) => previous === nextHeight ? previous : nextHeight);
       // The toggle lives outside the untrusted document; follow the marker
       // so it stays at the fold whether the quoted part is shown or hidden.
@@ -748,6 +775,7 @@ export function SafeMessage({
       const nextFoldTop = marker ? Math.round(marker.getBoundingClientRect().top + (frameDoc.defaultView?.scrollY ?? 0)) : null;
       setFoldTop((previous) => previous === nextFoldTop ? previous : nextFoldTop);
     };
+    resizeFrameRef.current = resize;
     resize();
     const onResize = () => {
       updateFontSize(minimumFontSizeRef.current);
@@ -818,6 +846,7 @@ export function SafeMessage({
     frameDoc.addEventListener("focusout", onLinkLeave);
 
     cleanupRef.current = () => {
+      resizeFrameRef.current = null;
       observer?.disconnect();
       frameDoc.defaultView?.removeEventListener("resize", onResize);
       frameDoc.removeEventListener("click", onClick);
@@ -886,13 +915,13 @@ export function SafeMessage({
           if (leaving !== null && linkHrefAt(event.relatedTarget) !== leaving) setHoveredLinkHref(null);
         }}
       >
-        {plainFold ? (
-          <>
-            {linkifyText(decodeHtmlEntities(plainFold.visible))}
-            {renderQuotedHistoryButton(null)}
-            {quotedHistoryExpanded ? linkifyText(decodeHtmlEntities(plainFold.quoted)) : null}
-          </>
-        ) : decoded ? linkifyText(decoded) : "No message content."}
+        <div data-email-plain-content style={{ zoom }}>
+          {plainFold ? linkifyText(decodeHtmlEntities(plainFold.visible)) : decoded ? linkifyText(decoded) : "No message content."}
+        </div>
+        {plainFold ? renderQuotedHistoryButton(null) : null}
+        {plainFold && quotedHistoryExpanded ? (
+          <div data-email-plain-content style={{ zoom }}>{linkifyText(decodeHtmlEntities(plainFold.quoted))}</div>
+        ) : null}
         {linkStatus}
       </div>
     );

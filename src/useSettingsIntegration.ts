@@ -1,3 +1,4 @@
+import { EMAIL_ZOOM } from "./emailRenderingPolicy";
 import { useCallback, useMemo, type Dispatch, type SetStateAction } from "react";
 import type { useAccounts } from "./useAccounts";
 import type { useAppPreferences } from "./useAppPreferences";
@@ -26,7 +27,7 @@ export function useSettingsIntegration({
     refreshAccounts, setAuthStatus,
   } = mailAccounts;
   const {
-    setTheme, setAccent, setFontScale, setFontFamily, setEmailMinimumFontSize,
+    setTheme, setAccent, setFontScale, setFontFamily, setEmailMinimumFontSize, setEmailZoom,
     setAutoReadDelaySeconds, setLoadRemoteImages, setAvailabilityPreferences,
   } = preferences;
   const { loadThreads, query } = mailboxThreads;
@@ -67,6 +68,7 @@ export function useSettingsIntegration({
     setFontScale(imported.fontScale);
     setFontFamily(imported.fontFamily);
     setEmailMinimumFontSize(imported.emailMinimumFontSize ?? 0);
+    setEmailZoom(imported.emailZoom ?? EMAIL_ZOOM.defaultPercent);
     setAutoReadDelaySeconds(imported.autoReadDelaySeconds);
     setLoadRemoteImages(imported.loadRemoteImages);
     setAvailabilityPreferences(imported.availabilityPreferences);
@@ -79,7 +81,7 @@ export function useSettingsIntegration({
     refreshAiAvailability();
     setSettingsSection("accounts");
   }, [
-    setTheme, setAccent, setFontScale, setFontFamily, setEmailMinimumFontSize,
+    setTheme, setAccent, setFontScale, setFontFamily, setEmailMinimumFontSize, setEmailZoom,
     setAutoReadDelaySeconds, setLoadRemoteImages, setAvailabilityPreferences, setActiveAccountId,
     refreshAccounts, refreshSplitInboxes, setAuthStatus, refreshAiAvailability, setSettingsSection,
   ]);

@@ -2,6 +2,95 @@ import { expect, test } from "@playwright/test";
 import { emailRenderingFixtures } from "../../src/test/emailRenderingFixtures";
 
 test.describe("email rendering fixtures", () => {
+  for (const fixture of ["zoomTable", "zoomFlow"]) {
+    for (const theme of ["light", "dark"]) {
+      for (const width of [390, 1200]) {
+        test(`${fixture} zoom scales text, images, spacing, and fold placement in ${theme} at ${width}px`, async ({ page }) => {
+          await page.setViewportSize({ width, height: 900 });
+          await page.goto(`/tests/email-rendering.html?theme=${theme}&fixture=${fixture}&zoom=100&images`);
+          const frame = page.locator("iframe.message-body");
+          const body = frame.contentFrame().locator("body");
+          const image = frame.contentFrame().getByAltText("Zoom icon");
+          await expect(image).toHaveAttribute("src", /^data:/);
+          const originalDocument = await frame.evaluateHandle((element) => (element as HTMLIFrameElement).contentDocument!);
+          const originalSrcdoc = await frame.getAttribute("srcdoc");
+          const measure = () => body.evaluate((element) => {
+            const doc = element.ownerDocument;
+            const date = doc.querySelector("span")!;
+            const range = doc.createRange();
+            range.selectNodeContents(date);
+            const text = range.getBoundingClientRect();
+            const link = doc.querySelector("a")!.getBoundingClientRect();
+            // Measure one word so permitted line wrapping in a narrow table
+            // does not look like a change to text magnification.
+            range.setEnd(date.firstChild!, 3);
+            return { textWidth: range.getBoundingClientRect().width, gap: link.left - text.right, height: element.getBoundingClientRect().height };
+          });
+          const baseline = await measure();
+          expect(baseline.gap).toBeGreaterThan(0);
+          const control = page.getByRole("combobox", { name: "Email zoom" });
+          const controlBox = (await control.boundingBox())!;
+          const selected = await body.getByText("Oct 24, 2026", { exact: true }).evaluate((element) => {
+            const range = element.ownerDocument.createRange();
+            range.selectNodeContents(element);
+            element.ownerDocument.getSelection()!.addRange(range);
+            return element.ownerDocument.getSelection()!.toString();
+          });
+          for (const zoom of [125, 200, 50, 100]) {
+            await control.selectOption(String(zoom));
+            await expect(body).toHaveCSS("zoom", String(zoom / 100));
+            const metrics = await measure();
+            // A static font avoids system optical-size changes; allow a
+            // pixel for WebKit's integer text-rectangle rounding.
+            expect(Math.abs(metrics.textWidth - baseline.textWidth * zoom / 100)).toBeLessThanOrEqual(1);
+            // The flow gap and table-cell padding are both authored as 16px.
+            // Table columns may redistribute spare width when constrained.
+            expect(metrics.gap).toBeGreaterThanOrEqual(16 * zoom / 100);
+            if (fixture === "zoomFlow") expect(metrics.gap).toBeCloseTo(baseline.gap * zoom / 100, 0);
+            expect((await image.boundingBox())!.width).toBeCloseTo(24 * zoom / 100, 0);
+            await expect.poll(async () => (await frame.boundingBox())!.height).toBeGreaterThanOrEqual(Math.floor(metrics.height));
+            await expect.poll(async () => (await frame.boundingBox())!.height).toBeLessThanOrEqual(Math.ceil(metrics.height) + 1);
+            const markerTop = await frame.contentFrame().locator("[data-quoted-history-fold]").evaluate((element) => element.getBoundingClientRect().top);
+            const toggle = page.getByRole("button", { name: "Show quoted content" });
+            const margin = await toggle.evaluate((element) => parseFloat(getComputedStyle(element).marginTop));
+            await expect.poll(async () => (await toggle.boundingBox())!.y - (await frame.boundingBox())!.y - margin).toBe(Math.round(markerTop));
+            expect((await control.boundingBox())!.height).toBe(controlBox.height);
+            expect(await frame.getAttribute("srcdoc")).toBe(originalSrcdoc);
+            expect(await frame.evaluate((element, original) => (element as HTMLIFrameElement).contentDocument === original, originalDocument)).toBe(true);
+            expect(await body.evaluate((element) => element.ownerDocument.getSelection()!.toString())).toBe(selected);
+          }
+          await page.getByRole("button", { name: "Show quoted content" }).click();
+          await expect(body).toContainText("Earlier quoted message.");
+          await control.selectOption("150");
+          await expect(body).toContainText("Earlier quoted message.");
+          await page.getByRole("button", { name: "Hide quoted content" }).click();
+          await expect(body).not.toContainText("Earlier quoted message.");
+          await originalDocument.dispose();
+        });
+      }
+    }
+  }
+
+  for (const plain of [false, true]) {
+    test(`email zoom combines with the font floor for ${plain ? "plain" : "HTML"} text`, async ({ page }) => {
+      await page.goto(`/tests/email-rendering.html?theme=light&fixture=smallTextFlow&zoom=125&minimumFontSize=18${plain ? "&plain" : ""}`);
+      const text = plain ? page.getByTestId("message-body").locator("[data-email-plain-content]") : page.locator("iframe.message-body").contentFrame().locator(".small-copy");
+      await expect(text).toHaveCSS("font-size", "18px");
+      const width = () => text.evaluate((element) => {
+        const range = element.ownerDocument.createRange();
+        range.setStart(element.firstChild!, 0);
+        range.setEnd(element.firstChild!, 3);
+        return range.getBoundingClientRect().width;
+      });
+      const enlarged = await width();
+      await page.getByRole("combobox", { name: "Email zoom" }).selectOption("100");
+      expect(Math.abs(enlarged - (await width()) * 1.25)).toBeLessThanOrEqual(2);
+      await expect(text).toHaveCSS("font-size", "18px");
+      await page.getByRole("combobox", { name: "Minimum email font size" }).selectOption("0");
+      await expect(text).toHaveCSS("font-size", plain ? "15px" : "10px");
+    });
+  }
+
   for (const fixture of ["notification", "transactional"]) {
     test(`${fixture} changes read styling without reloading or losing selection`, async ({ page }) => {
       await page.goto(`/tests/email-rendering.html?theme=light&fixture=${fixture}&tone`);

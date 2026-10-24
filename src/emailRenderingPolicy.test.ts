@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { EMAIL_MINIMUM_FONT_SIZE, parseEmailMinimumFontSize, EMAIL_CSS_LIMITS, EMAIL_IMAGE_LIMITS, preservedImageMinWidth, emailFrameHeight, sanitizeCssDeclaration, sanitizeHtmlCellPadding, sanitizeHtmlDimension, sanitizeHtmlFontSize, EMAIL_LEGACY_FONT_SIZE } from "./emailRenderingPolicy";
+import { EMAIL_ZOOM, parseEmailZoom, EMAIL_MINIMUM_FONT_SIZE, parseEmailMinimumFontSize, EMAIL_CSS_LIMITS, EMAIL_IMAGE_LIMITS, preservedImageMinWidth, emailFrameHeight, sanitizeCssDeclaration, sanitizeHtmlCellPadding, sanitizeHtmlDimension, sanitizeHtmlFontSize, EMAIL_LEGACY_FONT_SIZE } from "./emailRenderingPolicy";
 
 describe("email rendering numeric policy", () => {
+  it("validates email zoom at both bounds without clamping or accepting CSS", () => {
+    const { minPercent, maxPercent, defaultPercent } = EMAIL_ZOOM;
+    for (const value of [minPercent, minPercent + 1, 125, maxPercent - 1, maxPercent]) {
+      expect(parseEmailZoom(value)).toBe(value);
+    }
+    for (const value of [minPercent - 1, maxPercent + 1, 0, -1, 125.5, NaN, Infinity, undefined, "125", "125%;background:url(https://tracker.invalid)"]) {
+      expect(parseEmailZoom(value)).toBe(defaultPercent);
+    }
+    // Magnification is a reader capability, never sender CSS.
+    expect(sanitizeCssDeclaration("zoom", "2")).toBeNull();
+  });
   it("validates the reader font floor at both boundaries without silently clamping", () => {
     const { minPx, maxPx } = EMAIL_MINIMUM_FONT_SIZE;
     expect(parseEmailMinimumFontSize(0)).toBe(0);

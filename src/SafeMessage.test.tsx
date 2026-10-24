@@ -37,6 +37,55 @@ function loadFrame(frame: HTMLIFrameElement) {
 }
 
 describe("SafeMessage", () => {
+  it.each(["zoomTable", "zoomFlow"] as const)("changes %s zoom in place without changing sender styles or selection", (fixture) => {
+    const html = emailRenderingFixtures[fixture];
+    const { rerender } = render(<SafeMessage html={html} emailZoom={125} />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    const doc = loadFrame(frame);
+    const srcdoc = frame.srcdoc;
+    const markup = doc.querySelector("[data-email-root]")!.innerHTML;
+    const range = doc.createRange();
+    range.selectNodeContents(doc.querySelector("span")!);
+    doc.getSelection()!.addRange(range);
+    const selected = doc.getSelection()!.toString();
+    expect(doc.body.style.zoom).toBe("1.25");
+    for (const zoom of [50, 150, 100]) {
+      rerender(<SafeMessage html={html} emailZoom={zoom} />);
+      expect(doc.body.style.zoom).toBe(String(zoom / 100));
+      expect(frame.srcdoc).toBe(srcdoc);
+      expect(frame.contentDocument).toBe(doc);
+      expect(doc.querySelector("[data-email-root]")!.innerHTML).toBe(markup);
+      expect(doc.getSelection()!.toString()).toBe(selected);
+    }
+    rerender(<SafeMessage html={html} emailZoom={999} />);
+    expect(doc.body.style.zoom).toBe("1");
+  });
+
+  it("applies email zoom to plain text independently of the minimum font size", () => {
+    const { rerender } = render(<SafeMessage html="" text="Plain text" emailZoom={125} emailMinimumFontSize={18} />);
+    expect(screen.getByTestId("message-body")).toHaveStyle({ fontSize: "max(18px, var(--text-reading))" });
+    expect(screen.getByTestId("message-body").querySelector<HTMLElement>("[data-email-plain-content]")!.style.zoom).toBe("1.25");
+    rerender(<SafeMessage html="" text="Plain text" emailZoom={100} />);
+    expect(screen.getByTestId("message-body").querySelector<HTMLElement>("[data-email-plain-content]")!.style.zoom).toBe("1");
+    expect(screen.getByTestId("message-body").style.fontSize).toBe("");
+  });
+
+  it("keeps zoom reader-owned and preserves the security boundary at enlarged sizes", () => {
+    const resolveImage = vi.fn();
+    render(<SafeMessage html={'<style>body { zoom: 20; background:url(https://tracker.invalid/bg) }</style><p style="zoom:20;position:fixed">Copy</p><img src="https://tracker.invalid/image" onerror="parent.compromised=true"><script>parent.compromised=true</script><a href="javascript:alert(1)">Unsafe</a>'} emailZoom={200} resolveImage={resolveImage} />);
+    const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+    const doc = loadFrame(frame);
+    expect(doc.body.style.zoom).toBe("2");
+    expect(doc.querySelector("p")!.style.cssText).toBe("");
+    expect(doc.querySelector("script, [onerror]")).toBeNull();
+    expect(doc.querySelector("img")!.hasAttribute("src")).toBe(false);
+    expect(doc.querySelector("a")!.hasAttribute("href")).toBe(false);
+    expect(resolveImage).not.toHaveBeenCalled();
+    expect(frame.srcdoc).toContain("script-src 'none'");
+    expect(frame.srcdoc).not.toContain("zoom: 20");
+    expect(frame.srcdoc).not.toContain("url(https://tracker.invalid/bg)");
+  });
+
   it("names its frame for assistive technology without a native hover tooltip", () => {
     render(<SafeMessage html="<p>Hello</p>" tone="default" />);
     const frame = screen.getByLabelText("Message content");
@@ -1453,7 +1502,9 @@ it("decodes entities in the plain text fallback", () => {
 it("collapses and reveals quoted history in a plain-text reply", () => {
   const text = "Current answer\n\n------ Original Message ------\nFrom A. Sender\nEarlier message";
   expect(collapseQuotedHistoryText(text)).toBe("Current answer");
-  render(<SafeMessage html="" text={text} />);
+  render(<SafeMessage html="" text={text} emailZoom={125} />);
+  expect(screen.getByRole("button", { name: "Show quoted content" }).closest("[data-email-plain-content]")).toBeNull();
+  expect(screen.getByTestId("message-body").style.zoom).toBe("");
 
   expect(screen.getByTestId("message-body")).toHaveTextContent("Current answer");
   expect(screen.getByTestId("message-body")).not.toHaveTextContent("Earlier message");

@@ -158,6 +158,7 @@ export function App() {
     fontScale,
     fontFamily,
     adjustFontScale,
+    emailZoom,
     emailMinimumFontSize,
     autoReadDelaySeconds,
     loadRemoteImages,
@@ -219,7 +220,7 @@ export function App() {
     accounts, visibleDetail?.messages.at(-1)?.id, visibleDetail?.thread.accountId,
     snippetLibrary.snippets, snippetLibrary.create, snippetLibrary.update, snippetLibrary.remove,
     selectedId,
-    { theme: effectiveThemeValue, fontScale: fontScale / 100, fontFamily, emailMinimumFontSize, loadImages: loadRemoteImages },
+    { theme: effectiveThemeValue, fontScale: fontScale / 100, fontFamily, emailZoom, emailMinimumFontSize, loadImages: loadRemoteImages },
     signatureLibrary,
   );
   const draftSelection = useDraftSelection(correspondence.drafts, correspondence.activeDraft?.id ?? null);
@@ -1176,6 +1177,7 @@ export function App() {
                     theme={effectiveThemeValue}
                     fontScale={fontScale / 100}
                     fontFamily={fontFamily}
+                    emailZoom={emailZoom}
                     emailMinimumFontSize={emailMinimumFontSize}
                     threadText={displayedThreadText}
                     onActivate={activateMessage}
@@ -1224,6 +1226,7 @@ export function App() {
                     theme={effectiveThemeValue}
                     fontScale={fontScale / 100}
                     fontFamily={fontFamily}
+                    emailZoom={emailZoom}
                     emailMinimumFontSize={emailMinimumFontSize}
                     onActivate={ignoreOutboxMessageEvent}
                     onToggle={ignoreOutboxMessageEvent}

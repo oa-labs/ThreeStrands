@@ -43,17 +43,21 @@ const resolveFixtureImage = async (url: string) => {
 };
 
 function RenderingHarness() {
+  const [zoom, setZoom] = useState(Number(params.get("zoom") ?? 100));
   const [minimum, setMinimum] = useState(Number(params.get("minimumFontSize") ?? 0));
   const [tone, setTone] = useState<"default" | "current" | "muted">("default");
   return (
     <div style={{ width: "100%", maxWidth: 760, margin: "0 auto" }}>
+      {params.has("zoom") ? <select aria-label="Email zoom" value={zoom} onChange={(event) => setZoom(Number(event.target.value))}>
+        <option value={50}>50%</option><option value={100}>100%</option><option value={125}>125%</option><option value={150}>150%</option><option value={200}>200%</option>
+      </select> : null}
       {params.has("minimumFontSize") ? <select aria-label="Minimum email font size" value={minimum} onChange={(event) => setMinimum(Number(event.target.value))}>
         <option value={0}>Off</option><option value={18}>18 px</option><option value={22}>22 px</option>
       </select> : null}
       {params.has("tone") ? <select aria-label="Message tone" value={tone} onChange={(event) => setTone(event.target.value as typeof tone)}>
         <option value="default">Unread</option><option value="muted">Read</option><option value="current">Latest</option>
       </select> : null}
-      <SafeMessage html={params.has("plain") ? "" : fixture} text="Plain text message" theme={theme} loadImages={params.has("images")} resolveImage={resolveFixtureImage} emailMinimumFontSize={minimum} priorThreadText={priorThreadText} tone={tone} />
+      <SafeMessage html={params.has("plain") ? "" : fixture} text="Plain text message" theme={theme} loadImages={params.has("images")} resolveImage={resolveFixtureImage} emailZoom={zoom} emailMinimumFontSize={minimum} priorThreadText={priorThreadText} tone={tone} />
     </div>
   );
 }

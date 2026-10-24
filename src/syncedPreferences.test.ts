@@ -28,6 +28,7 @@ describe("synced preferences data boundary", () => {
     localStorage.setItem("threestrands.fontScale", "120");
     localStorage.setItem("threestrands.settings.fontFamily", "Georgia");
     localStorage.setItem("threestrands.settings.emailMinimumFontSize", "16");
+    localStorage.setItem("threestrands.settings.emailZoom", "125");
 
     queuePortablePreferences();
 
@@ -38,6 +39,7 @@ describe("synced preferences data boundary", () => {
     expect(preferences).not.toHaveProperty("fontScale");
     expect(preferences).not.toHaveProperty("fontFamily");
     expect(preferences).not.toHaveProperty("emailMinimumFontSize");
+    expect(preferences).not.toHaveProperty("emailZoom");
   });
 
   it("does not queue or pull preferences outside the native app", async () => {
@@ -79,12 +81,14 @@ describe("synced preferences data boundary", () => {
     localStorage.setItem("threestrands.fontScale", "90");
     localStorage.setItem("threestrands.settings.fontFamily", "Helvetica");
     localStorage.setItem("threestrands.settings.emailMinimumFontSize", "12");
+    localStorage.setItem("threestrands.settings.emailZoom", "125");
     vi.mocked(invoke).mockResolvedValue({
       // Older app versions replicated appearance fields.
       theme: "light",
       accent: "rose",
       fontScale: 110,
       emailMinimumFontSize: 18,
+      emailZoom: 150,
       fontFamily: "Georgia",
       selectedAccountId: "remote@example.com",
       autoReadDelaySeconds: 4,
@@ -112,6 +116,7 @@ describe("synced preferences data boundary", () => {
     expect(localStorage.getItem("threestrands.fontScale")).toBe("90");
     expect(localStorage.getItem("threestrands.settings.fontFamily")).toBe("Helvetica");
     expect(localStorage.getItem("threestrands.settings.emailMinimumFontSize")).toBe("12");
+    expect(localStorage.getItem("threestrands.settings.emailZoom")).toBe("125");
     expect(localStorage.getItem("threestrands.settings.autoReadDelaySeconds")).toBe("4");
     expect(localStorage.getItem("threestrands.crash-reports")).toBeNull();
   });

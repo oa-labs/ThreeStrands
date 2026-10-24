@@ -39,6 +39,7 @@ type MessageCardProps = {
   theme: "light" | "dark";
   fontScale: number;
   fontFamily: FontFamily;
+  emailZoom?: number;
   emailMinimumFontSize?: number;
   /** The conversation's text index; this card folds text repeated from messages before `index`. */
   threadText?: ThreadTextIndex;
@@ -71,6 +72,7 @@ export const MessageCard = memo(function MessageCard({
   theme,
   fontScale,
   fontFamily,
+  emailZoom,
   emailMinimumFontSize = 0,
   threadText,
   onActivate,
@@ -282,6 +284,7 @@ export const MessageCard = memo(function MessageCard({
           theme={theme}
           fontScale={fontScale}
           fontFamily={fontFamily}
+          emailZoom={emailZoom}
           emailMinimumFontSize={emailMinimumFontSize}
           tone={isLatest ? "current" : message.unread ? "default" : "muted"}
           priorThreadText={priorThreadText}

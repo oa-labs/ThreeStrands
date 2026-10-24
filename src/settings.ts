@@ -1,4 +1,4 @@
-import { parseEmailMinimumFontSize } from "./emailRenderingPolicy";
+import { EMAIL_ZOOM, parseEmailZoom, parseEmailMinimumFontSize } from "./emailRenderingPolicy";
 
 export type FontFamily = string;
 
@@ -461,5 +461,22 @@ export function readEmailMinimumFontSize(): number {
 export function saveEmailMinimumFontSize(value: number): number {
   const next = parseEmailMinimumFontSize(value);
   try { localStorage.setItem(EMAIL_MINIMUM_FONT_SIZE_KEY, String(next)); } catch { /* session preference still applies */ }
+  return next;
+}
+
+const EMAIL_ZOOM_KEY = "threestrands.settings.emailZoom";
+
+export function readEmailZoom(): number {
+  try {
+    const saved = localStorage.getItem(EMAIL_ZOOM_KEY);
+    return parseEmailZoom(saved === null ? EMAIL_ZOOM.defaultPercent : Number(saved));
+  } catch {
+    return EMAIL_ZOOM.defaultPercent;
+  }
+}
+
+export function saveEmailZoom(value: number): number {
+  const next = parseEmailZoom(value);
+  try { localStorage.setItem(EMAIL_ZOOM_KEY, String(next)); } catch { /* session preference still applies */ }
   return next;
 }

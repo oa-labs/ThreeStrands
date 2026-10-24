@@ -89,6 +89,9 @@ pub struct TransferPreferences {
     // Added in 0.56; older exports preserve sender sizes.
     #[serde(default)]
     pub email_minimum_font_size: i64,
+    // Added in 0.163; preceding exports import at 100% zoom.
+    #[serde(default = "default_email_zoom", skip_serializing_if = "is_default_email_zoom")]
+    pub email_zoom: i64,
     pub auto_read_delay_seconds: i64,
     pub load_remote_images: bool,
     pub selected_account_id: Option<String>,
@@ -107,6 +110,14 @@ pub struct TransferPreferences {
     // so an export without colors still imports into earlier builds.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub calendar_colors: CalendarColors,
+}
+
+fn default_email_zoom() -> i64 {
+    100
+}
+
+fn is_default_email_zoom(value: &i64) -> bool {
+    *value == default_email_zoom()
 }
 
 fn default_accent() -> String {
@@ -147,6 +158,10 @@ impl TransferPreferences {
         // Mirrors the reader preference bounds in emailRenderingPolicy.ts.
         if self.email_minimum_font_size != 0 && !(12..=32).contains(&self.email_minimum_font_size) {
             return Err("The transfer contains an invalid minimum email font size".to_string());
+        }
+        // Mirrors EMAIL_ZOOM in emailRenderingPolicy.ts at the native boundary.
+        if !(50..=200).contains(&self.email_zoom) {
+            return Err("The transfer contains an invalid email zoom".to_string());
         }
         if !(0..=60).contains(&self.auto_read_delay_seconds) {
             return Err("The transfer contains an invalid read delay".to_string());
@@ -912,6 +927,7 @@ mod tests {
                 font_scale: 110,
                 font_family: "system".to_string(),
                 email_minimum_font_size: 18,
+                email_zoom: default_email_zoom(),
                 auto_read_delay_seconds: 2,
                 load_remote_images: false,
                 selected_account_id: Some("person@example.com".to_string()),
@@ -1498,6 +1514,29 @@ mod tests {
     }
 
     #[test]
+    fn preceding_export_defaults_email_zoom_to_100_percent() {
+        let (_, result) = import_fixture(fixtures::V4_CURRENT);
+        assert_eq!(result.preferences.email_zoom, default_email_zoom());
+        // The preceding schema is preserved when the new setting is unused.
+        let serialized = serde_json::to_value(&result.preferences).unwrap();
+        assert!(serialized.get("emailZoom").is_none());
+    }
+
+    #[test]
+    fn email_zoom_round_trips_and_rejects_invalid_bounds() {
+        let mut payload = decrypt(fixtures::V4_CURRENT, fixtures::PASSWORD).unwrap();
+        for value in [50, 51, 100, 125, 199, 200] {
+            payload.preferences.email_zoom = value;
+            let result = decrypt(&encrypt(&payload, fixtures::PASSWORD).unwrap(), fixtures::PASSWORD).unwrap();
+            assert_eq!(result.preferences.email_zoom, value);
+        }
+        for value in [49, 201, -1] {
+            payload.preferences.email_zoom = value;
+            assert!(payload.preferences.validate().is_err());
+        }
+    }
+
+    #[test]
     fn minimum_email_font_size_round_trips_and_rejects_invalid_bounds() {
         let mut payload = decrypt(fixtures::V4_CURRENT, fixtures::PASSWORD).unwrap();
         for value in [0, 12, 18, 32] {
@@ -1702,6 +1741,7 @@ mod tests {
                 font_scale: 125,
                 font_family: "Iowan Old Style".to_string(),
                 email_minimum_font_size: 18,
+                email_zoom: default_email_zoom(),
                 auto_read_delay_seconds: 15,
                 load_remote_images: true,
                 selected_account_id: Some("current@example.com".to_string()),
