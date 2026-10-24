@@ -14,6 +14,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - **Settings → AI Provider** now lists recent **Activity**: which feature sent each request to your AI provider, the conversation's subject, how many messages, and the tokens used. Email text is never kept there.
 
 ### Improved
+- Switching accounts with <kbd>⌘1</kbd>, <kbd>⌘2</kbd>, and so on now remembers the email you had open in each account, so it's still selected when you come back.
 - Pressing <kbd>t</kbd> now switches the column on the right of your mail between the conversation's details and the day's **Schedule**, instead of squeezing in another column. Your choice stays put when you visit another view or restart the app.
 - Calendar invitation cards now make web addresses in the location clickable, opening them in your browser. Decorative separator lines no longer clutter invitation descriptions.
 - The **Brief** now sums up what's new since your last reply or your last brief, instead of the whole conversation again, and suggests tasks only from the new messages. When it helps, a last line recaps the earlier conversation, and a note says when the brief covers only the latest messages.

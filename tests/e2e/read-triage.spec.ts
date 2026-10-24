@@ -409,6 +409,18 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
   await page.keyboard.press("ControlOrMeta+1");
   await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
 
+  // Returning to an account reselects the conversation it last had open.
+  const rows = threadOptions(page);
+  await expect(rows.first()).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("j");
+  await expect(rows.nth(1)).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("ControlOrMeta+2");
+  await expect(page.getByRole("heading", { name: "0 conversations" })).toBeVisible();
+  await page.keyboard.press("ControlOrMeta+1");
+  await expect(page.getByRole("heading", { name: "3 conversations" })).toBeVisible();
+  await expect(rows.nth(1)).toHaveAttribute("aria-selected", "true");
+  await expect(rows.first()).toHaveAttribute("aria-selected", "false");
+
   // The command palette offers the same switching, discoverable like any other command.
   await page.keyboard.press("ControlOrMeta+k");
   let palette = page.getByRole("dialog", { name: "Command Palette" });

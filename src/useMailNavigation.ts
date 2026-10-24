@@ -109,6 +109,15 @@ export function useMailNavigation({
     setMailbox((current) => (current === "inbox" || current === "split" ? (target ? "split" : "inbox") : current));
     setActiveSplitInboxId(target);
   }, [activeAccountId, splitInboxesLoaded, accountSplitInboxes, setMailbox, setActiveSplitInboxId, setQuery, setSearchOpen]);
+  // The conversation each account last had open, so switching back to it (⌘1, ⌘2, …) reselects it.
+  const selectionByAccountRef = useRef(new Map<string | null, { mailbox: MailboxKind; threadId: string }>());
+  const rememberSelection = () => {
+    const currentMailbox = mailbox === "split" ? "inbox" : mailbox;
+    if (selectedId) selectionByAccountRef.current.set(activeAccountId, { mailbox: currentMailbox, threadId: selectedId });
+    else selectionByAccountRef.current.delete(activeAccountId);
+  };
+  const rememberSelectionRef = useRef(rememberSelection);
+  rememberSelectionRef.current = rememberSelection;
   // Jumps to another conversation (from the context panel, Tasks, or Contacts) that Back can undo.
   const [returnSteps, setReturnSteps] = useState<readonly ReturnStep[]>([]);
   const pendingReaderRestoreRef = useRef<{ threadId: string; expanded: [string, boolean][]; anchor: ReaderAnchor | null; stage: "expand" | "scroll" } | null>(null);
@@ -141,6 +150,7 @@ export function useMailNavigation({
       const targetMailbox: MailboxKind = thread.trashed ? "trash" : thread.archived ? "allMail" : "inbox";
       const targetAccountId = activeAccountId === null ? null : thread.accountId;
       if (targetAccountId !== activeAccountId) {
+        rememberSelectionRef.current();
         saveSelectedMailboxForAccount(activeAccountId, mailbox === "split" ? "inbox" : mailbox);
         setActiveAccountId(targetAccountId);
       }
@@ -193,6 +203,7 @@ export function useMailNavigation({
     // Keeps the origin conversation selected while its list reloads, as a jump does for its target.
     contextOpenedThreadRef.current = origin.threadId;
     if (origin.accountId !== activeAccountId) {
+      rememberSelectionRef.current();
       saveSelectedMailboxForAccount(activeAccountId, mailbox === "split" ? "inbox" : mailbox);
       // The origin's own tab and search come back below, so the per-account tab restore must not replace them.
       restoredTabAccountRef.current = origin.accountId;
@@ -285,6 +296,7 @@ export function useMailNavigation({
     contextOpenedThreadRef.current = null;
     const currentMailbox = mailbox === "split" ? "inbox" : mailbox;
     saveSelectedMailboxForAccount(activeAccountId, currentMailbox);
+    rememberSelectionRef.current();
     const nextMailbox = readSelectedMailboxForAccount(accountId) ?? "inbox";
     setMailbox(nextMailbox);
     setActiveSplitInboxId(null);
@@ -296,6 +308,10 @@ export function useMailNavigation({
     if (nextMailbox === "drafts" || nextMailbox === "outbox") {
       setSelectedId(null);
       setDetail(null);
+    } else {
+      // Kept once the account's list loads if the conversation is still in it; otherwise the first one is selected.
+      const remembered = selectionByAccountRef.current.get(accountId);
+      if (remembered?.mailbox === nextMailbox) setSelectedId(remembered.threadId);
     }
     setActiveAccountId(accountId);
   }, [
