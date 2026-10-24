@@ -4,6 +4,8 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+## 0.163.2 — 2026-10-24
+
 ### New
 - **Settings → Appearance → Email Zoom** now enlarges email text, images, and spacing together, independently of app text size. The reading controls explain how to combine zoom with a minimum font size, or preserve the sender’s proportions by leaving the minimum off.
 - The new **Today** view (press <kbd>0</kbd>) shows your day at a glance: your agenda with a **Join** button for the next meeting, unread mail sorted into **Invitations**, **Needs a reply**, **From people**, and **Updates**, and tasks that are overdue or due today. Finished events are dimmed under a **Now** line, and the first few events **Tomorrow** are listed below. The agenda includes all your calendars, while mail and tasks follow the account you have selected. Its lists use the same text size as your inbox, with room to breathe. To start the app there, choose **Today** under **Settings → Appearance → Start With**; when your inbox is empty, the side panel links to it.
