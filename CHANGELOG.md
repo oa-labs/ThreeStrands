@@ -4,6 +4,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### Fixed
+- Meeting suggestions now prefer the full conferencing join link over a generic location such as “Microsoft Teams.” Emails offering multiple sessions keep each session paired with its own join link.
+
 ## 0.163.2 — 2026-10-24
 
 ### New
