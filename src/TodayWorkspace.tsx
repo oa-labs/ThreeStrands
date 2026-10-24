@@ -85,7 +85,9 @@ function TodayLayout({
     return () => { active = false; };
   }, [accountId, refreshKey]);
 
-  const [tasks, setTasks] = useState<ThreadTask[]>([]);
+  // Null until read, and after a failed read, so neither shows "No open tasks."
+  const [loadedTasks, setTasks] = useState<ThreadTask[] | null>(null);
+  const tasks = loadedTasks ?? [];
   const [announcement, setAnnouncement] = useState("");
   useEffect(() => {
     let active = true;
@@ -93,7 +95,7 @@ function TodayLayout({
       if (active) setTasks(loaded.filter((task) => isActiveTaskStatus(task.status)).sort(compareTasksForDisplay));
     }).catch(() => {
       // Supplemental to the day's mail; a failed read leaves the column empty.
-      if (active) setTasks([]);
+      if (active) setTasks(null);
     });
     return () => { active = false; };
   }, [accountId, taskRefreshKey]);
@@ -114,7 +116,7 @@ function TodayLayout({
     const done = isActiveTaskStatus(task.status);
     try {
       const updated = await mailClient.setTaskStatus(task.id, done ? "completed" : "open");
-      setTasks((current) => current.map((candidate) => candidate.id === task.id ? updated : candidate));
+      setTasks((current) => current?.map((candidate) => candidate.id === task.id ? updated : candidate) ?? null);
       setAnnouncement(`${done ? "Completed" : "Reopened"}: ${task.title}`);
       onTasksChanged();
     } catch (reason) {
@@ -205,7 +207,7 @@ function TodayLayout({
         {overdue.length > 0 ? <ContextSection id="today-tasks-overdue" title="Overdue" count={overdue.length} rows={overdue.map(taskRow)} /> : null}
         {dueToday.length > 0 ? <ContextSection id="today-tasks-due" title="Due today" count={dueToday.length} rows={dueToday.map(taskRow)} /> : null}
         {open.length > 0 ? <ContextSection id="today-tasks-open" title="Open tasks" count={open.length} limit={3} rows={open.map(taskRow)} /> : null}
-        {tasks.length === 0 ? <ContextSection id="today-tasks-none" title="Tasks" rows={[]} footer={<p className="context-status">No open tasks.</p>} /> : null}
+        {loadedTasks?.length === 0 ? <ContextSection id="today-tasks-none" title="Open tasks" rows={[]} footer={<p className="context-status">No open tasks.</p>} /> : null}
         {reconnect.length > 0 ? <ContextSection
           id="today-keep-in-touch"
           title="Keep in touch"
