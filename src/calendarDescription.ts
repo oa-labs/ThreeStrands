@@ -1,3 +1,4 @@
+import { safeWebUrl } from "./calendarTime";
 import { htmlToPlainText } from "./htmlPlainText";
 
 /**
@@ -19,4 +20,18 @@ export function calendarDescriptionText(description: string): string {
     ? htmlToPlainText(description, { whitespace: "collapse" })
     : description;
   return text.replace(SEPARATOR_LINE, "").trim();
+}
+
+/** A whole, explicitly labelled join line supplies a meeting link without guessing from a host. */
+export function calendarInvitationDetails(location: string | null, description: string | null): { location: string; description: string; joinUrl: string | null } {
+  const text = description ? calendarDescriptionText(description) : "";
+  const lines = text.split("\n");
+  const joinLine = lines.findIndex((line) => /^(?:Join(?: with [^:\n]+)?|Meeting link|Video call):\s*https?:\/\/\S+\s*$/i.test(line.trim()));
+  const written = joinLine < 0 ? null : lines[joinLine].trim().replace(/^[^:]+:\s*/, "");
+  const joinUrl = safeWebUrl(written);
+  if (!joinUrl) return { location: location ?? "", description: text, joinUrl: null };
+  // Only remove an identical URL token. A different path, query, or trailing text stays intact.
+  const place = (location ?? "").replace(/https?:\/\/[^\s<>";]+/g, (url) => url === written ? "" : url)
+    .replace(/^[\s,;·]+|[\s,;·]+$/g, "");
+  return { location: place, description: lines.filter((_, index) => index !== joinLine).join("\n").trim(), joinUrl };
 }

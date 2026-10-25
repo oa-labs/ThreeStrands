@@ -52,6 +52,7 @@ export function ContactMeetings({ people, timeZone, onOpenEvent }: {
     className="context-meetings"
     title="Upcoming meetings"
     count={meetings.length}
+    note="With people in this conversation"
     rows={meetings.map(({ event, name }) => (
       <ContextRow
         key={`${event.accountId}:${event.id}`}
@@ -62,7 +63,7 @@ export function ContactMeetings({ people, timeZone, onOpenEvent }: {
         wrapTitle
         date={<span title={formatEventDate(event)}>{formatUpcomingDate(event)}</span>}
         detail={<>
-          <span className="context-meeting-details">with {name}</span>
+          <span className="context-meeting-details">{event.allDay ? "All day" : new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone }).format(new Date(event.start))} · with {name}</span>
           {responseLabel(event) ? <span className="context-meeting-response" data-response-status={event.responseStatus ?? undefined}> · {responseLabel(event)}</span> : null}
         </>}
         onActivate={() => onOpenEvent(event)}

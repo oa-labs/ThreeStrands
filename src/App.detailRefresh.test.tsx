@@ -83,7 +83,7 @@ it("follows a reply's recipients in the conversation panel", async () => {
     const to = within(composer).getByRole("textbox", { name: "To" });
     fireEvent.change(to, { target: { value: `${(to as HTMLInputElement).value}, carol@example.com,` } });
     const header = within(panel).getByRole("group", { name: "Showing history with" });
-    fireEvent.click(await within(header).findByRole("button", { name: /^\d+ others?$/ }));
+    fireEvent.click(await within(header).findByRole("button", { name: /^Show history with / }));
     fireEvent.click(within(header).getByRole("button", { name: "carol@example.com" }));
     await waitFor(() => expect(within(header).getByText("carol@example.com")).toHaveClass("context-person-name"));
 
@@ -246,10 +246,11 @@ describe("conversation brief", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     const panel = screen.getByRole("complementary", { name: "Conversation context" });
-    const invitation = await within(panel).findByRole("region", { name: "Invitation" });
-    expect(await within(invitation).findByRole("button", { name: "Accept" })).toBeEnabled();
+    expect(within(panel).queryByRole("region", { name: "Invitation" })).not.toBeInTheDocument();
+    const invitation = await screen.findByRole("region", { name: "Calendar invitation" });
+    expect(await within(invitation).findByRole("button", { name: "Going" })).toBeEnabled();
     expect(within(invitation).getByRole("button", { name: "Maybe" })).toBeEnabled();
-    expect(within(invitation).getByRole("button", { name: "Decline" })).toBeEnabled();
+    expect(within(invitation).getByRole("button", { name: "Not going" })).toBeEnabled();
     expect(within(panel).queryByRole("button", { name: "Find Times" })).not.toBeInTheDocument();
     if (mode === "brief") {
       fireEvent.click(await within(panel).findByRole("button", { name: "Get Brief" }));

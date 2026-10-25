@@ -572,6 +572,20 @@ describe("ThreadAssist", () => {
     expect(onRun).toHaveBeenCalledWith(false);
   });
 
+  it("renders and copies a single takeaway as a paragraph, retaining lists for multiple takeaways", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const single = { ...summarized, thread: { ...summarized.thread, summary: "• Please reply by Friday." } };
+    const { rerender } = render(<ThreadAssist {...props({ detail: single })} />);
+    expect(screen.getByText("Please reply by Friday.").tagName).toBe("P");
+    expect(screen.queryByRole("list")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Copy brief" }));
+    expect(writeText).toHaveBeenCalledWith("Please reply by Friday.");
+    await screen.findByRole("button", { name: "Copied brief" });
+    rerender(<ThreadAssist {...props({ detail: summarized })} />);
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+  });
+
   it("offers no copy action before a brief exists", () => {
     render(<ThreadAssist {...props()} />);
     expect(screen.queryByRole("button", { name: "Copy brief" })).not.toBeInTheDocument();

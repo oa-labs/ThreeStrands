@@ -11,6 +11,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - When you create an event, **Invite People** now suggests your contacts and contact groups as you type a name or address. Press **Enter** or click a suggestion to add someone as a badge with their name, or choose a group to invite everyone in it.
 
 ### Improved
+- The conversation sidebar is calmer: single-takeaway briefs read as paragraphs, contact history has a compact person selector, known-sender details fold away, and upcoming meetings include their times. Respond to invitations and suggest another time directly on the invitation card, with your current response clearly selected, a single meeting link, and expandable event details.
 - On Windows, **Files** now shows a preview picture of PDFs, images, and other documents, as it already did on macOS.
 - Text that isn't an email address no longer turns into a recipient badge when you write a message or invite people to an event. It stays in the field with a note saying what's wrong so you can fix it, and **Send**, **Send later**, and creating the event wait until it's fixed.
 

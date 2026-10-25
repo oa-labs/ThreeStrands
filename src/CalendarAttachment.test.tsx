@@ -55,6 +55,44 @@ describe("CalendarAttachment", () => {
     expect(mailClient.previewCalendarAttachment).toHaveBeenCalledWith("message-1", "calendar-1");
   });
 
+  it.each([
+    ["Room 4B; https://video.example.com/team?key=abc", "Join with Team Video: https://video.example.com/team?key=abc\nBring your notes.", "Room 4B", "https://video.example.com/team?key=abc", "Bring your notes."],
+    ["https://call.example.org/session", "<p>Meeting link: https://call.example.org/session</p><p>Agenda<br>Roadmap review</p>", null, "https://call.example.org/session", "Agenda\nRoadmap review"],
+  ])("shows one explicit join link and expandable details for %s", (location, description, place, url, remaining) => {
+    render(<CalendarEvent event={{ ...event, location, description }} />);
+    const link = screen.getByRole("link", { name: "Join meeting" });
+    expect(link).toHaveAttribute("href", url);
+    expect(screen.getAllByRole("link")).toHaveLength(1);
+    fireEvent.click(link);
+    expect(openUrl).toHaveBeenCalledWith(url);
+    if (place) expect(screen.getByText(place)).toBeVisible();
+    const details = screen.getByText("Show details").closest("details")!;
+    expect(details).not.toHaveAttribute("open");
+    expect(details.querySelector(".calendar-description")?.textContent).toBe(remaining);
+    fireEvent.click(screen.getByText("Show details"));
+    expect(details).toHaveAttribute("open");
+  });
+
+  it.each([
+    ["javascript:alert(1)", "javascript:alert(1)"],
+    ["data:text/html,<script>alert(1)</script>", "data:text/html,"],
+    ["file:///tmp/invite.ics", "file:///tmp/invite.ics"],
+    ["https://", "https://"],
+  ])("keeps unsafe join descriptions inert: %s", (url, text) => {
+    const { container } = render(<CalendarEvent event={{ ...event, description: `Meeting link: ${url}` }} />);
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(container.querySelector("script")).toBeNull();
+    expect(container.querySelector(".calendar-description")).toHaveTextContent(`Meeting link: ${text}`);
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it("preserves different location URLs and join lines containing extra instructions", () => {
+    const { container } = render(<CalendarEvent event={{ ...event, location: "https://video.example.org/other", description: "Meeting link: https://video.example.org/session\nJoin: https://video.example.org/backup use PIN 1234" }} />);
+    expect(screen.getByRole("link", { name: "https://video.example.org/other" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Join meeting" })).toHaveAttribute("href", "https://video.example.org/session");
+    expect(container.querySelector(".calendar-description")).toHaveTextContent("Join: https://video.example.org/backup use PIN 1234");
+  });
+
   it("falls back to a normal attachment when parsing fails", async () => {
     vi.spyOn(mailClient, "previewCalendarAttachment").mockRejectedValue(new Error("invalid"));
 

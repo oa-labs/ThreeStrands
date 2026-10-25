@@ -1,19 +1,15 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { CalendarDays } from "lucide-react";
 import { CalendarResponseControls } from "./CalendarResponseControls";
-import { calendarEventRange } from "./CalendarAttachment";
-import { isCalendarAttachment } from "./calendarInvitations";
-import { ContextSectionHeader } from "./ContextSections";
+import { calendarEventRange } from "./calendarInvitations";
 import { mailClient } from "./data/client";
-import type { AvailabilityCandidate, AvailabilityPreferences, CalendarEventPreview, Message, ScheduleEvent } from "./domain";
+import type { AvailabilityCandidate, AvailabilityPreferences, CalendarEventPreview, ScheduleEvent } from "./domain";
 import { errorMessage } from "./errors";
 import { FindTimesCard } from "./FindTimesCard";
-import { ICON_SIZE } from "./iconSizes";
 import { clampMeetingMinutes, lookaheadRange, type SchedulePlan } from "./scheduling";
 import { refreshScheduleCache, scheduleCacheGeneration, subscribeScheduleCache } from "./calendarScheduleCache";
 
-type Props = {
-  message: Message;
+/** Actions offered beside a parsed invitation, independent of AI brief settings. */
+export type InvitationActions = {
   calendarConnected: boolean;
   preferences: AvailabilityPreferences;
   ai: boolean;
@@ -22,52 +18,10 @@ type Props = {
   onOpenCalendarSettings(): void;
 };
 
-/** Native invitation actions, independent of the AI brief and its settings. */
-export function InvitationSection(props: Props) {
-  const key = JSON.stringify([props.message.id, props.message.attachments.filter(isCalendarAttachment)]);
-  return <InvitationSectionBody key={key} {...props} />;
-}
-
-function InvitationSectionBody(props: Props) {
-  const [events, setEvents] = useState<CalendarEventPreview[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [attempt, setAttempt] = useState(0);
-  const { message } = props;
-  const attachmentsKey = JSON.stringify(message.attachments.filter(isCalendarAttachment).map((attachment) => attachment.id));
-  useEffect(() => {
-    let active = true;
-    setError(null);
-    setEvents(null);
-    const ids = JSON.parse(attachmentsKey) as string[];
-    void Promise.all(ids.map((id) => mailClient.previewCalendarAttachment(message.id, id)))
-      .then((previews) => {
-        if (!active) return;
-        const seen = new Set<string>();
-        setEvents(previews.flatMap((preview) => preview.events).filter((event) => {
-          const key = event.uid?.trim() || JSON.stringify([event.title, event.start, event.end]);
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        }));
-      })
-      .catch((reason: unknown) => { if (active) setError(`Could not read invitation: ${errorMessage(reason)}`); });
-    return () => { active = false; };
-  }, [message.id, attachmentsKey, attempt]);
-  return <section className="context-section context-invitation" aria-label="Invitation">
-    <ContextSectionHeader title="Invitation" icon={<CalendarDays size={ICON_SIZE.xs} />} />
-    <div className="context-invitation-body">
-      {error ? <><p className="context-status" role="alert">{error}</p><button type="button" className="btn btn-sm" onClick={() => setAttempt((value) => value + 1)}>Retry</button></>
-        : events === null ? <p className="context-status" role="status">Reading invitation…</p>
-          : events.length === 0 ? <p className="context-status">No events could be read from this invitation.</p>
-            : events.map((event, index) => <InvitationResponse key={`${event.uid ?? index}`} {...props} invitation={event} showTitle={events.length > 1} />)}
-    </div>
-  </section>;
-}
-
 type Lookup = { kind: "checking" } | { kind: "found"; event: ScheduleEvent } | { kind: "missing" } | { kind: "error"; message: string };
 
-function InvitationResponse({ invitation, showTitle, ...props }: Props & { invitation: CalendarEventPreview; showTitle: boolean }) {
-  const { calendarConnected, message, preferences, ai, intoDraft, onReplyWithTimes, onOpenCalendarSettings } = props;
+export function InvitationResponse({ invitation, sourceMessageId, ...props }: InvitationActions & { invitation: CalendarEventPreview; sourceMessageId: string }) {
+  const { calendarConnected, preferences, ai, intoDraft, onReplyWithTimes, onOpenCalendarSettings } = props;
   const [lookup, setLookup] = useState<Lookup>({ kind: "checking" });
   const [attempt, setAttempt] = useState(0);
   const [plan, setPlan] = useState<SchedulePlan | null>(null);
@@ -103,15 +57,14 @@ function InvitationResponse({ invitation, showTitle, ...props }: Props & { invit
       {!lookup.event.canRespond ? <p className="context-status">Already on your calendar. This calendar doesn’t allow you to respond.</p> : <>
         <button type="button" className="btn-link" onClick={suggestTimes}>Suggest a different time</button>
         {plan ? <FindTimesCard plan={plan} preferences={preferences} calendarConnected intoDraft={intoDraft}
-          ai={ai ? () => ({ sourceMessageId: message.id, draftSubject: invitation.title, draftText: "" }) : null}
-          onReplyWithTimes={(slots) => onReplyWithTimes(slots, message.id)}
+          ai={ai ? () => ({ sourceMessageId, draftSubject: invitation.title, draftText: "" }) : null}
+          onReplyWithTimes={(slots) => onReplyWithTimes(slots, sourceMessageId)}
           onOpenCalendarSettings={onOpenCalendarSettings}
           onAddToCalendar={() => undefined} onConfirmTime={() => undefined} /> : null}
       </>}
     </>;
   };
   return <div className="context-invitation-response">
-    {showTitle ? <strong>{invitation.title}</strong> : null}
     {response()}
   </div>;
 }
