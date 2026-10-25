@@ -222,6 +222,75 @@ describe("useReaderState", () => {
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
     expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
   });
+
+  describe("keeping the latest message at the top while its body sizes", () => {
+    /** Mounts a stack whose latest message grows later, with a controllable ResizeObserver. */
+    function mountGrowingReader() {
+      const resize = { notify: () => {}, disconnected: false };
+      vi.stubGlobal("ResizeObserver", class {
+        constructor(callback: () => void) { resize.notify = () => { if (!resize.disconnected) callback(); }; }
+        observe() {}
+        disconnect() { resize.disconnected = true; }
+      });
+      const scrollIntoView = vi.fn();
+      function Reader() {
+        const reader = useReaderState({ selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen: false });
+        return createElement("div", { ref: reader.messageStackRef, "data-testid": "stack" },
+          createElement("article", { ref: (node: HTMLElement | null) => {
+            if (node) {
+              node.scrollIntoView = scrollIntoView;
+              Object.defineProperty(node, "offsetTop", { configurable: true, value: 900 });
+            }
+            reader.latestMessageRef.current = node;
+          } }));
+      }
+      const view = render(createElement(Reader));
+      return { stack: view.getByTestId("stack"), resize, scrollIntoView, unmount: view.unmount };
+    }
+
+    it("scrolls the stack back to the latest message's top, inside its scroll padding, each time it grows", () => {
+      try {
+        const reader = mountGrowingReader();
+        expect(reader.scrollIntoView).toHaveBeenCalledTimes(1);
+        reader.stack.style.scrollPaddingTop = "24px";
+        reader.resize.notify();
+        expect(reader.stack.scrollTop).toBe(876);
+        reader.stack.scrollTop = 500;
+        reader.resize.notify();
+        expect(reader.stack.scrollTop).toBe(876);
+        reader.unmount();
+        expect(reader.resize.disconnected).toBe(true);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it.each(["wheel", "touchMove", "pointerDown", "keyDown"] as const)("stops once the reader moves through the conversation (%s)", (event) => {
+      try {
+        const reader = mountGrowingReader();
+        fireEvent[event](window);
+        expect(reader.resize.disconnected).toBe(true);
+        reader.resize.notify();
+        expect(reader.stack.scrollTop).toBe(0);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("stops when the stack scrolls away from where it was pinned, as from inside the email", () => {
+      try {
+        const reader = mountGrowingReader();
+        fireEvent.scroll(reader.stack);
+        expect(reader.resize.disconnected).toBe(false);
+
+        reader.stack.scrollTop = 240;
+        fireEvent.scroll(reader.stack);
+        expect(reader.resize.disconnected).toBe(true);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+  });
 });
 
 describe("the message being read", () => {

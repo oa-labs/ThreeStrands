@@ -2,6 +2,16 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { Message, ThreadDetail } from "./domain";
 import { messageAtReadingLine } from "./readingMessage";
 
+/** Input that means the reader is moving through the conversation themselves. */
+const RELEASE_EVENTS = ["wheel", "touchmove", "pointerdown", "keydown"] as const;
+
+/** Layout position in the document, ignoring scroll and transforms such as a card's entrance animation. */
+function layoutTop(node: HTMLElement) {
+  let top = 0;
+  for (let current: HTMLElement | null = node; current; current = current.offsetParent as HTMLElement | null) top += current.offsetTop;
+  return top;
+}
+
 /**
  * Owns state that belongs to the conversation reader rather than the mailbox
  * or application shell. Expansion is intentionally keyed by message id so
@@ -111,7 +121,33 @@ export function useReaderState({
     const previous = lastAutoScrollRef.current;
     if (previous?.threadId === detailThreadId && previous.messageId === latestDisplayedMessageId) return;
     lastAutoScrollRef.current = { threadId: detailThreadId, messageId: latestDisplayedMessageId };
-    latestMessageRef.current?.scrollIntoView?.({ block: "start" });
+    const latest = latestMessageRef.current;
+    latest?.scrollIntoView?.({ block: "start" });
+    // The email body sizes itself after this first scroll. Until then the card
+    // is short, so the stack can only scroll far enough to leave it at the
+    // bottom. Keep it at the top as it grows, until the reader takes over.
+    // Input inside the email's iframe never reaches this window, so a scroll
+    // that moves the stack away from where the pin left it also releases it.
+    const stack = messageStackRef.current;
+    if (!latest || !stack || typeof ResizeObserver === "undefined") return;
+    let pinnedScrollTop = stack.scrollTop;
+    // Scroll only the stack: scrollIntoView would also nudge any scrollable
+    // ancestor, such as the window, every time the body grows.
+    const observer = new ResizeObserver(() => {
+      const offset = layoutTop(latest) - layoutTop(stack);
+      stack.scrollTop = offset - (parseFloat(getComputedStyle(stack).scrollPaddingTop) || 0);
+      pinnedScrollTop = stack.scrollTop;
+    });
+    observer.observe(latest);
+    const onScroll = () => { if (Math.abs(stack.scrollTop - pinnedScrollTop) > 1) release(); };
+    const release = () => {
+      observer.disconnect();
+      stack.removeEventListener("scroll", onScroll);
+      for (const type of RELEASE_EVENTS) window.removeEventListener(type, release, true);
+    };
+    stack.addEventListener("scroll", onScroll, { passive: true });
+    for (const type of RELEASE_EVENTS) window.addEventListener(type, release, { capture: true, passive: true });
+    return release;
   }, [composerOpen, detailThreadId, latestDisplayedMessageId]);
 
   useLayoutEffect(() => {

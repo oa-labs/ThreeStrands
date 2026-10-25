@@ -1094,7 +1094,7 @@ kbd {
 }
 .reader-actions { display: flex; align-items: center; gap: var(--space-1); }
 .action-button span, .action-button kbd { display: none; }
-.message-stack { min-height: 0; overflow: auto; overflow-anchor: none; padding: var(--space-6) clamp(var(--space-6), 5vw, var(--space-16)); }
+.message-stack { min-height: 0; overflow: auto; overflow-anchor: none; padding: var(--space-6) clamp(var(--space-6), 5vw, var(--space-16)); scroll-padding-top: var(--space-6); }
 /* An unsent draft card shares the message column so it lines up with the cards above it. */
 .message, .thread-draft { width: 100%; max-width: 840px; margin: 0 auto; }
 .message > header { display: flex; align-items: flex-start; width: 100%; gap: var(--space-2-5); padding-bottom: var(--space-6); }

@@ -859,6 +859,34 @@ test("keeps the theme toggle on screen with a long email", async ({ page }) => {
   await expect(page.locator(".message-stack")).toHaveJSProperty("scrollTop", 0);
 });
 
+test("keeps the latest message at the top of a long conversation while its email loads, until the reader scrolls", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 600 });
+  await page.goto("/");
+  await expect(page.getByTestId("message-body")).toBeVisible();
+  const email = page.frameLocator(".message-body").locator("body");
+  const stack = page.locator(".message-stack");
+  // Earlier messages fill the stack above a latest message that is still short.
+  await stack.evaluate((node) => {
+    const earlier = document.createElement("div");
+    earlier.style.height = "2000px";
+    node.prepend(earlier);
+  });
+  const latestOffset = () => stack.evaluate((node) => {
+    const latest = node.querySelector<HTMLElement>(".message-card-expanded")!;
+    return Math.round(latest.getBoundingClientRect().top - node.getBoundingClientRect().top);
+  });
+
+  await email.evaluate((node) => { node.innerHTML = "<p>A long email paragraph.</p>".repeat(150); });
+  await expect.poll(latestOffset).toBe(24);
+
+  await stack.hover();
+  await page.mouse.wheel(0, -300);
+  await expect.poll(latestOffset).toBeGreaterThan(24);
+  const scrolled = await latestOffset();
+  await email.evaluate((node) => { node.innerHTML += "<p>More text.</p>".repeat(100); });
+  await expect.poll(latestOffset).toBe(scrolled);
+});
+
 
 test("batch shortcuts act on checked mail and Select All preserves email text selection", async ({ page }) => {
   await page.goto("/");
