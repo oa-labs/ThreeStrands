@@ -52,6 +52,49 @@ export function looksLikeCompleteAddress(email: string): boolean {
   return domain.includes(".") && !domain.startsWith(".") && !domain.endsWith(".");
 }
 
+// One "@", a dotted domain, and nothing that separates or wraps addresses.
+// Still not RFC 5322 validation, but strict enough to decide whether typed
+// text may become a recipient badge; the server validates again on send.
+const EMAIL_ADDRESS = /^[^\s@,;<>"]+@[^\s@,;<>"]+\.[^\s@,;<>"]+$/;
+
+export function isEmailAddress(email: string): boolean {
+  return EMAIL_ADDRESS.test(email.trim());
+}
+
+// A recipient as typed or stored: `jane@example.com` or `Jane <jane@example.com>`.
+// Nothing may follow the closing ">", or that text would be silently dropped.
+export function isValidRecipient(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.includes("<") && !trimmed.endsWith(">")) return false;
+  return isEmailAddress(parseAddress(trimmed).email);
+}
+
+// Splits typed or pasted text into the addresses that may become recipient
+// badges and the rest, which stays in the field to fix. Commas, semicolons,
+// and whitespace separate addresses; "Jane <jane@example.com>" is one.
+export function splitTypedAddresses(text: string): { addresses: { email: string; name: string | null }[]; rest: string } {
+  const addresses: { email: string; name: string | null }[] = [];
+  const rest: string[] = [];
+  for (const segment of splitAddressList(text.replace(/;/g, ","))) {
+    if (isValidRecipient(segment)) {
+      const parsed = parseAddress(segment);
+      addresses.push({ email: parsed.email, name: parsed.name !== parsed.email ? parsed.name : null });
+      continue;
+    }
+    for (const token of segment.split(/[\s,]+/)) {
+      if (!token) continue;
+      if (isEmailAddress(token)) addresses.push({ email: token, name: null });
+      else rest.push(token);
+    }
+  }
+  return { addresses, rest: rest.join(" ") };
+}
+
+// The recipients in an address list that are not email addresses.
+export function invalidRecipients(list: string): string[] {
+  return splitAddressList(list).filter((segment) => !isValidRecipient(segment));
+}
+
 // Splits an RFC-style address list without treating commas inside quoted
 // display names or angle brackets as recipient separators. Stored mail can
 // also carry an unquoted comma in a display name ("Daniel O'Connor, CFA®

@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CreateCalendarEventDialog } from "./CreateCalendarEventDialog";
 import { mailClient } from "./data/client";
-import type { CalendarAccount, CalendarOption, ScheduleEvent } from "./domain";
+import type { CalendarAccount, CalendarOption, ContactProfile, ScheduleEvent } from "./domain";
 
 const accounts: CalendarAccount[] = [{ email: "you@example.com", connectedAt: "2026-09-01T00:00:00Z", status: "connected" }];
 const calendars: CalendarOption[] = [{ id: "primary", accountId: "you@example.com", name: "You", primary: true, selected: true, writable: true }];
@@ -96,7 +96,8 @@ describe("CreateCalendarEventDialog", () => {
     })));
   });
 
-  it("shows invitees as badges, commits an unfinished address on Cmd+Enter, and names invalid ones", async () => {
+  it("shows invitees as badges, commits an unfinished address on Cmd+Enter, and keeps text that isn't an address out of the badges", async () => {
+    vi.spyOn(mailClient, "listContactProfiles").mockResolvedValue([]);
     const saved: ScheduleEvent = { id: "saved", accountId: accounts[0].email, calendarId: "primary", title: "Sync",
       start: new Date(2026, 9, 1, 15, 0).toISOString(), end: new Date(2026, 9, 1, 15, 30).toISOString(), allDay: false };
     const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(saved);
@@ -108,16 +109,168 @@ describe("CreateCalendarEventDialog", () => {
 
     fireEvent.change(input, { target: { value: "not-an-address" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(within(dialog).getByRole("button", { name: "Remove not-an-address" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Remove not-an-address" })).not.toBeInTheDocument();
+    expect(input).toHaveValue("not-an-address");
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("“not-an-address” isn't an email address. Choose a contact or type a full address.");
+
+    // Saving stops at the field instead.
+    fireEvent.click(within(dialog).getByLabelText("Title"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
+    await waitFor(() => expect(input).toHaveFocus());
     fireEvent.keyDown(input, { key: "Enter", metaKey: true });
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Check these invitee email addresses: not-an-address.");
     expect(create).not.toHaveBeenCalled();
 
-    fireEvent.click(within(dialog).getByRole("button", { name: "Remove not-an-address" }));
-    expect(input).toHaveFocus();
+    // Editing clears the hint until the next commit.
     fireEvent.change(input, { target: { value: "theo@example.com" } });
+    expect(input).not.toHaveAttribute("aria-invalid");
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
     fireEvent.keyDown(input, { key: "Enter", metaKey: true });
     await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ attendees: ["jane@example.com", "theo@example.com"] })));
+  });
+
+  it("adds the addresses in pasted or blurred text and leaves the rest to fix", () => {
+    vi.spyOn(mailClient, "listContactProfiles").mockResolvedValue([]);
+    render(<CreateCalendarEventDialog start={new Date(2026, 9, 1, 15, 0)} end={new Date(2026, 9, 1, 15, 30)} accounts={accounts}
+      calendars={calendars} onClose={vi.fn()} onCreated={vi.fn()} />);
+    const input = screen.getByRole("textbox", { name: "Invite People" });
+
+    fireEvent.paste(input, { clipboardData: { getData: () => 'omar@example.com; "Doe, Jane" <jane@example.com>, bob carl@example' } });
+    expect(screen.getByRole("button", { name: "Remove omar@example.com" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove Doe, Jane" })).toBeInTheDocument();
+    expect(input).toHaveValue("bob carl@example");
+    expect(screen.getByRole("alert")).toHaveTextContent("“bob carl@example” isn't an email address.");
+
+    // A name being typed is kept whole when the field loses focus.
+    fireEvent.change(input, { target: { value: "Jane Doe" } });
+    fireEvent.blur(input);
+    expect(input).toHaveValue("Jane Doe");
+    expect(screen.queryByRole("button", { name: "Remove Jane" })).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("“Jane Doe” isn't an email address.");
+  });
+
+  it("marks a suggested invitee that isn't an address and refuses to create until it's removed", async () => {
+    vi.spyOn(mailClient, "listContactProfiles").mockResolvedValue([]);
+    const saved: ScheduleEvent = { id: "saved", accountId: accounts[0].email, calendarId: "primary", title: "Sync",
+      start: new Date(2026, 9, 1, 15, 0).toISOString(), end: new Date(2026, 9, 1, 15, 30).toISOString(), allDay: false };
+    const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(saved);
+    render(<CreateCalendarEventDialog start={new Date(2026, 9, 1, 15, 0)} end={new Date(2026, 9, 1, 15, 30)} accounts={accounts}
+      calendars={calendars} initialTitle="Sync" initialInvitees={["jane@example.com", "Bob"]} onClose={vi.fn()} onCreated={vi.fn()} />);
+    const dialog = screen.getByRole("dialog", { name: "New event" });
+    expect(within(dialog).getByText("Bob").closest(".recipient-chip")).toHaveClass("invalid");
+    expect(within(dialog).getByText("jane@example.com").closest(".recipient-chip")).not.toHaveClass("invalid");
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("“Bob” isn't an email address. Remove it or type a full address.");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
+    expect(await within(dialog).findByText("Check these invitee email addresses: Bob.")).toBeInTheDocument();
+    expect(create).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove Bob" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ attendees: ["jane@example.com"] })));
+  });
+
+  it("suggests address-book contacts for Invite People and adds the chosen one as a named badge", async () => {
+    const profile = (id: string, displayName: string | null, addresses: string[]): ContactProfile => ({ id, displayName, role: null, company: null,
+      location: null, bio: null, notes: null, links: [], photoData: null, favorite: false, addresses, sentCount: 0, receivedCount: 0,
+      lastInteractedAt: null, birthday: null, keepInTouch: { intervalDays: null } as ContactProfile["keepInTouch"], keepInTouchDueAt: null });
+    const lookup = vi.spyOn(mailClient, "listContactProfiles").mockResolvedValue([
+      profile("jane", "Jane Doe", ["jane@example.com", "jane.doe@work.example"]),
+      profile("janet", null, ["janet@example.com"]),
+    ]);
+    const saved: ScheduleEvent = { id: "saved", accountId: accounts[0].email, calendarId: "primary", title: "Sync",
+      start: new Date(2026, 9, 1, 15, 0).toISOString(), end: new Date(2026, 9, 1, 15, 30).toISOString(), allDay: false };
+    const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(saved);
+    const onClose = vi.fn();
+    render(<CreateCalendarEventDialog start={new Date(2026, 9, 1, 15, 0)} end={new Date(2026, 9, 1, 15, 30)} accounts={accounts}
+      calendars={calendars} initialTitle="Sync" initialInvitees={["jane@example.com"]} onClose={onClose} onCreated={vi.fn()} />);
+    const dialog = screen.getByRole("dialog", { name: "New event" });
+    const input = within(dialog).getByRole("textbox", { name: "Invite People" });
+
+    // A space continues a name being looked up rather than committing it.
+    fireEvent.change(input, { target: { value: "Jane" } });
+    fireEvent.keyDown(input, { key: " " });
+    expect(within(dialog).queryByRole("button", { name: "Remove Jane" })).not.toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "Jane D" } });
+    const list = await within(dialog).findByRole("listbox", { name: "Invite People suggestions" });
+    expect(lookup).toHaveBeenLastCalledWith("Jane D", 8);
+    // An address already invited is not suggested again.
+    expect(within(list).getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "Jane Doejane.doe@work.example", "janet@example.com",
+    ]);
+    expect(input).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(within(list).getByRole("option", { name: "janet@example.com" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(within(dialog).getByRole("button", { name: "Remove Jane Doe" })).toBeInTheDocument();
+    expect(within(dialog).getByText("Jane Doe")).toHaveAttribute("title", "jane.doe@work.example");
+    expect(input).toHaveValue("");
+    expect(within(dialog).queryByRole("listbox")).not.toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "jan" } });
+    const next = await within(dialog).findByRole("listbox", { name: "Invite People suggestions" });
+    // Escape closes the suggestions, not the dialog.
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(next).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: "jane" } });
+    fireEvent.mouseDown(within(await within(dialog).findByRole("listbox")).getByRole("option", { name: "janet@example.com" }));
+    expect(within(dialog).getByRole("button", { name: "Remove janet@example.com" })).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      attendees: ["jane@example.com", "jane.doe@work.example", "janet@example.com"],
+    })));
+  });
+
+  it("suggests contact groups ahead of contacts and invites every member not already invited", async () => {
+    vi.spyOn(mailClient, "listContactProfiles").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listContactGroupRecipients").mockResolvedValue([
+      { id: "board", name: "Board", members: [
+        { contactId: "jane", email: "jane@example.com", displayName: "Jane Doe", addresses: ["jane@example.com"] },
+        { contactId: "omar", email: "omar@example.com", displayName: "Omar Ali", addresses: ["omar@example.com"] },
+        { contactId: "lee", email: "lee@example.com", displayName: null, addresses: ["lee@example.com"] },
+      ] },
+      { id: "empty", name: "Boardgames", members: [] },
+    ]);
+    const saved: ScheduleEvent = { id: "saved", accountId: accounts[0].email, calendarId: "primary", title: "Sync",
+      start: new Date(2026, 9, 1, 15, 0).toISOString(), end: new Date(2026, 9, 1, 15, 30).toISOString(), allDay: false };
+    const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(saved);
+    render(<CreateCalendarEventDialog start={new Date(2026, 9, 1, 15, 0)} end={new Date(2026, 9, 1, 15, 30)} accounts={accounts}
+      calendars={calendars} initialTitle="Sync" initialInvitees={["jane@example.com"]} onClose={vi.fn()} onCreated={vi.fn()} />);
+    const dialog = screen.getByRole("dialog", { name: "New event" });
+    const input = within(dialog).getByRole("textbox", { name: "Invite People" });
+
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "boa" } });
+    const list = await within(dialog).findByRole("listbox", { name: "Invite People suggestions" });
+    // A group with no members is not offered.
+    expect(within(list).getAllByRole("option").map((option) => option.getAttribute("aria-label"))).toEqual(["Board, group of 3 members"]);
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(within(dialog).getByRole("button", { name: "Remove Omar Ali" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Remove lee@example.com" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("status")).toHaveTextContent("Added 2 people from Board · 1 already in Invite People");
+    expect(input).toHaveValue("");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      attendees: ["jane@example.com", "omar@example.com", "lee@example.com"],
+    })));
+  });
+
+  it("commits a typed address on space while suggestions are available", async () => {
+    vi.spyOn(mailClient, "listContactProfiles").mockResolvedValue([]);
+    render(<CreateCalendarEventDialog start={new Date(2026, 9, 1, 15, 0)} end={new Date(2026, 9, 1, 15, 30)} accounts={accounts}
+      calendars={calendars} onClose={vi.fn()} onCreated={vi.fn()} />);
+    const input = screen.getByRole("textbox", { name: "Invite People" });
+    fireEvent.change(input, { target: { value: "theo@example.com" } });
+    fireEvent.keyDown(input, { key: " " });
+    expect(screen.getByRole("button", { name: "Remove theo@example.com" })).toBeInTheDocument();
+    expect(input).toHaveValue("");
   });
 
   it("defaults to a visible writable calendar ahead of a hidden primary", () => {

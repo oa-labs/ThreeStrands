@@ -6,6 +6,7 @@ import { mailClient } from "./data/client";
 import type { CalendarAccount, CalendarOption, CreateCalendarEventRequest, ScheduleEvent, UpdateCalendarEventRequest } from "./domain";
 import { errorMessage } from "./errors";
 import { EmailBadgeField } from "./ContactAddressField";
+import { isEmailAddress } from "./emailAddress";
 
 function localDateTimeValue(date: Date): string {
   const pad = (value: number) => String(value).padStart(2, "0");
@@ -18,7 +19,15 @@ function localDate(value: string): Date {
   return new Date(year, month - 1, day);
 }
 
-const EMAIL_PATTERN = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
+/**
+ * Text left in Invite People that is not an address blocks saving; the field
+ * already says why, so focus it to fix.
+ */
+function blockedByPendingInvitee(form: HTMLFormElement, pending: string): boolean {
+  if (!pending.trim()) return false;
+  form.querySelector<HTMLInputElement>('input[aria-label="Invite People"]')?.focus();
+  return true;
+}
 
 export function CreateCalendarEventDialog({
   start,
@@ -65,6 +74,7 @@ export function CreateCalendarEventDialog({
   const [endValue, setEndValue] = useState(() => initialAllDay ? dateInputValue(end) : localDateTimeValue(end));
   const [location, setLocation] = useState(initialLocation);
   const [invitees, setInvitees] = useState<string[]>(initialInvitees);
+  const [pendingInvitee, setPendingInvitee] = useState("");
   const [description, setDescription] = useState(initialDescription);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -83,6 +93,7 @@ export function CreateCalendarEventDialog({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    if (blockedByPendingInvitee(event.currentTarget, pendingInvitee)) return;
     const calendar = writable.find((option) => `${option.accountId}\n${option.id}` === selectedCalendarKey);
     const attendees = invitees;
     if (!calendar) { setError("Choose a calendar where you can create events."); return; }
@@ -106,7 +117,7 @@ export function CreateCalendarEventDialog({
       startAt = startsAt.toISOString();
       endAt = endsAt.toISOString();
     }
-    const invalid = attendees.filter((email) => !EMAIL_PATTERN.test(email));
+    const invalid = attendees.filter((email) => !isEmailAddress(email));
     if (invalid.length) {
       setError(`Check these invitee email addresses: ${invalid.join(", ")}.`); return;
     }
@@ -168,7 +179,7 @@ export function CreateCalendarEventDialog({
         {writable.some((calendar) => `${calendar.accountId}\n${calendar.id}` === selectedCalendarKey && !calendar.selected)
           ? <p className="modal-form-context">This calendar will be shown in your schedule.</p> : null}
         {writable.length === 0 ? <p className="form-error">Connect or reconnect a Google Calendar account with event access to create meetings.</p> : null}
-        <EmailBadgeField label="Invite People" values={invitees} disabled={saving} onChange={setInvitees} />
+        <EmailBadgeField label="Invite People" values={invitees} disabled={saving} onChange={setInvitees} onPendingChange={setPendingInvitee} />
         <label>Description<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={5} maxLength={32768} placeholder="Add meeting details" /></label>
         {error ? <p className="form-error" role="alert">{error}</p> : null}
         <div className="modal-form-actions">
@@ -204,6 +215,7 @@ export function EditCalendarEventDialog({
     : localDateTimeValue(new Date(event.end)));
   const [location, setLocation] = useState(event.location ?? "");
   const [invitees, setInvitees] = useState<string[]>(() => event.attendees ?? []);
+  const [pendingInvitee, setPendingInvitee] = useState("");
   const [description, setDescription] = useState(initialDescription);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -222,6 +234,7 @@ export function EditCalendarEventDialog({
   async function submit(formEvent: FormEvent<HTMLFormElement>) {
     formEvent.preventDefault();
     setError(null);
+    if (blockedByPendingInvitee(formEvent.currentTarget, pendingInvitee)) return;
     const attendees = invitees;
     if (!event.calendarId) { setError("This event's calendar is unknown. Refresh the calendar and try again."); return; }
     if (!title.trim()) { setError("Enter an event title."); return; }
@@ -244,7 +257,7 @@ export function EditCalendarEventDialog({
       start = startsAt.toISOString();
       end = endsAt.toISOString();
     }
-    const invalid = attendees.filter((email) => !EMAIL_PATTERN.test(email));
+    const invalid = attendees.filter((email) => !isEmailAddress(email));
     if (invalid.length) {
       setError(`Check these invitee email addresses: ${invalid.join(", ")}.`); return;
     }
@@ -286,7 +299,7 @@ export function EditCalendarEventDialog({
           <label>Ends<input type={timeType} value={endValue} onChange={(change) => setEndValue(change.target.value)} required /></label>
         </div>
         <label>Location<input value={location} onChange={(change) => setLocation(change.target.value)} maxLength={4096} placeholder="Add location" /></label>
-        <EmailBadgeField label="Invite People" values={invitees} disabled={saving} onChange={setInvitees} />
+        <EmailBadgeField label="Invite People" values={invitees} disabled={saving} onChange={setInvitees} onPendingChange={setPendingInvitee} />
         <label>Description<textarea value={description} onChange={(change) => setDescription(change.target.value)} rows={5} maxLength={32768} placeholder="Add meeting details" /></label>
         <p className="modal-form-context">Guests are notified of changes.</p>
         {error ? <p className="form-error" role="alert">{error}</p> : null}

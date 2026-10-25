@@ -3,7 +3,7 @@ import { Pin, PinOff, UserPlus, Users, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { ContactGroupRecipients, ContactSuggestion } from "./domain";
 import { matchingGroups, memberCountLabel } from "./contactGroups";
-import { formatAddress, looksLikeCompleteAddress, parseAddress, splitAddressList } from "./emailAddress";
+import { formatAddress, isEmailAddress, looksLikeCompleteAddress, parseAddress, splitAddressList, splitTypedAddresses } from "./emailAddress";
 import { logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
@@ -35,6 +35,10 @@ function toChip(segment: string): Chip {
 
 function formatChip(chip: Chip): string {
   return formatAddress(chip.displayName, chip.email);
+}
+
+function mergeTyped(chips: Chip[], addresses: { email: string; name: string | null }[]): Chip[] {
+  return addresses.reduce((next, address) => mergeChip(next, { email: address.email, displayName: address.name }), chips);
 }
 
 function mergeChip(chips: Chip[], candidate: Chip): Chip[] {
@@ -73,6 +77,10 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
   const lastEmitted = useRef(value);
   const [chips, setChips] = useState<Chip[]>(() => parseExternalValue(value).chips);
   const [draftText, setDraftText] = useState(() => parseExternalValue(value).draftText);
+  // Committing left text that is not an address; cleared by the next edit. A
+  // reopened draft's leftover text was never committed, so it starts flagged.
+  const [rejected, setRejected] = useState(() => Boolean(parseExternalValue(value).draftText.trim()));
+  const hintId = useId();
   const [suggestions, setSuggestions] = useState<ContactSuggestion[]>([]);
   const [dismissed, setDismissed] = useState(true);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -94,6 +102,7 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
     lastEmitted.current = value;
     setChips(parsed.chips);
     setDraftText(parsed.draftText);
+    setRejected(Boolean(parsed.draftText.trim()));
   }, [value]);
 
   function emit(nextChips: Chip[], nextDraftText: string) {
@@ -108,11 +117,21 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
     emit(chips.filter((chip) => chip.email.toLowerCase() !== target.email.toLowerCase()), draftText);
   }
 
+  // Only addresses become chips; anything else stays typed, with a hint.
   function commitDraftText() {
     const trimmed = draftText.trim();
     if (!trimmed) return;
-    emit(mergeChip(chips, toChip(trimmed)), "");
+    const { addresses, rest } = splitTypedAddresses(trimmed);
+    emit(mergeTyped(chips, addresses), rest);
+    setRejected(Boolean(rest));
   }
+
+  const invalidChips = chips.filter((chip) => !isEmailAddress(chip.email));
+  const hint = rejected && draftText.trim()
+    ? `“${draftText.trim()}” isn't an email address. Choose a contact or type a full address.`
+    : invalidChips.length
+      ? `${invalidChips.map((chip) => `“${chip.email}”`).join(", ")} ${invalidChips.length === 1 ? "isn't an email address" : "aren't email addresses"}. Remove ${invalidChips.length === 1 ? "it" : "them"} or type a full address.`
+      : null;
 
   const visibleSuggestions = suggestions.filter(
     (contact) => !chips.some((chip) => chip.email.toLowerCase() === contact.email.toLowerCase()),
@@ -243,7 +262,7 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
         {chips.map((chip) => (
           <span
             key={chip.email}
-            className="recipient-chip"
+            className={invalidChips.includes(chip) ? "recipient-chip invalid" : "recipient-chip"}
             draggable={!disabled}
             onDragStart={(event) => {
               dragOrigin = { field: id, remove: () => removeChip(chip) };
@@ -274,6 +293,8 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
           name={id}
           aria-label={label}
           aria-autocomplete="list"
+          aria-invalid={hint ? true : undefined}
+          aria-describedby={hint ? hintId : undefined}
           aria-expanded={visible}
           aria-controls={`${id}-suggestions`}
           aria-activedescendant={
@@ -290,6 +311,7 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
           placeholder={id === "to" && chips.length === 0 ? "Name <email@example.com>" : undefined}
           onChange={(event) => {
             emit(chips, event.target.value);
+            setRejected(false);
             setDismissed(false);
             setGroupNote(null);
             query(event.target.value);
@@ -305,14 +327,18 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
           }}
           onPaste={(event) => {
             const pasted = event.clipboardData.getData("text");
-            if (!pasted.includes(",")) return;
+            if (!/[,;\n]/.test(pasted)) return;
             event.preventDefault();
-            const segments = splitAddressList(`${draftText}${pasted}`)
-              .map((segment) => segment.trim())
-              .filter(Boolean);
-            emit(segments.map(toChip).reduce(mergeChip, chips), "");
+            const { addresses, rest } = splitTypedAddresses(`${draftText}${pasted}`);
+            emit(mergeTyped(chips, addresses), rest);
+            setRejected(Boolean(rest));
           }}
           onKeyDown={(event) => {
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+              // Sending stops at this field if its text isn't an address; say why here.
+              commitDraftText();
+              return;
+            }
             if (event.key === ",") {
               event.preventDefault();
               commitDraftText();
@@ -430,6 +456,7 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
       )}
     </div>
     {/* Below the field's row, so the chips stay aligned with the label. */}
+    {hint && <p id={hintId} className="recipient-field-hint" role="alert">{hint}</p>}
     {groupNote && <p className="recipient-group-note" role="status">{groupNote}</p>}
     </>
   );

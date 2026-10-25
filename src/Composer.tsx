@@ -12,6 +12,7 @@ import {
   readAiRequestConfig,
 } from "./aiSettings";
 import type { MessageAppearance } from "./SafeMessage";
+import { invalidRecipients } from "./emailAddress";
 import { RecipientField } from "./RecipientField";
 import { Modal } from "./AppChrome";
 import { DraftReviewSection, type DraftReviewAvailability } from "./DraftReviewSection";
@@ -129,8 +130,17 @@ export const Composer = forwardRef<ComposerHandle, {
     });
   }
   function discard() { void run(async () => { await flush(); await mailClient.discardDraft(draft.id); onClose(); }); }
+  // A recipient that isn't an address stops sending at its field, which says why.
+  function blockedByInvalidRecipient(): boolean {
+    const field = (["to", "cc", "bcc"] as const).find((name) => invalidRecipients(latest.current[name]).length > 0);
+    if (field) focusRecipient(field);
+    return Boolean(field);
+  }
+  function openSchedule() {
+    if (!blockedByInvalidRecipient()) setScheduleOpen(true);
+  }
   function send(afterQueued?: () => void, archiveOnSend?: boolean) {
-    if (scheduleOpen) return;
+    if (scheduleOpen || blockedByInvalidRecipient()) return;
     void run(async () => {
       const saved = await flush();
       const item = archiveOnSend
@@ -312,7 +322,7 @@ export const Composer = forwardRef<ComposerHandle, {
       else onRemoteVersion(stored);
     })().catch(logBackgroundFailure("Draft sync check"));
   }
-  useImperativeHandle(ref, () => ({ draftReview, flush, send, remoteChanged, schedule: () => setScheduleOpen(true), attach, close, discard, draftReplyWithAI, insertText, replaceRecipient, moveRecipientsToBcc, switchAccount: changeAccount, focusBody, prepareExit: async () => {
+  useImperativeHandle(ref, () => ({ draftReview, flush, send, remoteChanged, schedule: openSchedule, attach, close, discard, draftReplyWithAI, insertText, replaceRecipient, moveRecipientsToBcc, switchAccount: changeAccount, focusBody, prepareExit: async () => {
     if (busyRef.current) throw new Error("Finish the current composer action before closing.");
     busyRef.current = true; setBusy(true);
     try { await flush(); }
@@ -486,7 +496,7 @@ export const Composer = forwardRef<ComposerHandle, {
       {/* Outside the scrolling body so a new attachment shows beside the Attach button, not below the signature. */}
       {draft.attachments.some((attachment) => !attachment.inline) && <ul className="attachment-list" aria-label="Attachments">{draft.attachments.filter((attachment) => !attachment.inline).map((a) => <li key={a.id}><span>{a.name} <small>{Math.ceil(a.size / 1024)} KB · {a.ready ? "Ready" : a.messageId ? "Download required" : "Attached on another device · Attach it again here"}</small></span>{!a.ready && a.messageId && <button className="btn btn-sm" disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.fetchAttachment(draft.id, a.id); replaceDraft(next); })}>Download</button>}<button className="btn-icon btn-icon-sm" aria-label={`Remove ${a.name}`} disabled={busy} onClick={() => void run(async () => { await flush(); const next = await mailClient.removeAttachment(draft.id, a.id); replaceDraft(next); })}><X size={ICON_SIZE.sm} /></button></li>)}</ul>}
       <footer>
-        <ComposeSendActions busy={busy} onSend={() => send()} onSchedule={() => setScheduleOpen(true)} onSendAndArchive={onSendAndArchive} />
+        <ComposeSendActions busy={busy} onSend={() => send()} onSchedule={openSchedule} onSendAndArchive={onSendAndArchive} />
         <button className="btn-icon" onClick={attach} disabled={busy} aria-label="Attach Files" title={`Attach Files (${composeKeyLabel("Mod+Shift+a")})`} aria-keyshortcuts="Meta+Shift+A Control+Shift+A"><Paperclip size={ICON_SIZE.lg} /></button>
         <div className="compose-draft-status">
           <span className="save-status" role="status" title={status.detail}>{status.text}</span>

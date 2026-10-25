@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatAddress, formatDisplayName, normalizeAddressList, parseAddress, splitAddressList } from "./emailAddress";
+import { formatAddress, formatDisplayName, invalidRecipients, isEmailAddress, isValidRecipient, normalizeAddressList, parseAddress, splitAddressList, splitTypedAddresses } from "./emailAddress";
 
 describe("parseAddress", () => {
   it("splits a display name and email out of a From-style header", () => {
@@ -96,6 +96,41 @@ describe("splitAddressList", () => {
   it("does not attach a stray name to a bare address or invent one at the end", () => {
     expect(splitAddressList("Team, bob@example.com")).toEqual(["Team", "bob@example.com"]);
     expect(splitAddressList("bob@example.com, undisclosed-recipients:;")).toEqual(["bob@example.com", "undisclosed-recipients:;"]);
+  });
+});
+
+describe("recipient validation", () => {
+  it("accepts a plain address and rejects names, partial addresses, and separators", () => {
+    expect(isEmailAddress("jane@example.com")).toBe(true);
+    expect(isEmailAddress(" jane.doe+cal@mail.example.co.uk ")).toBe(true);
+    for (const text of ["", "Jane", "jane@", "@example.com", "jane@example", "jane@example.", "jane doe@example.com", "a@b@example.com", "jane@example.com,", "<jane@example.com>"]) {
+      expect(isEmailAddress(text), text).toBe(false);
+    }
+  });
+
+  it("accepts a named recipient by its address", () => {
+    expect(isValidRecipient("Jane Doe <jane@example.com>")).toBe(true);
+    expect(isValidRecipient('"Doe, Jane" <jane@example.com>')).toBe(true);
+    expect(isValidRecipient("Jane Doe <jane>")).toBe(false);
+    expect(isValidRecipient("Jane Doe <jane@example.com> carl@example.com")).toBe(false);
+  });
+
+  it("splits typed text into addresses and the text left to fix", () => {
+    expect(splitTypedAddresses('omar@example.com; "Doe, Jane" <jane@example.com>, bob carl@example\nlee@example.com')).toEqual({
+      addresses: [
+        { email: "omar@example.com", name: null },
+        { email: "jane@example.com", name: "Doe, Jane" },
+        { email: "lee@example.com", name: null },
+      ],
+      rest: "bob carl@example",
+    });
+    expect(splitTypedAddresses("Jane Doe")).toEqual({ addresses: [], rest: "Jane Doe" });
+    expect(splitTypedAddresses("  ")).toEqual({ addresses: [], rest: "" });
+  });
+
+  it("lists only the recipients in an address list that are not addresses", () => {
+    expect(invalidRecipients('jane@example.com, "Doe, Jane" <jane@example.com>, bob, carl@example')).toEqual(["bob", "carl@example"]);
+    expect(invalidRecipients("")).toEqual([]);
   });
 });
 

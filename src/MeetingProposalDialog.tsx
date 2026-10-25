@@ -33,11 +33,17 @@ export function MeetingProposalDialog({
   const [end, setEnd] = useState(dateTimeInputValue(proposal.normalizedEnd ?? proposal.searchRangeEnd));
   const [duration, setDuration] = useState(proposal.durationMinutes?.toString() ?? "30");
   const [timeZone, setTimeZone] = useState(proposal.timeZone ?? "");
+  const [pendingParticipant, setPendingParticipant] = useState("");
   const titleRef = useRef<HTMLInputElement>(null);
 
-  const submit = (event: React.FormEvent) => {
+  const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!title.trim()) return;
+    if (pendingParticipant.trim()) {
+      // Participants already says why the text there can't be saved.
+      event.currentTarget.querySelector<HTMLInputElement>('input[aria-label="Participants"]')?.focus();
+      return;
+    }
     onSave({
       ...proposal,
       title: title.trim(),
@@ -63,7 +69,7 @@ export function MeetingProposalDialog({
         }
       }}>
         <label><span>Title</span><input ref={titleRef} value={title} onChange={(event) => setTitle(event.target.value)} /></label>
-        <EmailBadgeField label="Participants" values={participants} onChange={setParticipants} />
+        <EmailBadgeField label="Participants" values={participants} onChange={setParticipants} onPendingChange={setPendingParticipant} />
         <label><span>Start</span><input type="datetime-local" value={start} onChange={(event) => setStart(event.target.value)} /></label>
         <label><span>End</span><input type="datetime-local" value={end} onChange={(event) => setEnd(event.target.value)} /></label>
         <label><span>Duration (Minutes)</span><input type="number" min="5" max="1440" value={duration} onChange={(event) => setDuration(event.target.value)} /></label>

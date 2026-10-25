@@ -1847,6 +1847,67 @@ describe("Composer recipient autocomplete", () => {
     expect(screen.queryByRole("button", { name: "Remove added@example.com" })).not.toBeInTheDocument();
   });
 
+  it("keeps typed text that isn't an address out of the badges, with a hint until it's edited", async () => {
+    vi.spyOn(mailClient, "listContactSuggestions").mockResolvedValue([]);
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const to = screen.getByRole("textbox", { name: "To" });
+
+    fireEvent.change(to, { target: { value: "Jane Doe" } });
+    fireEvent.keyDown(to, { key: "," });
+    expect(screen.queryByRole("button", { name: "Remove Jane Doe" })).not.toBeInTheDocument();
+    expect(to).toHaveValue("Jane Doe");
+    expect(to).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("alert")).toHaveTextContent("“Jane Doe” isn't an email address. Choose a contact or type a full address.");
+
+    fireEvent.change(to, { target: { value: "Jane Doe <jane@example.com>" } });
+    expect(to).not.toHaveAttribute("aria-invalid");
+    fireEvent.keyDown(to, { key: "Enter" });
+    expect(screen.getByRole("button", { name: "Remove Jane Doe" })).toBeInTheDocument();
+    expect(to).toHaveValue("");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    // Leaving the field keeps what was typed.
+    fireEvent.change(to, { target: { value: "bob" } });
+    fireEvent.blur(to);
+    expect(to).toHaveValue("bob");
+    expect(screen.getByRole("alert")).toHaveTextContent("“bob” isn't an email address.");
+  });
+
+  it("adds the addresses in a pasted list and leaves the rest to fix", () => {
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const to = screen.getByRole("textbox", { name: "To" });
+    fireEvent.paste(to, { clipboardData: { getData: () => "a@example.com, bob\nc@example.com" } });
+    expect(screen.getByRole("button", { name: "Remove a@example.com" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove c@example.com" })).toBeInTheDocument();
+    expect(to).toHaveValue("bob");
+    expect(screen.getByRole("alert")).toHaveTextContent("“bob” isn't an email address.");
+  });
+
+  it("won't send or schedule while a recipient isn't an address, and points at the field", async () => {
+    const queue = vi.spyOn(mailClient, "queueDraft");
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (value) => ({ ...value, revision: value.revision + 1 }));
+    // A saved draft's malformed badge and leftover text, as they come back.
+    render(<Composer draft={{ ...draft, to: "a@example.com", cc: "bob, c@example.com" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const cc = screen.getByRole("textbox", { name: "Cc" });
+    expect(screen.getByText("bob").closest(".recipient-chip")).toHaveClass("invalid");
+    expect(screen.getByText("a@example.com").closest(".recipient-chip")).not.toHaveClass("invalid");
+    expect(screen.getByRole("alert")).toHaveTextContent("“bob” isn't an email address. Remove it or type a full address.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(cc).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Send options" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Send later…" }));
+    expect(screen.queryByRole("dialog", { name: "Send later" })).not.toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(queue).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove bob" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Send options" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Send later…" }));
+    expect(screen.getByRole("dialog", { name: "Send later" })).toBeInTheDocument();
+  });
+
   it("drags a recipient badge from To into Cc, moving it rather than copying it", () => {
     const prefilled = { ...draft, to: "hello@threestrands.local", cc: "" };
     render(<Composer draft={prefilled} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
