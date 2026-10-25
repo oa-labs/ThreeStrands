@@ -85,7 +85,6 @@ import { readSettingsSection, saveSettingsSection } from "./settingsNavigation";
 import { TaskEditorDialog } from "./TaskEditorDialog";
 import { TaskSidebar, type TaskWorkspaceSnapshot } from "./TaskSidebar";
 import { THREAD_ASSIST_ID, ThreadAssist } from "./ThreadAssist";
-import { InvitationSection } from "./InvitationSection";
 import { latestInvitationMessage } from "./calendarInvitations";
 import { sharedChatAttachments, ThreadChat } from "./ThreadChat";
 import { ThreadList, ThreadRow } from "./ThreadList";
@@ -1166,6 +1165,14 @@ export function App() {
                   <MessageCard
                     key={message.id}
                     message={message}
+                    invitationActions={message.id === invitationMessage?.id ? {
+                      calendarConnected,
+                      preferences: availabilityPreferences,
+                      ai: aiDraftAvailable,
+                      intoDraft: Boolean(composerBelongsToVisibleThread && correspondence.liveDraft),
+                      onReplyWithTimes: draftAvailabilityReply,
+                      onOpenCalendarSettings: () => openSettingsAt("calendarAccounts"),
+                    } : undefined}
                     index={index}
                     isLatest={isLatest}
                     isExpanded={messageExpansionOverrides.get(message.id) ?? (isLatest || message.unread)}
@@ -1393,15 +1400,6 @@ export function App() {
               onOpenCalendarSettings={() => openSettingsAt("calendarAccounts")}
             />
           ) : null}
-          invitation={invitationMessage ? <InvitationSection
-            message={invitationMessage}
-            calendarConnected={calendarConnected}
-            preferences={availabilityPreferences}
-            ai={aiDraftAvailable}
-            intoDraft={Boolean(composerBelongsToVisibleThread && correspondence.liveDraft)}
-            onReplyWithTimes={draftAvailabilityReply}
-            onOpenCalendarSettings={() => openSettingsAt("calendarAccounts")}
-          /> : null}
           assist={visibleDetail ? (<>
             <ThreadAssist
               detail={visibleDetail}

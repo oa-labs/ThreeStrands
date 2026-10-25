@@ -70,8 +70,8 @@ for (const name of [null, "A recipient with a very long display name that exceed
       expect(layout.right).toBeLessThanOrEqual(layout.panelRight);
     };
     await expectTruncated(header.locator(".context-person-main .context-person-name"), name || email);
-    if (name) await expectTruncated(header.locator(".context-person-main .context-person-email"), email);
-    const toggle = header.getByRole("button", { name: "1 other", exact: true });
+    await expect(header.locator(".context-person-main .context-person-email")).toHaveCount(0);
+    const toggle = header.getByRole("button", { name: /^Show history with / });
     await expect(toggle).toBeVisible();
     expect((await toggle.boundingBox())!.x + (await toggle.boundingBox())!.width)
       .toBeLessThanOrEqual((await panel.boundingBox())!.x + (await panel.boundingBox())!.width);
@@ -82,7 +82,7 @@ for (const name of [null, "A recipient with a very long display name that exceed
     await others.getByRole("button").click();
     await expect(others).toHaveCount(0);
     await expect(header.locator(".context-person-main .context-person-name")).toHaveText(otherEmail);
-    await header.getByRole("button", { name: "1 other", exact: true }).click();
+    await header.getByRole("button", { name: /^Show history with / }).click();
     await expect(header.getByRole("list", { name: "Other people" }).locator(".context-person-name")).toHaveText(name || email);
   });
 }

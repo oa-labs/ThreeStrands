@@ -1279,6 +1279,7 @@ kbd {
   border-radius: var(--radius-lg);
   background: var(--input);
 }
+.calendar-card-failed { padding:var(--space-3); }
 .calendar-card-loading {
   display: flex;
   align-items: center;
@@ -1314,7 +1315,7 @@ kbd {
   text-align: center;
 }
 .calendar-date-tile span { padding-top: var(--space-1-5); color: var(--text); font-size: var(--text-page-title); font-weight: var(--weight-semibold); }
-.calendar-event-details { min-width: 0; }
+.calendar-event-details { flex:1; min-width: 0; }
 .calendar-event-heading { display: flex; align-items: baseline; gap: var(--space-2); }
 .calendar-event-details h4 { margin: 0 0 var(--space-2); color: var(--text); font-size: var(--text-card-title); line-height: var(--leading-snug); }
 .calendar-event-details p {
@@ -1329,13 +1330,15 @@ kbd {
 .calendar-event-details p svg { flex: 0 0 auto; margin-top: var(--space-0-5); color: var(--muted); }
 .calendar-event-details .calendar-when { color: var(--text); }
 .calendar-event-details .calendar-description {
-  display: -webkit-box;
+  display: block;
   max-width: 55ch;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
   white-space: pre-line;
 }
+.calendar-description-details { margin-top:var(--space-3); color:var(--secondary); font-size:var(--text-secondary); }
+.calendar-description-details summary { width:fit-content; cursor:pointer; color:var(--accent); }
+.calendar-event-location-link { overflow-wrap:anywhere; }
+.calendar-event-details .context-invitation-response { margin-top:var(--space-4); padding-top:var(--space-3); border-top:1px solid var(--border); }
 .calendar-status {
   border-radius: var(--radius-pill);
   padding: var(--space-0-5) var(--space-2);
@@ -1552,7 +1555,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
   font-size: var(--text-meta);
   text-align: right;
 }
-.thread-assist-shared { margin: var(--space-2) 0 0; color: var(--muted); font-size: var(--text-meta); }
+.thread-assist-shared { margin: var(--space-2) 0 0; padding-left:calc(var(--context-row-inset) + var(--context-glyph-column)); color: var(--muted); font-size: var(--text-meta); }
+.thread-assist-shared .context-link-button { margin-top:0; font-size:inherit; }
 .action-analysis-error { margin-top: var(--space-2); padding: var(--space-2) var(--space-2-5); border: 1px solid var(--warning); border-radius: var(--radius-sm); background: var(--input); font-size: var(--text-secondary); }
 .action-analysis-error p { margin: 0; color: var(--text); }
 .action-analysis-error-actions { display: flex; align-items: center; gap: var(--space-2-5); margin-top: var(--space-1-5); }
@@ -1984,6 +1988,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .calendar-event-response strong { color: var(--text); font-weight: var(--weight-semibold); }
 .calendar-event-response p { margin: 0; color: var(--error); overflow-wrap: anywhere; }
 .calendar-invitation-response-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.calendar-invitation-response-actions .btn[aria-pressed="true"]:disabled { opacity:1; }
 .calendar-invitation-response-actions .btn[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, var(--surface)); font-weight: var(--weight-semibold); }
 .tasks-workspace {
   grid-column: 2;
@@ -2238,14 +2243,14 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-status { margin:0; color:var(--muted); font-size:var(--text-meta); line-height:var(--leading-normal); }
 .context-link-button { margin-top: var(--space-1-5); }
 .thread-assist-summary { margin:0 0 var(--space-1-5); padding:0 var(--context-row-inset); list-style:none; color:var(--secondary); font-size:var(--text-body); line-height:var(--leading-normal); }
+.thread-assist-summary-paragraph { padding-left:calc(var(--context-row-inset) + var(--context-glyph-column)); overflow-wrap:anywhere; }
 .thread-assist-summary li { display:grid; grid-template-columns:var(--context-glyph-column) minmax(0,1fr); margin:var(--space-1) 0; overflow-wrap:anywhere; }
 /* The marker and chevron share an icon width inside the same glyph column. */
 .thread-assist-summary-marker { height:calc(var(--text-body) * var(--leading-normal)); }
 .thread-assist-summary .thread-assist-summary-earlier { color:var(--muted); }
-.context-invitation-body { display:grid; gap:var(--space-2); margin-inline:calc(var(--context-row-inset) + var(--context-glyph-column)) var(--context-row-inset); }
 .context-invitation-response { display:grid; min-width:0; gap:var(--space-2); }
-.context-invitation-body .btn-link { justify-self:start; text-align:left; }
-.context-invitation-body > .btn { justify-self:start; }
+.context-invitation-response > .btn-link { justify-self:start; text-align:left; }
+.context-invitation-response > .btn { justify-self:start; }
 .thread-assist-run { white-space: nowrap; }
 .context-section-header-actions .thread-assist-run { margin-right:var(--space-1); }
 .thread-assist-suggestions { display:grid; grid-template-columns:minmax(0,1fr); min-width:0; gap:var(--space-2); margin-top:var(--space-2-5); }
@@ -2348,6 +2353,10 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-row-warning .context-row-glyph { color:var(--warning); }
 .context-row-verified .context-row-glyph { color:var(--success); }
 /* Trust: a one-word verdict in the heading, then the tricks found, then Details folded below. */
+.context-trust-compact { padding-block:var(--space-2); }
+.context-trust-compact > details > summary { display:flex; align-items:center; justify-content:space-between; gap:var(--space-2); padding:var(--space-1) var(--context-row-inset); cursor:pointer; list-style:none; }
+.context-trust-compact > details > summary::-webkit-details-marker { display:none; }
+.context-trust-expand { color:var(--muted); font-size:var(--text-meta); }
 .context-trust-summary { display:inline-flex; align-items:center; gap:var(--space-1); color:var(--muted); font-size:var(--text-meta); font-weight:var(--weight-medium); }
 .context-trust-careful { color:var(--warning); }
 .context-trust-known { color:var(--success); }
@@ -2387,13 +2396,14 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-ai-row > .context-ai-launcher + .context-ai-launcher { padding-left:var(--space-2); }
 .context-ai-row > .context-section { order:1; flex:1 1 100%; min-width:0; padding-block:0; border-bottom:0; }
 .context-ai-row > .context-section + .context-section { padding-top:var(--space-3); border-top:1px solid var(--border); }
-.context-person { padding:var(--space-3) var(--context-row-inset) var(--space-2); }
+.context-person { padding:var(--space-2) calc(var(--context-row-inset) + var(--context-glyph-column)); }
+.context-person-label { flex-shrink:0; color:var(--muted); font-size:var(--text-meta); }
 .context-person-main { display:flex; align-items:center; gap:var(--space-2); min-width:0; }
-.contact-avatar.context-person-avatar { --avatar-size:var(--control-h-sm); }
-.context-person-text { display:grid; flex:1; min-width:0; grid-template-columns:minmax(0,1fr); }
 .context-person-name { min-width:0; overflow:hidden; color:var(--text); font-size:var(--text-secondary); font-weight:var(--weight-semibold); text-overflow:ellipsis; white-space:nowrap; }
 .context-person-email { min-width:0; overflow:hidden; color:var(--muted); font-size:var(--text-meta); text-overflow:ellipsis; white-space:nowrap; }
-.context-person-switch { flex:0 0 auto; white-space:nowrap; }
+.context-person-switch { display:inline-flex; align-items:center; gap:var(--space-1); min-width:0; padding:var(--space-1); border:0; border-radius:var(--radius-sm); background:transparent; color:var(--text); font:inherit; cursor:pointer; }
+.context-person-switch:hover { background:var(--hover); }
+.context-person-switch svg { flex-shrink:0; }
 .context-person-list { display:grid; gap:var(--space-0-5); margin:var(--space-2) 0 0; padding:var(--space-1); border:1px solid var(--border); border-radius:var(--radius-sm); list-style:none; }
 .context-person-option { display:grid; grid-template-columns:minmax(0,1fr); width:100%; min-width:0; padding:var(--space-1) var(--space-2); border:0; border-radius:var(--radius-sm); background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
 .context-person-option:hover, .context-person-option:focus-visible { background:var(--hover); }

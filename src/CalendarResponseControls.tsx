@@ -6,7 +6,7 @@ import type { ScheduleEvent } from "./domain";
 import { errorMessage } from "./errors";
 
 const RESPONSES = [["accepted", "Yes"], ["declined", "No"], ["tentative", "Maybe"]] as const;
-const INVITATION_RESPONSES = [["accepted", "Accept"], ["tentative", "Maybe"], ["declined", "Decline"]] as const;
+const INVITATION_RESPONSES = [["accepted", "Going"], ["tentative", "Maybe"], ["declined", "Not going"]] as const;
 
 /** The user's RSVP to a calendar event, with Yes / No / Maybe when they can answer it. */
 export function CalendarResponseControls({ event, onUpdated, invitation = false }: { event: ScheduleEvent; onUpdated(event: ScheduleEvent): void; invitation?: boolean }) {
@@ -33,7 +33,7 @@ export function CalendarResponseControls({ event, onUpdated, invitation = false 
       {invitation && unanswered ? <span className="context-status">Not responded.</span> : <span>Your response: <strong>{label}</strong></span>}
       {event.canRespond ? <div className={invitation ? "calendar-invitation-response-actions" : "segmented calendar-response-actions"} role="group" aria-label="Going?">
         {(invitation ? INVITATION_RESPONSES : RESPONSES).map(([status, title]) => (
-          <button key={status} type="button" className={invitation ? "btn" : "segment"} aria-pressed={event.responseStatus === status} disabled={pending} onClick={() => void respond(status)}>{title}</button>
+          <button key={status} type="button" className={invitation ? "btn" : "segment"} aria-pressed={event.responseStatus === status} disabled={pending || (invitation && event.responseStatus === status)} onClick={() => void respond(status)}>{title}</button>
         ))}
       </div> : null}
       {error ? <p role="alert">{error}</p> : null}

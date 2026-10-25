@@ -10,6 +10,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Press **⌘D** (**Ctrl+D** on Windows and Linux) to switch between light and dark mode from anywhere in the app, including while writing a message.
 
 ### Improved
+- The conversation sidebar is calmer: single-takeaway briefs read as paragraphs, contact history has a compact person selector, known-sender details fold away, and upcoming meetings include their times. Respond to invitations and suggest another time directly on the invitation card, with your current response clearly selected, a single meeting link, and expandable event details.
 - On Windows, **Files** now shows a preview picture of PDFs, images, and other documents, as it already did on macOS.
 
 ### Fixed

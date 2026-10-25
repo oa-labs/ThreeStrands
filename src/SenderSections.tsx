@@ -201,6 +201,14 @@ export function TrustSection({ message, subject, bulk, prior, onShowLink }: {
     : report.summary === "known"
       ? <span className="context-trust-summary context-trust-known"><ShieldCheck size={ICON_SIZE.xs} aria-hidden="true" />Known sender</span>
       : null;
+  // Familiar-sender reassurance stays compact; warnings retain their full section.
+  if (report.summary === "known") return <section className="context-section context-trust context-trust-compact" aria-label="Trust">
+    <details>
+      <summary>{summary}<span className="context-trust-expand">Sender details</span></summary>
+      {report.rows.map((finding) => trustRow(finding, onShowLink))}
+      <TrustDetails key={message.id} details={report.details} />
+    </details>
+  </section>;
   return (
     <ContextSection
       id="trust"

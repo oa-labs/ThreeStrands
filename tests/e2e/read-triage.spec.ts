@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 const threadOptions = (page: import("@playwright/test").Page) => page.getByRole("listbox").getByRole("option");
 
 for (const count of [1, 3]) {
-  test(`aligns ${count} brief bullet(s), wrapped text, and the section header with Find Times`, async ({ page }) => {
+  test(`aligns ${count === 1 ? "a brief paragraph" : `${count} brief bullets`}, wrapped text, and the section header with Find Times`, async ({ page }) => {
     await page.goto("/");
     await expect(page.locator(".context-panel")).toBeVisible();
     // Render the production components together, with a long brief that wraps
@@ -39,25 +39,28 @@ for (const count of [1, 3]) {
       )));
     }, count);
     const fixture = page.locator("#brief-layout-fixture");
-    await expect(fixture.locator(".thread-assist-summary li")).toHaveCount(count);
+    await expect(fixture.locator(".thread-assist-summary li")).toHaveCount(count === 1 ? 0 : count);
+    await expect(fixture.locator("p.thread-assist-summary")).toHaveCount(count === 1 ? 1 : 0);
     for (const scale of [1, 1.4]) {
       await page.evaluate((value) => document.documentElement.style.setProperty("--font-scale", String(value)), scale);
       const layout = await fixture.evaluate((panel) => {
         const chevron = panel.querySelector(".context-section-toggle svg")!.getBoundingClientRect();
         const heading = panel.querySelector(".context-section-toggle > span:last-child")!.getBoundingClientRect();
         const button = panel.querySelector(".compose-availability button")!.getBoundingClientRect();
-        const rows = [...panel.querySelectorAll(".thread-assist-summary li")].map((row) => {
-          const marker = row.querySelector("svg")!.getBoundingClientRect();
-          const text = row.lastElementChild!;
+        const rows = [...panel.querySelectorAll(".thread-assist-summary li, p.thread-assist-summary")].map((row) => {
+          const marker = row.querySelector("svg")?.getBoundingClientRect();
+          const text = row.tagName === "P" ? row : row.lastElementChild!;
           const range = document.createRange();
           range.selectNodeContents(text);
-          return { markerX: marker.x, textX: text.getBoundingClientRect().x, lines: [...range.getClientRects()].map((rect) => rect.x) };
+          return { markerX: marker?.x ?? null, textX: range.getClientRects()[0].x, lines: [...range.getClientRects()].map((rect) => rect.x) };
         });
         return { chevronX: chevron.x, headingX: heading.x, buttonX: button.x, rows };
       });
       for (const row of layout.rows) {
-        expect(row.markerX).toBeCloseTo(layout.chevronX, 0);
-        expect(row.markerX).toBeCloseTo(layout.buttonX, 0);
+        if (row.markerX !== null) {
+          expect(row.markerX).toBeCloseTo(layout.chevronX, 0);
+          expect(row.markerX).toBeCloseTo(layout.buttonX, 0);
+        }
         expect(row.textX).toBeCloseTo(layout.headingX, 0);
         expect(row.lines.length).toBeGreaterThan(1);
         for (const left of row.lines) expect(left).toBeCloseTo(row.textX, 0);

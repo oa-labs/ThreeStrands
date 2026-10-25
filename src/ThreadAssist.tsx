@@ -123,9 +123,8 @@ export function summaryLines(summary: string): string[] {
 }
 
 export function summaryClipboardText(summary: string): string {
-  return summaryLines(summary)
-    .map((line) => `- ${line}`)
-    .join("\n");
+  const lines = summaryLines(summary);
+  return lines.length === 1 ? lines[0] : lines.map((line) => `- ${line}`).join("\n");
 }
 
 // Suffixes and company forms that follow a comma without reversing a name.
@@ -322,7 +321,7 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
       {summaryText && scope.newCount < scope.coveredCount ? <p className="context-section-note">
         {scope.newCount === 1 ? "From the latest message" : `From the ${scope.newCount} latest messages`}
       </p> : null}
-      {summaryText ? <ul className="thread-assist-summary" role="list">
+      {orderedLines.length === 1 ? <p className="thread-assist-summary thread-assist-summary-paragraph">{orderedLines[0]}</p> : summaryText ? <ul className="thread-assist-summary" role="list">
         {orderedLines.map((line, index) => <li key={index} className={EARLIER_PREFIX.test(line) ? "thread-assist-summary-earlier" : undefined}>
           <span className="context-row-glyph thread-assist-summary-marker" aria-hidden="true"><svg width={ICON_SIZE.xs} height={ICON_SIZE.xs} viewBox="0 0 12 12"><circle cx="6" cy="6" r="2" fill="currentColor" /></svg></span><span>{line}</span>
         </li>)}

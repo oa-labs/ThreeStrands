@@ -11,19 +11,7 @@ export type ContextPersonOption = {
   name: string | null;
 };
 
-function initials(label: string): string {
-  const words = label.replace(/@.*/, "").split(/[\s._-]+/).filter(Boolean);
-  const letters = words.length > 1 ? [words[0][0], words[words.length - 1][0]] : [words[0]?.[0] ?? "?"];
-  return letters.join("").toLocaleUpperCase();
-}
-
-/**
- * Heads the panel's person sections with who they are about: one name and
- * address, and a switcher listing everyone else the panel could show. It
- * replaces a row of chips per participant, which crowded the panel as more
- * people joined a conversation. `people` come in the order to list them, the
- * conversation's own correspondents before the user's colleagues.
- */
+/** Names the scope of contact files and recent emails, with optional participant switching. */
 export function ContextPersonHeader({ people, selectedEmail, displayName, onSelect }: {
   people: ContextPersonOption[];
   selectedEmail: string;
@@ -58,25 +46,22 @@ export function ContextPersonHeader({ people, selectedEmail, displayName, onSele
   return (
     <div className="context-person" role="group" aria-label="Showing history with">
       <div className="context-person-main">
-        <span className="contact-avatar context-person-avatar" aria-hidden="true">{initials(name)}</span>
-        <span className="context-person-text">
-          <strong className="context-person-name" title={name}>{name}</strong>
-          {name !== selectedEmail ? <small className="context-person-email" title={selectedEmail}>{selectedEmail}</small> : null}
-        </span>
+        <span className="context-person-label">History with</span>
         {others.length > 0 ? (
           <button
             ref={toggleRef}
             type="button"
-            className="btn btn-sm context-person-switch"
+            className="context-person-switch"
             aria-expanded={open}
             aria-controls={listId}
-            title="Show someone else"
+            aria-label={`Show history with ${name}`}
+            title={selectedEmail}
             onClick={() => setOpen(!open)}
           >
-            {others.length} {others.length === 1 ? "other" : "others"}
-            {open ? <ChevronUp size={ICON_SIZE.sm} /> : <ChevronDown size={ICON_SIZE.sm} />}
+            <span className="context-person-name">{name}</span>
+            {open ? <ChevronUp size={ICON_SIZE.xs} /> : <ChevronDown size={ICON_SIZE.xs} />}
           </button>
-        ) : null}
+        ) : <span className="context-person-name" title={selectedEmail}>{name}</span>}
       </div>
       {open ? (
         <ul id={listId} ref={listRef} className="context-person-list" aria-label="Other people" onKeyDown={onListKeyDown}>

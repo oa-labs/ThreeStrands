@@ -1,15 +1,17 @@
 import { AttachmentChip } from "./AttachmentChip";
 import { FileStarButton } from "./FileStarButton";
-import { CalendarDays, Download, ExternalLink, MapPin, Repeat2, Users } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { CalendarDays, Download, ExternalLink, MapPin, Repeat2, Users, Video } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { EventLocation } from "./EventLocation";
-import { calendarDescriptionText } from "./calendarDescription";
+import { InvitationResponse, type InvitationActions } from "./InvitationSection";
+import { calendarInvitationDetails } from "./calendarDescription";
 import { mailClient } from "./data/client";
 import type { CalendarEventPreview, CalendarPreview, MessageAttachment } from "./domain";
 import { errorMessage } from "./errors";
 import { HoverTooltip } from "./AppChrome";
 import { ICON_SIZE } from "./iconSizes";
-export { isCalendarAttachment } from "./calendarInvitations";
+import { parsedInvitationDate } from "./calendarInvitations";
+export { calendarEventRange, isCalendarAttachment } from "./calendarInvitations";
 
 const MAX_PREVIEWABLE_SIZE = 2 * 1024 * 1024;
 
@@ -27,11 +29,12 @@ type GroupProps = {
   threadId?: string;
   attachments: MessageAttachment[];
   onError(message: string): void;
+  invitationActions?: InvitationActions;
 };
 
 /** Renders one calendar-invitation card per distinct event among `attachments`, collapsing
  * attachments that turn out to describe the same event. */
-export function CalendarAttachmentGroup({ messageId, threadId, attachments, onError }: GroupProps) {
+export function CalendarAttachmentGroup({ messageId, threadId, attachments, onError, invitationActions }: GroupProps) {
   const [visibleIds, setVisibleIds] = useState<Set<string> | null>(null);
   const [loadedPreviews, setLoadedPreviews] = useState<Map<string, CalendarPreview | null> | null>(null);
   // Parents rebuild the attachment array on every render (e.g. after a background sync), so
@@ -89,12 +92,13 @@ export function CalendarAttachmentGroup({ messageId, threadId, attachments, onEr
     <>
       {attachments.filter((attachment) => visibleIds.has(attachment.id)).map((attachment) => (
         <CalendarAttachment
-          key={attachment.id}
+          key={`${messageId}:${attachment.id}`}
           messageId={messageId}
           threadId={threadId}
           attachment={attachment}
           onError={onError}
           loadedPreview={loadedPreviews?.get(attachment.id)}
+          invitationActions={invitationActions}
         />
       ))}
     </>
@@ -106,20 +110,24 @@ type Props = {
   threadId?: string;
   attachment: MessageAttachment;
   onError(message: string): void;
+  invitationActions?: InvitationActions;
   /** A preview already loaded by CalendarAttachmentGroup. Null records a failed load;
    * undefined means this component still needs to load it. */
   loadedPreview?: CalendarPreview | null;
 };
 
-export function CalendarAttachment({ messageId, threadId, attachment, onError, loadedPreview }: Props) {
+export function CalendarAttachment({ messageId, threadId, attachment, onError, loadedPreview, invitationActions }: Props) {
   const [preview, setPreview] = useState<CalendarPreview | null>(null);
   const [failed, setFailed] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let active = true;
     setPreview(null);
     setFailed(false);
-    if (loadedPreview !== undefined) {
+    setPreviewError(null);
+    if (loadedPreview !== undefined && attempt === 0) {
       setPreview(loadedPreview);
       setFailed(loadedPreview === null);
       return () => { active = false; };
@@ -130,11 +138,11 @@ export function CalendarAttachment({ messageId, threadId, attachment, onError, l
     }
     void mailClient.previewCalendarAttachment(messageId, attachment.id).then((value) => {
       if (active) setPreview(value);
-    }).catch(() => {
-      if (active) setFailed(true);
+    }).catch((reason: unknown) => {
+      if (active) { setFailed(true); setPreviewError(errorMessage(reason)); }
     });
     return () => { active = false; };
-  }, [attachment.id, attachment.size, loadedPreview, messageId]);
+  }, [attachment.id, attachment.size, loadedPreview, messageId, attempt]);
 
   const open = () => {
     void mailClient.openAttachment(messageId, attachment.id).catch((reason: unknown) => {
@@ -147,7 +155,13 @@ export function CalendarAttachment({ messageId, threadId, attachment, onError, l
     });
   };
 
-  if (failed) return <AttachmentChip messageId={messageId} attachment={attachment} icon={<CalendarDays size={ICON_SIZE.sm} aria-hidden="true" />} starrable={Boolean(threadId)} onOpen={open} onSave={save} />;
+  if (failed) return <div className="calendar-card calendar-card-failed">
+    <AttachmentChip messageId={messageId} attachment={attachment} icon={<CalendarDays size={ICON_SIZE.sm} aria-hidden="true" />} starrable={Boolean(threadId)} onOpen={open} onSave={save} />
+    {invitationActions && attachment.size <= MAX_PREVIEWABLE_SIZE ? <>
+      <p role="alert">Could not read invitation{previewError ? `: ${previewError}` : "."}</p>
+      <button type="button" className="btn btn-sm" onClick={() => setAttempt((value) => value + 1)}>Retry</button>
+    </> : null}
+  </div>;
   if (!preview) {
     return (
       <div className="calendar-card calendar-card-loading" role="status">
@@ -160,8 +174,11 @@ export function CalendarAttachment({ messageId, threadId, attachment, onError, l
   return (
     <section className="calendar-card" aria-label="Calendar invitation">
       {preview.events.map((event, index) => (
-        <CalendarEvent event={event} key={`${event.start ?? "event"}-${index}`} />
+        <CalendarEvent event={event} key={`${messageId}:${event.uid ?? index}`}>
+          {invitationActions ? <InvitationResponse {...invitationActions} invitation={event} sourceMessageId={messageId} /> : null}
+        </CalendarEvent>
       ))}
+      {preview.events.length === 0 ? <p className="calendar-card-more">No events could be read from this invitation.</p> : null}
       {preview.truncated ? <p className="calendar-card-more">Additional events are included in this file.</p> : null}
       <footer className="calendar-card-actions">
         <span><CalendarDays size={ICON_SIZE.sm} /> {attachment.filename}</span>
@@ -175,9 +192,9 @@ export function CalendarAttachment({ messageId, threadId, attachment, onError, l
   );
 }
 
-export function CalendarEvent({ event }: { event: CalendarEventPreview }) {
+export function CalendarEvent({ event, children }: { event: CalendarEventPreview; children?: ReactNode }) {
   const status = event.status?.toLocaleLowerCase();
-  const description = event.description ? calendarDescriptionText(event.description) : "";
+  const { location, description, joinUrl } = calendarInvitationDetails(event.location, event.description);
   return (
     <article className={`calendar-event${status === "cancelled" ? " calendar-event-cancelled" : ""}`}>
       <div className="calendar-date-tile" aria-hidden="true">
@@ -190,56 +207,31 @@ export function CalendarEvent({ event }: { event: CalendarEventPreview }) {
           {status === "cancelled" ? <span className="calendar-status">Cancelled</span> : null}
         </div>
         <p className="calendar-when">{formatEventTime(event)}</p>
-        {event.location ? <p><MapPin size={ICON_SIZE.sm} /><span><EventLocation location={event.location} /></span></p> : null}
+        {location ? <p><MapPin size={ICON_SIZE.sm} /><span><EventLocation location={location} /></span></p> : null}
+        {joinUrl ? <p><Video size={ICON_SIZE.sm} /><EventLocation location={joinUrl} linkLabel="Join meeting" /></p> : null}
         {event.organizer || event.attendeeCount > 0 ? (
           <p><Users size={ICON_SIZE.sm} /><span>{peopleLabel(event)}</span></p>
         ) : null}
         {event.recurring ? <p><Repeat2 size={ICON_SIZE.sm} /><span>Recurring event</span></p> : null}
-        {description ? <p className="calendar-description">{description}</p> : null}
+        {description ? <details className="calendar-description-details"><summary>Show details</summary><p className="calendar-description">{description}</p></details> : null}
+        {children}
       </div>
     </article>
   );
 }
 
-function parsedDate(value: string | null): Date | null {
-  if (!value) return null;
-  const allDay = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  const date = allDay
-    ? new Date(Number(allDay[1]), Number(allDay[2]) - 1, Number(allDay[3]))
-    : new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-/**
- * The time an invitation event covers, for prefilling a new calendar event.
- * A missing end means one hour (or, all day, one day) after the start.
- * Null when the invitation has no usable start, or its times are wall-clock
- * times in a zone that could not be resolved, which would land at a guess.
- */
-export function calendarEventRange(event: CalendarEventPreview): { start: Date; end: Date } | null {
-  if (event.timeZone) return null;
-  const start = parsedDate(event.start);
-  if (!start) return null;
-  const end = parsedDate(event.end);
-  if (end && end > start) return { start, end };
-  const fallback = new Date(start);
-  if (event.allDay) fallback.setDate(fallback.getDate() + 1);
-  else fallback.setHours(fallback.getHours() + 1);
-  return { start, end: fallback };
-}
-
 function calendarMonth(value: string | null): string {
-  const date = parsedDate(value);
+  const date = parsedInvitationDate(value);
   return date ? new Intl.DateTimeFormat(undefined, { month: "short" }).format(date).toLocaleUpperCase() : "EVENT";
 }
 
 function calendarDay(value: string | null): string {
-  const date = parsedDate(value);
+  const date = parsedInvitationDate(value);
   return date ? String(date.getDate()) : "•";
 }
 
 function formatEventTime(event: CalendarEventPreview): string {
-  const start = parsedDate(event.start);
+  const start = parsedInvitationDate(event.start);
   if (!start) return "Time not specified";
   const date = new Intl.DateTimeFormat(undefined, {
     weekday: "long",
@@ -249,7 +241,7 @@ function formatEventTime(event: CalendarEventPreview): string {
   }).format(start);
   if (event.allDay) return `${date} · All day`;
   const time = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
-  const end = parsedDate(event.end);
+  const end = parsedInvitationDate(event.end);
   const range = end ? `${time.format(start)}–${time.format(end)}` : time.format(start);
   const zone = event.timeZone ? ` · ${event.timeZone.replaceAll("_", " ")}` : "";
   return `${date} · ${range}${zone}`;

@@ -49,9 +49,17 @@ describe("ContactMeetings", () => {
     expect(soon.querySelector(".context-row-date [title]")).toHaveAttribute("title", formatEventDate(soonEvent));
     expect(soon.closest(".context-row")).toHaveClass("context-row-wrap");
     expect(soon.querySelector(".context-row-detail")).toHaveTextContent("with Jane Doe");
-    expect(soon).not.toHaveTextContent(/\d:\d\d/);
+    expect(soon.querySelector(".context-row-detail")).toHaveTextContent(new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone: "UTC" }).format(new Date(soonEvent.start)));
+    expect(section).toHaveTextContent("With people in this conversation");
     fireEvent.click(soon);
     expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ id: "soon" }));
+  });
+
+  it("labels all-day meetings without inventing a time", async () => {
+    const tomorrow = new Date(Date.now() + 24 * hour).toISOString().slice(0, 10);
+    const following = new Date(Date.now() + 48 * hour).toISOString().slice(0, 10);
+    renderMeetings([{ ...meeting("all-day", 24, ["jane@example.com"]), start: tomorrow, end: following, allDay: true }]);
+    expect(await screen.findByRole("button", { name: /Meeting all-day/ })).toHaveTextContent("All day · with Jane Doe");
   });
 
   it("shows the first attendee who matches anyone on the conversation", async () => {

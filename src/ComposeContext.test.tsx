@@ -143,7 +143,7 @@ describe("ComposeContext", () => {
     renderPanel({ draft: { ...draft, to: "ann@partner.com", cc: "Pal <pal@friends.org>" } });
     const header = screen.getByRole("group", { name: "Showing history with" });
     expect(header).toHaveTextContent("ann@partner.com");
-    fireEvent.click(within(header).getByRole("button", { name: "1 other" }));
+    fireEvent.click(within(header).getByRole("button", { name: /^Show history with / }));
     fireEvent.click(within(header).getByRole("button", { name: /^Pal/ }));
     expect(header).toHaveTextContent("Pal");
     expect(within(header).queryByRole("button", { name: /^Pal/ })).not.toBeInTheDocument();
@@ -155,7 +155,7 @@ describe("ComposeContext", () => {
     const header = screen.getByRole("group", { name: "Showing history with" });
     // The first outside recipient is shown, not the colleague listed first.
     expect(header).toHaveTextContent("ann@partner.com");
-    fireEvent.click(within(header).getByRole("button", { name: "1 other" }));
+    fireEvent.click(within(header).getByRole("button", { name: /^Show history with / }));
     expect(within(within(header).getByRole("list", { name: "Other people" })).getAllByRole("button").map((button) => button.title)).toEqual(["sam@acme.com"]);
   });
 

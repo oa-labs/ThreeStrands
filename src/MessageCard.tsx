@@ -5,6 +5,7 @@ import { Check, ChevronDown, ChevronUp, Copy, CopyPlus, Forward, Paperclip, Repl
 import { Fragment, memo, useCallback, useContext, useMemo, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { HoverTooltip } from "./AppChrome";
 import { CalendarAttachmentGroup, isCalendarAttachment } from "./CalendarAttachment";
+import type { InvitationActions } from "./InvitationSection";
 import { AddressWithCard } from "./AddressWithCard";
 import { ContactCardContext } from "./ContactCard";
 import type { OutboxItem } from "./correspondence";
@@ -29,6 +30,7 @@ export type MessageResponseKind = "reply" | "replyAll" | "forward";
 
 type MessageCardProps = {
   message: Message;
+  invitationActions?: InvitationActions;
   index: number;
   isLatest: boolean;
   isExpanded: boolean;
@@ -64,6 +66,7 @@ type MessageCardProps = {
  */
 export const MessageCard = memo(function MessageCard({
   message,
+  invitationActions,
   index,
   isLatest,
   isExpanded,
@@ -302,6 +305,7 @@ export const MessageCard = memo(function MessageCard({
                 messageId={message.id}
                 attachments={downloadableAttachments.filter(isCalendarAttachment)}
                 onError={onNotice}
+                invitationActions={invitationActions}
               />
             ) : null}
             {downloadableAttachments.filter((attachment) => !isCalendarAttachment(attachment)).map((attachment) => (

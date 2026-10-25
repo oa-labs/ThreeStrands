@@ -25,7 +25,7 @@ async function personLoaded(contactId:string){
 
 /** Opens the person header's switcher and returns whom it offers, in order. */
 function otherPeople(header:HTMLElement){
-  fireEvent.click(within(header).getByRole("button",{name:/^\d+ others?$/}));
+  fireEvent.click(within(header).getByRole("button",{name:/^Show history with /}));
   return within(within(header).getByRole("list",{name:"Other people"})).getAllByRole("button").map(button=>button.title);
 }
 
@@ -122,7 +122,7 @@ describe("ContextPanel",()=>{
     it("closes the switcher on Escape and returns focus to it",async()=>{
       render(panel({readingMessageId:"c"}));
       await personLoaded("derived:lee@vendor.net");
-      const toggle=screen.getByRole("button",{name:"2 others"});
+      const toggle=screen.getByRole("button",{name:/^Show history with /});
       fireEvent.click(toggle);
       const list=screen.getByRole("list",{name:"Other people"});
       expect(within(list).getAllByRole("button")[0]).toHaveFocus();
@@ -688,7 +688,11 @@ describe("ContextPanel",()=>{
       const trust=await screen.findByRole("region",{name:"Trust"});
       expect(within(trust).getByText("Known sender")).toBeInTheDocument();
       expect(within(trust).queryByText("Be careful")).not.toBeInTheDocument();
-      expect(trust.querySelectorAll(".context-row:not([hidden] .context-row)")).toHaveLength(1);
+      const disclosure = within(trust).getByText("Known sender").closest("details")!;
+      expect(disclosure).not.toHaveAttribute("open");
+      expect(within(trust).getByText("You've written to Bob 3 times")).not.toBeVisible();
+      fireEvent.click(disclosure.querySelector("summary")!);
+      expect(within(trust).getByText("You've written to Bob 3 times")).toBeVisible();
       expect(trust).toHaveTextContent("You've written to Bob 3 times");
       expect(trust).toHaveTextContent("Since Feb 2025");
     });
