@@ -246,7 +246,7 @@ export const MessageCard = memo(function MessageCard({
         )}
         <time>{formatMailTimestamp(message.sentAt)}</time>
       </div>
-      <div className="message-recipients">
+      {recipientGroups.groups.length > 0 ? <div className="message-recipients">
         {recipientGroups.groups.map((group, groupIndex) => {
           const isLastGroup = groupIndex === recipientGroups.groups.length - 1;
           const listLength = group.addresses.length + (isLastGroup && hiddenRecipientCount ? 1 : 0);
@@ -275,7 +275,7 @@ export const MessageCard = memo(function MessageCard({
             {hiddenRecipientCount} more
           </button>
         </> : null}
-      </div>
+      </div> : null}
     </div>
   );
   return (
@@ -416,7 +416,7 @@ type RecipientGroup = { label: "to" | "cc"; addresses: string[] };
 
 /**
  * The header's "to …, cc …" groups, showing at most `limit` addresses across
- * both. A message with no Cc keeps its "to" group even when it is empty.
+ * both. Empty groups are omitted, including when no recipients are disclosed.
  */
 function visibleRecipientGroups(message: Message, limit: number): { groups: RecipientGroup[]; hiddenCount: number } {
   const to = splitAddressList(message.recipients.join(", "));
@@ -424,7 +424,7 @@ function visibleRecipientGroups(message: Message, limit: number): { groups: Reci
   const shownTo = to.slice(0, limit);
   const shownCc = cc.slice(0, Math.max(0, limit - shownTo.length));
   const groups: RecipientGroup[] = [];
-  if (shownTo.length || !cc.length) groups.push({ label: "to", addresses: shownTo });
+  if (shownTo.length) groups.push({ label: "to", addresses: shownTo });
   if (shownCc.length) groups.push({ label: "cc", addresses: shownCc });
   return { groups, hiddenCount: to.length + cc.length - shownTo.length - shownCc.length };
 }

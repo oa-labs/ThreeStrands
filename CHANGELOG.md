@@ -20,6 +20,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - For a recurring meeting, the side panel's **Files** list shows that meeting's invitation instead of one from every past occurrence, and a reason that applies to every file or conversation, such as "Matching topic and attendees", appears once under the heading instead of on each row.
 
 ### Fixed
+- Emails with no visible recipients, such as Bcc-only messages, no longer show an empty “to” line.
 - **Draft Review** now shows a sparkle icon beside its heading instead of an empty gap.
 - Moving the start date or time in **Edit event** now moves the end along with it, keeping the event’s duration. Changing the end date or time sets the duration for subsequent moves, including all-day events.
 - Pressing **Escape** after opening a calendar event from **Today** now returns you to **Today**, just as it does after opening an email.

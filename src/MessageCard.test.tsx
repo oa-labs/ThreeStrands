@@ -121,6 +121,20 @@ describe("MessageCard", () => {
       expect(line(container)).toHaveTextContent(/^cc meme@example\.com$/);
     });
 
+    it.each([
+      { recipients: [], cc: undefined },
+      { recipients: [], cc: [] },
+      { recipients: ["  "], cc: [" "] },
+    ])("omits the recipient line when no recipients are disclosed: %j", (headers) => {
+      const { container } = render(<MessageCard
+        message={{ ...message, ...headers }}
+        isExpanded {...stableProps} accounts={own}
+      />);
+      expect(container.querySelector(".message-recipients")).not.toBeInTheDocument();
+      expect(screen.getByText("Ada Lovelace")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Reply" })).toBeInTheDocument();
+    });
+
     it("counts To and Cc together toward the preview limit", () => {
       const people = (prefix: string, count: number) => Array.from({ length: count }, (_, i) => `${prefix} ${i + 1} <${prefix}${i + 1}@example.com>`);
       const { container } = render(<MessageCard
