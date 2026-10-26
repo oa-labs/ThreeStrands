@@ -25,7 +25,8 @@ use threestrands_sync_envelope::{
 };
 
 use super::{serialization_error, Database, DatabaseError, DbResult};
-use crate::replicated_sync::{decode_id, encode_id, ensure_space_and_device, FrontierConflict, FrontierConflictCandidate};
+use super::replicated_sync::ensure_space_and_device;
+use crate::replicated_sync::{decode_id, encode_id, FrontierConflict, FrontierConflictCandidate};
 
 /// Records that the replica changed, so the next push seals a new snapshot.
 /// `local` is true for a write made on this device, which is also what the

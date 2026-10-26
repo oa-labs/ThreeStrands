@@ -555,12 +555,6 @@ impl Database {
         Ok(())
     }
 
-    fn active_epoch(&self) -> DbResult<u32> {
-        self.connection()?
-            .query_row("SELECT active_epoch FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
-            .map_err(DatabaseError::from)
-    }
-
     fn advance_active_epoch(&self, key_epoch: u32) -> DbResult<()> {
         self.connection()?
             .execute(
@@ -1883,7 +1877,7 @@ pub(crate) mod test_support {
         let device_id = {
             let mut connection = database.connection().unwrap();
             let tx = connection.transaction().unwrap();
-            let device_id = crate::replicated_sync::ensure_space_and_device(&tx).unwrap();
+            let device_id = crate::db::replicated_sync::ensure_space_and_device(&tx).unwrap();
             tx.commit().unwrap();
             device_id
         };

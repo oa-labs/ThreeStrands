@@ -31,6 +31,7 @@ mod messages;
 mod mutations;
 mod outbox;
 mod recovery;
+pub(crate) mod replicated_sync;
 mod scheduled_send;
 mod search;
 mod sender;

@@ -38,7 +38,7 @@ fn queue(db: &Database) -> OutboxItem {
 fn group_setup(db: &Database, key: u8) {
     db.set_beta_features_enabled(true).unwrap();
     db.with_transaction(|tx| {
-        crate::replicated_sync::ensure_space_and_device(tx)?;
+        crate::db::replicated_sync::ensure_space_and_device(tx)?;
         tx.execute(
             "UPDATE sync_spaces SET recovery_public_key=?1,active_epoch=1",
             [vec![key; 32]],
@@ -53,7 +53,7 @@ fn snapshots_replicate_only_metadata_and_never_create_sendable_rows() {
     group_setup(&owner, 7);
     let item = queue(&owner);
     let identity = owner
-        .with_transaction(crate::replicated_sync::ensure_space_and_device)
+        .with_transaction(crate::db::replicated_sync::ensure_space_and_device)
         .unwrap();
     let (snapshot, _) = owner
         .take_local_snapshot(

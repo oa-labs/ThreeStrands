@@ -232,7 +232,7 @@ pub(crate) async fn create_join_code(
     if choices.is_empty() {
         return Err(EnrollmentError::Invalid("Choose at least one connector to include in the join code".to_string()));
     }
-    let rows = database.configured_transports().map_err(EnrollmentError::Connector)?;
+    let rows = database.configured_transports().map_err(|error| EnrollmentError::Connector(error.to_string()))?;
     let mut connectors = Vec::with_capacity(choices.len());
     let mut selected_ids = Vec::with_capacity(choices.len());
     for choice in choices {

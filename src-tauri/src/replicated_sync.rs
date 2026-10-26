@@ -24,14 +24,16 @@ use chrono::Utc;
 use keyring::Entry;
 use threestrands_sync_envelope::os_rng;
 use rand::Rng;
-use rusqlite::{params, OptionalExtension, Transaction};
+#[cfg(test)]
+use rusqlite::{params, OptionalExtension};
+#[cfg(test)]
+use crate::db::replicated_sync::ensure_space_and_device;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use threestrands_sync_core::{EntityType, ENTITY_EXISTENCE_FIELD};
 use threestrands_sync_envelope::{
-    compute_cid, message_key_epoch, open_snapshot, protocol_marker_cid, seal_snapshot, sign_device_head, verify_device_head,
+    compute_cid, message_key_epoch, open_snapshot, seal_snapshot, sign_device_head, verify_device_head,
     DeviceHead, DeviceId as EnvelopeDeviceId, ObjectKind, OpenParams, SealParams, SignedDeviceHead, SigningKey, VerifyingKey,
-    PROTOCOL_MARKER,
 };
 use threestrands_sync_transport::{
     Cid as TransportCid, HeadLocator, SyncTransport, TransportError, TransportHealth,
@@ -41,7 +43,7 @@ use threestrands_sync_transport::{
 use crate::{
     backoff::retry_at,
     error::{AppError, AppResult},
-    db::{Database, DatabaseError, DbResult},
+    db::{Database, DbResult},
     error_text::display,
     s3_transport::{S3Config, S3Credentials, S3ProbeReport, S3Transport},
     sync_connectors::{
@@ -78,33 +80,6 @@ impl Database {
         Ok(enabled() || self.beta_features_enabled()?)
     }
 
-    /// The persisted state of the Settings "Enable replicated sync" toggle.
-    /// `false` (not an error) when no `sync_spaces` row exists yet — nothing
-    /// has ever been turned on.
-    pub fn beta_features_enabled(&self) -> DbResult<bool> {
-        let enabled: Option<bool> = self.with_connection(|connection| {
-            Ok(connection
-                .query_row("SELECT enabled FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
-                .optional()?)
-        })?;
-        Ok(enabled.unwrap_or(false))
-    }
-
-    /// Turns the Settings "Enable replicated sync" toggle on or off. Turning
-    /// it off stops replication (the periodic loop and every push/pull
-    /// call check this) without deleting local keys, roster, or graph
-    /// state — matching "disabling sync and returning to local-only
-    /// operation" rather than an irreversible reset.
-    pub fn set_beta_features_enabled(&self, on: bool) -> DbResult<()> {
-        self.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO sync_spaces(id, active_epoch, lamport, enabled) VALUES (?1, 0, 0, ?2)
-                 ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled",
-                params![SPACE_ID, on],
-            )?;
-            Ok(())
-        })
-    }
 }
 
 /// The outcome of checking whether a resolved, validated entity is ready to
@@ -337,27 +312,6 @@ impl Database {
     }
 }
 
-pub(crate) fn ensure_space_and_device(tx: &Transaction) -> DbResult<[u8; 16]> {
-    tx.execute(
-        "INSERT OR IGNORE INTO sync_spaces(id, active_epoch, lamport, enabled) VALUES (?1, 0, 0, 1)",
-        params![SPACE_ID],
-    )?;
-    // `is_self` — not "the first row" — is what identifies this device's
-    // own entry once enrollment means `sync_devices` also holds peers.
-    let existing: Option<String> = tx
-        .query_row("SELECT device_id FROM sync_devices WHERE is_self=1 LIMIT 1", [], |row| row.get(0))
-        .optional()?;
-    if let Some(hex) = existing {
-        return decode_id(&hex).map_err(DatabaseError::Corrupt);
-    }
-    let device_id = random_id();
-    tx.execute(
-        "INSERT INTO sync_devices(device_id, status, is_self) VALUES (?1, 'active', 1)",
-        params![encode_id(&device_id)],
-    )?;
-    Ok(device_id)
-}
-
 pub(crate) fn random_id() -> [u8; 16] {
     let mut bytes = [0u8; 16];
     os_rng().fill_bytes(&mut bytes);
@@ -448,7 +402,7 @@ impl Database {
     /// keypairs and trusts them for itself. Touches the OS keychain — never
     /// call this from a test.
     pub fn local_device_identity(&self) -> Result<DeviceIdentity, String> {
-        let device_id = self.with_transaction(ensure_space_and_device)?;
+        let device_id = self.local_sync_device_id()?;
         let signing_key = load_or_create_signing_key()?;
         let x25519_secret = load_or_create_device_x25519_secret()?;
         let verifying_key = signing_key.verifying_key();
@@ -472,23 +426,10 @@ impl Database {
     /// push/pull this cycle," not a hard failure.
     pub fn local_replicated_keys(&self) -> Result<LocalKeys, String> {
         let identity = self.local_device_identity()?;
-        let active_epoch: u32 = self.with_connection(|connection| {
-            Ok(connection.query_row(
-                "SELECT active_epoch FROM sync_spaces WHERE id=?1",
-                params![SPACE_ID],
-                |row| row.get(0),
-            )?)
-        })?;
+        let active_epoch = self.active_epoch()?;
         let k_epoch = load_epoch_key(active_epoch)?
             .ok_or_else(|| "This device has not completed replicated-sync enrollment yet".to_string())?;
-        let earlier_epochs: Vec<u32> = self.with_connection(|connection| {
-            let mut statement =
-                connection.prepare("SELECT key_epoch FROM sync_epoch_history WHERE key_epoch < ?1 ORDER BY key_epoch")?;
-            let rows = statement
-                .query_map(params![active_epoch], |row| row.get(0))?
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(rows)
-        })?;
+        let earlier_epochs = self.epochs_before(active_epoch)?;
         let mut earlier_epoch_keys = BTreeMap::new();
         for key_epoch in earlier_epochs {
             if let Some(key) = load_epoch_key(key_epoch)? {
@@ -505,104 +446,6 @@ impl Database {
         })
     }
 
-    /// Records a device's public key as trusted for signature verification,
-    /// leaving any existing X25519 public key untouched. For our own
-    /// device, [`Self::local_device_identity`] calls
-    /// [`Self::trust_device_keys`] instead. Tests call this directly to
-    /// simulate an already-trusted peer that only needs Ed25519 material.
-    #[cfg(test)]
-    pub fn trust_device_public_key(&self, device_id: &[u8; 16], verifying_key: &VerifyingKey) -> DbResult<()> {
-        self.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO sync_devices(device_id, public_key, status) VALUES (?1,?2,'active')
-                 ON CONFLICT(device_id) DO UPDATE SET public_key=excluded.public_key",
-                params![encode_id(device_id), verifying_key.to_bytes().to_vec()],
-            )?;
-            Ok(())
-        })
-    }
-
-    /// Records both of a device's public keys as trusted and active. Used
-    /// for self-trust and by enrollment/rotation import to adopt a roster
-    /// snapshot.
-    pub(crate) fn trust_device_keys(
-        &self,
-        device_id: &[u8; 16],
-        verifying_key: &VerifyingKey,
-        x25519_public: &[u8; 32],
-    ) -> DbResult<()> {
-        self.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO sync_devices(device_id, public_key, x25519_public, status) VALUES (?1,?2,?3,'active')
-                 ON CONFLICT(device_id) DO UPDATE SET public_key=excluded.public_key, x25519_public=excluded.x25519_public, status='active'",
-                params![encode_id(device_id), verifying_key.to_bytes().to_vec(), x25519_public.to_vec()],
-            )?;
-            Ok(())
-        })
-    }
-
-    /// Adopts one device from a peer's roster snapshot. Like
-    /// [`Self::trust_device_keys`], except that a device this database has
-    /// already revoked stays revoked with its keys untouched. Revocation is
-    /// permanent for a device id (leaving a sync group discards the id), and
-    /// rosters can arrive out of order: an older rotation or a lagging key
-    /// share still lists the device as active and must not undo a newer
-    /// revocation.
-    pub(crate) fn trust_roster_device_keys(
-        &self,
-        device_id: &[u8; 16],
-        verifying_key: &VerifyingKey,
-        x25519_public: &[u8; 32],
-    ) -> DbResult<()> {
-        self.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO sync_devices(device_id, public_key, x25519_public, status) VALUES (?1,?2,?3,'active')
-                 ON CONFLICT(device_id) DO UPDATE SET public_key=excluded.public_key, x25519_public=excluded.x25519_public, status='active'
-                 WHERE sync_devices.status <> 'revoked'",
-                params![encode_id(device_id), verifying_key.to_bytes().to_vec(), x25519_public.to_vec()],
-            )?;
-            Ok(())
-        })
-    }
-
-    /// Marks a device revoked: it stops being trusted for future signature
-    /// verification (snapshots, heads, and enrollment/rotation
-    /// objects alike), though it cannot un-decrypt ciphertext it already
-    /// received under a prior epoch.
-    pub(crate) fn revoke_device(&self, device_id: &[u8; 16]) -> DbResult<()> {
-        self.with_connection(|connection| {
-            connection.execute(
-                "UPDATE sync_devices SET status='revoked' WHERE device_id=?1",
-                params![encode_id(device_id)],
-            )?;
-            Ok(())
-        })
-    }
-
-    /// Every device this local database currently trusts a public key for
-    /// and considers active (not revoked).
-    pub(crate) fn known_device_roster(&self) -> DbResult<Vec<(EnvelopeDeviceId, VerifyingKey)>> {
-        let rows: Vec<(String, Vec<u8>)> = self.with_connection(|connection| {
-            let mut statement = connection.prepare(
-                "SELECT device_id, public_key FROM sync_devices WHERE public_key IS NOT NULL AND status='active'",
-            )?;
-            let rows = statement
-                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(rows)
-        })?;
-        rows.into_iter()
-            .map(|(device_id_hex, key_bytes)| {
-                let device_id = EnvelopeDeviceId::from_bytes(decode_id(&device_id_hex).map_err(DatabaseError::Corrupt)?);
-                let key_array: [u8; 32] = key_bytes
-                    .try_into()
-                    .map_err(|_| DatabaseError::corrupt("Stored device public key is invalid"))?;
-                let verifying_key = VerifyingKey::from_bytes(&key_array)
-                    .map_err(|_| DatabaseError::corrupt("Stored device public key is invalid"))?;
-                Ok((device_id, verifying_key))
-            })
-            .collect()
-    }
 }
 
 fn load_or_create_signing_key() -> Result<SigningKey, String> {
@@ -701,8 +544,8 @@ pub(crate) fn store_epoch_key(key_epoch: u32, key: &[u8; 32]) -> Result<(), Stri
 /// a forged or corrupted index can only ever make `open_snapshot` fail,
 /// never make a wrong snapshot succeed.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct ChunkIndex {
-    chunk_cids: Vec<String>,
+pub(crate) struct ChunkIndex {
+    pub(crate) chunk_cids: Vec<String>,
 }
 
 impl Database {
@@ -735,56 +578,7 @@ impl Database {
                 return Err(display(error));
             }
         };
-        let stored = self.with_transaction(|tx| {
-            // The previous snapshot stays on each transport that has it
-            // until that transport's head names this one; see
-            // `delete_retired_objects`.
-            let previous: Vec<(String, i64)> = {
-                let mut statement = tx.prepare("SELECT cid, state_sequence FROM sync_objects WHERE state_sequence IS NOT NULL")?;
-                let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<Vec<_>, _>>()?;
-                rows
-            };
-            for (cid, state_sequence) in previous {
-                tx.execute(
-                    "INSERT OR IGNORE INTO sync_retired_objects(cid, transport_instance_id, state_sequence)
-                     SELECT cid, transport_instance_id, ?2 FROM sync_deliveries WHERE cid=?1 AND state='delivered'",
-                    params![cid, state_sequence],
-                )?;
-                tx.execute("DELETE FROM sync_deliveries WHERE cid=?1", params![cid])?;
-                tx.execute("DELETE FROM sync_objects WHERE cid=?1", params![cid])?;
-            }
-
-            let chunk_count = sealed.chunks.len() as i64;
-            let mut chunk_cids = Vec::with_capacity(sealed.chunks.len());
-            let mut objects: Vec<(String, &str, i64, i64, Vec<u8>)> = Vec::with_capacity(sealed.chunks.len() + 1);
-            for (index, chunk) in sealed.chunks.iter().enumerate() {
-                let cid = compute_cid(chunk);
-                objects.push((cid.clone(), "state_chunk", index as i64, chunk_count, chunk.clone()));
-                chunk_cids.push(cid);
-            }
-            let index_bytes = serde_json::to_vec(&ChunkIndex { chunk_cids }).map_err(crate::db::serialization_error)?;
-            objects.push((compute_cid(&index_bytes), "state_index", 0, 1, index_bytes));
-            for (cid, kind, chunk_index, chunk_count, bytes) in objects {
-                tx.execute(
-                    "INSERT OR IGNORE INTO sync_objects(cid,object_kind,state_sequence,chunk_index,chunk_count,bytes) VALUES (?1,?2,?3,?4,?5,?6)",
-                    params![cid, kind, next as i64, chunk_index, chunk_count, bytes],
-                )?;
-                for transport_id in transports {
-                    tx.execute(
-                        "INSERT OR IGNORE INTO sync_deliveries(cid,transport_instance_id,state,attempts) VALUES (?1,?2,'pending',0)",
-                        params![cid, transport_id.0],
-                    )?;
-                }
-            }
-            tx.execute(
-                "UPDATE sync_local_state
-                 SET state_sequence=?1, sealed_epoch=?2
-                 WHERE id=1",
-                params![next as i64, keys.key_epoch],
-            )?;
-            crate::db::sync_state::clear_dirty_if_generation(tx, snapshot_generation)?;
-            Ok(())
-        });
+        let stored = self.store_sealed_snapshot(&sealed.chunks, next, keys.key_epoch, transports, snapshot_generation);
         if let Err(error) = stored {
             self.mark_replica_changed()?;
             return Err(String::from(error));
@@ -792,56 +586,16 @@ impl Database {
         Ok(true)
     }
 
-    /// The snapshot `transport_instance_id` can honestly be pointed at: this
-    /// device's current snapshot, once every one of its objects has reached
-    /// that transport. `None` while it hasn't, and the transport's head then
-    /// keeps naming the previous snapshot, which stays there until it's
-    /// replaced.
-    fn delivered_state_head(&self, transport_instance_id: &str) -> DbResult<Option<(u64, String)>> {
-        self.with_connection(|connection| {
-            let row: Option<(i64, i64, Option<String>)> = connection
-                .query_row(
-                    "SELECT so.state_sequence,
-                            SUM(CASE WHEN sd.state='delivered' THEN 0 ELSE 1 END),
-                            MAX(CASE WHEN so.object_kind='state_index' THEN so.cid END)
-                     FROM sync_objects so
-                     LEFT JOIN sync_deliveries sd ON sd.cid = so.cid AND sd.transport_instance_id = ?1
-                     WHERE so.state_sequence IS NOT NULL
-                     GROUP BY so.state_sequence ORDER BY so.state_sequence DESC LIMIT 1",
-                    params![transport_instance_id],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .optional()?;
-            Ok(match row {
-                Some((sequence, 0, Some(index_cid))) => Some((sequence as u64, index_cid)),
-                _ => None,
-            })
-        })
-    }
-
     /// Deletes this device's superseded snapshot objects from a transport
     /// whose head now names `head_sequence`. Best effort: a failed delete is
     /// retried next time; an object already gone counts as deleted.
     async fn delete_retired_objects(&self, transport: &dyn SyncTransport, head_sequence: u64) -> Result<(), String> {
         let instance_id = transport.instance_id().0;
-        let retired: Vec<String> = self.with_connection(|connection| {
-            let mut statement = connection
-                .prepare("SELECT cid FROM sync_retired_objects WHERE transport_instance_id=?1 AND state_sequence < ?2")?;
-            let rows = statement
-                .query_map(params![instance_id, head_sequence as i64], |row| row.get(0))?
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(rows)
-        })?;
+        let retired = self.retired_objects(&instance_id, head_sequence)?;
         for cid in retired {
             match transport.delete_object(&TransportCid(cid.clone())).await {
                 Ok(()) | Err(TransportError::NotFound) => {
-                    self.with_connection(|connection| {
-                        connection.execute(
-                            "DELETE FROM sync_retired_objects WHERE cid=?1 AND transport_instance_id=?2",
-                            params![cid, instance_id],
-                        )?;
-                        Ok(())
-                    })?;
+                    self.forget_retired_object(&cid, &instance_id)?;
                 }
                 Err(error) => log::debug!(target: "replicated_sync", "deleting an old snapshot object from {instance_id} failed: {error}"),
             }
@@ -849,134 +603,8 @@ impl Database {
         Ok(())
     }
 
-    /// The latest snapshot sequence merged from `device_id_hex`.
-    fn merged_state_sequence(&self, device_id_hex: &str) -> DbResult<u64> {
-        self.with_connection(|connection| {
-            let sequence: Option<i64> = connection
-                .query_row(
-                    "SELECT state_sequence FROM sync_remote_states WHERE device_id=?1",
-                    params![device_id_hex],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            Ok(sequence.unwrap_or(0) as u64)
-        })
-    }
-
-    fn record_merged_state(&self, device_id_hex: &str, state_sequence: u64) -> DbResult<()> {
-        self.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO sync_remote_states(device_id, state_sequence, merged_at) VALUES (?1, ?2, ?3)
-                 ON CONFLICT(device_id) DO UPDATE SET state_sequence=excluded.state_sequence, merged_at=excluded.merged_at
-                 WHERE excluded.state_sequence > sync_remote_states.state_sequence",
-                params![device_id_hex, state_sequence as i64, Utc::now().to_rfc3339()],
-            )?;
-            Ok(())
-        })
-    }
-
-    /// Remembers when a peer's latest verified head was published, when this
-    /// device first saw it, and which key epoch the peer is on. Only a head newer than the one on record
-    /// (by its own publication time) replaces it, so a stale copy on a
-    /// lagging transport never rolls the record back.
-    pub(crate) fn record_head_observation(&self, head: &DeviceHead, seen_at_ms: i64) -> DbResult<()> {
-        self.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO sync_remote_states(device_id, last_head_published_at_ms, last_head_seen_at_ms, last_head_epoch) VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT(device_id) DO UPDATE SET last_head_published_at_ms=excluded.last_head_published_at_ms,
-                     last_head_seen_at_ms=excluded.last_head_seen_at_ms, last_head_epoch=excluded.last_head_epoch
-                 WHERE sync_remote_states.last_head_published_at_ms IS NULL
-                    OR sync_remote_states.last_head_published_at_ms < excluded.last_head_published_at_ms",
-                params![encode_id(head.device_id.as_bytes()), head.published_at_ms, seen_at_ms, head.epoch],
-            )?;
-            Ok(())
-        })
-    }
-
-    /// Whether `head_content` (a head's content minus its publication time)
-    /// should be published to `transport_instance_id` now: it changed since
-    /// the last publication there, or the heartbeat is due.
-    fn head_publication_due(&self, transport_instance_id: &str, head_content: &str, now_ms: i64) -> DbResult<bool> {
-        let last: Option<(String, i64)> = self.with_connection(|connection| {
-            Ok(connection
-                .query_row(
-                    "SELECT head_content, published_at_ms FROM sync_head_publications WHERE transport_instance_id=?1",
-                    params![transport_instance_id],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .optional()?)
-        })?;
-        Ok(match last {
-            None => true,
-            Some((content, published_at_ms)) => {
-                content != head_content || now_ms - published_at_ms >= crate::sync_policy::HEAD_HEARTBEAT_MS
-            }
-        })
-    }
-
-    fn record_head_publication(&self, transport_instance_id: &str, head_content: &str, now_ms: i64) -> DbResult<()> {
-        self.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO sync_head_publications(transport_instance_id, head_content, published_at_ms) VALUES (?1,?2,?3)
-                 ON CONFLICT(transport_instance_id) DO UPDATE SET head_content=excluded.head_content, published_at_ms=excluded.published_at_ms",
-                params![transport_instance_id, head_content, now_ms],
-            )?;
-            Ok(())
-        })
-    }
 }
 
-impl Database {
-    /// Records the protocol marker as a local object, so anti-entropy
-    /// repair stores it on every connector this device uses, including ones
-    /// added later. Idempotent.
-    pub(crate) fn ensure_protocol_marker_object(&self) -> DbResult<()> {
-        self.with_connection(|connection| {
-            connection.execute(
-                "INSERT OR IGNORE INTO sync_objects(cid,object_kind,chunk_index,chunk_count,bytes) VALUES (?1,'protocol_marker',0,1,?2)",
-                params![protocol_marker_cid(), PROTOCOL_MARKER],
-            )?;
-            Ok(())
-        })
-    }
-
-    /// Whether to tell the user that upgrading reset sync: this device left
-    /// a group created by an earlier, incompatible build.
-    pub fn protocol_reset_notice(&self) -> Result<bool, String> {
-        self.with_connection(|connection| {
-            Ok(connection.query_row("SELECT EXISTS(SELECT 1 FROM sync_notices WHERE kind='protocol_reset')", [], |row| row.get(0))?)
-        })
-        .map_err(String::from)
-    }
-
-    pub fn dismiss_protocol_reset_notice(&self) -> Result<(), String> {
-        self.with_connection(|connection| {
-            connection.execute("DELETE FROM sync_notices WHERE kind='protocol_reset'", [])?;
-            Ok(())
-        })
-        .map_err(String::from)
-    }
-
-    /// The highest epoch whose keychain entries a schema migration left
-    /// behind (it can't reach the keychain itself), if any.
-    fn pending_keychain_cleanup(&self) -> Result<Option<u32>, String> {
-        self.with_connection(|connection| {
-            Ok(connection
-                .query_row("SELECT highest_epoch FROM sync_pending_keychain_cleanup WHERE id=1", [], |row| row.get(0))
-                .optional()?)
-        })
-        .map_err(String::from)
-    }
-
-    fn clear_pending_keychain_cleanup(&self) -> Result<(), String> {
-        self.with_connection(|connection| {
-            connection.execute("DELETE FROM sync_pending_keychain_cleanup", [])?;
-            Ok(())
-        })
-        .map_err(String::from)
-    }
-
-}
 
 // =============================== Delivery ===================================
 
@@ -984,46 +612,13 @@ impl Database {
 /// before it is treated as settled-failed rather than pending.
 const MAX_DELIVERY_ATTEMPTS: i64 = 20;
 
-struct DeliveryItem {
-    cid: String,
-    bytes: Vec<u8>,
-    attempts: i64,
+pub(crate) struct DeliveryItem {
+    pub(crate) cid: String,
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) attempts: i64,
 }
 
 impl Database {
-    fn pending_delivery_items(&self, transport_instance_id: &str) -> DbResult<Vec<DeliveryItem>> {
-        self.with_connection(|connection| {
-            let now = Utc::now().to_rfc3339();
-            let mut statement = connection.prepare(
-                "SELECT sd.cid, so.bytes, sd.attempts
-                 FROM sync_deliveries sd JOIN sync_objects so ON so.cid = sd.cid
-                 WHERE sd.transport_instance_id=?1 AND sd.state='pending'
-                   AND (sd.retry_at IS NULL OR sd.retry_at <= ?2)",
-            )?;
-            let rows = statement
-                .query_map(params![transport_instance_id, now], |row| {
-                    Ok(DeliveryItem {
-                        cid: row.get(0)?,
-                        bytes: row.get(1)?,
-                        attempts: row.get(2)?,
-                    })
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(rows)
-        })
-    }
-
-    fn record_delivery_success(&self, cid: &str, transport_instance_id: &str, remote_id: Option<&str>) -> DbResult<()> {
-        self.with_connection(|connection| {
-            connection.execute(
-                "UPDATE sync_deliveries SET state='delivered', remote_id=?3, last_error=NULL, retry_at=NULL
-                 WHERE cid=?1 AND transport_instance_id=?2",
-                params![cid, transport_instance_id, remote_id],
-            )?;
-            Ok(())
-        })
-    }
-
     fn record_delivery_failure(
         &self,
         cid: &str,
@@ -1042,59 +637,9 @@ impl Database {
         } else {
             ("failed", None)
         };
-        self.with_connection(|connection| {
-            connection.execute(
-                "UPDATE sync_deliveries SET state=?3, attempts=?4, retry_at=?5, last_error=?6
-                 WHERE cid=?1 AND transport_instance_id=?2",
-                params![cid, transport_instance_id, state, next_attempts, retry_timestamp, error.to_string()],
-            )?;
-            Ok(())
-        })
+        self.store_delivery_failure(cid, transport_instance_id, state, next_attempts, retry_timestamp, &error.to_string())
     }
 
-    /// Ensures a pending delivery row exists for every locally known object
-    /// on every transport in `transport_ids` that doesn't already have one
-    /// (pending, delivered, or failed) — the anti-entropy behavior that
-    /// turns transport union into replication. Cheap to call repeatedly:
-    /// `INSERT OR IGNORE` only ever adds rows for a truly new pairing.
-    pub fn enqueue_repair_deliveries(&self, transport_ids: &[TransportInstanceId]) -> Result<usize, String> {
-        self.with_connection(|connection| {
-            let cids: Vec<String> = {
-                let mut statement = connection.prepare("SELECT cid FROM sync_objects")?;
-                let rows = statement
-                    .query_map([], |row| row.get(0))?
-                    .collect::<Result<Vec<_>, _>>()?;
-                rows
-            };
-            let mut created = 0;
-            for cid in &cids {
-                for transport_id in transport_ids {
-                    created += connection.execute(
-                        "INSERT OR IGNORE INTO sync_deliveries(cid,transport_instance_id,state,attempts) VALUES (?1,?2,'pending',0)",
-                        params![cid, transport_id.0],
-                    )?;
-                }
-            }
-            Ok(created)
-        })
-        .map_err(String::from)
-    }
-
-    /// Pending/delivered/failed delivery counts for one transport instance,
-    /// for the Settings UI.
-    pub fn delivery_counts(&self, transport_instance_id: &str) -> Result<(i64, i64, i64), String> {
-        self.with_connection(|connection| {
-            let count = |state: &str| -> DbResult<i64> {
-                Ok(connection.query_row(
-                    "SELECT COUNT(*) FROM sync_deliveries WHERE transport_instance_id=?1 AND state=?2",
-                    params![transport_instance_id, state],
-                    |row| row.get(0),
-                )?)
-            };
-            Ok((count("pending")?, count("delivered")?, count("failed")?))
-        })
-        .map_err(String::from)
-    }
 }
 
 /// The result of one push cycle.
@@ -1270,35 +815,6 @@ impl Database {
             }
             Ok(())
         })
-    }
-
-    fn pending_entity_materializations(&self)->Result<Vec<(EntityType,String)>,String>{
-        let rows=self.with_connection(|connection|{
-            let mut statement=connection.prepare("SELECT entity_type,entity_id FROM pending_entity_materializations ORDER BY updated_at")?;
-            let rows=statement.query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?)))?;
-            rows.collect::<Result<Vec<_>,_>>().map_err(Into::into)
-        }).map_err(display)?;
-        Ok(rows.into_iter().filter_map(|(kind,id)|{
-            serde_json::from_value::<EntityType>(Value::String(kind.clone())).ok().map(|entity_type|(entity_type,id)).or_else(||{
-                log::warn!(target:"replicated_sync", "ignoring pending materialization for unknown entity type {kind}");
-                None
-            })
-        }).collect())
-    }
-
-    fn remember_pending_entity_materialization(&self,entity_type:EntityType,entity_id:&str,reason:&str)->Result<(),String>{
-        let reason=reason.chars().take(2_000).collect::<String>();
-        self.with_connection(|connection|{
-            connection.execute("INSERT INTO pending_entity_materializations(entity_type,entity_id,reason,updated_at) VALUES(?1,?2,?3,?4) ON CONFLICT(entity_type,entity_id) DO UPDATE SET reason=excluded.reason,updated_at=excluded.updated_at",params![entity_type.as_str(),entity_id,reason,Utc::now().to_rfc3339()])?;
-            Ok(())
-        }).map_err(display)
-    }
-
-    fn clear_pending_entity_materialization(&self,entity_type:EntityType,entity_id:&str)->Result<(),String>{
-        self.with_connection(|connection|{
-            connection.execute("DELETE FROM pending_entity_materializations WHERE entity_type=?1 AND entity_id=?2",params![entity_type.as_str(),entity_id])?;
-            Ok(())
-        }).map_err(display)
     }
 
     fn materialize_one_entity(&self, entity_type: EntityType, entity_id: &str) -> Result<ProjectionReadiness, String> {
@@ -1492,28 +1008,6 @@ pub struct ConfiguredTransport {
 }
 
 impl Database {
-    pub fn configured_transports(&self) -> Result<Vec<ConfiguredTransport>, String> {
-        self.with_connection(|connection| {
-            let mut statement = connection.prepare(
-                "SELECT instance_id, kind, config_json, enabled, last_success_at, last_error FROM sync_transports",
-            )?;
-            let rows = statement
-                .query_map([], |row| {
-                    Ok(ConfiguredTransport {
-                        instance_id: row.get(0)?,
-                        kind: row.get(1)?,
-                        config_json: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-                        enabled: row.get(3)?,
-                        last_success_at: row.get(4)?,
-                        last_error: row.get(5)?,
-                    })
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(rows)
-        })
-        .map_err(String::from)
-    }
-
     /// Persists (or reconfigures, if `instance_id` already exists) one
     /// connector: validates it, writes its non-secret config to
     /// `sync_transports`, then stores `secrets` in the OS keychain — or,
@@ -1526,14 +1020,7 @@ impl Database {
     ) -> Result<(), String> {
         config.validate(instance_id, secrets)?;
         let config_json = config.to_config_json()?;
-        self.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO sync_transports(instance_id,kind,config_json,required,enabled) VALUES (?1,?2,?3,1,1)
-                 ON CONFLICT(instance_id) DO UPDATE SET kind=excluded.kind, config_json=excluded.config_json, enabled=1",
-                params![instance_id, config.kind(), config_json],
-            )?;
-            Ok(())
-        })?;
+        self.upsert_transport_row(instance_id, config.kind(), &config_json)?;
         match secrets {
             Some(secrets) => secrets.store(instance_id),
             None => TransportSecrets::delete(config.kind(), instance_id),
@@ -1605,13 +1092,7 @@ impl Database {
         };
         config.validate(instance_id, effective_secrets)?;
         let config_json = config.to_config_json()?;
-        self.with_connection(|connection| {
-            connection.execute(
-                "UPDATE sync_transports SET config_json=?2 WHERE instance_id=?1",
-                params![instance_id, config_json],
-            )?;
-            Ok(())
-        })?;
+        self.set_transport_config_json(instance_id, &config_json)?;
         match secrets {
             Some(secrets) => secrets.store(instance_id),
             None => Ok(()),
@@ -1628,13 +1109,7 @@ impl Database {
             .into_iter()
             .find(|row| row.instance_id == instance_id)
             .map(|row| row.kind);
-        self.with_connection(|connection| {
-            connection.execute("DELETE FROM sync_transports WHERE instance_id=?1", params![instance_id])?;
-            connection.execute("DELETE FROM sync_deliveries WHERE transport_instance_id=?1", params![instance_id])?;
-            connection.execute("DELETE FROM sync_head_publications WHERE transport_instance_id=?1", params![instance_id])?;
-            connection.execute("DELETE FROM sync_retired_objects WHERE transport_instance_id=?1", params![instance_id])?;
-            Ok(())
-        })?;
+        self.delete_transport_rows(instance_id)?;
         match kind {
             Some(kind) if is_known_kind(&kind) => TransportSecrets::delete(&kind, instance_id),
             // No row, or a kind this version doesn't know: clear every
@@ -1643,25 +1118,6 @@ impl Database {
         }
     }
 
-    fn set_transport_success(&self, instance_id: &str) -> DbResult<()> {
-        self.with_connection(|connection| {
-            connection.execute(
-                "UPDATE sync_transports SET last_success_at=?2, last_error=NULL WHERE instance_id=?1",
-                params![instance_id, Utc::now().to_rfc3339()],
-            )?;
-            Ok(())
-        })
-    }
-
-    fn set_transport_error(&self, instance_id: &str, error: &str) -> DbResult<()> {
-        self.with_connection(|connection| {
-            connection.execute(
-                "UPDATE sync_transports SET last_error=?2 WHERE instance_id=?1",
-                params![instance_id, error],
-            )?;
-            Ok(())
-        })
-    }
 }
 
 impl ConfiguredTransport {
