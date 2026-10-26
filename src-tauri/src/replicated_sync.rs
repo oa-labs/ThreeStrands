@@ -229,6 +229,11 @@ impl Database {
                 repaired += 1;
             }
         }
+        for record in self.list_sender_confirmations()? {
+            if self.reconcile_one_entity(EntityType::SenderConfirmation, &record.id, json!({"pattern": record}))? {
+                repaired += 1;
+            }
+        }
         for account in self.list_accounts()? {
             let payload = json!({
                 "email": account.email,

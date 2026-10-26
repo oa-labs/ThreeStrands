@@ -29,7 +29,7 @@ mod mutations;
 mod recovery;
 mod search;
 mod sender;
-mod sender_feedback;
+pub(crate) mod sender_feedback;
 pub(crate) mod sender_rules;
 mod settings_transfer;
 mod snippets;

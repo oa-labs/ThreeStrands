@@ -14,7 +14,7 @@ pub(crate) const BASELINE_VERSION: i64 = 74;
 
 /// The current schema version. A new schema change adds an
 /// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 86;
+pub(crate) const LATEST_VERSION: i64 = 87;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -947,8 +947,8 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         .map_err(error)?;
     }
     if version < 86 {
-        // Explicit sender feedback is local evidence, not a synced setting or
-        // a contact alias. Keep it after cached messages age out.
+        // Explicit sender feedback is separate from contact aliases. Keep it
+        // after cached messages age out.
         tx.execute_batch(
             "CREATE TABLE IF NOT EXISTS sender_delivery_patterns (
                  id TEXT PRIMARY KEY,
@@ -964,6 +964,19 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
              );
              CREATE INDEX IF NOT EXISTS sender_delivery_requester ON sender_delivery_patterns(account_id, requester);",
         ).map_err(error)?;
+    }
+    if version < 87 {
+        // Equivalent confirmations on different devices must share an identity
+        // so forgetting removes every copy. Preserve all original evidence.
+        let rows = {
+            let mut statement = tx.prepare("SELECT id, account_id, requester, sender_email, link_origins FROM sender_delivery_patterns").map_err(error)?;
+            let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?))).map_err(error)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(error)?
+        };
+        for (id, account, requester, sender, origins) in rows {
+            let stable = crate::db::sender_feedback::confirmation_id(&account, &requester, &sender, &origins);
+            tx.execute("UPDATE sender_delivery_patterns SET id=?1 WHERE id=?2", rusqlite::params![stable, id]).map_err(error)?;
+        }
     }
     if stored == 0 {
         // Only new installations get the 90-day default. Existing databases
@@ -1285,6 +1298,20 @@ mod tests {
                 .unwrap(),
             super::LATEST_VERSION
         );
+    }
+
+    #[test]
+    fn v87_preserves_existing_confirmation_evidence_with_stable_sync_ids() {
+        let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection.execute_batch("INSERT INTO sender_delivery_patterns VALUES ('old-uuid','you@example.com','ana@partner.example','requests@service.example','ana@partner.example','[\"https://service.example\"]',0,'old-message','2026-10-26T12:00:00Z'); PRAGMA user_version=86;").unwrap();
+        super::migrate(&mut connection).unwrap();
+        let (id, authenticated, source, origins): (String, bool, String, String) = connection.query_row("SELECT id,authenticated,source_message_id,link_origins FROM sender_delivery_patterns", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
+        assert_eq!(id, crate::db::sender_feedback::confirmation_id("you@example.com", "ana@partner.example", "requests@service.example", &origins));
+        assert!(!authenticated);
+        assert_eq!(source, "old-message");
+        assert_eq!(origins, "[\"https://service.example\"]");
     }
 
     #[test]

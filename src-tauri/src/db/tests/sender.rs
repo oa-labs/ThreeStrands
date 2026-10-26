@@ -204,6 +204,122 @@ fn sender_feedback_requires_cached_headers_and_never_stores_document_urls_or_tok
     assert!(database.sender_familiarity("valid-feedback", "requests@service.example", "").unwrap().delivery_patterns.is_empty());
 }
 
+#[test]
+fn sender_feedback_enforces_the_shared_origin_limit_locally_and_on_sync() {
+    use threestrands_sync_protocol::{EntityType, MAX_SENDER_CONFIRMATION_ORIGINS};
+    let source = database();
+    source.upsert_thread(ACCOUNT, &[delivery_message("limit-source", "requests@service.example", "ana@partner.example", "pass")]).unwrap();
+    for count in [MAX_SENDER_CONFIRMATION_ORIGINS - 1, MAX_SENDER_CONFIRMATION_ORIGINS, MAX_SENDER_CONFIRMATION_ORIGINS + 1] {
+        let origins: Vec<String> = (0..count).map(|i| format!("https://site{i}.example")).collect();
+        assert_eq!(source.confirm_sender_delivery("limit-source", &origins).is_ok(), count <= MAX_SENDER_CONFIRMATION_ORIGINS);
+        let mut record = source.list_sender_confirmations().unwrap().remove(0);
+        record.link_origins = origins;
+        record.link_origins.sort();
+        record.id = crate::db::sender_feedback::confirmation_id(&record.account_id, &record.requester, &record.sender_email, &serde_json::to_string(&record.link_origins).unwrap());
+        let peer = database();
+        let payload = serde_json::json!({"pattern": record});
+        assert_eq!(peer.materialize_entity(EntityType::SenderConfirmation, &record.id, Some(&payload), false).is_ok(), count <= MAX_SENDER_CONFIRMATION_ORIGINS);
+    }
+}
+
+fn sync_feedback(peer: &crate::db::Database, source: &crate::db::Database) {
+    let touched = peer.merge_replica_state(&source.load_replica_state().unwrap()).unwrap();
+    peer.materialize_touched_entities(&touched).unwrap();
+}
+
+#[test]
+fn sender_confirmations_sync_atomically_and_forgetting_survives_stale_snapshots() {
+    use threestrands_sync_protocol::EntityType;
+    let source = database();
+    let peer = database();
+    source.set_beta_features_enabled(true).unwrap();
+    peer.set_beta_features_enabled(true).unwrap();
+    let sender = "requests@service.example";
+    let requester = "ana@partner.example";
+    source.upsert_thread(ACCOUNT, &[delivery_message("original-sync", sender, requester, "pass")]).unwrap();
+    peer.upsert_thread(ACCOUNT, &[delivery_message("peer-sync", sender, requester, "fail")]).unwrap();
+    source.confirm_sender_delivery("original-sync", &["https://service.example".into()]).unwrap();
+    // Two devices independently remember an identical pattern. Their evidence
+    // remains atomic and their identity converges rather than duplicating.
+    peer.confirm_sender_delivery("peer-sync", &["https://service.example".into()]).unwrap();
+    let source_record = source.list_sender_confirmations().unwrap().remove(0);
+    let peer_record = peer.list_sender_confirmations().unwrap().remove(0);
+    assert_eq!(source_record.id, peer_record.id);
+    assert!(source_record.authenticated);
+    assert!(!peer_record.authenticated);
+    sync_feedback(&peer, &source);
+    sync_feedback(&source, &peer);
+    assert_eq!(peer.list_sender_confirmations().unwrap().len(), 1);
+    let payload = source.resolve_field_winner(EntityType::SenderConfirmation, &source_record.id, "pattern").unwrap().unwrap();
+    assert!(payload == serde_json::to_value(&source_record).unwrap() || payload == serde_json::to_value(&peer_record).unwrap());
+    assert_eq!(serde_json::to_value(peer.list_sender_confirmations().unwrap().remove(0)).unwrap(), payload);
+    let stale = peer.load_replica_state().unwrap();
+    peer.forget_sender_delivery(&source_record.id).unwrap();
+    sync_feedback(&source, &peer);
+    assert!(source.list_sender_confirmations().unwrap().is_empty());
+    let touched = source.merge_replica_state(&stale).unwrap();
+    source.materialize_touched_entities(&touched).unwrap();
+    source.reconcile_replicated_sync_backlog().unwrap();
+    assert!(source.list_sender_confirmations().unwrap().is_empty());
+    assert_eq!(source.resolve_field_winner(EntityType::SenderConfirmation, &source_record.id, "pattern").unwrap(), None);
+    // An explicit new confirmation can be made after forgetting.
+    source.confirm_sender_delivery("original-sync", &["https://service.example".into()]).unwrap();
+    sync_feedback(&peer, &source);
+    assert_eq!(peer.list_sender_confirmations().unwrap().len(), 1);
+}
+
+#[test]
+fn existing_confirmations_backfill_without_broadening_account_requester_or_authentication_scope() {
+    let source = database();
+    let peer = database();
+    let sender = "requests@service.example";
+    let requester = "ana@partner.example";
+    source.upsert_thread(ACCOUNT, &[delivery_message("old-confirmation", sender, requester, "fail")]).unwrap();
+    source.confirm_sender_delivery("old-confirmation", &[]).unwrap();
+    source.connection().unwrap().execute("DELETE FROM messages WHERE id=?1", ["old-confirmation"]).unwrap();
+    source.reconcile_replicated_sync_backlog().unwrap();
+    assert_eq!(source.reconcile_replicated_sync_backlog().unwrap(), 0, "backfill is idempotent");
+    sync_feedback(&peer, &source);
+    peer.upsert_thread(ACCOUNT, &[delivery_message("future-peer", sender, requester, "pass")]).unwrap();
+    let patterns = peer.sender_familiarity("future-peer", sender, "").unwrap().delivery_patterns;
+    assert_eq!(patterns.len(), 1);
+    assert!(!patterns[0].authenticated, "sync must never upgrade authentication evidence");
+    assert_eq!(patterns[0].source_message_id, "old-confirmation");
+    peer.upsert_thread("other@example.com", &[delivery_message("other-peer-account", sender, requester, "pass")]).unwrap();
+    assert!(peer.sender_familiarity("other-peer-account", sender, "").unwrap().delivery_patterns.is_empty());
+    peer.upsert_thread(ACCOUNT, &[delivery_message("other-peer-person", sender, "bob@partner.example", "pass")]).unwrap();
+    assert!(peer.sender_familiarity("other-peer-person", sender, "").unwrap().delivery_patterns.is_empty());
+}
+
+#[test]
+fn synchronized_confirmations_reject_unsafe_destinations_and_mismatched_evidence() {
+    use threestrands_sync_protocol::EntityType;
+    let source = database();
+    source.upsert_thread(ACCOUNT, &[delivery_message("validation-source", "requests@service.example", "ana@partner.example", "pass")]).unwrap();
+    source.confirm_sender_delivery("validation-source", &["https://service.example".into()]).unwrap();
+    let record = source.list_sender_confirmations().unwrap().remove(0);
+    let valid = serde_json::json!({"pattern": record});
+    let peer = database();
+    for (field, value) in [
+        ("linkOrigins", serde_json::json!(["javascript:alert(1)"])),
+        ("linkOrigins", serde_json::json!(["https://service.example/document?token=secret"])),
+        ("linkOrigins", serde_json::json!(["https://user:secret@service.example"])),
+        ("requester", serde_json::json!("other@partner.example")),
+        ("accountId", serde_json::json!("other@example.com")),
+        ("senderEmail", serde_json::json!("spoof@service.example")),
+        ("authenticated", serde_json::json!("true")),
+        ("confirmedAt", serde_json::json!("yesterday")),
+        ("secret", serde_json::json!("credential")),
+    ] {
+        let mut invalid = valid.clone(); invalid["pattern"][field] = value;
+        assert!(peer.materialize_entity(EntityType::SenderConfirmation, &record.id, Some(&invalid), false).is_err(), "{field}");
+    }
+    assert!(peer.materialize_entity(EntityType::SenderConfirmation, "wrong-id", Some(&valid), false).is_err());
+    assert!(peer.list_sender_confirmations().unwrap().is_empty());
+    peer.materialize_entity(EntityType::SenderConfirmation, &record.id, Some(&valid), false).unwrap();
+    assert_eq!(peer.list_sender_confirmations().unwrap().len(), 1);
+}
+
 fn save_contact(database: &crate::db::Database, name: &str, addresses: &[&str]) {
     database
         .save_contact_profile(&crate::models::SaveContactRequest {

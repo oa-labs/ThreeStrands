@@ -919,6 +919,11 @@ pub(crate) async fn remove_synced_mail_account(
     for rule in state.database.list_sender_rules()?.into_iter().filter(|rule| rule.account_id.eq_ignore_ascii_case(&email)) {
         state.database.record_local_entity_deletion(threestrands_sync_protocol::EntityType::SenderRule, &rule.id)?;
     }
+    for record in state.database.list_sender_confirmations()?.into_iter().filter(|record| record.account_id.eq_ignore_ascii_case(&email)) {
+        // Remove the readable row too, so the backfill in sync_once cannot
+        // publish it again while removing the account everywhere.
+        state.database.forget_sender_delivery(&record.id)?;
+    }
     state.replicated_sync.sync_once().await?;
     remove_account_internal(email, state, app, true).await
 }

@@ -43,7 +43,13 @@ pub enum EntityType {
     /// A compose draft. Added in 0.147.0; an earlier build cannot open a
     /// snapshot that holds one.
     Draft,
+    /// Explicit delivery-pattern evidence, added in 0.173.0. Older builds
+    /// cannot open a snapshot containing this entity type.
+    SenderConfirmation,
 }
+
+/// Most web origins one remembered delivery pattern may contain.
+pub const MAX_SENDER_CONFIRMATION_ORIGINS: usize = 500;
 
 /// Most members one synchronized contact group may list.
 pub const MAX_CONTACT_GROUP_MEMBERS: usize = 500;
@@ -70,6 +76,7 @@ impl EntityType {
             Self::Signature => "signature",
             Self::SignatureDefaults => "signature_defaults",
             Self::Draft => "draft",
+            Self::SenderConfirmation => "sender_confirmation",
         }
     }
 
@@ -124,6 +131,25 @@ impl EntityType {
             }
             Self::Draft => {
                 draft_content(payload)?;
+            }
+            Self::SenderConfirmation => {
+                // One atomic field prevents concurrent confirmations from
+                // combining authentication evidence with another pattern.
+                if object.len() != 1 { return Err("Unknown sender confirmation field".into()); }
+                let pattern = object.get("pattern").and_then(Value::as_object).ok_or("Missing sender confirmation")?;
+                if pattern.keys().any(|key| !["id", "accountId", "requester", "senderEmail", "replyTo", "linkOrigins", "authenticated", "sourceMessageId", "confirmedAt"].contains(&key.as_str())) {
+                    return Err("Unknown sender confirmation detail".into());
+                }
+                for field in ["id", "accountId", "requester", "senderEmail", "sourceMessageId", "confirmedAt"] {
+                    required_string(pattern, field, 2048)?;
+                }
+                if !matches!(pattern.get("replyTo"), Some(Value::Null) | Some(Value::String(_))) || !pattern.get("authenticated").is_some_and(Value::is_boolean) {
+                    return Err("Invalid sender confirmation evidence".into());
+                }
+                let origins = pattern.get("linkOrigins").and_then(Value::as_array).ok_or("Missing link origins")?;
+                if origins.len() > MAX_SENDER_CONFIRMATION_ORIGINS || origins.iter().any(|origin| !origin.is_string()) {
+                    return Err("Invalid link origins".into());
+                }
             }
             Self::SenderRule => {
                 required_string(object, "id", 128)?;
@@ -310,6 +336,7 @@ impl std::str::FromStr for EntityType {
             "contact_group" => Ok(Self::ContactGroup),
             "scheduled_send_summary" => Ok(Self::ScheduledSendSummary),
             "sender_rule" => Ok(Self::SenderRule),
+            "sender_confirmation" => Ok(Self::SenderConfirmation),
             "signature" => Ok(Self::Signature),
             "signature_defaults" => Ok(Self::SignatureDefaults),
             "draft" => Ok(Self::Draft),
@@ -480,7 +507,8 @@ mod tests {
             | EntityType::SenderRule
             | EntityType::Signature
             | EntityType::SignatureDefaults
-            | EntityType::Draft => entity_type,
+            | EntityType::Draft
+            | EntityType::SenderConfirmation => entity_type,
         };
         for entity_type in [
             EntityType::Task,
@@ -499,6 +527,7 @@ mod tests {
             EntityType::Signature,
             EntityType::SignatureDefaults,
             EntityType::Draft,
+            EntityType::SenderConfirmation,
         ] {
             let entity_type = listed(entity_type);
             assert_eq!(entity_type.as_str().parse::<EntityType>(), Ok(entity_type));
@@ -622,6 +651,26 @@ mod tests {
         invalid["photoData"]=json!("x".repeat(90_001));
         assert!(EntityType::Contact.validate_payload(&invalid).is_err());
     }
+    #[test]
+    fn sender_confirmation_contract_preserves_atomic_evidence_and_bounds_origins() {
+        let valid = serde_json::json!({"pattern": {
+            "id":"sender-confirmation:abc", "accountId":"you@example.com", "requester":"ana@partner.example",
+            "senderEmail":"requests@service.example", "replyTo":"ana@partner.example", "linkOrigins":[],
+            "authenticated":false, "sourceMessageId":"message", "confirmedAt":"2026-10-26T12:00:00Z"
+        }});
+        for count in [MAX_SENDER_CONFIRMATION_ORIGINS - 1, MAX_SENDER_CONFIRMATION_ORIGINS, MAX_SENDER_CONFIRMATION_ORIGINS + 1] {
+            let mut value = valid.clone();
+            value["pattern"]["linkOrigins"] = serde_json::json!(vec!["https://service.example"; count]);
+            assert_eq!(EntityType::SenderConfirmation.validate_payload(&value).is_ok(), count <= MAX_SENDER_CONFIRMATION_ORIGINS);
+        }
+        let mut extra = valid.clone(); extra["token"] = serde_json::json!("secret");
+        assert!(EntityType::SenderConfirmation.validate_payload(&extra).is_err());
+        for field in ["authenticated", "requester", "sourceMessageId", "linkOrigins"] {
+            let mut missing = valid.clone(); missing["pattern"].as_object_mut().unwrap().remove(field);
+            assert!(EntityType::SenderConfirmation.validate_payload(&missing).is_err(), "{field}");
+        }
+    }
+
     #[test]
     fn sender_rule_contract_allows_only_address_or_domain_mutes() {
         let valid = json!({

@@ -88,6 +88,7 @@ impl Database {
                 EntityType::Draft => {}
                 EntityType::Snippet => self.delete_synced_row("DELETE FROM snippets WHERE id=?1", entity_id)?,
                 EntityType::SplitInbox => self.delete_synced_row("DELETE FROM split_inboxes WHERE id=?1", entity_id)?,
+                EntityType::SenderConfirmation => self.delete_synced_row("DELETE FROM sender_delivery_patterns WHERE id=?1", entity_id)?,
                 EntityType::SenderRule => self.delete_synced_row("DELETE FROM sender_rules WHERE id=?1", entity_id)?,
                 EntityType::Contact => self.delete_contact_profile(entity_id)?,
                 // Unlinks local tasks and goals the same way the deleting device did.
@@ -136,6 +137,12 @@ impl Database {
                 }
                 EntityType::SplitInbox => {
                     self.upsert_synced_split(serde_json::from_value(payload.clone()).map_err(serialization_error)?)?
+                }
+                EntityType::SenderConfirmation => {
+                    entity_type.validate_payload(payload).map_err(DatabaseError::invalid)?;
+                    let record: crate::db::sender_feedback::SenderConfirmation = serde_json::from_value(payload["pattern"].clone()).map_err(serialization_error)?;
+                    if record.id != entity_id { return Err(DatabaseError::invalid("Sender confirmation identity mismatch")); }
+                    self.upsert_synced_sender_confirmation(&record)?;
                 }
                 EntityType::SenderRule => {
                     entity_type.validate_payload(payload).map_err(DatabaseError::invalid)?;

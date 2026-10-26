@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { listen } from "@tauri-apps/api/event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ContactCardContext, type ContactCardActions } from "./ContactCard";
@@ -10,6 +11,8 @@ import { placeHoverCard } from "./AddressWithCard";
 import { MessageCard } from "./MessageCard";
 import { TrustSection } from "./SenderSections";
 import { threadTextIndex } from "./threadTextIndex";
+
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(vi.fn()) }));
 
 vi.mock("./inlineAttachments", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./inlineAttachments")>();
@@ -365,6 +368,28 @@ describe("MessageCard", () => {
       await screen.findByText("You confirmed this email is legitimate");
       await waitFor(() => expect(screen.queryByRole("button", { name: /^Be careful:/ })).not.toBeInTheDocument());
       expect(screen.queryByRole("button", { name: "Known sender. Show sender details" })).not.toBeInTheDocument();
+    });
+
+    it("refreshes confirmations and forgetting from another device and removes its sync listener", async () => {
+      Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: {} });
+      const stop = vi.fn(); vi.mocked(listen).mockResolvedValue(stop);
+      const { familiarity } = reads({ ...stranger, deliveryPatterns: [] }, { ...verified, replyTo: "person@customer.example" });
+      const { unmount } = render(<TrustSection message={message} subject="Hello" bulk={false} />);
+      try {
+        await screen.findByRole("button", { name: "This is legitimate" });
+        await waitFor(() => expect(listen).toHaveBeenCalledWith("replicated-sync-status", expect.any(Function)));
+        const refresh = vi.mocked(listen).mock.calls.at(-1)![1] as () => void;
+        familiarity.mockResolvedValue({ ...stranger, deliveryPatterns: [{ id: "feedback", senderEmail: "ada@example.com", replyTo: "person@customer.example", linkOrigins: [], authenticated: true, sourceMessageId: message.id, confirmedAt: "2026-10-26T12:00:00Z" }] });
+        await act(async () => { refresh(); });
+        await screen.findByRole("button", { name: "Forget confirmation" });
+        familiarity.mockResolvedValue({ ...stranger, deliveryPatterns: [] });
+        await act(async () => { refresh(); });
+        await screen.findByRole("button", { name: "This is legitimate" });
+        expect(screen.queryByRole("button", { name: "Forget confirmation" })).not.toBeInTheDocument();
+        unmount(); expect(stop).toHaveBeenCalled();
+      } finally {
+        delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+      }
     });
 
     it("shows a quiet shield for a known sender that opens the same details as the Trust section", async () => {

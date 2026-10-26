@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useId, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Eye, Globe, Link2, Mail, Paperclip, Reply, Shield, ShieldCheck, TriangleAlert, UserCheck, UserRound } from "lucide-react";
 import type { Message, MessageTrust, SenderFamiliarity, SenderHistory, SenderRule, SplitInbox } from "./domain";
@@ -202,8 +203,16 @@ export function useTrustReport({ message, subject, bulk, prior, enabled = true }
   const key = `${message.id}\n${message.sender}`;
   useEffect(() => {
     const refresh = () => { pendingTrustReads.clear(); setRevision((value) => value + 1); };
+    let active = true;
+    let stop: (() => void) | undefined;
     window.addEventListener(SENDER_FEEDBACK_CHANGED, refresh);
-    return () => window.removeEventListener(SENDER_FEEDBACK_CHANGED, refresh);
+    if ("__TAURI_INTERNALS__" in window) {
+      void listen("replicated-sync-status", refresh).then((unlisten) => {
+        if (active) stop = unlisten;
+        else unlisten();
+      }).catch(logBackgroundFailure("Sender confirmation sync listener"));
+    }
+    return () => { active = false; stop?.(); window.removeEventListener(SENDER_FEEDBACK_CHANGED, refresh); };
   }, []);
   useEffect(() => {
     if (!enabled) return;
@@ -246,7 +255,7 @@ function SenderFeedback({ messageId, feedback }: { messageId: string; feedback: 
           ? <button type="button" className="btn-link" disabled={busy} onClick={() => { void save(matchingId); }}>Forget confirmation</button>
           : <button type="button" className="btn-link" disabled={busy} onClick={() => { void save(); }}>{busy ? "Saving…" : "This is legitimate"}</button>}
       </div>
-      <p className="context-sender-feedback-scope">{matchingId ? "Remembered" : "Remembers"} this sending address and link destinations for {feedback.requester} on this device. Security checks still apply.</p>
+      <p className="context-sender-feedback-scope">{matchingId ? "Remembered" : "Remembers"} this sending address and link destinations for {feedback.requester} for this mail account. Confirmations sync across your devices when sync is enabled. Security checks still apply.</p>
       {!matchingId && feedback.patterns.length > 0 ? (
         <details>
           <summary>Remembered senders</summary>

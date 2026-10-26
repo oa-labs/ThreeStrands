@@ -12,6 +12,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Reopen a long email you were partway through, such as a newsletter, and it picks up where you left off instead of starting back at the top. Your place is kept for two days, and the email opens at the top again once you've read to the end or a new reply arrives.
 
 ### Improved
+- **This is legitimate** confirmations now sync between your devices for the same mail account, including confirmations you already saved. **Forget confirmation** also syncs, while security checks continue to apply.
 - **Today** is easier to read at a glance. Event, task, and message titles are a size larger, the lines under them match your inbox's titles, and the header is down to the date and one line about your day, since unread mail and tasks due already have their own columns.
 - Removed the **History with** person selector from the right context panel. Recent emails and files still follow the message you’re reading or the recipients you’re writing to.
 - Calendar invitations in the side panel's **Files** list are now named by their meeting, as they are in **Files**, instead of all showing as "invite.ics".

@@ -644,7 +644,8 @@ describe("ContextPanel",()=>{
       expect(mailClient.confirmSenderDelivery).toHaveBeenCalledWith("2",[]);
       expect(screen.queryByRole("region",{name:"Be careful"})).not.toBeInTheDocument();
       const checks=screen.getByRole("region",{name:"Sender checks"});
-      expect(checks).toHaveTextContent("requester@customer.example on this device");
+      expect(checks).toHaveTextContent("requester@customer.example for this mail account");
+      expect(checks).toHaveTextContent("Confirmations sync across your devices when sync is enabled. Security checks still apply.");
       fireEvent.click(within(checks).getByRole("button",{name:"Forget confirmation"}));
       expect(await screen.findByRole("region",{name:"Be careful"})).toHaveTextContent("Replies go elsewhere");
       expect(mailClient.forgetSenderDelivery).toHaveBeenCalledWith("feedback-1");

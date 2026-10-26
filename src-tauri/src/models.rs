@@ -790,7 +790,7 @@ pub struct SenderFamiliarity {
     pub delivery_patterns: Vec<SenderDeliveryPattern>,
 }
 
-/// User-confirmed delivery relationships. Local to this device and account;
+/// User-confirmed delivery relationships, scoped to one account and replicated;
 /// these are evidence about a pattern, never an exemption from security checks.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
