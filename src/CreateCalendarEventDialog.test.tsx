@@ -1,11 +1,99 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CreateCalendarEventDialog } from "./CreateCalendarEventDialog";
+import { CreateCalendarEventDialog, EditCalendarEventDialog } from "./CreateCalendarEventDialog";
 import { mailClient } from "./data/client";
 import type { CalendarAccount, CalendarOption, ContactProfile, ScheduleEvent } from "./domain";
 
 const accounts: CalendarAccount[] = [{ email: "you@example.com", connectedAt: "2026-09-01T00:00:00Z", status: "connected" }];
 const calendars: CalendarOption[] = [{ id: "primary", accountId: "you@example.com", name: "You", primary: true, selected: true, writable: true }];
+
+describe("EditCalendarEventDialog", () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  const event: ScheduleEvent = {
+    id: "meeting", accountId: accounts[0].email, calendarId: "primary", title: "Planning",
+    start: "2026-10-01T09:00:00", end: "2026-10-01T10:30:00", allDay: false,
+  };
+
+  it.each([
+    ["a later day", event.start, event.end, "2026-10-05T09:00", "2026-10-05T10:30"],
+    ["an earlier year", event.start, event.end, "2025-12-31T09:00", "2025-12-31T10:30"],
+    ["a time across midnight", event.start, event.end, "2026-10-31T23:30", "2026-11-01T01:00"],
+    ["a multi-day event", "2026-10-01T09:00:00", "2026-10-03T12:00:00", "2026-10-05T09:00", "2026-10-07T12:00"],
+    ["spring DST", event.start, event.end, "2026-03-08T01:30", "2026-03-08T04:00"],
+    ["fall DST", event.start, event.end, "2026-11-01T00:30", "2026-11-01T01:00"],
+    ["an event spanning fall's repeated hour", "2026-11-01T01:15:00-04:00", "2026-11-01T01:45:00-05:00", "2026-11-02T09:00", "2026-11-02T10:30"],
+  ])("preserves elapsed duration when moving the start to %s", async (_name, start, end, nextStart, nextEnd) => {
+    const update = vi.spyOn(mailClient, "updateCalendarEvent").mockResolvedValue(event);
+    render(<EditCalendarEventDialog event={{ ...event, start, end }} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: nextStart } });
+    expect(screen.getByLabelText("Ends")).toHaveValue(nextEnd);
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      start: new Date(nextStart).toISOString(),
+      // Fall's 01:00 occurs twice; check the elapsed duration rather than
+      // parsing that ambiguous local wall time back into a Date.
+      end: new Date(new Date(nextStart).getTime() + new Date(end).getTime() - new Date(start).getTime()).toISOString(),
+    })));
+  });
+
+  it.each([
+    ["time", "2026-10-01T12:00", "2026-10-06T17:00"],
+    ["date", "2026-10-02T10:30", "2026-10-07T15:30"],
+  ])("uses an explicitly edited end %s as the new duration", async (_name, nextEnd, expectedEnd) => {
+    const update = vi.spyOn(mailClient, "updateCalendarEvent").mockResolvedValue(event);
+    render(<EditCalendarEventDialog event={event} onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Ends"), { target: { value: nextEnd } });
+    expect(screen.getByLabelText("Starts")).toHaveValue("2026-10-01T09:00");
+    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: "2026-10-05T09:00" } });
+    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: "2026-10-06T14:00" } });
+    expect(screen.getByLabelText("Ends")).toHaveValue(expectedEnd);
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ end: new Date(expectedEnd).toISOString() })));
+  });
+
+  it.each([
+    ["one day", "2026-10-01", "2026-10-02", "2026-10-05", "2026-10-05", "2026-10-06"],
+    ["several days across spring DST", "2026-10-01", "2026-10-04", "2026-03-07", "2026-03-09", "2026-03-10"],
+    ["several days across fall DST", "2026-03-07", "2026-03-10", "2026-10-31", "2026-11-02", "2026-11-03"],
+    ["an earlier year", "2026-10-01", "2026-10-04", "2025-12-30", "2026-01-01", "2026-01-02"],
+  ])("preserves %s for all-day events and saves an exclusive end", async (_name, start, end, nextStart, lastDay, exclusiveEnd) => {
+    const update = vi.spyOn(mailClient, "updateCalendarEvent").mockResolvedValue(event);
+    render(<EditCalendarEventDialog event={{ ...event, start, end, allDay: true }} onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: nextStart } });
+    expect(screen.getByLabelText("Ends")).toHaveValue(lastDay);
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ start: nextStart, end: exclusiveEnd, allDay: true })));
+  });
+
+  it("uses an edited all-day end to reset the day count, including a single day", () => {
+    render(<EditCalendarEventDialog event={{ ...event, start: "2026-10-01", end: "2026-10-03", allDay: true }} onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Ends"), { target: { value: "2026-10-04" } });
+    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: "2026-10-10" } });
+    expect(screen.getByLabelText("Ends")).toHaveValue("2026-10-13");
+    fireEvent.change(screen.getByLabelText("Ends"), { target: { value: "2026-10-10" } });
+    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: "2026-10-20" } });
+    expect(screen.getByLabelText("Ends")).toHaveValue("2026-10-20");
+  });
+
+  it.each(["Starts", "Ends"])("retains duration while the %s field is temporarily empty", (label) => {
+    render(<EditCalendarEventDialog event={event} onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText(label), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: "2026-10-05T09:00" } });
+    expect(screen.getByLabelText("Ends")).toHaveValue("2026-10-05T10:30");
+  });
+
+  it("recalculates duration when switching between all-day and timed events", () => {
+    render(<EditCalendarEventDialog event={event} onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.click(screen.getByLabelText("All day"));
+    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: "2026-10-05" } });
+    expect(screen.getByLabelText("Ends")).toHaveValue("2026-10-05");
+    fireEvent.click(screen.getByLabelText("All day"));
+    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: "2026-10-06T23:30" } });
+    expect(screen.getByLabelText("Ends")).toHaveValue("2026-10-07T00:30");
+  });
+});
 
 describe("CreateCalendarEventDialog", () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });

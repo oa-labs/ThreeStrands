@@ -19,6 +19,17 @@ function localDate(value: string): Date {
   return new Date(year, month - 1, day);
 }
 
+function eventFieldTime(value: string, allDay: boolean): number {
+  // Date-only fields use calendar-day arithmetic, independent of DST. Timed
+  // events keep their elapsed duration in the user's local time zone.
+  return new Date(allDay ? `${value}T00:00:00Z` : value).getTime();
+}
+
+function eventDuration(start: number, end: number, allDay: boolean): number | null {
+  const duration = end - start;
+  return Number.isFinite(duration) && (allDay ? duration >= 0 : duration > 0) ? duration : null;
+}
+
 /**
  * Text left in Invite People that is not an address blocks saving; the field
  * already says why, so focus it to fix.
@@ -209,10 +220,16 @@ export function EditCalendarEventDialog({
   const initialDescription = useMemo(() => event.description ? calendarDescriptionText(event.description) : "", [event.description]);
   const [title, setTitle] = useState(event.title);
   const [allDay, setAllDay] = useState(event.allDay);
-  const [startValue, setStartValue] = useState(() => event.allDay ? event.start.slice(0, 10) : localDateTimeValue(new Date(event.start)));
-  const [endValue, setEndValue] = useState(() => event.allDay
-    ? dateInputValue(addDays(localDate(event.end), -1))
-    : localDateTimeValue(new Date(event.end)));
+  const [range, setRange] = useState(() => {
+    const startValue = event.allDay ? event.start.slice(0, 10) : localDateTimeValue(new Date(event.start));
+    const endValue = event.allDay ? dateInputValue(addDays(localDate(event.end), -1)) : localDateTimeValue(new Date(event.end));
+    // Keep instants as well as field text: the same local time occurs twice
+    // when DST ends, and parsing the text again would lose that distinction.
+    const startTime = event.allDay ? eventFieldTime(startValue, true) : new Date(event.start).getTime();
+    const endTime = event.allDay ? eventFieldTime(endValue, true) : new Date(event.end).getTime();
+    return { startValue, endValue, startTime, endTime, duration: eventDuration(startTime, endTime, event.allDay) };
+  });
+  const { startValue, endValue } = range;
   const [location, setLocation] = useState(event.location ?? "");
   const [invitees, setInvitees] = useState<string[]>(() => event.attendees ?? []);
   const [pendingInvitee, setPendingInvitee] = useState("");
@@ -220,15 +237,36 @@ export function EditCalendarEventDialog({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  function changeStart(next: string) {
+    setRange((previous) => {
+      const startTime = eventFieldTime(next, allDay);
+      const changed = { ...previous, startValue: next, startTime };
+      // Clearing or partially typing the start must not discard the duration.
+      if (previous.duration === null || !Number.isFinite(startTime)) return changed;
+      const endTime = startTime + previous.duration;
+      const end = new Date(endTime);
+      if (!Number.isFinite(end.getTime())) return changed;
+      return { ...changed, endTime, endValue: allDay ? end.toISOString().slice(0, 10) : localDateTimeValue(end) };
+    });
+  }
+
+  function changeEnd(next: string) {
+    setRange((previous) => {
+      const endTime = eventFieldTime(next, allDay);
+      const duration = eventDuration(previous.startTime, endTime, allDay) ?? previous.duration;
+      return { ...previous, endValue: next, endTime, duration };
+    });
+  }
+
   function changeAllDay(next: boolean) {
     setAllDay(next);
-    if (next) {
-      setStartValue(startValue.slice(0, 10));
-      setEndValue(endValue.slice(0, 10) < startValue.slice(0, 10) ? startValue.slice(0, 10) : endValue.slice(0, 10));
-    } else {
-      setStartValue(`${startValue.slice(0, 10)}T09:00`);
-      setEndValue(`${startValue.slice(0, 10)}T10:00`);
-    }
+    const nextStart = next ? startValue.slice(0, 10) : `${startValue.slice(0, 10)}T09:00`;
+    const nextEnd = next
+      ? endValue.slice(0, 10) < startValue.slice(0, 10) ? startValue.slice(0, 10) : endValue.slice(0, 10)
+      : `${startValue.slice(0, 10)}T10:00`;
+    const startTime = eventFieldTime(nextStart, next);
+    const endTime = eventFieldTime(nextEnd, next);
+    setRange({ startValue: nextStart, endValue: nextEnd, startTime, endTime, duration: eventDuration(startTime, endTime, next) });
   }
 
   async function submit(formEvent: FormEvent<HTMLFormElement>) {
@@ -249,8 +287,8 @@ export function EditCalendarEventDialog({
       start = dateInputValue(startDay);
       end = dateInputValue(addDays(lastDay, 1));
     } else {
-      const startsAt = new Date(startValue);
-      const endsAt = new Date(endValue);
+      const startsAt = new Date(range.startTime);
+      const endsAt = new Date(range.endTime);
       if (!Number.isFinite(startsAt.getTime()) || !Number.isFinite(endsAt.getTime()) || endsAt <= startsAt) {
         setError("The end time must be after the start time."); return;
       }
@@ -295,8 +333,8 @@ export function EditCalendarEventDialog({
         <label>Title<input value={title} onChange={(change) => setTitle(change.target.value)} maxLength={1024} required placeholder="Add title" /></label>
         <label className="calendar-event-all-day-field"><input type="checkbox" checked={allDay} onChange={(change) => changeAllDay(change.target.checked)} />All day</label>
         <div className="calendar-event-time-fields">
-          <label>Starts<input type={timeType} value={startValue} onChange={(change) => setStartValue(change.target.value)} required /></label>
-          <label>Ends<input type={timeType} value={endValue} onChange={(change) => setEndValue(change.target.value)} required /></label>
+          <label>Starts<input type={timeType} value={startValue} onChange={(change) => changeStart(change.target.value)} required /></label>
+          <label>Ends<input type={timeType} value={endValue} onChange={(change) => changeEnd(change.target.value)} required /></label>
         </div>
         <label>Location<input value={location} onChange={(change) => setLocation(change.target.value)} maxLength={4096} placeholder="Add location" /></label>
         <EmailBadgeField label="Invite People" values={invitees} disabled={saving} onChange={setInvitees} onPendingChange={setPendingInvitee} />

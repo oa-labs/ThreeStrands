@@ -17,6 +17,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Calendar invitations in the side panel's **Files** list are now named by their meeting, as they are in **Files**, instead of all showing as "invite.ics".
 
 ### Fixed
+- Moving the start date or time in **Edit event** now moves the end along with it, keeping the event’s duration. Changing the end date or time sets the duration for subsequent moves, including all-day events.
 - Pressing **Escape** after opening a calendar event from **Today** now returns you to **Today**, just as it does after opening an email.
 
 ## 0.167.1 — 2026-10-25
