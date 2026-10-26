@@ -43,6 +43,7 @@ pub use mail_sync::SentBackfillProgress;
 pub use mutations::PendingMutation;
 pub use recovery::{open_with_recovery, OpenError, RecoveryOutcome};
 pub(crate) use sender::MAX_SENDER_THREADS;
+pub(crate) use today::PROMISE_LOOKBACK_DAYS;
 
 #[cfg(test)]
 pub(crate) mod test_support;

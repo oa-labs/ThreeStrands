@@ -582,6 +582,18 @@ export type TodayMail = {
   corresponded: boolean;
 };
 
+/** A promise in the user's sent mail that nothing sent since appears to keep. */
+export type OpenPromise = {
+  thread: Thread;
+  /** The sent message that makes the promise. */
+  messageId: string;
+  sentAt: string;
+  /** Its To line, minus the user's own addresses. */
+  recipients: string[];
+  /** The sentence that makes the promise, as the user wrote it. */
+  excerpt: string;
+};
+
 export type TodayMailPage = {
   threads: TodayMail[];
   /** Every unread conversation in scope, including any past the listed ones. */

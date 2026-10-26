@@ -61,6 +61,7 @@ import type {
   Thread,
   ThreadDetail,
   ThreadPage,
+  OpenPromise,
   TodayMailPage,
   ThreadTask,
   ThreadMutation,
@@ -112,6 +113,8 @@ export interface MailClient extends CorrespondenceClient {
   mailboxUnreadCounts(accountId?: string): Promise<MailboxUnreadCounts>;
   /** Unread conversations for the Today view, split inbox matches included, newest arrival first. */
   listTodayMail(accountId?: string): Promise<TodayMailPage>;
+  /** Promises in the user's sent mail from the last two weeks that nothing sent since appears to keep, newest first. */
+  listOpenPromises(accountId?: string): Promise<OpenPromise[]>;
   getThread(id: string): Promise<ThreadDetail>;
   openAttachment(messageId: string, attachmentId: string): Promise<void>;
   saveAttachment(messageId: string, attachmentId: string): Promise<void>;
@@ -374,6 +377,7 @@ const tauriClient: MailClient = {
   listUnreadCounts: () => read("list_unread_counts"),
   mailboxUnreadCounts: (accountId) => read("mailbox_unread_counts", { accountId }),
   listTodayMail: (accountId) => read("list_today_mail", { accountId }),
+  listOpenPromises: (accountId) => read("list_open_promises", { accountId }),
   getThread: (id) => read("get_thread", { id }),
   openAttachment: (messageId, attachmentId) => complete("open_attachment", { messageId, attachmentId }),
   saveAttachment: (messageId, attachmentId) => complete("save_attachment", { messageId, attachmentId }),

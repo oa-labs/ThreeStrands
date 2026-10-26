@@ -1,10 +1,10 @@
-import { ContactRound, Mail, Video } from "lucide-react";
+import { ContactRound, ListPlus, Mail, Send, Video, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { CalendarAgenda } from "./CalendarAgenda";
 import { ContextRow, ContextSection } from "./ContextSections";
 import { mailClient } from "./data/client";
-import type { CalendarOption, ContactProfile, ScheduleEvent, ThreadTask, TodayMail } from "./domain";
+import type { CalendarOption, ContactProfile, OpenPromise, ScheduleEvent, ThreadTask, TodayMail } from "./domain";
 import { agendaEventsFor, formatClockTime, isDeclined } from "./agendaEvents";
 import { addDays, eventDate, startOfLocalDay } from "./calendarTime";
 import { parseAddress } from "./emailAddress";
@@ -13,7 +13,9 @@ import { HoverTooltip } from "./AppChrome";
 import { ICON_SIZE } from "./iconSizes";
 import { describeDue, isKeepInTouchDue } from "./keepInTouch";
 import { meetingPlace } from "./ThreadAssist";
+import { dismissPromise, promiseRecipients, readDismissedPromises } from "./openPromises";
 import { compareTasksForDisplay, dueView, formatDue, isActiveTaskStatus, isOverdue } from "./taskViews";
+import { dayShape, meetingsWith, sharedMeetingsNote } from "./todayInsights";
 import { groupTodayMail, type TodayMailGroup } from "./todayMail";
 import { useCalendarSchedule } from "./useCalendarSchedule";
 
@@ -113,6 +115,41 @@ function TodayLayout({
     return () => { active = false; };
   }, []);
 
+  const [promises, setPromises] = useState<OpenPromise[]>([]);
+  const [dismissed, setDismissed] = useState(readDismissedPromises);
+  useEffect(() => {
+    let active = true;
+    mailClient.listOpenPromises(accountId ?? undefined).then((loaded) => {
+      if (active) setPromises(loaded);
+    }).catch(() => {
+      // Supplemental, like tasks; a failed read leaves the section out.
+      if (active) setPromises([]);
+    });
+    return () => { active = false; };
+  }, [accountId, refreshKey, taskRefreshKey]);
+  const openPromises = promises.filter((promise) => !dismissed.includes(promise.messageId));
+
+  const trackPromise = async (promise: OpenPromise) => {
+    try {
+      const created = await mailClient.createTask({
+        accountId: promise.thread.accountId,
+        threadId: promise.thread.id,
+        sourceMessageId: promise.messageId,
+        subjectSnapshot: promise.thread.subject || "(no subject)",
+        title: promise.excerpt,
+        kind: "follow_up",
+        evidenceText: promise.excerpt,
+      });
+      // The task now tracks it, so the native list leaves it out from here on.
+      setPromises((current) => current.filter((candidate) => candidate.messageId !== promise.messageId));
+      setAnnouncement(`Task added: ${created.title}`);
+      onTasksChanged();
+      onEditTask(created);
+    } catch (reason) {
+      setAnnouncement(errorMessage(reason));
+    }
+  };
+
   // Checking a task off keeps its row in place, struck through, until Today is read again.
   const toggleDone = async (task: ThreadTask) => {
     const done = isActiveTaskStatus(task.status);
@@ -128,6 +165,7 @@ function TodayLayout({
 
   const todaysEvents = agendaEventsFor(schedule?.events ?? [], now, calendars);
   const next = nextMeeting(todaysEvents, now);
+  const shape = schedule ? dayShape(todaysEvents, now) : "";
   const overdue = tasks.filter((task) => isActiveTaskStatus(task.status) && dueView(task, now) === "Overdue");
   const dueToday = tasks.filter((task) => dueView(task, now) === "Today");
   const open = tasks.filter((task) => !overdue.includes(task) && !dueToday.includes(task));
@@ -172,6 +210,7 @@ function TodayLayout({
         <span className="eyebrow">Today · Mail and tasks: {accountId ?? "All accounts"}{schedule ? " · All calendars" : ""}</span>
         <h1>{now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</h1>
         <p className="today-summary">{summary}</p>
+        {shape ? <p className="today-day-shape">{shape}</p> : null}
       </div>
       {next ? <NextMeeting event={next} now={now} onOpenEvent={onOpenEvent} /> : null}
     </header>
@@ -179,7 +218,7 @@ function TodayLayout({
       <div className="today-column" role="group" aria-label="Agenda">
         {schedule ? <>
           {/* The page heading already names today, so its agenda leaves the date out. */}
-          <CalendarAgenda today={now} now={now} showDate={false} calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} />
+          <CalendarAgenda today={now} now={now} showDate={false} markConflicts calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} />
           <CalendarAgenda today={addDays(startOfLocalDay(now), 1)} tomorrow calendars={calendars} schedule={schedule} onOpenEvent={onOpenEvent} />
         </>
           : <ContextSection id="calendar-agenda" title="Today's agenda" rows={[]}
@@ -193,14 +232,19 @@ function TodayLayout({
           title={title}
           count={groups[group].length}
           limit={limit}
-          rows={groups[group].map((item) => <ContextRow
-            key={item.thread.id}
-            icon={<Mail size={ICON_SIZE.sm} />}
-            title={senderName(item)}
-            date={formatArrival(item.thread.lastReceivedAt, now)}
-            detail={item.thread.subject || "(no subject)"}
-            onActivate={() => onOpenThread(item.thread.id)}
-          />)}
+          rows={groups[group].map((item) => {
+            // Whoever wrote may also be in a meeting with the user later today.
+            const shared = item.sender ? sharedMeetingsNote(meetingsWith(parseAddress(item.sender).email, todaysEvents, now)) : "";
+            const subject = item.thread.subject || "(no subject)";
+            return <ContextRow
+              key={item.thread.id}
+              icon={<Mail size={ICON_SIZE.sm} />}
+              title={senderName(item)}
+              date={formatArrival(item.thread.lastReceivedAt, now)}
+              detail={shared ? <><span className="today-shared-meetings">{shared}</span> · {subject}</> : subject}
+              onActivate={() => onOpenThread(item.thread.id)}
+            />;
+          })}
         /> : null)}
         {mailError || mail?.total === 0 ? <ContextSection id="today-mail-empty" title="Unread mail" rows={[]}
           footer={mailError ? <p className="form-error" role="alert">{mailError}</p> : <p className="context-status">Nothing unread.</p>} /> : null}
@@ -208,6 +252,30 @@ function TodayLayout({
         <p className="today-column-link"><button type="button" className="btn-link" onClick={onOpenInbox}>Open Inbox</button></p>
       </div>
       <div className="today-column" role="group" aria-label="Tasks">
+        {openPromises.length > 0 ? <ContextSection
+          id="today-promises"
+          title="You said you would"
+          count={openPromises.length}
+          limit={5}
+          rows={openPromises.map((promise) => <ContextRow
+            as="article"
+            key={promise.messageId}
+            icon={<Send size={ICON_SIZE.sm} />}
+            title={promise.excerpt}
+            wrapTitle
+            date={formatArrival(promise.sentAt, now)}
+            detail={`To ${promiseRecipients(promise)} · Nothing sent to them since`}
+            onActivate={() => onOpenThread(promise.thread.id)}
+            actions={[
+              <button key="task" type="button" className="btn-icon btn-icon-sm" aria-label={`Make a task: ${promise.excerpt}`} title="Make a task" onClick={() => void trackPromise(promise)}>
+                <ListPlus size={ICON_SIZE.sm} />
+              </button>,
+              <button key="dismiss" type="button" className="btn-icon btn-icon-sm" aria-label={`Dismiss: ${promise.excerpt}`} title="Dismiss" onClick={() => setDismissed(dismissPromise(promise.messageId))}>
+                <X size={ICON_SIZE.sm} />
+              </button>,
+            ]}
+          />)}
+        /> : null}
         {overdue.length > 0 ? <ContextSection id="today-tasks-overdue" title="Overdue" count={overdue.length} rows={overdue.map(taskRow)} /> : null}
         {dueToday.length > 0 ? <ContextSection id="today-tasks-due" title="Due today" count={dueToday.length} rows={dueToday.map(taskRow)} /> : null}
         {open.length > 0 ? <ContextSection id="today-tasks-open" title="Open tasks" count={open.length} limit={3} rows={open.map(taskRow)} /> : null}

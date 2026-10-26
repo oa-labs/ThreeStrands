@@ -111,3 +111,80 @@ fn today_mail_reports_invitations_and_the_size_of_the_to_line() {
     assert_eq!(find("file").to_count, 2);
     assert_eq!(find("pdf").to_count, 4);
 }
+
+fn sent(id: &str, thread_id: &str, date: &str, to: &[&str], body: &str) -> NormalizedMessage {
+    let mut message = message(id, thread_id, date, body);
+    message.from = format!("Me <{ME}>");
+    message.to = to.iter().map(|address| address.to_string()).collect();
+    message.labels = vec!["SENT".into()];
+    message
+}
+
+const SINCE: &str = "2026-10-12T00:00:00Z";
+
+fn promise_threads(database: &crate::db::Database) -> Vec<String> {
+    database.list_open_promises(Some(ME), SINCE).unwrap().into_iter().map(|promise| promise.thread.provider_thread_id).collect()
+}
+
+#[test]
+fn open_promises_quote_the_newest_sent_message_and_its_recipients() {
+    let database = database();
+    clear_seed_threads(&database);
+    database.upsert_thread(ME, &[
+        unread("j1", "jill", "2026-10-22T09:00:00Z", "Jill <jill@example.org>", &[ME]),
+        sent("j2", "jill", "2026-10-22T10:00:00Z", &["Jill <jill@example.org>", ME],
+            "Sure thing. I'll reconnect your server, run the report and send it over.\n\nOn Oct 22, Jill wrote:\n> I'll send the invoices."),
+    ]).unwrap();
+
+    let promises = database.list_open_promises(Some(ME), SINCE).unwrap();
+    assert_eq!(promises.len(), 1);
+    assert_eq!(promises[0].excerpt, "I'll reconnect your server, run the report and send it over");
+    assert_eq!(promises[0].recipients, vec!["Jill <jill@example.org>".to_string()], "the user's own address is left off");
+    assert_eq!(promises[0].message_id, "j2");
+    assert!(database.list_open_promises(Some("other@example.com"), SINCE).unwrap().is_empty());
+}
+
+#[test]
+fn open_promises_read_only_the_users_own_text() {
+    let database = database();
+    clear_seed_threads(&database);
+    // The promise is only in the quoted message under the user's reply.
+    database.upsert_thread(ME, &[sent("q1", "quoted", "2026-10-22T10:00:00Z", &["ann@example.org"],
+        "Thanks, that works.\n\nOn Oct 21, Ann wrote:\n> I'll send the contract over.")]).unwrap();
+    // Someone else made the promise.
+    database.upsert_thread(ME, &[unread("o1", "theirs", "2026-10-22T10:00:00Z", "Bo <bo@example.org>", &[ME])]).unwrap();
+    assert!(promise_threads(&database).is_empty());
+}
+
+#[test]
+fn a_later_message_to_the_same_person_keeps_the_promise() {
+    let database = database();
+    clear_seed_threads(&database);
+    database.upsert_thread(ME, &[sent("p1", "promise", "2026-10-20T10:00:00Z", &["dana@example.org"], "I'll send the deck Friday.")]).unwrap();
+    database.upsert_thread(ME, &[sent("w1", "waiting", "2026-10-20T10:00:00Z", &["eli@example.org"], "Let me check with Pete.")]).unwrap();
+    assert_eq!(promise_threads(&database), vec!["promise", "waiting"]);
+
+    // Sent in another conversation, after the promise.
+    database.upsert_thread(ME, &[sent("p2", "deck", "2026-10-23T10:00:00Z", &["Dana <DANA@example.org>"], "Here's the deck.")]).unwrap();
+    assert_eq!(promise_threads(&database), vec!["waiting"]);
+}
+
+#[test]
+fn open_promises_skip_old_trashed_and_tracked_conversations() {
+    let database = database();
+    clear_seed_threads(&database);
+    database.upsert_thread(ME, &[sent("old", "old", "2026-10-01T10:00:00Z", &["a@example.org"], "I'll send it.")]).unwrap();
+    let mut trashed = sent("tr", "trashed", "2026-10-22T10:00:00Z", &["b@example.org"], "I'll send it.");
+    trashed.labels = vec!["SENT".into(), "TRASH".into()];
+    database.upsert_thread(ME, &[trashed]).unwrap();
+    database.upsert_thread(ME, &[sent("tk", "tracked", "2026-10-22T10:00:00Z", &["c@example.org"], "I'll send it.")]).unwrap();
+    database.upsert_thread(ME, &[sent("no", "plain", "2026-10-22T10:00:00Z", &["d@example.org"], "Sounds good, see you then.")]).unwrap();
+    assert_eq!(promise_threads(&database), vec!["tracked"]);
+
+    let thread_id = database.list_open_promises(Some(ME), SINCE).unwrap()[0].thread.id.clone();
+    let request: crate::models::CreateTaskRequest = serde_json::from_value(serde_json::json!({
+        "accountId": ME, "threadId": thread_id, "subjectSnapshot": "Subject", "title": "Send it", "kind": "follow_up",
+    })).unwrap();
+    database.create_task(&request).unwrap();
+    assert!(promise_threads(&database).is_empty());
+}

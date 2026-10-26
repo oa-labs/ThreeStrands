@@ -437,6 +437,10 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       });
       return { threads: items, total: unread.length };
     },
+    /** The demo mailbox has no sent promises; promise detection runs natively over stored bodies. */
+    async listOpenPromises() {
+      return [];
+    },
     async mailboxUnreadCounts(accountId) {
       const splits: Record<string, number> = {};
       let inbox = 0;

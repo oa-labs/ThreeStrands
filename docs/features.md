@@ -55,7 +55,12 @@ and message rendering each have their own document in this folder.
   unread mail grouped by heuristics (invitations, needs a reply when To has at
   most 3 addresses, from people, updates), tasks
   overdue or due today, and due Keep in Touch reminders. Settings → Appearance →
-  Start With can open the app on Today.
+  Start With can open the app on Today. A day summary line names free time,
+  double-bookings, and when the last meeting ends; overlapping meetings are
+  marked on the agenda (with "Recorded" when the invite says so); mail rows
+  note when the sender is in a meeting with you later today; and "You said
+  you would" lists promises from your own sent mail in the last two weeks that
+  nothing sent since appears to keep (see [Today view design](today-design.md)).
 - Inbox zero shows the account’s last-check status and links to Today.
 - Opt-in crash reporting; see the [crash reporting policy](crash-reporting.md).
 

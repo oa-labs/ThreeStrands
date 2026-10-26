@@ -258,4 +258,5 @@ flowchart LR
 - [Settings transfer](docs/settings-transfer.md) and [email rendering policy](docs/email-rendering-policy.md) — persistent-format and reader boundaries.
 - [Features and known limitations](docs/features.md) and [contact management](docs/address-book.md) — current capabilities, shortcuts, and outstanding live-account checks.
 - [IMAP/SMTP provider design](docs/imap-design.md) — provider design and phase progress.
+- [Today view design](docs/today-design.md) — what Today works out without AI, and the phase 2 AI layer (meaning sort, Top of mind strip).
 - [Archived plans](docs/archive/) — completed plans (multi-account, database recovery and modularization, Phase 2 compose, IMAP spike) kept for design history.

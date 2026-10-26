@@ -5,6 +5,8 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ## Unreleased
 
 ### New
+- **Today** now reads your day for you. A line under the date says when you're free until, which times are double-booked, and when your last meeting ends. Overlapping meetings are marked on the agenda, with **Recorded** when the invite says the session will be recorded, so you know which one is safer to miss. An unread message from someone you're meeting later today says so, such as "Also in your 2:00 pm meeting".
+- **Today** has a new **You said you would** section listing promises from your own sent mail in the last two weeks, like "I'll send the report over", when you haven't written to that person since. Click one to open the conversation, turn it into a task, or dismiss it.
 - The reading pane now shows whether to trust a sender right beside their name. A sender you write to whose mail checks out gets a small gray shield; a message with something suspicious gets a warning that says what's wrong. Hover over it to see the sender details, or click to keep them open; the separate **Known sender** line in the side panel is gone. The side panel's trust section is now titled **Be careful** when something looks wrong, or **Sender checks** for newsletters and other bulk mail. The most serious warnings, such as a familiar name from a new address, a look-alike address or link, or a risky attachment, also appear above the message itself.
 
 ### Improved

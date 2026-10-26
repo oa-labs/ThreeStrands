@@ -463,6 +463,21 @@ pub struct TodayMailPage {
     pub total: i64,
 }
 
+/// A promise the user made in their own sent mail that nothing they have
+/// sent since appears to keep; see `Database::list_open_promises`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenPromise {
+    pub thread: Thread,
+    /// The sent message that makes the promise.
+    pub message_id: String,
+    pub sent_at: String,
+    /// The To line of that message, minus the user's own addresses.
+    pub recipients: Vec<String>,
+    /// The sentence that makes the promise, as the user wrote it.
+    pub excerpt: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {

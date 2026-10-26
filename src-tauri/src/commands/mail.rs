@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::models::{
     CreateLabelRequest, Label, MailboxUnreadCounts, SearchThreadsRequest, Thread, ThreadDetail,
-    ThreadMutation, ThreadPage, TodayMailPage, TriageEvent, TriageSenderStats, UpdateLabelRequest,
+    OpenPromise, ThreadMutation, ThreadPage, TodayMailPage, TriageEvent, TriageSenderStats, UpdateLabelRequest,
 };
 use crate::sync::SyncService;
 use tauri::State;
@@ -100,6 +100,18 @@ pub(crate) async fn list_today_mail(
 ) -> AppResult<TodayMailPage> {
     let database = state.database.clone();
     run_database_task(move || database.list_today_mail(account_id.as_deref())).await
+}
+
+/// Promises in the user's sent mail still waiting on them, for the Today view;
+/// see `Database::list_open_promises`.
+#[tauri::command]
+pub(crate) async fn list_open_promises(
+    account_id: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<OpenPromise>> {
+    let database = state.database.clone();
+    let since = (chrono::Utc::now() - chrono::Duration::days(crate::db::PROMISE_LOOKBACK_DAYS)).to_rfc3339();
+    run_database_task(move || database.list_open_promises(account_id.as_deref(), &since)).await
 }
 
 #[tauri::command]

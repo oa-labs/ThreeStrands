@@ -2,9 +2,9 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
-import type { CalendarOption, ContactProfile, ScheduleEvent, ThreadTask, TodayMail } from "./domain";
+import type { CalendarOption, ContactProfile, OpenPromise, ScheduleEvent, ThreadTask, TodayMail } from "./domain";
 import { nextMeeting, TodayWorkspace } from "./TodayWorkspace";
-import { todayItem } from "./test/todayMail";
+import { todayItem, todayThread } from "./test/todayMail";
 
 const openUrl = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl }));
@@ -61,6 +61,7 @@ describe("TodayWorkspace", () => {
     vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
     vi.spyOn(mailClient, "listKeepInTouch").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listOpenPromises").mockResolvedValue([]);
     mockMail([]);
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); openUrl.mockReset(); localStorage.clear(); });
@@ -102,6 +103,24 @@ describe("TodayWorkspace", () => {
       // Groups list in this order: invitations first.
       const headings = screen.getAllByRole("region").map((region) => region.getAttribute("aria-labelledby") && region.querySelector("h3")?.textContent);
       expect(headings.indexOf("Invitations")).toBeLessThan(headings.indexOf("Needs a reply"));
+    });
+
+    it("says when a sender is also in a meeting with you later today", async () => {
+      mockMail([
+        todayItem("taylor", { sender: "Taylor <Taylor@example.org>" }, { subject: "Time off today" }),
+        todayItem("dana", { sender: "Dana <dana@example.org>" }, { subject: "Q4 budget" }),
+      ]);
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ errors: [], events: [
+        event("ops", 5, { title: "Operations", attendees: ["taylor@example.org"] }),
+        event("gone", -60, { title: "Earlier", attendees: ["dana@example.org"] }),
+      ] });
+      renderToday({ calendarConnected: true });
+
+      const reply = await screen.findByRole("region", { name: "Needs a reply" });
+      const taylor = within(reply).getByRole("button", { name: /Taylor/ });
+      expect(await within(taylor).findByText(/^Also in your \d{1,2}:\d{2}\s?[ap]m meeting$/)).toHaveClass("today-shared-meetings");
+      // A meeting that already ended is not mentioned.
+      expect(within(within(reply).getByRole("button", { name: /Dana/ })).queryByText(/Also in your/)).not.toBeInTheDocument();
     });
 
     it("writes arrival times the way event times are written", async () => {
@@ -231,6 +250,63 @@ describe("TodayWorkspace", () => {
     });
   });
 
+  describe("promises", () => {
+    const promise = (id: string, overrides: Partial<OpenPromise> = {}): OpenPromise => ({
+      thread: todayThread(`thread-${id}`, { subject: "ArtBrew report", accountId: "you@example.com" }),
+      messageId: id, sentAt: "2026-10-22T10:00:00Z", recipients: ["Jill Hart <jill@example.org>"],
+      excerpt: "I'll reconnect your server, run the report and send it over", ...overrides,
+    });
+
+    it("lists promises still waiting on you and opens the conversation", async () => {
+      const listOpenPromises = vi.spyOn(mailClient, "listOpenPromises").mockResolvedValue([promise("p1")]);
+      const { onOpenThread } = renderToday();
+
+      const section = await screen.findByRole("region", { name: "You said you would" });
+      expect(listOpenPromises).toHaveBeenCalledWith("you@example.com");
+      expect(within(section).getByText("To Jill Hart · Nothing sent to them since")).toBeInTheDocument();
+      fireEvent.click(within(section).getByRole("button", { name: /^I.ll reconnect your server/ }));
+      expect(onOpenThread).toHaveBeenCalledWith("thread-p1");
+    });
+
+    it("makes a follow-up task from a promise and opens it for editing", async () => {
+      vi.spyOn(mailClient, "listOpenPromises").mockResolvedValue([promise("p1")]);
+      const created = task("new", { title: "I'll reconnect your server, run the report and send it over", kind: "follow_up" });
+      const createTask = vi.spyOn(mailClient, "createTask").mockResolvedValue(created);
+      const { onEditTask, onTasksChanged } = renderToday();
+
+      fireEvent.click(await screen.findByRole("button", { name: /^Make a task: I'll reconnect/ }));
+      await waitFor(() => expect(createTask).toHaveBeenCalledWith({
+        accountId: "you@example.com", threadId: "thread-p1", sourceMessageId: "p1", subjectSnapshot: "ArtBrew report",
+        title: "I'll reconnect your server, run the report and send it over", kind: "follow_up",
+        evidenceText: "I'll reconnect your server, run the report and send it over",
+      }));
+      expect(onEditTask).toHaveBeenCalledWith(created);
+      expect(onTasksChanged).toHaveBeenCalled();
+      await waitFor(() => expect(screen.queryByRole("region", { name: "You said you would" })).not.toBeInTheDocument());
+    });
+
+    it("dismisses a promise on this device", async () => {
+      vi.spyOn(mailClient, "listOpenPromises").mockResolvedValue([promise("p1"), promise("p2", { excerpt: "Let me check with Pete" })]);
+      renderToday();
+
+      fireEvent.click(await screen.findByRole("button", { name: "Dismiss: Let me check with Pete" }));
+      const section = screen.getByRole("region", { name: "You said you would" });
+      expect(within(section).queryByText("Let me check with Pete")).not.toBeInTheDocument();
+      cleanup();
+
+      renderToday();
+      expect(await screen.findByText(/^I'll reconnect your server/)).toBeInTheDocument();
+      expect(screen.queryByText("Let me check with Pete")).not.toBeInTheDocument();
+    });
+
+    it("leaves the section out when promises cannot be read", async () => {
+      vi.spyOn(mailClient, "listOpenPromises").mockRejectedValue(new Error("locked"));
+      renderToday();
+      await waitFor(() => expect(mailClient.listOpenPromises).toHaveBeenCalled());
+      expect(screen.queryByRole("region", { name: "You said you would" })).not.toBeInTheDocument();
+    });
+  });
+
   describe("agenda", () => {
     it("points to Settings instead of loading a schedule when no calendar is connected", async () => {
       renderToday({ calendarConnected: false });
@@ -260,6 +336,22 @@ describe("TodayWorkspace", () => {
       const agenda = screen.getByRole("region", { name: "Today's agenda" });
       expect(within(agenda).getAllByText("Sync")).toHaveLength(1);
       expect(within(agenda).getByText("Optional talk").closest(".context-row")).toHaveClass("agenda-event-declined");
+    });
+
+    it("marks overlapping meetings, notes which is recorded, and describes the rest of the day", async () => {
+      vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ errors: [], events: [
+        event("cs", 5, { title: "CS Updates", description: "This session will be recorded." }),
+        event("ramp", 5, { title: "Ramp AI deep dive" }),
+        event("later", 40, { title: "Elder meeting" }),
+      ] });
+      renderToday({ calendarConnected: true });
+
+      const agenda = await screen.findByRole("region", { name: "Today's agenda" });
+      const cs = (await within(agenda).findByText("CS Updates")).closest(".context-row")!;
+      expect(cs).toHaveClass("agenda-event-conflict");
+      expect(within(cs as HTMLElement).getByText(/Overlaps Ramp AI deep dive · Recorded/)).toBeInTheDocument();
+      expect(within(agenda).getByText("Elder meeting").closest(".context-row")).not.toHaveClass("agenda-event-conflict");
+      expect(screen.getByText(/double-booked \(CS Updates is recorded\) · Last meeting ends/, { selector: ".today-day-shape" })).toBeInTheDocument();
     });
 
     it("names a meeting under way as now, with when it ends", async () => {
@@ -297,6 +389,7 @@ describe("TodayWorkspace tomorrow", () => {
     clearScheduleCache();
     vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
     vi.spyOn(mailClient, "listKeepInTouch").mockResolvedValue([]);
+    vi.spyOn(mailClient, "listOpenPromises").mockResolvedValue([]);
     vi.spyOn(mailClient, "listTodayMail").mockResolvedValue({ threads: [], total: 0 });
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); });

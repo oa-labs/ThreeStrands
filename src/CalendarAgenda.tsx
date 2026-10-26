@@ -5,6 +5,7 @@ import { calendarColorStyle, useCalendarColors } from "./calendarColors";
 import { addDays, formatEventTime, startOfLocalDay } from "./calendarTime";
 import { agendaEventsFor, formatClockTime, isDeclined, isPastEvent } from "./agendaEvents";
 import { responseLabel } from "./calendarResponse";
+import { agendaConflicts, mentionsRecording } from "./todayInsights";
 import { useCalendarSchedule } from "./useCalendarSchedule";
 import type { CalendarOption, ScheduleEvent } from "./domain";
 import { ICON_SIZE } from "./iconSizes";
@@ -24,6 +25,8 @@ type AgendaProps = {
   tomorrow?: boolean;
   /** Names the day under the heading; left out where the page already says which day it is. */
   showDate?: boolean;
+  /** Says which meetings overlap another, and which of those are recorded. */
+  markConflicts?: boolean;
 };
 
 /** Events Tomorrow shows before "Show more". */
@@ -44,11 +47,12 @@ function TodayAgenda(props: AgendaProps) {
   return <Agenda {...props} schedule={schedule} />;
 }
 
-function Agenda({ today, calendars, onOpenEvent, now, tomorrow = false, showDate = true, schedule: { events, loading, error, reload } }: AgendaProps & { schedule: Schedule }) {
+function Agenda({ today, calendars, onOpenEvent, now, tomorrow = false, showDate = true, markConflicts = false, schedule: { events, loading, error, reload } }: AgendaProps & { schedule: Schedule }) {
   const colors = useCalendarColors();
   const selected = calendars.filter((calendar) => calendar.selected);
   const agenda = agendaEventsFor(events, today, calendars);
   const multipleAccounts = new Set(selected.map((calendar) => calendar.accountId)).size > 1;
+  const conflicts = markConflicts ? agendaConflicts(agenda) : new Map<ScheduleEvent, ScheduleEvent[]>();
   const pastCount = now ? agenda.filter((event) => isPastEvent(event, now)).length : 0;
   // All-day events list first and are never past during their day, so the
   // divider goes before the first timed event still to finish.
@@ -59,10 +63,14 @@ function Agenda({ today, calendars, onOpenEvent, now, tomorrow = false, showDate
     const calendar = selected.find((calendar) => calendar.accountId === event.accountId && calendar.id === event.calendarId);
     // A calendar named after its account already says which account it is.
     const account = multipleAccounts && calendar?.name.toLocaleLowerCase() !== event.accountId.toLocaleLowerCase() ? event.accountId : null;
-    const detail = [formatEventTime(event), event.location, calendar?.name, account, responseLabel(event)].filter(Boolean).join(" · ");
+    const overlapping = conflicts.get(event) ?? [];
+    const conflict = overlapping.length
+      ? [`Overlaps ${overlapping.map((other) => other.title).join(", ")}`, mentionsRecording(event) ? "Recorded" : null]
+      : [];
+    const detail = [formatEventTime(event), ...conflict, event.location, calendar?.name, account, responseLabel(event)].filter(Boolean).join(" · ");
     rows.push(<ContextRow
       key={`${event.accountId}:${event.calendarId}:${event.id}`}
-      className={[now && isPastEvent(event, now) ? "agenda-event-past" : "", isDeclined(event) ? "agenda-event-declined" : ""].filter(Boolean).join(" ") || undefined}
+      className={[now && isPastEvent(event, now) ? "agenda-event-past" : "", isDeclined(event) ? "agenda-event-declined" : "", overlapping.length ? "agenda-event-conflict" : ""].filter(Boolean).join(" ") || undefined}
       icon={<CalendarDays size={ICON_SIZE.sm} style={{ ...calendarColorStyle(colors, event.accountId, event.calendarId), color: "var(--calendar-color, var(--accent))" }} />}
       title={event.title}
       detail={detail}
