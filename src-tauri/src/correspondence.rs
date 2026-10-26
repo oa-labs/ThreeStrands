@@ -1,4 +1,5 @@
 //! Local drafts and a send queue deliberately separate from retryable label mutations.
+use crate::clock::unix_millis;
 use crate::{
     auth::AccountAuth,
     db::{Database, DatabaseError, DbResult},
@@ -10,7 +11,6 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
     Engine,
 };
-use chrono::Utc;
 use mail_builder::MessageBuilder;
 use mail_parser::MessageParser;
 use rusqlite::{params, OptionalExtension};
@@ -44,9 +44,6 @@ fn error(e: impl std::fmt::Display) -> String {
 }
 fn json<T: Serialize>(value: &T) -> Result<String, String> {
     serde_json::to_string(value).map_err(error)
-}
-fn now() -> i64 {
-    Utc::now().timestamp_millis()
 }
 
 /// A short, plain-language note stored in `sent_copy_error` for a Sent-copy
@@ -562,7 +559,7 @@ impl Database {
             forwarded_edit: None,
             follow_up_task_id: None,
             attachments: vec![],
-            updated_at: now(),
+            updated_at: unix_millis(),
             server_draft: None,
         };
         if mode != "new" {
@@ -781,7 +778,7 @@ impl Database {
             forwarded_edit: None,
             follow_up_task_id: None,
             attachments: forward_attachments(&source, &normalized)?,
-            updated_at: now(),
+            updated_at: unix_millis(),
             server_draft: None,
         };
         self.write_draft(&mut d, false, |tx, d, payload| {
@@ -825,7 +822,7 @@ impl Database {
         }
         let expected = draft.revision;
         draft.revision += 1;
-        draft.updated_at = now();
+        draft.updated_at = unix_millis();
         let changed = self.update_draft(&mut draft, expected)?;
         if changed != 1 {
             return Err("Draft changed elsewhere. Reopen it before editing.".into());
@@ -850,7 +847,7 @@ impl Database {
         self.replace_automatic_signature(&mut d)?;
         let expected = d.revision;
         d.revision += 1;
-        d.updated_at = now();
+        d.updated_at = unix_millis();
         let changed = self.update_draft(&mut d, expected)?;
         if changed != 1 {
             return Err("Draft changed elsewhere. Reopen it before editing.".into());
@@ -906,7 +903,7 @@ impl Database {
         self.replace_automatic_signature(&mut d)?;
         let expected = d.revision;
         d.revision += 1;
-        d.updated_at = now();
+        d.updated_at = unix_millis();
         let changed = self.update_draft(&mut d, expected)?;
         if changed != 1 {
             return Err("Draft changed elsewhere. Reopen it before editing.".into());
@@ -918,7 +915,7 @@ impl Database {
     /// back, and its server copy waits [`DISCARD_SERVER_DELAY_MS`] before it
     /// is deleted.
     pub fn discard_draft(&self, id: &str) -> Result<(), String> {
-        let at = now();
+        let at = unix_millis();
         self.with_transaction(|tx| {
             tx.execute(
                 "INSERT OR REPLACE INTO discarded_drafts(id, revision, payload, discarded_at)
@@ -944,7 +941,7 @@ impl Database {
             };
             let mut draft: Draft = serde_json::from_str(&payload).map_err(crate::db::serialization_error)?;
             draft.revision = revision + 1;
-            draft.updated_at = now();
+            draft.updated_at = unix_millis();
             tx.execute(
                 "INSERT INTO drafts VALUES (?1,?2,?3)",
                 params![draft.id, draft.revision, serde_json::to_string(&draft).map_err(crate::db::serialization_error)?],
@@ -960,7 +957,7 @@ impl Database {
                 params![id, draft.revision, revision],
             )?;
             if in_sync == 0 {
-                Self::mark_draft_push_pending(tx, &draft, now())?;
+                Self::mark_draft_push_pending(tx, &draft, unix_millis())?;
             }
             Ok(draft)
         });
@@ -998,7 +995,7 @@ impl Database {
         let changed = self.with_transaction(|tx| {
             let changed = write(tx, draft, &payload)?;
             if changed == 1 && push {
-                Self::mark_draft_push_pending(tx, draft, now())?;
+                Self::mark_draft_push_pending(tx, draft, unix_millis())?;
             }
             Ok(changed)
         })?;
@@ -1030,7 +1027,7 @@ impl Database {
     fn save_attachment_draft(&self, mut d: Draft) -> Result<Draft, String> {
         let expected = d.revision;
         d.revision += 1;
-        d.updated_at = now();
+        d.updated_at = unix_millis();
         if self.update_draft(&mut d, expected)? != 1 {
             return Err("Draft changed while preparing attachment; retry".into());
         }
@@ -1102,7 +1099,7 @@ impl Database {
     /// on. See `docs/imap-design.md` ("Sending").
     pub fn mark_unverifiable(&self, id: &str) -> Result<(), String> {
         let owner=self.outbox()?.into_iter().find(|o|o.id==id).and_then(|o|o.schedule).map(|s|s.report.owner_installation_id).unwrap_or_default();
-        self.change_outbox("UPDATE outbox_messages SET state='unverifiable', error='This message may have been sent, but delivery could not be confirmed. Confirm with the recipient before sending it again.' WHERE id=?1 AND state='uncertain'",[id],id,&owner,now())?;
+        self.change_outbox("UPDATE outbox_messages SET state='unverifiable', error='This message may have been sent, but delivery could not be confirmed. Confirm with the recipient before sending it again.' WHERE id=?1 AND state='uncertain'",[id],id,&owner,unix_millis())?;
         Ok(())
     }
     pub fn queue(
@@ -1150,7 +1147,7 @@ impl Database {
             id: operation_id,
             draft: d.clone(),
             state: "undo_pending".into(),
-            deadline: now() + UNDO_MS,
+            deadline: unix_millis() + UNDO_MS,
             error: None,
             provider_id: None,
             last_attempt_at: None,
@@ -1169,7 +1166,7 @@ impl Database {
         if removed != 1 {
             return Err("Draft changed while preparing send".into());
         }
-        Self::draft_left_drafts(&tx, id, now())?;
+        Self::draft_left_drafts(&tx, id, unix_millis())?;
         tx.execute("INSERT INTO outbox_messages(id,draft_id,revision,account,state,deadline,payload,raw,archive_on_send) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![item.id,id,revision,d.account,item.state,item.deadline,json(&d)?,raw,item.archive_on_send]).map_err(error)?;
         tx.commit().map_err(error)?;
         Ok(item)
@@ -1209,8 +1206,8 @@ impl Database {
             params![d.id, d.revision, json(&d)?],
         )
         .map_err(error)?;
-        Self::mark_draft_push_pending(&tx, &d, now())?;
-        if let Some(schedule) = &item.schedule { crate::scheduled_send::record(&tx,id,&schedule.report.owner_installation_id,now()).map_err(error)?; }
+        Self::mark_draft_push_pending(&tx, &d, unix_millis())?;
+        if let Some(schedule) = &item.schedule { crate::scheduled_send::record(&tx,id,&schedule.report.owner_installation_id,unix_millis()).map_err(error)?; }
         tx.commit().map_err(error)?;
         Ok(d)
     }
@@ -1219,7 +1216,7 @@ impl Database {
             .connection()?
             .query_row(
                 "SELECT count(*) FROM outbox_messages WHERE state='undo_pending' AND deadline>?1",
-                [now()],
+                [unix_millis()],
                 |r| r.get::<_, i64>(0),
             )
             .map_err(error)?
@@ -1234,7 +1231,7 @@ impl Database {
     pub fn pause_ready_sends_for_owned(&self, account: &str, owner: &str) -> Result<(), String> {
         let items=self.outbox()?;
         for item in items.into_iter().filter(|o|o.draft.account==account && ["undo_pending","ready","scheduled","overdue"].contains(&o.state.as_str())) {
-            self.change_outbox("UPDATE outbox_messages SET state='failed',error='Account disconnected. Reconnect and restore this draft to send.' WHERE id=?1 AND state IN ('undo_pending','ready','scheduled','overdue')",[&item.id],&item.id,owner,now())?;
+            self.change_outbox("UPDATE outbox_messages SET state='failed',error='Account disconnected. Reconnect and restore this draft to send.' WHERE id=?1 AND state IN ('undo_pending','ready','scheduled','overdue')",[&item.id],&item.id,owner,unix_millis())?;
         }
         Ok(())
     }
@@ -1504,7 +1501,7 @@ pub struct Correspondence {
 impl Correspondence {
     pub fn resume_schedules(&self) -> Result<(),String> {
         let owner=self.schedule_owner(false).unwrap_or_default();
-        self.database.overdue_schedules_owned(now(),true,&owner)
+        self.database.overdue_schedules_owned(unix_millis(),true,&owner)
     }
     pub fn pause_account_schedules(&self,account:&str) -> Result<(),String> {
         let owner=self.schedule_owner(false).unwrap_or_default();
@@ -1535,7 +1532,7 @@ impl Correspondence {
     }
     fn listed_outbox(&self) -> Result<serde_json::Value, String> {
         let owner = self.schedule_owner(false).ok();
-        if let Some(owner) = &owner { self.database.refresh_schedule_reports(owner, now())?; }
+        if let Some(owner) = &owner { self.database.refresh_schedule_reports(owner, unix_millis())?; }
         let mut items = self.database.outbox()?;
         for item in &mut items {
             if let Some(schedule) = &mut item.schedule {
@@ -1664,7 +1661,7 @@ impl Correspondence {
             PushDraft { id } => {
                 let database = self.database.clone();
                 let id = id.clone();
-                crate::run_database_task(move || database.push_drafts_now(Some(&id), now()))
+                crate::run_database_task(move || database.push_drafts_now(Some(&id), unix_millis()))
                     .await
                     .map_err(String::from)?;
                 return Ok(serde_json::Value::Null);
@@ -1726,16 +1723,16 @@ impl Correspondence {
                 let identities = provider.identities(&draft.account).await.map_err(error)?;
                 let message_id_domain = provider.message_id_domain(draft.from_address()).map_err(error)?;
                 let owner=schedule_owner;
-                Ok(serde_json::to_value(self.database.schedule_draft(&id,revision,&selection,&owner,&identities,message_id_domain.as_deref(),&self.root,now())?).map_err(error)?)
+                Ok(serde_json::to_value(self.database.schedule_draft(&id,revision,&selection,&owner,&identities,message_id_domain.as_deref(),&self.root,unix_millis())?).map_err(error)?)
             }
             Reschedule {id,revision,selection} => {
                 let owner=schedule_owner;
-                self.database.manage_schedule(&id,revision,Some(&selection),false,&owner,now())?;
+                self.database.manage_schedule(&id,revision,Some(&selection),false,&owner,unix_millis())?;
                 Ok(serde_json::Value::Null)
             }
             SendScheduledNow {id,revision} => {
                 let owner=schedule_owner;
-                self.database.manage_schedule(&id,revision,None,true,&owner,now())?;
+                self.database.manage_schedule(&id,revision,None,true,&owner,unix_millis())?;
                 Ok(serde_json::Value::Null)
             }
             Create {
@@ -2059,7 +2056,7 @@ impl Correspondence {
         }
     }
     pub fn cleanup(&self) -> Result<(), String> {
-        self.database.purge_discarded_drafts(now())?;
+        self.database.purge_discarded_drafts(unix_millis())?;
         let mut retained: HashSet<String> = self
             .database
             .drafts()?
@@ -2112,7 +2109,7 @@ impl Correspondence {
             .map_err(error)?
         {
             let owner = self.authorize_schedule_async(id).await?;
-            self.database.change_outbox("UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2 AND state='uncertain'",params![message.provider_message_id,id],id,&owner,now())?;
+            self.database.change_outbox("UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2 AND state='uncertain'",params![message.provider_message_id,id],id,&owner,unix_millis())?;
             if let Some(thread_id) = message.thread_id.as_deref() {
                 if self.database.archive_on_send(&item.id)? {
                     let _ = provider
@@ -2145,8 +2142,8 @@ impl Correspondence {
         let _guard = self.gate.lock().await;
         let service = self.clone();
         let owner=crate::run_database_task(move || service.schedule_owner(false)).await.ok();
-        self.database.overdue_schedules_owned(now(),false,owner.as_deref().unwrap_or(""))?;
-        if let Some(owner)=&owner { self.database.refresh_schedule_reports(owner,now())?; }
+        self.database.overdue_schedules_owned(unix_millis(),false,owner.as_deref().unwrap_or(""))?;
+        if let Some(owner)=&owner { self.database.refresh_schedule_reports(owner,unix_millis())?; }
         self.database.fail_sends_for_removed_accounts(owner.as_deref().unwrap_or(""))?;
         let items = self.database.outbox()?;
         // Process due Sent-copy jobs FIRST, every tick — before the
@@ -2156,7 +2153,7 @@ impl Correspondence {
         // jobs to completion (fact 4). Holding `self.gate` for the whole tick
         // gives per-message serialisation for free; the processor caps its own
         // per-tick work.
-        self.process_sent_copy_jobs(now()).await?;
+        self.process_sent_copy_jobs(unix_millis()).await?;
         if !items
             .iter()
             .any(|o| ["undo_pending", "ready", "scheduled", "uncertain"].contains(&o.state.as_str()))
@@ -2168,7 +2165,7 @@ impl Correspondence {
         // account's queued sends.
         let mut by_account: HashMap<String, Vec<OutboxItem>> = HashMap::new();
         for item in items {
-            if !["scheduled","undo_pending","ready","uncertain"].contains(&item.state.as_str()) || item.deadline>now() {continue;}
+            if !["scheduled","undo_pending","ready","uncertain"].contains(&item.state.as_str()) || item.deadline>unix_millis() {continue;}
             // Rate-limit prepare re-attempts for a NON-scheduled queued item
             // whose last transient prepare failure stamped `last_attempt_at`
             // within SMTP_PREPARE_RETRY_INTERVAL: skip it this tick so a down
@@ -2179,7 +2176,7 @@ impl Correspondence {
             let send_candidate = ["undo_pending", "ready"].contains(&item.state.as_str())
                 && item.schedule.is_none();
             if send_candidate
-                && !crate::provider::imap::smtp_prepare_retry_due(item.last_attempt_at, now())
+                && !crate::provider::imap::smtp_prepare_retry_due(item.last_attempt_at, unix_millis())
             {
                 continue;
             }
@@ -2190,11 +2187,11 @@ impl Correspondence {
         }
         for (account, items) in by_account {
             let Ok(provider) = self.provider_for(&account).await else {
-                for item in &items { if item.schedule.is_some() {self.database.block_schedule(&item.id,owner.as_deref().unwrap_or(""),Some("account_disconnected"),now())?;} }
+                for item in &items { if item.schedule.is_some() {self.database.block_schedule(&item.id,owner.as_deref().unwrap_or(""),Some("account_disconnected"),unix_millis())?;} }
                 continue;
             };
             let Ok(identity) = provider.sender_identity().await else {
-                for item in &items { if item.schedule.is_some() {self.database.block_schedule(&item.id,owner.as_deref().unwrap_or(""),Some("authorization"),now())?;} }
+                for item in &items { if item.schedule.is_some() {self.database.block_schedule(&item.id,owner.as_deref().unwrap_or(""),Some("authorization"),unix_millis())?;} }
                 continue;
             };
             for item in items {
@@ -2204,12 +2201,12 @@ impl Correspondence {
                     continue;
                 }
                 if item.state == "uncertain" {
-                    if item.deadline <= now() {
+                    if item.deadline <= unix_millis() {
                         self.database
                             .connection()?
                             .execute(
                                 "UPDATE outbox_messages SET deadline=?1 WHERE id=?2",
-                                params![now() + 60_000, item.id],
+                                params![unix_millis() + 60_000, item.id],
                             )
                             .map_err(error)?;
                         let _ = self.reconcile(&item.id).await;
@@ -2217,11 +2214,11 @@ impl Correspondence {
                     continue;
                 }
                 if !["undo_pending", "ready", "scheduled"].contains(&item.state.as_str())
-                    || item.deadline > now()
+                    || item.deadline > unix_millis()
                 {
                     continue;
                 }
-                self.send_due_item(&item, provider.as_ref(), &identity, owner.as_deref().unwrap_or(""), now())
+                self.send_due_item(&item, provider.as_ref(), &identity, owner.as_deref().unwrap_or(""), unix_millis())
                     .await?;
             }
         }
@@ -2820,7 +2817,7 @@ mod tests {
             forwarded_edit: None,
             follow_up_task_id: None,
             attachments: vec![],
-            updated_at: now(),
+            updated_at: unix_millis(),
             server_draft: None,
         };
         db.connection()
@@ -3041,7 +3038,7 @@ mod tests {
                 .and_then(|from| from.name()),
             Some("Joel Reed")
         );
-        assert!(item.deadline > now());
+        assert!(item.deadline > unix_millis());
         assert_eq!(
             db.queue(&d.id, d.revision, false, &[], None, Path::new("/unused"))
                 .unwrap()
@@ -3151,7 +3148,7 @@ mod tests {
         // Due next month: only the removal check, not the send loop, reaches it now.
         db.connection().unwrap().execute(
             "UPDATE outbox_messages SET state='scheduled', deadline=?2 WHERE id=?1",
-            params![gone_scheduled.id, now() + 30 * 24 * 60 * 60 * 1000],
+            params![gone_scheduled.id, unix_millis() + 30 * 24 * 60 * 60 * 1000],
         ).unwrap();
 
         service.tick().await.unwrap();
@@ -3593,7 +3590,7 @@ mod tests {
                 .unwrap()
                 .execute(
                     "UPDATE outbox_messages SET state='ready', deadline=?2 WHERE id=?1",
-                    params![item.id, now() - 1],
+                    params![item.id, unix_millis() - 1],
                 )
                 .unwrap();
             service
@@ -3640,7 +3637,7 @@ mod tests {
             };
             // No error propagates out (the old code did `return Err`).
             service
-                .send_due_item(&item, &provider, "you@example.com", "", now())
+                .send_due_item(&item, &provider, "you@example.com", "", unix_millis())
                 .await
                 .unwrap();
             // Still queued, not failed; a plain retry note; attempts untouched.
@@ -3662,7 +3659,7 @@ mod tests {
                 let item = ready_item(&service);
                 let provider = FakeSender { behaviour: PrepareBehaviour::Fail(make) };
                 service
-                    .send_due_item(&item, &provider, "you@example.com", "", now())
+                    .send_due_item(&item, &provider, "you@example.com", "", unix_millis())
                     .await
                     .unwrap();
                 assert_eq!(state_of(&service, &item.id), "failed");
@@ -3688,7 +3685,7 @@ mod tests {
                 let item = ready_item(&service);
                 let provider = FakeSender { behaviour: PrepareBehaviour::Fail(make) };
                 service
-                    .send_due_item(&item, &provider, "you@example.com", "", now())
+                    .send_due_item(&item, &provider, "you@example.com", "", unix_millis())
                     .await
                     .unwrap();
                 assert_eq!(state_of(&service, &item.id), "ready", "{:?}", make());
@@ -3707,7 +3704,7 @@ mod tests {
                     ProviderError::ReauthenticationRequired("creds rejected".into())
                 }),
             };
-            service.send_due_item(&item, &provider, "you@example.com", "", now()).await.unwrap();
+            service.send_due_item(&item, &provider, "you@example.com", "", unix_millis()).await.unwrap();
             let row = service.database.outbox().unwrap().remove(0);
             assert!(row.error.as_deref().unwrap().contains("Reconnect this account"), "{:?}", row.error);
         }
@@ -3720,7 +3717,7 @@ mod tests {
                 behaviour: PrepareBehaviour::Succeed(SendResult::Accepted),
             };
             service
-                .send_due_item(&item, &provider, "you@example.com", "", now())
+                .send_due_item(&item, &provider, "you@example.com", "", unix_millis())
                 .await
                 .unwrap();
             assert_eq!(state_of(&service, &item.id), "sent");
@@ -3736,7 +3733,7 @@ mod tests {
                 behaviour: PrepareBehaviour::Succeed(SendResult::NotDelivered),
             };
             service
-                .send_due_item(&item, &provider, "you@example.com", "", now())
+                .send_due_item(&item, &provider, "you@example.com", "", unix_millis())
                 .await
                 .unwrap();
             assert_eq!(state_of(&service, &item.id), "failed");
@@ -3756,7 +3753,7 @@ mod tests {
                 behaviour: PrepareBehaviour::Succeed(SendResult::Unknown),
             };
             service
-                .send_due_item(&item, &provider, "you@example.com", "", now())
+                .send_due_item(&item, &provider, "you@example.com", "", unix_millis())
                 .await
                 .unwrap();
             assert_eq!(state_of(&service, &item.id), "uncertain");
@@ -3791,11 +3788,11 @@ mod tests {
             };
             let up = FakeSender { behaviour: PrepareBehaviour::Succeed(SendResult::Accepted) };
             service
-                .send_due_item(&failing_item, &down, "you@example.com", "", now())
+                .send_due_item(&failing_item, &down, "you@example.com", "", unix_millis())
                 .await
                 .unwrap();
             service
-                .send_due_item(&sending_item, &up, "you@example.com", "", now())
+                .send_due_item(&sending_item, &up, "you@example.com", "", unix_millis())
                 .await
                 .unwrap();
             assert_eq!(state_of(&service, &failing_item.id), "ready");
@@ -3993,7 +3990,7 @@ mod tests {
                 .unwrap()
                 .execute(
                     "UPDATE outbox_messages SET state='ready', deadline=?2 WHERE id=?1",
-                    params![item.id, now() - 1],
+                    params![item.id, unix_millis() - 1],
                 )
                 .unwrap();
             service
@@ -4071,7 +4068,7 @@ mod tests {
             {
                 let service = service();
                 let item = ready_item(&service);
-                let at = now();
+                let at = unix_millis();
                 service
                     .dispatch_due(&item, at, true, |_, thread| async move {
                         Ok(DeliveryReceipt { provider_message_id: "pm".into(), thread_id: thread })
@@ -4093,7 +4090,7 @@ mod tests {
                 let service = service();
                 let item = ready_item(&service);
                 service
-                    .dispatch_due(&item, now(), false, |_, thread| async move {
+                    .dispatch_due(&item, unix_millis(), false, |_, thread| async move {
                         Ok(DeliveryReceipt { provider_message_id: "pm".into(), thread_id: thread })
                     })
                     .await
@@ -4115,7 +4112,7 @@ mod tests {
             let service = service();
             let item = ready_item(&service);
             service
-                .dispatch_due(&item, now(), true, |_, _| async {
+                .dispatch_due(&item, unix_millis(), true, |_, _| async {
                     Ok(DeliveryReceipt { provider_message_id: "pm".into(), thread_id: None })
                 })
                 .await
@@ -4126,10 +4123,10 @@ mod tests {
         #[tokio::test]
         async fn done_marks_the_job_done_and_never_resends() {
             let service = service();
-            seed_job(&service, "j1", "you@example.com", "pending", 0, now() - 1, 0);
+            seed_job(&service, "j1", "you@example.com", "pending", 0, unix_millis() - 1, 0);
             let provider = JobProvider::new(vec![JobAnswer::Done]);
             service
-                .run_sent_copy_job(&provider, "j1", b"Hi", "pending", 0, false, now())
+                .run_sent_copy_job(&provider, "j1", b"Hi", "pending", 0, false, unix_millis())
                 .await
                 .unwrap();
             let row = job_row(&service, "j1");
@@ -4143,8 +4140,8 @@ mod tests {
         #[tokio::test]
         async fn recheck_moves_the_job_to_verify_with_the_right_next_at() {
             let service = service();
-            seed_job(&service, "j1", "you@example.com", "pending", 0, now() - 1, 0);
-            let at = now();
+            seed_job(&service, "j1", "you@example.com", "pending", 0, unix_millis() - 1, 0);
+            let at = unix_millis();
             let provider = JobProvider::new(vec![JobAnswer::Recheck(Duration::from_secs(10))]);
             service
                 .run_sent_copy_job(&provider, "j1", b"Hi", "pending", 0, false, at)
@@ -4160,8 +4157,8 @@ mod tests {
         async fn a_transient_error_bumps_attempts_and_backs_off_never_before_the_settle_window() {
             use crate::provider::imap::{sent_copy_backoff, SENT_COPY_SETTLE};
             let service = service();
-            seed_job(&service, "j1", "you@example.com", "verify", 1, now() - 1, 1);
-            let at = now();
+            seed_job(&service, "j1", "you@example.com", "verify", 1, unix_millis() - 1, 1);
+            let at = unix_millis();
             let provider = JobProvider::new(vec![JobAnswer::Transient]);
             service
                 .run_sent_copy_job(&provider, "j1", b"Hi", "verify", 1, true, at)
@@ -4187,7 +4184,7 @@ mod tests {
         async fn transient_at_max_attempts_abandons() {
             use crate::provider::imap::SENT_COPY_MAX_ATTEMPTS;
             let service = service();
-            let at = now();
+            let at = unix_millis();
             let prior = (SENT_COPY_MAX_ATTEMPTS - 1) as i64;
             seed_job(&service, "j1", "you@example.com", "verify", prior, at - 1, 1);
             let provider = JobProvider::new(vec![JobAnswer::Transient]);
@@ -4204,7 +4201,7 @@ mod tests {
         #[tokio::test]
         async fn a_permanent_error_abandons_immediately_with_a_plain_error() {
             let service = service();
-            let at = now();
+            let at = unix_millis();
             seed_job(&service, "j1", "you@example.com", "pending", 0, at - 1, 0);
             let provider = JobProvider::new(vec![JobAnswer::Permanent]);
             service
@@ -4231,7 +4228,7 @@ mod tests {
             // No account is registered, so provider_for fails. process_sent_copy_jobs
             // must skip the job and leave it exactly as-is, and the tick continues.
             let service = service();
-            let at = now();
+            let at = unix_millis();
             seed_job(&service, "j1", "ghost@example.com", "pending", 0, at - 1, 0);
             service.process_sent_copy_jobs(at).await.unwrap();
             let row = job_row(&service, "j1");
@@ -4249,7 +4246,7 @@ mod tests {
             // reach the processor rather than short-circuit on the early return.
             let service = service();
             let item = ready_item(&service);
-            let at = now();
+            let at = unix_millis();
             service
                 .dispatch_due(&item, at, true, |_, _| async {
                     Ok(DeliveryReceipt { provider_message_id: "pm".into(), thread_id: None })
@@ -4278,7 +4275,7 @@ mod tests {
         async fn the_per_tick_cap_bounds_how_many_jobs_run() {
             use crate::provider::imap::SENT_COPY_MAX_JOBS_PER_TICK;
             let service = service();
-            let at = now();
+            let at = unix_millis();
             // A full older batch on an unavailable account must not consume
             // any work slots. The healthy jobs still run, oldest first.
             for i in 0..SENT_COPY_MAX_JOBS_PER_TICK {
@@ -4342,7 +4339,7 @@ mod tests {
             // other succeeds. (process_sent_copy_jobs groups by account; this
             // asserts the per-job body is independent and neither resends.)
             let service = service();
-            let at = now();
+            let at = unix_millis();
             seed_job(&service, "fail", "a@example.com", "pending", 0, at - 1, 0);
             seed_job(&service, "ok", "b@example.com", "pending", 0, at - 1, 0);
             let failing = JobProvider::new(vec![JobAnswer::Permanent]);
@@ -4362,7 +4359,7 @@ mod tests {
             // its pending state and settle-window next_at.
             let service = service();
             let item = ready_item(&service);
-            let at = now();
+            let at = unix_millis();
             service
                 .dispatch_due(&item, at, true, |_, _| async {
                     Ok(DeliveryReceipt { provider_message_id: "pm".into(), thread_id: None })
@@ -4387,7 +4384,7 @@ mod tests {
                 vec![JobAnswer::Permanent],
             ] {
                 let service = service();
-                let at = now();
+                let at = unix_millis();
                 seed_job(&service, "j", "you@example.com", "pending", 0, at - 1, 0);
                 let provider = JobProvider::new(answers);
                 service
@@ -5541,7 +5538,7 @@ mod tests {
         let d=saved(&owner.database);let immediate=owner.database.queue(&d.id,d.revision,false,&[],None,&owner.root).unwrap();
         crate::schema::migrate(&mut owner.database.connection().unwrap()).unwrap();
         let items=owner.database.outbox().unwrap();
-        assert!(items.iter().find(|o|o.id==immediate.id).unwrap().deadline>now());
+        assert!(items.iter().find(|o|o.id==immediate.id).unwrap().deadline>unix_millis());
         assert_eq!(items.iter().find(|o|o.id==item.id).unwrap().schedule.as_ref().unwrap().report.scheduled_at,item.deadline);
     }
 

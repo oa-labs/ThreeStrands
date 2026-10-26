@@ -1,3 +1,4 @@
+import { readLocalStorage, useLocalStorageState } from "./useLocalStorageState";
 import { useEffect, useRef, useState } from "react";
 
 type ResizableWidthConfig = {
@@ -10,34 +11,20 @@ type ResizableWidthConfig = {
 };
 
 function readStoredWidth({ storageKey, minimumWidth, defaultWidth, maximumWidth }: ResizableWidthConfig) {
-  try {
-    const saved = Number(localStorage.getItem(storageKey));
-    if (Number.isFinite(saved) && saved >= minimumWidth && saved <= maximumWidth) return saved;
-  } catch {
-    // Resizing remains available when storage is blocked.
-  }
-  return defaultWidth;
+  return readLocalStorage(storageKey, (raw) => {
+    const saved = Number(raw);
+    return Number.isFinite(saved) && saved >= minimumWidth && saved <= maximumWidth ? saved : defaultWidth;
+  }, defaultWidth);
 }
 
 export function useResizableWidth(config: ResizableWidthConfig) {
-  const [preferredWidth, setPreferredWidth] = useState(() => readStoredWidth(config));
+  const [preferredWidth, setPreferredWidth] = useLocalStorageState(config.storageKey, () => readStoredWidth(config), String, 150);
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
   useEffect(() => {
     const onResize = () => setViewportWidth(window.innerWidth);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
-  const { storageKey } = config;
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      try {
-        localStorage.setItem(storageKey, String(preferredWidth));
-      } catch {
-        // Retain the width for this session if persistence is unavailable.
-      }
-    }, 150);
-    return () => window.clearTimeout(timer);
-  }, [storageKey, preferredWidth]);
   // Keep room for the sibling pane without overwriting the user's preferred width
   // when the app window temporarily becomes smaller.
   const maxWidth = Math.max(config.minimumWidth, Math.min(config.maximumWidth, viewportWidth - config.reservedWidth));

@@ -3438,12 +3438,12 @@ mod config_tests {
         // Secrets go to an in-memory stand-in for the keychain in tests
         // (see `sync_connectors::secret_store`).
         let id = format!("ipfs-{}", Uuid::new_v4());
-        database.add_ipfs_rpc_transport(&id, "https://rpc.filebase.io", Some("ipfs-token-value")).unwrap();
+        database.add_ipfs_rpc_transport(&id, crate::ipfs_transport::FILEBASE_RPC_URL, Some("ipfs-token-value")).unwrap();
 
         let rows = database.configured_transports().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].kind, "ipfs_rpc");
-        assert_eq!(rows[0].config().map(|config| config.location()).as_deref(), Some("https://rpc.filebase.io"));
+        assert_eq!(rows[0].config().map(|config| config.location()).as_deref(), Some(crate::ipfs_transport::FILEBASE_RPC_URL));
         // No credential ever appears in the stored config.
         assert!(!rows[0].config_json.to_ascii_lowercase().contains("token"));
         assert!(!rows[0].config_json.contains("ipfs-token-value"));
@@ -3453,14 +3453,14 @@ mod config_tests {
         );
 
         // Re-adding without a token clears the stored one.
-        database.add_ipfs_rpc_transport(&id, "https://rpc.filebase.io", None).unwrap();
+        database.add_ipfs_rpc_transport(&id, crate::ipfs_transport::FILEBASE_RPC_URL, None).unwrap();
         assert_eq!(TransportSecrets::load("ipfs_rpc", &id).unwrap(), None);
     }
 
     #[tokio::test]
     async fn build_configured_transports_includes_an_ipfs_rpc_row() {
         let database = Database::open_memory();
-        database.add_ipfs_rpc_transport("ipfs-1", "https://rpc.filebase.io", None).unwrap();
+        database.add_ipfs_rpc_transport("ipfs-1", crate::ipfs_transport::FILEBASE_RPC_URL, None).unwrap();
         let transports = build_configured_transports(&database).await;
         assert_eq!(transports.len(), 1);
         assert_eq!(transports[0].instance_id().0, "ipfs-1");
@@ -3469,7 +3469,7 @@ mod config_tests {
     #[test]
     fn removing_an_ipfs_rpc_transport_clears_its_config_row() {
         let database = Database::open_memory();
-        database.add_ipfs_rpc_transport("ipfs-1", "https://rpc.filebase.io", None).unwrap();
+        database.add_ipfs_rpc_transport("ipfs-1", crate::ipfs_transport::FILEBASE_RPC_URL, None).unwrap();
         database.remove_transport("ipfs-1").unwrap();
         assert!(database.configured_transports().unwrap().is_empty());
     }
@@ -3565,7 +3565,7 @@ mod config_tests {
             .add_s3_transport(&s3_id, &s3_test_config("https://s3.us-east-1.amazonaws.com"), &s3_test_credentials())
             .unwrap();
         let ipfs_id = format!("ipfs-{}", Uuid::new_v4());
-        database.add_ipfs_rpc_transport(&ipfs_id, "https://rpc.filebase.io", Some("token")).unwrap();
+        database.add_ipfs_rpc_transport(&ipfs_id, crate::ipfs_transport::FILEBASE_RPC_URL, Some("token")).unwrap();
 
         database.remove_transport(&s3_id).unwrap();
         assert_eq!(TransportSecrets::load("s3", &s3_id).unwrap(), None);
@@ -3787,7 +3787,7 @@ mod config_tests {
         assert!(engine.update_connector("missing", Some("name"), None).is_err());
 
         let ipfs_id = format!("ipfs-{}", Uuid::new_v4());
-        database.add_ipfs_rpc_transport(&ipfs_id, "https://rpc.filebase.io", None).unwrap();
+        database.add_ipfs_rpc_transport(&ipfs_id, crate::ipfs_transport::FILEBASE_RPC_URL, None).unwrap();
         let s3: ConnectorCredentials =
             serde_json::from_value(json!({ "kind": "s3", "accessKeyId": "a", "secretAccessKey": "b" })).unwrap();
         assert!(engine.update_connector(&ipfs_id, None, Some(s3)).is_err());
@@ -3804,7 +3804,7 @@ mod config_tests {
         let database = Database::open_memory();
         let folder = TempFolder::new();
         database.add_folder_transport("folder-1", &folder.path).unwrap();
-        database.add_ipfs_rpc_transport(&format!("ipfs-{}", Uuid::new_v4()), "https://rpc.filebase.io", None).unwrap();
+        database.add_ipfs_rpc_transport(&format!("ipfs-{}", Uuid::new_v4()), crate::ipfs_transport::FILEBASE_RPC_URL, None).unwrap();
         let statuses = ReplicatedSync::new(Arc::new(database)).status().await.unwrap();
         let by_kind = |kind: &str| statuses.iter().find(|status| status.kind == kind).unwrap();
         assert!(by_kind("folder").supports_delete_data);

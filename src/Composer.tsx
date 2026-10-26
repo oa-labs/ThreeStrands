@@ -1,3 +1,4 @@
+import { useAiAvailability } from "./useAiAvailability";
 import { draftSignatureSnapshot, type SignatureState } from "./signatures";
 import { SignaturesSettings } from "./SignaturesSettings";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
@@ -6,8 +7,6 @@ import { mailClient } from "./data/client";
 import type { Draft, OutboxItem, SendingIdentity } from "./correspondence";
 import type { Account, ReplyAssistContext, Snippet } from "./domain";
 import {
-  isAiApiKeyConfigured,
-  readAiFeatures,
   readAiProvider,
   readAiRequestConfig,
 } from "./aiSettings";
@@ -90,8 +89,9 @@ export const Composer = forwardRef<ComposerHandle, {
   const [showBlankCopies, setShowBlankCopies] = useState(false);
   // Reply Assist shows for replies once Draft Assist is on with a provider
   // chosen; it can generate once an API key is configured too.
-  const [replyAssistEnabled, setReplyAssistEnabled] = useState(false);
-  const [replyAssistAvailable, setReplyAssistAvailable] = useState(false);
+  const { aiDraftFeatureEnabled, aiDraftAvailable } = useAiAvailability(false);
+  const replyAssistEnabled = ["reply", "replyAll"].includes(initial.mode) && aiDraftFeatureEnabled;
+  const replyAssistAvailable = replyAssistEnabled && aiDraftAvailable;
   const [replyAssistOpen, setReplyAssistOpen] = useState(false);
   const [replyAssistContext, setReplyAssistContext] = useState<ReplyAssistContext | null>(null);
   const [replyInstruction, setReplyInstruction] = useState("");
@@ -346,15 +346,6 @@ export const Composer = forwardRef<ComposerHandle, {
     }
     return () => { mounted.current = false; previous?.focus(); };
   }, [flush, initial.attachments, initial.mode, replaceDraft]);
-  useEffect(() => {
-    if (!["reply", "replyAll"].includes(initial.mode)) return;
-    const enabled = readAiProvider() !== "none" && readAiFeatures().draftAssist;
-    setReplyAssistEnabled(enabled);
-    if (!enabled) return;
-    void isAiApiKeyConfigured()
-      .then((configured) => { if (mounted.current) setReplyAssistAvailable(configured); })
-      .catch(() => { if (mounted.current) setReplyAssistAvailable(false); });
-  }, [initial.mode]);
   useEffect(() => {
     if (!replyAssistInstruction || !replyAssistAvailable || automaticallyOpenedInstruction.current === replyAssistInstruction) return;
     automaticallyOpenedInstruction.current = replyAssistInstruction;

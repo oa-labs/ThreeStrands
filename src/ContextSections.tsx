@@ -1,3 +1,4 @@
+import { readLocalStorage, writeLocalStorage } from "./useLocalStorageState";
 import { FileStarButton } from "./FileStarButton";
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, Mail, MessageSquareText } from "lucide-react";
@@ -18,23 +19,17 @@ import { attachmentMeetingTitle } from "./invitationTitle";
 const COLLAPSED_KEY = "threestrands.contextPanel.collapsedSections";
 
 function readCollapsed(): Set<string> {
-  try {
-    const saved = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]") as unknown;
+  return readLocalStorage(COLLAPSED_KEY, (raw) => {
+    const saved: unknown = JSON.parse(raw ?? "[]");
     return new Set(Array.isArray(saved) ? saved.filter((item): item is string => typeof item === "string") : []);
-  } catch {
-    return new Set();
-  }
+  }, new Set<string>());
 }
 
 function saveCollapsed(id: string, collapsed: boolean) {
   const next = readCollapsed();
   if (collapsed) next.add(id);
   else next.delete(id);
-  try {
-    localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
-  } catch {
-    // Storage can be unavailable; the section still toggles for this session.
-  }
+  writeLocalStorage(COLLAPSED_KEY, JSON.stringify([...next]));
 }
 
 /**

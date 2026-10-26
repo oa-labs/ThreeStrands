@@ -25,6 +25,7 @@
 //! returning idempotent success. Every read also verifies the file's bytes
 //! hash to the filename that named it before returning them.
 
+use crate::transport_validation::sanitize_cid;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -375,17 +376,6 @@ async fn atomic_write(dir: &Path, final_path: &Path, bytes: &[u8]) -> Result<(),
         return Err(io_error(error));
     }
     Ok(())
-}
-
-/// CIDv1 strings are plain lowercase base32 (RFC4648) after their `b`
-/// multibase prefix: alphanumeric only. Rejecting anything else here closes
-/// off path traversal, absolute paths, and null-byte tricks before a CID
-/// ever reaches a filesystem call.
-fn sanitize_cid(cid: &str) -> Result<&str, TransportError> {
-    if cid.len() < 8 || cid.len() > 256 || !cid.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return Err(TransportError::Permanent("invalid content identifier".to_string()));
-    }
-    Ok(cid)
 }
 
 fn io_error(error: std::io::Error) -> TransportError {

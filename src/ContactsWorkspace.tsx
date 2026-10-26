@@ -1,3 +1,4 @@
+import { useAiAvailability } from "./useAiAvailability";
 import { useWorkspaceCommands } from "./workspaceCommands";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type TextareaHTMLAttributes } from "react";
 import { CircleAlert, Check, ContactRound, Heart, LoaderCircle, Plus, Search, Sparkles, Trash, UserRound, Users } from "lucide-react";
@@ -5,7 +6,7 @@ import { ContactManagement, MergeContactsDialog } from "./ContactManagement";
 import { ContactAddressField, ContactLinksField } from "./ContactAddressField";
 import { mailClient } from "./data/client";
 import type { ContactFieldSuggestion, ContactGroup, ContactProfile, ContactTimelineItem, SaveContactRequest } from "./domain";
-import { isAiApiKeyConfigured, readAiFeatures, readAiProvider, readAiRequestConfig } from "./aiSettings";
+import { readAiRequestConfig } from "./aiSettings";
 import { errorMessage } from "./errors";
 import { PanelResizeHandle, useContactListWidth } from "./PanelResizeHandle";
 import { KeepInTouchSection } from "./KeepInTouchSection";
@@ -72,9 +73,7 @@ export function ContactsWorkspace({onOpenThread,onCompose,onSaved,onOpenAiSettin
   const preserveSuggestionsForId=useRef<string|null>(null);
   const preserveDraftForId=useRef<string|null>(null);
   // Profile Suggestions show only with a provider chosen and Contact Enrichment on; without a key they explain the setup left.
-  const aiEnabled=readAiProvider()!=="none"&&readAiFeatures().contactEnrichment;
-  const [aiReady,setAiReady]=useState(false);
-  useEffect(()=>{if(!aiEnabled)return;let current=true;void isAiApiKeyConfigured().then(configured=>{if(current)setAiReady(configured);}).catch(()=>{if(current)setAiReady(false);});return()=>{current=false;};},[aiEnabled]);
+  const { aiContactFeatureEnabled: aiEnabled, aiContactAvailable: aiReady } = useAiAvailability(false);
   const addingRef=useRef(adding);
   useEffect(()=>{addingRef.current=adding;},[adding]);
   const load=useCallback(async(keepProfile?:ContactProfile)=>{setLoading(true);setError(null);try{let result=await mailClient.listContactProfiles(query,500,accountId??undefined);const requestedId=requestedContactId.current;if(requestedId&&!query.trim()){requestedContactId.current=null;if(!result.some(item=>item.id===requestedId)){const requestedProfile=await mailClient.getContactProfile(requestedId);if(requestedProfile)result=[requestedProfile,...result];}}if(keepProfile&&!result.some(item=>item.id===keepProfile.id)&&!query.trim())result=[keepProfile,...result];setProfiles(result);setSelectedId(current=>keepProfile?.id??(current&&result.some(item=>item.id===current)?current:requestedId&&result.some(item=>item.id===requestedId)?requestedId:addingRef.current?null:result[0]?.id??null));}catch(reason){setError(errorMessage(reason));}finally{setLoading(false);}},[query,accountId]);

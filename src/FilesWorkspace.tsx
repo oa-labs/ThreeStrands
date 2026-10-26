@@ -1,3 +1,4 @@
+import { readLocalStorage, useLocalStorageState } from "./useLocalStorageState";
 import { useWorkspaceCommands } from "./workspaceCommands";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Download, ExternalLink, Info, MessageSquareText, ShieldAlert, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
@@ -33,10 +34,7 @@ const senderName = (file: WorkspaceFile) => formatDisplayName(parseAddress(file.
 
 const SHOW_INVITATIONS_KEY = "threestrands.files.showInvitations";
 function readShowInvitations() {
-  try { return localStorage.getItem(SHOW_INVITATIONS_KEY) === "true"; } catch { return false; }
-}
-function writeShowInvitations(show: boolean) {
-  try { localStorage.setItem(SHOW_INVITATIONS_KEY, String(show)); } catch { /* The choice still applies for this session. */ }
+  return readLocalStorage(SHOW_INVITATIONS_KEY, (raw) => raw === "true", false);
 }
 
 /** Empty native date controls can display today's date on macOS. Label the
@@ -75,8 +73,7 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [total, setTotal] = useState(0);
   const [hiddenCalendar, setHiddenCalendar] = useState(0);
-  const [showInvitations, setShowInvitationsState] = useState(readShowInvitations);
-  const setShowInvitations = (show: boolean) => { setShowInvitationsState(show); writeShowInvitations(show); };
+  const [showInvitations, setShowInvitations] = useLocalStorageState(SHOW_INVITATIONS_KEY, readShowInvitations);
   const [selected, setSelected] = useState<string | null>(restored.current?.selected ?? null);
   const [search, setSearch] = useState(restored.current?.search ?? "");
   const [sender, setSender] = useState(restored.current?.sender ?? "");

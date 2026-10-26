@@ -7,6 +7,7 @@
 //! Every server copy has a `Message-ID` derived from the draft id, so any
 //! device holding the draft finds the same copy and updates it rather than
 //! creating another one.
+use crate::clock::unix_millis;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use rusqlite::{params, OptionalExtension, Transaction};
@@ -43,10 +44,6 @@ fn server_message_id(draft_id: &str, domain: Option<&str>) -> String {
         server_message_local_part(draft_id),
         domain.unwrap_or("threestrands.local")
     )
-}
-
-fn now() -> i64 {
-    chrono::Utc::now().timestamp_millis()
 }
 
 /// Whether drafts on accounts of this kind are kept on the server.
@@ -423,7 +420,7 @@ impl Correspondence {
     pub async fn run_draft_pushes(self) {
         let mut last_pulled = HashMap::new();
         loop {
-            if let Err(error) = self.run_draft_round(now(), &mut last_pulled).await {
+            if let Err(error) = self.run_draft_round(unix_millis(), &mut last_pulled).await {
                 log::warn!(target: "drafts", "server draft push failed: {error}");
             }
             tokio::time::sleep(PUSH_POLL_INTERVAL).await;
@@ -433,7 +430,7 @@ impl Correspondence {
     /// Pushes every pending draft now, waiting at most [`EXIT_PUSH_TIMEOUT`].
     /// Drafts that don't make it stay saved locally and push on next launch.
     pub async fn push_drafts_before_exit(&self) {
-        let at = now();
+        let at = unix_millis();
         if self.database.push_drafts_now(None, at).is_err() {
             return;
         }
@@ -497,10 +494,10 @@ impl Correspondence {
     ) -> Result<(), String> {
         let Some(draft) = self.database.local_draft(&link.draft_id)? else {
             match self.database.removed_draft_outcome(&link.draft_id)? {
-                RemovedDraft::Delete => self.database.retire_draft_link(link, now())?,
+                RemovedDraft::Delete => self.database.retire_draft_link(link, unix_millis())?,
                 RemovedDraft::Wait => self
                     .database
-                    .defer_draft_link(&link.draft_id, now() + SEND_PENDING_RECHECK_MS)?,
+                    .defer_draft_link(&link.draft_id, unix_millis() + SEND_PENDING_RECHECK_MS)?,
             }
             return Ok(());
         };
@@ -518,7 +515,7 @@ impl Correspondence {
             None => {
                 let attempts = link.attempts + 1;
                 let message = format!("{} isn't connected on this device.", draft.account);
-                self.database.record_draft_push_failure(&draft.id, "retrying", &message, Some(retry_at(attempts, now())), attempts)?;
+                self.database.record_draft_push_failure(&draft.id, "retrying", &message, Some(retry_at(attempts, unix_millis())), attempts)?;
                 self.notify_draft(&draft, "retrying", Some(message));
                 return Ok(());
             }
@@ -548,7 +545,7 @@ impl Correspondence {
             Err(PushError::Provider(error)) => {
                 let (state, message, retries) = classify_push_error(&error, &draft.account);
                 let attempts = link.attempts + 1;
-                let due = retries.then(|| retry_at(attempts, now()));
+                let due = retries.then(|| retry_at(attempts, unix_millis()));
                 self.database.record_draft_push_failure(&draft.id, state, &message, due, attempts)?;
                 self.notify_draft(&draft, state, Some(message));
             }
@@ -624,7 +621,7 @@ impl Correspondence {
         deletion: &Deletion,
         provider: Option<&Arc<dyn MailProvider>>,
     ) -> Result<(), String> {
-        let retry = |attempts: u32| self.database.defer_draft_deletion(deletion.id, attempts, retry_at(attempts, now()));
+        let retry = |attempts: u32| self.database.defer_draft_deletion(deletion.id, attempts, retry_at(attempts, unix_millis()));
         let Some(provider) = provider else {
             retry(deletion.attempts + 1)?;
             return Ok(());
@@ -684,7 +681,6 @@ pub(crate) mod tests {
         path::PathBuf,
         sync::{Mutex as StdMutex, MutexGuard},
     };
-
 
     use super::*;
     use crate::{
@@ -941,14 +937,14 @@ pub(crate) mod tests {
         }
         /// Runs the worker as if `delay_ms` had passed since now.
         pub(crate) async fn run_after(&self, delay_ms: i64) {
-            self.service.push_due_drafts_with(now() + delay_ms, &self.providers()).await.unwrap();
+            self.service.push_due_drafts_with(unix_millis() + delay_ms, &self.providers()).await.unwrap();
         }
         /// Pulls the account's server drafts.
         pub(crate) async fn pull(&self) -> bool {
             self.service.pull_server_drafts(ACCOUNT, self.server.as_ref()).await.unwrap()
         }
         async fn run_disconnected(&self, delay_ms: i64) {
-            self.service.push_due_drafts_with(now() + delay_ms, &HashMap::new()).await.unwrap();
+            self.service.push_due_drafts_with(unix_millis() + delay_ms, &HashMap::new()).await.unwrap();
         }
         pub(crate) fn status(&self, draft: &Draft) -> Option<ServerDraftStatus> {
             let current = self.db().draft(&draft.id).unwrap();
@@ -1061,7 +1057,7 @@ pub(crate) mod tests {
     async fn the_composer_closing_pushes_without_waiting() {
         let harness = Harness::new();
         let draft = harness.edit(harness.new_draft(), "Closing now");
-        harness.db().push_drafts_now(Some(&draft.id), now()).unwrap();
+        harness.db().push_drafts_now(Some(&draft.id), unix_millis()).unwrap();
         harness.run_after(0).await;
         assert!(harness.only_server_body().contains("Closing now"));
     }
@@ -1074,13 +1070,13 @@ pub(crate) mod tests {
         harness.run_after(PAST_DELAY).await;
         assert_eq!(harness.state(&draft), "retrying");
         let backoff = harness.link_due(&draft).unwrap();
-        assert!(backoff >= now() + crate::backoff::retry_delay_secs(1) * 1_000 - 1_000);
+        assert!(backoff >= unix_millis() + crate::backoff::retry_delay_secs(1) * 1_000 - 1_000);
 
         let draft = harness.edit(draft, "Two");
         assert_eq!(harness.link_due(&draft), Some(backoff), "editing must not skip the backoff");
         assert_eq!(harness.state(&draft), "retrying");
 
-        harness.run_after(backoff - now() + 1).await;
+        harness.run_after(backoff - unix_millis() + 1).await;
         assert!(harness.only_server_body().contains("Two"));
         assert_eq!(harness.state(&draft), "saved");
     }
@@ -1234,7 +1230,7 @@ pub(crate) mod tests {
         // The link was retired into a queued deletion that hasn't run yet.
         let late = crate::correspondence::DISCARD_SERVER_DELAY_MS + 1;
         harness.service.database.connection().unwrap()
-            .execute("UPDATE draft_server_deletions SET due_at=?1", [now() + 60 * 60 * 1000]).unwrap();
+            .execute("UPDATE draft_server_deletions SET due_at=?1", [unix_millis() + 60 * 60 * 1000]).unwrap();
         harness.run_after(late).await;
         harness.db().restore_discarded_draft(&draft.id).unwrap();
         harness.run_after(60 * 60 * 1000 + 1).await;
@@ -1269,7 +1265,7 @@ pub(crate) mod tests {
         harness.service.cleanup().unwrap();
         assert!(harness.root.0.join(&file).exists(), "Undo brings the file back too");
 
-        let expired = now() - crate::correspondence::DISCARDED_DRAFT_RETENTION_MS - 1;
+        let expired = unix_millis() - crate::correspondence::DISCARDED_DRAFT_RETENTION_MS - 1;
         harness.db().connection().unwrap().execute("UPDATE discarded_drafts SET discarded_at=?1", [expired]).unwrap();
         harness.service.cleanup().unwrap();
         assert!(!harness.root.0.join(&file).exists());
@@ -1362,8 +1358,8 @@ pub(crate) mod tests {
     async fn quitting_pushes_pending_drafts_right_away() {
         let harness = Harness::new();
         let draft = harness.edit(harness.new_draft(), "Before quitting");
-        harness.db().push_drafts_now(None, now()).unwrap();
-        assert!(harness.link_due(&draft).unwrap() <= now());
+        harness.db().push_drafts_now(None, unix_millis()).unwrap();
+        assert!(harness.link_due(&draft).unwrap() <= unix_millis());
     }
 
     #[test]

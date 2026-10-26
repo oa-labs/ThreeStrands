@@ -1,5 +1,6 @@
+import { readLocalStorage, useLocalStorageState } from "./useLocalStorageState";
 import { Pencil, Plus } from "lucide-react";
-import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { forwardRef, useImperativeHandle, useMemo, useRef } from "react";
 import type { Goal, ThreadTask } from "./domain";
 import { currentGoalGroups, formatPeriod, GOAL_HORIZON_LABELS, GOAL_STALE_AFTER_DAYS, goalIsStale, goalProgress, goalsToReview, periodFor } from "./goals";
 import { isActiveTaskStatus } from "./taskViews";
@@ -17,11 +18,7 @@ const STATUS_LABELS: Partial<Record<Goal["status"], string>> = { achieved: "Achi
 const REVIEW_DEFERRED_KEY = "threestrands.goals.reviewDeferredUntil";
 
 function readReviewDeferral(): string | null {
-  try {
-    return localStorage.getItem(REVIEW_DEFERRED_KEY);
-  } catch {
-    return null;
-  }
+  return readLocalStorage(REVIEW_DEFERRED_KEY, (raw) => raw, null);
 }
 
 /** Goals for the current quarter, half, and year beside the task workspace; selecting one filters the tasks. */
@@ -53,14 +50,9 @@ export const GoalsPane = forwardRef<GoalsPaneHandle, {
   const toReview = goalsToReview(goals, now);
   // "Later" hides the prompt for the rest of the current quarter on this device.
   const currentQuarter = periodFor("quarter", now);
-  const [deferredUntil, setDeferredUntil] = useState(readReviewDeferral);
+  const [deferredUntil, setDeferredUntil] = useLocalStorageState(REVIEW_DEFERRED_KEY, readReviewDeferral, (value) => value ?? "");
   const deferReview = () => {
     setDeferredUntil(currentQuarter);
-    try {
-      localStorage.setItem(REVIEW_DEFERRED_KEY, currentQuarter);
-    } catch {
-      // The prompt stays hidden for this session.
-    }
   };
 
   const rows = () => [...(paneRef.current?.querySelectorAll<HTMLElement>("[data-goal-row]") ?? [])];

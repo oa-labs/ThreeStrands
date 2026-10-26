@@ -1,3 +1,4 @@
+import { readLocalStorage, useLocalStorageState } from "./useLocalStorageState";
 import type { CommandResult } from "./commands";
 import { Check, ChevronLeft, ChevronRight, Clock3, Columns3, List, Mail, Plus, RotateCcw, SquareCheckBig, Target, X } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
@@ -22,22 +23,13 @@ export type TaskLayout = "board" | "list";
 const TASK_LAYOUT_KEY = "threestrands.tasks.layout";
 
 function readTaskLayout(): TaskLayout {
-  try {
-    return localStorage.getItem(TASK_LAYOUT_KEY) === "list" ? "list" : "board";
-  } catch {
-    return "board";
-  }
+  return readLocalStorage(TASK_LAYOUT_KEY, (stored) => stored === "list" ? "list" : "board", "board");
 }
 
 const TASK_VIEW_KEY = "threestrands.tasks.view";
 
 function readTaskView(): TaskView {
-  try {
-    const stored = localStorage.getItem(TASK_VIEW_KEY);
-    return TASK_VIEWS.find((name) => name === stored) ?? "All";
-  } catch {
-    return "All";
-  }
+  return readLocalStorage(TASK_VIEW_KEY, (stored) => TASK_VIEWS.find((name) => name === stored) ?? "All", "All");
 }
 
 const STATUS_LABELS: Record<TaskStatus, string> = { open: "To Do", in_progress: "In Progress", completed: "Done", cancelled: "Done" };
@@ -136,9 +128,9 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(restored.current?.selectedId ?? null);
-  const [view, setView] = useState<TaskView>(() => restored.current?.view ?? readTaskView());
+  const [view, setView] = useLocalStorageState<TaskView>(TASK_VIEW_KEY, () => restored.current?.view ?? readTaskView());
   const [showOlderDone, setShowOlderDone] = useState(restored.current?.olderDone ?? false);
-  const [layout, setLayout] = useState<TaskLayout>(() => restored.current?.layout ?? readTaskLayout());
+  const [layout, setLayout] = useLocalStorageState<TaskLayout>(TASK_LAYOUT_KEY, () => restored.current?.layout ?? readTaskLayout());
   const board = layout === "board";
   const shownTaskId = useRef<string | null>(null);
   shownTaskId.current = selectedTaskId;
@@ -237,23 +229,9 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
 
   useEffect(() => { onSelectedTaskChange?.(selectedTask); }, [onSelectedTaskChange, selectedTask]);
   useEffect(() => { onLayoutChange?.(layout); }, [layout, onLayoutChange]);
-  useEffect(() => { if (board && view === "Completed") setView("All"); }, [board, view]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(TASK_VIEW_KEY, view);
-    } catch {
-      // The chosen view still applies for this session.
-    }
-  }, [view]);
+  useEffect(() => { if (board && view === "Completed") setView("All"); }, [board, view, setView]);
 
-  const changeLayout = useCallback((next: TaskLayout) => {
-    setLayout(next);
-    try {
-      localStorage.setItem(TASK_LAYOUT_KEY, next);
-    } catch {
-      // The chosen layout still applies for this session.
-    }
-  }, []);
+  const changeLayout = setLayout;
 
   const setStatus = useCallback(async (task: ThreadTask, status: TaskStatus) => {
     try {
@@ -321,7 +299,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
     setNewTaskError(null);
     setLastAddedTitle(null);
     setAddingTask(true);
-  }, []);
+  }, [setView]);
 
   const createTask = async () => {
     const title = newTaskTitle.trim();
@@ -435,7 +413,7 @@ export const TaskSidebar = forwardRef<TaskWorkspaceHandle, {
       const views: readonly TaskView[] = board ? BOARD_TASK_VIEWS : TASK_VIEWS;
       setView((current) => views[(Math.max(0, views.indexOf(current)) + direction + views.length) % views.length]);
     },
-  }), [board, boardColumns, changeLayout, layout, moveSelection, onOpenThread, openDetails, selectedTask, setStatus, startNew]);
+  }), [board, boardColumns, changeLayout, layout, moveSelection, onOpenThread, openDetails, selectedTask, setStatus, startNew, setView]);
 
   const renderCard = (task: ThreadTask) => {
     const active = isActiveTaskStatus(task.status);

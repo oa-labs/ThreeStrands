@@ -1,6 +1,7 @@
+use crate::clock::unix_seconds;
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use keyring::Entry;
 use oauth2::{
@@ -530,7 +531,7 @@ impl OAuthCredential {
         let mut tokens = self
             .load()
             .map_err(AccessTokenError::ReauthenticationRequired)?;
-        if tokens.expires_at > now() {
+        if tokens.expires_at > unix_seconds() {
             return Ok(tokens.access_token);
         }
         let refresh_token = tokens.refresh_token.as_deref().ok_or_else(|| {
@@ -787,7 +788,7 @@ fn tokens_from_response(
         refresh_token: response
             .refresh_token()
             .map(|token| token.secret().to_string()),
-        expires_at: now() + expires_in.saturating_sub(60),
+        expires_at: unix_seconds() + expires_in.saturating_sub(60),
     })
 }
 
@@ -903,13 +904,6 @@ fn build_http_client(
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(display)
-}
-
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
 }
 
 #[cfg(test)]
@@ -1093,7 +1087,7 @@ mod tests {
         );
         assert_eq!(tokens.access_token, "exchanged-access");
         assert_eq!(tokens.refresh_token.as_deref(), Some("exchanged-refresh"));
-        assert!(tokens.expires_at > now());
+        assert!(tokens.expires_at > unix_seconds());
         server.abort();
     }
 
@@ -1346,7 +1340,7 @@ mod tests {
         *auth.token_cache.lock().unwrap() = Some(Tokens {
             access_token: "access-secret".into(),
             refresh_token: refresh_token.map(str::to_owned),
-            expires_at: now() + 3600,
+            expires_at: unix_seconds() + 3600,
         });
         auth
     }

@@ -4,6 +4,7 @@
 //! deleted elsewhere leaves, unless this device has edits the server hasn't
 //! seen. When both sides changed, the server's version is held back and the
 //! user picks one.
+use crate::clock::unix_millis;
 use std::{collections::HashMap, path::Path, sync::Arc};
 
 use mail_parser::{Address, MessageParser, MimeHeaders, PartType};
@@ -22,10 +23,6 @@ use crate::{
 pub(crate) const DRAFT_PULL_INTERVAL_MS: i64 = 60_000;
 /// The largest draft body this device imports; the composer refuses larger.
 const MAX_IMPORTED_BODY_BYTES: usize = 2 * 1024 * 1024;
-
-fn now() -> i64 {
-    chrono::Utc::now().timestamp_millis()
-}
 
 /// The local draft id a server copy names in its `Message-ID`, when it is one
 /// ThreeStrands wrote.
@@ -158,7 +155,7 @@ pub(crate) fn draft_from_server_copy(
         forwarded_edit: None,
         follow_up_task_id: base.and_then(|base| base.follow_up_task_id.clone()),
         attachments,
-        updated_at: now(),
+        updated_at: unix_millis(),
         server_draft: None,
     })
 }
@@ -289,7 +286,7 @@ impl Database {
                     tx.execute(
                         "UPDATE draft_server_links SET server_id=NULL, server_version=NULL, conflict=NULL, state='pending',
                              due_at=?2, pending_since=COALESCE(pending_since, ?2) WHERE draft_id=?1",
-                        params![link.draft_id, now()],
+                        params![link.draft_id, unix_millis()],
                     )?;
                     Ok(false)
                 }
@@ -322,13 +319,13 @@ impl Database {
             if !keep_server {
                 tx.execute(
                     "UPDATE draft_server_links SET conflict=NULL, state='pending', due_at=?2, pending_since=COALESCE(pending_since, ?2) WHERE draft_id=?1",
-                    params![id, now()],
+                    params![id, unix_millis()],
                 )?;
                 return serde_json::from_str::<Draft>(&payload).map_err(serialization_error);
             }
             let mut server: Draft = serde_json::from_str(&held).map_err(serialization_error)?;
             server.revision = revision + 1;
-            server.updated_at = now();
+            server.updated_at = unix_millis();
             tx.execute(
                 "UPDATE drafts SET revision=?2, payload=?3 WHERE id=?1",
                 params![id, server.revision, serde_json::to_string(&server).map_err(serialization_error)?],
@@ -802,7 +799,7 @@ mod tests {
     async fn pulls_run_once_per_interval_unless_asked() {
         let harness = Harness::new();
         let mut last = HashMap::new();
-        let at = now();
+        let at = unix_millis();
         harness.service.pull_due_accounts(at, &harness.providers(), &mut last, false).await.unwrap();
         harness.service.pull_due_accounts(at + DRAFT_PULL_INTERVAL_MS - 1, &harness.providers(), &mut last, false).await.unwrap();
         let lists = || harness.server.calls().iter().filter(|call| *call == "list").count();

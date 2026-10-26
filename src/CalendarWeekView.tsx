@@ -1,3 +1,4 @@
+import { readLocalStorage, writeLocalStorage, useLocalStorageState } from "./useLocalStorageState";
 import { useWorkspaceCommands } from "./workspaceCommands";
 import { WorkspaceContextRail } from "./WorkspaceContextRail";
 import { WorkspaceRelatedContext } from "./WorkspaceRelatedContext";
@@ -57,41 +58,24 @@ function eventRangeFromSlots(day: Date, anchor: number, current: number, dragged
 }
 
 function readWeekScrollTop(): number {
-  try {
-    const stored = localStorage.getItem(WEEK_SCROLL_TOP_KEY);
+  return readLocalStorage(WEEK_SCROLL_TOP_KEY, (stored) => {
     const saved = stored === null || stored.trim() === "" ? Number.NaN : Number(stored);
-    if (Number.isFinite(saved) && saved >= 0 && saved <= MAX_WEEK_SCROLL_TOP) return saved;
-  } catch {
-    // A blocked storage backend should not prevent the week view from opening.
-  }
-  return DEFAULT_WEEK_SCROLL_TOP;
+    return Number.isFinite(saved) && saved >= 0 && saved <= MAX_WEEK_SCROLL_TOP ? saved : DEFAULT_WEEK_SCROLL_TOP;
+  }, DEFAULT_WEEK_SCROLL_TOP);
 }
 
 function saveWeekScrollTop(scrollTop: number): void {
   if (!Number.isFinite(scrollTop) || scrollTop < 0 || scrollTop > MAX_WEEK_SCROLL_TOP) return;
-  try {
-    localStorage.setItem(WEEK_SCROLL_TOP_KEY, String(scrollTop));
-  } catch {
-    // The scroll position still applies for this session when storage is unavailable.
-  }
+  writeLocalStorage(WEEK_SCROLL_TOP_KEY, String(scrollTop));
 }
+
+const serializeAccounts = (accounts: ReadonlySet<string>) => JSON.stringify([...accounts]);
 
 function readCollapsedCalendarAccounts(): Set<string> {
-  try {
-    const stored: unknown = JSON.parse(localStorage.getItem(COLLAPSED_CALENDAR_ACCOUNTS_KEY) ?? "[]");
-    if (Array.isArray(stored)) return new Set(stored.filter((email): email is string => typeof email === "string"));
-  } catch {
-    // Unreadable or blocked storage leaves every account expanded.
-  }
-  return new Set();
-}
-
-function saveCollapsedCalendarAccounts(collapsed: ReadonlySet<string>): void {
-  try {
-    localStorage.setItem(COLLAPSED_CALENDAR_ACCOUNTS_KEY, JSON.stringify([...collapsed]));
-  } catch {
-    // The collapsed accounts still apply for this session when storage is unavailable.
-  }
+  return readLocalStorage(COLLAPSED_CALENDAR_ACCOUNTS_KEY, (raw) => {
+    const stored: unknown = JSON.parse(raw ?? "[]");
+    return new Set(Array.isArray(stored) ? stored.filter((email): email is string => typeof email === "string") : []);
+  }, new Set<string>());
 }
 
 function weekdayLabel(date: Date): string {
@@ -182,7 +166,7 @@ function CalendarList({
   onToggle(accountId: string, calendarId: string, selected: boolean): void;
   onAdd(): void;
 }) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsedCalendarAccounts);
+  const [collapsed, setCollapsed] = useLocalStorageState<Set<string>>(COLLAPSED_CALENDAR_ACCOUNTS_KEY, readCollapsedCalendarAccounts, serializeAccounts);
   return (
     <section className="calendar-list" aria-label="Calendars">
       <header>
@@ -204,7 +188,6 @@ function CalendarList({
                 const next = new Set(current);
                 if (next.has(account.email)) next.delete(account.email);
                 else next.add(account.email);
-                saveCollapsedCalendarAccounts(next);
                 return next;
               })}
             >
@@ -416,7 +399,7 @@ export function CalendarWeekView({
         <header className="calendar-week-header">
           <div className="calendar-week-heading"><span className="eyebrow">Calendar <span className="eyebrow-account" title={selectedAccountEmails.join(", ") || undefined}>· {accountScope}</span></span><h1>{monthTitle(weekStart)}</h1><p className="calendar-visible-range">{weekStart.toLocaleDateString(undefined, { month: "short", day: "numeric" })}{days.length > 1 ? ` – ${days.at(-1)!.toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</p></div>
           <div className="calendar-week-controls">
-            <div className="segmented" role="group" aria-label="Calendar Range">{CALENDAR_RANGES.map((item) => <button key={item.value} type="button" className="segment" aria-pressed={mode === item.value} onClick={() => { setMode(item.value); try { localStorage.setItem(CALENDAR_RANGE_KEY,item.value); } catch { /* Session preference still applies. */ } }}>{item.label}</button>)}</div>
+            <div className="segmented" role="group" aria-label="Calendar Range">{CALENDAR_RANGES.map((item) => <button key={item.value} type="button" className="segment" aria-pressed={mode === item.value} onClick={() => { setMode(item.value); writeLocalStorage(CALENDAR_RANGE_KEY,item.value); }}>{item.label}</button>)}</div>
             <button type="button" className="btn" aria-expanded={navigationOpen} onClick={() => setNavigationOpen((value) => !value)}><CalendarDays size={ICON_SIZE.sm} />Calendars</button>
             <button type="button" className="btn" title="Today (t)" aria-keyshortcuts="t" onClick={goToToday}>Today</button>
             <div className="calendar-week-nav">

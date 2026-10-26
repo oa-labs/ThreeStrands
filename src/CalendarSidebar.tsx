@@ -1,3 +1,4 @@
+import { readLocalStorage, writeLocalStorage } from "./useLocalStorageState";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { TextAlignStart, CalendarDays, ChevronLeft, ChevronRight, Clock3, Link as LinkIcon, MapPin, Pencil, RefreshCw, Trash, Users, Video, X } from "lucide-react";
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -33,23 +34,15 @@ const DEFAULT_CALENDAR_SCROLL_TOP = 7 * HOUR_HEIGHT;
 const MAX_CALENDAR_SCROLL_TOP = 24 * HOUR_HEIGHT;
 
 function readCalendarScrollTop(): number {
-  try {
-    const stored = localStorage.getItem(CALENDAR_SCROLL_TOP_KEY);
+  return readLocalStorage(CALENDAR_SCROLL_TOP_KEY, (stored) => {
     const saved = stored === null || stored.trim() === "" ? Number.NaN : Number(stored);
-    if (Number.isFinite(saved) && saved >= 0 && saved <= MAX_CALENDAR_SCROLL_TOP) return saved;
-  } catch {
-    // A blocked storage backend should not prevent the calendar from opening.
-  }
-  return DEFAULT_CALENDAR_SCROLL_TOP;
+    return Number.isFinite(saved) && saved >= 0 && saved <= MAX_CALENDAR_SCROLL_TOP ? saved : DEFAULT_CALENDAR_SCROLL_TOP;
+  }, DEFAULT_CALENDAR_SCROLL_TOP);
 }
 
 function saveCalendarScrollTop(scrollTop: number): void {
   if (!Number.isFinite(scrollTop) || scrollTop < 0 || scrollTop > MAX_CALENDAR_SCROLL_TOP) return;
-  try {
-    localStorage.setItem(CALENDAR_SCROLL_TOP_KEY, String(scrollTop));
-  } catch {
-    // The scroll position still applies for this session when storage is unavailable.
-  }
+  writeLocalStorage(CALENDAR_SCROLL_TOP_KEY, String(scrollTop));
 }
 
 const WHEEL_SWIPE_THRESHOLD = 60;

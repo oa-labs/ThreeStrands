@@ -25,6 +25,7 @@
 //! object store has no directory to mark, and the folder adapter creates
 //! its own marker when it opens a copied corpus.
 
+use crate::transport_validation::sanitize_cid;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -635,13 +636,6 @@ impl S3Transport {
         let body = response.text().await.ok()?;
         Some(xml_element(&body, "Status") == Some("Enabled"))
     }
-}
-
-fn sanitize_cid(cid: &str) -> Result<&str, TransportError> {
-    if cid.len() < 8 || cid.len() > 256 || !cid.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return Err(TransportError::Permanent("invalid content identifier".to_string()));
-    }
-    Ok(cid)
 }
 
 #[async_trait]

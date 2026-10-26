@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { readLocalStorage, useLocalStorageState } from "./useLocalStorageState";
+import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { PanelRightClose, PanelRightOpen } from "lucide-react";
 import { PanelResizeHandle, useResizableWidth } from "./PanelResizeHandle";
 import { focusContextPanel, handleContextPanelKeyDown } from "./contextPanelFocus";
@@ -8,8 +9,7 @@ import { ICON_SIZE } from "./iconSizes";
 export function WorkspaceContextRail({ label, children, onReturn }: { label: string; children: ReactNode; onReturn?(): void }) {
   const panel = useRef<HTMLElement>(null);
   const storageKey = `threestrands.workspaceContext.collapsed.${label}`;
-  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(storageKey)==="true"; } catch { return false; } });
-  useEffect(() => { try { localStorage.setItem(storageKey,String(collapsed)); } catch { /* Layout remains available without storage. */ } }, [collapsed,storageKey]);
+  const [collapsed, setCollapsed] = useLocalStorageState(storageKey, () => readLocalStorage(storageKey, (raw) => raw === "true", false));
   useEffect(() => {
     const focus = (event: Event) => {
       if (!(event instanceof CustomEvent) || event.detail!==label) return;
@@ -18,7 +18,7 @@ export function WorkspaceContextRail({ label, children, onReturn }: { label: str
     };
     window.addEventListener("threestrands:focus-context",focus);
     return () => window.removeEventListener("threestrands:focus-context",focus);
-  }, [label]);
+  }, [label, setCollapsed]);
   const size = useResizableWidth({ storageKey: "threestrands.workspaceContextWidth", minimumWidth: 300, defaultWidth: 340, maximumWidth: 520, reservedWidth: 58 + 626 });
   return <div className={`workspace-context-container${collapsed ? " collapsed" : ""}`} style={{ "--workspace-context-width": `${size.width}px` } as CSSProperties}>
     <button type="button" className="btn-icon workspace-context-toggle" aria-label={collapsed ? `Show ${label}` : `Hide ${label}`} aria-expanded={!collapsed} aria-controls={`workspace-${label.replaceAll(" ", "-")}`} onClick={() => setCollapsed((value) => !value)}>

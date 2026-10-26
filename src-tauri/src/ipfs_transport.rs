@@ -29,6 +29,9 @@ use threestrands_sync_transport::{
     TransportCapabilities, TransportError, TransportHealth, TransportInstanceId,
 };
 
+#[cfg(test)]
+pub(crate) const FILEBASE_RPC_URL: &str = "https://rpc.filebase.io";
+
 const SCAN_PAGE_SIZE: usize = 500;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -515,14 +518,14 @@ mod url_tests {
 
     #[test]
     fn accepts_a_plain_https_origin() {
-        let origin = parse_rpc_origin("https://rpc.filebase.io").unwrap();
+        let origin = parse_rpc_origin(FILEBASE_RPC_URL).unwrap();
         assert_eq!(origin.scheme, "https");
         assert_eq!(origin.host, "rpc.filebase.io");
         assert_eq!(origin.port, None);
         assert_eq!(origin.path_prefix, "");
         assert_eq!(
             method_url(&origin, "version"),
-            "https://rpc.filebase.io/api/v0/version"
+            format!("{FILEBASE_RPC_URL}/api/v0/version")
         );
     }
 
@@ -543,12 +546,12 @@ mod url_tests {
 
     #[test]
     fn rejects_a_query_string() {
-        assert!(parse_rpc_origin("https://rpc.filebase.io/?token=abc").is_err());
+        assert!(parse_rpc_origin(&format!("{FILEBASE_RPC_URL}/?token=abc")).is_err());
     }
 
     #[test]
     fn rejects_a_fragment() {
-        assert!(parse_rpc_origin("https://rpc.filebase.io/#section").is_err());
+        assert!(parse_rpc_origin(&format!("{FILEBASE_RPC_URL}/#section")).is_err());
     }
 
     #[test]

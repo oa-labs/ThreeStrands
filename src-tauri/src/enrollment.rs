@@ -4212,7 +4212,7 @@ mod tests {
                     },
                     threestrands_sync_envelope::JoinConnector {
                         kind: "ipfs_rpc".to_string(),
-                        config_json: r#"{"baseUrl":"https://rpc.filebase.io"}"#.to_string(),
+                        config_json: serde_json::json!({"baseUrl": crate::ipfs_transport::FILEBASE_RPC_URL}).to_string(),
                         secrets_json: None,
                     },
                     threestrands_sync_envelope::JoinConnector {
@@ -4233,7 +4233,7 @@ mod tests {
             assert_eq!(folder.label.as_deref(), Some("Home"));
             let ipfs = &preview.connectors[1];
             assert!(ipfs.supported && !ipfs.needs_credentials && !ipfs.needs_folder);
-            assert_eq!(ipfs.location, "https://rpc.filebase.io");
+            assert_eq!(ipfs.location, crate::ipfs_transport::FILEBASE_RPC_URL);
             assert!(!preview.connectors[2].supported);
 
             assert!(matches!(
@@ -4265,7 +4265,7 @@ mod tests {
             let mut mixed = base;
             mixed.connectors.push(threestrands_sync_envelope::JoinConnector {
                 kind: "ipfs_rpc".to_string(),
-                config_json: r#"{"baseUrl":"https://rpc.filebase.io"}"#.to_string(),
+                config_json: serde_json::json!({"baseUrl": crate::ipfs_transport::FILEBASE_RPC_URL}).to_string(),
                 secrets_json: Some(r#"{"token":"t"}"#.to_string()),
             });
             let prepared = join_codes::prepare_join_connectors(&mixed, &[], vec![]).unwrap();

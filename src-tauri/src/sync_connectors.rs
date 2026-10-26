@@ -495,8 +495,8 @@ mod tests {
         // The exact JSON the pre-refactor `add_*_transport` functions wrote.
         let folder = TransportConfig::from_row("folder", r#"{"path":"/Users/me/Dropbox/Sync"}"#).unwrap();
         assert_eq!(folder, TransportConfig::Folder(FolderConfig { path: "/Users/me/Dropbox/Sync".to_string(), label: None }));
-        let ipfs = TransportConfig::from_row("ipfs_rpc", r#"{"baseUrl":"https://rpc.filebase.io"}"#).unwrap();
-        assert_eq!(ipfs.location(), "https://rpc.filebase.io");
+        let ipfs = TransportConfig::from_row("ipfs_rpc", &serde_json::json!({"baseUrl": crate::ipfs_transport::FILEBASE_RPC_URL}).to_string()).unwrap();
+        assert_eq!(ipfs.location(), crate::ipfs_transport::FILEBASE_RPC_URL);
         let s3 = TransportConfig::from_row(
             "s3",
             r#"{"endpoint":"https://s3.example.com","region":"auto","bucket":"b-1","prefix":"p","pathStyle":true}"#,
@@ -518,7 +518,7 @@ mod tests {
     fn every_kind_round_trips_through_its_row_with_a_label() {
         let mut configs = vec![
             TransportConfig::Folder(FolderConfig { path: "/tmp/sync".to_string(), label: None }),
-            TransportConfig::IpfsRpc(IpfsRpcConfig { base_url: "https://rpc.filebase.io".to_string(), label: None }),
+            TransportConfig::IpfsRpc(IpfsRpcConfig { base_url: crate::ipfs_transport::FILEBASE_RPC_URL.to_string(), label: None }),
             TransportConfig::S3(s3_config()),
         ];
         for config in &mut configs {
@@ -691,7 +691,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_ipfs_connector_refuses_to_delete_data() {
-        let config = TransportConfig::IpfsRpc(IpfsRpcConfig { base_url: "https://rpc.filebase.io".to_string(), label: None });
+        let config = TransportConfig::IpfsRpc(IpfsRpcConfig { base_url: crate::ipfs_transport::FILEBASE_RPC_URL.to_string(), label: None });
         let connector = Connector::open("ipfs", &config, None).await.unwrap();
         assert!(connector.delete_all_corpus_data().await.is_err());
         assert_eq!(connector.corpus_size_bytes().await, None);
