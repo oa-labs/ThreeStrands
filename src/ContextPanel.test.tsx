@@ -23,12 +23,6 @@ async function personLoaded(contactId:string){
   await waitFor(()=>expect(mailClient.contactFiles).toHaveBeenLastCalledWith(contactId,50));
 }
 
-/** Opens the person header's switcher and returns whom it offers, in order. */
-function otherPeople(header:HTMLElement){
-  fireEvent.click(within(header).getByRole("button",{name:/^Show history with /}));
-  return within(within(header).getByRole("list",{name:"Other people"})).getAllByRole("button").map(button=>button.title);
-}
-
 function renderPanel(overrides:Partial<Parameters<typeof ContextPanel>[0]>={}){
   return render(<ContextPanel detail={detail} accounts={[account]} onOpenThread={vi.fn()} {...overrides}/>);
 }
@@ -83,7 +77,7 @@ describe("ContextPanel",()=>{
     it("shows the sender of the message being read, or whom the user wrote to",async()=>{
       const {rerender}=render(panel({readingMessageId:"a"}));
       await personLoaded(partner.id);
-      expect(screen.getByRole("group",{name:"Showing history with"})).toHaveTextContent("Ana Ruiz");
+      expect(screen.queryByRole("group",{name:"Showing history with"})).not.toBeInTheDocument();
 
       rerender(panel({readingMessageId:"b"}));
       await personLoaded("derived:lee@vendor.net");
@@ -103,35 +97,25 @@ describe("ContextPanel",()=>{
       await personLoaded("derived:lee@vendor.net");
     });
 
-    it("lists the conversation's correspondents before the user's colleagues and switches to the one picked",async()=>{
-      const onSelectPerson=vi.fn();
-      const {rerender}=render(panel({readingMessageId:"c",onSelectPerson}));
+    it("follows the reader without offering a history person switcher",async()=>{
+      const {rerender}=render(panel({readingMessageId:"c"}));
       await personLoaded("derived:lee@vendor.net");
-      const header=screen.getByRole("group",{name:"Showing history with"});
-      expect(otherPeople(header)).toEqual(["ana@partner.org","pat@example.com"]);
-      fireEvent.click(within(header).getByRole("button",{name:/Ana Ruiz/}));
-      expect(onSelectPerson).toHaveBeenCalledWith("ana@partner.org");
+      expect(screen.queryByRole("button",{name:/^Show history with /})).not.toBeInTheDocument();
+      expect(screen.queryByRole("list",{name:"Other people"})).not.toBeInTheDocument();
+      rerender(panel({readingMessageId:"a"}));
       await personLoaded(partner.id);
-      expect(within(header).queryByRole("list",{name:"Other people"})).not.toBeInTheDocument();
-
-      // Moving to another message lets go of the pick.
-      rerender(panel({readingMessageId:"b",onSelectPerson}));
-      await personLoaded("derived:lee@vendor.net");
     });
 
-    it("closes the switcher on Escape and returns focus to it",async()=>{
-      render(panel({readingMessageId:"c"}));
+    it("leaves Escape handling to the context panel without a history switcher",async()=>{
+      const onKeyDown=vi.fn();
+      render(panel({readingMessageId:"c",onKeyDown}));
       await personLoaded("derived:lee@vendor.net");
-      const toggle=screen.getByRole("button",{name:/^Show history with /});
-      fireEvent.click(toggle);
-      const list=screen.getByRole("list",{name:"Other people"});
-      expect(within(list).getAllByRole("button")[0]).toHaveFocus();
-      fireEvent.keyDown(list,{key:"ArrowDown"});
-      expect(within(list).getAllByRole("button")[1]).toHaveFocus();
-      fireEvent.keyDown(list,{key:"Escape"});
+      const context=screen.getByRole("complementary",{name:"Conversation context"});
+      context.focus();
+      fireEvent.keyDown(context,{key:"Escape"});
+      expect(onKeyDown).toHaveBeenCalled();
+      expect(context).toHaveFocus();
       expect(screen.queryByRole("list",{name:"Other people"})).not.toBeInTheDocument();
-      expect(toggle).toHaveFocus();
-      expect(toggle).toHaveAttribute("aria-expanded","false");
     });
   });
 
@@ -417,17 +401,14 @@ describe("ContextPanel",()=>{
       vi.mocked(mailClient.contactActivity).mockResolvedValue({...noActivity,sentCount:3,receivedCount:4,threadCount:2});
     });
 
-    it("heads the person sections with the first To recipient and switches among the reply's recipients",async()=>{
-      renderPanel({selectedEmail:null,reply:reply([toBob,ccCarol])});
+    it("follows recipients selected in the reader without a history switcher",async()=>{
+      const {rerender}=renderPanel({selectedEmail:null,reply:reply([toBob,ccCarol])});
       const panel=screen.getByRole("complementary",{name:"Conversation context"});
       expect(await within(panel).findByRole("region",{name:"About Bob Lee"})).toBeInTheDocument();
       await personLoaded(bob.id);
       expect(mailClient.contactActivity).not.toHaveBeenCalled();
-      const header=within(panel).getByRole("group",{name:"Showing history with"});
-      expect(header).toHaveTextContent("Bob Lee");
-      expect(otherPeople(header)).toEqual(["carol@example.com"]);
-
-      fireEvent.click(within(header).getByRole("button",{name:"carol@example.com"}));
+      expect(within(panel).queryByRole("group",{name:"Showing history with"})).not.toBeInTheDocument();
+      rerender(<ContextPanel detail={detail} accounts={[account]} selectedEmail="carol@example.com" reply={reply([toBob,ccCarol])} onOpenThread={vi.fn()}/>);
       const card=await within(panel).findByRole("region",{name:"About Carol Ng"});
       expect(card).toHaveTextContent("Buyer");
       expect(card).toHaveTextContent("Prefers mornings");
@@ -437,19 +418,11 @@ describe("ContextPanel",()=>{
     it("follows recipients the reply gains or loses, not the conversation's participants",async()=>{
       const {rerender}=renderPanel({reply:reply([toBob])});
       await personLoaded(bob.id);
-      // One recipient leaves nobody to switch to; Jane is on the conversation but not on the reply.
-      const header=screen.getByRole("group",{name:"Showing history with"});
-      expect(within(header).queryByRole("button",{name:/other/})).not.toBeInTheDocument();
-
-      rerender(<ContextPanel detail={detail} accounts={[account]} reply={reply([toBob,ccCarol])} onOpenThread={vi.fn()}/>);
-      expect(otherPeople(header)).toEqual(["carol@example.com"]);
-      fireEvent.click(within(header).getByRole("button",{name:"carol@example.com"}));
+      expect(screen.queryByRole("group",{name:"Showing history with"})).not.toBeInTheDocument();
+      rerender(<ContextPanel detail={detail} accounts={[account]} reply={reply([ccCarol])} onOpenThread={vi.fn()}/>);
       await personLoaded(carol.id);
-
-      // Removing the chosen recipient returns the panel to the first one left.
       rerender(<ContextPanel detail={detail} accounts={[account]} reply={reply([toBob])} onOpenThread={vi.fn()}/>);
       await personLoaded(bob.id);
-
       rerender(<ContextPanel detail={detail} accounts={[account]} reply={reply([])} onOpenThread={vi.fn()}/>);
       expect(await screen.findByText("Add a recipient to see your history with them.")).toBeInTheDocument();
       expect(screen.queryByRole("region",{name:/^About /})).not.toBeInTheDocument();

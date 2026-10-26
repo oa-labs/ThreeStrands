@@ -3,7 +3,6 @@ import { mailClient } from "./data/client";
 import type { Account, ContactProfile, ContactTimelineItem, ThreadDetail } from "./domain";
 import { ContactFilesSection, RecentEmailsSection, ThreadOutlineSection, type RecentEmailItem } from "./ContextSections";
 import { RecipientSummary } from "./RecipientSections";
-import { ContextPersonHeader, type ContextPersonOption } from "./ContextPersonHeader";
 import { isColleagueAddress } from "./contactContext";
 import { messagePerson } from "./readingMessage";
 import { parseAddress, splitAddressList } from "./emailAddress";
@@ -31,17 +30,15 @@ export type ContextPerson = {
 /**
  * The single right-side panel for a conversation, in two groups. First what
  * is about the conversation: the AI brief and suggestions, related tasks and
- * meetings, and an outline of a long conversation. Then, under a header
- * naming them, what is about the selected participant: files they sent, other
+ * meetings, and an outline of a long conversation. Then what is about the
+ * selected participant: files they sent, other
  * emails with them. Their contact
  * card lives in the reader, on hover over their name. Sections without
  * content are left out.
  *
  * The selected participant is the person of the message being read: its
  * sender, or whom the user wrote to. Picking someone, by their name in a
- * message header or from the header's switcher, holds until the reader moves
- * to another message. The switcher lists the conversation's correspondents
- * before the user's colleagues.
+ * message header, holds until the reader moves to another message.
  *
  * The AI actions, Find Times and the brief, share one row at the top: each is
  * a button until it has something to show, then opens to full width below
@@ -58,15 +55,13 @@ export type ContextPerson = {
  * sender's history and one-click decisions first in the person group. Other
  * conversations show Trust only when something needs a look.
  */
-export function ContextPanel({ detail, accounts, selectedEmail = null, readingMessageId = null, onSelectPerson, reply = null, onOpenThread, onShowMessage, onShowLink, availability, assist, related, chat, sender, idle = null, onKeyDown }: {
+export function ContextPanel({ detail, accounts, selectedEmail = null, readingMessageId = null, reply = null, onOpenThread, onShowMessage, onShowLink, availability, assist, related, chat, sender, idle = null, onKeyDown }: {
   detail: ThreadDetail | null;
   accounts: Account[];
   /** A participant the reader picked from a message header; ignored if not on the conversation. */
   selectedEmail?: string | null;
   /** The message being read, whose person the panel shows unless someone is picked. */
   readingMessageId?: string | null;
-  /** Called when the reader picks someone in the panel's person header. */
-  onSelectPerson?(email: string): void;
   /**
    * The reply being written in this conversation: its recipients, To first,
    * and the sections to show above the conversation's own while it is open.
@@ -116,17 +111,7 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, readingMe
     }
     return participants[0]?.email ?? "";
   }, [detail, participants, own, readingMessageId]);
-  // A person chosen in the header, until the reader picks someone else in a
-  // message or moves to another message.
-  const [headerPick, setHeaderPick] = useState<string | null>(null);
-  const pickSource = `${selectedEmail?.toLocaleLowerCase() ?? ""}\n${readingMessageId ?? ""}`;
-  const [lastPickSource, setLastPickSource] = useState(pickSource);
-  if (lastPickSource !== pickSource) { setLastPickSource(pickSource); setHeaderPick(null); }
-  const picked = headerPick ?? selectedEmail?.toLocaleLowerCase() ?? "";
-  const selectPerson = (address: string) => {
-    setHeaderPick(address);
-    onSelectPerson?.(address);
-  };
+  const picked = selectedEmail?.toLocaleLowerCase() ?? "";
   const ownEmails = useMemo(() => accounts.map((account) => account.email), [accounts]);
   const replyRecipients = reply?.recipients;
   const recipients = useMemo(() => replyRecipients ?? [], [replyRecipients]);
@@ -255,19 +240,6 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, readingMe
     }
     return [...merged.values()].sort((left, right) => right.sentAt.localeCompare(left.sentAt));
   }, [timeline, senderHistory.history, detail?.thread.id]);
-  // Whom the header can switch to: the reply's recipients while replying,
-  // otherwise everyone on the conversation, one entry per saved contact. The
-  // user's colleagues come last, since the conversation is rarely about them.
-  const switchable = useMemo<ContextPersonOption[]>(() => {
-    const options: ContextPersonOption[] = reply
-      ? recipients.map((item) => ({
-        email: item.email,
-        name: item.name || chips.find((chip) => chip.emails.includes(item.email))?.name || null,
-      }))
-      : chips.map((chip) => ({ email: chip.emails[0], emails: chip.emails, name: chip.name || null }));
-    const colleague = (option: ContextPersonOption) => isColleagueAddress(option.email, ownEmails);
-    return [...options.filter((option) => !colleague(option)), ...options.filter(colleague)];
-  }, [reply, recipients, chips, ownEmails]);
   const showMessage = onShowMessage ?? ((threadId: string) => onOpenThread(threadId));
   return (
     <aside className="context-panel" aria-label="Conversation context" tabIndex={-1} onKeyDown={onKeyDown}>
@@ -278,14 +250,6 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, readingMe
       {inbound ? <TrustSection key={inbound.id} message={inbound} subject={detail?.thread.subject ?? ""} bulk={Boolean(bulk)} prior={inboundPrior}
         onShowLink={onShowLink && detail ? (link) => onShowLink(detail.thread.id, inbound.id, link) : undefined} /> : null}
       {detail ? <ThreadOutlineSection detail={detail} accounts={accounts} onShowMessage={showMessage} /> : null}
-      {detail ? (
-        <ContextPersonHeader
-          people={switchable}
-          selectedEmail={email}
-          displayName={loadedEmail === email ? profile?.displayName : null}
-          onSelect={selectPerson}
-        />
-      ) : null}
       {detail && reply ? (recipient ? (
         <RecipientSummary
           email={recipient.email}

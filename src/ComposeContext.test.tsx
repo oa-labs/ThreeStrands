@@ -139,24 +139,23 @@ describe("ComposeContext", () => {
     }
   });
 
-  it("switches whose history is shown among several recipients", async () => {
-    renderPanel({ draft: { ...draft, to: "ann@partner.com", cc: "Pal <pal@friends.org>" } });
-    const header = screen.getByRole("group", { name: "Showing history with" });
-    expect(header).toHaveTextContent("ann@partner.com");
-    fireEvent.click(within(header).getByRole("button", { name: /^Show history with / }));
-    fireEvent.click(within(header).getByRole("button", { name: /^Pal/ }));
-    expect(header).toHaveTextContent("Pal");
-    expect(within(header).queryByRole("button", { name: /^Pal/ })).not.toBeInTheDocument();
+  it("follows the first recipient's history without a person selector", async () => {
+    const { props, rerender } = renderPanel({ draft: { ...draft, to: "ann@partner.com", cc: "Pal <pal@friends.org>" } });
+    await screen.findByRole("region", { name: "About Ann Lee" });
+    await screen.findByRole("region", { name: "Recent emails" });
+    expect(screen.queryByRole("group", { name: "Showing history with" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Show history with / })).not.toBeInTheDocument();
+    rerender(<ComposeContext {...props} draft={{ ...draft, to: "Pal <pal@friends.org>" }} />);
     await waitFor(() => expect(mailClient.contactTimeline).toHaveBeenLastCalledWith("derived:pal@friends.org", 0, 5));
+    await waitFor(() => expect(mailClient.contactFiles).toHaveBeenLastCalledWith("derived:pal@friends.org", 50));
   });
 
-  it("lists the user's colleagues after the people the message is going to", async () => {
+  it("prefers an outside recipient's history over the user's colleagues", async () => {
     renderPanel({ draft: { ...draft, to: "Sam <sam@acme.com>, ann@partner.com" } });
-    const header = screen.getByRole("group", { name: "Showing history with" });
-    // The first outside recipient is shown, not the colleague listed first.
-    expect(header).toHaveTextContent("ann@partner.com");
-    fireEvent.click(within(header).getByRole("button", { name: /^Show history with / }));
-    expect(within(within(header).getByRole("list", { name: "Other people" })).getAllByRole("button").map((button) => button.title)).toEqual(["sam@acme.com"]);
+    await screen.findByRole("region", { name: "About Ann Lee" });
+    expect(mailClient.contactTimeline).toHaveBeenCalledWith(ann.id, 0, 5);
+    expect(mailClient.getContactProfile).not.toHaveBeenCalledWith("derived:sam@acme.com");
+    expect(screen.queryByRole("list", { name: "Other people" })).not.toBeInTheDocument();
   });
 
   it("offers the address the user probably meant and applies it through the composer", async () => {

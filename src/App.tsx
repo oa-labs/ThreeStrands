@@ -1365,7 +1365,6 @@ export function App() {
           accounts={accounts}
           selectedEmail={contextPersonEmail}
           readingMessageId={readingMessageId}
-          onSelectPerson={contactCardActions.onSelectPerson}
           reply={composerBelongsToVisibleThread && correspondence.liveDraft ? {
             recipients: replyRecipients,
             checks: (

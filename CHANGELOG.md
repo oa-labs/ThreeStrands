@@ -4,6 +4,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### Improved
+- Removed the **History with** person selector from the right context panel. Recent emails and files still follow the message you’re reading or the recipients you’re writing to.
+
 ## 0.167.1 — 2026-10-25
 
 ### New
