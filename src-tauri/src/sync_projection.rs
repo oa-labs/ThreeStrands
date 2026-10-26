@@ -88,7 +88,7 @@ impl Database {
                 EntityType::Draft => {}
                 EntityType::Snippet => self.delete_synced_row("DELETE FROM snippets WHERE id=?1", entity_id)?,
                 EntityType::SplitInbox => self.delete_synced_row("DELETE FROM split_inboxes WHERE id=?1", entity_id)?,
-                EntityType::SenderConfirmation => self.delete_synced_row("DELETE FROM sender_delivery_patterns WHERE id=?1", entity_id)?,
+                EntityType::SenderConfirmation => self.forget_sender_delivery(entity_id)?,
                 EntityType::SenderRule => self.delete_synced_row("DELETE FROM sender_rules WHERE id=?1", entity_id)?,
                 EntityType::Contact => self.delete_contact_profile(entity_id)?,
                 // Unlinks local tasks and goals the same way the deleting device did.
