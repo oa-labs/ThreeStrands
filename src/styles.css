@@ -2374,6 +2374,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 /* Trust: a one-word verdict in the heading, then the tricks found, then Details folded below. */
 .context-trust-summary { display:inline-flex; align-items:center; gap:var(--space-1); color:var(--muted); font-size:var(--text-meta); font-weight:var(--weight-medium); }
 .context-trust-careful { color:var(--warning); }
+.context-trust-warning .context-section-header h3 { color:var(--warning); }
 .context-trust-known { color:var(--success); }
 .context-trust-details { margin-top:var(--space-1); }
 .context-trust-details-toggle { display:flex; align-items:center; width:100%; min-width:0; padding:var(--space-0-5) var(--context-row-inset); border:0; border-radius:var(--radius-sm); color:var(--muted); background:transparent; font:inherit; font-size:var(--text-meta); text-align:left; cursor:pointer; }

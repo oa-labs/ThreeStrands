@@ -91,11 +91,18 @@ When a message supports it, press <kbd>⌘/Ctrl + u</kbd> or use the reader's un
 
 ## Trust and Attachment Warnings
 
-The **Trust** section checks for common email tricks on your computer. **Be careful** explains findings such as a familiar name used by a new address, a lookalike domain, a subject line that disguises words with look-alike letters, a misleading link, or a risky attachment from someone you have not written to. A warning also appears beside the sender's name in the message, and the most serious ones appear above the message itself. A small gray shield beside the name marks a **Known sender**: the app recognizes your correspondence or a saved contact and has evidence verifying the sender. It is not a promise that every message is safe. Hover over the shield or warning to see the sender details, or click it to keep them open.
+ThreeStrands checks each message for common email tricks, entirely on your computer, and shows what it finds beside the sender's name:
+
+- A small gray shield marks a **Known sender**: someone you write to or have saved as a contact, whose email is verified as coming from them. It is not a promise that every message is safe.
+- An amber warning names what looks wrong, such as a familiar name used by a new address, a lookalike domain, a subject line that disguises words with look-alike letters, a misleading link, or a risky attachment from someone you have not written to.
+
+Hover over the shield or warning to see the sender details, or click it to keep them open. The most serious warnings (a borrowed name, a lookalike address or link, or a risky attachment) also appear above the message itself.
+
+When something looks wrong, the side panel shows a **Be careful** section with every finding. For newsletters and other bulk mail, a **Sender checks** section shows the same details even when nothing looks wrong.
 
 Choose **Show link** to find the link in the message. **Details** expands the mail server’s sender checks, the sites links open, and tracking images. Links in folded quoted history are left out of these warnings. Remote images remain blocked until you allow them, subject to your privacy settings.
 
-<ts-shot scene="trust" alt="Trust explains a misleading link with a Be careful warning and a Show link action."></ts-shot>
+<ts-shot scene="trust" alt="The Be careful section explains a misleading link and offers a Show link action."></ts-shot>
 
 Risky attachments, including programs, macro-enabled Office files, disk images, attached web pages, and disguised filenames such as invoice.pdf.exe, show a warning and reason before opening. They are never previewed.
 

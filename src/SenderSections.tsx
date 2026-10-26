@@ -213,9 +213,10 @@ export function useTrustReport({ message, subject, bulk, prior, enabled = true }
 }
 
 /**
- * Whether the latest message from someone else can be trusted. Be careful
- * heads the section when anything warns. A known sender gets no section: the
- * reader's shield beside their name already offers the same details. Rows give the
+ * Whether the latest message from someone else can be trusted. The section
+ * is titled Be careful when anything warns, and Sender checks for bulk mail
+ * with nothing to warn about. A known sender gets no section: the reader's
+ * shield beside their name already offers the same details. Rows give the
  * concrete tricks, such as a display name borrowed from a contact, a
  * look-alike domain or subject word, a link that hides where it goes, or a risky attachment,
  * and then the sender's history with the user; link rows can show their
@@ -236,16 +237,14 @@ export function TrustSection({ message, subject, bulk, prior, onShowLink }: {
   if (!report) return null;
   if (report.rows.length === 0 && report.details.length === 0) return null;
   if (report.summary === "known" || (!bulk && !report.summary)) return null;
-  const summary = report.summary === "careful"
-    ? <span className="context-trust-summary context-trust-careful"><TriangleAlert size={ICON_SIZE.xs} aria-hidden="true" />Be careful</span>
-    : null;
+  const title = report.summary === "careful" ? "Be careful" : "Sender checks";
   return (
+    // The id keeps the collapse state the section had under its earlier Trust title.
     <ContextSection
       id="trust"
-      className="context-trust"
-      title="Trust"
-      label="Trust"
-      actions={summary}
+      className={report.summary === "careful" ? "context-trust context-trust-warning" : "context-trust"}
+      title={title}
+      label={title}
       limit={report.rows.length}
       rows={report.rows.map((finding) => trustRow(finding, onShowLink))}
       closing={<TrustDetails key={message.id} details={report.details} />}

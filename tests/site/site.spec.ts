@@ -706,7 +706,7 @@ test.describe("docs", () => {
     }
     await page.goto("./docs/triage.html");
     const triage = page.locator(".docs-body");
-    for (const claim of ["Muted Senders", "Known sender", "not a promise that every message is safe", "never previewed", "Remote images remain blocked until you allow them"]) {
+    for (const claim of ["Muted Senders", "Known sender", "Be careful", "Sender checks", "not a promise that every message is safe", "never previewed", "Remote images remain blocked until you allow them"]) {
       await expect(triage).toContainText(claim);
     }
   });

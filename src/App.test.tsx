@@ -848,7 +848,7 @@ describe("bulk sender decisions in the context panel", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
     const panel = screen.getByRole("complementary", { name: "Conversation context" });
     const sender = await within(panel).findByRole("region", { name: "Recent emails" });
-    expect(within(panel).getByRole("region", { name: "Trust" })).toBeInTheDocument();
+    expect(within(panel).getByRole("region", { name: "Sender checks" })).toBeInTheDocument();
 
     await act(async () => {
       within(sender).getByRole("button", { name: "Archive 3 in Inbox" }).click();
