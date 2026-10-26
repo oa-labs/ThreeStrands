@@ -1104,6 +1104,23 @@ kbd {
 .message-sender-row strong .address { max-width: 100%; }
 .message-sender-row strong .address-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .message-sender-row time, .message-recipients { color: var(--muted); font-size: var(--text-meta); }
+/* Trust beside the sender: a known sender's shield stays quiet; a warning names itself in the warning tone. */
+.message-trust { display: inline-flex; min-width: 0; }
+.message-trust-badge { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; padding: var(--space-0-5) var(--space-1); border: 0; border-radius: var(--radius-sm); background: transparent; font: inherit; font-size: var(--text-meta); cursor: pointer; }
+.message-trust-badge:hover { background: var(--hover); }
+.message-trust-known { color: var(--muted); }
+.message-trust-careful { color: var(--warning); font-weight: var(--weight-medium); }
+.message-trust-careful svg { flex: 0 0 auto; }
+.message-trust-headline { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.message-trust-card { padding: var(--space-2) 0; }
+.message-trust-card > .context-trust-summary { display: flex; padding: var(--space-1) var(--context-row-inset); }
+/* The strongest warnings sit above the body in the shared warning notice. */
+.message-trust-banner { margin-bottom: var(--space-3); font-size: var(--text-secondary); }
+.message-trust-banner > svg { flex: 0 0 auto; margin-top: var(--space-0-5); }
+.message-trust-banner-list { display: grid; gap: var(--space-1); min-width: 0; margin: 0; padding: 0; list-style: none; }
+.message-trust-banner-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-2); }
+.message-trust-banner-title { color: var(--text); font-weight: var(--weight-medium); }
+.message-trust-banner-detail { color: var(--muted); overflow-wrap: anywhere; }
 .message-sender-row time { flex: 0 0 auto; margin-left: auto; white-space: nowrap; }
 .message-header-actions { display: flex; align-items: center; gap: var(--space-0-5); flex: 0 0 auto; }
 .message-recipients { line-height: var(--leading-normal); }

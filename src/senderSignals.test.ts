@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Message, MessageAttachment, MessageTrust, SenderFamiliarity, SenderRule, SplitInbox, ThreadDetail } from "./domain";
 import { buildThreadTextIndex } from "./quotedHistory";
-import { analyzeLinks, bulkMessage, latestInbound, matchingRule, matchingSplit, siteOf, trustReport, TRUST_ATTACHMENT_LIMIT, TRUST_MISMATCH_LIMIT, TRUST_SUBJECT_WORD_LIMIT, type LinkAnalysis, type TrustInput } from "./senderSignals";
+import { analyzeLinks, bulkMessage, latestInbound, matchingRule, matchingSplit, siteOf, trustHeadline, trustReport, TRUST_ATTACHMENT_LIMIT, TRUST_MISMATCH_LIMIT, TRUST_SUBJECT_WORD_LIMIT, type LinkAnalysis, type TrustInput } from "./senderSignals";
 
 const own = new Set(["you@example.com"]);
 
@@ -382,6 +382,36 @@ describe("trust signals from the user's own history", () => {
     expect(warnings(input({ attachments: files, familiarity: { ...stranger, sentCount: 4 } })).map((finding) => finding.title)).toEqual(["invoice.pdf.exe", "setup.exe"]);
     const many = Array.from({ length: TRUST_ATTACHMENT_LIMIT + 2 }, (_, index) => attachment(`tool${index}.exe`));
     expect(warnings(input({ attachments: many }))).toHaveLength(TRUST_ATTACHMENT_LIMIT);
+  });
+
+  it("marks borrowed names, look-alike domains, and risky files strong enough to head the message", () => {
+    const strongKeys = (value: TrustInput) => warnings(value).filter((finding) => finding.strong).map((finding) => finding.kind);
+    expect(strongKeys(input({ sender: "Jane Rivera <jr@freemail.example>", familiarity: { ...stranger, nameMatches: ["jane@partner.example"] } }))).toEqual(["impersonation"]);
+    expect(strongKeys(input({ sender: '"billing@studio.example" <desk@other.example>' }))).toEqual(["impersonation"]);
+    expect(strongKeys(input({ sender: "Jane <jane@partn3r.example>", trust: { ...verified, fromDomain: "partn3r.example" } }))).toEqual(["lookalike"]);
+    expect(strongKeys(input({ links: analyzeLinks('<a href="https://partnr.example/pay">Pay</a>') }))).toEqual(["link"]);
+    expect(strongKeys(input({ links: analyzeLinks('<a href="https://xn--shp-ted.example/">Shop</a>'), familiarity: null }))).toEqual(["link"]);
+    expect(strongKeys(input({ attachments: [attachment("invoice.pdf.exe")] }))).toEqual(["attachment"]);
+  });
+
+  it("keeps weaker warnings off the message body", () => {
+    const weak = warnings(input({
+      subject: "COMPLETE REVlEW",
+      trust: { ...verified, replyTo: "desk@elsewhere.example" },
+      links: analyzeLinks('<a href="http://198.51.100.7/">partner.example</a><a href="https://partner.example@other.example/">Sign in</a>'),
+    }));
+    expect(weak.map((finding) => finding.kind)).toEqual(["subject", "replyTo", "mismatch", "link"]);
+    expect(weak.some((finding) => finding.strong)).toBe(false);
+    const failed = warnings(input({ trust: { ...verified, authentication: { ...verified.authentication!, dmarc: "fail" } } }));
+    expect(failed).toMatchObject([{ kind: "authentication" }]);
+    expect(failed[0].strong).toBeUndefined();
+  });
+
+  it("sums up a report for the reader header as its first warning and a count of the rest", () => {
+    expect(trustHeadline(trustReport(input({ familiarity: { ...stranger, sentCount: 3 } })))).toBeNull();
+    expect(trustHeadline(trustReport(input({ attachments: [attachment("setup.exe")] })))).toBe("setup.exe");
+    expect(trustHeadline(trustReport(input({ subject: "COMPLETE REVlEW", attachments: [attachment("setup.exe"), attachment("tool.exe")] }))))
+      .toBe("Subject uses look-alike letters · 2 more");
   });
 
   it("keeps a Reply-To at a domain the user writes to out of the warnings", () => {

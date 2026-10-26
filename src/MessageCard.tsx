@@ -22,6 +22,9 @@ import { formatMailTimestamp } from "./threadPresentation";
 import { ICON_SIZE } from "./iconSizes";
 import { selectedMessageQuote } from "./selectedMessageQuote";
 import { formatShortcutStep } from "./shortcutCatalog";
+import { useTrustReport } from "./SenderSections";
+import type { TrustLink } from "./senderSignals";
+import { TrustBadge, TrustBanner } from "./TrustBadge";
 
 /** A long recipient list (To and Cc together) shows this many names, then "and N more" to reveal the rest. */
 const RECIPIENT_PREVIEW_LIMIT = 20;
@@ -57,6 +60,15 @@ type MessageCardProps = {
   onNotice: (message: string) => void;
   /** A link in this message to show, such as one the Trust section warns about. */
   revealLink?: LinkReveal | null;
+  /**
+   * The conversation's subject. When set, a message someone else sent shows
+   * its trust verdict beside the sender and its strongest warnings above the body.
+   */
+  subject?: string;
+  /** Whether the conversation is bulk mail, as the Trust section judges it. */
+  bulk?: boolean;
+  /** Shows a link a trust warning is about. */
+  onShowLink?: (messageId: string, link: TrustLink) => void;
 };
 
 /**
@@ -89,6 +101,9 @@ export const MessageCard = memo(function MessageCard({
   onImageClick,
   onNotice,
   revealLink = null,
+  subject,
+  bulk = false,
+  onShowLink,
 }: MessageCardProps) {
   const parsedSender = parseAddress(message.sender);
   const senderAccount = accounts.find(
@@ -96,6 +111,14 @@ export const MessageCard = memo(function MessageCard({
   );
   const senderName = senderAccount?.displayName?.trim() || parsedSender.name;
   const priorThreadText = useMemo(() => threadText?.before(index), [threadText, index]);
+  const trust = useTrustReport({
+    message,
+    subject: subject ?? "",
+    bulk,
+    prior: priorThreadText,
+    enabled: isExpanded && subject !== undefined && !senderAccount && !queuedItem,
+  });
+  const showTrustLink = useMemo(() => onShowLink ? (link: TrustLink) => onShowLink(message.id, link) : undefined, [onShowLink, message.id]);
   const senderDisplayName = formatDisplayName(senderName);
   const downloadableAttachments = useMemo(() => {
     const referencedContentIds = referencedImageContentIds(message.bodyHtml);
@@ -171,6 +194,7 @@ export const MessageCard = memo(function MessageCard({
     <div className="message-header-details">
       <div className="message-sender-row">
         <strong><MessageAddress address={message.sender} displayName={senderDisplayName} own={ownEmails} /></strong>
+        {trust ? <TrustBadge report={trust} onShowLink={showTrustLink} /> : null}
         {queuedItem ? null : (
           <div className="message-header-actions">
             <HoverTooltip label="Reply" placement="bottom">
@@ -279,6 +303,7 @@ export const MessageCard = memo(function MessageCard({
         </button>
       </header>
       <div id={cardBodyId} className="message-card-body">
+        {trust ? <TrustBanner report={trust} onShowLink={showTrustLink} /> : null}
         <SafeMessage
           html={message.bodyHtml}
           text={message.bodyText}

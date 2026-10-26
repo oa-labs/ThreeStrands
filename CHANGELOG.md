@@ -4,6 +4,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### New
+- The reading pane now shows whether to trust a sender right beside their name. A sender you write to whose mail checks out gets a small gray shield; a message with something suspicious gets a warning that says what's wrong. Hover over it to see the sender details, or click to keep them open. The most serious warnings, such as a familiar name from a new address, a look-alike address or link, or a risky attachment, also appear above the message itself.
+
 ## 0.167.1 — 2026-10-25
 
 ### New

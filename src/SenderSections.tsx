@@ -7,7 +7,7 @@ import { ContextRow, ContextSection } from "./ContextSections";
 import { ICON_SIZE } from "./iconSizes";
 import type { PriorThreadText } from "./quotedHistory";
 import { logBackgroundFailure } from "./errors";
-import { analyzeLinks, matchingRule, matchingSplit, SENDER_HISTORY_LIMIT, trustReport, type TrustFinding, type TrustLink } from "./senderSignals";
+import { analyzeLinks, matchingRule, matchingSplit, SENDER_HISTORY_LIMIT, trustReport, type TrustFinding, type TrustLink, type TrustReport } from "./senderSignals";
 
 /** The bulk sender a Sender section is about. */
 export type SenderTarget = { accountId: string; email: string; name: string };
@@ -114,7 +114,8 @@ function findingIcon(finding: TrustFinding) {
   return <Icon size={ICON_SIZE.sm} />;
 }
 
-function trustRow(finding: TrustFinding, onShowLink?: (link: TrustLink) => void) {
+/** One Trust finding as a context row; link findings offer Show link. */
+export function trustRow(finding: TrustFinding, onShowLink?: (link: TrustLink) => void) {
   const link = finding.link;
   return (
     <ContextRow
@@ -138,7 +139,8 @@ function detailsSummary(details: TrustFinding[]): string {
   }).join(" · ");
 }
 
-function TrustDetails({ details }: { details: TrustFinding[] }) {
+/** The folded Details under a trust report: sender checks, sites, and tracking. */
+export function TrustDetails({ details }: { details: TrustFinding[] }) {
   const [open, setOpen] = useState(false);
   const id = useId();
   if (details.length === 0) return null;
@@ -154,7 +156,61 @@ function TrustDetails({ details }: { details: TrustFinding[] }) {
   );
 }
 
-type TrustReads = { id: string; trust: MessageTrust | null; familiarity: SenderFamiliarity | null };
+type TrustReads = { key: string; trust: MessageTrust | null; familiarity: SenderFamiliarity | null };
+
+/**
+ * Reads still in flight, shared so the reader header and the Trust section
+ * opening the same message ask once. Settled reads are not kept, so a later
+ * look sees current history.
+ */
+const pendingTrustReads = new Map<string, Promise<TrustReads>>();
+
+function readTrust(message: Message, key: string): Promise<TrustReads> {
+  const pending = pendingTrustReads.get(key);
+  if (pending) return pending;
+  const from = parseAddress(message.sender);
+  const failed = (what: string) => (reason: unknown) => {
+    logBackgroundFailure(what)(reason);
+    return null;
+  };
+  const read = Promise.all([
+    mailClient.messageTrust(message.id).catch(failed("Message trust")),
+    mailClient.senderFamiliarity(message.id, from.email, from.name).catch(failed("Sender familiarity")),
+  ]).then(([trust, familiarity]) => ({ key, trust, familiarity }))
+    .finally(() => pendingTrustReads.delete(key));
+  pendingTrustReads.set(key, read);
+  return read;
+}
+
+/**
+ * The trust report for a message someone else sent, or null until both of
+ * its reads finish (so nothing appears and then reorders) or while
+ * `enabled` is false. The reader header and the Trust section both use it,
+ * so they always agree.
+ */
+export function useTrustReport({ message, subject, bulk, prior, enabled = true }: {
+  message: Message;
+  subject: string;
+  bulk: boolean;
+  prior?: PriorThreadText;
+  enabled?: boolean;
+}): TrustReport | null {
+  const [reads, setReads] = useState<TrustReads | null>(null);
+  const key = `${message.id}\n${message.sender}`;
+  useEffect(() => {
+    if (!enabled) return;
+    let active = true;
+    readTrust(message, key).then((loaded) => { if (active) setReads(loaded); });
+    return () => { active = false; };
+    // `key` covers the message fields the reads use.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, key]);
+  const links = useMemo(() => enabled ? analyzeLinks(message.bodyHtml, prior) : null, [enabled, message.bodyHtml, prior]);
+  return useMemo(() => {
+    if (!enabled || !links || reads?.key !== key) return null;
+    return trustReport({ trust: reads.trust, links, familiarity: reads.familiarity, sender: message.sender, subject, attachments: message.attachments ?? [], bulk });
+  }, [enabled, links, reads, key, message.sender, message.attachments, subject, bulk]);
+}
 
 /**
  * Whether the latest message from someone else can be trusted. A summary
@@ -176,24 +232,8 @@ export function TrustSection({ message, subject, bulk, prior, onShowLink }: {
   prior?: PriorThreadText;
   onShowLink?(link: TrustLink): void;
 }) {
-  const [reads, setReads] = useState<TrustReads | null>(null);
-  useEffect(() => {
-    let active = true;
-    const from = parseAddress(message.sender);
-    const failed = (what: string) => (reason: unknown) => {
-      logBackgroundFailure(what)(reason);
-      return null;
-    };
-    Promise.all([
-      mailClient.messageTrust(message.id).catch(failed("Message trust")),
-      mailClient.senderFamiliarity(message.id, from.email, from.name).catch(failed("Sender familiarity")),
-    ]).then(([trust, familiarity]) => { if (active) setReads({ id: message.id, trust, familiarity }); });
-    return () => { active = false; };
-  }, [message.id, message.sender]);
-  const links = useMemo(() => analyzeLinks(message.bodyHtml, prior), [message.bodyHtml, prior]);
-  // Wait for both reads so the section does not appear and then reorder.
-  if (reads?.id !== message.id) return null;
-  const report = trustReport({ trust: reads.trust, links, familiarity: reads.familiarity, sender: message.sender, subject, attachments: message.attachments ?? [], bulk });
+  const report = useTrustReport({ message, subject, bulk, prior });
+  if (!report) return null;
   if (report.rows.length === 0 && report.details.length === 0) return null;
   if (!bulk && !report.summary) return null;
   const summary = report.summary === "careful"

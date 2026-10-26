@@ -90,6 +90,7 @@ import { sharedChatAttachments, ThreadChat } from "./ThreadChat";
 import { ThreadList, ThreadRow } from "./ThreadList";
 import { ThreadTasks } from "./ThreadTasks";
 import { threadTextIndex } from "./threadTextIndex";
+import { bulkMessage, type TrustLink } from "./senderSignals";
 import { UnsubscribeConfirm } from "./UnsubscribeConfirm";
 import { SenderSplitDialog } from "./SenderSplitDialog";
 import { MuteSenderDialog } from "./MuteSenderDialog";
@@ -474,6 +475,15 @@ export function App() {
     respondToMessage,
     editMessageAsNew,
   } = useReaderActions({ reader, displayedMessages, visibleDetail, selected, correspondence, jumpToThread, mailbox, includeArchived, recordTriageEvent });
+  // The reader header judges trust as the Trust section does.
+  const visibleBulk = useMemo(() => Boolean(visibleDetail && bulkMessage(
+    visibleDetail,
+    new Set(accounts.map((account) => account.email.toLocaleLowerCase())),
+  )), [accounts, visibleDetail]);
+  const visibleThreadId = visibleDetail?.thread.id;
+  const showTrustLink = useCallback((messageId: string, link: TrustLink) => {
+    if (visibleThreadId) showMessageLink(visibleThreadId, messageId, link);
+  }, [showMessageLink, visibleThreadId]);
 
   const interactionScope = correspondence.activeDraft
     ? "compose"
@@ -1197,6 +1207,9 @@ export function App() {
                     onImageClick={setLightboxImageSrc}
                     onNotice={showNoticeMessage}
                     revealLink={linkReveal?.messageId === message.id ? linkReveal.reveal : null}
+                    subject={visibleDetail.thread.subject}
+                    bulk={visibleBulk}
+                    onShowLink={showTrustLink}
                   />
                 );
             }) : null}

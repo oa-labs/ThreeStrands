@@ -198,6 +198,11 @@ export type TrustFinding = {
   detail: string;
   /** The link a link finding is about, so the reader can show it. */
   link?: TrustLink;
+  /**
+   * A warning strong enough to head the message itself: a borrowed name, a
+   * look-alike sender or link domain, or a risky attachment.
+   */
+  strong?: boolean;
 };
 
 /**
@@ -383,18 +388,19 @@ export function trustReport({ trust, links, familiarity, sender, subject, attach
       key: "impersonation",
       kind: "impersonation",
       title: `Name matches ${from.name}, but from a new address`,
+      strong: true,
       detail: `${email} · You know ${from.name} as ${familiarity.nameMatches[0]}${others > 0 ? ` and ${others} more` : ""}`,
     });
   }
   const claimed = from.name ? claimedInName(from.name, email) : null;
   if (claimed) {
-    warn({ key: "claimed-name", kind: "impersonation", title: `Name shows ${claimed}`, detail: `Sent from ${email}` });
+    warn({ key: "claimed-name", kind: "impersonation", title: `Name shows ${claimed}`, detail: `Sent from ${email}`, strong: true });
   }
   const imitated = known && fromSite ? lookalikeOf(fromSite, known) : null;
   if (imitated) {
-    warn({ key: "lookalike", kind: "lookalike", title: `Address looks like ${unicodeHost(imitated)}`, detail: `Sent from ${describeHost(domain)}` });
+    warn({ key: "lookalike", kind: "lookalike", title: `Address looks like ${unicodeHost(imitated)}`, detail: `Sent from ${describeHost(domain)}`, strong: true });
   } else if (domain && unicodeHost(asciiHost(domain)).split(".").some(mixesScripts)) {
-    warn({ key: "lookalike", kind: "lookalike", title: "Address uses look-alike letters", detail: `Sent from ${describeHost(domain)}` });
+    warn({ key: "lookalike", kind: "lookalike", title: "Address uses look-alike letters", detail: `Sent from ${describeHost(domain)}`, strong: true });
   }
 
   const disguised = subjectDisguises(subject);
@@ -429,7 +435,8 @@ export function trustReport({ trust, links, familiarity, sender, subject, attach
     if (!trick) continue;
     const key = `link:${trick.kind}:${trick.site}`;
     if (linkWarnings.some((finding) => finding.key === key)) continue;
-    linkWarnings.push({ key, tone: "warning", kind: "link", title: trick.title, detail: trick.detail, link: fact.link });
+    const strong = trick.kind === "lookalike" || trick.kind === "script";
+    linkWarnings.push({ key, tone: "warning", kind: "link", title: trick.title, detail: trick.detail, link: fact.link, ...(strong ? { strong } : {}) });
   }
   const listed = linkWarnings.slice(0, TRUST_MISMATCH_LIMIT);
   const extra = linkWarnings.length - listed.length;
@@ -446,7 +453,7 @@ export function trustReport({ trust, links, familiarity, sender, subject, attach
     // who know each other; programs and disguised names never are.
     .filter(({ risk }) => risk && (!acquainted || risk.kind === "program" || risk.kind === "disguised"));
   for (const { attachment, risk } of risky.slice(0, TRUST_ATTACHMENT_LIMIT)) {
-    warn({ key: `attachment:${attachment.id}`, kind: "attachment", title: attachment.filename, detail: risk?.reason ?? "" });
+    warn({ key: `attachment:${attachment.id}`, kind: "attachment", title: attachment.filename, detail: risk?.reason ?? "", strong: true });
   }
 
   const history: TrustFinding[] = [];
@@ -495,4 +502,14 @@ export function trustReport({ trust, links, familiarity, sender, subject, attach
     ? "careful"
     : acquainted && authentication?.tone === "verified" ? "known" : null;
   return { summary, rows, details };
+}
+
+/**
+ * The reader header's one line about a report that warns: the first warning,
+ * with a count of the rest. Null when nothing warns.
+ */
+export function trustHeadline(report: TrustReport): string | null {
+  const warnings = report.rows.filter((finding) => finding.tone === "warning");
+  if (warnings.length === 0) return null;
+  return warnings.length === 1 ? warnings[0].title : `${warnings[0].title} · ${warnings.length - 1} more`;
 }

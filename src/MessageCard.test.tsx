@@ -4,10 +4,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ContactCardContext, type ContactCardActions } from "./ContactCard";
 import type { OutboxItem } from "./correspondence";
 import { mailClient } from "./data/client";
-import type { Account, ContactProfile, Message } from "./domain";
+import type { Account, ContactProfile, Message, MessageTrust, SenderFamiliarity } from "./domain";
 import * as inlineAttachments from "./inlineAttachments";
 import { placeHoverCard } from "./AddressWithCard";
 import { MessageCard } from "./MessageCard";
+import { TrustSection } from "./SenderSections";
 import { threadTextIndex } from "./threadTextIndex";
 
 vi.mock("./inlineAttachments", async (importOriginal) => {
@@ -339,6 +340,98 @@ describe("MessageCard", () => {
       expect(screen.getByRole("button", { name: "Copy ada@example.com" })).toBeInTheDocument();
       expect(screen.queryByRole("group", { name: /Contact card/ })).not.toBeInTheDocument();
       expect(lookup).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("trust beside the sender", () => {
+    const verified: MessageTrust = { fromDomain: "example.com", authentication: { spf: "pass", dkim: "pass", dmarc: "pass", dkimDomains: ["example.com"], spfDomains: ["example.com"] }, replyTo: null };
+    const stranger: SenderFamiliarity = { sentCount: 0, firstSentAt: null, receivedBefore: true, contactName: null, nameMatches: [], knownDomains: ["partner.example"] };
+    const reads = (familiarity: SenderFamiliarity, trust: MessageTrust | null = verified) => ({
+      trust: vi.spyOn(mailClient, "messageTrust").mockResolvedValue(trust),
+      familiarity: vi.spyOn(mailClient, "senderFamiliarity").mockResolvedValue(familiarity),
+    });
+    const lookalikeLink = '<p>Please <a href="https://partnr.example/pay">pay the invoice</a>.</p>';
+
+    it("shows a quiet shield for a known sender that opens the same details as the Trust section", async () => {
+      reads({ ...stranger, sentCount: 3, firstSentAt: "2025-02-10T00:00:00Z" });
+      render(<MessageCard message={message} isExpanded {...stableProps} subject="Hello" />);
+      const shield = await screen.findByRole("button", { name: "Known sender. Show sender details" });
+      expect(shield).toHaveClass("message-trust-known");
+      expect(shield).toHaveTextContent("");
+      expect(screen.queryByRole("note", { name: "Be careful" })).not.toBeInTheDocument();
+
+      fireEvent.mouseEnter(shield.parentElement!);
+      const card = screen.getByRole("group", { name: "Sender details: Known sender" });
+      expect(card).toHaveTextContent("You've written to Ada 3 times");
+      fireEvent.click(within(card).getByRole("button", { name: /^Details/ }));
+      expect(within(card).getByText("Sender verified")).toBeVisible();
+    });
+
+    it("names the first warning beside the sender and puts strong warnings above the body", async () => {
+      reads(stranger);
+      const onShowLink = vi.fn();
+      render(<MessageCard message={{ ...message, bodyHtml: lookalikeLink }} isExpanded {...stableProps} subject="COMPLETE REVlEW" onShowLink={onShowLink} />);
+      const badge = await screen.findByRole("button", { name: /^Be careful: Subject uses look-alike letters · 1 more/ });
+      expect(badge).toHaveClass("message-trust-careful");
+      expect(badge).toHaveTextContent("Subject uses look-alike letters · 1 more");
+
+      // Only the look-alike link is strong enough for the body; the subject trick stays on the badge.
+      const banner = screen.getByRole("note", { name: "Be careful" });
+      expect(banner).toHaveTextContent("Link looks like partner.example");
+      expect(banner).not.toHaveTextContent("Subject");
+      fireEvent.click(within(banner).getByRole("button", { name: "Show link" }));
+      expect(onShowLink).toHaveBeenCalledWith("m1", { href: "https://partnr.example/pay", text: "pay the invoice" });
+    });
+
+    it("keeps the details open on click until clicked again or Escape, and shows a link from them", async () => {
+      reads(stranger);
+      const onShowLink = vi.fn();
+      render(<MessageCard message={{ ...message, bodyHtml: lookalikeLink }} isExpanded {...stableProps} subject="Invoice" onShowLink={onShowLink} />);
+      const badge = await screen.findByRole("button", { name: /^Be careful: Link looks like partner\.example/ });
+      fireEvent.click(badge);
+      expect(badge).toHaveAttribute("aria-expanded", "true");
+      fireEvent.mouseLeave(badge.parentElement!);
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 200)); });
+      expect(screen.getByRole("group", { name: "Sender details: Be careful" })).toBeInTheDocument();
+
+      fireEvent.keyDown(badge, { key: "Escape" });
+      expect(screen.queryByRole("group", { name: "Sender details: Be careful" })).not.toBeInTheDocument();
+      expect(badge).toHaveAttribute("aria-expanded", "false");
+
+      fireEvent.click(badge);
+      const card = screen.getByRole("group", { name: "Sender details: Be careful" });
+      fireEvent.click(within(card).getByRole("button", { name: "Show link" }));
+      expect(onShowLink).toHaveBeenCalledWith("m1", { href: "https://partnr.example/pay", text: "pay the invoice" });
+      expect(screen.queryByRole("group", { name: "Sender details: Be careful" })).not.toBeInTheDocument();
+    });
+
+    it("shows nothing for a stranger with nothing to warn about", async () => {
+      const { familiarity } = reads(stranger);
+      render(<MessageCard message={message} isExpanded {...stableProps} subject="Hello" />);
+      await waitFor(() => expect(familiarity).toHaveBeenCalled());
+      await act(async () => {});
+      expect(document.querySelector(".message-trust")).toBeNull();
+      expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    });
+
+    it("judges only expanded messages from someone else in a conversation", () => {
+      const { trust } = reads(stranger);
+      const { rerender } = render(<MessageCard message={message} isExpanded={false} {...stableProps} subject="Hello" />);
+      rerender(<MessageCard message={message} isExpanded {...stableProps} />);
+      rerender(<MessageCard message={{ ...message, sender: "Me <ME@example.com>" }} isExpanded {...stableProps} subject="Hello" accounts={[{ email: "me@example.com" } as Account]} />);
+      expect(trust).not.toHaveBeenCalled();
+    });
+
+    it("agrees with the Trust section and reads the message once for both", async () => {
+      const { trust, familiarity } = reads({ ...stranger, sentCount: 2 });
+      render(<>
+        <MessageCard message={message} isExpanded {...stableProps} subject="Hello" />
+        <TrustSection message={message} subject="Hello" bulk={false} />
+      </>);
+      await screen.findByRole("button", { name: "Known sender. Show sender details" });
+      expect(await screen.findByText("Known sender")).toBeInTheDocument();
+      expect(trust).toHaveBeenCalledTimes(1);
+      expect(familiarity).toHaveBeenCalledTimes(1);
     });
   });
 
