@@ -216,3 +216,7 @@ pub(crate) fn serialization_error(error: serde_json::Error) -> DatabaseError {
 #[cfg(test)]
 #[path = "db/tests/connection.rs"]
 mod connection_tests;
+
+#[cfg(test)]
+#[path = "db/tests/boundary.rs"]
+mod boundary_tests;
