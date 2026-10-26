@@ -1,5 +1,5 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { TextAlignStart, CalendarDays, ChevronLeft, ChevronRight, Clock3, MapPin, Pencil, RefreshCw, Trash, Video, X } from "lucide-react";
+import { TextAlignStart, CalendarDays, ChevronLeft, ChevronRight, Clock3, Link as LinkIcon, MapPin, Pencil, RefreshCw, Trash, Users, Video, X } from "lucide-react";
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HoverTooltip } from "./AppChrome";
 import {
@@ -19,7 +19,7 @@ import { calendarColorStyle, useCalendarColors } from "./calendarColors";
 import { removeFromScheduleCache, revalidateScheduleCache } from "./calendarScheduleCache";
 import { isEditableTarget } from "./commands";
 import { mailClient } from "./data/client";
-import type { ScheduleEvent } from "./domain";
+import type { CalendarOption, ScheduleEvent } from "./domain";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { errorMessage } from "./errors";
 import { useCalendarSchedule } from "./useCalendarSchedule";
@@ -124,11 +124,17 @@ export function scheduleRequestFor(date: Date) {
   };
 }
 
+// Expandable rows keep the icon column of the rows around them; this small
+// chevron replaces the browser's disclosure marker and turns when opened.
+function DisclosureChevron() {
+  return <ChevronRight className="calendar-event-disclosure" size={ICON_SIZE.xs} aria-hidden="true" />;
+}
+
 function EventAttendees({ event, attendees }: { event: ScheduleEvent; attendees: string[] }) {
   const summary = attendeeResponseSummary(event);
   return (
     <details className="calendar-event-attendees">
-      <summary>{attendees.length === 1 ? "1 attendee" : `${attendees.length} attendees`}{summary ? <span className="calendar-event-attendee-summary"> · {summary}</span> : null}</summary>
+      <summary><Users size={ICON_SIZE.lg} /><span>{attendees.length === 1 ? "1 attendee" : `${attendees.length} attendees`}{summary ? <span className="calendar-event-attendee-summary"> · {summary}</span> : null}<DisclosureChevron /></span></summary>
       <ul>{attendees.map((email) => {
         const status = event.attendeeResponses?.[email];
         const label = attendeeResponseLabel(status);
@@ -138,10 +144,33 @@ function EventAttendees({ event, attendees }: { event: ScheduleEvent; attendees:
   );
 }
 
-export function EventViewer({ event, onDismiss, onUpdated, embedded = false }: { embedded?: boolean; event: ScheduleEvent; onDismiss(): void; onUpdated(event: ScheduleEvent): void }) {
+/**
+ * What the event's calendar row says: the calendar's own name when it has one,
+ * plus the account when several accounts share the view. Null when it would
+ * only repeat the single connected account.
+ */
+export function eventCalendarLabel(event: ScheduleEvent, calendars: CalendarOption[]): string | null {
+  const calendar = calendars.find((item) => item.accountId === event.accountId && item.id === event.calendarId);
+  const named = calendar && !calendar.primary && calendar.name !== event.accountId ? calendar.name : null;
+  if (new Set(calendars.map((item) => item.accountId)).size > 1) return named ? `${named} · ${event.accountId}` : event.accountId;
+  return named;
+}
+
+export function EventViewer({ event, onDismiss, onUpdated, embedded = false, calendarLabel = event.accountId }: {
+  embedded?: boolean;
+  event: ScheduleEvent;
+  onDismiss(): void;
+  onUpdated(event: ScheduleEvent): void;
+  /** The calendar row's text; null leaves the row out. */
+  calendarLabel?: string | null;
+}) {
   const calendarColors = useCalendarColors();
   const viewerRef = useRef<HTMLDivElement>(null);
   const conferenceUrl = safeWebUrl(event.conferenceUrl);
+  // A location that is only a link reads as its host; the join button already
+  // covers a location that repeats the conference link.
+  const locationUrl = safeWebUrl(event.location?.trim());
+  const showLocation = Boolean(event.location) && !(locationUrl && locationUrl === conferenceUrl);
   const [editing, setEditing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
@@ -213,11 +242,11 @@ export function EventViewer({ event, onDismiss, onUpdated, embedded = false }: {
             }}>Join video meeting</a>
           </p>
         ) : null}
-        {event.location ? <p><MapPin size={ICON_SIZE.lg} /><span><EventLocation location={event.location} /></span></p> : null}
-        <p><CalendarDays size={ICON_SIZE.lg} /><span>{event.accountId}</span></p>
+        {showLocation && event.location ? <p>{locationUrl ? <LinkIcon size={ICON_SIZE.lg} /> : <MapPin size={ICON_SIZE.lg} />}<span><EventLocation location={event.location} linkLabel={locationUrl ? new URL(locationUrl).host : undefined} /></span></p> : null}
+        {calendarLabel ? <p><CalendarDays size={ICON_SIZE.lg} /><span>{calendarLabel}</span></p> : null}
         <CalendarResponseControls event={event} onUpdated={onUpdated} />
         {event.attendees?.length ? <EventAttendees event={event} attendees={event.attendees} /> : null}
-        {event.description ? embedded ? <details className="calendar-event-viewer-description"><summary>Description</summary><p>{calendarDescriptionText(event.description)}</p></details> : <p className="calendar-event-viewer-description"><TextAlignStart size={ICON_SIZE.lg} /><span>{calendarDescriptionText(event.description)}</span></p> : null}
+        {event.description ? embedded ? <details className="calendar-event-viewer-description"><summary><TextAlignStart size={ICON_SIZE.lg} /><span>Description<DisclosureChevron /></span></summary><p>{calendarDescriptionText(event.description)}</p></details> : <p className="calendar-event-viewer-description"><TextAlignStart size={ICON_SIZE.lg} /><span>{calendarDescriptionText(event.description)}</span></p> : null}
       </div>
       {editing ? <EditCalendarEventDialog
         event={event}

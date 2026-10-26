@@ -1,8 +1,10 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { readFileSync } from "node:fs";
+import postcss from "postcss";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { CALENDAR_SCROLL_TOP_KEY, CalendarSidebar, EventViewer, scheduleRequestFor } from "./CalendarSidebar";
+import { CALENDAR_SCROLL_TOP_KEY, CalendarSidebar, EventViewer, eventCalendarLabel, scheduleRequestFor } from "./CalendarSidebar";
 import { mailClient } from "./data/client";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { UPCOMING_MEETING_DAYS } from "./ContactMeetings";
@@ -13,6 +15,15 @@ import { UPCOMING_MEETING_DAYS } from "./ContactMeetings";
  */
 function dayRequests(listEvents: { mock: { calls: [string, string, string][] } }) {
   return listEvents.mock.calls.filter(([timeMin, timeMax]) => Date.parse(timeMax) - Date.parse(timeMin) < UPCOMING_MEETING_DAYS * 86_400_000);
+}
+
+/** Declarations of the stylesheet rules that list exactly this selector. */
+function declarations(selector: string) {
+  const found: Record<string, string> = {};
+  postcss.parse(readFileSync("src/styles.css", "utf8")).walkRules((rule) => {
+    if (rule.selectors.includes(selector)) rule.walkDecls((declaration) => { found[declaration.prop] = declaration.value; });
+  });
+  return found;
 }
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
@@ -37,8 +48,15 @@ describe("calendar sidebar", () => {
       allDay: false,
     };
     const { rerender } = render(<EventViewer event={{ ...event, location: "https://example.zoom.us/j/926?from=addon" }} onDismiss={() => {}} onUpdated={() => {}} />);
-    fireEvent.click(screen.getByRole("link", { name: "https://example.zoom.us/j/926?from=addon" }));
+    // A location that is only a link shows its host, with the full URL on hover.
+    const hostLink = screen.getByRole("link", { name: "example.zoom.us" });
+    expect(hostLink).toHaveAttribute("title", "https://example.zoom.us/j/926?from=addon");
+    fireEvent.click(hostLink);
     expect(openUrl).toHaveBeenCalledWith("https://example.zoom.us/j/926?from=addon");
+
+    // The join button already covers a location that repeats the conference link.
+    rerender(<EventViewer event={{ ...event, location: " https://example.zoom.us/j/926 ", conferenceUrl: "https://example.zoom.us/j/926" }} onDismiss={() => {}} onUpdated={() => {}} />);
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(["Join video meeting"]);
 
     rerender(<EventViewer event={{ ...event, location: "Room 4B (https://example.com/rooms/4b), floor 2" }} onDismiss={() => {}} onUpdated={() => {}} />);
     const viewer = screen.getByRole("dialog", { name: "Prep call details" });
@@ -80,6 +98,71 @@ describe("calendar sidebar", () => {
 
     rerender(<EventViewer event={{ ...event, attendeeResponses: undefined }} onDismiss={() => {}} onUpdated={() => {}} />);
     expect(screen.getByRole("group").querySelector("summary")).toHaveTextContent(/^5 attendees$/);
+  });
+
+  it("shows attendees and description as icon rows with a small disclosure chevron", () => {
+    const event = {
+      id: "planning",
+      accountId: "calendar@example.com",
+      title: "Product planning",
+      start: "2026-10-05T14:00:00-04:00",
+      end: "2026-10-05T14:45:00-04:00",
+      allDay: false,
+      attendees: ["jane@example.com"],
+      description: "Agenda",
+    };
+    render(<EventViewer embedded event={event} onDismiss={() => {}} onUpdated={() => {}} />);
+    const summaries = [...screen.getByRole("region", { name: "Product planning details" }).querySelectorAll("summary")];
+    expect(summaries.map((summary) => summary.textContent)).toEqual(["1 attendee", "Description"]);
+    for (const summary of summaries) {
+      // The leading icon fills the rows' icon column; the chevron trails the label.
+      expect(summary.firstElementChild?.tagName.toLowerCase()).toBe("svg");
+      expect(summary.querySelector("span .calendar-event-disclosure")).not.toBeNull();
+    }
+    const summary = declarations(".calendar-event-viewer-details > details > summary");
+    expect(summary).toMatchObject({ display: "grid", "list-style": "none" });
+    expect(summary["font-weight"]).toBeUndefined();
+    expect(declarations(".calendar-event-viewer-details > details > summary::-webkit-details-marker")).toMatchObject({ display: "none" });
+  });
+
+  it("keeps embedded event details at their own height with the actions beside the title", () => {
+    // The rail is a flex column; a growing event block would push related context down.
+    expect(declarations(".workspace-context-rail .calendar-event-details")).toMatchObject({ flex: "none" });
+    const header = declarations(".workspace-context-rail .calendar-event-details > header");
+    expect(header).toMatchObject({ display: "grid", "grid-template-columns": "auto minmax(0, 1fr) auto", "align-items": "start" });
+    expect(header["flex-wrap"]).toBeUndefined();
+  });
+
+  it("names the event's calendar only when it says something the view does not", () => {
+    const event = { id: "sync", accountId: "work@example.com", calendarId: "team", title: "Sync", start: "2026-10-05T14:00:00-04:00", end: "2026-10-05T14:30:00-04:00", allDay: false };
+    const calendar = { id: "primary", accountId: "work@example.com", name: "work@example.com", primary: true, selected: true, writable: true };
+    const team = { ...calendar, id: "team", name: "Team", primary: false };
+    const other = { ...calendar, accountId: "home@example.com", name: "home@example.com" };
+    // One account: the primary calendar repeats the account, a named calendar does not.
+    expect(eventCalendarLabel({ ...event, calendarId: "primary" }, [calendar, team])).toBeNull();
+    expect(eventCalendarLabel(event, [calendar, team])).toBe("Team");
+    // Several accounts: the account tells events apart.
+    expect(eventCalendarLabel({ ...event, calendarId: "primary" }, [calendar, team, other])).toBe("work@example.com");
+    expect(eventCalendarLabel(event, [calendar, team, other])).toBe("Team · work@example.com");
+    expect(eventCalendarLabel({ ...event, calendarId: "missing" }, [calendar, other])).toBe("work@example.com");
+
+    const { rerender } = render(<EventViewer event={event} calendarLabel={null} onDismiss={() => {}} onUpdated={() => {}} />);
+    expect(screen.getByRole("dialog", { name: "Sync details" })).not.toHaveTextContent("work@example.com");
+    rerender(<EventViewer event={event} calendarLabel="Team" onDismiss={() => {}} onUpdated={() => {}} />);
+    expect(screen.getByRole("dialog", { name: "Sync details" })).toHaveTextContent("Team");
+    // Without a label from the view, the row falls back to the account.
+    rerender(<EventViewer event={event} onDismiss={() => {}} onUpdated={() => {}} />);
+    expect(screen.getByRole("dialog", { name: "Sync details" })).toHaveTextContent("work@example.com");
+  });
+
+  it("states the response only when it cannot be changed here", () => {
+    const event = { id: "sync", accountId: "work@example.com", title: "Sync", start: "2026-10-05T14:00:00-04:00", end: "2026-10-05T14:30:00-04:00", allDay: false, responseStatus: "accepted" as const };
+    const { rerender } = render(<EventViewer event={{ ...event, canRespond: false }} onDismiss={() => {}} onUpdated={() => {}} />);
+    expect(screen.getByRole("dialog", { name: "Sync details" })).toHaveTextContent("Your response: Going");
+    expect(screen.queryByRole("group", { name: "Going?" })).not.toBeInTheDocument();
+    rerender(<EventViewer event={{ ...event, canRespond: true }} onDismiss={() => {}} onUpdated={() => {}} />);
+    expect(screen.getByRole("dialog", { name: "Sync details" })).not.toHaveTextContent("Your response");
+    expect(within(screen.getByRole("group", { name: "Going?" })).getByRole("button", { name: "Yes" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("routes T to Calendar Accounts until a calendar is connected", async () => {

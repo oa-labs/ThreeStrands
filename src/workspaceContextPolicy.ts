@@ -1,5 +1,7 @@
 import { parseAddress } from "./emailAddress";
-import type { ContextQuery, WorkspaceContextTarget, WorkspaceConversation } from "./domain";
+import { isCalendarAttachment } from "./calendarInvitations";
+import { attachmentMeetingTitle } from "./invitationTitle";
+import type { ContextQuery, WorkspaceContextTarget, WorkspaceConversation, WorkspaceFile } from "./domain";
 
 export const CONTEXT_POLICY = { rows: 6, files: 30, daysBefore: 90, daysAfter: 14, debounceMs: 150, sourceScore: 100, topicScore: 10, attendeeScore: 5, maxTerms: 12 } as const;
 const GENERIC = new Set("the and for with from this that have your about review meeting weekly daily monthly call sync update task prepare discuss discussion notes follow up next plan planning read file files document documents attachment attachments email message reply send finish complete draft new important today tomorrow".split(" "));
@@ -27,4 +29,22 @@ export function rankContext(candidates: WorkspaceConversation[], query: ContextQ
   });
   ranked.sort((a,b) => b.score-a.score || b.sentAt.localeCompare(a.sentAt) || a.threadId.localeCompare(b.threadId));
   return ranked.slice(0, CONTEXT_POLICY.rows);
+}
+/**
+ * A meeting's files keep one invitation: the one titled like the meeting, or
+ * else the newest. A series sends a new invitation for every occurrence, and
+ * the earlier ones stay reachable from their conversations. Starred files stay.
+ */
+export function meetingFiles(files: WorkspaceFile[], title: string): WorkspaceFile[] {
+  const invitations = files.filter((file) => !file.starred && isCalendarAttachment(file.attachment));
+  if (invitations.length < 2) return files;
+  const wanted = title.trim().toLocaleLowerCase();
+  const kept = invitations.find((file) => attachmentMeetingTitle(file)?.toLocaleLowerCase() === wanted)
+    ?? invitations.reduce((newest, file) => file.sentAt > newest.sentAt ? file : newest);
+  return files.filter((file) => file === kept || !invitations.includes(file));
+}
+/** The reason every row shares, said once for the section rather than on each row. */
+export function sharedReason(items: { reason?: string }[]): string | null {
+  const reason = items[0]?.reason;
+  return reason && items.every((item) => item.reason === reason) ? reason : null;
 }

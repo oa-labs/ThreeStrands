@@ -1988,20 +1988,27 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .calendar-event-viewer .settings-inline-confirm { flex-wrap: wrap; margin-top: var(--space-3); }
 .calendar-event-viewer h3 { min-width: 0; margin: 0; font-size: var(--text-pane-title); font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
 .calendar-event-color { width: 12px; height: 12px; border-radius: var(--radius-xs); background: color-mix(in srgb, var(--calendar-color, var(--accent)) 55%, white); }
-.calendar-event-viewer-details { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); margin-top: var(--space-4); }
-.calendar-event-viewer-details > p { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; gap: var(--space-2); margin: 0; color: var(--secondary); font-size: var(--text-body); line-height: var(--leading-normal); }
+.calendar-event-viewer-details { --event-detail-icon-column: 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); margin-top: var(--space-4); }
+.calendar-event-viewer-details > p { display: grid; grid-template-columns: var(--event-detail-icon-column) minmax(0, 1fr); align-items: start; gap: var(--space-2); margin: 0; color: var(--secondary); font-size: var(--text-body); line-height: var(--leading-normal); }
 .calendar-event-viewer-details svg { margin-top: var(--space-0-5); color: var(--muted); }
 .calendar-event-viewer-details a { width: fit-content; border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); background: var(--accent); color: var(--accent-contrast); font-weight: var(--weight-semibold); text-decoration: none; }
 .calendar-event-viewer-details a.calendar-event-location-link { width: auto; border-radius: 0; padding: 0; background: none; color: var(--accent); font-weight: inherit; text-decoration: underline; overflow-wrap: anywhere; }
 .calendar-event-viewer-description span { max-height: 8.7em; overflow: auto; white-space: pre-wrap; }
 .calendar-event-viewer-details > details { color: var(--secondary); font-size: var(--text-body); line-height: var(--leading-normal); }
-.calendar-event-viewer-details > details > summary { color: var(--text); font-weight: var(--weight-medium); cursor: pointer; }
-.calendar-event-viewer-details > details ul { margin: var(--space-1) 0 0; padding-left: var(--space-5); }
+/* Expandable rows read like the icon rows above them, with a small chevron instead of the browser marker. */
+.calendar-event-viewer-details > details > summary { display: grid; grid-template-columns: var(--event-detail-icon-column) minmax(0, 1fr); align-items: start; gap: var(--space-2); list-style: none; cursor: pointer; }
+.calendar-event-viewer-details > details > summary::-webkit-details-marker { display: none; }
+.calendar-event-viewer-details > details > summary:hover { color: var(--text); }
+.calendar-event-disclosure { margin-left: var(--space-1); vertical-align: middle; transition: transform var(--duration-base) ease; }
+.calendar-event-viewer-details > details[open] > summary .calendar-event-disclosure { transform: rotate(90deg); }
+.calendar-event-viewer-details > details > :not(summary) { margin-left: calc(var(--event-detail-icon-column) + var(--space-2)); }
+.calendar-event-viewer-details > details ul { margin-top: var(--space-1); margin-bottom: 0; padding-left: 0; list-style: none; }
 .calendar-event-attendee-summary { color: var(--secondary); font-weight: var(--weight-regular); }
 .calendar-event-attendee-response { color: var(--muted); }
 .calendar-event-attendee-response[data-response-status="accepted"] { color: var(--accent); }
 .calendar-event-viewer-details > details p { margin: var(--space-1) 0 0; }
 .calendar-event-response { display: grid; min-width: 0; gap: var(--space-2); color: var(--secondary); font-size: var(--text-body); }
+.calendar-response-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
 .calendar-event-response strong { color: var(--text); font-weight: var(--weight-semibold); }
 .calendar-event-response p { margin: 0; color: var(--error); overflow-wrap: anywhere; }
 .calendar-invitation-response-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
@@ -3429,8 +3436,11 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .workspace-context-rail .task-detail-form { padding: 0 0 var(--space-4); }
 .workspace-context-rail .task-detail-row { grid-template-columns: minmax(0, 1fr); }
 .workspace-context-rail .task-detail-hints { flex-direction: column; align-items: flex-start; }
-.workspace-context-rail .calendar-event-details { position: static; border: 0; border-radius: 0; background: transparent; padding: 0 0 var(--space-4); box-shadow: none; outline: none; }
-.workspace-context-rail .calendar-event-details > header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+/* The event block takes its own height in the rail rather than stretching to fill it. */
+.workspace-context-rail .calendar-event-details { flex: none; position: static; border: 0; border-radius: 0; background: transparent; padding: 0 0 var(--space-4); box-shadow: none; outline: none; }
+/* A long title wraps in its own column; the swatch and actions stay on its first line. */
+.workspace-context-rail .calendar-event-details > header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: var(--space-2); }
+.workspace-context-rail .calendar-event-details > header .calendar-event-color { margin-top: var(--space-1); }
 .workspace-context-rail .calendar-event-details h3 { margin: 0; font-size: var(--text-body); overflow-wrap: anywhere; }
 .workspace-context-rail .calendar-event-viewer-details { min-width: 0; overflow-wrap: anywhere; }
 .workspace-context-rail .calendar-event-viewer-description p { white-space: pre-wrap; }

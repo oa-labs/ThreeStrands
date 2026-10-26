@@ -6,7 +6,7 @@ import { CalendarAgenda } from "./CalendarAgenda";
 import { calendarRange, CALENDAR_RANGES, CALENDAR_RANGE_KEY, readCalendarRange, rangeForEvent, type CalendarRangeMode } from "./calendarRange";
 import { CalendarDays, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
-import { EventViewer } from "./CalendarSidebar";
+import { EventViewer, eventCalendarLabel } from "./CalendarSidebar";
 import { HoverTooltip } from "./AppChrome";
 import {
   HOUR_HEIGHT,
@@ -591,8 +591,8 @@ export function CalendarWeekView({
       </aside> : null}
       <WorkspaceContextRail label="Meeting context" onReturn={() => (eventTrigger.current?.isConnected ? eventTrigger.current : gridRef.current)?.focus()}>
         {selectedEvent ? <>
-          <ContextSectionHeader title="Event details" />
-          <EventViewer key={`${selectedEvent.accountId}:${selectedEvent.calendarId}:${selectedEvent.id}`} embedded event={selectedEvent} onDismiss={() => {
+          <ContextSectionHeader title="Event details" icon={<CalendarDays size={ICON_SIZE.xs} />} />
+          <EventViewer key={`${selectedEvent.accountId}:${selectedEvent.calendarId}:${selectedEvent.id}`} embedded event={selectedEvent} calendarLabel={eventCalendarLabel(selectedEvent, calendars)} onDismiss={() => {
             setSelectedEvent(null);
             if (!eventTrigger.current) document.getElementById("workspace-Meeting-context")?.focus();
           }} onUpdated={setSelectedEvent} />

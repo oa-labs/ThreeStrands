@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { responseLabel } from "./calendarResponse";
 import { revalidateScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
@@ -12,6 +12,7 @@ const INVITATION_RESPONSES = [["accepted", "Going"], ["tentative", "Maybe"], ["d
 export function CalendarResponseControls({ event, onUpdated, invitation = false }: { event: ScheduleEvent; onUpdated(event: ScheduleEvent): void; invitation?: boolean }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const questionId = useId();
   const label = responseLabel(event);
   if (!label) return null;
   const unanswered = event.responseStatus === "needsAction" || event.responseStatus == null;
@@ -28,12 +29,28 @@ export function CalendarResponseControls({ event, onUpdated, invitation = false 
       setPending(false);
     }
   };
+  if (!invitation && event.canRespond) {
+    // The pressed segment already shows the answer, so the question labels the control instead of a status line.
+    return (
+      <div className="calendar-event-response">
+        <div className="calendar-response-row">
+          <span id={questionId}>Going?</span>
+          <div className="segmented calendar-response-actions" role="group" aria-labelledby={questionId}>
+            {RESPONSES.map(([status, title]) => (
+              <button key={status} type="button" className="segment" aria-pressed={event.responseStatus === status} disabled={pending} onClick={() => void respond(status)}>{title}</button>
+            ))}
+          </div>
+        </div>
+        {error ? <p role="alert">{error}</p> : null}
+      </div>
+    );
+  }
   return (
     <div className="calendar-event-response">
       {invitation && unanswered ? <span className="context-status">Not responded.</span> : <span>Your response: <strong>{label}</strong></span>}
-      {event.canRespond ? <div className={invitation ? "calendar-invitation-response-actions" : "segmented calendar-response-actions"} role="group" aria-label="Going?">
-        {(invitation ? INVITATION_RESPONSES : RESPONSES).map(([status, title]) => (
-          <button key={status} type="button" className={invitation ? "btn" : "segment"} aria-pressed={event.responseStatus === status} disabled={pending || (invitation && event.responseStatus === status)} onClick={() => void respond(status)}>{title}</button>
+      {event.canRespond ? <div className="calendar-invitation-response-actions" role="group" aria-label="Going?">
+        {INVITATION_RESPONSES.map(([status, title]) => (
+          <button key={status} type="button" className="btn" aria-pressed={event.responseStatus === status} disabled={pending || event.responseStatus === status} onClick={() => void respond(status)}>{title}</button>
         ))}
       </div> : null}
       {error ? <p role="alert">{error}</p> : null}

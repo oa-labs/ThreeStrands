@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenedCalendarDialog } from "./OpenedCalendarDialog";
 import { mailClient } from "./data/client";
@@ -64,13 +64,13 @@ describe("OpenedCalendarDialog", () => {
     expect(within(dialog).getByRole("heading", { name: "Launch review" })).toBeInTheDocument();
     expect(within(dialog).getByText("Room 4B")).toBeInTheDocument();
     expect(find).toHaveBeenCalledWith("launch-review@example.com");
-    expect(await within(dialog).findByText("Awaiting response")).toBeInTheDocument();
+    const going = await within(dialog).findByRole("group", { name: "Going?" });
+    expect(within(going).getByRole("button", { name: "Yes" })).toHaveAttribute("aria-pressed", "false");
 
-    fireEvent.click(within(dialog).getByRole("button", { name: "Yes" }));
+    fireEvent.click(within(going).getByRole("button", { name: "Yes" }));
 
     expect(respond).toHaveBeenCalledWith(onCalendar, "accepted");
-    expect(await within(dialog).findByText("Going")).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Yes" })).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(within(going).getByRole("button", { name: "Yes" })).toHaveAttribute("aria-pressed", "true"));
     expect(within(dialog).queryByRole("button", { name: /Add to Calendar/ })).toBeNull();
     expect(onAddToCalendar).not.toHaveBeenCalled();
   });

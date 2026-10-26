@@ -5,18 +5,18 @@ import type { WorkspaceContextTarget, WorkspaceConversation, WorkspaceFile } fro
 import { ContextRow, ContextSection } from "./ContextSections";
 import { AttachmentIcon } from "./AttachmentIcon";
 import { FileStarButton, FILES_CHANGED } from "./FileStarButton";
-import { CONTEXT_POLICY, contextQuery, rankContext } from "./workspaceContextPolicy";
+import { CONTEXT_POLICY, contextQuery, meetingFiles, rankContext, sharedReason } from "./workspaceContextPolicy";
 import { errorMessage } from "./errors";
 import { formatHistoryDate } from "./contactContext";
 import { formatAttachmentSize } from "./threadPresentation";
 import { ICON_SIZE } from "./iconSizes";
 import { attachmentMeetingTitle } from "./invitationTitle";
 
-export function WorkspaceFileRow({ file, onOpenThread }: { file: WorkspaceFile; onOpenThread(id: string): void }) {
+export function WorkspaceFileRow({ file, showReason = true, onOpenThread }: { file: WorkspaceFile; showReason?: boolean; onOpenThread(id: string): void }) {
   const [error, setError] = useState<string | null>(null);
   return <>
     <ContextRow icon={<AttachmentIcon filename={file.attachment.filename} mimeType={file.attachment.mimeType} size="sm" />}
-      title={attachmentMeetingTitle(file) ?? file.attachment.filename} date={formatHistoryDate(file.sentAt)} detail={`${file.reason ? `${file.reason} · ` : ""}${formatAttachmentSize(file.attachment.size)} · ${file.accountId}`}
+      title={attachmentMeetingTitle(file) ?? file.attachment.filename} date={formatHistoryDate(file.sentAt)} detail={`${showReason && file.reason ? `${file.reason} · ` : ""}${formatAttachmentSize(file.attachment.size)} · ${file.accountId}`}
       onActivate={() => { void mailClient.openAttachment(file.messageId, file.attachment.id).catch((reason) => setError(errorMessage(reason))); }}
       actions={[
         <button key="show" type="button" className="btn-icon btn-icon-sm" aria-label={`Show the email with ${file.attachment.filename}`} onClick={() => onOpenThread(file.threadId)}><MessageSquareText size={ICON_SIZE.sm} /></button>,
@@ -35,6 +35,7 @@ export function WorkspaceRelatedContext({ target, accountIds, onOpenThread }: { 
   const [revision, setRevision] = useState(0);
   const requestKey = JSON.stringify(contextQuery(target, accountIds));
   const sourceMessage = target.kind === "task" ? target.task.sourceMessageId : undefined;
+  const meetingTitle = target.kind === "meeting" ? target.event.title : null;
   useEffect(() => {
     const changed = () => setRevision((value) => value + 1);
     window.addEventListener(FILES_CHANGED, changed);
@@ -51,19 +52,22 @@ export function WorkspaceRelatedContext({ target, accountIds, onOpenThread }: { 
         setConversations(related);
         try {
           const page = await mailClient.listFiles({ accountIds: query.accountIds, threadIds: related.map((item) => item.threadId), priorityMessageId: sourceMessage ?? undefined, prioritizeStarred: true, limit: CONTEXT_POLICY.files });
-          if (active) setFiles(page.files.map((file) => ({ ...file, reason: related.find((item) => item.threadId===file.threadId)?.reason }))
+          const pageFiles = meetingTitle === null ? page.files : meetingFiles(page.files, meetingTitle);
+          if (active) setFiles(pageFiles.map((file) => ({ ...file, reason: related.find((item) => item.threadId===file.threadId)?.reason }))
             .sort((a,b) => Number(b.messageId===sourceMessage)-Number(a.messageId===sourceMessage) || Number(b.starred)-Number(a.starred) || b.sentAt.localeCompare(a.sentAt)));
         } catch (reason) { if (active) setFileError(errorMessage(reason)); }
       }).catch((reason) => { if (active) setError(errorMessage(reason)); }).finally(() => { if (active) setLoading(false); });
     }, CONTEXT_POLICY.debounceMs);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [requestKey, revision, sourceMessage]);
+  }, [requestKey, revision, sourceMessage, meetingTitle]);
+  const fileReason = sharedReason(files);
+  const conversationReason = sharedReason(conversations);
   return <>
     {loading ? <p className="context-status" role="status">Finding related information…</p> : null}
     {error ? <p className="form-error" role="alert">{error}<button type="button" className="btn-link" onClick={() => setRevision((value) => value + 1)}>Retry context</button></p> : null}
     {fileError ? <p className="form-error" role="alert">{fileError}<button type="button" className="btn-link" onClick={() => setRevision((value) => value + 1)}>Retry files</button></p> : null}
-    {files.length ? <ContextSection id="workspace-files" title="Files" count={files.length} limit={CONTEXT_POLICY.rows} rows={files.map((file) => <WorkspaceFileRow key={`${file.messageId}:${file.attachment.id}`} file={file} onOpenThread={onOpenThread} />)} /> : null}
-    {conversations.length ? <ContextSection id="workspace-conversations" title="Conversations" count={conversations.length} rows={conversations.map((item) => <ContextRow key={item.threadId} icon={<MessageSquareText size={ICON_SIZE.sm} />} title={item.subject} date={formatHistoryDate(item.sentAt)} detail={`${item.reason} · ${item.accountId}`} onActivate={() => onOpenThread(item.threadId)} />)} /> : null}
+    {files.length ? <ContextSection id="workspace-files" title="Files" count={files.length} limit={CONTEXT_POLICY.rows} note={fileReason} rows={files.map((file) => <WorkspaceFileRow key={`${file.messageId}:${file.attachment.id}`} file={file} showReason={!fileReason} onOpenThread={onOpenThread} />)} /> : null}
+    {conversations.length ? <ContextSection id="workspace-conversations" title="Conversations" count={conversations.length} note={conversationReason} rows={conversations.map((item) => <ContextRow key={item.threadId} icon={<MessageSquareText size={ICON_SIZE.sm} />} title={item.subject} date={formatHistoryDate(item.sentAt)} detail={conversationReason || !item.reason ? item.accountId : `${item.reason} · ${item.accountId}`} onActivate={() => onOpenThread(item.threadId)} />)} /> : null}
     {!loading && !error && !fileError && !conversations.length ? <p className="context-status">No related information found in synchronized mail.</p> : null}
   </>;
 }

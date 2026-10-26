@@ -119,6 +119,9 @@ describe("CalendarWeekView", () => {
     fireEvent.click(await within(agenda).findByRole("button", { name: /Project review/ }));
     const details = await screen.findByRole("region", { name: "Project review details" });
     expect(details).toHaveFocus();
+    // The heading's glyph column holds an icon, so the label lines up with the rows below.
+    const heading = screen.getByRole("heading", { name: "Event details" });
+    expect(heading.querySelector(".context-row-glyph svg")).not.toBeNull();
     expect(screen.queryByRole("region", { name: "Today's agenda" })).not.toBeInTheDocument();
     expect(container.querySelector(".calendar-week-scroll")?.scrollTop).toBeGreaterThan(0);
     fireEvent.click(within(details).getByRole("button", { name: "Close Event Details" }));
@@ -411,15 +414,16 @@ describe("CalendarWeekView", () => {
     expect(button).toHaveAttribute("data-response-status", "needsAction");
     fireEvent.click(button);
     const dialog = screen.getByRole("region", { name: "Team sync details" });
-    expect(dialog).toHaveTextContent("Awaiting response");
+    // The question labels the answer buttons; no status line repeats what they show.
+    expect(dialog).not.toHaveTextContent("Your response");
+    expect(dialog).not.toHaveTextContent("Awaiting response");
     const going = within(dialog).getByRole("group", { name: "Going?" });
-    expect(within(going).getByRole("button", { name: "Yes" })).toHaveAttribute("aria-pressed", "false");
+    for (const answer of within(going).getAllByRole("button")) expect(answer).toHaveAttribute("aria-pressed", "false");
     let finishRefetch!: (value: { events: typeof invited[]; errors: string[] }) => void;
     vi.mocked(mailClient.listScheduleEvents).mockImplementation(() => new Promise((resolve) => { finishRefetch = resolve; }));
     fireEvent.click(within(going).getByRole("button", { name: "Yes" }));
     await waitFor(() => expect(update).toHaveBeenCalledWith(invited, "accepted"));
-    await waitFor(() => expect(dialog).toHaveTextContent("Going"));
-    expect(within(going).getByRole("button", { name: "Yes" })).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(within(going).getByRole("button", { name: "Yes" })).toHaveAttribute("aria-pressed", "true"));
     // The grid keeps the week, with the new response, while the refetch is in flight.
     expect(screen.getByRole("button", { name: "Team sync" })).toHaveAttribute("data-response-status", "accepted");
     expect(screen.queryByText("Loading schedule…")).not.toBeInTheDocument();
