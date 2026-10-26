@@ -330,6 +330,21 @@ describe("ContextPanel",()=>{
     expect(onShowMessage).toHaveBeenCalledWith("thread-9","m4");
   });
 
+  it("names a person's invitation files by their meeting",async()=>{
+    vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
+    vi.mocked(mailClient.contactFiles).mockResolvedValue({files:[
+      {messageId:"m1",threadId:"t1",subject:"Updated invitation: Budget review @ Mon Oct 20, 2026 2pm",sentAt:"2026-10-02T15:00:00Z",attachment:{id:"a1",filename:"invite.ics",mimeType:"application/ics",size:2048}},
+      {messageId:"m2",threadId:"t2",subject:"Budget review",sentAt:"2026-10-01T15:00:00Z",attachment:{id:"a2",filename:"Budget.xlsx",mimeType:"application/vnd.ms-excel",size:2048}},
+    ],total:2});
+    renderPanel();
+    const files=await screen.findByRole("region",{name:"Files"});
+    expect(within(files).getByRole("button",{name:/^Budget reviewOct/})).toBeInTheDocument();
+    expect(within(files).queryByRole("button",{name:/^invite\.ics/})).not.toBeInTheDocument();
+    expect(within(files).getByRole("button",{name:"Show the email with invite.ics"})).toBeInTheDocument();
+    expect(within(files).getByRole("button",{name:/^Budget\.xlsx/})).toBeInTheDocument();
+  });
+
   it("outlines all replies newest first without a filter or date range",async()=>{
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);

@@ -12,6 +12,7 @@ import { ICON_SIZE } from "./iconSizes";
 import { AttachmentIcon } from "./AttachmentIcon";
 import { messagePreview } from "./messagePreview";
 import { threadTextIndex } from "./threadTextIndex";
+import { attachmentMeetingTitle } from "./invitationTitle";
 
 /** Per-device, per-section collapse choices. Transient layout, so not exported with settings. */
 const COLLAPSED_KEY = "threestrands.contextPanel.collapsedSections";
@@ -234,12 +235,13 @@ export function ContactFilesSection({ contactId, onShowMessage }: {
   };
   const rows = files.files.map((file) => {
     const { base, extension } = splitAttachmentName(file.attachment.filename);
+    const meeting = attachmentMeetingTitle(file);
     return (
       <ContextRow
         key={`${file.messageId}:${file.attachment.id}`}
         className="context-file"
         icon={<AttachmentIcon filename={file.attachment.filename} mimeType={file.attachment.mimeType} size="sm" />}
-        title={<><span className="context-file-base">{base}</span>{extension}</>}
+        title={meeting ?? <><span className="context-file-base">{base}</span>{extension}</>}
         date={formatHistoryDate(file.sentAt)}
         detail={formatAttachmentSize(file.attachment.size)}
         onActivate={() => open(file.messageId, file.attachment.id)}

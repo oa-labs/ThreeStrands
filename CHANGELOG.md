@@ -14,6 +14,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ### Improved
 - **Today** is easier to read at a glance. Event, task, and message titles are a size larger, the lines under them match your inbox's titles, and the header is down to the date and one line about your day, since unread mail and tasks due already have their own columns.
 - Removed the **History with** person selector from the right context panel. Recent emails and files still follow the message you’re reading or the recipients you’re writing to.
+- Calendar invitations in the side panel's **Files** list are now named by their meeting, as they are in **Files**, instead of all showing as "invite.ics".
 
 ### Fixed
 - Pressing **Escape** after opening a calendar event from **Today** now returns you to **Today**, just as it does after opening an email.

@@ -30,4 +30,16 @@ describe("automatic workspace context", () => {
     fireEvent.click(section.getByRole("button",{name:"Show 2 more"}));
     expect(section.getAllByRole("button",{name:/^atlas-\d\.pdf/})).toHaveLength(8);
   });
+  it("names an invitation by its meeting, as Files does, and keeps the filename on its actions",async()=>{
+    vi.spyOn(mailClient,"contextCandidates").mockResolvedValue([{threadId:"atlas",accountId:"work@example.com",subject:"Atlas forecast",sentAt:"2026-10-01T10:00:00Z",participants:["alice@example.com"]}]);
+    const file=(id:string,subject:string,filename:string,mimeType:string):WorkspaceFile=>({accountId:"work@example.com",messageId:id,threadId:"atlas",subject,sentAt:"2026-10-01T10:00:00Z",sender:"alice@example.com",direction:"received",attachment:{id:"part:0.1",filename,mimeType,size:10},starred:false,availability:"unknown"});
+    vi.spyOn(mailClient,"listFiles").mockResolvedValue({files:[file("m1","Invitation: Atlas forecast @ Tue Oct 13, 2026 10am","invite.ics","text/calendar"),file("m2","Atlas forecast deck","atlas.pdf","application/pdf")],total:2});
+    render(<WorkspaceRelatedContext accountIds={["work@example.com"]} onOpenThread={vi.fn()} target={meeting("atlas","Atlas forecast")} />);
+    const section=within(await screen.findByRole("region",{name:/Files/}));
+    expect(section.getByRole("button",{name:/^Atlas forecastOct/})).toBeInTheDocument();
+    expect(section.queryByRole("button",{name:/^invite\.ics/})).not.toBeInTheDocument();
+    expect(section.getByRole("button",{name:"Star invite.ics"})).toBeInTheDocument();
+    // Other files keep their filename even when the email is about the same meeting.
+    expect(section.getByRole("button",{name:/^atlas\.pdf/})).toBeInTheDocument();
+  });
 });

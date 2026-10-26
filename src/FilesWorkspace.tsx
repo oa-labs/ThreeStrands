@@ -15,8 +15,7 @@ import { ICON_SIZE } from "./iconSizes";
 import { fileTypeLabel } from "./attachmentKind";
 import { formatDisplayName, parseAddress } from "./emailAddress";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
-import { isCalendarAttachment } from "./CalendarAttachment";
-import { invitationTitle } from "./invitationTitle";
+import { attachmentMeetingTitle } from "./invitationTitle";
 import { AddressWithCard } from "./AddressWithCard";
 import { attachmentRisk } from "./attachmentRisk";
 import { FilePreview } from "./FilePreview";
@@ -31,8 +30,6 @@ export type FilesWorkspaceSnapshot = { loaded: number; selected: string | null; 
 const PAGE_SIZE = 50;
 const keyFor = (file: WorkspaceFile) => JSON.stringify([file.accountId, file.messageId, file.attachment.id]);
 const senderName = (file: WorkspaceFile) => formatDisplayName(parseAddress(file.sender).name);
-/** Invitations are named by their meeting, since the filename (often "invite.ics") says nothing. */
-const meetingTitle = (file: WorkspaceFile) => isCalendarAttachment(file.attachment) ? invitationTitle(file.subject) : null;
 
 const SHOW_INVITATIONS_KEY = "threestrands.files.showInvitations";
 function readShowInvitations() {
@@ -210,7 +207,7 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
                 if (event.key!=="Enter" || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
                 event.preventDefault(); setSelected(keyFor(item)); window.dispatchEvent(new CustomEvent("threestrands:focus-context", { detail: "File context" }));
               }} onDoubleClick={() => action(mailClient.openAttachment(item.messageId,item.attachment.id))}>
-              <span className="file-list-name"><AttachmentIcon filename={item.attachment.filename} mimeType={item.attachment.mimeType} size="sm" />{meetingTitle(item) ? <><strong title={meetingTitle(item)!}>{meetingTitle(item)}</strong><span className="file-list-filename" title={item.attachment.filename}>({item.attachment.filename})</span></> : <strong title={item.attachment.filename}>{item.attachment.filename}</strong>}</span>
+              <span className="file-list-name"><AttachmentIcon filename={item.attachment.filename} mimeType={item.attachment.mimeType} size="sm" />{attachmentMeetingTitle(item) ? <><strong title={attachmentMeetingTitle(item)!}>{attachmentMeetingTitle(item)}</strong><span className="file-list-filename" title={item.attachment.filename}>({item.attachment.filename})</span></> : <strong title={item.attachment.filename}>{item.attachment.filename}</strong>}</span>
               <span className="file-list-sender" title={item.sender}>{senderName(item)}{showAccount ? <small className="file-list-account">{item.accountId}</small> : null}</span>
               <time className="file-list-date" dateTime={item.sentAt}>{formatHistoryDate(item.sentAt)}</time>
               <span className="file-list-size">{formatAttachmentSize(item.attachment.size)}</span>
@@ -227,8 +224,8 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
         {file ? <>
           <div className="file-detail">
             <FilePreview file={file} online={online} onOpen={() => action(mailClient.openAttachment(file.messageId,file.attachment.id))} />
-            <h2 className="file-detail-name">{meetingTitle(file) ?? file.attachment.filename}</h2>
-            <p className="file-detail-meta">{fileTypeLabel(file.attachment.filename, file.attachment.mimeType)}{meetingTitle(file) ? ` · ${file.attachment.filename}` : ""} · {formatAttachmentSize(file.attachment.size)}</p>
+            <h2 className="file-detail-name">{attachmentMeetingTitle(file) ?? file.attachment.filename}</h2>
+            <p className="file-detail-meta">{fileTypeLabel(file.attachment.filename, file.attachment.mimeType)}{attachmentMeetingTitle(file) ? ` · ${file.attachment.filename}` : ""} · {formatAttachmentSize(file.attachment.size)}</p>
             <dl className="file-detail-metadata">
               <div><dt>From</dt><dd><FileSender file={file} own={accountIds} onOpenContact={onOpenContact} />{parseAddress(file.sender).email !== senderName(file) ? <span className="file-detail-sender-email">{parseAddress(file.sender).email}</span> : null}</dd></div>
               <div><dt>{file.direction === "sent" ? "Sent" : "Received"}</dt><dd>{new Date(file.sentAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</dd></div>

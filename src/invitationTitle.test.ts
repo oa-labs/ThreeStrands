@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { invitationTitle } from "./invitationTitle";
+import { attachmentMeetingTitle, invitationTitle } from "./invitationTitle";
 
 describe("invitationTitle", () => {
   it("removes status words and the trailing schedule", () => {
@@ -21,5 +21,16 @@ describe("invitationTitle", () => {
     expect(invitationTitle("")).toBeNull();
     expect(invitationTitle("Invitation: ")).toBeNull();
     expect(invitationTitle("  ")).toBeNull();
+  });
+});
+
+describe("attachmentMeetingTitle", () => {
+  const attachment = (filename: string, mimeType: string) => ({ id: "a", filename, mimeType, size: 1 });
+  it("names calendar files by the meeting, by type or by extension", () => {
+    expect(attachmentMeetingTitle({ subject: "Invitation: Weekly sync @ Tue Oct 14, 2026 10am", attachment: attachment("invite.ics", "application/octet-stream") })).toBe("Weekly sync");
+    expect(attachmentMeetingTitle({ subject: "Accepted: Design crit", attachment: attachment("event", "text/calendar; method=REPLY") })).toBe("Design crit");
+  });
+  it("leaves other files to their filename", () => {
+    expect(attachmentMeetingTitle({ subject: "Invitation: Weekly sync", attachment: attachment("agenda.pdf", "application/pdf") })).toBeNull();
   });
 });
