@@ -13,9 +13,9 @@ const isMac = /Mac|iPhone|iPad/.test(navigator.platform) || navigator.userAgent.
 function localizeModifierKeys() {
   if (isMac) return;
   for (const element of document.querySelectorAll<HTMLElement>("[data-mod-key]")) {
-    element.textContent = "Ctrl K";
+    element.textContent = element.textContent!.replace("⌘", "Ctrl ");
     const label = element.getAttribute("aria-label");
-    if (label) element.setAttribute("aria-label", label.replace("⌘K", "Ctrl K"));
+    if (label) element.setAttribute("aria-label", label.replace("⌘", "Ctrl "));
   }
   for (const element of document.querySelectorAll<HTMLElement>("[data-mod-enter]")) {
     element.textContent = "Ctrl ↩";

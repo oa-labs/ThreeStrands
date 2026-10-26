@@ -7,7 +7,7 @@ import { shortcutGroups } from "../../src/shortcutCatalog";
 
 const RELEASES = "https://github.com/oa-labs/ThreeStrands/releases/latest";
 const LICENSE_URL = "https://github.com/oa-labs/ThreeStrands/blob/master/LICENSE";
-const TOUR_SCENES = ["inbox", "split-inbox", "newsletter", "reply", "tasks", "goals", "inbox-zero", "find-times", "calendar-week", "calendar-create", "contacts", "files"];
+const TOUR_SCENES = ["inbox", "split-inbox", "newsletter", "reply", "tasks", "goals", "today", "find-times", "calendar-week", "calendar-create", "contacts", "files"];
 const { version } = JSON.parse(readFileSync(path.resolve("package.json"), "utf8")) as { version: string };
 
 /** Walks the whole page so every lazy image and scroll-driven effect gets a chance to run. */
@@ -70,12 +70,12 @@ test.describe("feature claims", () => {
     await expect(tour).toContainText("mark it achieved, drop it, or carry it forward");
     const roadmap = page.locator("#roadmap");
     await expect(roadmap.getByRole("heading", { level: 3 })).toHaveText([
-      "Snooze", "Sending Aliases", "Drafts Across Devices",
+      "Snooze", "Sending Aliases",
       "Connected Address Books", "Smarter Inbox Rules", "Microsoft 365",
       "Encrypted Sync Reliability", "Shared and Mobile Workflows",
     ]);
     await expect(roadmap).toContainText("verified Gmail aliases");
-    await expect(roadmap).toContainText("clear controls over draft synchronization");
+    await expect(roadmap).not.toContainText("Drafts Across Devices");
     await expect(roadmap).toContainText("Google Contacts and CardDAV address books connected with ongoing synchronization");
     await expect(roadmap).toContainText("CSV and vCard import and export are available today");
     await expect(roadmap).toContainText("Gmail and IMAP/SMTP connections available today");
@@ -83,7 +83,7 @@ test.describe("feature claims", () => {
     await expect(roadmap).not.toContainText(/\bbeta\b/i);
   });
 
-  test("promotes the release’s signatures, newsletter controls, scheduling, and inbox-zero workflows", async ({ page }) => {
+  test("promotes the release’s signatures, newsletter controls, scheduling, Today, and draft workflows", async ({ page }) => {
     await page.goto("./");
     const writing = page.locator('[data-step="reply"]');
     for (const claim of ["formatted signatures with logos", "import your signature from Gmail", "Sent", "Edit as New"]) {
@@ -97,13 +97,15 @@ test.describe("feature claims", () => {
     for (const claim of ["optional AI", "next week", "lunch gap", "Drive Time Buffer"]) {
       await expect(times).toContainText(claim);
     }
-    const zero = page.locator('[data-step="inbox-zero"]');
-    for (const claim of ["open tasks", "Keep in Touch", "today’s agenda", "last checked"]) {
-      await expect(zero).toContainText(claim);
+    const today = page.locator('[data-step="today"]');
+    for (const claim of ["Join button", "Needs a reply", "overdue or due today", "Keep in Touch", "Inbox zero", "last checked"]) {
+      await expect(today).toContainText(claim);
     }
+    await expect(today.locator("kbd")).toHaveText("0");
+    await expect(writing).toContainText("Drafts save to your Gmail or IMAP Drafts folder");
     await expect(page.locator(".privacy-shot")).toContainText("Trust checks run on your computer");
     await expect(page.locator(".privacy-shot")).toContainText("Show link takes you to the link in the email");
-    await expect(page.locator('[data-step="files"]')).toContainText("On macOS, preview");
+    await expect(page.locator('[data-step="files"]')).toContainText("On macOS and Windows, preview");
     await expect(page.locator('[data-step="files"]')).toContainText("never previewed");
   });
 
@@ -113,7 +115,7 @@ test.describe("feature claims", () => {
     for (const selector of ['meta[name="description"]', 'meta[property="og:description"]']) {
       await expect(page.locator(selector)).toHaveAttribute("content", /Gmail and IMAP/);
     }
-    await expect(page.locator(".hero .fine-print")).toContainText("Gmail + IMAP · macOS + Linux");
+    await expect(page.locator(".hero .fine-print")).toContainText("Gmail + IMAP · macOS, Windows + Linux");
     const tour = page.locator("#features");
     await expect(tour).toContainText("Proton Mail through Proton Mail Bridge");
     await expect(tour).toContainText("Google Calendar connects separately and works alongside either mail provider");
@@ -122,6 +124,17 @@ test.describe("feature claims", () => {
     await expect(page.locator(".flow")).toHaveAttribute("aria-label", /Gmail or your IMAP\/SMTP server/);
     await expect(page.locator(".finale .fine-print")).toContainText("Gmail and IMAP/SMTP");
     await expect(page.locator("main")).not.toContainText(/Gmail today|Gmail is the only|every Gmail account/i);
+  });
+
+  test("shows each ⌘ shortcut with Ctrl off Apple platforms", async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "platform", { get: () => "Win32" });
+      Object.defineProperty(navigator, "userAgent", { get: () => "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" });
+    });
+    await page.goto("./");
+    await expect(page.locator(".details [data-mod-key]")).toHaveText("Ctrl D");
+    await expect(page.locator("figcaption [data-mod-key]")).toHaveText("Ctrl K");
+    await expect(page.locator('[data-key="mod+k"]')).toHaveAttribute("aria-label", "Ctrl K: Command palette");
   });
 
   test("promotes finding mail attachments with their source context and local stars", async ({ page }) => {
@@ -165,9 +178,10 @@ test.describe("feature claims", () => {
     }
     await expect(page.locator('[data-step="calendar-week"]')).toContainText("Customize calendar colors, show or hide accounts");
     await expect(page.locator('[data-step="calendar-create"]')).toContainText("Edit or delete events you manage");
-    await expect(page.locator('[data-step="calendar-create"]')).toContainText("Yes, No, or Maybe");
+    await expect(page.locator('[data-step="calendar-create"]')).toContainText("Accept, Maybe, or Decline");
+    await expect(page.locator('[data-step="calendar-create"]')).toContainText("suggests your contacts and contact groups");
     await expect(page.locator(".detail-grid")).toContainText("no AI required");
-    await expect(page.locator(".detail-grid")).toContainText("On macOS, choose ThreeStrands as your default mail app");
+    await expect(page.locator(".detail-grid")).toContainText("On macOS, Windows, and Linux, choose ThreeStrands as your default mail app");
   });
 
   test("explains AI activation, sharing choices, and reviewed actions", async ({ page }) => {

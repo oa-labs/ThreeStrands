@@ -79,7 +79,7 @@
             </a>
             <a class="button button-ghost" href="#features">Explore Features<ts-icon name="arrow-right"></ts-icon></a>
           </div>
-          <p class="fine-print"><a href="https://github.com/oa-labs/ThreeStrands" rel="noopener">Source available</a> · Gmail + IMAP · macOS + Linux</p>
+          <p class="fine-print"><a href="https://github.com/oa-labs/ThreeStrands" rel="noopener">Source available</a> · Gmail + IMAP · macOS, Windows + Linux</p>
         </div>
 
         <div class="hero-stage container">
@@ -148,7 +148,7 @@
               <svg class="strand-glyph" viewBox="0 0 120 30" aria-hidden="true" focusable="false"><path d="M6 15 q18 -16 36 0 t36 0 t36 0" /></svg>
               <p class="strand-label">Schedule</p>
               <h3>Your Day, Beside Your Mail</h3>
-              <p>See your day or week from Google Calendar, find free time against your working hours, and create or edit events, answer invitations, or put available times in a reply.</p>
+              <p>Press <kbd>0</kbd> for Today: your agenda, unread mail, and tasks due on one screen. See your day or week from Google Calendar, find free time against your working hours, and create or edit events, answer invitations, or put available times in a reply.</p>
             </article>
           </div>
         </div>
@@ -241,7 +241,7 @@
                 <p class="step-count">04</p>
                 <h3>Write with the Context You Need</h3>
                 <p>Write with rich text, inline images, attachments, reusable snippets, and formatted signatures with logos. Choose separate signature defaults for new messages and replies, or import your signature from Gmail. Keep recipient history, shared files, related tasks, meetings, and available times beside your draft. Recipient suggestions draw on saved contacts and correspondence, and groups expand into individual recipients.</p>
-                <p>Local checks flag missing attachments, likely address typos, account mismatches, and group addresses exposed in To or Cc. Optional AI draft review offers specific feedback against the outcome you want. Send now includes a ten-second undo window, and a durable outbox survives restarts. Sent keeps your outgoing conversations together, including messages sent from other devices. Edit as New reuses a sent message and its attachments for new recipients.</p>
+                <p>Local checks flag missing attachments, likely address typos, account mismatches, and group addresses exposed in To or Cc. Optional AI draft review offers specific feedback against the outcome you want. Drafts save to your Gmail or IMAP Drafts folder, so you can finish them on your phone, the web, or another computer. Send now includes a ten-second undo window, and a durable outbox survives restarts. Sent keeps your outgoing conversations together, including messages sent from other devices. Edit as New reuses a sent message and its attachments for new recipients.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="reply" sizes="92vw" alt="A reply with a formatted signature beneath the conversation it answers, with recipient context beside it."></ts-shot></div></div>
               </li>
               <li class="tour-step" data-step="tasks">
@@ -256,11 +256,12 @@
                 <p>Set goals for the year, half, and quarter in each account, and link tasks to the goal they move forward. Select a goal to see only its work, with open and done counts and a flag when nothing has moved in three weeks. At the end of a period, review each goal and mark it achieved, drop it, or carry it forward.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="goals" sizes="92vw" alt="The Tasks board filtered to a quarterly launch goal, beside a Goals pane listing quarter, half, and year goals with open and done counts."></ts-shot></div></div>
               </li>
-              <li class="tour-step" data-step="inbox-zero">
+              <li class="tour-step" data-step="today">
                 <p class="step-count">07</p>
-                <h3>Inbox Zero, with a Next Step</h3>
-                <p>When the inbox is clear, see your open tasks, people due for a Keep in Touch check-in, and today’s agenda when a calendar is connected. Open any item to carry on. The reading pane shows when the account was last checked, so you can tell a clear inbox from a connection problem.</p>
-                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="inbox-zero" sizes="92vw" alt="Inbox zero with the account’s last-check status, open tasks, Keep in Touch reminders, and today’s agenda."></ts-shot></div></div>
+                <h3>Your Day at a Glance</h3>
+                <p>Press <kbd>0</kbd> for Today: your agenda with a Join button for the next meeting, unread mail sorted into Invitations, Needs a reply, From people, and Updates, and tasks that are overdue or due today. A Now line dims what’s finished, tomorrow’s first events wait below, and people due for a Keep in Touch check-in appear beside your tasks. Start the app on Today if you like.</p>
+                <p>When the inbox is clear, Inbox zero shows when the account was last checked, so you can tell a clear inbox from a connection problem, and links straight to Today.</p>
+                <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="today" sizes="92vw" alt="Today with the day’s agenda and tomorrow’s first events, unread mail grouped by Needs a reply, From people, and Updates, and tasks due beside Keep in Touch reminders."></ts-shot></div></div>
               </li>
               <li class="tour-step" data-step="find-times">
                 <p class="step-count">08</p>
@@ -277,7 +278,8 @@
               <li class="tour-step" data-step="calendar-create">
                 <p class="step-count">10</p>
                 <h3>From Conversation to Calendar</h3>
-                <p>Create events with invitees from the week view or a reviewed meeting suggestion. Check the title, time, location, and calendar before creating, or mark the event All day. When a newsletter announces several events, Get Brief and conversation chat can offer each one at its stated date and time. Edit or delete events you manage, and answer invitations with Yes, No, or Maybe.</p>
+                <p>Create events with invitees from the week view or a reviewed meeting suggestion. Check the title, time, location, and calendar before creating, or mark the event All day. When a newsletter announces several events, Get Brief and conversation chat can offer each one at its stated date and time. Edit or delete events you manage. Invite People suggests your contacts and contact groups as you type.</p>
+                <p>Invitations arrive as a card beside the email: Accept, Maybe, or Decline with your current answer clearly marked, or suggest a different time and review the reply before it goes. Event details show who is going, not going, or hasn’t answered yet.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="calendar-create" sizes="92vw" alt="A new calendar event with an All day option, location, calendar, and invitee, awaiting Create event."></ts-shot></div></div>
               </li>
               <li class="tour-step" data-step="contacts">
@@ -291,7 +293,7 @@
                 <p class="step-count">12</p>
                 <h3>Find the File Without Hunting Down the Email</h3>
                 <p>Bring attachments from your synced mail together in one Files view, including archived conversations. Search by filename or filter by sender, file type, direction, account, and date. Star the files you return to, and jump straight to the source conversation when you need the context.</p>
-                <p>On macOS, preview a selected document or picture before opening it. Risky attachments show a warning and are never previewed. Mark Spam removes a message’s files from Files, with Undo if needed. Press <kbd>5</kbd> to open Files. Stars stay on this computer and do not keep an offline copy.</p>
+                <p>On macOS and Windows, preview a selected document or picture before opening it. Risky attachments show a warning and are never previewed. Mark Spam removes a message’s files from Files, with Undo if needed. Press <kbd>5</kbd> to open Files. Stars stay on this computer and do not keep an offline copy.</p>
                 <div class="tour-inline window window-flat"><div class="window-body"><ts-shot scene="files" sizes="92vw" alt="The Files view with searchable mail attachments, a starred rollout image and its preview, and its source conversation in the context panel."></ts-shot></div></div>
               </li>
             </ol>
@@ -305,7 +307,7 @@
                   <ts-shot scene="reply" data-scene="reply" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="tasks" data-scene="tasks" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="goals" data-scene="goals" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
-                  <ts-shot scene="inbox-zero" data-scene="inbox-zero" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
+                  <ts-shot scene="today" data-scene="today" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="find-times" data-scene="find-times" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="calendar-week" data-scene="calendar-week" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
                   <ts-shot scene="calendar-create" data-scene="calendar-create" sizes="(min-width: 900px) 58vw, 1px" alt=""></ts-shot>
@@ -421,9 +423,9 @@
               <li><ts-icon name="shield-check"></ts-icon>Chat searches other mail only when you choose Search all mail. You select which readable attachments to share.</li>
               <li><ts-icon name="lock"></ts-icon>AI starts off. Set up your provider and key, then enable the features you want.</li>
             </ul>
-            <p class="ai-note">Proactive briefs are a separate opt-in: when enabled, qualifying conversations are sent to your provider after you stay on them. Contact enrichment reviews correspondence with that person when you request it.</p>
+            <p class="ai-note">Proactive briefs are a separate opt-in: when enabled, qualifying conversations are sent to your provider after you stay on them. Each brief covers only what’s new since your last reply or brief, and says how many messages it shared and with which provider. Contact enrichment reviews correspondence with that person when you request it.</p>
             <p class="ai-note">Draft review starts with a preview of the subject, written text, and optional goal you choose to share. Recipient fields, separately stored quoted history, and attachments are excluded. Review suggested wording before applying it; revisions can be undone.</p>
-            <p class="ai-note">Track requests, tokens, and estimated costs in settings. An optional fast model handles summaries, reply drafts, and contact enrichment while your main model handles draft review, briefs, suggestions, and chat.</p>
+            <p class="ai-note">Track requests, tokens, and estimated costs in settings. An Activity log lists which feature sent each request, for which conversation, and how many messages; email text is never kept there. An optional fast model handles summaries, reply drafts, and contact enrichment while your main model handles draft review, briefs, suggestions, and chat.</p>
           </div>
           <div class="ai-screenshots">
             <figure>
@@ -453,11 +455,14 @@
             <li><ts-icon name="search"></ts-icon><h3>Local + Provider Search</h3><p>Search cached mail instantly, and reach beyond the cache through your connected provider where supported.</p></li>
             <li><ts-icon name="users"></ts-icon><h3>Multiple Accounts</h3><p>Gmail and IMAP accounts in one merged inbox, with nicknames and colors to tell them apart.</p></li>
             <li><ts-icon name="shield-check"></ts-icon><h3>Before You Send</h3><p>Local checks flag likely mistakes in attachments, recipients, and sender accounts. Review them and decide what to change; no AI required.</p></li>
-            <li><ts-icon name="mail"></ts-icon><h3>Open Mail and Invitations</h3><p>Mailto links open a draft. On macOS, choose ThreeStrands as your default mail app and open .ics invitations to review or add to Google Calendar.</p></li>
+            <li><ts-icon name="mail"></ts-icon><h3>Open Mail and Invitations</h3><p>Mailto links open a draft. On macOS, Windows, and Linux, choose ThreeStrands as your default mail app and open .ics invitations to review or add to Google Calendar.</p></li>
+            <li><ts-icon name="file-pen-line"></ts-icon><h3>Drafts That Follow You</h3><p>Drafts save to your Gmail or IMAP server and come back from it, attachments included. Discard by mistake? Undo brings them back.</p></li>
             <li><ts-icon name="scroll-text"></ts-icon><h3>Snippets</h3><p>Reusable replies, a keystroke away.</p></li>
             <li><ts-icon name="mail-x"></ts-icon><h3>Newsletter Control</h3><p>Unsubscribe with confirmation, archive a sender’s inbox mail, or give it a Split Inbox. Mute marks new mail from that sender read and archives it as it arrives; manage your choices in Settings → Muted Senders.</p></li>
             <li><ts-icon name="fold-vertical"></ts-icon><h3>Clean Threads</h3><p>Repeated quoted replies fold away, and search skips them too.</p></li>
-            <li><ts-icon name="a-large-small"></ts-icon><h3>Readable Mail</h3><p>Set a minimum font size for tiny sender text.</p></li>
+            <li><ts-icon name="at-sign"></ts-icon><h3>Sent to You, or Cc'd?</h3><p>Message headers read “to David Martinez, cc me,” so you can tell at a glance.</p></li>
+            <li><ts-icon name="rotate-ccw"></ts-icon><h3>Right Where You Left Off</h3><p>The app reopens to the view you quit in, and each account remembers the conversation you had open.</p></li>
+            <li><ts-icon name="a-large-small"></ts-icon><h3>Readable Mail</h3><p>Zoom email on its own, set a minimum font size for tiny sender text, and let hard-to-read sender colors adjust just enough to read. Switch light and dark mode anytime with <kbd data-mod-key>⌘D</kbd>.</p></li>
             <li><ts-icon name="database-backup"></ts-icon><h3>Self-Healing Cache</h3><p>Automatic backups and startup recovery keep your local data safe.</p></li>
           </ul>
         </div>
@@ -474,7 +479,6 @@
           <ol class="roadmap-list">
             <li><h3>Snooze</h3><p>Put a conversation aside and bring it back at a chosen time.</p></li>
             <li><h3>Sending Aliases</h3><p>Send from verified Gmail aliases. Formatted signatures and defaults for each sending address are available today.</p></li>
-            <li><h3>Drafts Across Devices</h3><p>Start a reply on one computer and finish it on another, with clear controls over draft synchronization.</p></li>
             <li><h3>Connected Address Books</h3><p>Keep Google Contacts and CardDAV address books connected with ongoing synchronization. CSV and vCard import and export are available today.</p></li>
             <li><h3>Smarter Inbox Rules</h3><p>Inspectable, user-controlled classification beyond domain, label, and address rules.</p></li>
             <li><h3>Microsoft 365</h3><p>Add a direct Microsoft 365 integration alongside the Gmail and IMAP/SMTP connections available today.</p></li>
@@ -505,7 +509,7 @@
             </a>
             <a class="button button-ghost" href="privacy.html">Read the Privacy Policy<ts-icon name="arrow-right"></ts-icon></a>
           </div>
-          <p class="fine-print">Gmail and IMAP/SMTP · macOS and Linux · Builds on GitHub Releases. Google Calendar connects separately.</p>
+          <p class="fine-print">Gmail and IMAP/SMTP · macOS, Windows, and Linux · Builds on GitHub Releases. Google Calendar connects separately.</p>
         </div>
       </section>
     </main>
