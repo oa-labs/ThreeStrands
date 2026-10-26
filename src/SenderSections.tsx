@@ -255,7 +255,7 @@ function SenderFeedback({ messageId, feedback }: { messageId: string; feedback: 
           ? <button type="button" className="btn-link" disabled={busy} onClick={() => { void save(matchingId); }}>Forget confirmation</button>
           : <button type="button" className="btn-link" disabled={busy} onClick={() => { void save(); }}>{busy ? "Saving…" : "This is legitimate"}</button>}
       </div>
-      <p className="context-sender-feedback-scope">{matchingId ? "Remembered" : "Remembers"} this sending address and link destinations for {feedback.requester} for this mail account. Confirmations sync across your devices when sync is enabled. Security checks still apply.</p>
+      <p className="context-sender-feedback-scope">{matchingId ? "Remembered" : "Remembers"} this sending address and link destinations for {feedback.requester} for this mail account. Security checks still apply.</p>
       {!matchingId && feedback.patterns.length > 0 ? (
         <details>
           <summary>Remembered senders</summary>
