@@ -136,7 +136,7 @@ describe("TodayWorkspace", () => {
       const listTodayMail = mockMail([]);
       renderToday({ accountId: null });
       await waitFor(() => expect(listTodayMail).toHaveBeenCalledWith(undefined));
-      expect(screen.getByText("Today · Mail and tasks: All accounts")).toBeInTheDocument();
+      expect(screen.getByText("· All accounts", { selector: ".eyebrow-account" })).toBeInTheDocument();
     });
 
     it("says when nothing is unread, and when only the newest are listed", async () => {
@@ -148,7 +148,8 @@ describe("TodayWorkspace", () => {
       mockMail([todayItem("one")], 250);
       renderToday();
       expect(await screen.findByText("Showing the newest 1 of 250 unread.")).toBeInTheDocument();
-      expect(screen.getByText(/250 unread/, { selector: ".today-summary" })).toBeInTheDocument();
+      // The column gives the count, so the header doesn't repeat it.
+      expect(document.querySelector(".today-header")).not.toHaveTextContent(/unread/);
     });
 
     it("shows a read failure instead of an empty inbox", async () => {
@@ -188,7 +189,7 @@ describe("TodayWorkspace", () => {
       expect(screen.queryByText("Task done")).not.toBeInTheDocument();
       expect(within(screen.getByRole("region", { name: "Overdue" })).getByText("Task late")).toBeInTheDocument();
       expect(within(screen.getByRole("region", { name: "Due today" })).getByText("Task now")).toBeInTheDocument();
-      expect(screen.getByText(/2 tasks due/, { selector: ".today-summary" })).toBeInTheDocument();
+      expect(document.querySelector(".today-header")).not.toHaveTextContent(/due/);
 
       fireEvent.click(within(open).getByRole("button", { name: /Task soon/ }));
       expect(onEditTask).toHaveBeenCalledWith(expect.objectContaining({ id: "soon" }));
@@ -311,14 +312,17 @@ describe("TodayWorkspace", () => {
     it("points to Settings instead of loading a schedule when no calendar is connected", async () => {
       renderToday({ calendarConnected: false });
       expect(within(screen.getByRole("region", { name: "Today's agenda" })).getByText(/Connect a calendar in Settings/)).toBeInTheDocument();
-      expect(screen.getByText("Today · Mail and tasks: you@example.com")).toBeInTheDocument();
+      expect(screen.getByText("· you@example.com", { selector: ".eyebrow-account" })).not.toHaveAttribute("title");
       expect(mailClient.listScheduleEvents).not.toHaveBeenCalled();
-      expect(await screen.findByText(/^0 unread · No tasks due$/, { selector: ".today-summary" })).toBeInTheDocument();
+      // Without a calendar the header has nothing to say about the day beyond its date.
+      await waitFor(() => expect(mailClient.listTasks).toHaveBeenCalled());
+      expect(document.querySelector(".today-day-shape")).toBeNull();
     });
 
-    it("says the agenda covers every calendar while mail and tasks follow the account", async () => {
+    it("names the account like other views and says the agenda covers every calendar", async () => {
       renderToday({ calendarConnected: true });
-      expect(await screen.findByText("Today · Mail and tasks: you@example.com · All calendars")).toBeInTheDocument();
+      expect(await screen.findByText("· you@example.com", { selector: ".eyebrow-account" }))
+        .toHaveAttribute("title", "Mail and tasks follow this account. The agenda shows all your calendars.");
     });
 
     it("counts a meeting on two calendars once, and skips declined ones for the count and the next meeting", async () => {
@@ -332,7 +336,7 @@ describe("TodayWorkspace", () => {
       renderToday({ calendarConnected: true });
 
       expect(await screen.findByRole("button", { name: /^Next: Sync in \d+ min$/ })).toBeInTheDocument();
-      expect(screen.getByText(/^1 meeting ·/, { selector: ".today-summary" })).toBeInTheDocument();
+      expect(screen.getByText(/^1 meeting( ·|$)/, { selector: ".today-day-shape" })).toBeInTheDocument();
       const agenda = screen.getByRole("region", { name: "Today's agenda" });
       expect(within(agenda).getAllByText("Sync")).toHaveLength(1);
       expect(within(agenda).getByText("Optional talk").closest(".context-row")).toHaveClass("agenda-event-declined");
@@ -351,7 +355,7 @@ describe("TodayWorkspace", () => {
       expect(cs).toHaveClass("agenda-event-conflict");
       expect(within(cs as HTMLElement).getByText(/Overlaps Ramp AI deep dive · Recorded/)).toBeInTheDocument();
       expect(within(agenda).getByText("Elder meeting").closest(".context-row")).not.toHaveClass("agenda-event-conflict");
-      expect(screen.getByText(/double-booked \(CS Updates is recorded\) · Last meeting ends/, { selector: ".today-day-shape" })).toBeInTheDocument();
+      expect(screen.getByText(/^3 meetings · Double-booked at .+ \(CS Updates is recorded\) · Last meeting ends/, { selector: ".today-day-shape" })).toBeInTheDocument();
     });
 
     it("names a meeting under way as now, with when it ends", async () => {
@@ -374,7 +378,7 @@ describe("TodayWorkspace", () => {
       // The page heading already gives today's date.
       expect(agenda.querySelector(".context-section-note")).toBeNull();
       const next = await screen.findByRole("button", { name: /^Next: Design sync in \d+ min$/ });
-      expect(screen.getByText(/2 meetings/, { selector: ".today-summary" })).toBeInTheDocument();
+      expect(screen.getByText(/^2 meetings/, { selector: ".today-day-shape" })).toBeInTheDocument();
 
       fireEvent.click(screen.getByRole("button", { name: "Join" }));
       expect(openUrl).toHaveBeenCalledWith("https://meet.example.com/design");
@@ -408,7 +412,7 @@ describe("TodayWorkspace tomorrow", () => {
     const tomorrow = await screen.findByRole("region", { name: "Tomorrow" });
     expect(await within(tomorrow).findByText("Dentist")).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Today's agenda" })).queryByText("Dentist")).not.toBeInTheDocument();
-    expect(screen.getByText(/^No meetings ·/, { selector: ".today-summary" })).toBeInTheDocument();
+    expect(screen.getByText(/^No meetings$/, { selector: ".today-day-shape" })).toBeInTheDocument();
     const [timeMin, timeMax] = listEvents.mock.calls[0];
     expect(new Date(timeMax).getTime() - new Date(timeMin).getTime()).toBeGreaterThanOrEqual(47 * 3_600_000);
   });

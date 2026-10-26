@@ -162,14 +162,16 @@ describe("component typography", () => {
     expect(sizeOf(".context-section-header h3")).toBe("--text-label");
   });
 
-  it("sets Today's rows at the email list's UI size, like Files, rather than the side panel's", () => {
+  it("sets Today's rows a step above the email list, with details at the list's title size", () => {
     const emailSize = sizeOf(".thread-subject");
-    expect(sizeOf(".today-column .context-row-title")).toBe(emailSize);
+    expect(sizeOf(".today-column .context-row-title")).toBe("--text-card-title");
+    expect(rolePx(sizeOf(".today-column .context-row-title")!)).toBeGreaterThan(rolePx(emailSize!));
     expect(rolePx(sizeOf(".context-row-title")!)).toBeLessThan(rolePx(emailSize!));
     for (const selector of [".today-column .context-row-detail", ".today-column .context-row-date"]) {
-      expect(rolePx(sizeOf(selector)!), selector).toBeLessThan(rolePx(emailSize!));
+      expect(sizeOf(selector), selector).toBe(emailSize);
       expect(rolePx(sizeOf(selector)!), selector).toBeGreaterThan(rolePx(sizeOf(".context-row-detail")!));
     }
+    expect(sizeOf(".today-day-shape")).toBe(emailSize);
     expect(sizeOf(".context-section-header h3")).toBe("--text-label");
   });
 

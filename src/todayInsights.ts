@@ -44,8 +44,9 @@ export function mentionsRecording(event: ScheduleEvent): boolean {
 }
 
 /**
- * The rest of the day in one line, such as "Free until 2:00 pm · 4:00 pm
- * double-booked · Last meeting ends 5:00 pm". Empty when no meeting is left.
+ * The rest of the day in one line, such as "Free until 2:00 pm · Double-booked
+ * at 4:00 pm · Last meeting ends 5:00 pm". Two or more clashes are counted
+ * instead, since the agenda marks each one. Empty for a day without meetings.
  */
 export function dayShape(events: readonly ScheduleEvent[], now: Date): string {
   const remaining = events.filter((event) => isAttending(event) && new Date(event.end).getTime() > now.getTime())
@@ -65,9 +66,10 @@ export function dayShape(events: readonly ScheduleEvent[], now: Date): string {
       clashes.set(start, recorded);
     }
   }
-  for (const [start, clashing] of [...clashes].sort(([left], [right]) => left - right)) {
-    const recorded = clashing.filter(mentionsRecording);
-    parts.push(`${formatClockTime(new Date(start))} double-booked${recorded.length ? ` (${recorded.map((event) => event.title).join(", ")} ${recorded.length === 1 ? "is" : "are"} recorded)` : ""}`);
+  if (clashes.size > 0) {
+    const recorded = [...new Set([...clashes.values()].flat())].filter(mentionsRecording);
+    const note = recorded.length ? ` (${recorded.map((event) => event.title).join(", ")} ${recorded.length === 1 ? "is" : "are"} recorded)` : "";
+    parts.push(clashes.size === 1 ? `Double-booked at ${formatClockTime(new Date([...clashes.keys()][0]))}${note}` : `${clashes.size} double-bookings${note}`);
   }
 
   const lastEnd = Math.max(...remaining.map((event) => new Date(event.end).getTime()));

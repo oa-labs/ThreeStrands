@@ -46,7 +46,16 @@ describe("dayShape", () => {
       meeting("Marketing", at(14), at(14, 25)),
       meeting("CS Updates", at(16), at(16, 20), { description: "The session is recorded." }),
       meeting("Ramp AI", at(16), at(17)),
-    ], now)).toBe(`Free until ${clock(14)} · ${clock(16)} double-booked (CS Updates is recorded) · Last meeting ends ${clock(17)}`);
+    ], now)).toBe(`Free until ${clock(14)} · Double-booked at ${clock(16)} (CS Updates is recorded) · Last meeting ends ${clock(17)}`);
+  });
+
+  it("counts two or more clashes rather than listing each time", () => {
+    expect(dayShape([
+      meeting("Marketing", at(14), at(14, 25)),
+      meeting("Momentum", at(14), at(14, 45)),
+      meeting("CS Updates", at(16), at(16, 20), { description: "The session is recorded." }),
+      meeting("Ramp AI", at(16), at(17)),
+    ], now)).toBe(`Free until ${clock(14)} · 2 double-bookings (CS Updates is recorded) · Last meeting ends ${clock(17)}`);
   });
 
   it("calls a gap free time from the threshold up", () => {
@@ -61,7 +70,7 @@ describe("dayShape", () => {
       meeting("Done", at(8), at(9)),
       meeting("Long", at(10, 30), at(12)),
       meeting("Overlap", at(11), at(11, 30)),
-    ], now)).toBe(`${clock(11)} double-booked · Last meeting ends ${clock(12)}`);
+    ], now)).toBe(`Double-booked at ${clock(11)} · Last meeting ends ${clock(12)}`);
   });
 
   it("says when no meeting is left, and says nothing for a day without meetings", () => {

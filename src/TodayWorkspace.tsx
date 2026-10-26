@@ -171,11 +171,10 @@ function TodayLayout({
   const open = tasks.filter((task) => !overdue.includes(task) && !dueToday.includes(task));
   const groups = groupTodayMail(mail?.threads ?? []);
 
-  const summary = [
-    schedule ? count(todaysEvents.filter((event) => !event.allDay && !isDeclined(event)).length, "meeting") : null,
-    mail ? `${mail.total} unread` : null,
-    count(overdue.length + dueToday.length, "task") + " due",
-  ].filter(Boolean).join(" · ");
+  // Unread mail and tasks due have their own columns, so the header speaks only to the day's meetings.
+  const dayLine = schedule
+    ? [count(todaysEvents.filter((event) => !event.allDay && !isDeclined(event)).length, "meeting"), shape].filter(Boolean).join(" · ")
+    : "";
 
   const taskRow = (task: ThreadTask) => {
     const due = formatDue(task);
@@ -207,10 +206,9 @@ function TodayLayout({
     <header className="today-header">
       <div>
         {/* Mail and tasks follow the account in view; the agenda shows every selected calendar, as Calendar does. */}
-        <span className="eyebrow">Today · Mail and tasks: {accountId ?? "All accounts"}{schedule ? " · All calendars" : ""}</span>
+        <span className="eyebrow">Today <span className="eyebrow-account" title={schedule ? "Mail and tasks follow this account. The agenda shows all your calendars." : undefined}>· {accountId ?? "All accounts"}</span></span>
         <h1>{now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</h1>
-        <p className="today-summary">{summary}</p>
-        {shape ? <p className="today-day-shape">{shape}</p> : null}
+        {dayLine ? <p className="today-day-shape">{dayLine}</p> : null}
       </div>
       {next ? <NextMeeting event={next} now={now} onOpenEvent={onOpenEvent} /> : null}
     </header>
