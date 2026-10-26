@@ -31,14 +31,15 @@ function setup(initial = draft, available = true, { open = true } = {}) {
     replaceDraft: (expected, edit) => ref.current!.draftReview.replaceDraft(expected, edit),
   };
   const onOpenSettings = vi.fn();
+  const onOpenWritingProfile = vi.fn();
   const tree = (withReview: boolean) => <>
     <Composer ref={ref} draft={initial} accounts={[{ email: initial.account }] as Account[]} snippets={[]}
       onCreateSnippet={vi.fn()} onUpdateSnippet={vi.fn()} onDeleteSnippet={vi.fn()} onClose={vi.fn()} onQueued={vi.fn()} />
-    {withReview ? <DraftReviewSection actions={actions} account={initial.account} enabled available={available} onOpenSettings={onOpenSettings} /> : null}
+    {withReview ? <DraftReviewSection actions={actions} account={initial.account} enabled available={available} onOpenSettings={onOpenSettings} onOpenWritingProfile={onOpenWritingProfile} /> : null}
   </>;
   const view = render(tree(open));
   return {
-    ...view, ref, actions, onOpenSettings,
+    ...view, ref, actions, onOpenSettings, onOpenWritingProfile,
     body: screen.getByRole("textbox", { name: "Message Body" }),
     openReview: () => view.rerender(tree(true)),
   };
@@ -111,13 +112,14 @@ describe("Draft review", () => {
     expect(screen.queryByText(/No writing profile/)).not.toBeInTheDocument();
   });
 
-  it("points to AI settings when the sending account has no writing profile", async () => {
+  it("opens Writing Profile settings when the sending account has no writing profile", async () => {
     setWritingProfile("other@example.com", { aboutYou: "Other account", reviewInstructions: "" });
-    const { onOpenSettings } = setup();
+    const { onOpenSettings, onOpenWritingProfile } = setup();
     await reviewed();
     expect(screen.getByText(/No writing profile for this account/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add Writing Profile" }));
-    expect(onOpenSettings).toHaveBeenCalled();
+    expect(onOpenWritingProfile).toHaveBeenCalledOnce();
+    expect(onOpenSettings).not.toHaveBeenCalled();
     expect(within(whatWasSent()).queryByRole("heading", { name: "Your writing profile" })).not.toBeInTheDocument();
     expect(within(whatWasSent()).getByText(/written text and goal shown here are sent/)).toBeInTheDocument();
   });

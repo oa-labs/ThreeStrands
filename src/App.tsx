@@ -1218,6 +1218,7 @@ export function App() {
             ) : null}
             {correspondence.renderComposer(context.canSendAndMarkDone ? context.sendAndMarkDone : undefined, {
               enabled: aiDraftFeatureEnabled, available: aiDraftAvailable, onOpenSettings: () => openSettingsAt("ai"),
+              onOpenWritingProfile: () => openSettingsAt("writingProfile"),
             })}
           </div>
           </ContactCardContext.Provider>

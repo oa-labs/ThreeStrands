@@ -490,7 +490,7 @@ export const Composer = forwardRef<ComposerHandle, {
         ) : null}
         {error && !remote && <div className="notice compose-error" role="alert">{error} <button className="btn btn-sm" onClick={() => void run(async () => { await flush(); })}>Retry Save</button></div>}
         {reviewEnabled && reviewOpen ? (
-          <DraftReviewSection actions={draftReview} account={draft.account} goal={reviewGoal} onGoalChange={setReviewGoal} enabled available={Boolean(review?.available)} onOpenSettings={review?.onOpenSettings} onClose={() => setReviewOpen(false)} />
+          <DraftReviewSection actions={draftReview} account={draft.account} goal={reviewGoal} onGoalChange={setReviewGoal} enabled available={Boolean(review?.available)} onOpenSettings={review?.onOpenSettings} onOpenWritingProfile={review?.onOpenWritingProfile} onClose={() => setReviewOpen(false)} />
         ) : null}
       </div>
       {!isReply ? writingTools : null}

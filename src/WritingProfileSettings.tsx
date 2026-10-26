@@ -11,10 +11,14 @@ import {
 /**
  * Who the user is and how they want drafts reviewed, per sending account, so
  * Draft Review does not need it explained in every email's goal. Edits save
- * when a field loses focus or the section closes.
+ * when a field loses focus or the section closes. The profile stays editable
+ * while Draft Review is off, so what was written never seems to disappear.
  */
-export function WritingProfileSettings({ accounts, onChange }: {
+export function WritingProfileSettings({ accounts, draftReviewOn, onOpenAiSettings, onChange }: {
   accounts: Account[];
+  /** Whether Draft Review can use the profile: a provider is chosen and Writing is on. */
+  draftReviewOn: boolean;
+  onOpenAiSettings?(): void;
   /** Queues the portable preference record; see `AiProviderSettings`. */
   onChange?: () => void;
 }) {
@@ -43,7 +47,9 @@ export function WritingProfileSettings({ accounts, onChange }: {
     if (!pending.current) setDraft(writingProfileFor(profiles, selected));
   }, [profiles, selected]);
 
-  if (!selected) return null;
+  if (!selected) return <section className="settings-section writing-profile-settings" aria-label="Writing Profile">
+    <p>Connect a mail account to write a profile for it.</p>
+  </section>;
 
   function edit(field: keyof WritingProfile, value: string) {
     const profile = { ...draft, [field]: value };
@@ -56,12 +62,15 @@ export function WritingProfileSettings({ accounts, onChange }: {
     setAccount(next);
   }
 
-  return <>
-    <h3>Writing Profile</h3>
-    <p className="settings-hint">
+  return <section className="settings-section writing-profile-settings" aria-label="Writing Profile">
+    <p>
       Draft Review sends this to your AI provider with every review of email you write from this account, along with
-      any goal you add for that email.
+      any goal you add for that email. It treats what you write in About You as true and may suggest using it.
     </p>
+    {draftReviewOn ? null : <p className="settings-hint" role="note">
+      Draft Review is off, so this profile isn’t used yet. Turn on Writing in AI Provider to use it.
+      {onOpenAiSettings ? <> <button type="button" className="btn-link" onClick={onOpenAiSettings}>AI Provider</button></> : null}
+    </p>}
     {accounts.length > 1 ? <label className="settings-field">
       <span>Account</span>
       <select value={selected} onChange={(event) => chooseAccount(event.target.value)}>
@@ -71,7 +80,7 @@ export function WritingProfileSettings({ accounts, onChange }: {
     <label className="settings-field">
       <span>About You</span>
       <textarea
-        rows={4}
+        rows={10}
         value={draft.aboutYou}
         maxLength={WRITING_PROFILE_LIMITS.aboutYou}
         placeholder="e.g. I’m the CEO of a 30-person consulting firm. I write to operations leaders about process improvement projects."
@@ -79,10 +88,11 @@ export function WritingProfileSettings({ accounts, onChange }: {
         onBlur={commit}
       />
     </label>
+    <CharacterCount value={draft.aboutYou} limit={WRITING_PROFILE_LIMITS.aboutYou} />
     <label className="settings-field">
       <span>Review Instructions</span>
       <textarea
-        rows={3}
+        rows={8}
         value={draft.reviewInstructions}
         maxLength={WRITING_PROFILE_LIMITS.reviewInstructions}
         placeholder="e.g. Help me move opportunities forward: one clear next step, no hedging, under 150 words."
@@ -90,5 +100,10 @@ export function WritingProfileSettings({ accounts, onChange }: {
         onBlur={commit}
       />
     </label>
-  </>;
+    <CharacterCount value={draft.reviewInstructions} limit={WRITING_PROFILE_LIMITS.reviewInstructions} />
+  </section>;
+}
+
+function CharacterCount({ value, limit }: { value: string; limit: number }) {
+  return <small className="settings-hint writing-profile-count">{`${[...value].length.toLocaleString()} / ${limit.toLocaleString()}`}</small>;
 }

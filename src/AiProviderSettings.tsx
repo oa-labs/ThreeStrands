@@ -38,8 +38,6 @@ import { AiUsageSummary } from "./AiUsageSummary";
 import { AiActivityList } from "./AiActivityList";
 import { MIN_PROACTIVE_DWELL_SECONDS } from "./proactiveBrief";
 import { ICON_SIZE } from "./iconSizes";
-import type { Account } from "./domain";
-import { WritingProfileSettings } from "./WritingProfileSettings";
 
 /**
  * `onChange` must run after every saved field, not just the switches: it
@@ -47,11 +45,7 @@ import { WritingProfileSettings } from "./WritingProfileSettings";
  * applies that record over local storage, so a field saved without it is
  * silently reverted to its last queued value.
  */
-export function AiProviderSettings({ onChange, accounts = [] }: {
-  onChange?: () => void;
-  /** Mail accounts, for each one's writing profile. */
-  accounts?: Account[];
-}) {
+export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
   const [provider, setProvider] = useState(readAiProvider);
   const [model, setModel] = useState(readAiModel);
   const [fastModel, setFastModel] = useState(readAiFastModel);
@@ -290,7 +284,7 @@ export function AiProviderSettings({ onChange, accounts = [] }: {
             />
             <SettingsToggle
               label="Writing"
-              description="Draft Reply writes a reply from a short instruction, Draft Review gives feedback on your draft, and Find Times reads the conversation for when to meet."
+              description="Draft Reply writes a reply from a short instruction, Draft Review gives feedback on your draft using your Writing Profile, and Find Times reads the conversation for when to meet."
               checked={aiAreaEnabled(features, "writing")}
               onChange={(value) => updateArea("writing", value)}
             />
@@ -301,8 +295,6 @@ export function AiProviderSettings({ onChange, accounts = [] }: {
               onChange={(value) => updateArea("contacts", value)}
             />
           </div>
-
-          {aiAreaEnabled(features, "writing") ? <WritingProfileSettings accounts={accounts} onChange={onChange} /> : null}
 
           <h3>Automatic Briefs</h3>
           <p className="settings-hint" id={automaticHintId}>

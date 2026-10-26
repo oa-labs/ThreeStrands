@@ -16,6 +16,8 @@ export type DraftReviewAvailability = {
   /** An API key is also configured. */
   available: boolean;
   onOpenSettings?(): void;
+  /** Opens Settings at Writing Profile. */
+  onOpenWritingProfile?(): void;
 };
 
 /** What one review sent, shown afterwards under What Was Sent. */
@@ -28,7 +30,7 @@ type SentReview = { snapshot: DraftReviewSnapshot; profile: WritingProfile; goal
  * sending account's writing profile, and a goal can be added afterwards to
  * review again. Hidden unless Draft Assist is on with a provider chosen.
  */
-export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalChange, enabled, available, onOpenSettings, onClose }: {
+export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalChange, enabled, available, onOpenSettings, onOpenWritingProfile, onClose }: {
   actions: DraftReviewActions;
   /** The goal, kept by the composer so closing the panel does not clear it. */
   goal?: string;
@@ -41,6 +43,8 @@ export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalCha
   available: boolean;
   /** Opens AI settings; without it, setup is described but not linked. */
   onOpenSettings?(): void;
+  /** Opens Settings at Writing Profile; without it, the profile is described but not linked. */
+  onOpenWritingProfile?(): void;
   onClose?(): void;
 }) {
   const [localGoal, setLocalGoal] = useState("");
@@ -171,8 +175,8 @@ export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalCha
           <Sparkles size={ICON_SIZE.sm} />Review Again
         </button>
         {!accountHasProfile ? <p className="context-section-note">
-          No writing profile for this account. Tell Draft Review who you are and how to review once, in AI settings.
-          {onOpenSettings ? <> <button type="button" className="btn-link" onClick={onOpenSettings}>Add Writing Profile</button></> : null}
+          No writing profile for this account. Tell Draft Review who you are and how to review once, in Settings.
+          {onOpenWritingProfile ? <> <button type="button" className="btn-link" onClick={onOpenWritingProfile}>Add Writing Profile</button></> : null}
         </p> : null}
       </div> : null}
       {sent && !busy ? <details className="draft-review-preview">

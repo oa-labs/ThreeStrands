@@ -287,7 +287,7 @@ describe("settings section keyboard navigation", () => {
     const dialog = await screen.findByRole("dialog", { name: "Settings" });
     const nav = within(dialog).getByRole("navigation", { name: "Settings sections" });
     const sectionButtons = Array.from(nav.querySelectorAll<HTMLButtonElement>("button[data-section-id]"));
-    expect(sectionButtons).toHaveLength(14);
+    expect(sectionButtons).toHaveLength(15);
     for (const button of sectionButtons) {
       const icon = button.querySelector("svg");
       expect(icon).not.toBeNull();
@@ -332,6 +332,14 @@ describe("settings section keyboard navigation", () => {
     expect(within(dialog).getByRole("button", { name: "Privacy" })).toHaveAttribute("aria-current", "true");
     expect(within(dialog).getByRole("region", { name: "Privacy" })).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "Appearance" })).not.toBeInTheDocument();
+
+    // The writing profile is a Workflow section of its own, not part of AI Provider.
+    fireEvent.change(search, { target: { value: "review instructions" } });
+    expect(within(dialog).getByRole("button", { name: "Writing Profile" })).toHaveAttribute("aria-current", "true");
+    expect(within(dialog).getByText("Workflow")).toBeInTheDocument();
+    expect(within(dialog).getByRole("region", { name: "Writing Profile" })).toBeInTheDocument();
+    const nav = within(dialog).getByRole("navigation", { name: "Settings sections" });
+    expect(within(nav).queryByRole("button", { name: "AI Provider" })).not.toBeInTheDocument();
   });
 
   it("puts both account removal scopes behind one confirmation", async () => {

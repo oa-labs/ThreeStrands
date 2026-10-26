@@ -11,6 +11,7 @@ const sections: Record<SettingsSection, true> = {
   mutedSenders: true,
   snippets: true,
   signatures: true,
+  writingProfile: true,
   ai: true,
   replicatedSync: true,
   privacy: true,

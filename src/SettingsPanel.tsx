@@ -17,6 +17,7 @@ import {
   Sparkles,
   Signature,
   TextQuote,
+  UserPen,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -37,6 +38,8 @@ import { SplitInboxesSettings } from "./SplitInboxesSettings";
 import { MutedSendersSettings } from "./MutedSendersSettings";
 import { SnippetsSettings } from "./SnippetsSettings";
 import { AiProviderSettings } from "./AiProviderSettings";
+import { WritingProfileSettings } from "./WritingProfileSettings";
+import { aiAreaEnabled, readAiFeatures, readAiProvider } from "./aiSettings";
 import { PrivacySettings } from "./PrivacySettings";
 import { DataTransferSettings } from "./DataTransferSettings";
 import type {
@@ -75,8 +78,9 @@ const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   { id: "splitInboxes", label: "Split Inboxes", group: "Workflow", description: "Create focused inbox views for the messages that matter.", keywords: "filtered inbox domain label address pattern", icon: Inbox },
   { id: "mutedSenders", label: "Muted Senders", group: "Workflow", description: "Review senders whose new mail skips the Inbox.", keywords: "mute muted sender newsletter archive automatically skip inbox unmute rule", icon: BellOff },
   { id: "signatures", label: "Signatures", group: "Workflow", description: "Create signatures and choose defaults for each sending address.", keywords: "signature sign-off logo alias footer compose", icon: Signature },
+  { id: "writingProfile", label: "Writing Profile", group: "Workflow", description: "Tell Draft Review who you are and how to review your email, for each account.", keywords: "about you review instructions draft review feedback ai sales tone role company", icon: UserPen, autosaves: true },
   { id: "snippets", label: "Snippets", group: "Workflow", description: "Manage reusable text for faster replies.", keywords: "canned text reply templates compose", icon: TextQuote },
-  { id: "ai", label: "AI Provider", group: "Integrations", description: "Connect an AI provider and choose which features may use it.", keywords: "api key model endpoint draft summary actions review writing profile about you instructions", icon: Sparkles },
+  { id: "ai", label: "AI Provider", group: "Integrations", description: "Connect an AI provider and choose which features may use it.", keywords: "api key model endpoint draft summary actions", icon: Sparkles },
   { id: "replicatedSync", label: "Replicated Sync", group: "Integrations", description: "Configure end-to-end encrypted replication transports.", keywords: "folder ipfs rpc encrypted", icon: Network },
   { id: "privacy", label: "Privacy", group: "System", description: "Control local retention and remote message content.", keywords: "storage retention remote images cache", icon: ShieldCheck, autosaves: true },
   { id: "diagnostics", label: "Diagnostics", group: "System", description: "Inspect synchronization health and crash-reporting controls.", keywords: "sync status errors crash reports troubleshooting", icon: Activity, autosaves: true },
@@ -313,6 +317,14 @@ export function Settings({
             <MutedSendersSettings rules={mutedSenders.senderRules} onUnmute={mutedSenders.unmute} />
           ) : null}
           {section === "signatures" && signatures ? <SignaturesSettings library={signatures} accounts={mailAccounts.accounts} /> : null}
+          {section === "writingProfile" ? (
+            <WritingProfileSettings
+              accounts={mailAccounts.accounts}
+              draftReviewOn={readAiProvider() !== "none" && aiAreaEnabled(readAiFeatures(), "writing")}
+              onOpenAiSettings={() => onSectionChange("ai")}
+              onChange={queuePortablePreferences}
+            />
+          ) : null}
           {section === "snippets" ? (
             <SnippetsSettings
               snippets={snippets.snippets}
@@ -321,7 +333,7 @@ export function Settings({
               onDelete={snippets.remove}
             />
           ) : null}
-          {section === "ai" ? <AiProviderSettings accounts={mailAccounts.accounts} onChange={() => { onAiConfigChange(); queuePortablePreferences(); }} /> : null}
+          {section === "ai" ? <AiProviderSettings onChange={() => { onAiConfigChange(); queuePortablePreferences(); }} /> : null}
           {section === "privacy" ? (
             <PrivacySettings
               loadRemoteImages={preferences.loadRemoteImages}
