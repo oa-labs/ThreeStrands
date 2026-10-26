@@ -50,6 +50,23 @@ const MAX_CALENDAR_ID_LENGTH: usize = 1_024;
 /// Palette id by calendar account email, then calendar id.
 pub type CalendarColors = BTreeMap<String, BTreeMap<String, String>>;
 
+/// Mail accounts with a writing profile in one transfer.
+const MAX_WRITING_PROFILES: usize = 200;
+const MAX_WRITING_PROFILE_ACCOUNT_LENGTH: usize = 320;
+
+/// What Draft Review knows about the user when they send from one account.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WritingProfile {
+    #[serde(default)]
+    pub about_you: String,
+    #[serde(default)]
+    pub review_instructions: String,
+}
+
+/// Writing profile by lowercased mail account email.
+pub type WritingProfiles = BTreeMap<String, WritingProfile>;
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AiFeaturePreferences {
@@ -113,6 +130,11 @@ pub struct TransferPreferences {
     // so an export without colors still imports into earlier builds.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub calendar_colors: CalendarColors,
+    // Added in 0.171 under format version 5; earlier exports import with no
+    // writing profiles. Omitted when empty so an export without profiles
+    // still imports into earlier builds.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub writing_profiles: WritingProfiles,
 }
 
 fn default_email_zoom() -> i64 {
@@ -189,8 +211,39 @@ impl TransferPreferences {
         validate_text("AI endpoint", &self.ai_endpoint, MAX_TEXT_LENGTH)?;
         crate::availability::validate_preferences(&self.availability_preferences)
             .map_err(|_| "The transfer contains invalid availability preferences".to_string())?;
-        validate_calendar_colors(&self.calendar_colors)
+        validate_calendar_colors(&self.calendar_colors)?;
+        validate_writing_profiles(&self.writing_profiles)
     }
+}
+
+fn validate_writing_profiles(profiles: &WritingProfiles) -> Result<(), String> {
+    let invalid = || "The transfer contains an invalid writing profile".to_string();
+    if profiles.len() > MAX_WRITING_PROFILES {
+        return Err(invalid());
+    }
+    for (account, profile) in profiles {
+        validate_required_text("writing profile account", account, MAX_WRITING_PROFILE_ACCOUNT_LENGTH).map_err(|_| invalid())?;
+        // Keys are lowercased so one account cannot carry two profiles, and a
+        // profile with nothing in it is not stored.
+        if *account != account.to_lowercase()
+            || (profile.about_you.trim().is_empty() && profile.review_instructions.trim().is_empty())
+        {
+            return Err(invalid());
+        }
+        for (text, limit) in [
+            (&profile.about_you, crate::ai::MAX_WRITING_PROFILE_ABOUT_CHARS),
+            (&profile.review_instructions, crate::ai::MAX_WRITING_PROFILE_INSTRUCTIONS_CHARS),
+        ] {
+            // Multi-line text: the limit counts characters, as Draft Review
+            // does, and line breaks and tabs are the only control characters.
+            if text.chars().count() > limit
+                || text.chars().any(|c| c.is_control() && c != '\n' && c != '\t')
+            {
+                return Err(invalid());
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_calendar_colors(colors: &CalendarColors) -> Result<(), String> {
@@ -963,6 +1016,7 @@ mod tests {
                 },
                 availability_preferences: default_availability_preferences(),
                 calendar_colors: CalendarColors::new(),
+                writing_profiles: WritingProfiles::new(),
             },
             accounts: vec![TransferAccount {
                 email: "person@example.com".to_string(),
@@ -1431,6 +1485,7 @@ mod tests {
     /// - `v4-current`: the version-4 current fixture, now frozen (kept so the
     ///   version-4 import path stays exercised with its original bytes).
     /// - `v5-0.121`: last export before muted senders (0.121.0).
+    /// - `v5-0.170`: last export before writing profiles (0.171.0).
     /// - `v5-current`: what this build exports. The only fixture with a
     ///   regenerate helper (`regenerate_current_settings_transfer_fixture`).
     ///
@@ -1469,6 +1524,7 @@ mod tests {
         /// the fixture exercises the new `TransferAccount::imap` field end to
         /// end. The only fixture with a regenerate helper
         /// (`regenerate_current_settings_transfer_fixture`).
+        pub(super) const V5_0_170: &[u8] = include_bytes!("../tests/fixtures/settings-transfer/v5-0.170.dispatch-settings");
         pub(super) const V5_0_132: &[u8] = include_bytes!("../tests/fixtures/settings-transfer/v5-0.132.dispatch-settings");
         pub(super) const V5_CURRENT: &[u8] =
             include_bytes!("../tests/fixtures/settings-transfer/v5-current.dispatch-settings");
@@ -1823,6 +1879,13 @@ mod tests {
                         BTreeMap::from([("other@example.net".to_string(), "gray".to_string())]),
                     ),
                 ]),
+                writing_profiles: WritingProfiles::from([(
+                    "current@example.com".to_string(),
+                    WritingProfile {
+                        about_you: "CEO of a consulting firm.\nI write to prospective clients.".to_string(),
+                        review_instructions: "Push for one specific next step.".to_string(),
+                    },
+                )]),
             },
             accounts: vec![
                 TransferAccount {
@@ -1979,6 +2042,7 @@ mod tests {
         assert_eq!(preferences.availability_preferences.drive_time_buffer_minutes, 30);
         assert_eq!(preferences.calendar_colors, current_fixture_payload().preferences.calendar_colors);
         assert_eq!(preferences.calendar_colors["current@example.com"]["team@group.calendar.google.com"], "coral");
+        assert_eq!(preferences.writing_profiles, current_fixture_payload().preferences.writing_profiles);
 
         // Version 5 adds a third account (IMAP) carrying its settings.
         assert_eq!((result.account_count, result.split_inbox_count, result.snippet_count, result.contact_count), (3, 1, 1, 1));
@@ -2319,6 +2383,63 @@ mod tests {
         edge.validate().unwrap();
         let mut unknown = serde_json::to_value(current_fixture_payload()).unwrap();
         unknown["contactGroups"][0]["color"] = serde_json::json!("red");
+        assert!(serde_json::from_value::<TransferPayload>(unknown).is_err());
+    }
+
+    #[test]
+    fn frozen_v5_0_170_export_imports_without_writing_profiles() {
+        assert_eq!(envelope_version(fixtures::V5_0_170), VERSION);
+        let (_, result) = import_fixture(fixtures::V5_0_170);
+        result.preferences.validate().unwrap();
+        assert!(result.preferences.writing_profiles.is_empty());
+        assert_eq!(result.preferences.calendar_colors, current_fixture_payload().preferences.calendar_colors);
+    }
+
+    #[test]
+    fn transfer_omits_writing_profiles_when_none_are_set() {
+        let mut payload = current_fixture_payload();
+        payload.preferences.writing_profiles.clear();
+        let serialized = serde_json::to_value(&payload).unwrap();
+        // Earlier builds reject unknown fields.
+        assert!(serialized["preferences"].get("writingProfiles").is_none());
+    }
+
+    #[test]
+    fn transfer_bounds_writing_profiles() {
+        let about = crate::ai::MAX_WRITING_PROFILE_ABOUT_CHARS;
+        let instructions = crate::ai::MAX_WRITING_PROFILE_INSTRUCTIONS_CHARS;
+        let profile = |about_you: String, review_instructions: String| WritingProfile { about_you, review_instructions };
+        for (length, ok) in [(about - 1, true), (about, true), (about + 1, false)] {
+            let mut payload = current_fixture_payload();
+            payload.preferences.writing_profiles = WritingProfiles::from([("a@example.com".into(), profile("é".repeat(length), String::new()))]);
+            assert_eq!(payload.preferences.validate().is_ok(), ok, "about {length}");
+        }
+        for (length, ok) in [(instructions - 1, true), (instructions, true), (instructions + 1, false)] {
+            let mut payload = current_fixture_payload();
+            payload.preferences.writing_profiles = WritingProfiles::from([("a@example.com".into(), profile(String::new(), "é".repeat(length)))]);
+            assert_eq!(payload.preferences.validate().is_ok(), ok, "instructions {length}");
+        }
+        for (count, ok) in [(MAX_WRITING_PROFILES, true), (MAX_WRITING_PROFILES + 1, false)] {
+            let mut payload = current_fixture_payload();
+            payload.preferences.writing_profiles = (0..count)
+                .map(|index| (format!("account-{index}@example.com"), profile("CEO".into(), String::new())))
+                .collect();
+            assert_eq!(payload.preferences.validate().is_ok(), ok, "{count} profiles");
+        }
+        let invalid: [(String, WritingProfile); 5] = [
+            ("Upper@Example.com".into(), profile("CEO".into(), String::new())),
+            (" ".into(), profile("CEO".into(), String::new())),
+            ("x".repeat(MAX_WRITING_PROFILE_ACCOUNT_LENGTH + 1), profile("CEO".into(), String::new())),
+            ("a@example.com".into(), profile(" \n".into(), " ".into())),
+            ("a@example.com".into(), profile("CEO\u{0}".into(), String::new())),
+        ];
+        for (account, value) in invalid {
+            let mut payload = current_fixture_payload();
+            payload.preferences.writing_profiles = WritingProfiles::from([(account.clone(), value)]);
+            assert!(payload.preferences.validate().is_err(), "{account}");
+        }
+        let mut unknown = serde_json::to_value(current_fixture_payload()).unwrap();
+        unknown["preferences"]["writingProfiles"]["current@example.com"]["persona"] = serde_json::json!("x");
         assert!(serde_json::from_value::<TransferPayload>(unknown).is_err());
     }
 

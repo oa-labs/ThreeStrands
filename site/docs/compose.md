@@ -63,7 +63,7 @@ Its **Before you send** section checks your draft on this computer and suggests 
 - You usually write to these people from a different account.
 - Members of a group are visible in To or Cc, with an option to move them to Bcc.
 
-With [AI assistance](ai.html) turned on, click **Review** below your message to open **Draft Review** and get feedback against the goal you describe. **Draft Reply** sits beside it in a reply.
+With [AI assistance](ai.html) turned on, click **Review** below your message to open **Draft Review** and get feedback against the goal you describe and the writing profile you set for that account. **Draft Reply** sits beside it in a reply.
 
 ## Send, Undo, and Send Later
 

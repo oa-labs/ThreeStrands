@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { pullSyncedPreferences, queuePortablePreferences, queuePortablePreferencesAndWait } from "./syncedPreferences";
 import { DEFAULT_AI_FEATURES, readAiFeatures, saveAiFeatures } from "./aiSettings";
 import { readCalendarColors, resetCalendarColorsForTests, setCalendarColor } from "./calendarColors";
+import { readWritingProfiles, resetWritingProfilesForTests, setWritingProfile } from "./writingProfiles";
 
 function queuedPreferences(): Record<string, unknown> {
   const call = vi.mocked(invoke).mock.calls.find(([command]) => command === "update_synced_preferences");
@@ -17,6 +18,7 @@ describe("synced preferences data boundary", () => {
   beforeEach(() => {
     localStorage.clear();
     resetCalendarColorsForTests();
+    resetWritingProfilesForTests();
     vi.clearAllMocks();
     Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {}, configurable: true });
   });
@@ -70,6 +72,7 @@ describe("synced preferences data boundary", () => {
       "availabilityPreferences",
       "calendarColors",
       "loadRemoteImages",
+      "writingProfiles",
     ]);
     const serialized = JSON.stringify(preferences);
     expect(serialized).not.toContain("secret");
@@ -159,6 +162,25 @@ describe("synced preferences data boundary", () => {
     await pullSyncedPreferences();
 
     expect(readCalendarColors()).toEqual({ "me@example.com": { team: "sky" } });
+  });
+
+  it("queues writing profiles so Draft Review knows the user on their other devices", () => {
+    setWritingProfile("Me@Example.com", { aboutYou: "CEO", reviewInstructions: "Be direct." });
+    queuePortablePreferences();
+    expect(queuedPreferences().writingProfiles).toEqual({ "me@example.com": { aboutYou: "CEO", reviewInstructions: "Be direct." } });
+  });
+
+  it("applies writing profiles edited on another device and keeps them when an older replica omits them", async () => {
+    setWritingProfile("me@example.com", { aboutYou: "CEO", reviewInstructions: "" });
+    setWritingProfile("home@example.com", { aboutYou: "Parent", reviewInstructions: "" });
+    vi.mocked(invoke).mockResolvedValue({ writingProfiles: { "me@example.com": { aboutYou: "Founder", reviewInstructions: "Push for a call." } } });
+
+    await pullSyncedPreferences();
+    expect(readWritingProfiles()).toEqual({ "me@example.com": { aboutYou: "Founder", reviewInstructions: "Push for a call." } });
+
+    vi.mocked(invoke).mockResolvedValue({ autoReadDelaySeconds: 4 });
+    await pullSyncedPreferences();
+    expect(readWritingProfiles()).toEqual({ "me@example.com": { aboutYou: "Founder", reviewInstructions: "Push for a call." } });
   });
 
   it("preserves the device appearance when a new replica omits it", async () => {

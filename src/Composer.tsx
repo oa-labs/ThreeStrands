@@ -275,7 +275,7 @@ export const Composer = forwardRef<ComposerHandle, {
     const authored = bodyEditor.current.reviewBody();
     const current = latest.current;
     return {
-      id: current.id, subject: current.subject, body: authored.text, bodyHtml: authored.html,
+      id: current.id, account: current.account, subject: current.subject, body: authored.text, bodyHtml: authored.html,
       hasInlineImages: authored.hasInlineImages,
       hasInlineQuotes: authored.hasInlineQuotes,
       fingerprint: JSON.stringify([current.id, current.account, current.from ?? null, current.to, current.cc, current.bcc,
@@ -489,7 +489,7 @@ export const Composer = forwardRef<ComposerHandle, {
         ) : null}
         {error && !remote && <div className="notice compose-error" role="alert">{error} <button className="btn btn-sm" onClick={() => void run(async () => { await flush(); })}>Retry Save</button></div>}
         {reviewEnabled && reviewOpen ? (
-          <DraftReviewSection actions={draftReview} enabled available={Boolean(review?.available)} onOpenSettings={review?.onOpenSettings} onClose={() => setReviewOpen(false)} />
+          <DraftReviewSection actions={draftReview} account={draft.account} enabled available={Boolean(review?.available)} onOpenSettings={review?.onOpenSettings} onClose={() => setReviewOpen(false)} />
         ) : null}
       </div>
       {!isReply ? writingTools : null}

@@ -38,6 +38,8 @@ import { AiUsageSummary } from "./AiUsageSummary";
 import { AiActivityList } from "./AiActivityList";
 import { MIN_PROACTIVE_DWELL_SECONDS } from "./proactiveBrief";
 import { ICON_SIZE } from "./iconSizes";
+import type { Account } from "./domain";
+import { WritingProfileSettings } from "./WritingProfileSettings";
 
 /**
  * `onChange` must run after every saved field, not just the switches: it
@@ -45,7 +47,11 @@ import { ICON_SIZE } from "./iconSizes";
  * applies that record over local storage, so a field saved without it is
  * silently reverted to its last queued value.
  */
-export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
+export function AiProviderSettings({ onChange, accounts = [] }: {
+  onChange?: () => void;
+  /** Mail accounts, for each one's writing profile. */
+  accounts?: Account[];
+}) {
   const [provider, setProvider] = useState(readAiProvider);
   const [model, setModel] = useState(readAiModel);
   const [fastModel, setFastModel] = useState(readAiFastModel);
@@ -295,6 +301,8 @@ export function AiProviderSettings({ onChange }: { onChange?: () => void }) {
               onChange={(value) => updateArea("contacts", value)}
             />
           </div>
+
+          {aiAreaEnabled(features, "writing") ? <WritingProfileSettings accounts={accounts} onChange={onChange} /> : null}
 
           <h3>Automatic Briefs</h3>
           <p className="settings-hint" id={automaticHintId}>

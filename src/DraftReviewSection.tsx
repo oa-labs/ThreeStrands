@@ -7,6 +7,7 @@ import type { DraftReviewResult } from "./domain";
 import { reviewHasRevision, type DraftReviewActions, type DraftReviewSnapshot } from "./draftReview";
 import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
+import { hasWritingProfile, useWritingProfiles, writingProfileFor, type WritingProfile } from "./writingProfiles";
 
 /** Whether the composer offers Draft Review, from AI settings. */
 export type DraftReviewAvailability = {
@@ -22,8 +23,10 @@ export type DraftReviewAvailability = {
  * the message body, so the draft stays in view and editable while it is
  * reviewed. Hidden unless Draft Assist is on with a provider chosen.
  */
-export function DraftReviewSection({ actions, enabled, available, onOpenSettings, onClose }: {
+export function DraftReviewSection({ actions, account, enabled, available, onOpenSettings, onClose }: {
   actions: DraftReviewActions;
+  /** The sending account, to say up front whether it has a writing profile. */
+  account?: string;
   /** Draft Assist is on and an AI provider is chosen. */
   enabled: boolean;
   /** An API key is also configured. */
@@ -33,7 +36,10 @@ export function DraftReviewSection({ actions, enabled, available, onOpenSettings
   onClose?(): void;
 }) {
   const [goal, setGoal] = useState("");
+  const profiles = useWritingProfiles();
   const [original, setOriginal] = useState<DraftReviewSnapshot | null>(null);
+  // The profile shown in the preview, so the request sends exactly what was shown.
+  const [profile, setProfile] = useState<WritingProfile | null>(null);
   const [review, setReview] = useState<DraftReviewResult | null>(null);
   const [applied, setApplied] = useState<DraftReviewSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
@@ -60,6 +66,7 @@ export function DraftReviewSection({ actions, enabled, available, onOpenSettings
       const snapshot = actions.readDraft();
       if (!snapshot.body.trim()) throw new Error("Write some email text before requesting a review.");
       setOriginal(snapshot);
+      setProfile(writingProfileFor(profiles, snapshot.account));
       setReview(null);
       setApplied(null);
       setError("");
@@ -67,7 +74,7 @@ export function DraftReviewSection({ actions, enabled, available, onOpenSettings
   }
 
   async function getFeedback() {
-    if (!original || inFlight.current) return;
+    if (!original || !profile || inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
     setError("");
@@ -75,7 +82,10 @@ export function DraftReviewSection({ actions, enabled, available, onOpenSettings
       const current = actions.readDraft();
       if (current.fingerprint !== original.fingerprint) throw new Error("Your draft changed. Refresh the preview before requesting feedback.");
       const { provider, model, endpoint } = readAiRequestConfig("reviewing a draft", "draftReview");
-      const result = await mailClient.reviewDraft({ subject: original.subject, body: original.body, goal }, provider, model, endpoint);
+      const result = await mailClient.reviewDraft({
+        subject: original.subject, body: original.body, goal,
+        aboutYou: profile.aboutYou, reviewInstructions: profile.reviewInstructions,
+      }, provider, model, endpoint);
       if (mounted.current) setReview(result);
     } catch (reason) {
       if (mounted.current) setError(errorMessage(reason));
@@ -104,6 +114,10 @@ export function DraftReviewSection({ actions, enabled, available, onOpenSettings
   }
 
   if (!enabled) return null;
+  const sendsProfile = Boolean(profile && hasWritingProfile(profile));
+  // Before the preview, the note describes the account the draft is written from.
+  const accountHasProfile = original ? sendsProfile
+    : account ? hasWritingProfile(writingProfileFor(profiles, account)) : null;
   return <section ref={section} className="draft-review" aria-labelledby="draft-review-title">
     <ContextSectionHeader title="Draft Review" titleId="draft-review-title" actions={onClose ? (
       <button type="button" className="btn-icon btn-icon-sm" aria-label="Close Draft Review" onClick={onClose}><X size={ICON_SIZE.sm} /></button>
@@ -114,6 +128,10 @@ export function DraftReviewSection({ actions, enabled, available, onOpenSettings
         <span>Goal for This Email <small>(optional)</small></span>
         <input value={goal} disabled={busy} placeholder="e.g. Get an introductory call" onChange={(event) => setGoal(event.target.value)} />
       </label>
+      {accountHasProfile === false ? <p className="context-section-note">
+        No writing profile for this account. Tell Draft Review who you are and how to review once, in AI settings.
+        {onOpenSettings ? <> <button type="button" className="btn-link" onClick={onOpenSettings}>Add Writing Profile</button></> : null}
+      </p> : null}
       <button type="button" className="btn btn-sm" disabled={busy} onClick={prepare}>
         {review ? "Review Again" : original ? "Refresh Preview" : "Review Draft"}
       </button>
@@ -122,7 +140,14 @@ export function DraftReviewSection({ actions, enabled, available, onOpenSettings
           <summary>{review ? "Original email" : `Email content sent to ${readAiProvider()}`}</summary>
           <p><strong>Subject:</strong> {original.subject || "(no subject)"}</p>
           <pre>{original.body}</pre>
-          {!review ? <p className="context-section-note">Only this subject, the text shown here, and the optional goal are sent. Recipient fields, separately stored quoted history, and attachments are excluded.</p> : null}
+          {sendsProfile && profile ? <div className="draft-review-profile">
+            <h4>Your writing profile</h4>
+            {profile.aboutYou.trim() ? <p><strong>About You:</strong> {profile.aboutYou}</p> : null}
+            {profile.reviewInstructions.trim() ? <p><strong>Review Instructions:</strong> {profile.reviewInstructions}</p> : null}
+          </div> : null}
+          {!review ? <p className="context-section-note">{sendsProfile
+            ? "Only this subject, the text shown here, your writing profile, and the optional goal are sent."
+            : "Only this subject, the text shown here, and the optional goal are sent."} Recipient fields, separately stored quoted history, and attachments are excluded.</p> : null}
         </details>
         {!review ? <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => void getFeedback()}>
           <Sparkles size={ICON_SIZE.sm} />{busy ? "Reviewing…" : "Get Feedback"}

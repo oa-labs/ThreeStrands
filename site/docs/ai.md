@@ -34,7 +34,7 @@ ThreeStrands keeps one API key at a time, so enter a new key when you switch pro
 ### Writing
 
 - **Draft Reply** — in the composer, press <kbd>⌘/Ctrl + j</kbd> to draft a reply from a short instruction.
-- **Draft Review** — click **Review** below your message for feedback against your goal. Suggestions are never sent automatically.
+- **Draft Review** — click **Review** below your message for feedback against your goal. Suggestions are never sent automatically. To avoid explaining yourself in every goal, write a **Writing Profile** for each account under **Settings → AI Provider**: **About You** says who you are and what you do, and **Review Instructions** says how you want drafts reviewed. Draft Review shows the profile with the rest of what it sends, and suggests using a fact from it only as a suggestion you can see.
 - **Find Times** — beside **Get Brief** at the top of the side panel, reads the conversation and your draft for when to meet, such as "next week" or "Thursday afternoon", and the app then finds open times on your calendar. Select times while reading and choose **Draft Reply With These Times**, or insert them into an open draft. Your calendar is never sent to the AI provider.
 
 ### Contacts

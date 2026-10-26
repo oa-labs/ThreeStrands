@@ -3,6 +3,8 @@ import type { DraftReviewResult } from "./domain";
 /** A synchronous capture of the actual editor DOM, including unsaved edits. */
 export type DraftReviewSnapshot = {
   id: string;
+  /** The sending account, whose writing profile the review uses. */
+  account: string;
   subject: string;
   body: string;
   bodyHtml: string;

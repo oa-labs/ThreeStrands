@@ -45,5 +45,11 @@
     }
   },
   "emailZoom": 125,
-  "emailTextColors": "app"
+  "emailTextColors": "app",
+  "writingProfiles": {
+    "person@example.com": {
+      "aboutYou": "CEO of a consulting firm.",
+      "reviewInstructions": "Push for one specific next step."
+    }
+  }
 }

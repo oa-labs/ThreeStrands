@@ -786,6 +786,9 @@ export type DraftReviewRequest = {
   subject: string;
   body: string;
   goal: string;
+  /** The sending account's writing profile from AI settings; blank when none. */
+  aboutYou: string;
+  reviewInstructions: string;
 };
 
 export type DraftReviewResult = {

@@ -8,6 +8,7 @@ import type { Account, DraftReviewResult } from "./domain";
 import type { DraftReviewActions } from "./draftReview";
 import { mailClient } from "./data/client";
 import { saveAiProvider } from "./aiSettings";
+import { resetWritingProfilesForTests, setWritingProfile } from "./writingProfiles";
 
 const draft: Draft = {
   id: "review-draft", revision: 0, account: "me@example.com", mode: "new",
@@ -32,7 +33,7 @@ function setup(initial = draft, available = true) {
   const view = render(<>
     <Composer ref={ref} draft={initial} accounts={[{ email: initial.account }] as Account[]} snippets={[]}
       onCreateSnippet={vi.fn()} onUpdateSnippet={vi.fn()} onDeleteSnippet={vi.fn()} onClose={vi.fn()} onQueued={vi.fn()} />
-    <DraftReviewSection actions={actions} enabled available={available} onOpenSettings={onOpenSettings} />
+    <DraftReviewSection actions={actions} account={initial.account} enabled available={available} onOpenSettings={onOpenSettings} />
   </>);
   return { ...view, ref, actions, onOpenSettings, body: screen.getByRole("textbox", { name: "Message Body" }) };
 }
@@ -46,6 +47,7 @@ async function reviewDraft() {
 describe("Draft review", () => {
   beforeEach(() => {
     localStorage.clear();
+    resetWritingProfilesForTests();
     saveAiProvider("openai");
     vi.spyOn(mailClient, "saveDraft").mockImplementation(async (value) => ({ ...value, revision: value.revision + 1 }));
     vi.spyOn(mailClient, "reviewDraft").mockResolvedValue(result);
@@ -63,9 +65,40 @@ describe("Draft review", () => {
     expect(mailClient.reviewDraft).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Get Feedback" }));
     await screen.findByText(result.assessment);
-    expect(mailClient.reviewDraft).toHaveBeenCalledWith({ subject: "Hello", body: "A fresh edit.", goal: "Get an introductory call" }, "openai", expect.any(String), null);
+    expect(mailClient.reviewDraft).toHaveBeenCalledWith({ subject: "Hello", body: "A fresh edit.", goal: "Get an introductory call", aboutYou: "", reviewInstructions: "" }, "openai", expect.any(String), null);
     expect(body).toHaveTextContent("A fresh edit.");
     expect(mailClient.queueDraft).not.toHaveBeenCalled();
+  });
+
+  it("previews and sends the sending account's writing profile with the goal", async () => {
+    setWritingProfile("Me@Example.com", { aboutYou: "CEO of a consulting firm.", reviewInstructions: "Push for one next step." });
+    setWritingProfile("other@example.com", { aboutYou: "Other account", reviewInstructions: "" });
+    setup();
+    expect(screen.queryByText(/No writing profile/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review Draft" }));
+    const preview = screen.getByText(/Email content sent to/).closest("details")!;
+    expect(within(preview).getByRole("heading", { name: "Your writing profile" })).toBeInTheDocument();
+    expect(within(preview).getByText("CEO of a consulting firm.")).toBeInTheDocument();
+    expect(within(preview).getByText("Push for one next step.")).toBeInTheDocument();
+    expect(within(preview).queryByText("Other account")).not.toBeInTheDocument();
+    expect(within(preview).getByText(/your writing profile, and the optional goal are sent/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Get Feedback" }));
+    await screen.findByText(result.assessment);
+    expect(mailClient.reviewDraft).toHaveBeenCalledWith({
+      subject: "Hello", body: "Let me know your thoughts.", goal: "",
+      aboutYou: "CEO of a consulting firm.", reviewInstructions: "Push for one next step.",
+    }, "openai", expect.any(String), null);
+  });
+
+  it("points to AI settings when the sending account has no writing profile", () => {
+    setWritingProfile("other@example.com", { aboutYou: "Other account", reviewInstructions: "" });
+    const { onOpenSettings } = setup();
+    expect(screen.getByText(/No writing profile for this account/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add Writing Profile" }));
+    expect(onOpenSettings).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Review Draft" }));
+    expect(screen.queryByRole("heading", { name: "Your writing profile" })).not.toBeInTheDocument();
+    expect(screen.getByText(/the text shown here, and the optional goal are sent/)).toBeInTheDocument();
   });
 
   it("applies only on request, saves the revision, and restores original subject and formatting with undo", async () => {

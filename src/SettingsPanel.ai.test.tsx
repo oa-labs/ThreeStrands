@@ -7,6 +7,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { readAiFastModel, readAiFeatures, readAiModel, saveAiProvider } from "./aiSettings";
 import { AiProviderSettings } from "./AiProviderSettings";
 import { queuePortablePreferences } from "./syncedPreferences";
+import type { Account } from "./domain";
+import { WRITING_PROFILE_LIMITS, readWritingProfiles, resetWritingProfilesForTests, setWritingProfile } from "./writingProfiles";
 
 describe("AI provider feature settings", () => {
   beforeEach(() => {
@@ -226,5 +228,69 @@ describe("AI provider feature settings", () => {
     expect(group).toHaveAccessibleDescription(/Turn on Reading to use automatic briefs/);
     expect(readAiFeatures()).toMatchObject({ proactiveBriefs: false, proactiveKnownSendersOnly: false });
     expect(screen.getByRole("region", { name: "AI usage" })).toBeInTheDocument();
+  });
+});
+
+describe("Writing profile settings", () => {
+  const accounts = [
+    { email: "work@example.com", nickname: "Work" },
+    { email: "home@example.com", nickname: null },
+  ] as Account[];
+  beforeEach(() => {
+    localStorage.clear();
+    resetWritingProfilesForTests();
+    vi.clearAllMocks();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {}, configurable: true });
+    vi.mocked(invoke).mockResolvedValue(false);
+    saveAiProvider("openai");
+  });
+  afterEach(cleanup);
+
+  function syncedProfiles() {
+    const queued = vi.mocked(invoke).mock.calls.filter(([command]) => command === "update_synced_preferences");
+    return (queued.at(-1)?.[1] as { preferences: { writingProfiles: unknown } } | undefined)?.preferences.writingProfiles;
+  }
+
+  it("saves each account's profile on blur and queues it for sync", async () => {
+    render(<AiProviderSettings accounts={accounts} onChange={queuePortablePreferences} />);
+    const about = screen.getByRole("textbox", { name: "About You" });
+    fireEvent.change(about, { target: { value: "CEO of a consulting firm." } });
+    expect(readWritingProfiles()).toEqual({});
+    fireEvent.blur(about);
+    expect(readWritingProfiles()).toEqual({ "work@example.com": { aboutYou: "CEO of a consulting firm.", reviewInstructions: "" } });
+    await waitFor(() => expect(syncedProfiles()).toEqual(readWritingProfiles()));
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Account" }), { target: { value: "home@example.com" } });
+    expect(screen.getByRole("textbox", { name: "About You" })).toHaveValue("");
+    const instructions = screen.getByRole("textbox", { name: "Review Instructions" });
+    fireEvent.change(instructions, { target: { value: "Keep it warm." } });
+    fireEvent.blur(instructions);
+    expect(readWritingProfiles()).toEqual({
+      "work@example.com": { aboutYou: "CEO of a consulting firm.", reviewInstructions: "" },
+      "home@example.com": { aboutYou: "", reviewInstructions: "Keep it warm." },
+    });
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Account" }), { target: { value: "work@example.com" } });
+    expect(screen.getByRole("textbox", { name: "About You" })).toHaveValue("CEO of a consulting firm.");
+  });
+
+  it("keeps an edit when the account changes or Settings closes before blur, and clears an emptied profile", () => {
+    setWritingProfile("work@example.com", { aboutYou: "CEO", reviewInstructions: "" });
+    const view = render(<AiProviderSettings accounts={accounts} onChange={queuePortablePreferences} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "About You" }), { target: { value: "" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Account" }), { target: { value: "home@example.com" } });
+    expect(readWritingProfiles()).toEqual({});
+    fireEvent.change(screen.getByRole("textbox", { name: "About You" }), { target: { value: "Parent" } });
+    view.unmount();
+    expect(readWritingProfiles()).toEqual({ "home@example.com": { aboutYou: "Parent", reviewInstructions: "" } });
+  });
+
+  it("limits each field to what Draft Review accepts and hides the profile when Writing is off", () => {
+    render(<AiProviderSettings accounts={accounts.slice(0, 1)} onChange={queuePortablePreferences} />);
+    expect(screen.queryByRole("combobox", { name: "Account" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "About You" })).toHaveAttribute("maxLength", String(WRITING_PROFILE_LIMITS.aboutYou));
+    expect(screen.getByRole("textbox", { name: "Review Instructions" })).toHaveAttribute("maxLength", String(WRITING_PROFILE_LIMITS.reviewInstructions));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Writing" }));
+    expect(screen.queryByRole("heading", { name: "Writing Profile" })).not.toBeInTheDocument();
   });
 });

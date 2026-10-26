@@ -36,6 +36,7 @@ import {
   saveSelectedAccountId,
 } from "./settings";
 import { readTheme, saveTheme, type Theme } from "./theme";
+import { readWritingProfiles, saveWritingProfiles, type WritingProfileMap } from "./writingProfiles";
 import type { AvailabilityPreferences, MailProvider } from "./domain";
 
 /**
@@ -66,6 +67,8 @@ export type ExportablePreferences = {
   availabilityPreferences: AvailabilityPreferences;
   /** Optional on the wire: exports without colors omit it. */
   calendarColors?: CalendarColorMap;
+  /** Optional on the wire: exports without writing profiles omit it. */
+  writingProfiles?: WritingProfileMap;
 };
 
 export type SettingsImportResult = {
@@ -96,6 +99,7 @@ export function readExportablePreferences(): ExportablePreferences {
     aiFeatures: readAiFeatures(),
     availabilityPreferences: readAvailabilityPreferences(),
     calendarColors: readCalendarColors(),
+    writingProfiles: readWritingProfiles(),
   };
 }
 
@@ -118,6 +122,8 @@ export function applyExportablePreferences(preferences: ExportablePreferences): 
   saveAvailabilityPreferences(preferences.availabilityPreferences);
   // Absent from exports made before calendar colors, or with none set.
   saveCalendarColors(preferences.calendarColors ?? {});
+  // Absent from exports made before writing profiles, or with none written.
+  saveWritingProfiles(preferences.writingProfiles ?? {});
 }
 
 export async function exportSettings(password: string): Promise<string | null> {

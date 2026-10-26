@@ -2405,6 +2405,9 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .draft-review-suggestions blockquote { margin:var(--space-1) 0; padding-left:var(--space-2); border-left:2px solid var(--border); color:var(--muted); white-space:pre-wrap; }
 .draft-review-suggestions .draft-review-wording { margin-top:var(--space-1); white-space:pre-wrap; }
 .draft-review-preview p { overflow-wrap:anywhere; }
+.draft-review-profile { display:grid; gap:var(--space-1); margin:var(--space-2) 0; }
+.draft-review-profile h4 { margin:0; }
+.draft-review-profile p { white-space:pre-wrap; }
 /* Find Times and Get Brief share one row as buttons; a section with something to show opens below them. */
 .context-ai-row { display:flex; flex-wrap:wrap; align-items:center; row-gap:var(--space-2); padding:var(--space-3) 0; border-bottom:1px solid var(--border); }
 .context-ai-row:empty { display:none; }
