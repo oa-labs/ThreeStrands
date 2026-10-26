@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Message, MessageAttachment, MessageTrust, SenderFamiliarity, SenderRule, SplitInbox, ThreadDetail } from "./domain";
+import type { Message, MessageAttachment, MessageTrust, SenderDeliveryPattern, SenderFamiliarity, SenderRule, SplitInbox, ThreadDetail } from "./domain";
 import { buildThreadTextIndex } from "./quotedHistory";
 import { analyzeLinks, bulkMessage, latestInbound, matchingRule, matchingSplit, siteOf, trustHeadline, trustReport, TRUST_ATTACHMENT_LIMIT, TRUST_MISMATCH_LIMIT, TRUST_SUBJECT_WORD_LIMIT, type LinkAnalysis, type TrustInput } from "./senderSignals";
 
@@ -251,6 +251,83 @@ describe("trust signals from the user's own history", () => {
   const titles = (value: TrustInput) => trustReport(value).rows.map((finding) => finding.title);
   const warnings = (value: TrustInput) => trustReport(value).rows.filter((finding) => finding.tone === "warning");
   const attachment = (filename: string, extra: Partial<MessageAttachment> = {}): MessageAttachment => ({ id: filename, filename, mimeType: "application/octet-stream", size: 1, ...extra });
+
+  const confirmedPattern: SenderDeliveryPattern = {
+    id: "confirmed-pattern", senderEmail: "requests@signing.example", replyTo: "ana@customer.example",
+    linkOrigins: ["https://help.signing.example", "https://secure.signing.example"], authenticated: true,
+    sourceMessageId: "confirmed-request", confirmedAt: "2026-10-26T12:00:00Z",
+  };
+  const deliveryInput = (overrides: Partial<TrustInput> = {}): TrustInput => input({
+    messageId: "future-request", sender: "Requests <requests@signing.example>",
+    trust: { ...verified, fromDomain: "signing.example", replyTo: "ana@customer.example" },
+    links: analyzeLinks('<p><a href="https://secure.signing.example/sign?token=private">Review</a></p><footer><a href="https://help.signing.example/faq">Help</a></footer>'),
+    familiarity: { ...stranger, knownDomains: [], deliveryPatterns: [confirmedPattern] },
+    ...overrides,
+  });
+
+  it("uses explicit feedback for the exact requester, sender, and web origins without calling the service a known contact", () => {
+    const report = trustReport(deliveryInput());
+    expect(report.summary).toBeNull();
+    expect(report.rows).toMatchObject([{ kind: "delivery", tone: "info", title: "Matches a request you confirmed" }]);
+    expect(report.details.find((finding) => finding.kind === "replyTo")).toMatchObject({ tone: "info" });
+    expect(report.feedback?.linkOrigins).toEqual(confirmedPattern.linkOrigins);
+    expect(JSON.stringify(report.feedback)).not.toContain("private");
+    expect(trustReport(deliveryInput({ messageId: "confirmed-request" })).rows[0].title).toBe("You confirmed this email is legitimate");
+
+    // A structurally different portal notification uses the same general rule.
+    const portal = { ...confirmedPattern, senderEmail: "notices@portal.example", linkOrigins: ["https://portal.example"], replyTo: "lee@studio.example" };
+    const value = deliveryInput({ sender: portal.senderEmail, trust: { ...verified, fromDomain: "portal.example", replyTo: portal.replyTo }, links: analyzeLinks('<table><tr><td><a href="https://portal.example/jobs/123">Open job</a></td></tr></table>'), familiarity: { ...stranger, knownDomains: [], deliveryPatterns: [portal] } });
+    expect(warnings(value)).toEqual([]);
+    expect(trustReport(value).rows[0].title).toBe("Matches a request you confirmed");
+  });
+
+  it("calls out a new sending address, scheme, port, subdomain, or link destination for a confirmed requester", () => {
+    for (const value of [
+      deliveryInput({ sender: "other@signing.example" }),
+      deliveryInput({ sender: "requests@new-service.example", trust: { ...verified, fromDomain: "new-service.example", replyTo: confirmedPattern.replyTo } }),
+      ...["http://secure.signing.example", "https://secure.signing.example:8443", "https://other.signing.example", "https://unfamiliar.example"].map((origin) => deliveryInput({ links: analyzeLinks(`<a href="${origin}/sign">Review</a><a href="https://help.signing.example/faq">Help</a>`) })),
+      deliveryInput({ links: analyzeLinks('<a href="https://secure.signing.example/sign">Review</a>') }),
+    ]) {
+      expect(warnings(value).map((finding) => finding.title)).toContain("Different delivery pattern");
+      expect(trustReport(value).rows.some((finding) => finding.key === "delivery-confirmed")).toBe(false);
+    }
+  });
+
+  it("does not recognize another person at the same organization or an unconfirmed service", () => {
+    const other = deliveryInput({ trust: { ...verified, fromDomain: "signing.example", replyTo: "bob@customer.example" } });
+    expect(warnings(other).map((finding) => finding.title)).toContain("Replies go elsewhere");
+    expect(trustReport(other).rows.some((finding) => finding.key === "delivery-confirmed")).toBe(false);
+    for (const familiarity of [null, { ...stranger, receivedBefore: true, knownDomains: [], deliveryPatterns: [] }]) {
+      expect(warnings(deliveryInput({ familiarity })).map((finding) => finding.title)).toContain("Replies go elsewhere");
+    }
+  });
+
+  it("requires DMARC on both the confirmed request and the current message and preserves every other warning", () => {
+    for (const dmarc of ["fail", "none", null]) {
+      const value = deliveryInput({ trust: { ...verified, fromDomain: "signing.example", replyTo: confirmedPattern.replyTo, authentication: { ...verified.authentication!, dmarc } } });
+      expect(warnings(value).map((finding) => finding.title)).toContain("Replies go elsewhere");
+      expect(trustReport(value).rows.some((finding) => finding.key === "delivery-confirmed")).toBe(false);
+    }
+    expect(warnings(deliveryInput({ familiarity: { ...stranger, knownDomains: [], deliveryPatterns: [{ ...confirmedPattern, authenticated: false }] } })).map((finding) => finding.title)).toContain("Replies go elsewhere");
+    for (const value of [
+      deliveryInput({ subject: "COMPLETE REVlEW" }),
+      deliveryInput({ attachments: [attachment("installer.exe")] }),
+      deliveryInput({ links: analyzeLinks('<a href="https://secure.signing.example/sign">bank.example</a><a href="https://help.signing.example/faq">Help</a>') }),
+      deliveryInput({ sender: "ana@customer.example <requests@signing.example>" }),
+    ]) {
+      expect(trustReport(value).summary).toBe("careful");
+      expect(warnings(value).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("never reuses a pattern when distinct link analysis reaches its limit", () => {
+    for (const count of [499, 500, 501]) {
+      const links = analyzeLinks(Array.from({ length: count }, (_, index) => `<a href="https://secure.signing.example/${index}">Review</a>`).join(""));
+      const value = deliveryInput({ links, familiarity: { ...stranger, knownDomains: [], deliveryPatterns: [{ ...confirmedPattern, linkOrigins: ["https://secure.signing.example"] }] } });
+      expect(trustReport(value).feedback !== undefined).toBe(count < 500);
+      expect(warnings(value).some((finding) => finding.kind === "replyTo")).toBe(count >= 500);
+    }
+  });
 
   it("calls someone the user writes to a known sender, and says how often and since when", () => {
     const report = trustReport(input({ familiarity: { ...stranger, sentCount: 12, firstSentAt: "2024-03-05T10:00:00Z" } }));

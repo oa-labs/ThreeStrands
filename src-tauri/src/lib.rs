@@ -1420,6 +1420,8 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::contacts::sender_history,
         commands::contacts::message_trust,
         commands::contacts::sender_familiarity,
+        commands::contacts::confirm_sender_delivery,
+        commands::contacts::forget_sender_delivery,
         commands::settings::list_sender_rules,
         commands::settings::mute_sender,
         commands::settings::delete_sender_rule,

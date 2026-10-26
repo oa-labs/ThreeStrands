@@ -60,6 +60,7 @@ import type {
   MessageTrust,
   SenderFamiliarity,
   SenderRule,
+  SenderDeliveryPattern,
   MuteResult,
   UnsubscribeResult,
   UpdateTaskRequest,
@@ -76,6 +77,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
   let calendarOptions = seed.calendarOptions;
   let threads = seed.threads;
   let senderRules: SenderRule[] = [];
+  let deliveryPatterns: (SenderDeliveryPattern & { accountId: string; requester: string })[] = [];
   let labels = seed.labels;
   let splitInboxes = seed.splitInboxes;
   let tasks = seed.tasks;
@@ -1038,7 +1040,21 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
           .flatMap((profile) => profile.addresses.map((item) => item.toLocaleLowerCase()))
           .filter((item) => item !== address).slice(0, 3) : [],
         knownDomains: [...new Set([...knownAddresses].map((item) => item.split("@")[1]).filter(Boolean))].sort(),
+        deliveryPatterns: structuredClone(deliveryPatterns.filter((pattern) => pattern.accountId === threads.find((thread) => thread.id === current?.threadId)?.accountId && pattern.requester === address)),
       };
+    },
+    async confirmSenderDelivery(messageId, linkOrigins) {
+      const message = findMessage(messageId);
+      const thread = threads.find((item) => item.id === message?.threadId);
+      if (!message || !thread) throw new Error("Email not found");
+      const senderEmail = parseAddress(message.sender).email.toLocaleLowerCase();
+      const origins = [...new Set(linkOrigins.map((origin) => new URL(origin).origin))].sort();
+      if (!deliveryPatterns.some((pattern) => pattern.accountId === thread.accountId && pattern.requester === senderEmail && JSON.stringify(pattern.linkOrigins) === JSON.stringify(origins))) {
+        deliveryPatterns.push({ id: crypto.randomUUID(), accountId: thread.accountId, requester: senderEmail, senderEmail, replyTo: null, linkOrigins: origins, authenticated: true, sourceMessageId: messageId, confirmedAt: new Date().toISOString() });
+      }
+    },
+    async forgetSenderDelivery(id) {
+      deliveryPatterns = deliveryPatterns.filter((pattern) => pattern.id !== id);
     },
     async contextCandidates(query) {
       const words=query.terms.map((term) => term.toLocaleLowerCase());

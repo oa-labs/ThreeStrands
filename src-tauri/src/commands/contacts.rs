@@ -326,6 +326,18 @@ pub(crate) async fn sender_familiarity(message_id: String, email: String, name: 
 }
 
 #[tauri::command]
+pub(crate) async fn confirm_sender_delivery(message_id: String, link_origins: Vec<String>, state: State<'_, AppState>) -> AppResult<()> {
+    let database = state.database.clone();
+    run_database_task(move || database.confirm_sender_delivery(&message_id, &link_origins)).await
+}
+
+#[tauri::command]
+pub(crate) async fn forget_sender_delivery(id: String, state: State<'_, AppState>) -> AppResult<()> {
+    let database = state.database.clone();
+    run_database_task(move || database.forget_sender_delivery(&id)).await
+}
+
+#[tauri::command]
 pub(crate) async fn context_candidates(query: models::ContextQuery, state: State<'_, AppState>) -> AppResult<Vec<models::WorkspaceConversation>> {
     let database = state.database.clone();
     run_database_task(move || database.context_candidates(&query)).await

@@ -6,7 +6,7 @@ import { mailClient } from "./data/client";
 import { ContextRow, ContextSection } from "./ContextSections";
 import { ICON_SIZE } from "./iconSizes";
 import type { PriorThreadText } from "./quotedHistory";
-import { logBackgroundFailure } from "./errors";
+import { errorMessage, logBackgroundFailure } from "./errors";
 import { analyzeLinks, matchingRule, matchingSplit, SENDER_HISTORY_LIMIT, trustReport, type TrustFinding, type TrustLink, type TrustReport } from "./senderSignals";
 
 /** The bulk sender a Sender section is about. */
@@ -105,6 +105,7 @@ const FINDING_ICONS: Record<TrustFinding["kind"], typeof Shield> = {
   subject: Mail,
   attachment: Paperclip,
   history: UserRound,
+  delivery: UserCheck,
 };
 
 function findingIcon(finding: TrustFinding) {
@@ -164,6 +165,7 @@ type TrustReads = { key: string; trust: MessageTrust | null; familiarity: Sender
  * look sees current history.
  */
 const pendingTrustReads = new Map<string, Promise<TrustReads>>();
+const SENDER_FEEDBACK_CHANGED = "threestrands:sender-feedback-changed";
 
 function readTrust(message: Message, key: string): Promise<TrustReads> {
   const pending = pendingTrustReads.get(key);
@@ -196,7 +198,13 @@ export function useTrustReport({ message, subject, bulk, prior, enabled = true }
   enabled?: boolean;
 }): TrustReport | null {
   const [reads, setReads] = useState<TrustReads | null>(null);
+  const [revision, setRevision] = useState(0);
   const key = `${message.id}\n${message.sender}`;
+  useEffect(() => {
+    const refresh = () => { pendingTrustReads.clear(); setRevision((value) => value + 1); };
+    window.addEventListener(SENDER_FEEDBACK_CHANGED, refresh);
+    return () => window.removeEventListener(SENDER_FEEDBACK_CHANGED, refresh);
+  }, []);
   useEffect(() => {
     if (!enabled) return;
     let active = true;
@@ -204,12 +212,50 @@ export function useTrustReport({ message, subject, bulk, prior, enabled = true }
     return () => { active = false; };
     // `key` covers the message fields the reads use.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, key]);
+  }, [enabled, key, revision]);
   const links = useMemo(() => enabled ? analyzeLinks(message.bodyHtml, prior) : null, [enabled, message.bodyHtml, prior]);
   return useMemo(() => {
     if (!enabled || !links || reads?.key !== key) return null;
-    return trustReport({ trust: reads.trust, links, familiarity: reads.familiarity, sender: message.sender, subject, attachments: message.attachments ?? [], bulk });
-  }, [enabled, links, reads, key, message.sender, message.attachments, subject, bulk]);
+    return trustReport({ messageId: message.id, trust: reads.trust, links, familiarity: reads.familiarity, sender: message.sender, subject, attachments: message.attachments ?? [], bulk });
+  }, [enabled, links, reads, key, message.id, message.sender, message.attachments, subject, bulk]);
+}
+
+/** A user assertion about this request, with an explicit scope and reversible storage. */
+function SenderFeedback({ messageId, feedback }: { messageId: string; feedback: NonNullable<TrustReport["feedback"]> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = async (forgetId?: string) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      if (forgetId) await mailClient.forgetSenderDelivery(forgetId);
+      else await mailClient.confirmSenderDelivery(messageId, feedback.linkOrigins);
+      window.dispatchEvent(new Event(SENDER_FEEDBACK_CHANGED));
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const matchingId = feedback.matching?.id;
+  return (
+    <div className="context-sender-feedback">
+      <div className="context-sender-actions">
+        {matchingId
+          ? <button type="button" className="btn-link" disabled={busy} onClick={() => { void save(matchingId); }}>Forget confirmation</button>
+          : <button type="button" className="btn-link" disabled={busy} onClick={() => { void save(); }}>{busy ? "Saving…" : "This is legitimate"}</button>}
+      </div>
+      <p className="context-sender-feedback-scope">{matchingId ? "Remembered" : "Remembers"} this sending address and link destinations for {feedback.requester} on this device. Security checks still apply.</p>
+      {!matchingId && feedback.patterns.length > 0 ? (
+        <details>
+          <summary>Remembered senders</summary>
+          {feedback.patterns.map((pattern) => <div className="context-sender-actions" key={pattern.id}><span>{pattern.senderEmail}</span><button type="button" className="btn-link" disabled={busy} aria-label={`Forget confirmation for ${pattern.senderEmail}`} onClick={() => { void save(pattern.id); }}>Forget</button></div>)}
+        </details>
+      ) : null}
+      {error ? <p role="alert">Couldn’t save sender feedback: {error}</p> : null}
+    </div>
+  );
 }
 
 /**
@@ -236,7 +282,7 @@ export function TrustSection({ message, subject, bulk, prior, onShowLink }: {
   const report = useTrustReport({ message, subject, bulk, prior });
   if (!report) return null;
   if (report.rows.length === 0 && report.details.length === 0) return null;
-  if (report.summary === "known" || (!bulk && !report.summary)) return null;
+  if (!report.feedback?.relevant && (report.summary === "known" || (!bulk && !report.summary))) return null;
   const title = report.summary === "careful" ? "Be careful" : "Sender checks";
   return (
     // The id keeps the collapse state the section had under its earlier Trust title.
@@ -247,7 +293,7 @@ export function TrustSection({ message, subject, bulk, prior, onShowLink }: {
       label={title}
       limit={report.rows.length}
       rows={report.rows.map((finding) => trustRow(finding, onShowLink))}
-      closing={<TrustDetails key={message.id} details={report.details} />}
+      closing={<><TrustDetails key={message.id} details={report.details} />{report.feedback ? <SenderFeedback key={message.id} messageId={message.id} feedback={report.feedback} /> : null}</>}
     />
   );
 }

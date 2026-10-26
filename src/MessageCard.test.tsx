@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ContactCardContext, type ContactCardActions } from "./ContactCard";
 import type { OutboxItem } from "./correspondence";
 import { mailClient } from "./data/client";
-import type { Account, ContactProfile, Message, MessageTrust, SenderFamiliarity } from "./domain";
+import type { Account, ContactProfile, Message, MessageTrust, SenderDeliveryPattern, SenderFamiliarity } from "./domain";
 import * as inlineAttachments from "./inlineAttachments";
 import { placeHoverCard } from "./AddressWithCard";
 import { MessageCard } from "./MessageCard";
@@ -351,6 +351,21 @@ describe("MessageCard", () => {
       familiarity: vi.spyOn(mailClient, "senderFamiliarity").mockResolvedValue(familiarity),
     });
     const lookalikeLink = '<p>Please <a href="https://partnr.example/pay">pay the invoice</a>.</p>';
+
+    it("updates the reader's warning alongside context-panel feedback without hiding stronger warnings", async () => {
+      let patterns: SenderDeliveryPattern[] = [];
+      const { familiarity } = reads({ ...stranger, deliveryPatterns: [] }, { ...verified, replyTo: "person@customer.example" });
+      familiarity.mockImplementation(async () => ({ ...stranger, deliveryPatterns: patterns }));
+      vi.spyOn(mailClient, "confirmSenderDelivery").mockImplementation(async () => {
+        patterns = [{ id: "feedback", senderEmail: "ada@example.com", replyTo: "person@customer.example", linkOrigins: [], authenticated: true, sourceMessageId: message.id, confirmedAt: "2026-10-26T12:00:00Z" }];
+      });
+      render(<><MessageCard message={message} isExpanded {...stableProps} subject="Hello" /><TrustSection message={message} subject="Hello" bulk={false} /></>);
+      await screen.findByRole("button", { name: /^Be careful: Replies go elsewhere/ });
+      fireEvent.click(screen.getByRole("button", { name: "This is legitimate" }));
+      await screen.findByText("You confirmed this email is legitimate");
+      await waitFor(() => expect(screen.queryByRole("button", { name: /^Be careful:/ })).not.toBeInTheDocument());
+      expect(screen.queryByRole("button", { name: "Known sender. Show sender details" })).not.toBeInTheDocument();
+    });
 
     it("shows a quiet shield for a known sender that opens the same details as the Trust section", async () => {
       reads({ ...stranger, sentCount: 3, firstSentAt: "2025-02-10T00:00:00Z" });

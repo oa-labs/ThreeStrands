@@ -2381,6 +2381,9 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-trust-details-toggle:hover { color:var(--text); background:var(--hover); }
 .context-trust-details-label { flex:0 0 auto; margin-right:var(--space-2); color:var(--text); font-weight:var(--weight-medium); }
 .context-trust-details-summary { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.context-sender-feedback { padding:var(--space-1) var(--context-row-inset); font-size:var(--text-meta); color:var(--muted); overflow-wrap:anywhere; }
+.context-sender-feedback .context-sender-actions { margin-left:0; }
+.context-sender-feedback-scope { margin:var(--space-1) 0; }
 .compose-check { display:grid; gap:var(--space-1); padding:var(--space-1-5) 0 var(--space-1-5) var(--space-2-5); border-left:2px solid var(--border); color:var(--muted); font-size:var(--text-meta); line-height:var(--leading-normal); }
 .compose-check + .compose-check { margin-top:var(--space-1); }
 .compose-check strong { color:var(--text); font-weight:var(--weight-medium); overflow-wrap:anywhere; }

@@ -3,11 +3,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { ContextPanel } from "./ContextPanel";
 import { mailClient } from "./data/client";
 import { formatHistoryDate } from "./contactContext";
-import type { Account, ContactActivity, ContactProfile, ContactTimelineItem, MessageTrust, SenderFamiliarity, SenderHistory, ThreadDetail } from "./domain";
+import type { Account, ContactActivity, ContactProfile, ContactTimelineItem, MessageTrust, SenderDeliveryPattern, SenderFamiliarity, SenderHistory, ThreadDetail } from "./domain";
 import type { SenderActions } from "./SenderSections";
 import { expectContextRows } from "./test/contextRows";
 
-vi.mock("./data/client",()=>({mailClient:{getContactProfile:vi.fn(),resolveContactIds:vi.fn(),contactTimeline:vi.fn(),saveContactProfile:vi.fn(),contactActivity:vi.fn(),contactFiles:vi.fn(),senderHistory:vi.fn(),messageTrust:vi.fn(),senderFamiliarity:vi.fn(),fileStars:vi.fn().mockResolvedValue([]),setFileStar:vi.fn().mockResolvedValue(undefined),openAttachment:vi.fn()}}));
+vi.mock("./data/client",()=>({mailClient:{getContactProfile:vi.fn(),resolveContactIds:vi.fn(),contactTimeline:vi.fn(),saveContactProfile:vi.fn(),contactActivity:vi.fn(),contactFiles:vi.fn(),senderHistory:vi.fn(),messageTrust:vi.fn(),senderFamiliarity:vi.fn(),confirmSenderDelivery:vi.fn(),forgetSenderDelivery:vi.fn(),fileStars:vi.fn().mockResolvedValue([]),setFileStar:vi.fn().mockResolvedValue(undefined),openAttachment:vi.fn()}}));
 vi.mock("@tauri-apps/plugin-opener",()=>({openUrl:vi.fn()}));
 
 const jane:ContactProfile={id:"contact:jane@example.com",displayName:"Jane Doe",role:null,company:"Acme",location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:["jane@example.com"],sentCount:1,receivedCount:1,lastInteractedAt:null,birthday:null,keepInTouch:{intervalDays:null,startedAt:null,snoozedUntil:null,snoozedAt:null,lastTouchAt:null},keepInTouchDueAt:null};
@@ -628,6 +628,49 @@ describe("ContextPanel",()=>{
       const trust=await screen.findByRole("region",{name:"Be careful"});
       expect(trust).toHaveTextContent("Replies go elsewhere");
       expect(trust).toHaveTextContent("Reply-To is desk@elsewhere.example");
+    });
+
+    it("confirms a legitimate request, retains a place to forget it, and restores the warning when forgotten",async()=>{
+      const pattern:SenderDeliveryPattern={id:"feedback-1",senderEmail:"bob@example.com",replyTo:"requester@customer.example",linkOrigins:[],authenticated:true,sourceMessageId:"2",confirmedAt:"2026-10-26T12:00:00Z"};
+      let patterns:SenderDeliveryPattern[]=[];
+      vi.mocked(mailClient.messageTrust).mockResolvedValue({...verified,fromDomain:"example.com",replyTo:pattern.replyTo});
+      vi.mocked(mailClient.senderFamiliarity).mockImplementation(async()=>({...unfamiliar,deliveryPatterns:patterns}));
+      vi.mocked(mailClient.confirmSenderDelivery).mockImplementation(async()=>{patterns=[pattern];});
+      vi.mocked(mailClient.forgetSenderDelivery).mockImplementation(async()=>{patterns=[];});
+      renderPanel();
+      const trust=await screen.findByRole("region",{name:"Be careful"});
+      fireEvent.click(within(trust).getByRole("button",{name:"This is legitimate"}));
+      expect(await screen.findByText("You confirmed this email is legitimate")).toBeVisible();
+      expect(mailClient.confirmSenderDelivery).toHaveBeenCalledWith("2",[]);
+      expect(screen.queryByRole("region",{name:"Be careful"})).not.toBeInTheDocument();
+      const checks=screen.getByRole("region",{name:"Sender checks"});
+      expect(checks).toHaveTextContent("requester@customer.example on this device");
+      fireEvent.click(within(checks).getByRole("button",{name:"Forget confirmation"}));
+      expect(await screen.findByRole("region",{name:"Be careful"})).toHaveTextContent("Replies go elsewhere");
+      expect(mailClient.forgetSenderDelivery).toHaveBeenCalledWith("feedback-1");
+    });
+
+    it("keeps sender feedback available for a quiet request using an established customer's Reply-To",async()=>{
+      vi.mocked(mailClient.messageTrust).mockResolvedValue({...verified,fromDomain:"example.com",replyTo:"requester@customer.example"});
+      vi.mocked(mailClient.senderFamiliarity).mockResolvedValue({...unfamiliar,knownDomains:["customer.example"],deliveryPatterns:[]});
+      renderPanel();
+      const trust=await screen.findByRole("region",{name:"Sender checks"});
+      expect(within(trust).getByRole("button",{name:"This is legitimate"})).toBeVisible();
+    });
+
+    it("shows feedback failures, permits retry, and never claims an unsuccessful save worked",async()=>{
+      vi.mocked(mailClient.messageTrust).mockResolvedValue({...verified,fromDomain:"example.com",replyTo:"requester@customer.example"});
+      vi.mocked(mailClient.senderFamiliarity).mockResolvedValue({...unfamiliar,deliveryPatterns:[]});
+      let fail!:(reason:Error)=>void;
+      vi.mocked(mailClient.confirmSenderDelivery).mockImplementation(()=>new Promise<void>((_resolve,reject)=>{fail=reject;}));
+      renderPanel();
+      fireEvent.click(await screen.findByRole("button",{name:"This is legitimate"}));
+      expect(screen.getByRole("button",{name:"Saving…"})).toBeDisabled();
+      await act(async()=>{fail(new Error("Database is locked"));});
+      expect(await screen.findByRole("alert")).toHaveTextContent("Database is locked");
+      expect(screen.getByRole("region",{name:"Be careful"})).toBeInTheDocument();
+      expect(screen.queryByText("You confirmed this email is legitimate")).not.toBeInTheDocument();
+      expect(screen.getByRole("button",{name:"This is legitimate"})).toBeEnabled();
     });
 
     it("does not warn about links in the quoted history the reader folds away",async()=>{

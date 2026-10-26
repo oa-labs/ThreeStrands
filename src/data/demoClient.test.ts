@@ -162,6 +162,19 @@ describe("showcase dataset", () => {
     }
   });
 
+  it("remembers explicit sender feedback and lets the user forget it", async () => {
+    const client = createDemoClient(defaultDemoDataset());
+    const message = (await client.getThread("welcome")).messages[0];
+    const sender = message.sender.match(/<([^>]+)>/)?.[1] ?? message.sender;
+    expect((await client.senderFamiliarity(message.id, sender, "")).deliveryPatterns).toEqual([]);
+    await client.confirmSenderDelivery(message.id, ["https://portal.example", "https://portal.example/"]);
+    const patterns = (await client.senderFamiliarity(message.id, sender.toLocaleLowerCase(), "")).deliveryPatterns!;
+    expect(patterns).toHaveLength(1);
+    expect(patterns[0]).toMatchObject({ sourceMessageId: message.id, linkOrigins: ["https://portal.example"], authenticated: true });
+    await client.forgetSenderDelivery(patterns[0].id);
+    expect((await client.senderFamiliarity(message.id, sender, "")).deliveryPatterns).toEqual([]);
+  });
+
   it("only contains addresses and links on reserved domains", () => {
     const serialized = JSON.stringify(buildShowcaseDataset(now));
     const domains = [

@@ -225,6 +225,8 @@ export interface MailClient extends CorrespondenceClient {
   messageTrust(messageId: string): Promise<MessageTrust | null>;
   /** How well the user knows `email`, the sender of `messageId`, who goes by `name`. */
   senderFamiliarity(messageId: string, email: string, name: string): Promise<SenderFamiliarity>;
+  confirmSenderDelivery(messageId: string, linkOrigins: string[]): Promise<void>;
+  forgetSenderDelivery(id: string): Promise<void>;
   listSenderRules(): Promise<SenderRule[]>;
   /** Mutes a sender in one account, marking read and archiving the listed Inbox conversations from them. */
   muteSender(accountId: string, matchKind: SenderRule["matchKind"], matchValue: string, archiveThreadIds: string[]): Promise<MuteResult>;
@@ -435,6 +437,8 @@ const tauriClient: MailClient = {
   senderHistory: (accountId, email, limit) => read("sender_history", { accountId, email, limit }),
   messageTrust: (messageId) => read("message_trust", { messageId }),
   senderFamiliarity: (messageId, email, name) => read("sender_familiarity", { messageId, email, name }),
+  confirmSenderDelivery: (messageId, linkOrigins) => complete("confirm_sender_delivery", { messageId, linkOrigins }),
+  forgetSenderDelivery: (id) => complete("forget_sender_delivery", { id }),
   listSenderRules: () => read("list_sender_rules"),
   muteSender: (accountId, matchKind, matchValue, archiveThreadIds) => complete("mute_sender", { accountId, matchKind, matchValue, archiveThreadIds }),
   deleteSenderRule: (id) => complete("delete_sender_rule", { id }),

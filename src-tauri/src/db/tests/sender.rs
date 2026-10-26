@@ -117,6 +117,93 @@ fn message_trust_reads_the_stored_headers_and_is_absent_without_them() {
     assert!(database.message_trust("missing").unwrap().is_none());
 }
 
+fn delivery_message(id: &str, sender: &str, reply_to: &str, dmarc: &str) -> NormalizedMessage {
+    let domain = sender.rsplit_once('@').unwrap().1;
+    let raw = RawMessage {
+        id: id.into(), thread_id: id.into(), label_ids: vec![], snippet: String::new(), internal_date: String::new(),
+        payload: MimePart { headers: vec![
+            MimeHeader { name: "From".into(), value: sender.into() },
+            MimeHeader { name: "Reply-To".into(), value: reply_to.into() },
+            MimeHeader { name: "Authentication-Results".into(), value: format!("mx.example; dmarc={dmarc} header.from={domain}; dkim=pass header.d={domain}") },
+        ], ..MimePart::default() },
+    };
+    let mut item = from(id, id, "2026-10-01T00:00:00Z", sender, &["INBOX"]);
+    item.metadata_json = serde_json::to_string(&raw).unwrap();
+    item
+}
+
+#[test]
+fn sender_feedback_is_explicit_scoped_to_exact_requester_and_account_and_reversible() {
+    let database = database();
+    let sender = "requests@signing.example";
+    let requester = "ana@partner.example";
+    database.upsert_thread(ACCOUNT, &[delivery_message("original", sender, requester, "pass")]).unwrap();
+    database.upsert_thread(ACCOUNT, &[delivery_message("next", sender, requester, "pass")]).unwrap();
+    assert!(database.sender_familiarity("original", sender, "").unwrap().delivery_patterns.is_empty());
+
+    database.confirm_sender_delivery("original", &["https://signing.example".into(), "https://help.example".into(), "https://signing.example/".into()]).unwrap();
+    database.confirm_sender_delivery("original", &["https://help.example".into(), "https://signing.example".into()]).unwrap();
+    let patterns = database.sender_familiarity("next", sender, "").unwrap().delivery_patterns;
+    assert_eq!(patterns.len(), 1, "duplicate confirmations must be idempotent");
+    let pattern = &patterns[0];
+    assert_eq!(pattern.sender_email, sender);
+    assert_eq!(pattern.reply_to.as_deref(), Some(requester));
+    assert_eq!(pattern.link_origins, ["https://help.example", "https://signing.example"]);
+    assert!(pattern.authenticated);
+    assert_eq!(pattern.source_message_id, "original");
+
+    // Same Reply-To, different delivery service: return the prior evidence
+    // so the UI can call out a changed pattern, never copy trust to it.
+    database.upsert_thread(ACCOUNT, &[delivery_message("changed", "requests@new-service.example", requester, "pass")]).unwrap();
+    assert_eq!(database.sender_familiarity("changed", "requests@new-service.example", "").unwrap().delivery_patterns.len(), 1);
+    database.upsert_thread(ACCOUNT, &[delivery_message("another-person", sender, "bob@partner.example", "pass")]).unwrap();
+    assert!(database.sender_familiarity("another-person", sender, "").unwrap().delivery_patterns.is_empty());
+    database.upsert_thread("other@example.com", &[delivery_message("other-account", sender, requester, "pass")]).unwrap();
+    assert!(database.sender_familiarity("other-account", sender, "").unwrap().delivery_patterns.is_empty());
+    database.forget_sender_delivery(&pattern.id).unwrap();
+    database.forget_sender_delivery(&pattern.id).unwrap();
+    assert!(database.sender_familiarity("next", sender, "").unwrap().delivery_patterns.is_empty());
+}
+
+#[test]
+fn sender_feedback_survives_reopening_and_cached_source_removal() {
+    let temp = crate::db::test_support::TempDbPath::new();
+    {
+        let database = crate::db::Database::open(&temp.path).unwrap();
+        database.upsert_thread(ACCOUNT, &[delivery_message("confirmed", "notifications@portal.example", "person@customer.example", "pass")]).unwrap();
+        database.confirm_sender_delivery("confirmed", &["https://portal.example".into()]).unwrap();
+        database.connection().unwrap().execute("DELETE FROM threads WHERE id = ?1", [local("confirmed")]).unwrap();
+    }
+    let database = crate::db::Database::open(&temp.path).unwrap();
+    database.upsert_thread(ACCOUNT, &[delivery_message("future", "notifications@portal.example", "person@customer.example", "pass")]).unwrap();
+    let patterns = database.sender_familiarity("future", "notifications@portal.example", "").unwrap().delivery_patterns;
+    assert_eq!(patterns.len(), 1);
+    assert_eq!(patterns[0].source_message_id, "confirmed");
+}
+
+#[test]
+fn sender_feedback_without_authentication_never_teaches_a_reusable_pattern() {
+    let database = database();
+    database.upsert_thread(ACCOUNT, &[delivery_message("unverified", "requests@service.example", "ana@partner.example", "fail")]).unwrap();
+    database.confirm_sender_delivery("unverified", &[]).unwrap();
+    let patterns = database.sender_familiarity("unverified", "requests@service.example", "").unwrap().delivery_patterns;
+    assert_eq!(patterns.len(), 1);
+    assert!(!patterns[0].authenticated);
+}
+
+#[test]
+fn sender_feedback_requires_cached_headers_and_never_stores_document_urls_or_tokens() {
+    let database = database();
+    assert!(database.confirm_sender_delivery("missing", &[]).is_err());
+    database.upsert_thread(ACCOUNT, &[from("bare-feedback", "bare-feedback", "2026-10-01T00:00:00Z", "requests@service.example", &["INBOX"])]).unwrap();
+    assert!(database.confirm_sender_delivery("bare-feedback", &[]).is_err());
+    database.upsert_thread(ACCOUNT, &[delivery_message("valid-feedback", "requests@service.example", "ana@partner.example", "pass")]).unwrap();
+    for value in ["not-a-url", "javascript:alert(1)", "https://service.example/document/secret", "https://service.example?token=secret", "https://service.example/#secret", "https://user:secret@service.example/"] {
+        assert!(database.confirm_sender_delivery("valid-feedback", &[value.into()]).is_err(), "{value}");
+    }
+    assert!(database.sender_familiarity("valid-feedback", "requests@service.example", "").unwrap().delivery_patterns.is_empty());
+}
+
 fn save_contact(database: &crate::db::Database, name: &str, addresses: &[&str]) {
     database
         .save_contact_profile(&crate::models::SaveContactRequest {

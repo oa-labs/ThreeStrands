@@ -14,7 +14,7 @@ pub(crate) const BASELINE_VERSION: i64 = 74;
 
 /// The current schema version. A new schema change adds an
 /// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 85;
+pub(crate) const LATEST_VERSION: i64 = 86;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -946,6 +946,25 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 86 {
+        // Explicit sender feedback is local evidence, not a synced setting or
+        // a contact alias. Keep it after cached messages age out.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS sender_delivery_patterns (
+                 id TEXT PRIMARY KEY,
+                 account_id TEXT NOT NULL,
+                 requester TEXT NOT NULL,
+                 sender_email TEXT NOT NULL,
+                 reply_to TEXT,
+                 link_origins TEXT NOT NULL,
+                 authenticated INTEGER NOT NULL,
+                 source_message_id TEXT NOT NULL,
+                 confirmed_at TEXT NOT NULL,
+                 UNIQUE(account_id, requester, sender_email, link_origins)
+             );
+             CREATE INDEX IF NOT EXISTS sender_delivery_requester ON sender_delivery_patterns(account_id, requester);",
+        ).map_err(error)?;
+    }
     if stored == 0 {
         // Only new installations get the 90-day default. Existing databases
         // without a retention setting still mean Forever. Keep the default
@@ -1239,6 +1258,8 @@ mod tests {
         "table:draft_server_deletions",
         "table:discarded_drafts",
         "table:ai_activity",
+        "table:sender_delivery_patterns",
+        "index:sender_delivery_requester",
     ];
 
     #[test]
@@ -1264,6 +1285,21 @@ mod tests {
                 .unwrap(),
             super::LATEST_VERSION
         );
+    }
+
+    #[test]
+    fn v85_adds_sender_feedback_without_changing_existing_data() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection.execute_batch("DROP TABLE sender_delivery_patterns; PRAGMA user_version = 85;").unwrap();
+        connection.execute("INSERT INTO compose_settings(key, value) VALUES ('feedback-upgrade-test', 'preserved')", []).unwrap();
+        super::migrate(&mut connection).unwrap();
+        let value: String = connection.query_row("SELECT value FROM compose_settings WHERE key = 'feedback-upgrade-test'", [], |row| row.get(0)).unwrap();
+        assert_eq!(value, "preserved");
+        let count: i64 = connection.query_row("SELECT count(*) FROM sender_delivery_patterns", [], |row| row.get(0)).unwrap();
+        assert_eq!(count, 0);
+        super::migrate(&mut connection).unwrap();
     }
 
     #[test]
@@ -1446,7 +1482,7 @@ mod tests {
         assert_eq!(analysis_focus, None);
         let activity: i64 = connection.query_row("SELECT count(*) FROM ai_activity", [], |row| row.get(0)).unwrap();
         assert_eq!(activity, 0);
-        assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 85);
+        assert_eq!(connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), super::LATEST_VERSION);
     }
 
     #[test]

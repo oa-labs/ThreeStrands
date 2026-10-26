@@ -509,6 +509,18 @@ export type SenderFamiliarity = {
   nameMatches: string[];
   /** Domains of saved contacts' addresses and of addresses the user has written to. */
   knownDomains: string[];
+  /** Explicit confirmations on this device, scoped to this account and exact requester. */
+  deliveryPatterns?: SenderDeliveryPattern[];
+};
+
+export type SenderDeliveryPattern = {
+  id: string;
+  senderEmail: string;
+  replyTo: string | null;
+  linkOrigins: string[];
+  authenticated: boolean;
+  sourceMessageId: string;
+  confirmedAt: string;
 };
 
 /** One attachment a person sent, with the message it arrived on. */

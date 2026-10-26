@@ -1,5 +1,5 @@
 import { attachmentRisk } from "./attachmentRisk";
-import type { Message, MessageAttachment, MessageTrust, SenderFamiliarity, SenderRule, SplitInbox, ThreadDetail } from "./domain";
+import type { Message, MessageAttachment, MessageTrust, SenderDeliveryPattern, SenderFamiliarity, SenderRule, SplitInbox, ThreadDetail } from "./domain";
 import { parseAddress } from "./emailAddress";
 import { disguisedWords, knownSites, lookalikeOf, mixesScripts, spelledOutSite, unicodeHost, type KnownSites } from "./lookalike";
 import { foldQuotedHistoryHtml, type PriorThreadText } from "./quotedHistory";
@@ -193,7 +193,7 @@ export type TrustFinding = {
   key: string;
   /** Warnings come first and bring the section into any conversation. */
   tone: "warning" | "verified" | "info";
-  kind: "authentication" | "replyTo" | "mismatch" | "sites" | "tracking" | "impersonation" | "lookalike" | "subject" | "link" | "attachment" | "history";
+  kind: "authentication" | "replyTo" | "mismatch" | "sites" | "tracking" | "impersonation" | "lookalike" | "subject" | "link" | "attachment" | "history" | "delivery";
   title: string;
   detail: string;
   /** The link a link finding is about, so the reader can show it. */
@@ -212,9 +212,22 @@ export type TrustFinding = {
  * otherwise none. `rows` are the warnings and the sender's
  * history; `details` holds the rest, folded under Details.
  */
-export type TrustReport = { summary: "careful" | "known" | null; rows: TrustFinding[]; details: TrustFinding[] };
+export type TrustReport = {
+  summary: "careful" | "known" | null;
+  rows: TrustFinding[];
+  details: TrustFinding[];
+  feedback?: {
+    requester: string;
+    linkOrigins: string[];
+    patterns: SenderDeliveryPattern[];
+    matching: SenderDeliveryPattern | null;
+    /** Keep the section available for mediated mail and remembered relationships. */
+    relevant: boolean;
+  };
+};
 
 export type TrustInput = {
+  messageId?: string;
   /** Null when the message's headers are not stored. */
   trust: MessageTrust | null;
   links: LinkAnalysis;
@@ -227,6 +240,11 @@ export type TrustInput = {
   attachments: readonly MessageAttachment[];
   bulk: boolean;
 };
+
+/** Exact web origins, including scheme and port; never retain document URLs or tokens. */
+export function deliveryLinkOrigins(links: LinkAnalysis): string[] {
+  return [...new Set(links.links.map((fact) => new URL(fact.link.href).origin))].sort();
+}
 
 const METHOD_NAMES = { dmarc: "DMARC", dkim: "DKIM", spf: "SPF" } as const;
 /** Results that are a check's real conclusion against the sender, not a missing or neutral one. */
@@ -368,7 +386,7 @@ function linkTrick(fact: LinkFact, known: KnownSites | null): Omit<TrustFinding,
  * Reply-To at another organization. The sender's history with the user
  * follows. The sites links open and tracking images sit in the details.
  */
-export function trustReport({ trust, links, familiarity, sender, subject, attachments, bulk }: TrustInput): TrustReport {
+export function trustReport({ messageId, trust, links, familiarity, sender, subject, attachments, bulk }: TrustInput): TrustReport {
   const from = parseAddress(sender);
   const email = from.email.toLocaleLowerCase();
   const domain = email.split("@")[1] ?? "";
@@ -381,6 +399,25 @@ export function trustReport({ trust, links, familiarity, sender, subject, attach
 
   const authentication = trust ? authenticationFinding(trust) : null;
   if (authentication?.tone === "warning") warnings.push(authentication);
+
+  // Exact identities and origins prevent a confirmation becoming a blanket
+  // exemption for a shared service or organization. Missing feedback reads
+  // and truncated link analysis never authorize a quieter assessment.
+  const patterns = familiarity?.deliveryPatterns;
+  const linkOrigins = deliveryLinkOrigins(links);
+  const requester = trust?.replyTo?.toLocaleLowerCase() || email;
+  const matching = patterns?.find((pattern) => pattern.senderEmail === email
+    && pattern.replyTo === (trust?.replyTo?.toLocaleLowerCase() ?? null)
+    && pattern.linkOrigins.length === linkOrigins.length
+    && pattern.linkOrigins.every((origin, index) => origin === linkOrigins[index])) ?? null;
+  const feedback = trust && patterns && email.includes("@") && domain === trust.fromDomain && links.links.length < TRUST_LINK_LIMIT
+    ? { requester, linkOrigins, patterns, matching, relevant: Boolean(trust.replyTo || patterns.length) }
+    : undefined;
+  const recognizedDelivery = Boolean(feedback && matching?.authenticated && trust?.authentication?.dmarc === "pass");
+  const confirmedMessage = Boolean(feedback && messageId && matching?.sourceMessageId === messageId);
+  if (feedback && !matching && patterns?.some((pattern) => pattern.authenticated)) {
+    warn({ key: "delivery-changed", kind: "delivery", title: "Different delivery pattern", detail: `You've confirmed other requests for ${requester}; this sending address or its link destinations are different` });
+  }
 
   if (familiarity && !acquainted && familiarity.nameMatches.length > 0 && from.name) {
     const others = familiarity.nameMatches.length - 1;
@@ -411,12 +448,12 @@ export function trustReport({ trust, links, familiarity, sender, subject, attach
     const familiarReply = Boolean(known && replyDomain && known.sites.has(siteOf(replyDomain)));
     const finding: TrustFinding = {
       key: "reply-to",
-      tone: familiarReply ? "info" : "warning",
+      tone: familiarReply || recognizedDelivery ? "info" : "warning",
       kind: "replyTo",
       title: "Replies go elsewhere",
-      detail: familiarReply ? `Reply-To is ${trust.replyTo}, a domain you write to` : `Reply-To is ${trust.replyTo}`,
+      detail: recognizedDelivery ? `Reply-To is ${trust.replyTo}, matching a request you confirmed` : familiarReply ? `Reply-To is ${trust.replyTo}, a domain you write to` : `Reply-To is ${trust.replyTo}`,
     };
-    if (familiarReply) details.push(finding);
+    if (familiarReply || recognizedDelivery) details.push(finding);
     else warnings.push(finding);
   }
 
@@ -457,6 +494,9 @@ export function trustReport({ trust, links, familiarity, sender, subject, attach
   }
 
   const history: TrustFinding[] = [];
+  if (recognizedDelivery || confirmedMessage) {
+    history.push({ key: "delivery-confirmed", tone: "info", kind: "delivery", title: confirmedMessage ? "You confirmed this email is legitimate" : "Matches a request you confirmed", detail: `${requester} via ${email}` });
+  }
   if (familiarity) {
     const who = familiarity.contactName || from.name || email;
     if (familiarity.sentCount > 0) {
@@ -470,7 +510,7 @@ export function trustReport({ trust, links, familiarity, sender, subject, attach
       });
     } else if (familiarity.contactName) {
       history.push({ key: "history", tone: "verified", kind: "history", title: "Saved in your contacts", detail: `As ${familiarity.contactName}` });
-    } else if (!bulk && !familiarity.receivedBefore && email) {
+    } else if (!bulk && !familiarity.receivedBefore && email && !recognizedDelivery && !confirmedMessage) {
       history.push({ key: "history", tone: "info", kind: "history", title: "First email from this address", detail: email });
     }
   }
@@ -501,7 +541,7 @@ export function trustReport({ trust, links, familiarity, sender, subject, attach
   const summary = warnings.length > 0
     ? "careful"
     : acquainted && authentication?.tone === "verified" ? "known" : null;
-  return { summary, rows, details };
+  return { summary, rows, details, ...(feedback ? { feedback } : {}) };
 }
 
 /**

@@ -787,6 +787,21 @@ pub struct SenderFamiliarity {
     /// Domains of saved contacts' addresses and of addresses the user has
     /// written to, lowercased.
     pub known_domains: Vec<String>,
+    pub delivery_patterns: Vec<SenderDeliveryPattern>,
+}
+
+/// User-confirmed delivery relationships. Local to this device and account;
+/// these are evidence about a pattern, never an exemption from security checks.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SenderDeliveryPattern {
+    pub id: String,
+    pub sender_email: String,
+    pub reply_to: Option<String>,
+    pub link_origins: Vec<String>,
+    pub authenticated: bool,
+    pub source_message_id: String,
+    pub confirmed_at: String,
 }
 
 /// One conversation in a sender's history, dated by the sender's newest message in it.

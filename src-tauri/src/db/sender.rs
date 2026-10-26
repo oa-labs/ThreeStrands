@@ -111,8 +111,9 @@ impl Database {
     pub fn sender_familiarity(&self, message_id: &str, email: &str, name: &str) -> DbResult<SenderFamiliarity> {
         let email = email.trim().to_ascii_lowercase();
         let name = comparable_name(name);
+        let delivery_patterns = self.sender_delivery_patterns(message_id)?;
         self.with_connection(|connection| {
-            let mut familiarity = SenderFamiliarity::default();
+            let mut familiarity = SenderFamiliarity { delivery_patterns, ..SenderFamiliarity::default() };
             if email.contains('@') {
                 (familiarity.sent_count, familiarity.first_sent_at) = connection.query_row(
                     "SELECT COUNT(DISTINCT message_id), MIN(sent_at) FROM contact_interactions WHERE direction = 'sent' AND email = ?1",
