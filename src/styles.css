@@ -2372,10 +2372,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-row-warning .context-row-glyph { color:var(--warning); }
 .context-row-verified .context-row-glyph { color:var(--success); }
 /* Trust: a one-word verdict in the heading, then the tricks found, then Details folded below. */
-.context-trust-compact { padding-block:var(--space-2); }
-.context-trust-compact > details > summary { display:flex; align-items:center; justify-content:space-between; gap:var(--space-2); padding:var(--space-1) var(--context-row-inset); cursor:pointer; list-style:none; }
-.context-trust-compact > details > summary::-webkit-details-marker { display:none; }
-.context-trust-expand { color:var(--muted); font-size:var(--text-meta); }
 .context-trust-summary { display:inline-flex; align-items:center; gap:var(--space-1); color:var(--muted); font-size:var(--text-meta); font-weight:var(--weight-medium); }
 .context-trust-careful { color:var(--warning); }
 .context-trust-known { color:var(--success); }

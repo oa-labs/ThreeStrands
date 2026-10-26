@@ -423,13 +423,14 @@ describe("MessageCard", () => {
     });
 
     it("agrees with the Trust section and reads the message once for both", async () => {
-      const { trust, familiarity } = reads({ ...stranger, sentCount: 2 });
+      const { trust, familiarity } = reads(stranger);
+      const suspect = { ...message, bodyHtml: lookalikeLink };
       render(<>
-        <MessageCard message={message} isExpanded {...stableProps} subject="Hello" />
-        <TrustSection message={message} subject="Hello" bulk={false} />
+        <MessageCard message={suspect} isExpanded {...stableProps} subject="Invoice" />
+        <TrustSection message={suspect} subject="Invoice" bulk={false} />
       </>);
-      await screen.findByRole("button", { name: "Known sender. Show sender details" });
-      expect(await screen.findByText("Known sender")).toBeInTheDocument();
+      await screen.findByRole("button", { name: /^Be careful: Link looks like partner\.example/ });
+      expect(await screen.findByText("Be careful")).toBeInTheDocument();
       expect(trust).toHaveBeenCalledTimes(1);
       expect(familiarity).toHaveBeenCalledTimes(1);
     });

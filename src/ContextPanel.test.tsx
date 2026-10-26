@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ContextPanel } from "./ContextPanel";
 import { mailClient } from "./data/client";
 import { formatHistoryDate } from "./contactContext";
@@ -653,21 +653,22 @@ describe("ContextPanel",()=>{
       expect(within(trust).getByText("Sender verified")).toBeVisible();
     });
 
-    it("shows a verified sender the user writes to as one Known sender line in personal mail",async()=>{
+    it("leaves a verified sender the user writes to to the reader's shield, in personal and bulk mail",async()=>{
       vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
       vi.mocked(mailClient.messageTrust).mockResolvedValue({...verified,fromDomain:"example.com"});
       vi.mocked(mailClient.senderFamiliarity).mockResolvedValue({...unfamiliar,sentCount:3,firstSentAt:"2025-02-10T00:00:00Z",knownDomains:["example.com"]});
       renderPanel();
-      const trust=await screen.findByRole("region",{name:"Trust"});
-      expect(within(trust).getByText("Known sender")).toBeInTheDocument();
-      expect(within(trust).queryByText("Be careful")).not.toBeInTheDocument();
-      const disclosure = within(trust).getByText("Known sender").closest("details")!;
-      expect(disclosure).not.toHaveAttribute("open");
-      expect(within(trust).getByText("You've written to Bob 3 times")).not.toBeVisible();
-      fireEvent.click(disclosure.querySelector("summary")!);
-      expect(within(trust).getByText("You've written to Bob 3 times")).toBeVisible();
-      expect(trust).toHaveTextContent("You've written to Bob 3 times");
-      expect(trust).toHaveTextContent("Since Feb 2025");
+      await personLoaded(bob.id);
+      await waitFor(()=>expect(mailClient.senderFamiliarity).toHaveBeenCalled());
+      expect(screen.queryByRole("region",{name:"Trust"})).not.toBeInTheDocument();
+      expect(screen.queryByText("Known sender")).not.toBeInTheDocument();
+
+      cleanup();
+      vi.mocked(mailClient.messageTrust).mockResolvedValue(verified);
+      renderPanel({detail:newsDetail()});
+      await waitFor(()=>expect(mailClient.messageTrust).toHaveBeenCalledWith("n3"));
+      await act(async()=>{});
+      expect(screen.queryByRole("region",{name:"Trust"})).not.toBeInTheDocument();
     });
 
     it("leaves Trust out of personal mail from a stranger with nothing to warn about",async()=>{

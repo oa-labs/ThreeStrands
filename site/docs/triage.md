@@ -91,7 +91,7 @@ When a message supports it, press <kbd>⌘/Ctrl + u</kbd> or use the reader's un
 
 ## Trust and Attachment Warnings
 
-The **Trust** section checks for common email tricks on your computer. **Be careful** explains findings such as a familiar name used by a new address, a lookalike domain, a subject line that disguises words with look-alike letters, a misleading link, or a risky attachment from someone you have not written to. **Known sender** means the app recognizes your correspondence or a saved contact and has evidence verifying the sender; it is not a promise that every message is safe.
+The **Trust** section checks for common email tricks on your computer. **Be careful** explains findings such as a familiar name used by a new address, a lookalike domain, a subject line that disguises words with look-alike letters, a misleading link, or a risky attachment from someone you have not written to. A warning also appears beside the sender's name in the message, and the most serious ones appear above the message itself. A small gray shield beside the name marks a **Known sender**: the app recognizes your correspondence or a saved contact and has evidence verifying the sender. It is not a promise that every message is safe. Hover over the shield or warning to see the sender details, or click it to keep them open.
 
 Choose **Show link** to find the link in the message. **Details** expands the mail server’s sender checks, the sites links open, and tracking images. Links in folded quoted history are left out of these warnings. Remote images remain blocked until you allow them, subject to your privacy settings.
 

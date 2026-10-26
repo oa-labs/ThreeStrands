@@ -213,15 +213,15 @@ export function useTrustReport({ message, subject, bulk, prior, enabled = true }
 }
 
 /**
- * Whether the latest message from someone else can be trusted. A summary
- * heads the section: Be careful when anything warns, Known sender for
- * someone the user writes to or saved whose mail was verified. Rows give the
+ * Whether the latest message from someone else can be trusted. Be careful
+ * heads the section when anything warns. A known sender gets no section: the
+ * reader's shield beside their name already offers the same details. Rows give the
  * concrete tricks, such as a display name borrowed from a contact, a
  * look-alike domain or subject word, a link that hides where it goes, or a risky attachment,
  * and then the sender's history with the user; link rows can show their
  * link in the message. Sender checks, the sites links open, and tracking
- * images fold under Details. Bulk mail always shows the section; other
- * conversations only with a summary. Links are read only from the part shown
+ * images fold under Details. Bulk mail from anyone but a known sender always
+ * shows the section; other conversations only when something warns. Links are read only from the part shown
  * before folded quoted history; `prior` is the conversation text before the
  * message, as the reader folds it.
  */
@@ -235,20 +235,10 @@ export function TrustSection({ message, subject, bulk, prior, onShowLink }: {
   const report = useTrustReport({ message, subject, bulk, prior });
   if (!report) return null;
   if (report.rows.length === 0 && report.details.length === 0) return null;
-  if (!bulk && !report.summary) return null;
+  if (report.summary === "known" || (!bulk && !report.summary)) return null;
   const summary = report.summary === "careful"
     ? <span className="context-trust-summary context-trust-careful"><TriangleAlert size={ICON_SIZE.xs} aria-hidden="true" />Be careful</span>
-    : report.summary === "known"
-      ? <span className="context-trust-summary context-trust-known"><ShieldCheck size={ICON_SIZE.xs} aria-hidden="true" />Known sender</span>
-      : null;
-  // Familiar-sender reassurance stays compact; warnings retain their full section.
-  if (report.summary === "known") return <section className="context-section context-trust context-trust-compact" aria-label="Trust">
-    <details>
-      <summary>{summary}<span className="context-trust-expand">Sender details</span></summary>
-      {report.rows.map((finding) => trustRow(finding, onShowLink))}
-      <TrustDetails key={message.id} details={report.details} />
-    </details>
-  </section>;
+    : null;
   return (
     <ContextSection
       id="trust"
