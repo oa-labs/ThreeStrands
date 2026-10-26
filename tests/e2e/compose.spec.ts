@@ -71,12 +71,15 @@ test("reviews a new email in the composer, applies and undoes without sending, a
   await composer.getByRole("textbox", { name: "To", exact: true }).fill("client@example.com");
   await composer.getByRole("textbox", { name: "Subject" }).fill("An introduction");
   await body.fill("I help teams improve their workflow.");
+  // One click reviews the draft; a goal is only for reviewing again.
   await composer.getByRole("button", { name: "Review", exact: true }).click();
-  await panel.getByRole("textbox", { name: /Goal for This Email/ }).fill("Get an introductory call");
-  await panel.getByRole("button", { name: "Review Draft", exact: true }).click();
-  await expect(panel.locator("pre")).toHaveText("I help teams improve their workflow.");
+  await expect(panel.getByRole("button", { name: "Apply Revision" })).toBeVisible();
   await expect(body).toHaveText("I help teams improve their workflow.");
-  await panel.getByRole("button", { name: "Get Feedback" }).click();
+  await panel.getByText("What was sent to", { exact: false }).click();
+  await expect(panel.locator("details pre")).toHaveText("I help teams improve their workflow.");
+  await panel.getByRole("textbox", { name: /Add a goal for this email/ }).fill("Get an introductory call");
+  await panel.getByRole("button", { name: "Review Again" }).click();
+  await expect(panel.getByText("Goal: Get an introductory call")).toBeAttached();
   await panel.getByRole("button", { name: "Apply Revision" }).click();
   await expect(body).toContainText("Would you be open to a brief conversation?");
   await expect(composer.locator(".save-status")).toHaveText("Draft saved");
@@ -86,11 +89,10 @@ test("reviews a new email in the composer, applies and undoes without sending, a
   await (await openFolders(page)).getByRole("button", { name: /Drafts/ }).click();
   await page.getByRole("option", { name: /An introduction/ }).click();
   await expect(body).toHaveText("I help teams improve their workflow.");
-  // A reopened draft starts with Draft Review closed and empty.
+  // A reopened draft starts with Draft Review closed and no goal.
   await expect(panel).toHaveCount(0);
   await composer.getByRole("button", { name: "Review", exact: true }).click();
-  await expect(panel.getByRole("textbox", { name: /Goal for This Email/ })).toHaveValue("");
-  await expect(panel.getByRole("button", { name: "Apply Revision" })).toHaveCount(0);
+  await expect(panel.getByRole("textbox", { name: /Add a goal for this email/ })).toHaveValue("");
 });
 
 test("draft review protects changes made after requesting feedback", async ({ page }) => {
@@ -102,8 +104,7 @@ test("draft review protects changes made after requesting feedback", async ({ pa
   const body = composer.getByRole("textbox", { name: "Message Body" });
   await body.fill("Let me know your thoughts.");
   await composer.getByRole("button", { name: "Review", exact: true }).click();
-  await panel.getByRole("button", { name: "Review Draft", exact: true }).click();
-  await panel.getByRole("button", { name: "Get Feedback" }).click();
+  await expect(panel.getByRole("button", { name: "Apply Revision" })).toBeVisible();
   await body.fill("Keep this newer wording.");
   await panel.getByRole("button", { name: "Apply Revision" }).click();
   await expect(panel.getByRole("alert")).toContainText("Your draft changed");

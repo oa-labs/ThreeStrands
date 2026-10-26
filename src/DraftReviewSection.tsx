@@ -18,14 +18,22 @@ export type DraftReviewAvailability = {
   onOpenSettings?(): void;
 };
 
+/** What one review sent, shown afterwards under What Was Sent. */
+type SentReview = { snapshot: DraftReviewSnapshot; profile: WritingProfile; goal: string };
+
 /**
  * Feedback on a draft from AI, opened from the composer's Review button below
  * the message body, so the draft stays in view and editable while it is
- * reviewed. Hidden unless Draft Assist is on with a provider chosen.
+ * reviewed. Opening it is the request: the review starts at once with the
+ * sending account's writing profile, and a goal can be added afterwards to
+ * review again. Hidden unless Draft Assist is on with a provider chosen.
  */
-export function DraftReviewSection({ actions, account, enabled, available, onOpenSettings, onClose }: {
+export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalChange, enabled, available, onOpenSettings, onClose }: {
   actions: DraftReviewActions;
-  /** The sending account, to say up front whether it has a writing profile. */
+  /** The goal, kept by the composer so closing the panel does not clear it. */
+  goal?: string;
+  onGoalChange?(goal: string): void;
+  /** The sending account, to say whether it has a writing profile. */
   account?: string;
   /** Draft Assist is on and an AI provider is chosen. */
   enabled: boolean;
@@ -35,17 +43,20 @@ export function DraftReviewSection({ actions, account, enabled, available, onOpe
   onOpenSettings?(): void;
   onClose?(): void;
 }) {
-  const [goal, setGoal] = useState("");
+  const [localGoal, setLocalGoal] = useState("");
+  const goal = keptGoal ?? localGoal;
+  const setGoal = onGoalChange ?? setLocalGoal;
   const profiles = useWritingProfiles();
+  const [sent, setSent] = useState<SentReview | null>(null);
+  // The draft the review applies to; Undo replaces it with the restored draft.
   const [original, setOriginal] = useState<DraftReviewSnapshot | null>(null);
-  // The profile shown in the preview, so the request sends exactly what was shown.
-  const [profile, setProfile] = useState<WritingProfile | null>(null);
   const [review, setReview] = useState<DraftReviewResult | null>(null);
   const [applied, setApplied] = useState<DraftReviewSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const inFlight = useRef(false);
   const mounted = useRef(true);
+  const started = useRef(false);
   const section = useRef<HTMLElement>(null);
   const replacesBody = Boolean(original && review && original.body !== review.revisedBody);
   const protectedBody = Boolean(original?.hasInlineImages || original?.hasInlineQuotes);
@@ -55,35 +66,31 @@ export function DraftReviewSection({ actions, account, enabled, available, onOpe
     section.current?.scrollIntoView?.({ block: "nearest" });
     return () => { mounted.current = false; };
   }, []);
-  // Focus goes to its first control, again once the API key check settles
-  // and the setup note gives way to the review controls.
+  // Opening the panel asks for the review, once the API key check confirms
+  // one can be sent.
   useEffect(() => {
-    section.current?.querySelector<HTMLElement>("input, button:not(:disabled):not([aria-label='Close Draft Review'])")?.focus({ preventScroll: true });
-  }, [available]);
+    if (!enabled || !available || started.current) return;
+    started.current = true;
+    void latestRequest.current();
+  }, [enabled, available]);
 
-  function prepare() {
-    try {
-      const snapshot = actions.readDraft();
-      if (!snapshot.body.trim()) throw new Error("Write some email text before requesting a review.");
-      setOriginal(snapshot);
-      setProfile(writingProfileFor(profiles, snapshot.account));
-      setReview(null);
-      setApplied(null);
-      setError("");
-    } catch (reason) { setError(errorMessage(reason)); }
-  }
-
-  async function getFeedback() {
-    if (!original || !profile || inFlight.current) return;
+  async function requestReview() {
+    if (inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
     setError("");
     try {
-      const current = actions.readDraft();
-      if (current.fingerprint !== original.fingerprint) throw new Error("Your draft changed. Refresh the preview before requesting feedback.");
+      const snapshot = actions.readDraft();
+      if (!snapshot.body.trim()) throw new Error("Write some email text before requesting a review.");
+      const profile = writingProfileFor(profiles, snapshot.account);
+      const request = { snapshot, profile, goal: goal.trim() };
+      setReview(null);
+      setApplied(null);
+      setSent(request);
+      setOriginal(snapshot);
       const { provider, model, endpoint } = readAiRequestConfig("reviewing a draft", "draftReview");
       const result = await mailClient.reviewDraft({
-        subject: original.subject, body: original.body, goal,
+        subject: snapshot.subject, body: snapshot.body, goal: request.goal,
         aboutYou: profile.aboutYou, reviewInstructions: profile.reviewInstructions,
       }, provider, model, endpoint);
       if (mounted.current) setReview(result);
@@ -94,6 +101,9 @@ export function DraftReviewSection({ actions, account, enabled, available, onOpe
       if (mounted.current) setBusy(false);
     }
   }
+
+  const latestRequest = useRef(requestReview);
+  latestRequest.current = requestReview;
 
   function apply() {
     if (!original || !review) return;
@@ -114,72 +124,69 @@ export function DraftReviewSection({ actions, account, enabled, available, onOpe
   }
 
   if (!enabled) return null;
-  const sendsProfile = Boolean(profile && hasWritingProfile(profile));
-  // Before the preview, the note describes the account the draft is written from.
-  const accountHasProfile = original ? sendsProfile
-    : account ? hasWritingProfile(writingProfileFor(profiles, account)) : null;
-  return <section ref={section} className="draft-review" aria-labelledby="draft-review-title">
+  const reviewedAccount = sent?.snapshot.account ?? account;
+  const accountHasProfile = reviewedAccount ? hasWritingProfile(writingProfileFor(profiles, reviewedAccount)) : true;
+  const sentProfile = sent && hasWritingProfile(sent.profile) ? sent.profile : null;
+  return <section ref={section} className="draft-review" aria-labelledby="draft-review-title" aria-busy={busy}>
     <ContextSectionHeader title="Draft Review" titleId="draft-review-title" actions={onClose ? (
       <button type="button" className="btn-icon btn-icon-sm" aria-label="Close Draft Review" onClick={onClose}><X size={ICON_SIZE.sm} /></button>
     ) : undefined} />
     {available ? <div className="draft-review-content">
-      <p className="context-section-note">Get specific suggestions while keeping your voice.</p>
-      <label className="draft-review-goal">
-        <span>Goal for This Email <small>(optional)</small></span>
-        <input value={goal} disabled={busy} placeholder="e.g. Get an introductory call" onChange={(event) => setGoal(event.target.value)} />
-      </label>
-      {accountHasProfile === false ? <p className="context-section-note">
-        No writing profile for this account. Tell Draft Review who you are and how to review once, in AI settings.
-        {onOpenSettings ? <> <button type="button" className="btn-link" onClick={onOpenSettings}>Add Writing Profile</button></> : null}
-      </p> : null}
-      <button type="button" className="btn btn-sm" disabled={busy} onClick={prepare}>
-        {review ? "Review Again" : original ? "Refresh Preview" : "Review Draft"}
-      </button>
-      {original ? <>
-        <details className="draft-review-preview" open={!review}>
-          <summary>{review ? "Original email" : `Email content sent to ${readAiProvider()}`}</summary>
-          <p><strong>Subject:</strong> {original.subject || "(no subject)"}</p>
-          <pre>{original.body}</pre>
-          {sendsProfile && profile ? <div className="draft-review-profile">
-            <h4>Your writing profile</h4>
-            {profile.aboutYou.trim() ? <p><strong>About You:</strong> {profile.aboutYou}</p> : null}
-            {profile.reviewInstructions.trim() ? <p><strong>Review Instructions:</strong> {profile.reviewInstructions}</p> : null}
-          </div> : null}
-          {!review ? <p className="context-section-note">{sendsProfile
-            ? "Only this subject, the text shown here, your writing profile, and the optional goal are sent."
-            : "Only this subject, the text shown here, and the optional goal are sent."} Recipient fields, separately stored quoted history, and attachments are excluded.</p> : null}
-        </details>
-        {!review ? <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => void getFeedback()}>
-          <Sparkles size={ICON_SIZE.sm} />{busy ? "Reviewing…" : "Get Feedback"}
-        </button> : <>
-          <p className="draft-review-assessment" role="status">{review.assessment}</p>
-          {review.suggestions.length ? <ol className="draft-review-suggestions">
-            {review.suggestions.map((suggestion, index) => <li key={index}>
-              <strong>{suggestion.title}</strong>
-              <small>{suggestion.field === "subject" ? "Subject" : "Body"}</small>
-              {suggestion.excerpt ? <blockquote>{suggestion.excerpt}</blockquote> : null}
-              <p>{suggestion.reason}</p>
-              {suggestion.replacement ? <p className="draft-review-wording">Try: {suggestion.replacement}</p> : null}
-            </li>)}
-          </ol> : <p className="context-section-note">No changes suggested.</p>}
-          {reviewHasRevision(review, original) ? <div className="draft-review-preview">
-            <h4>Revised email</h4>
-            <p><strong>Subject:</strong> {review.revisedSubject || "(no subject)"}</p>
-            <pre>{review.revisedBody}</pre>
-            {applied ? <>
-              <p role="status">Revision applied.</p>
-              <button type="button" className="btn btn-sm" onClick={undo}>Undo Revision</button>
-            </> : <>
-              <p className="context-section-note">{replacesBody && protectedBody
-                ? "Apply body suggestions manually to keep inline images and quoted text in place."
-                : replacesBody ? "Applying replaces your written text and its formatting. Undo restores the original. Quoted history and attachments stay in place."
-                  : "Only the subject changes. Your written text and formatting stay in place."}</p>
-              <button type="button" className="btn btn-sm btn-primary" disabled={replacesBody && protectedBody} onClick={apply}>Apply Revision</button>
-            </>}
-          </div> : null}
-        </>}
+      {busy ? <p className="context-section-note" role="status">Reviewing…</p> : null}
+      {review && original && !busy ? <>
+        <p className="draft-review-assessment" role="status">{review.assessment}</p>
+        {review.suggestions.length ? <ol className="draft-review-suggestions">
+          {review.suggestions.map((suggestion, index) => <li key={index}>
+            <strong>{suggestion.title}</strong>
+            <small>{suggestion.field === "subject" ? "Subject" : "Body"}</small>
+            {suggestion.excerpt ? <blockquote>{suggestion.excerpt}</blockquote> : null}
+            <p>{suggestion.reason}</p>
+            {suggestion.replacement ? <p className="draft-review-wording">Try: {suggestion.replacement}</p> : null}
+          </li>)}
+        </ol> : <p className="context-section-note">No changes suggested.</p>}
+        {reviewHasRevision(review, original) ? <div className="draft-review-preview">
+          <h4>Revised email</h4>
+          <p><strong>Subject:</strong> {review.revisedSubject || "(no subject)"}</p>
+          <pre>{review.revisedBody}</pre>
+          {applied ? <>
+            <p role="status">Revision applied.</p>
+            <button type="button" className="btn btn-sm" onClick={undo}>Undo Revision</button>
+          </> : <>
+            <p className="context-section-note">{replacesBody && protectedBody
+              ? "Apply body suggestions manually to keep inline images and quoted text in place."
+              : replacesBody ? "Applying replaces your written text and its formatting. Undo restores the original. Quoted history and attachments stay in place."
+                : "Only the subject changes. Your written text and formatting stay in place."}</p>
+            <button type="button" className="btn btn-sm btn-primary" disabled={replacesBody && protectedBody} onClick={apply}>Apply Revision</button>
+          </>}
+        </div> : null}
       </> : null}
       {error ? <p className="context-status" role="alert">{error}</p> : null}
+      {!busy && (review || error) ? <div className="draft-review-again">
+        <label className="draft-review-goal">
+          <span>{review ? "Not quite right? Add a goal for this email" : "Goal for This Email"} <small>(optional)</small></span>
+          <input value={goal} placeholder="e.g. Get an introductory call" onChange={(event) => setGoal(event.target.value)}
+            onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void requestReview(); } }} />
+        </label>
+        <button type="button" className="btn btn-sm" onClick={() => void requestReview()}>
+          <Sparkles size={ICON_SIZE.sm} />Review Again
+        </button>
+        {!accountHasProfile ? <p className="context-section-note">
+          No writing profile for this account. Tell Draft Review who you are and how to review once, in AI settings.
+          {onOpenSettings ? <> <button type="button" className="btn-link" onClick={onOpenSettings}>Add Writing Profile</button></> : null}
+        </p> : null}
+      </div> : null}
+      {sent && !busy ? <details className="draft-review-preview">
+        <summary>What was sent to {readAiProvider()}</summary>
+        <p><strong>Subject:</strong> {sent.snapshot.subject || "(no subject)"}</p>
+        <pre>{sent.snapshot.body}</pre>
+        {sentProfile ? <div className="draft-review-profile">
+          <h4>Your writing profile</h4>
+          {sentProfile.aboutYou.trim() ? <p><strong>About You:</strong> {sentProfile.aboutYou}</p> : null}
+          {sentProfile.reviewInstructions.trim() ? <p><strong>Review Instructions:</strong> {sentProfile.reviewInstructions}</p> : null}
+        </div> : null}
+        {sent.goal ? <p><strong>Goal:</strong> {sent.goal}</p> : null}
+        <p className="context-section-note">Only the subject, written text{sentProfile ? ", writing profile," : ""} and goal shown here are sent. Recipient fields, separately stored quoted history, and attachments are excluded.</p>
+      </details> : null}
     </div> : <div className="draft-review-content">
       <p className="context-section-note">Set up an AI provider and API key in AI settings to get writing feedback.</p>
       {onOpenSettings ? <button type="button" className="btn btn-sm" onClick={onOpenSettings}>AI Settings</button> : null}

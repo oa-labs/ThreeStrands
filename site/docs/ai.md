@@ -34,14 +34,14 @@ ThreeStrands keeps one API key at a time, so enter a new key when you switch pro
 ### Writing
 
 - **Draft Reply** — in the composer, press <kbd>⌘/Ctrl + j</kbd> to draft a reply from a short instruction.
-- **Draft Review** — click **Review** below your message for feedback against your goal. Suggestions are never sent automatically. To avoid explaining yourself in every goal, write a **Writing Profile** for each account under **Settings → AI Provider**: **About You** says who you are and what you do, and **Review Instructions** says how you want drafts reviewed. Draft Review shows the profile with the rest of what it sends, and suggests using a fact from it only as a suggestion you can see.
+- **Draft Review** — click **Review** below your message and feedback appears right away. Nothing changes in your draft until you click **Apply Revision**. If the feedback misses the point, add a goal for that email and click **Review Again**. **What was sent** under the feedback shows exactly what went to your provider. To avoid explaining yourself in every goal, write a **Writing Profile** for each account under **Settings → AI Provider**: **About You** says who you are and what you do, and **Review Instructions** says how you want drafts reviewed. Draft Review shows the profile with the rest of what it sends, and suggests using a fact from it only as a suggestion you can see.
 - **Find Times** — beside **Get Brief** at the top of the side panel, reads the conversation and your draft for when to meet, such as "next week" or "Thursday afternoon", and the app then finds open times on your calendar. Select times while reading and choose **Draft Reply With These Times**, or insert them into an open draft. Your calendar is never sent to the AI provider.
 
 ### Contacts
 
 - **Enhance With AI** on a contact suggests profile details from your email for you to accept.
 
-Buttons marked with the sparkle icon, such as **Get Brief** and **Get Feedback**, are the ones that send something to your AI provider. After a brief, a line under it says how many messages were shared and with which provider.
+Buttons marked with the sparkle icon, such as **Get Brief** and **Review**, are the ones that send something to your AI provider. After a brief, a line under it says how many messages were shared and with which provider.
 
 Areas you switch off disappear from the app, along with their commands. Until you choose an AI provider, the **Brief** section beside a conversation is the one place that offers **Set Up AI**.
 
