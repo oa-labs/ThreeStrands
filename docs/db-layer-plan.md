@@ -1,6 +1,6 @@
 # Keeping persistence inside `db/`
 
-Status: accepted (2026-10-26). Phase 0 in progress.
+Status: accepted (2026-10-26). Phases 0 and 1 done (0.173.1).
 
 `src-tauri/src/db.rs` says "Feature modules own their SQL and tests": `db/`
 owns persistence, and the rest of the app calls named `Database` methods.

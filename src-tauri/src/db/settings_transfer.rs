@@ -119,11 +119,11 @@ impl Database {
                 transaction.execute("DELETE FROM signature_defaults", [])?;
                 for signature in &library.signatures {
                     transaction.execute("INSERT INTO signatures(id,payload) VALUES(?1,?2)", params![signature.id, serde_json::to_string(signature).map_err(serialization_error)?])?;
-                    if sync_signatures { crate::signatures::record_signature_write(transaction, threestrands_sync_protocol::EntityType::Signature, &signature.id, &serde_json::to_value(signature).map_err(serialization_error)?)?; }
+                    if sync_signatures { super::record_signature_write(transaction, threestrands_sync_protocol::EntityType::Signature, &signature.id, &serde_json::to_value(signature).map_err(serialization_error)?)?; }
                 }
                 for defaults in &library.defaults {
                     transaction.execute("INSERT INTO signature_defaults(id,payload) VALUES(?1,?2)", params![defaults.id, serde_json::to_string(defaults).map_err(serialization_error)?])?;
-                    if sync_signatures { crate::signatures::record_signature_write(transaction, threestrands_sync_protocol::EntityType::SignatureDefaults, &defaults.id, &serde_json::to_value(defaults).map_err(serialization_error)?)?; }
+                    if sync_signatures { super::record_signature_write(transaction, threestrands_sync_protocol::EntityType::SignatureDefaults, &defaults.id, &serde_json::to_value(defaults).map_err(serialization_error)?)?; }
                 }
             }
 

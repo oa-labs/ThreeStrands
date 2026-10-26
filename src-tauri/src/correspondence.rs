@@ -1207,7 +1207,7 @@ impl Database {
         )
         .map_err(error)?;
         Self::mark_draft_push_pending(&tx, &d, unix_millis())?;
-        if let Some(schedule) = &item.schedule { crate::scheduled_send::record(&tx,id,&schedule.report.owner_installation_id,unix_millis()).map_err(error)?; }
+        if let Some(schedule) = &item.schedule { crate::db::record_schedule_report(&tx,id,&schedule.report.owner_installation_id,unix_millis()).map_err(error)?; }
         tx.commit().map_err(error)?;
         Ok(d)
     }
@@ -1501,7 +1501,7 @@ pub struct Correspondence {
 impl Correspondence {
     pub fn resume_schedules(&self) -> Result<(),String> {
         let owner=self.schedule_owner(false).unwrap_or_default();
-        self.database.overdue_schedules_owned(unix_millis(),true,&owner)
+        Ok(self.database.overdue_schedules_owned(unix_millis(),true,&owner)?)
     }
     pub fn pause_account_schedules(&self,account:&str) -> Result<(),String> {
         let owner=self.schedule_owner(false).unwrap_or_default();

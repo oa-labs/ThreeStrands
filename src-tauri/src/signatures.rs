@@ -1,7 +1,5 @@
 //! Portable signature templates and per-address defaults. Drafts carry their
 //! own snapshot; sending never consults the mutable template library.
-use crate::db::{serialization_error, Database, DatabaseError, DbResult};
-use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use threestrands_sync_protocol::EntityType;
 
@@ -91,138 +89,6 @@ impl SignatureLibrary {
             if !ids.insert(&defaults.id) {
                 return Err("Duplicate signature defaults".into());
             }
-        }
-        Ok(())
-    }
-}
-
-impl Database {
-    pub fn signature_library(&self) -> DbResult<SignatureLibrary> {
-        Ok(SignatureLibrary {
-            signatures: self.list_signature_records("signatures")?,
-            defaults: self.list_signature_records("signature_defaults")?,
-        })
-    }
-    fn list_signature_records<T: serde::de::DeserializeOwned>(
-        &self,
-        table: &str,
-    ) -> DbResult<Vec<T>> {
-        self.with_connection(|c| {
-            let mut query = c.prepare(&format!("SELECT payload FROM {table} ORDER BY id"))?;
-            let rows = query.query_map([], |row| row.get::<_, String>(0))?;
-            rows.map(|row| serde_json::from_str(&row?).map_err(serialization_error))
-                .collect()
-        })
-    }
-    pub fn store_signature(&self, item: &Signature) -> DbResult<()> {
-        let value = serde_json::to_value(item).map_err(serialization_error)?;
-        EntityType::Signature
-            .validate_payload(&value)
-            .map_err(DatabaseError::invalid)?;
-        embed_images(&item.html, &item.id).map_err(DatabaseError::invalid)?;
-        signature_sync_payload(item).map_err(DatabaseError::invalid)?;
-        self.store_signature_record("signatures", &item.id, &value)
-    }
-    pub fn store_signature_defaults(&self, item: &SignatureDefaults) -> DbResult<()> {
-        let value = serde_json::to_value(item).map_err(serialization_error)?;
-        EntityType::SignatureDefaults
-            .validate_payload(&value)
-            .map_err(DatabaseError::invalid)?;
-        if item.id != SignatureDefaults::key(&item.account, &item.address) {
-            return Err(DatabaseError::invalid(
-                "Invalid signature defaults identity",
-            ));
-        }
-        self.store_signature_record("signature_defaults", &item.id, &value)
-    }
-    fn store_signature_record(
-        &self,
-        table: &str,
-        id: &str,
-        value: &serde_json::Value,
-    ) -> DbResult<()> {
-        let enabled = self.replicated_sync_active()? && !self.is_projecting_remote_operation();
-        let entity_type = if table == "signatures" {
-            EntityType::Signature
-        } else {
-            EntityType::SignatureDefaults
-        };
-        self.with_transaction(|tx| {
-            tx.execute(&format!("INSERT INTO {table}(id,payload) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload"), params![id, value.to_string()])?;
-            if enabled { record_signature_write(tx, entity_type, id, value)?; }
-            Ok(())
-        })
-    }
-    pub fn delete_signature(&self, id: &str) -> DbResult<()> {
-        self.delete_signature_record("signatures", EntityType::Signature, id)
-    }
-    pub fn delete_signature_defaults(&self, id: &str) -> DbResult<()> {
-        self.delete_signature_record("signature_defaults", EntityType::SignatureDefaults, id)
-    }
-    fn delete_signature_record(
-        &self,
-        table: &str,
-        entity_type: EntityType,
-        id: &str,
-    ) -> DbResult<()> {
-        let enabled = self.replicated_sync_active()? && !self.is_projecting_remote_operation();
-        self.with_transaction(|tx| {
-            tx.execute(&format!("DELETE FROM {table} WHERE id=?1"), [id])?;
-            if enabled {
-                crate::sync_state::record_replicated_deletion_in_transaction(tx, entity_type, id)?;
-            }
-            Ok(())
-        })
-    }
-    pub fn default_draft_signature(
-        &self,
-        account: &str,
-        address: &str,
-        mode: &str,
-    ) -> Result<Option<DraftSignature>, String> {
-        let library = self.signature_library()?;
-        let alias = SignatureDefaults::key(account, address);
-        let base = SignatureDefaults::key(account, "");
-        let defaults = library
-            .defaults
-            .iter()
-            .find(|d| d.id == alias)
-            .or_else(|| library.defaults.iter().find(|d| d.id == base));
-        let id = defaults.and_then(|d| {
-            if mode == "new" {
-                d.new_signature_id.as_ref()
-            } else {
-                d.reply_signature_id.as_ref()
-            }
-        });
-        Ok(id
-            .and_then(|id| library.signatures.iter().find(|s| &s.id == id))
-            .map(|s| DraftSignature {
-                id: Some(s.id.clone()),
-                name: s.name.clone(),
-                html: s.html.clone(),
-                text: s.text.clone(),
-                automatic: true,
-                html_offset: 0,
-                text_offset: 0,
-            }))
-    }
-    pub fn replace_automatic_signature(
-        &self,
-        draft: &mut crate::correspondence::Draft,
-    ) -> Result<(), String> {
-        if draft.signature.as_ref().is_some_and(|s| !s.automatic) {
-            return Ok(());
-        }
-        let previous = draft
-            .signature
-            .as_ref()
-            .map(|s| (s.html_offset, s.text_offset));
-        draft.signature =
-            self.default_draft_signature(&draft.account, draft.from_address(), &draft.mode)?;
-        if let (Some(s), Some((html, text))) = (&mut draft.signature, previous) {
-            s.html_offset = html;
-            s.text_offset = text;
         }
         Ok(())
     }
@@ -362,7 +228,6 @@ fn canonical_image_sources(html: &str) -> std::collections::BTreeSet<usize> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::correspondence::Draft;
 
     pub(crate) fn template(id: &str) -> Signature {
         Signature {
@@ -448,129 +313,6 @@ pub(crate) mod tests {
             .clone();
         corrupted[&key] = serde_json::json!("Changed chunk");
         assert!(signature_from_sync(&corrupted).is_err());
-    }
-
-    #[test]
-    fn long_account_and_alias_pairs_have_bounded_stable_replica_ids() {
-        let account = format!("{}@example.com", "a".repeat(308));
-        let alias = format!("{}@example.com", "b".repeat(308));
-        let value = defaults(&account, &alias, None, None);
-        assert!(value.id.len() <= threestrands_sync_envelope::limits::MAX_ENTITY_ID_BYTES);
-        let db = Database::open_memory();
-        db.store_signature_defaults(&value).unwrap();
-        assert_eq!(
-            SignatureDefaults::key(&account.to_uppercase(), &alias.to_uppercase()),
-            value.id
-        );
-        assert_ne!(SignatureDefaults::key(&alias, &account), value.id);
-    }
-
-    #[test]
-    fn templates_defaults_and_alias_inheritance_are_independent() {
-        let db = Database::open_memory();
-        db.store_signature(&template("full")).unwrap();
-        db.store_signature(&template("short")).unwrap();
-        db.store_signature_defaults(&defaults("me@example.com", "", Some("full"), Some("short")))
-            .unwrap();
-        assert_eq!(
-            db.default_draft_signature("ME@example.com", "alias@example.com", "new")
-                .unwrap()
-                .unwrap()
-                .name,
-            "full"
-        );
-        for mode in ["reply", "replyAll", "forward"] {
-            assert_eq!(
-                db.default_draft_signature("me@example.com", "me@example.com", mode)
-                    .unwrap()
-                    .unwrap()
-                    .name,
-                "short"
-            );
-        }
-        db.store_signature_defaults(&defaults(
-            "me@example.com",
-            "alias@example.com",
-            None,
-            Some("full"),
-        ))
-        .unwrap();
-        assert!(db
-            .default_draft_signature("me@example.com", "ALIAS@example.com", "new")
-            .unwrap()
-            .is_none());
-        db.delete_signature_defaults(&SignatureDefaults::key(
-            "me@example.com",
-            "alias@example.com",
-        ))
-        .unwrap();
-        assert_eq!(
-            db.default_draft_signature("me@example.com", "alias@example.com", "new")
-                .unwrap()
-                .unwrap()
-                .name,
-            "full"
-        );
-        db.delete_signature("full").unwrap();
-        assert!(db
-            .default_draft_signature("me@example.com", "me@example.com", "new")
-            .unwrap()
-            .is_none());
-    }
-
-    #[test]
-    fn drafts_snapshot_templates_and_respect_explicit_choices_and_edits() {
-        let db = Database::open_memory();
-        db.store_signature(&template("original")).unwrap();
-        db.store_signature_defaults(&defaults("first@example.com", "", Some("original"), None))
-            .unwrap();
-        db.store_signature(&template("second")).unwrap();
-        db.store_signature_defaults(&defaults("second@example.com", "", Some("second"), None))
-            .unwrap();
-        let d = db
-            .create_draft("new", None, "first@example.com", &[])
-            .unwrap();
-        assert_eq!(d.signature.as_ref().unwrap().text, "original");
-        let mut changed = template("original");
-        changed.text = "Updated template".into();
-        db.store_signature(&changed).unwrap();
-        db.delete_signature("original").unwrap();
-        assert_eq!(db.draft(&d.id).unwrap().signature.unwrap().text, "original");
-        let moved = db.set_draft_account(&d.id, "second@example.com").unwrap();
-        assert_eq!(moved.signature.as_ref().unwrap().text, "second");
-        let mut edited = moved;
-        edited.signature.as_mut().unwrap().text = "My personal sign-off".into();
-        let saved = db.save_draft(edited).unwrap();
-        assert!(!saved.signature.as_ref().unwrap().automatic);
-        let back = db
-            .set_draft_account(&saved.id, "first@example.com")
-            .unwrap();
-        assert_eq!(back.signature.unwrap().text, "My personal sign-off");
-        let mut none = db.draft(&d.id).unwrap();
-        none.signature = Some(DraftSignature {
-            id: None,
-            name: "No Signature".into(),
-            html: String::new(),
-            text: String::new(),
-            automatic: false,
-            html_offset: 0,
-            text_offset: 0,
-        });
-        db.save_draft(none).unwrap();
-        assert!(db
-            .set_draft_account(&d.id, "second@example.com")
-            .unwrap()
-            .signature
-            .unwrap()
-            .html
-            .is_empty());
-        // Legacy draft payloads still decode without requiring a new field.
-        let mut legacy = serde_json::to_value(d).unwrap();
-        legacy.as_object_mut().unwrap().remove("signature");
-        assert!(serde_json::from_value::<Draft>(legacy)
-            .unwrap()
-            .signature
-            .is_none());
     }
 
     #[test]
@@ -691,54 +433,6 @@ pub(crate) fn signature_from_sync(value: &serde_json::Value) -> Result<Signature
         html,
         text,
     })
-}
-
-pub(crate) fn record_signature_write(
-    tx: &rusqlite::Transaction,
-    entity_type: EntityType,
-    id: &str,
-    value: &serde_json::Value,
-) -> DbResult<()> {
-    let value = if entity_type == EntityType::Signature {
-        signature_sync_payload(&serde_json::from_value(value.clone()).map_err(serialization_error)?)
-            .map_err(DatabaseError::invalid)?
-    } else {
-        value.clone()
-    };
-    let fields = value
-        .as_object()
-        .ok_or_else(|| DatabaseError::invalid("Invalid signature record"))?
-        .keys()
-        .cloned()
-        .collect();
-    crate::sync_state::record_replicated_write_in_transaction(
-        tx,
-        entity_type,
-        id,
-        &fields,
-        &value,
-    )?;
-    if entity_type == EntityType::Signature {
-        let mut query = tx.prepare(
-            "SELECT DISTINCT field FROM sync_values WHERE entity_type=?1 AND entity_id=?2",
-        )?;
-        let old = query
-            .query_map(params![entity_type.as_str(), id], |row| {
-                row.get::<_, String>(0)
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        for field in old.into_iter().filter(|field| {
-            (field.starts_with("html:") || field.starts_with("text:")) && value.get(field).is_none()
-        }) {
-            // Replica context retains the removed fields' dots, just as it
-            // does for an entity deletion. Older snapshots cannot revive them.
-            tx.execute(
-                "DELETE FROM sync_values WHERE entity_type=?1 AND entity_id=?2 AND field=?3",
-                params![entity_type.as_str(), id, field],
-            )?;
-        }
-    }
-    Ok(())
 }
 
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {

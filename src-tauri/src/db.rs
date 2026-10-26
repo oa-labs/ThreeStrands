@@ -27,11 +27,13 @@ mod maintenance;
 mod messages;
 mod mutations;
 mod recovery;
+mod scheduled_send;
 mod search;
 mod sender;
 pub(crate) mod sender_feedback;
 pub(crate) mod sender_rules;
 mod settings_transfer;
+mod signatures;
 mod snippets;
 mod split_inboxes;
 mod tasks;
@@ -43,7 +45,9 @@ pub(crate) use labels::cache_label_listing;
 pub use mail_sync::SentBackfillProgress;
 pub use mutations::PendingMutation;
 pub use recovery::{open_with_recovery, OpenError, RecoveryOutcome};
+pub(crate) use scheduled_send::record_schedule_report;
 pub(crate) use sender::MAX_SENDER_THREADS;
+pub(crate) use signatures::record_signature_write;
 pub(crate) use today::PROMISE_LOOKBACK_DAYS;
 
 #[cfg(test)]
