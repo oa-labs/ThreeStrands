@@ -23,11 +23,9 @@
 //!   a phrase-derived recovery secret is itself the trust proof — see
 //!   [`join_with_recovery_phrase`].
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use chrono::Utc;
-use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
 use serde_bytes::ByteBuf;
 use threestrands_sync_envelope::{
@@ -37,7 +35,7 @@ use threestrands_sync_envelope::{
     recovery_ed25519_signing_key, recovery_phrase_from_seed, recovery_seed_from_phrase,
     recovery_x25519_secret, seal_to_x25519, sign_enrollment_grant, sign_enrollment_rejection, sign_enrollment_request,
     sign_key_rotation, try_open_sealed_box, verify_enrollment_grant, verify_enrollment_rejection, verify_enrollment_request,
-    verify_key_rotation, DeviceId as EnvelopeDeviceId, EnrollmentGrant, EnrollmentRequest,
+    verify_key_rotation, EnrollmentGrant, EnrollmentRequest,
     EnrollmentRejection, KeyRotation, RequestId, RosterEntry, SealedEpochKey, SignedEnrollmentGrant, SignedEnrollmentRequest,
     SignedKeyRotation, VerifyingKey, X25519PublicKey,
 };
@@ -46,6 +44,14 @@ use threestrands_sync_envelope::{protocol_marker_cid, PROTOCOL_MARKER};
 use threestrands_sync_transport::{Cid as TransportCid, SyncTransport, TransportError};
 
 use crate::db::{Database, DatabaseError, DbResult};
+#[cfg(test)]
+use crate::replicated_sync::SPACE_ID;
+#[cfg(test)]
+use rusqlite::{params, OptionalExtension};
+#[cfg(test)]
+use std::collections::BTreeSet;
+#[cfg(test)]
+use threestrands_sync_envelope::DeviceId as EnvelopeDeviceId;
 
 mod error;
 mod join_codes;
@@ -58,7 +64,7 @@ pub(crate) use join_codes::{
 use join_codes::{
     find_invitation, verify_fetched_invitation, MAX_JOIN_CODE_HOURS, MIN_JOIN_CODE_HOURS,
 };
-use crate::replicated_sync::{decode_id, encode_id, random_id, x25519_public_bytes, DeviceIdentity, LocalKeys, SPACE_ID};
+use crate::replicated_sync::{decode_id, encode_id, random_id, x25519_public_bytes, DeviceIdentity, LocalKeys};
 
 fn now_ms() -> i64 {
     Utc::now().timestamp_millis()
@@ -105,15 +111,13 @@ fn adopt_epoch_key(epoch_keys: &dyn EpochKeyStore, key_epoch: u32, key: &[u8; 32
     }
 }
 
-type RecoveryPublicKeys = ([u8; 32], [u8; 32]);
-type RawRecoveryPublicKeyRow = (Option<Vec<u8>>, Option<Vec<u8>>);
 
 fn roster_entry_verifying_key(entry: &RosterEntry) -> EnrollmentResult<VerifyingKey> {
     let bytes: [u8; 32] = entry.ed25519_public.as_slice().try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid roster public key"))?;
     VerifyingKey::from_bytes(&bytes).map_err(|_| EnrollmentError::MalformedKey("Invalid roster public key"))
 }
 
-fn roster_entry_x25519(entry: &RosterEntry) -> EnrollmentResult<[u8; 32]> {
+pub(crate) fn roster_entry_x25519(entry: &RosterEntry) -> EnrollmentResult<[u8; 32]> {
     entry.x25519_public.as_slice().try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid roster X25519 key"))
 }
 
@@ -217,354 +221,7 @@ pub(crate) fn store_earlier_epoch_keys(
     Ok(())
 }
 
-fn default_device_name() -> String {
-    let hostname = gethostname::gethostname().to_string_lossy().trim().to_string();
-    let hostname = hostname.chars().take(MAX_DEVICE_LABEL_CHARS).collect::<String>();
-    if hostname.is_empty() { "This device".to_string() } else { hostname }
-}
-
 impl Database {
-    /// A pure-SQL status read (no keychain I/O) for the Settings panel:
-    /// whether this device has never started, is waiting on a grant, has a
-    /// grant staged for human fingerprint confirmation, or is fully
-    /// enrolled. "Enrolled" is defined as: this device has adopted key
-    /// material for the sync space's current `active_epoch`.
-    pub fn enrollment_status(&self) -> DbResult<EnrollmentStatus> {
-        let connection = self.connection()?;
-        let active_epoch: Option<i64> = connection
-            .query_row("SELECT active_epoch FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
-            .optional()
-            ?;
-        let Some(active_epoch) = active_epoch else {
-            return Ok(EnrollmentStatus::NotStarted);
-        };
-        let adopted: bool = connection
-            .query_row("SELECT 1 FROM sync_epoch_history WHERE key_epoch=?1", params![active_epoch], |_| Ok(true))
-            .optional()
-            ?
-            .unwrap_or(false);
-        if adopted {
-            let device_count: i64 = connection
-                .query_row("SELECT COUNT(*) FROM sync_devices WHERE status='active'", [], |row| row.get(0))
-                ?;
-            let history_handoff_keys_used: i64 = connection
-                .query_row(
-                    "SELECT COUNT(*) FROM sync_epoch_history WHERE key_epoch < ?1",
-                    [active_epoch],
-                    |row| row.get(0),
-                )
-                ?;
-            let history_handoff_keys_used = history_handoff_keys_used as usize;
-            let history_handoff_warning = (history_handoff_keys_used >= MAX_EARLIER_EPOCH_KEYS - MAX_EARLIER_EPOCH_KEYS / 5)
-                .then_some(HistoryHandoffWarning {
-                    used: history_handoff_keys_used,
-                    limit: MAX_EARLIER_EPOCH_KEYS,
-                });
-            drop(connection);
-            return Ok(EnrollmentStatus::Enrolled {
-                device_count: device_count as usize,
-                awaiting_admission_from: self.awaiting_admission_from()?,
-                history_handoff_warning,
-            });
-        }
-
-        let staged: Option<(String, String, Vec<u8>)> = connection
-            .query_row(
-                "SELECT request_id, fingerprint, pending_grant_cbor FROM replicated_sync_enrollment_requests
-                 WHERE direction='outgoing' AND status='staged' ORDER BY created_at DESC LIMIT 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .optional()
-            ?;
-        if let Some((request_id, fingerprint, grant_cbor)) = staged {
-            let approver_fingerprint = decode_signed_enrollment_grant(&grant_cbor)
-                .ok()
-                .and_then(|signed| signed.grant.roster.iter().find(|entry| entry.device_id == signed.grant.approver_device_id).cloned())
-                .and_then(|entry| Some(enrollment_fingerprint(&entry.ed25519_public, roster_entry_x25519(&entry).ok()?.as_slice())))
-                .unwrap_or_else(|| "(unavailable)".to_string());
-            return Ok(EnrollmentStatus::AwaitingConfirmation { request_id, fingerprint, approver_fingerprint });
-        }
-
-        let pending: Option<(String, String, String)> = connection
-            .query_row(
-                "SELECT request_id, fingerprint, created_at FROM replicated_sync_enrollment_requests
-                 WHERE direction='outgoing' AND status='pending' ORDER BY created_at DESC LIMIT 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .optional()
-            ?;
-        let rejected: Option<(String, String)> = connection
-            .query_row(
-                "SELECT request_id, fingerprint FROM replicated_sync_enrollment_requests
-                 WHERE direction='outgoing' AND status='rejected' ORDER BY created_at DESC LIMIT 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()
-            ?;
-        match pending {
-            Some((request_id, fingerprint, created_at)) => Ok(EnrollmentStatus::AwaitingGrant { request_id, fingerprint, created_at }),
-            None => match rejected {
-                Some((request_id, fingerprint)) => Ok(EnrollmentStatus::Rejected { request_id, fingerprint }),
-                None => Ok(EnrollmentStatus::NotStarted),
-            },
-        }
-    }
-
-    pub fn pending_incoming_enrollment_requests(&self) -> DbResult<Vec<IncomingEnrollmentRequest>> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT request_id, device_id, fingerprint, created_at FROM replicated_sync_enrollment_requests
-                 WHERE direction='incoming' AND status='pending' ORDER BY created_at ASC",
-            )
-            ?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok(IncomingEnrollmentRequest {
-                    request_id: row.get(0)?,
-                    device_id: row.get(1)?,
-                    fingerprint: row.get(2)?,
-                    created_at: row.get(3)?,
-                })
-            })
-            ?
-            .collect::<Result<Vec<_>, _>>()
-            ?;
-        Ok(rows)
-    }
-
-    /// This device first, then active peers, then revoked ones.
-    pub fn device_roster(&self) -> DbResult<Vec<DeviceRosterEntry>> {
-        let self_device_id: Option<String> = self.connection()?.query_row(
-            "SELECT device_id FROM sync_devices WHERE is_self=1 LIMIT 1",
-            [],
-            |row| row.get(0),
-        ).optional()?;
-        if let Some(device_id) = self_device_id {
-            self.ensure_self_device_name(&device_id)?;
-        }
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT d.device_id, d.status, d.is_self, l.label,
-                        CASE WHEN d.is_self = 1 THEN (SELECT last_change_at FROM sync_local_state WHERE id = 1)
-                             ELSE (SELECT r.merged_at FROM sync_remote_states r WHERE r.device_id = d.device_id) END,
-                        EXISTS(SELECT 1 FROM replicated_sync_invitation_redemptions r
-                               WHERE r.device_id = d.device_id AND r.state IN ('admitted','observed'))
-                        OR (d.is_self = 1 AND EXISTS(SELECT 1 FROM replicated_sync_invitations i WHERE i.direction='incoming'))
-                 FROM sync_devices d LEFT JOIN sync_device_labels l ON l.device_id = d.device_id
-                 ORDER BY d.is_self DESC, d.status = 'revoked', d.device_id",
-            )
-            ?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok(DeviceRosterEntry {
-                    device_id: row.get(0)?,
-                    status: row.get(1)?,
-                    is_self: row.get(2)?,
-                    label: row.get(3)?,
-                    last_change_at: row.get(4)?,
-                    joined_with_join_code: row.get(5)?,
-                })
-            })
-            ?
-            .collect::<Result<Vec<_>, _>>()
-            ?;
-        Ok(rows)
-    }
-
-    /// Gives this device its hostname the first time it appears in the roster.
-    /// The sync loop records it once the portable preference entity exists.
-    pub(crate) fn ensure_self_device_name(&self, device_id_hex: &str) -> DbResult<()> {
-        self.connection()?
-            .execute(
-                "INSERT OR IGNORE INTO sync_device_labels(device_id,label) SELECT ?1,?2
-                 WHERE EXISTS (SELECT 1 FROM sync_devices WHERE device_id=?1 AND is_self=1)",
-                params![device_id_hex, default_device_name()],
-            )
-            ?;
-        Ok(())
-    }
-
-    pub(crate) fn record_self_device_name_if_missing(&self, device_id_hex: &str) -> DbResult<()> {
-        let field = format!("deviceName:{device_id_hex}");
-        let (label, preferences_exist, already_recorded): (Option<String>, bool, bool) = self.connection()?.query_row(
-            "SELECT l.label,
-                    EXISTS(SELECT 1 FROM sync_values WHERE entity_type='preferences' AND entity_id='portable'),
-                    EXISTS(SELECT 1 FROM sync_values WHERE entity_type='preferences' AND entity_id='portable' AND field=?1)
-             FROM sync_device_labels l WHERE l.device_id=?2",
-            params![field, device_id_hex],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        ).optional()?.unwrap_or((None, false, false));
-        if preferences_exist && !already_recorded {
-            if let Some(label) = label {
-                let fields = BTreeSet::from([field.clone()]);
-                let payload = serde_json::json!({ (field): label });
-                self.record_local_entity_write(threestrands_sync_protocol::EntityType::Preferences, "portable", payload, Some(fields))?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Applies a resolved shared device-name field to this device's roster cache.
-    pub(crate) fn materialize_device_name(&self, device_id_hex: &str, name: Option<&str>) -> DbResult<()> {
-        let connection = self.connection()?;
-        match name {
-            Some(name) => {
-                connection.execute(
-                    "INSERT INTO sync_device_labels(device_id,label) VALUES (?1,?2)
-                     ON CONFLICT(device_id) DO UPDATE SET label=excluded.label",
-                    params![device_id_hex, name],
-                )?;
-            }
-            None => {
-                connection.execute("DELETE FROM sync_device_labels WHERE device_id=?1", params![device_id_hex])?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Sets a shared roster name. A blank self-name restores this machine's
-    /// hostname; a blank peer name removes its name from the shared roster.
-    pub fn set_device_label(&self, device_id_hex: &str, label: &str) -> DbResult<()> {
-        let label = if label.trim().is_empty() {
-            let is_self: bool = self.connection()?.query_row(
-                "SELECT EXISTS(SELECT 1 FROM sync_devices WHERE device_id=?1 AND is_self=1)",
-                params![device_id_hex],
-                |row| row.get(0),
-            )?;
-            if is_self { default_device_name() } else { String::new() }
-        } else {
-            label.trim().to_string()
-        };
-        if label.chars().count() > MAX_DEVICE_LABEL_CHARS {
-            return Err(DatabaseError::invalid(format!("Device names can be at most {MAX_DEVICE_LABEL_CHARS} characters.")));
-        }
-        let connection = self.connection()?;
-        if label.is_empty() {
-            connection.execute("DELETE FROM sync_device_labels WHERE device_id=?1", params![device_id_hex])?;
-        } else {
-            connection
-                .execute(
-                    "INSERT INTO sync_device_labels(device_id,label) VALUES (?1,?2)
-                     ON CONFLICT(device_id) DO UPDATE SET label=excluded.label",
-                    params![device_id_hex, label],
-                )
-                ?;
-        }
-        drop(connection);
-
-        let field = format!("deviceName:{device_id_hex}");
-        let fields = BTreeSet::from([field.clone()]);
-        let payload = serde_json::json!({ (field): if label.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(label) } });
-        let preferences_exist: bool = self.connection()?.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sync_values WHERE entity_type='preferences' AND entity_id='portable')",
-            [],
-            |row| row.get(0),
-        )?;
-        if preferences_exist {
-            self.record_local_entity_write(threestrands_sync_protocol::EntityType::Preferences, "portable", payload, Some(fields))?;
-        }
-        Ok(())
-    }
-
-    /// Forgets this device's membership in the sync space, locally only:
-    /// the replication log, roster, enrollment state, and labels go, while
-    /// materialized data (tasks, snippets, accounts, preferences), the
-    /// configured transports, and the beta toggle stay. The self row goes
-    /// too, so the next identity load provisions a fresh device id.
-    ///
-    /// Returns the highest epoch this device may hold a key for, so the
-    /// caller can remove `0..=` that range from the keychain afterwards —
-    /// after, so a keychain failure never leaves the database claiming an
-    /// enrollment whose keys are already gone.
-    pub fn leave_sync_space(&self) -> DbResult<u32> {
-        let mut connection = self.connection()?;
-        let tx = connection.transaction()?;
-        let highest_epoch: u32 = tx
-            .query_row(
-                "SELECT MAX(COALESCE((SELECT MAX(key_epoch) FROM sync_epoch_history), 0),
-                            COALESCE((SELECT active_epoch FROM sync_spaces WHERE id=?1), 0))",
-                params![SPACE_ID],
-                |row| row.get(0),
-            )
-            ?;
-        tx.execute_batch(
-            "DELETE FROM scheduled_send_summaries;
-             DELETE FROM sync_deliveries;
-             DELETE FROM sync_values;
-             DELETE FROM sync_context;
-             DELETE FROM sync_objects;
-             DELETE FROM sync_epoch_history;
-             DELETE FROM replicated_sync_enrollment_requests;
-             DELETE FROM replicated_sync_invitation_redemptions;
-             DELETE FROM replicated_sync_invitations;
-             DELETE FROM sync_control_objects_seen;
-             DELETE FROM sync_device_labels;
-             DELETE FROM sync_devices;
-             DELETE FROM sync_remote_states;
-             DELETE FROM sync_local_state;
-             DELETE FROM sync_retired_objects;
-             DELETE FROM sync_head_publications;",
-        )
-        ?;
-        tx.execute(
-            "UPDATE sync_spaces SET active_epoch=0, lamport=0, recovery_public_key=NULL, recovery_x25519_public=NULL, last_error=NULL WHERE id=?1",
-            params![SPACE_ID],
-        )
-        ?;
-        tx.commit()?;
-        Ok(highest_epoch)
-    }
-
-    fn seen_control_object(&self, cid: &str) -> DbResult<bool> {
-        self.connection()?
-            .query_row("SELECT 1 FROM sync_control_objects_seen WHERE cid=?1", params![cid], |_| Ok(true))
-            .optional()
-            .map(|found| found.unwrap_or(false))
-            .map_err(DatabaseError::from)
-    }
-
-    fn mark_control_object_seen(&self, cid: &str, kind: &str) -> DbResult<()> {
-        self.connection()?
-            .execute(
-                "INSERT OR IGNORE INTO sync_control_objects_seen(cid, object_kind) VALUES (?1,?2)",
-                params![cid, kind],
-            )
-            ?;
-        Ok(())
-    }
-
-    fn record_epoch_activation(&self, key_epoch: u32, source_cid: &str) -> DbResult<()> {
-        self.connection()?
-            .execute(
-                "INSERT OR IGNORE INTO sync_epoch_history(key_epoch, activated_at, source_cid) VALUES (?1,?2,?3)",
-                params![key_epoch, Utc::now().to_rfc3339(), source_cid],
-            )
-            ?;
-        Ok(())
-    }
-
-    fn set_active_epoch(&self, key_epoch: u32) -> DbResult<()> {
-        self.connection()?
-            .execute("UPDATE sync_spaces SET active_epoch=?2 WHERE id=?1", params![SPACE_ID, key_epoch])
-            ?;
-        Ok(())
-    }
-
-    fn advance_active_epoch(&self, key_epoch: u32) -> DbResult<()> {
-        self.connection()?
-            .execute(
-                "UPDATE sync_spaces SET active_epoch=?2 WHERE id=?1 AND active_epoch < ?2",
-                params![SPACE_ID, key_epoch],
-            )
-            ?;
-        Ok(())
-    }
-
     /// Whether this device should rotate to resolve a collision at
     /// `key_epoch` with the rotation `incoming_cid`: it initiated the
     /// rotation it holds for that epoch, that rotation's content address is
@@ -573,46 +230,11 @@ impl Database {
         if self.active_epoch()? != key_epoch {
             return Ok(false);
         }
-        let own_rotation: Option<(String, Vec<u8>)> = self
-            .connection()?
-            .query_row(
-                "SELECT h.source_cid, o.bytes FROM sync_epoch_history h
-                 JOIN sync_objects o ON o.cid=h.source_cid AND o.object_kind='control'
-                 WHERE h.key_epoch=?1",
-                params![key_epoch],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()
-            ?;
+        let own_rotation = self.epoch_source_control_object(key_epoch)?;
         let Some((own_cid, bytes)) = own_rotation else { return Ok(false) };
         let initiated_here = decode_signed_key_rotation(&bytes)
             .is_ok_and(|signed| signed.rotation.initiator_device_id == identity.device_id && signed.rotation.key_epoch == key_epoch);
         Ok(initiated_here && own_cid.as_str() > incoming_cid)
-    }
-
-    fn set_recovery_public_keys(&self, ed25519_public: &[u8; 32], x25519_public: &[u8; 32]) -> DbResult<()> {
-        self.connection()?
-            .execute(
-                "UPDATE sync_spaces SET recovery_public_key=?2, recovery_x25519_public=?3 WHERE id=?1",
-                params![SPACE_ID, ed25519_public.to_vec(), x25519_public.to_vec()],
-            )
-            ?;
-        Ok(())
-    }
-
-    fn recovery_public_keys(&self) -> DbResult<Option<RecoveryPublicKeys>> {
-        let row: Option<RawRecoveryPublicKeyRow> = self
-            .connection()?
-            .query_row("SELECT recovery_public_key, recovery_x25519_public FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| {
-                Ok((row.get(0)?, row.get(1)?))
-            })
-            .optional()
-            ?;
-        let Some((ed25519, x25519)) = row else { return Ok(None) };
-        let (Some(ed25519), Some(x25519)) = (ed25519, x25519) else { return Ok(None) };
-        let ed25519: [u8; 32] = ed25519.try_into().map_err(|_| DatabaseError::corrupt("Invalid stored recovery Ed25519 key"))?;
-        let x25519: [u8; 32] = x25519.try_into().map_err(|_| DatabaseError::corrupt("Invalid stored recovery X25519 key"))?;
-        Ok(Some((ed25519, x25519)))
     }
 
     fn adopt_roster(&self, roster: &[RosterEntry]) -> EnrollmentResult<()> {
@@ -639,13 +261,7 @@ impl Database {
 /// way leaves every other device without the new epoch's key.
 async fn publish_control_object(database: &Database, transports: &[Arc<dyn SyncTransport>], bytes: &[u8]) -> EnrollmentResult<String> {
     let cid = compute_cid(bytes);
-    database
-        .connection()?
-        .execute(
-            "INSERT OR IGNORE INTO sync_objects(cid,object_kind,chunk_index,chunk_count,bytes) VALUES (?1,'control',0,1,?2)",
-            params![cid, bytes],
-        )
-        ?;
+    database.store_control_object(&cid, bytes)?;
     publish_to_all(transports, bytes).await;
     Ok(cid)
 }
@@ -661,34 +277,6 @@ async fn publish_to_all(transports: &[Arc<dyn SyncTransport>], bytes: &[u8]) -> 
     cid
 }
 
-impl Database {
-    /// Every device this local database knows about, active *or* revoked —
-    /// the full snapshot published inside a grant or rotation object, so a
-    /// recipient learns a revocation explicitly (a `RosterEntry` with
-    /// `status: "revoked"`) rather than merely inferring it from an
-    /// omission, which a device that missed the rotation could not do.
-    fn full_roster_snapshot(&self) -> DbResult<Vec<RosterEntry>> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare("SELECT device_id, public_key, x25519_public, status FROM sync_devices WHERE public_key IS NOT NULL AND x25519_public IS NOT NULL")
-            ?;
-        let rows: Vec<(String, Vec<u8>, Vec<u8>, String)> = statement
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
-            ?
-            .collect::<Result<Vec<_>, _>>()
-            ?;
-        rows.into_iter()
-            .map(|(device_id_hex, ed25519, x25519, status)| {
-                Ok(RosterEntry {
-                    device_id: EnvelopeDeviceId::from_bytes(decode_id(&device_id_hex).map_err(DatabaseError::Corrupt)?),
-                    ed25519_public: ByteBuf::from(ed25519),
-                    x25519_public: ByteBuf::from(x25519),
-                    status,
-                })
-            })
-            .collect()
-    }
-}
 
 // ============================ Genesis and joining ============================
 
@@ -952,22 +540,14 @@ pub async fn publish_enrollment_request(database: &Database, identity: &DeviceId
     let cid = publish_control_object(database, transports, &bytes).await?;
     database.mark_control_object_seen(&cid, "enrollment_request")?;
 
-    database
-        .connection()?
-        .execute(
-            "INSERT INTO replicated_sync_enrollment_requests(request_id, direction, device_id, ed25519_public, x25519_public, fingerprint, status, created_at)
-             VALUES (?1,'outgoing',?2,?3,?4,?5,'pending',?6)
-             ON CONFLICT(request_id) DO NOTHING",
-            params![
-                encode_id(request_id.as_bytes()),
-                encode_id(identity.device_id.as_bytes()),
-                identity.verifying_key.to_bytes().to_vec(),
-                x25519_public.to_vec(),
-                fingerprint,
-                Utc::now().to_rfc3339(),
-            ],
-        )
-        ?;
+    database.record_enrollment_request(
+        "outgoing",
+        &encode_id(request_id.as_bytes()),
+        &encode_id(identity.device_id.as_bytes()),
+        &identity.verifying_key.to_bytes(),
+        &x25519_public,
+        &fingerprint,
+    )?;
     Ok(fingerprint)
 }
 
@@ -1090,22 +670,14 @@ fn apply_incoming_request(database: &Database, identity: &DeviceIdentity, signed
         return Ok(());
     }
     let fingerprint = enrollment_fingerprint(&signed.request.ed25519_public, &signed.request.x25519_public);
-    database
-        .connection()?
-        .execute(
-            "INSERT INTO replicated_sync_enrollment_requests(request_id, direction, device_id, ed25519_public, x25519_public, fingerprint, status, created_at)
-             VALUES (?1,'incoming',?2,?3,?4,?5,'pending',?6)
-             ON CONFLICT(request_id) DO NOTHING",
-            params![
-                encode_id(signed.request.request_id.as_bytes()),
-                encode_id(signed.request.device_id.as_bytes()),
-                signed.request.ed25519_public.to_vec(),
-                signed.request.x25519_public.to_vec(),
-                fingerprint,
-                Utc::now().to_rfc3339(),
-            ],
-        )
-        ?;
+    database.record_enrollment_request(
+        "incoming",
+        &encode_id(signed.request.request_id.as_bytes()),
+        &encode_id(signed.request.device_id.as_bytes()),
+        &signed.request.ed25519_public,
+        &signed.request.x25519_public,
+        &fingerprint,
+    )?;
     Ok(())
 }
 
@@ -1115,26 +687,9 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
     // This grant may be addressed to another device that received the same
     // request. Clear our copy only when an already trusted active peer signed
     // it and the roster names the exact requester keys we recorded.
-    let unresolved_incoming: Option<(String, Vec<u8>, Vec<u8>)> = database
-        .connection()?
-        .query_row(
-            "SELECT device_id, ed25519_public, x25519_public FROM replicated_sync_enrollment_requests
-             WHERE request_id=?1 AND direction='incoming' AND status IN ('pending','rejected')",
-            params![request_id_hex],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .optional()
-        ?;
+    let unresolved_incoming = database.unresolved_incoming_request(&request_id_hex)?;
     if !signed.grant.signed_by_recovery {
-        let trusted_approver: Option<Vec<u8>> = database
-            .connection()?
-            .query_row(
-                "SELECT public_key FROM sync_devices WHERE device_id=?1 AND status='active' AND public_key IS NOT NULL",
-                params![encode_id(signed.grant.approver_device_id.as_bytes())],
-                |row| row.get(0),
-            )
-            .optional()
-            ?;
+        let trusted_approver = database.active_device_public_key(&encode_id(signed.grant.approver_device_id.as_bytes()))?;
         let approver_verifies = trusted_approver
             .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
             .and_then(|bytes| VerifyingKey::from_bytes(&bytes).ok())
@@ -1152,13 +707,7 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
             if let Some(entry) = approved_requester {
                 if let Some((requester_id, _, _)) = unresolved_incoming {
                     if encode_id(entry.device_id.as_bytes()) == requester_id {
-                        database
-                            .connection()?
-                            .execute(
-                                "UPDATE replicated_sync_enrollment_requests SET status='approved' WHERE request_id=?1 AND direction='incoming' AND status IN ('pending','rejected')",
-                                params![request_id_hex],
-                            )
-                            ?;
+                        database.approve_unresolved_incoming_request(&request_id_hex)?;
                     }
                 } else {
                     // A peer may have been offline until after both objects
@@ -1169,36 +718,20 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
                     let requester_ed25519 = entry.ed25519_public.as_slice();
                     if let Ok(requester_x25519) = roster_entry_x25519(entry) {
                         let fingerprint = enrollment_fingerprint(requester_ed25519, &requester_x25519);
-                        database
-                            .connection()?
-                            .execute(
-                                "INSERT OR IGNORE INTO replicated_sync_enrollment_requests(request_id, direction, device_id, ed25519_public, x25519_public, fingerprint, status, created_at)
-                                 VALUES (?1,'incoming',?2,?3,?4,?5,'approved',?6)",
-                                params![
-                                    request_id_hex,
-                                    requester_id,
-                                    requester_ed25519,
-                                    requester_x25519.to_vec(),
-                                    fingerprint,
-                                    Utc::now().to_rfc3339(),
-                                ],
-                            )
-                            ?;
+                        database.record_approved_incoming_request(
+                            &request_id_hex,
+                            &requester_id,
+                            &requester_ed25519,
+                            &requester_x25519,
+                            &fingerprint,
+                        )?;
                     }
                 }
             }
         }
     }
 
-    let matches_our_request: Option<String> = database
-        .connection()?
-        .query_row(
-            "SELECT request_id FROM replicated_sync_enrollment_requests WHERE request_id=?1 AND direction='outgoing' AND status IN ('pending','rejected')",
-            params![request_id_hex],
-            |row| row.get(0),
-        )
-        .optional()
-        ?;
+    let matches_our_request = database.unresolved_outgoing_request(&request_id_hex)?;
     if matches_our_request.is_none() {
         // Not addressed to any request of ours. The only other reason to
         // apply a grant is a recovery-signed roster announcement — a
@@ -1255,13 +788,7 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
     // `enrollment_status` re-derives the approver's fingerprint from the
     // staged CBOR for display, so nothing further to compute here.
     let grant_cbor = encode_signed_enrollment_grant(&signed)?;
-    database
-        .connection()?
-        .execute(
-            "UPDATE replicated_sync_enrollment_requests SET status='staged', pending_grant_cbor=?2 WHERE request_id=?1 AND direction='outgoing' AND status IN ('pending','rejected')",
-            params![request_id_hex, grant_cbor],
-        )
-        ?;
+    database.stage_enrollment_grant(&request_id_hex, &grant_cbor)?;
     Ok(())
 }
 
@@ -1299,33 +826,15 @@ fn apply_key_share(
     if grant.signed_by_recovery {
         return Ok(KeyShare::Other);
     }
-    let enrolled: bool = database
-        .connection()?
-        .query_row("SELECT EXISTS(SELECT 1 FROM sync_epoch_history)", [], |row| row.get(0))
-        ?;
-    let answers_our_request: bool = database
-        .connection()?
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM replicated_sync_enrollment_requests WHERE request_id=?1 AND direction='outgoing' AND status IN ('pending','rejected','staged'))",
-            params![encode_id(grant.request_id.as_bytes())],
-            |row| row.get(0),
-        )
-        ?;
+    let enrolled = database.has_epoch_history()?;
+    let answers_our_request = database.outgoing_request_open(&encode_id(grant.request_id.as_bytes()))?;
     if !enrolled || answers_our_request {
         return Ok(KeyShare::Other);
     }
     let Some(current) = try_open_sealed_box(&identity.x25519_secret, &grant.sealed_epoch_key) else {
         return Ok(KeyShare::Other);
     };
-    let sender: Option<(String, Option<Vec<u8>>)> = database
-        .connection()?
-        .query_row(
-            "SELECT status, public_key FROM sync_devices WHERE device_id=?1",
-            params![encode_id(grant.approver_device_id.as_bytes())],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()
-        ?;
+    let sender = database.device_status_and_key(&encode_id(grant.approver_device_id.as_bytes()))?;
     let Some((status, public_key)) = sender else {
         return Ok(KeyShare::UnknownSender);
     };
@@ -1362,23 +871,7 @@ pub(crate) async fn share_keys_with_lagging_peers(
     keys: &LocalKeys,
     transports: &[Arc<dyn SyncTransport>],
 ) -> EnrollmentResult<usize> {
-    let lagging: Vec<(String, Vec<u8>)> = {
-        let connection = database.connection()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT d.device_id, d.x25519_public FROM sync_remote_states r
-                 JOIN sync_devices d ON d.device_id = r.device_id
-                 WHERE d.status = 'active' AND d.is_self = 0 AND d.x25519_public IS NOT NULL
-                   AND r.last_head_epoch < ?1 AND (r.keys_shared_epoch IS NULL OR r.keys_shared_epoch < ?1)",
-            )
-            ?;
-        let rows = statement
-            .query_map(params![keys.key_epoch], |row| Ok((row.get(0)?, row.get(1)?)))
-            ?
-            .collect::<Result<Vec<_>, _>>()
-            ?;
-        rows
-    };
+    let lagging = database.peers_behind_epoch(keys.key_epoch)?;
     if lagging.is_empty() {
         return Ok(0);
     }
@@ -1404,10 +897,7 @@ pub(crate) async fn share_keys_with_lagging_peers(
         let bytes = encode_signed_enrollment_grant(&signed)?;
         let cid = publish_control_object(database, transports, &bytes).await?;
         database.mark_control_object_seen(&cid, "key_share")?;
-        database
-            .connection()?
-            .execute("UPDATE sync_remote_states SET keys_shared_epoch=?2 WHERE device_id=?1", params![device_id, keys.key_epoch])
-            ?;
+        database.record_keys_shared(device_id, keys.key_epoch)?;
     }
     Ok(lagging.len())
 }
@@ -1419,15 +909,7 @@ pub(crate) async fn share_keys_with_lagging_peers(
 fn apply_incoming_rejection(database: &Database, signed: threestrands_sync_envelope::SignedEnrollmentRejection) -> EnrollmentResult<bool> {
     let request_id = encode_id(signed.rejection.request_id.as_bytes());
     let rejector_id = encode_id(signed.rejection.rejector_device_id.as_bytes());
-    let trusted_key: Option<Vec<u8>> = database
-        .connection()?
-        .query_row(
-            "SELECT public_key FROM sync_devices WHERE device_id=?1 AND status='active' AND public_key IS NOT NULL",
-            params![rejector_id],
-            |row| row.get(0),
-        )
-        .optional()
-        ?;
+    let trusted_key = database.active_device_public_key(&rejector_id)?;
     let embedded_key = <[u8; 32]>::try_from(signed.rejection.rejector_ed25519_public.as_slice())
         .ok()
         .and_then(|bytes| VerifyingKey::from_bytes(&bytes).ok());
@@ -1436,15 +918,7 @@ fn apply_incoming_rejection(database: &Database, signed: threestrands_sync_envel
         .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
         .is_some_and(|bytes| bytes == embedded_key.to_bytes());
 
-    let request_direction: Option<String> = database
-        .connection()?
-        .query_row(
-            "SELECT direction FROM replicated_sync_enrollment_requests WHERE request_id=?1",
-            params![request_id],
-            |row| row.get(0),
-        )
-        .optional()
-        ?;
+    let request_direction = database.enrollment_request_direction(&request_id)?;
     let Some(direction) = request_direction else { return Ok(false) };
     // Existing devices only honor decisions from a peer already in their
     // trusted roster. A joining device has no roster yet, so it can verify
@@ -1457,14 +931,7 @@ fn apply_incoming_rejection(database: &Database, signed: threestrands_sync_envel
     // A published grant is the approval decision and cannot be undone by a
     // later rejection. Until a grant arrives, rejection resolves both the
     // joiner's outgoing request and every peer's incoming copy.
-    database
-        .connection()?
-        .execute(
-            "UPDATE replicated_sync_enrollment_requests SET status='rejected'
-             WHERE request_id=?1 AND status='pending'",
-            params![request_id],
-        )
-        ?;
+    database.mark_pending_request_rejected(&request_id)?;
     Ok(true)
 }
 
@@ -1474,14 +941,7 @@ pub async fn reject_enrollment_request(
     request_id_hex: &str,
     transports: &[Arc<dyn SyncTransport>],
 ) -> EnrollmentResult<()> {
-    let exists: bool = database
-        .connection()?
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM replicated_sync_enrollment_requests WHERE request_id=?1 AND direction='incoming' AND status='pending')",
-            params![request_id_hex],
-            |row| row.get(0),
-        )
-        ?;
+    let exists = database.incoming_request_pending(&request_id_hex)?;
     if !exists {
         return Err(EnrollmentError::RequestNotPending);
     }
@@ -1495,13 +955,7 @@ pub async fn reject_enrollment_request(
     let bytes = encode_signed_enrollment_rejection(&signed)?;
     let cid = publish_control_object(database, transports, &bytes).await?;
     database.mark_control_object_seen(&cid, "enrollment_rejection")?;
-    database
-        .connection()?
-        .execute(
-            "UPDATE replicated_sync_enrollment_requests SET status='rejected' WHERE request_id=?1 AND direction='incoming' AND status='pending'",
-            params![request_id_hex],
-        )
-        ?;
+    database.reject_pending_incoming_request(&request_id_hex)?;
     Ok(())
 }
 
@@ -1533,14 +987,7 @@ fn apply_incoming_rotation(database: &Database, identity: &DeviceIdentity, epoch
     // ignored for good.
     let roster = database.known_device_roster()?;
     let Some((_, verifying_key)) = roster.iter().find(|(device_id, _)| *device_id == signed.rotation.initiator_device_id) else {
-        let known_but_revoked: bool = database
-            .connection()?
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM sync_devices WHERE device_id=?1)",
-                params![encode_id(signed.rotation.initiator_device_id.as_bytes())],
-                |row| row.get(0),
-            )
-            ?;
+        let known_but_revoked = database.device_known(&encode_id(signed.rotation.initiator_device_id.as_bytes()))?;
         return Ok(if known_but_revoked { RotationOutcome::Done } else { RotationOutcome::UnknownInitiator });
     };
     if verify_key_rotation(verifying_key, &signed).is_err() {
@@ -1591,14 +1038,7 @@ fn apply_rotation_common(database: &Database, identity: &DeviceIdentity, epoch_k
 /// [`enrollment_fingerprint`] on both screens: imports a staged grant,
 /// adopting the epoch key and the whole roster it carries.
 pub async fn confirm_and_import_grant(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, request_id_hex: &str) -> EnrollmentResult<()> {
-    let grant_cbor: Vec<u8> = database
-        .connection()?
-        .query_row(
-            "SELECT pending_grant_cbor FROM replicated_sync_enrollment_requests WHERE request_id=?1 AND direction='outgoing' AND status='staged'",
-            params![request_id_hex],
-            |row| row.get(0),
-        )
-        ?;
+    let grant_cbor = database.staged_enrollment_grant(&request_id_hex)?;
     let signed = decode_signed_enrollment_grant(&grant_cbor)?;
     let k_epoch_bytes = try_open_sealed_box(&identity.x25519_secret, &signed.grant.sealed_epoch_key)
         .ok_or(EnrollmentError::NotSealedToThisDevice("This grant was not sealed to this device"))?;
@@ -1617,13 +1057,7 @@ pub async fn confirm_and_import_grant(database: &Database, identity: &DeviceIden
     database.record_epoch_activation(signed.grant.key_epoch, &source_cid)?;
     store_earlier_epoch_keys(database, epoch_keys, &earlier, &source_cid)?;
 
-    database
-        .connection()?
-        .execute(
-            "UPDATE replicated_sync_enrollment_requests SET status='completed' WHERE request_id=?1",
-            params![request_id_hex],
-        )
-        ?;
+    database.set_enrollment_request_status(&request_id_hex, "completed")?;
     Ok(())
 }
 
@@ -1640,14 +1074,7 @@ pub async fn approve_enrollment_request(
     request_id_hex: &str,
     transports: &[Arc<dyn SyncTransport>],
 ) -> EnrollmentResult<()> {
-    let (requester_device_id, requester_ed25519, requester_x25519): (String, Vec<u8>, Vec<u8>) = database
-        .connection()?
-        .query_row(
-            "SELECT device_id, ed25519_public, x25519_public FROM replicated_sync_enrollment_requests WHERE request_id=?1 AND direction='incoming' AND status='pending'",
-            params![request_id_hex],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        ?;
+    let (requester_device_id, requester_ed25519, requester_x25519) = database.pending_incoming_request(&request_id_hex)?;
     let requester_x25519: [u8; 32] = requester_x25519.try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid requester X25519 key"))?;
     let requester_ed25519_bytes: [u8; 32] = requester_ed25519.try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid requester Ed25519 key"))?;
     let requester_verifying_key = VerifyingKey::from_bytes(&requester_ed25519_bytes).map_err(|_| EnrollmentError::MalformedKey("Invalid requester Ed25519 key"))?;
@@ -1678,13 +1105,7 @@ pub async fn approve_enrollment_request(
     let cid = publish_control_object(database, transports, &bytes).await?;
     database.mark_control_object_seen(&cid, "enrollment_grant")?;
 
-    database
-        .connection()?
-        .execute(
-            "UPDATE replicated_sync_enrollment_requests SET status='approved' WHERE request_id=?1",
-            params![request_id_hex],
-        )
-        ?;
+    database.set_enrollment_request_status(&request_id_hex, "approved")?;
     Ok(())
 }
 

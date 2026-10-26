@@ -20,9 +20,8 @@ struct Counts {
 const ALLOWED: &[(&str, usize, usize, usize)] = &[
     ("correspondence.rs", 30, 1, 33),
     ("draft_push.rs", 12, 1, 12),
-    ("enrollment.rs", 101, 3, 80),
+    ("enrollment.rs", 47, 3, 36),
     ("enrollment/error.rs", 0, 2, 0),
-    ("enrollment/join_codes.rs", 22, 1, 21),
     ("lib.rs", 1, 0, 1),
     ("provider/imap/provider/tests/mod.rs", 13, 3, 10),
     ("replicated_sync.rs", 39, 1, 42),

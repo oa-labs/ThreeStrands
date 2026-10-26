@@ -1,6 +1,6 @@
 # Keeping persistence inside `db/`
 
-Status: accepted (2026-10-26). Phases 0 and 1 done (0.173.1); Phase 2 done (0.173.2); Phase 5 done (0.173.3). Phase 3: sync state done (0.173.4), replicated sync done (0.173.5).
+Status: accepted (2026-10-26). Phases 0 and 1 done (0.173.1); Phase 2 done (0.173.2); Phase 5 done (0.173.3); Phase 3 done (0.173.4 to 0.173.6). Phases 4 and 6 remain.
 
 `src-tauri/src/db.rs` says "Feature modules own their SQL and tests": `db/`
 owns persistence, and the rest of the app calls named `Database` methods.
@@ -108,15 +108,16 @@ pattern for the larger moves.
 
 ### Phase 3: sync state, replicated sync, and enrollment
 
-About three PRs.
+Three merges.
 
-- `replicated_sync.rs` and `sync_state.rs` persistence moves to a
-  `db/replicated_sync/` directory (`values`, `deliveries`, `transports`,
-  `devices`, `objects`).
+- `sync_state.rs` moves whole to `db/sync_state.rs`.
+- `replicated_sync.rs` persistence moves to `db/replicated_sync.rs`. One
+  file was enough; a directory would have split closely related ledger
+  queries.
 - `enrollment.rs` and `enrollment/join_codes.rs` persistence moves to
   `db/enrollment.rs` and `db/join_codes.rs`.
-- `ReplicatedSync` and the enrollment flow keep their protocol and crypto
-  logic.
+- `ReplicatedSync` and the enrollment flow keep their protocol, crypto,
+  keychain, and transport logic, and call named methods for their SQL.
 
 ### Phase 4: one copy of each table's SQL
 

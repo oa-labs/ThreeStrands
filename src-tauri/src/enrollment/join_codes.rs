@@ -26,7 +26,6 @@
 
 use std::sync::Arc;
 
-use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use threestrands_sync_envelope::{
@@ -39,10 +38,10 @@ use threestrands_sync_envelope::{
 use threestrands_sync_transport::{Cid as TransportCid, SyncTransport, TransportError};
 
 use super::{
-    default_device_name, open_earlier_epoch_keys, protocol_marker_missing, require_not_started, roster_entry_verifying_key,
-    seal_earlier_epoch_keys, store_earlier_epoch_keys, EnrollmentError, EnrollmentResult, EpochKeyStore, MAX_DEVICE_LABEL_CHARS,
+    open_earlier_epoch_keys, protocol_marker_missing, require_not_started, roster_entry_verifying_key,
+    seal_earlier_epoch_keys, store_earlier_epoch_keys, EnrollmentError, EnrollmentResult, EpochKeyStore,
 };
-use crate::db::{Database, DatabaseError, DbResult};
+use crate::db::{rfc3339_from_ms, Database, DatabaseError};
 use crate::replicated_sync::{decode_id, encode_id, x25519_public_bytes, DeviceIdentity, LocalKeys};
 use crate::sync_connectors::{
     Connector, ConnectorCredentials, FolderConfig, TransportConfig, TransportSecrets, FOLDER_KIND, IPFS_RPC_KIND,
@@ -58,10 +57,6 @@ pub(crate) const MAX_JOIN_CODE_HOURS: u32 = 7 * 24;
 /// retried on later sweeps (the invitation may still be syncing in), after
 /// which it is ignored for good: the longest code lifetime plus a day.
 const REDEMPTION_RETRY_WINDOW_MS: i64 = (MAX_JOIN_CODE_HOURS as i64 + 24) * 3_600_000;
-
-fn rfc3339_from_ms(ms: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(ms).map(|time| time.to_rfc3339()).unwrap_or_default()
-}
 
 // ================================ API types ==================================
 
@@ -160,23 +155,6 @@ struct FolderHint {
 
 // ================================= Helpers ===================================
 
-impl Database {
-    /// This device's shared name, for the code and the redemption.
-    fn self_device_name(&self, identity: &DeviceIdentity) -> DbResult<String> {
-        let device_id = encode_id(identity.device_id.as_bytes());
-        self.ensure_self_device_name(&device_id)?;
-        let label: Option<String> = self
-            .connection()?
-            .query_row("SELECT label FROM sync_device_labels WHERE device_id=?1", params![device_id], |row| row.get(0))
-            .optional()
-            ?;
-        Ok(label
-            .unwrap_or_else(default_device_name)
-            .chars()
-            .take(MAX_DEVICE_LABEL_CHARS)
-            .collect())
-    }
-}
 
 fn folder_name(path: &str) -> String {
     std::path::Path::new(path)
@@ -308,22 +286,14 @@ pub(crate) async fn create_join_code(
         ));
     }
     database.mark_control_object_seen(&cid, "invitation")?;
-    database
-        .connection()?
-        .execute(
-            "INSERT INTO replicated_sync_invitations(invitation_cid, direction, status, inviter_device_id, inviter_name,
-                 invite_ed25519_public, created_at, expires_at_ms)
-             VALUES (?1,'outgoing','open',?2,?3,?4,?5,?6)",
-            params![
-                cid,
-                encode_id(identity.device_id.as_bytes()),
-                code.inviter_name,
-                invite_signing_key.verifying_key().to_bytes().to_vec(),
-                rfc3339_from_ms(now_ms),
-                expires_at_ms,
-            ],
-        )
-        ?;
+    database.record_outgoing_invitation(
+        &cid,
+        &encode_id(identity.device_id.as_bytes()),
+        &code.inviter_name,
+        &invite_signing_key.verifying_key().to_bytes(),
+        now_ms,
+        expires_at_ms,
+    )?;
 
     code.invitation_cid = cid;
     Ok(encode_join_code(&code)?)
@@ -545,22 +515,14 @@ pub(crate) async fn commit_redemption(
     store_earlier_epoch_keys(database, epoch_keys, &opened.earlier_epoch_keys, &code.invitation_cid)?;
     database.mark_control_object_seen(&code.invitation_cid, "invitation")?;
     database.mark_control_object_seen(&redemption_cid, "invitation_redemption")?;
-    database
-        .connection()?
-        .execute(
-            "INSERT OR REPLACE INTO replicated_sync_invitations(invitation_cid, direction, status, inviter_device_id,
-                 inviter_name, created_at, expires_at_ms, redemption_cid)
-             VALUES (?1,'incoming','pending',?2,?3,?4,?5,?6)",
-            params![
-                code.invitation_cid,
-                encode_id(invitation.inviter_device_id.as_bytes()),
-                code.inviter_name,
-                rfc3339_from_ms(now_ms),
-                code.expires_at_ms,
-                redemption_cid,
-            ],
-        )
-        ?;
+    database.record_incoming_invitation(
+        &code.invitation_cid,
+        &encode_id(invitation.inviter_device_id.as_bytes()),
+        &code.inviter_name,
+        now_ms,
+        code.expires_at_ms,
+        &redemption_cid,
+    )?;
     Ok(())
 }
 
@@ -639,21 +601,13 @@ pub(super) fn apply_incoming_invitation(
     if verify_invitation(inviter_key, &signed).is_err() {
         return Ok(());
     }
-    database
-        .connection()?
-        .execute(
-            "INSERT OR IGNORE INTO replicated_sync_invitations(invitation_cid, direction, status, inviter_device_id,
-                 invite_ed25519_public, created_at, expires_at_ms)
-             VALUES (?1,'observed','observed',?2,?3,?4,?5)",
-            params![
-                cid,
-                encode_id(invitation.inviter_device_id.as_bytes()),
-                invitation.invite_ed25519_public.to_vec(),
-                rfc3339_from_ms(invitation.created_at_ms),
-                invitation.expires_at_ms,
-            ],
-        )
-        ?;
+    database.record_observed_invitation(
+        &cid,
+        &encode_id(invitation.inviter_device_id.as_bytes()),
+        &invitation.invite_ed25519_public,
+        invitation.created_at_ms,
+        invitation.expires_at_ms,
+    )?;
     Ok(())
 }
 
@@ -671,15 +625,7 @@ pub(super) fn apply_incoming_redemption(
     if redemption.device_id == identity.device_id {
         return Ok(JoinObjectOutcome::Done);
     }
-    let invitation: Option<(String, Option<Vec<u8>>, String)> = database
-        .connection()?
-        .query_row(
-            "SELECT direction, invite_ed25519_public, inviter_device_id FROM replicated_sync_invitations WHERE invitation_cid=?1",
-            params![redemption.invitation_cid],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .optional()
-        ?;
+    let invitation = database.invitation_for_redemption(&redemption.invitation_cid)?;
     let Some((direction, Some(invite_public), inviter_device_id)) = invitation else {
         let still_syncing = invitation.is_none() && now_ms < redemption.created_at_ms.saturating_add(REDEMPTION_RETRY_WINDOW_MS);
         return Ok(if still_syncing { JoinObjectOutcome::RetryLater } else { JoinObjectOutcome::Done });
@@ -693,26 +639,18 @@ pub(super) fn apply_incoming_redemption(
         return Ok(JoinObjectOutcome::Done);
     }
     let state = if direction == "outgoing" { "pending" } else { "observed" };
-    database
-        .connection()?
-        .execute(
-            "INSERT OR IGNORE INTO replicated_sync_invitation_redemptions(redemption_cid, invitation_cid, inviter_device_id,
-                 device_id, ed25519_public, x25519_public, device_name, created_at_ms, state, received_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-            params![
-                cid,
-                redemption.invitation_cid,
-                inviter_device_id,
-                encode_id(redemption.device_id.as_bytes()),
-                redemption.ed25519_public.to_vec(),
-                redemption.x25519_public.to_vec(),
-                redemption.device_name,
-                redemption.created_at_ms,
-                state,
-                rfc3339_from_ms(now_ms),
-            ],
-        )
-        ?;
+    database.record_redemption(
+        &cid,
+        &redemption.invitation_cid,
+        &inviter_device_id,
+        &encode_id(redemption.device_id.as_bytes()),
+        &redemption.ed25519_public,
+        &redemption.x25519_public,
+        &redemption.device_name,
+        redemption.created_at_ms,
+        state,
+        now_ms,
+    )?;
     Ok(JoinObjectOutcome::Done)
 }
 
@@ -720,20 +658,13 @@ pub(super) fn apply_incoming_redemption(
 /// is complete.
 pub(super) fn note_admission_if_listed(database: &Database, identity: &DeviceIdentity, roster: &[threestrands_sync_envelope::RosterEntry]) -> EnrollmentResult<()> {
     if roster.iter().any(|entry| entry.device_id == identity.device_id && entry.status == "active") {
-        database
-            .connection()?
-            .execute(
-                "UPDATE replicated_sync_invitations SET status='admitted' WHERE direction='incoming' AND status='pending'",
-                [],
-            )
-            ?;
+        database.mark_incoming_invitations_admitted()?;
     }
     Ok(())
 }
 
 // ============================ Inviter maintenance ============================
 
-type PendingRedemption = (String, String, String, Vec<u8>, Vec<u8>, String);
 
 /// On the inviter, once per sync cycle: admits the first valid redemption
 /// of each open, unexpired invitation, rejects the rest, expires old
@@ -747,40 +678,13 @@ pub(crate) async fn process_join_codes(
     transports: &[Arc<dyn SyncTransport>],
     now_ms: i64,
 ) -> EnrollmentResult<bool> {
-    let pending: Vec<PendingRedemption> = {
-        let connection = database.connection()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT r.redemption_cid, r.invitation_cid, r.device_id, r.ed25519_public, r.x25519_public, r.device_name
-                 FROM replicated_sync_invitation_redemptions r
-                 JOIN replicated_sync_invitations i ON i.invitation_cid = r.invitation_cid
-                 WHERE r.state='pending' AND i.direction='outgoing'
-                 ORDER BY r.created_at_ms, r.redemption_cid",
-            )
-            ?;
-        let rows = statement
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)))
-            ?
-            .collect::<Result<Vec<_>, _>>()
-            ?;
-        rows
-    };
+    let pending = database.pending_redemptions()?;
 
     let mut rotate = false;
     let mut closed = Vec::new();
     for (redemption_cid, invitation_cid, device_id_hex, ed25519_public, x25519_public, device_name) in pending {
-        let (status, expires_at_ms): (String, i64) = database
-            .connection()?
-            .query_row(
-                "SELECT status, expires_at_ms FROM replicated_sync_invitations WHERE invitation_cid=?1",
-                params![invitation_cid],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            ?;
-        let already_known: bool = database
-            .connection()?
-            .query_row("SELECT EXISTS(SELECT 1 FROM sync_devices WHERE device_id=?1)", params![device_id_hex], |row| row.get(0))
-            ?;
+        let (status, expires_at_ms) = database.invitation_status_and_expiry(&invitation_cid)?;
+        let already_known = database.device_known(&device_id_hex)?;
         let keys_valid = <[u8; 32]>::try_from(ed25519_public.as_slice())
             .ok()
             .and_then(|bytes| VerifyingKey::from_bytes(&bytes).ok())
@@ -795,60 +699,21 @@ pub(crate) async fn process_join_codes(
                 if !device_name.trim().is_empty() {
                     database.materialize_device_name(&device_id_hex, Some(device_name.trim()))?;
                 }
-                let connection = database.connection()?;
-                connection
-                    .execute(
-                        "UPDATE replicated_sync_invitations SET status='redeemed', redeemed_by_device_id=?2, redemption_cid=?3
-                         WHERE invitation_cid=?1",
-                        params![invitation_cid, device_id_hex, redemption_cid],
-                    )
-                    ?;
-                connection
-                    .execute(
-                        "UPDATE replicated_sync_invitation_redemptions SET state='admitted' WHERE redemption_cid=?1",
-                        params![redemption_cid],
-                    )
-                    ?;
+                database.admit_redemption(&invitation_cid, &device_id_hex, &redemption_cid)?;
                 // The invitation object stays until the code's own expiry
                 // so group members that sync later can still verify this
                 // redemption; see the cleanup below.
                 rotate = true;
             }
             _ => {
-                database
-                    .connection()?
-                    .execute(
-                        "UPDATE replicated_sync_invitation_redemptions SET state='rejected' WHERE redemption_cid=?1",
-                        params![redemption_cid],
-                    )
-                    ?;
+                database.reject_redemption(&redemption_cid)?;
             }
         }
     }
 
-    let expired: Vec<String> = {
-        let connection = database.connection()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT invitation_cid FROM replicated_sync_invitations
-                 WHERE direction='outgoing' AND status='open' AND expires_at_ms < ?1",
-            )
-            ?;
-        let rows = statement
-            .query_map(params![now_ms], |row| row.get(0))
-            ?
-            .collect::<Result<Vec<_>, _>>()
-            ?;
-        rows
-    };
+    let expired = database.open_invitations_expired_by(now_ms)?;
     for invitation_cid in expired {
-        database
-            .connection()?
-            .execute(
-                "UPDATE replicated_sync_invitations SET status='expired' WHERE invitation_cid=?1",
-                params![invitation_cid],
-            )
-            ?;
+        database.expire_invitation(&invitation_cid)?;
         rotate = true;
         closed.push(invitation_cid);
     }
@@ -856,21 +721,7 @@ pub(crate) async fn process_join_codes(
     // Redeemed invitations are deleted once their code would have expired.
     // After the admission rotation the sealed key inside only opens data
     // written before it, so keeping the object that long costs little.
-    let redeemed_past_expiry: Vec<String> = {
-        let connection = database.connection()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT invitation_cid FROM replicated_sync_invitations
-                 WHERE direction='outgoing' AND status='redeemed' AND object_deleted=0 AND expires_at_ms < ?1",
-            )
-            ?;
-        let rows = statement
-            .query_map(params![now_ms], |row| row.get(0))
-            ?
-            .collect::<Result<Vec<_>, _>>()
-            ?;
-        rows
-    };
+    let redeemed_past_expiry = database.redeemed_invitations_expired_by(now_ms)?;
     closed.extend(redeemed_past_expiry);
 
     if rotate {
@@ -893,14 +744,7 @@ pub(crate) async fn cancel_join_code(
     transports: &[Arc<dyn SyncTransport>],
     invitation_cid: &str,
 ) -> EnrollmentResult<()> {
-    let changed = database
-        .connection()?
-        .execute(
-            "UPDATE replicated_sync_invitations SET status='cancelled'
-             WHERE invitation_cid=?1 AND direction='outgoing' AND status='open'",
-            params![invitation_cid],
-        )
-        ?;
+    let changed = database.cancel_open_invitation(invitation_cid)?;
     if changed == 0 {
         return Err(EnrollmentError::JoinCodeNotOpen);
     }
@@ -910,112 +754,9 @@ pub(crate) async fn cancel_join_code(
 }
 
 fn mark_object_deleted(database: &Database, invitation_cid: &str) -> EnrollmentResult<()> {
-    database
-        .connection()?
-        .execute(
-            "UPDATE replicated_sync_invitations SET object_deleted=1 WHERE invitation_cid=?1",
-            params![invitation_cid],
-        )
-        ?;
+    database.mark_invitation_object_deleted(invitation_cid)?;
     Ok(())
 }
 
 // ============================ Listing and notices ============================
 
-impl Database {
-    /// Join codes this device created, newest first.
-    pub fn outstanding_join_codes(&self) -> DbResult<Vec<OutstandingJoinCode>> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT i.invitation_cid, i.created_at, i.expires_at_ms, i.status, i.redeemed_by_device_id,
-                        (SELECT r.device_name FROM replicated_sync_invitation_redemptions r WHERE r.redemption_cid = i.redemption_cid),
-                        (SELECT COUNT(*) FROM replicated_sync_invitation_redemptions r
-                          WHERE r.invitation_cid = i.invitation_cid AND r.state='rejected')
-                 FROM replicated_sync_invitations i
-                 WHERE i.direction='outgoing'
-                 ORDER BY i.created_at DESC",
-            )
-            ?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok(OutstandingJoinCode {
-                    invitation_cid: row.get(0)?,
-                    created_at: row.get(1)?,
-                    expires_at: rfc3339_from_ms(row.get(2)?),
-                    status: row.get(3)?,
-                    redeemed_by_device_id: row.get(4)?,
-                    redeemed_by_name: row.get(5)?,
-                    rejected_attempts: row.get(6)?,
-                })
-            })
-            ?
-            .collect::<Result<Vec<_>, _>>()
-            ?;
-        Ok(rows)
-    }
-
-    /// Undismissed join-code notices: devices that joined with a code (once
-    /// they're actually in the roster), and refused attempts on this
-    /// device's own codes.
-    pub fn join_code_notices(&self) -> DbResult<Vec<JoinCodeNotice>> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT r.redemption_cid,
-                        CASE WHEN r.state='rejected' THEN 'rejectedAttempt' ELSE 'joined' END,
-                        r.device_id, r.device_name, r.inviter_device_id,
-                        (SELECT label FROM sync_device_labels l WHERE l.device_id = r.inviter_device_id),
-                        r.created_at_ms
-                 FROM replicated_sync_invitation_redemptions r
-                 WHERE r.notice_dismissed = 0
-                   AND (r.state = 'rejected'
-                        OR (r.state IN ('admitted','observed')
-                            AND EXISTS (SELECT 1 FROM sync_devices d
-                                        WHERE d.device_id = r.device_id AND d.status='active' AND d.is_self=0)))
-                 ORDER BY r.created_at_ms",
-            )
-            ?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok(JoinCodeNotice {
-                    redemption_cid: row.get(0)?,
-                    kind: row.get(1)?,
-                    device_id: row.get(2)?,
-                    device_name: row.get(3)?,
-                    inviter_device_id: row.get(4)?,
-                    inviter_name: row.get(5)?,
-                    at: rfc3339_from_ms(row.get(6)?),
-                })
-            })
-            ?
-            .collect::<Result<Vec<_>, _>>()
-            ?;
-        Ok(rows)
-    }
-
-    pub fn dismiss_join_code_notice(&self, redemption_cid: &str) -> DbResult<()> {
-        self.connection()?
-            .execute(
-                "UPDATE replicated_sync_invitation_redemptions SET notice_dismissed=1 WHERE redemption_cid=?1",
-                params![redemption_cid],
-            )
-            ?;
-        Ok(())
-    }
-
-    /// The inviter's name while this device waits for its join-code
-    /// admission; `None` once admitted or when it didn't join by code.
-    pub(super) fn awaiting_admission_from(&self) -> DbResult<Option<String>> {
-        let name: Option<Option<String>> = self
-            .connection()?
-            .query_row(
-                "SELECT inviter_name FROM replicated_sync_invitations WHERE direction='incoming' AND status='pending' LIMIT 1",
-                [],
-                |row| row.get(0),
-            )
-            .optional()
-            ?;
-        Ok(name.map(|name| name.filter(|name| !name.trim().is_empty()).unwrap_or_else(|| "another device".to_string())))
-    }
-}
