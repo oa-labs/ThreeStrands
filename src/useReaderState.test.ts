@@ -2,6 +2,7 @@ import { act, fireEvent, render, renderHook } from "@testing-library/react";
 import { createElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { Message, ThreadDetail } from "./domain";
+import { READING_POSITION_MAX_AGE_MS, READING_POSITIONS_KEY, readReadingPositions } from "./readingPositions";
 import { useReaderState } from "./useReaderState";
 
 const message = (id: string, unread = false): Message => ({
@@ -359,6 +360,165 @@ describe("the message being read", () => {
       reader.layout({ first: -200, middle: 0, latest: 700 });
       reader.scroll();
       expect(reader.current().readingMessageId).toBe("middle");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("returning to where the user stopped reading", () => {
+  /** Mounts the reader for `thread-1`, whose messages sit at fixed offsets in the stack, with a controllable ResizeObserver. */
+  function mountReader() {
+    const resize = { notify: () => {}, disconnected: false };
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: () => void) {
+        resize.disconnected = false;
+        resize.notify = () => { if (!resize.disconnected) callback(); };
+      }
+      observe() {}
+      disconnect() { resize.disconnected = true; }
+    });
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 0; });
+    const scrollIntoView = vi.fn();
+    let reader!: ReturnType<typeof useReaderState>;
+    function Reader({ selectedThreadId }: { selectedThreadId: string | null }) {
+      const open = selectedThreadId === "thread-1";
+      reader = useReaderState({ selectedThreadId, detail: open ? detail : null, displayedMessages: open ? detail.messages : [], composerOpen: false });
+      return createElement("div", {
+        "data-testid": "stack",
+        ref: (node: HTMLDivElement | null) => {
+          reader.messageStackRef.current = node;
+          if (!node) return;
+          Object.defineProperty(node, "clientHeight", { configurable: true, value: 600 });
+          Object.defineProperty(node, "scrollHeight", { configurable: true, value: 4300 });
+        },
+      }, open ? detail.messages.map((item, index) => createElement("article", {
+          key: item.id,
+          ref: (node: HTMLElement | null) => {
+            if (!node) return;
+            reader.messageRefs.current.set(item.id, node);
+            Object.defineProperty(node, "offsetTop", { configurable: true, value: index * 300 });
+            if (item.id === "latest") {
+              node.scrollIntoView = scrollIntoView;
+              reader.latestMessageRef.current = node;
+            }
+          },
+        })) : null);
+    }
+    const view = render(createElement(Reader, { selectedThreadId: "thread-1" }));
+    const stack = view.getByTestId("stack");
+    const rect = (top: number, height: number) => ({ top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+    /**
+     * Lays the 600px reader out scrolled to `scrollTop` over a 300px older
+     * message and a 4000px latest one, and fires the scroll. `moveStack: false`
+     * leaves the stack's own offset where the pin put it.
+     */
+    const scrollTo = (scrollTop: number, { moveStack = true } = {}) => {
+      stack.getBoundingClientRect = () => rect(0, 600);
+      if (moveStack) stack.scrollTop = scrollTop;
+      reader.messageRefs.current.get("older")!.getBoundingClientRect = () => rect(-scrollTop, 300);
+      reader.messageRefs.current.get("latest")!.getBoundingClientRect = () => rect(300 - scrollTop, 4000);
+      act(() => { fireEvent.scroll(stack); });
+    };
+    return {
+      stack,
+      resize,
+      scrollIntoView,
+      scrollTo,
+      current: () => reader,
+      select: (selectedThreadId: string | null) => view.rerender(createElement(Reader, { selectedThreadId })),
+    };
+  }
+
+  const saved = (anchor: { messageId: string; offset: number }, latestMessageId = "latest") => {
+    localStorage.setItem(READING_POSITIONS_KEY, JSON.stringify([{ threadId: "thread-1", latestMessageId, anchor, savedAt: Date.now() }]));
+  };
+
+  it("saves the user's place when they leave the conversation", () => {
+    try {
+      const reader = mountReader();
+      fireEvent.wheel(window);
+      reader.scrollTo(2100);
+      reader.select("thread-2");
+      expect(readReadingPositions()).toEqual([expect.objectContaining({
+        threadId: "thread-1",
+        latestMessageId: "latest",
+        anchor: { messageId: "latest", offset: 1800 },
+      })]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not save the place it is holding while the email sizes, only one the user scrolls to", () => {
+    try {
+      const reader = mountReader();
+      reader.resize.notify();
+      reader.scrollTo(2100, { moveStack: false });
+      expect(reader.resize.disconnected).toBe(false);
+      reader.select("thread-2");
+      expect(readReadingPositions()).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("forgets the place once the user finishes the email or goes back near the top", () => {
+    try {
+      saved({ messageId: "latest", offset: 1800 });
+      const reader = mountReader();
+      fireEvent.wheel(window);
+      reader.scrollTo(3700);
+      reader.select("thread-2");
+      expect(readReadingPositions()).toEqual([]);
+
+      saved({ messageId: "latest", offset: 1800 });
+      reader.select("thread-1");
+      fireEvent.wheel(window);
+      reader.scrollTo(500);
+      reader.select(null);
+      expect(readReadingPositions()).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("reopens at the saved place and holds it while the email sizes", () => {
+    try {
+      saved({ messageId: "latest", offset: 1800 });
+      const reader = mountReader();
+      expect(reader.scrollIntoView).not.toHaveBeenCalled();
+      expect(reader.stack.scrollTop).toBe(2100);
+      reader.stack.scrollTop = 400;
+      reader.resize.notify();
+      expect(reader.stack.scrollTop).toBe(2100);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("opens an earlier message the user was reading", () => {
+    try {
+      saved({ messageId: "older", offset: 120 });
+      const reader = mountReader();
+      expect(reader.current().messageExpansionOverrides.get("older")).toBe(true);
+      expect(reader.stack.scrollTop).toBe(120);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each([
+    { reason: "a newer message arrived", latestMessageId: "previous", age: 0 },
+    { reason: "the place expired", latestMessageId: "latest", age: READING_POSITION_MAX_AGE_MS },
+  ])("opens at the latest message when $reason", ({ latestMessageId, age }) => {
+    try {
+      localStorage.setItem(READING_POSITIONS_KEY, JSON.stringify([{
+        threadId: "thread-1", latestMessageId, anchor: { messageId: "latest", offset: 1800 }, savedAt: Date.now() - age,
+      }]));
+      const reader = mountReader();
+      expect(reader.scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+      expect(reader.stack.scrollTop).toBe(0);
     } finally {
       vi.unstubAllGlobals();
     }

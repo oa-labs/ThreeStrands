@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Message, ThreadDetail } from "./domain";
 import { messageAtReadingLine } from "./readingMessage";
+import { readingPositionFor, readReadingPositions, saveReadingPlace, type ReadingPlace } from "./readingPositions";
+import { captureReaderAnchor } from "./returnNavigation";
 
 /** Input that means the reader is moving through the conversation themselves. */
 const RELEASE_EVENTS = ["wheel", "touchmove", "pointerdown", "keydown"] as const;
@@ -49,10 +51,17 @@ export function useReaderState({
     setReadingMessageIdState(messageId);
   }, []);
   const lastAutoScrollRef = useRef<{ threadId: string; messageId: string } | null>(null);
+  // Where the reader last settled in the open conversation, saved on leaving
+  // it. Not updated while the reader is pinned to a place it was opened at,
+  // since the body is still sizing and that scroll position is not the user's.
+  const readingPlaceRef = useRef<ReadingPlace | null>(null);
+  const pinningRef = useRef(false);
 
+  // Message nodes register and unregister themselves, so they are not cleared
+  // here: a conversation that opens with its detail already loaded has
+  // registered its messages before this runs.
   useEffect(() => {
     setMessageExpansionOverrides(new Map());
-    messageRefs.current.clear();
     activeMessageIdRef.current = null;
     pendingMessageToggleFocusRef.current = null;
     setActiveMessageId(null);
@@ -90,6 +99,14 @@ export function useReaderState({
     const update = () => {
       frame = 0;
       const bounds = stack.getBoundingClientRect();
+      const atBottom = stack.scrollTop + stack.clientHeight >= stack.scrollHeight - 2;
+      const latestMessageId = displayedMessagesRef.current.at(-1)?.id;
+      if (!pinningRef.current && latestMessageId) {
+        const anchor = captureReaderAnchor(stack, messageRefs.current);
+        readingPlaceRef.current = anchor
+          ? { threadId: detailThreadId, latestMessageId, anchor, viewportHeight: stack.clientHeight, atBottom }
+          : null;
+      }
       const pinned = pinnedReadingRef.current ? messageRefs.current.get(pinnedReadingRef.current) : null;
       if (pinned) {
         const rect = pinned.getBoundingClientRect();
@@ -102,15 +119,22 @@ export function useReaderState({
       const reading = messageAtReadingLine({
         top: bounds.top,
         height: stack.clientHeight,
-        atBottom: stack.scrollTop + stack.clientHeight >= stack.scrollHeight - 2,
+        atBottom,
       }, messages);
       if (reading) setReadingMessage(reading);
     };
     const onScroll = () => { if (!frame) frame = requestAnimationFrame(update); };
+    const savePlace = () => {
+      if (readingPlaceRef.current?.threadId === detailThreadId) saveReadingPlace(readingPlaceRef.current);
+    };
     stack.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("pagehide", savePlace);
     return () => {
       stack.removeEventListener("scroll", onScroll);
+      window.removeEventListener("pagehide", savePlace);
       if (frame) cancelAnimationFrame(frame);
+      savePlace();
+      readingPlaceRef.current = null;
     };
   }, [detailThreadId, setReadingMessage]);
 
@@ -121,26 +145,43 @@ export function useReaderState({
     const previous = lastAutoScrollRef.current;
     if (previous?.threadId === detailThreadId && previous.messageId === latestDisplayedMessageId) return;
     lastAutoScrollRef.current = { threadId: detailThreadId, messageId: latestDisplayedMessageId };
-    const latest = latestMessageRef.current;
-    latest?.scrollIntoView?.({ block: "start" });
+    const stack = messageStackRef.current;
+    // Reopening a conversation goes back to where the user stopped reading,
+    // unless that place expired or a newer message arrived since.
+    const resume = previous ? null : readingPositionFor(readReadingPositions(), detailThreadId, latestDisplayedMessageId, Date.now());
+    const resumeNode = resume ? messageRefs.current.get(resume.messageId) : undefined;
+    let target: HTMLElement | null;
+    // How far the stack's top sits past the target message's top.
+    let offset: (stack: HTMLElement) => number;
+    if (resume && resumeNode && stack) {
+      setMessageExpansionOverrides((current) => current.get(resume.messageId) ? current : new Map(current).set(resume.messageId, true));
+      target = resumeNode;
+      offset = () => resume.offset;
+      stack.scrollTop = layoutTop(resumeNode) - layoutTop(stack) + resume.offset;
+    } else {
+      target = latestMessageRef.current;
+      target?.scrollIntoView?.({ block: "start" });
+      offset = (scroller) => -(parseFloat(getComputedStyle(scroller).scrollPaddingTop) || 0);
+    }
     // The email body sizes itself after this first scroll. Until then the card
     // is short, so the stack can only scroll far enough to leave it at the
-    // bottom. Keep it at the top as it grows, until the reader takes over.
+    // bottom. Keep it in place as it grows, until the reader takes over.
     // Input inside the email's iframe never reaches this window, so a scroll
     // that moves the stack away from where the pin left it also releases it.
-    const stack = messageStackRef.current;
-    if (!latest || !stack || typeof ResizeObserver === "undefined") return;
+    if (!target || !stack || typeof ResizeObserver === "undefined") return;
+    const pinned = target;
+    pinningRef.current = true;
     let pinnedScrollTop = stack.scrollTop;
     // Scroll only the stack: scrollIntoView would also nudge any scrollable
     // ancestor, such as the window, every time the body grows.
     const observer = new ResizeObserver(() => {
-      const offset = layoutTop(latest) - layoutTop(stack);
-      stack.scrollTop = offset - (parseFloat(getComputedStyle(stack).scrollPaddingTop) || 0);
+      stack.scrollTop = layoutTop(pinned) - layoutTop(stack) + offset(stack);
       pinnedScrollTop = stack.scrollTop;
     });
-    observer.observe(latest);
+    observer.observe(pinned);
     const onScroll = () => { if (Math.abs(stack.scrollTop - pinnedScrollTop) > 1) release(); };
     const release = () => {
+      pinningRef.current = false;
       observer.disconnect();
       stack.removeEventListener("scroll", onScroll);
       for (const type of RELEASE_EVENTS) window.removeEventListener(type, release, true);

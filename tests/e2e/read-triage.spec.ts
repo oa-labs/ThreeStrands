@@ -891,6 +891,49 @@ test("keeps the latest message at the top of a long conversation while its email
 });
 
 
+test("reopens a long email from the list where the reader left it", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 600 });
+  await page.goto("/");
+  await expect(page.getByTestId("message-body")).toBeVisible();
+  // Make the welcome email newsletter-length wherever it is loaded from.
+  await page.evaluate(async () => {
+    const { mailClient } = await import("/src/data/client.ts");
+    const getThread = mailClient.getThread.bind(mailClient);
+    mailClient.getThread = async (id: string) => {
+      const detail = await getThread(id);
+      if (id === "welcome") {
+        for (const message of detail.messages) {
+          message.bodyHtml = Array.from({ length: 200 }, (_, index) => `<p>Newsletter paragraph ${index + 1}.</p>`).join("");
+        }
+      }
+      return detail;
+    };
+  });
+  const welcome = threadOptions(page).filter({ hasText: "Welcome to ThreeStrands" });
+  const other = threadOptions(page).filter({ hasNotText: "Welcome to ThreeStrands" }).first();
+  const stack = page.locator(".message-stack");
+  const latestOffset = () => stack.evaluate((node) => {
+    const latest = node.querySelector<HTMLElement>(".message-card-expanded")!;
+    return Math.round(latest.getBoundingClientRect().top - node.getBoundingClientRect().top);
+  });
+  const email = page.frameLocator(".message-body").locator("body");
+
+  await other.click();
+  await welcome.click();
+  await expect(email).toContainText("Newsletter paragraph 200.");
+  await expect.poll(latestOffset).toBe(24);
+  await stack.hover();
+  await page.mouse.wheel(0, 1500);
+  await expect.poll(latestOffset).toBeLessThan(-1000);
+  const place = await latestOffset();
+
+  await other.click();
+  await expect(email).not.toContainText("Newsletter paragraph");
+  await welcome.click();
+  await expect(email).toContainText("Newsletter paragraph 200.");
+  await expect.poll(latestOffset).toBe(place);
+});
+
 test("batch shortcuts act on checked mail and Select All preserves email text selection", async ({ page }) => {
   await page.goto("/");
   const rows = threadOptions(page);
