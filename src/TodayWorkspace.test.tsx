@@ -246,9 +246,11 @@ describe("TodayWorkspace", () => {
     });
 
     it("counts a meeting on two calendars once, and skips declined ones for the count and the next meeting", async () => {
+      // The copy reuses the first event's times; two Date.now() reads can land a millisecond apart.
+      const sync = event("work", 30, { title: "Sync", accountId: "cal@example.com" });
       vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ errors: [], events: [
-        event("work", 30, { title: "Sync", accountId: "cal@example.com" }),
-        event("copy", 30, { title: "Sync", accountId: "cal@example.com", responseStatus: "declined" }),
+        sync,
+        { ...sync, id: "copy", responseStatus: "declined" },
         event("skip", 10, { title: "Optional talk", responseStatus: "declined" }),
       ] });
       renderToday({ calendarConnected: true });
