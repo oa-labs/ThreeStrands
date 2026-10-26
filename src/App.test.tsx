@@ -6,6 +6,7 @@ import { mailClient } from "./data/client";
 import type { ThreadTask } from "./domain";
 import { FOREGROUND_DEBOUNCE_MS, FOREGROUND_IDLE_MS } from "./foregroundRefresh";
 import { SEARCH_DEBOUNCE_MS } from "./SearchField";
+import { clearScheduleCache } from "./calendarScheduleCache";
 
 const demoThreadIds = ["welcome", "roadmap", "privacy"];
 
@@ -2061,8 +2062,80 @@ describe("account selection persistence", () => {
   });
 });
 
-describe("returning from a jump to another conversation", () => {
+describe("returning from a jump", () => {
   useConversationFixture();
+  afterEach(clearScheduleCache);
+
+  async function openTodayWithCalendar() {
+    clearScheduleCache();
+    vi.setSystemTime(new Date(2026, 9, 26, 9));
+    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
+      { email: "calendar@example.com", connectedAt: "2026-10-01T00:00:00Z", status: "connected" },
+    ]);
+    vi.spyOn(mailClient, "listCalendarOptions").mockResolvedValue([
+      { id: "primary", accountId: "calendar@example.com", name: "Work", primary: true, selected: true, writable: true },
+    ]);
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [
+      { id: "review", calendarId: "primary", accountId: "calendar@example.com", title: "Project review", allDay: false,
+        start: new Date(2026, 9, 26, 10).toISOString(), end: new Date(2026, 9, 26, 11).toISOString() },
+      { id: "planning", calendarId: "primary", accountId: "calendar@example.com", title: "Planning", allDay: false,
+        start: new Date(2026, 9, 27, 10).toISOString(), end: new Date(2026, 9, 27, 11).toISOString() },
+    ], errors: [] });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    fireEvent.keyDown(window, { key: "0" });
+    const today = await screen.findByRole("region", { name: "Today" });
+    await within(today).findByRole("button", { name: /^Next: Project review/ });
+    return today;
+  }
+
+  it.each(["Today's agenda", "Tomorrow", "Next meeting"])("returns to Today with Escape after opening %s", async (entry) => {
+    const today = await openTodayWithCalendar();
+    const title = entry === "Tomorrow" ? "Planning" : "Project review";
+    const button = entry === "Next meeting"
+      ? within(today).getByRole("button", { name: /^Next: Project review/ })
+      : within(within(today).getByRole("region", { name: entry })).getByRole("button", { name: new RegExp(title) });
+    fireEvent.click(button);
+    expect(await screen.findByRole("region", { name: `${title} details` })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Calendar week" })).toBeInTheDocument();
+
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(await screen.findByRole("region", { name: "Today" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Calendar week" })).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.getByRole("region", { name: "Today" })).toBeInTheDocument();
+  });
+
+  it("dismisses a calendar dialog before Escape returns to Today", async () => {
+    const today = await openTodayWithCalendar();
+    fireEvent.click(within(today).getByRole("button", { name: /^Next: Project review/ }));
+    const week = await screen.findByRole("region", { name: "Calendar week" });
+    fireEvent.click(within(week).getByRole("button", { name: "New Event" }));
+    const dialog = await screen.findByRole("dialog", { name: "New event" });
+
+    fireEvent.keyDown(within(dialog).getByLabelText("Title"), { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "New event" })).not.toBeInTheDocument();
+    expect(week).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(await screen.findByRole("region", { name: "Today" })).toBeInTheDocument();
+  });
+
+  it.each(["Open Calendar", "switching views"])("does not return to Today after explicit navigation through %s", async (navigation) => {
+    const today = await openTodayWithCalendar();
+    if (navigation === "Open Calendar") {
+      fireEvent.click(within(today).getByRole("button", { name: "Open Calendar" }));
+    } else {
+      fireEvent.click(within(today).getByRole("button", { name: /^Next: Project review/ }));
+      await screen.findByRole("region", { name: "Calendar week" });
+      fireEvent.keyDown(window, { key: "1" });
+      await screen.findByRole("region", { name: "Inbox" });
+      fireEvent.keyDown(window, { key: "2" });
+    }
+    const week = await screen.findByRole("region", { name: "Calendar week" });
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(week).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Today" })).not.toBeInTheDocument();
+  });
 
   async function jumpFromRecentEmails() {
     const roadmap = await mailClient.getThread("roadmap");

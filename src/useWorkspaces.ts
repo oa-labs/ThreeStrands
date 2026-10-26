@@ -35,6 +35,16 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
   useEffect(() => { writeSideColumn(sideColumn); }, [sideColumn]);
   const [calendarWeekAnchor, setCalendarWeekAnchor] = useState<Date | null>(null);
   const [calendarEventToOpen, setCalendarEventToOpen] = useState<ScheduleEvent | null>(null);
+  const [calendarOpenedFromToday, setCalendarOpenedFromToday] = useState(false);
+  useEffect(() => {
+    if (rightWorkspace !== "week") setCalendarOpenedFromToday(false);
+  }, [rightWorkspace]);
+  const canReturnToToday = rightWorkspace === "week" && calendarOpenedFromToday;
+  const returnToToday = useCallback(() => {
+    if (!canReturnToToday) return;
+    setCalendarOpenedFromToday(false);
+    setRightWorkspace("today");
+  }, [canReturnToToday]);
   const [contactAddressBookTarget, setContactAddressBookTarget] = useState<string | null>(null);
   const [contactsView, setContactsView] = useState<ContactsView>(readContactsView);
   useEffect(() => { writeContactsView(contactsView); }, [contactsView]);
@@ -140,12 +150,14 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     selectedEmail: contextPersonEmail,
   }), [openContactInAddressBook, visibleThreadId, contextPersonEmail, readingMessageIdRef, showMailContext]);
   const openCalendarView = useCallback((day?: Date, event?: ScheduleEvent) => {
+    // Opening an agenda item is a reversible jump; choosing Calendar itself is navigation.
+    setCalendarOpenedFromToday(rightWorkspace === "today" && Boolean(event));
     setCalendarWeekAnchor((current) => day ? startOfLocalDay(day) : current ?? startOfLocalDay(new Date()));
     setCalendarEventToOpen(event ?? null);
     setRightWorkspace("week");
     void refreshCalendarAccounts().catch(logBackgroundFailure("Calendar account listing"));
     void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"));
-  }, [refreshCalendarAccounts, refreshCalendarOptions]);
+  }, [refreshCalendarAccounts, refreshCalendarOptions, rightWorkspace]);
 
   return {
     rightWorkspace, setRightWorkspace, calendarWeekAnchor, setCalendarWeekAnchor,
@@ -155,6 +167,6 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     calendarConnected, calendarSidebarStart, openCalendarAt, toggleSchedule, openTasks,
     sideColumn, setSideColumn, scheduleShown, showMailContext, openTasksView,
     openFilesView, openTodayView, openContactsView, openKeepInTouchView, openContactGroupsView, contactCardActions,
-    contextPersonEmail, openCalendarView,
+    contextPersonEmail, openCalendarView, canReturnToToday, returnToToday,
   };
 }
