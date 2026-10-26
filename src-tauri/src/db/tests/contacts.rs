@@ -1284,9 +1284,8 @@ fn contact_request(name: &str, email: &str) -> SaveContactRequest {
 /// only its own login address produces "sent".
 #[test]
 fn a_message_from_a_secondary_identity_is_indexed_as_sent() {
-    use crate::provider::imap::{
-        write_settings_row, Identity, ImapAccountSettings, LabelStorage, SecurityMode,
-    };
+    use crate::db::imap::write_settings_row;
+    use crate::provider::imap::{Identity, ImapAccountSettings, LabelStorage, SecurityMode};
     let database = database();
     let settings = ImapAccountSettings {
         imap_host: "127.0.0.1".into(),

@@ -21,6 +21,7 @@ mod contact_suggestions;
 pub(crate) mod contacts;
 mod drafts;
 mod goals;
+pub(crate) mod imap;
 mod files;
 mod ingestion;
 mod labels;

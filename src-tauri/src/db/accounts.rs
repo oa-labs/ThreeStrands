@@ -123,7 +123,7 @@ impl Database {
         email: &str,
     ) -> DbResult<Option<crate::provider::imap::ImapAccountSettings>> {
         self.with_connection(|connection| {
-            crate::provider::imap::read_settings_row(connection, email)
+            super::imap::read_settings_row(connection, email)
         })
     }
 
@@ -167,7 +167,7 @@ impl Database {
         settings: &crate::provider::imap::ImapAccountSettings,
     ) -> DbResult<()> {
         self.with_connection(|connection| {
-            crate::provider::imap::write_settings_row(connection, email, settings)
+            super::imap::write_settings_row(connection, email, settings)
         })
     }
 
@@ -180,7 +180,7 @@ impl Database {
         settings: &crate::provider::imap::ImapAccountSettings,
     ) -> DbResult<()> {
         self.with_transaction(|tx| {
-            let previous = crate::provider::imap::read_settings_row(tx, email)?
+            let previous = super::imap::read_settings_row(tx, email)?
                 .ok_or(DatabaseError::NotFound("IMAP settings"))?;
             let mailbox_changed = previous.imap_host != settings.imap_host
                 || previous.imap_port != settings.imap_port
@@ -208,7 +208,7 @@ impl Database {
             {
                 tx.execute("DELETE FROM imap_sent_copy_detection WHERE account_id=?1", [email])?;
             }
-            crate::provider::imap::write_settings_row(tx, email, settings)
+            super::imap::write_settings_row(tx, email, settings)
         })
     }
 
@@ -487,7 +487,7 @@ fn enrich_label_model(connection: &rusqlite::Connection, account: &mut Account) 
     if MailProviderKind::parse(&account.provider) != Some(MailProviderKind::Imap) {
         return Ok(());
     }
-    if let Some(settings) = crate::provider::imap::read_settings_row(connection, &account.email)? {
+    if let Some(settings) = super::imap::read_settings_row(connection, &account.email)? {
         account.label_model = crate::provider::imap::label_model_for(settings.label_storage);
     }
     Ok(())

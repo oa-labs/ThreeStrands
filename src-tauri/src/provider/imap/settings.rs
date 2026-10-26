@@ -25,7 +25,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 
 use crate::db::{Database, DbResult};
@@ -222,15 +221,14 @@ impl ImapSettingsStore {
     /// Inserts or replaces this account's settings row.
     pub fn save(&self, settings: &ImapAccountSettings) -> DbResult<()> {
         self.database
-            .with_connection(|connection| write_settings_row(connection, &self.account_id, settings))
+            .save_imap_account_settings(&self.account_id, settings)
     }
 
     /// Reads this account's settings, or `None` when it has no IMAP row (a
     /// Gmail account, or an IMAP account imported without having been set up
     /// here yet).
     pub fn load(&self) -> DbResult<Option<ImapAccountSettings>> {
-        self.database
-            .with_connection(|connection| read_settings_row(connection, &self.account_id))
+        self.database.imap_account_settings(&self.account_id)
     }
 
     /// Records the pin for `host:port`, failing loudly if a DIFFERENT
@@ -274,164 +272,6 @@ impl ImapSettingsStore {
     }
 }
 
-/// Writes (insert-or-replace) one account's settings row on a connection,
-/// reused by the store's `save` and by the settings-transfer import so the
-/// column list lives in exactly one place.
-pub(crate) fn write_settings_row(
-    connection: &rusqlite::Connection,
-    account_id: &str,
-    settings: &ImapAccountSettings,
-) -> DbResult<()> {
-    let mailbox_overrides = serde_json::to_string(&settings.mailbox_overrides)
-        .map_err(crate::db::serialization_error)?;
-    let identities =
-        serde_json::to_string(&settings.identities).map_err(crate::db::serialization_error)?;
-    let pins = serde_json::to_string(&settings.pinned_fingerprints)
-        .map_err(crate::db::serialization_error)?;
-    connection.execute(
-        "INSERT INTO imap_account_settings(
-             account_id, imap_host, imap_port, imap_security, imap_username,
-             smtp_host, smtp_port, smtp_security, smtp_username,
-             mailbox_overrides_json, archive_mailbox, label_storage, label_container,
-             identities_json, pinned_fingerprints_json, server_saves_sent)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)
-         ON CONFLICT(account_id) DO UPDATE SET
-             imap_host = excluded.imap_host,
-             imap_port = excluded.imap_port,
-             imap_security = excluded.imap_security,
-             imap_username = excluded.imap_username,
-             smtp_host = excluded.smtp_host,
-             smtp_port = excluded.smtp_port,
-             smtp_security = excluded.smtp_security,
-             smtp_username = excluded.smtp_username,
-             mailbox_overrides_json = excluded.mailbox_overrides_json,
-             archive_mailbox = excluded.archive_mailbox,
-             label_storage = excluded.label_storage,
-             label_container = excluded.label_container,
-             identities_json = excluded.identities_json,
-             pinned_fingerprints_json = excluded.pinned_fingerprints_json,
-             server_saves_sent = excluded.server_saves_sent",
-        rusqlite::params![
-            account_id,
-            settings.imap_host,
-            settings.imap_port as i64,
-            settings.imap_security.as_str(),
-            settings.imap_username,
-            settings.smtp_host,
-            settings.smtp_port as i64,
-            settings.smtp_security.as_str(),
-            settings.smtp_username,
-            mailbox_overrides,
-            settings.archive_mailbox,
-            settings.label_storage.as_str(),
-            settings.label_container,
-            identities,
-            pins,
-            settings.server_saves_sent as i64,
-        ],
-    )?;
-    Ok(())
-}
-
-/// Reads one account's settings row on a connection, or `None` when absent.
-pub(crate) fn read_settings_row(
-    connection: &rusqlite::Connection,
-    account_id: &str,
-) -> DbResult<Option<ImapAccountSettings>> {
-    let row = connection
-        .query_row(
-            "SELECT imap_host, imap_port, imap_security, imap_username,
-                    smtp_host, smtp_port, smtp_security, smtp_username,
-                    mailbox_overrides_json, archive_mailbox, label_storage, label_container,
-                    identities_json, pinned_fingerprints_json, server_saves_sent
-             FROM imap_account_settings WHERE account_id = ?1",
-            [account_id],
-            |row| {
-                Ok(RawSettingsRow {
-                    imap_host: row.get(0)?,
-                    imap_port: row.get::<_, i64>(1)?,
-                    imap_security: row.get(2)?,
-                    imap_username: row.get(3)?,
-                    smtp_host: row.get(4)?,
-                    smtp_port: row.get::<_, i64>(5)?,
-                    smtp_security: row.get(6)?,
-                    smtp_username: row.get(7)?,
-                    mailbox_overrides_json: row.get(8)?,
-                    archive_mailbox: row.get(9)?,
-                    label_storage: row.get(10)?,
-                    label_container: row.get(11)?,
-                    identities_json: row.get(12)?,
-                    pinned_fingerprints_json: row.get(13)?,
-                    server_saves_sent: row.get::<_, i64>(14)? != 0,
-                })
-            },
-        )
-        .optional()?;
-    match row {
-        None => Ok(None),
-        Some(raw) => raw
-            .into_settings()
-            .map(Some)
-            .map_err(crate::db::DatabaseError::corrupt),
-    }
-}
-
-/// The raw column values before JSON/enum decoding, so the `query_row` closure
-/// stays a pure `rusqlite` read and all fallible parsing happens after.
-struct RawSettingsRow {
-    imap_host: String,
-    imap_port: i64,
-    imap_security: String,
-    imap_username: String,
-    smtp_host: String,
-    smtp_port: i64,
-    smtp_security: String,
-    smtp_username: String,
-    mailbox_overrides_json: String,
-    archive_mailbox: Option<String>,
-    label_storage: String,
-    label_container: Option<String>,
-    identities_json: String,
-    pinned_fingerprints_json: String,
-    server_saves_sent: bool,
-}
-
-impl RawSettingsRow {
-    fn into_settings(self) -> Result<ImapAccountSettings, String> {
-        let imap_security = SecurityMode::parse(&self.imap_security)
-            .ok_or_else(|| format!("unknown IMAP security mode: {}", self.imap_security))?;
-        let smtp_security = SecurityMode::parse(&self.smtp_security)
-            .ok_or_else(|| format!("unknown SMTP security mode: {}", self.smtp_security))?;
-        let label_storage = LabelStorage::parse(&self.label_storage)
-            .ok_or_else(|| format!("unknown label storage: {}", self.label_storage))?;
-        let imap_port = u16::try_from(self.imap_port)
-            .map_err(|_| format!("IMAP port out of range: {}", self.imap_port))?;
-        let smtp_port = u16::try_from(self.smtp_port)
-            .map_err(|_| format!("SMTP port out of range: {}", self.smtp_port))?;
-        let mailbox_overrides =
-            serde_json::from_str(&self.mailbox_overrides_json).map_err(|e| e.to_string())?;
-        let identities = serde_json::from_str(&self.identities_json).map_err(|e| e.to_string())?;
-        let pinned_fingerprints =
-            serde_json::from_str(&self.pinned_fingerprints_json).map_err(|e| e.to_string())?;
-        Ok(ImapAccountSettings {
-            imap_host: self.imap_host,
-            imap_port,
-            imap_security,
-            imap_username: self.imap_username,
-            smtp_host: self.smtp_host,
-            smtp_port,
-            smtp_security,
-            smtp_username: self.smtp_username,
-            mailbox_overrides,
-            archive_mailbox: self.archive_mailbox,
-            label_storage,
-            label_container: self.label_container,
-            identities,
-            pinned_fingerprints,
-            server_saves_sent: self.server_saves_sent,
-        })
-    }
-}
 
 #[cfg(test)]
 mod tests {

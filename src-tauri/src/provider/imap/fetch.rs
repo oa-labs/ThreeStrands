@@ -41,7 +41,6 @@ use super::identity::{derive_message_id, IdentityInputs};
 use super::policy;
 use super::session::{flag_to_wire, ImapSession};
 use super::{ImapLocation, ImapStateStore};
-use crate::db::DbResult;
 use crate::provider::ProviderError;
 
 /// The identity/flags pass: cheap, no body. `BODY.PEEK[HEADER.FIELDS (...)]`
@@ -307,103 +306,7 @@ impl BodyFetcher for SessionBodyFetcher<'_> {
     }
 }
 
-/// One cached body row.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CachedBody {
-    pub raw: Vec<u8>,
-    pub size: i64,
-    pub fetched_at: i64,
-}
-
-/// Account-scoped accessor for the `imap_bodies` cache table (migration 57).
-///
-/// Keyed by the STABLE message id, so a `UIDVALIDITY` reset — which drops a
-/// mailbox's `imap_locations` rows via
-/// [`ImapStateStore::drop_mailbox_locations`] — never drops a body. Like every
-/// other table behind [`ImapStateStore`], it is scoped to one account and is
-/// provider-internal: it is a rebuildable cache and is deliberately NOT part of
-/// the settings-transfer export (`transfer.rs` is untouched).
-#[derive(Clone)]
-pub struct BodyCache {
-    store: ImapStateStore,
-}
-
-impl BodyCache {
-    pub fn new(store: ImapStateStore) -> Self {
-        Self { store }
-    }
-
-    fn account(&self) -> &str {
-        self.store.account_id()
-    }
-
-    /// Store (or replace) a message body, keyed by its stable id. `fetched_at`
-    /// is a caller-supplied unix timestamp so tests stay deterministic.
-    pub fn put(&self, message_id: &str, raw: &[u8], fetched_at: i64) -> DbResult<()> {
-        let account = self.account().to_string();
-        let size = raw.len() as i64;
-        self.store.database().with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO imap_bodies (account_id, message_id, raw, size, fetched_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT(account_id, message_id) DO UPDATE SET
-                     raw = excluded.raw,
-                     size = excluded.size,
-                     fetched_at = excluded.fetched_at",
-                rusqlite::params![account, message_id, raw, size, fetched_at],
-            )?;
-            Ok(())
-        })
-    }
-
-    /// Read a cached body back, or `None` when it is not cached.
-    pub fn get(&self, message_id: &str) -> DbResult<Option<CachedBody>> {
-        let account = self.account().to_string();
-        self.store.database().with_connection(|connection| {
-            let row = connection
-                .query_row(
-                    "SELECT raw, size, fetched_at FROM imap_bodies
-                     WHERE account_id = ?1 AND message_id = ?2",
-                    rusqlite::params![account, message_id],
-                    |row| {
-                        Ok(CachedBody {
-                            raw: row.get(0)?,
-                            size: row.get(1)?,
-                            fetched_at: row.get(2)?,
-                        })
-                    },
-                )
-                .ok();
-            Ok(row)
-        })
-    }
-
-    /// Whether a body is already cached, without reading its bytes.
-    pub fn contains(&self, message_id: &str) -> DbResult<bool> {
-        let account = self.account().to_string();
-        self.store.database().with_connection(|connection| {
-            let exists = connection.query_row(
-                "SELECT 1 FROM imap_bodies WHERE account_id = ?1 AND message_id = ?2",
-                rusqlite::params![account, message_id],
-                |_| Ok(()),
-            );
-            Ok(matches!(exists, Ok(())))
-        })
-    }
-
-    /// Total cached body bytes for this account (size accounting).
-    pub fn total_size(&self) -> DbResult<i64> {
-        let account = self.account().to_string();
-        self.store.database().with_connection(|connection| {
-            let total = connection.query_row(
-                "SELECT COALESCE(SUM(size), 0) FROM imap_bodies WHERE account_id = ?1",
-                rusqlite::params![account],
-                |row| row.get(0),
-            )?;
-            Ok(total)
-        })
-    }
-}
+pub use crate::db::imap::{BodyCache, CachedBody};
 
 /// Resolve a message's stable id, record its location, and cache its body
 /// exactly once.

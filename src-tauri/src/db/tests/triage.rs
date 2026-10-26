@@ -130,9 +130,8 @@ fn triage_events_attribute_senders_and_rank_quick_dismissals() {
 /// (`sender_identity_for_thread` returns `None` for a sent-only thread).
 #[test]
 fn a_sent_only_thread_from_a_secondary_identity_teaches_nothing() {
-    use crate::provider::imap::{
-        write_settings_row, Identity, ImapAccountSettings, LabelStorage, SecurityMode,
-    };
+    use crate::db::imap::write_settings_row;
+    use crate::provider::imap::{Identity, ImapAccountSettings, LabelStorage, SecurityMode};
     let database = database();
     // Give the account an identity list: login first, then a secondary one.
     let settings = ImapAccountSettings {

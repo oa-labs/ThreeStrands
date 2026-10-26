@@ -1,6 +1,6 @@
 # Keeping persistence inside `db/`
 
-Status: accepted (2026-10-26). Phases 0 and 1 done (0.173.1); Phase 2 done (0.173.2).
+Status: accepted (2026-10-26). Phases 0 and 1 done (0.173.1); Phase 2 done (0.173.2); Phase 5 done (0.173.3).
 
 `src-tauri/src/db.rs` says "Feature modules own their SQL and tests": `db/`
 owns persistence, and the rest of the app calls named `Database` methods.
@@ -136,9 +136,11 @@ This is the one phase that can change behavior, so review it most carefully.
 
 Move the SQL in `ImapStateStore`, `BodyCache`, and `ImapSettingsStore` to
 `db/imap.rs` (`imap_locations`, `imap_mailboxes`, `imap_copy_intents`,
-`imap_sent_copy_detection`, the body cache). `ImapStateStore` stays as a thin
-per-account wrapper over those methods, because the provider code already
-depends on it.
+`imap_sent_copy_detection`, the body cache, the settings row).
+`ImapStateStore` and `BodyCache` are already per-account persistence
+handles, so they moved into `db/imap.rs` whole and `provider::imap`
+re-exports them; provider code is unchanged. `ImapSettingsStore` stays in
+the provider and calls the existing `Database` settings methods.
 
 ### Phase 6: let the compiler enforce it
 
