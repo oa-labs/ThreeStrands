@@ -73,6 +73,7 @@ test("reviews a new email in the composer, applies and undoes without sending, a
   await body.fill("I help teams improve their workflow.");
   // One click reviews the draft; a goal is only for reviewing again.
   await composer.getByRole("button", { name: "Review", exact: true }).click();
+  await expect(panel.getByRole("heading", { name: "Draft Review" }).locator(".context-row-glyph svg")).toBeVisible();
   await expect(panel.getByRole("button", { name: "Apply Revision" })).toBeVisible();
   await expect(body).toHaveText("I help teams improve their workflow.");
   await panel.getByText("What was sent to", { exact: false }).click();

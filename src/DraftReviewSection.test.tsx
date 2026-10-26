@@ -320,6 +320,10 @@ describe("Draft review in the composer", () => {
 
     fireEvent.click(trigger);
     const review = await screen.findByRole("region", { name: "Draft Review" });
+    const heading = within(review).getByRole("heading", { name: "Draft Review" });
+    const glyph = heading.querySelector(".context-row-glyph");
+    expect(glyph).toHaveAttribute("aria-hidden", "true");
+    expect(glyph?.querySelector("svg.lucide-sparkles")).not.toBeNull();
     expect(trigger).toHaveAttribute("aria-expanded", "true");
     // Opening it is the request; the draft stays editable above it.
     expect(screen.getByRole("textbox", { name: "Message Body" })).not.toHaveAttribute("contenteditable", "false");

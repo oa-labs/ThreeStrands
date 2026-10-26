@@ -132,7 +132,7 @@ export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalCha
   const accountHasProfile = reviewedAccount ? hasWritingProfile(writingProfileFor(profiles, reviewedAccount)) : true;
   const sentProfile = sent && hasWritingProfile(sent.profile) ? sent.profile : null;
   return <section ref={section} className="draft-review" aria-labelledby="draft-review-title" aria-busy={busy}>
-    <ContextSectionHeader title="Draft Review" titleId="draft-review-title" actions={onClose ? (
+    <ContextSectionHeader title="Draft Review" titleId="draft-review-title" icon={<Sparkles size={ICON_SIZE.sm} />} actions={onClose ? (
       <button type="button" className="btn-icon btn-icon-sm" aria-label="Close Draft Review" onClick={onClose}><X size={ICON_SIZE.sm} /></button>
     ) : undefined} />
     {available ? <div className="draft-review-content">
