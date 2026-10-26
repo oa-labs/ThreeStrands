@@ -390,7 +390,7 @@ impl Database {
             }
             // This is an explicit local edit, even if another thread is
             // projecting remote entities. It must not be silently suppressed.
-            crate::sync_state::record_replicated_write_in_transaction(
+            crate::db::sync_state::record_replicated_write_in_transaction(
                 tx, EntityType::Preferences, "portable", &fields, &preferences,
             )?;
             // Retain native-owned device names and fields from newer clients

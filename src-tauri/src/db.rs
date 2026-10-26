@@ -41,6 +41,7 @@ mod settings_transfer;
 mod signatures;
 mod snippets;
 mod split_inboxes;
+pub(crate) mod sync_state;
 mod tasks;
 mod threads;
 mod today;

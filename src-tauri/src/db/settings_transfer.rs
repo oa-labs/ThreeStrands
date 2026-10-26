@@ -111,7 +111,7 @@ impl Database {
                         let mut query = transaction.prepare(&format!("SELECT id FROM {table}"))?;
                         let ids = query.query_map([], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
                         for id in ids.into_iter().filter(|id| !keep.contains(id.as_str())) {
-                            crate::sync_state::record_replicated_deletion_in_transaction(transaction, entity_type, &id)?;
+                            crate::db::sync_state::record_replicated_deletion_in_transaction(transaction, entity_type, &id)?;
                         }
                     }
                 }

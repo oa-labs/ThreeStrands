@@ -4,7 +4,7 @@ use super::DatabaseError;
 use super::contacts::save_contact_on;
 use super::{Database, DbResult};
 use crate::models::{ContactProfile, ContactRecord, KeepInTouch, SaveContactRequest};
-use crate::sync_state::{
+use crate::db::sync_state::{
     record_replicated_deletion_in_transaction, record_replicated_write_in_transaction,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};

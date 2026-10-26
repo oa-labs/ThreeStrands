@@ -48,7 +48,7 @@ pub(crate) fn record_schedule_report(tx: &Transaction, id: &str, owner: &str, at
                 match Database::record_follow_up_on(tx, &task_id) {
                     Ok(task) => {
                         if group(tx)?.is_some() {
-                            crate::sync_state::record_replicated_write_in_transaction(
+                            crate::db::sync_state::record_replicated_write_in_transaction(
                                 tx,
                                 EntityType::Task,
                                 &task.id,
@@ -86,7 +86,7 @@ pub(crate) fn record_schedule_report(tx: &Transaction, id: &str, owner: &str, at
         let entity_id = schedule.report.entity_id();
         let current: Option<String> = tx.query_row("SELECT value FROM sync_values WHERE entity_type='scheduled_send_summary' AND entity_id=?1 AND field='report' ORDER BY lamport DESC LIMIT 1", [&entity_id], |r| r.get(0)).optional()?.flatten();
         if current.as_deref() != Some(report.to_string().as_str()) {
-            crate::sync_state::record_replicated_write_in_transaction(
+            crate::db::sync_state::record_replicated_write_in_transaction(
                 tx,
                 EntityType::ScheduledSendSummary,
                 &entity_id,

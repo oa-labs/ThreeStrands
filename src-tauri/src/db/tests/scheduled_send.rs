@@ -73,7 +73,7 @@ fn snapshots_replicate_only_metadata_and_never_create_sendable_rows() {
         assert!(!bytes.contains(secret), "leaked {secret}");
     }
     let peer = db();
-    let state = crate::sync_state::snapshot_to_state(&snapshot).unwrap();
+    let state = crate::db::sync_state::snapshot_to_state(&snapshot).unwrap();
     peer.merge_replica_state(&state).unwrap();
     let report = &item.schedule.as_ref().unwrap().report;
     peer.materialize_entity(
@@ -115,7 +115,7 @@ fn snapshots_replicate_only_metadata_and_never_create_sendable_rows() {
             item.deadline - 1,
         )
         .unwrap();
-    peer.merge_replica_state(&crate::sync_state::snapshot_to_state(&newer).unwrap())
+    peer.merge_replica_state(&crate::db::sync_state::snapshot_to_state(&newer).unwrap())
         .unwrap();
     peer.merge_replica_state(&state).unwrap();
     let value = peer

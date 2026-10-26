@@ -29,7 +29,6 @@ const ALLOWED: &[(&str, usize, usize, usize)] = &[
     ("sync.rs", 7, 0, 7),
     ("sync_projection.rs", 20, 1, 14),
     ("sync_sim.rs", 7, 0, 6),
-    ("sync_state.rs", 24, 1, 12),
     ("transfer.rs", 1, 0, 1),
 ];
 

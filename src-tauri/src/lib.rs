@@ -50,7 +50,6 @@ mod sync_policy;
 #[cfg(test)]
 mod sync_sim;
 mod sync_projection;
-mod sync_state;
 mod system_fonts;
 mod transfer;
 #[path = "unsubscribe.rs"]

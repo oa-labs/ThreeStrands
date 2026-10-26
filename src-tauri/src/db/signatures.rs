@@ -83,7 +83,7 @@ impl Database {
         self.with_transaction(|tx| {
             tx.execute(&format!("DELETE FROM {table} WHERE id=?1"), [id])?;
             if enabled {
-                crate::sync_state::record_replicated_deletion_in_transaction(tx, entity_type, id)?;
+                crate::db::sync_state::record_replicated_deletion_in_transaction(tx, entity_type, id)?;
             }
             Ok(())
         })
@@ -212,7 +212,7 @@ pub(crate) fn record_signature_write(
         .keys()
         .cloned()
         .collect();
-    crate::sync_state::record_replicated_write_in_transaction(
+    crate::db::sync_state::record_replicated_write_in_transaction(
         tx,
         entity_type,
         id,

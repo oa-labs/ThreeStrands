@@ -24,7 +24,7 @@ use threestrands_sync_envelope::{
     DeviceId as EnvelopeDeviceId, ReplicaSnapshot, SequenceEntry, SnapshotField, SnapshotValue, PROTOCOL_VERSION,
 };
 
-use crate::db::{serialization_error, Database, DatabaseError, DbResult};
+use super::{serialization_error, Database, DatabaseError, DbResult};
 use crate::replicated_sync::{decode_id, encode_id, ensure_space_and_device, FrontierConflict, FrontierConflictCandidate};
 
 /// Records that the replica changed, so the next push seals a new snapshot.

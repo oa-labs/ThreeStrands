@@ -782,7 +782,7 @@ impl Database {
                  WHERE id=1",
                 params![next as i64, keys.key_epoch],
             )?;
-            crate::sync_state::clear_dirty_if_generation(tx, snapshot_generation)?;
+            crate::db::sync_state::clear_dirty_if_generation(tx, snapshot_generation)?;
             Ok(())
         });
         if let Err(error) = stored {
@@ -1377,7 +1377,7 @@ async fn pull_device_state(
     if snapshot.device_id != head.device_id || snapshot.state_sequence != head.state_sequence {
         return Err(format!("Device {author_hex}'s head and snapshot disagree about which snapshot it is"));
     }
-    let remote = crate::sync_state::snapshot_to_state(&snapshot)?;
+    let remote = crate::db::sync_state::snapshot_to_state(&snapshot)?;
     let touched = database.merge_replica_state(&remote)?;
     database.record_merged_state(&author_hex, snapshot.state_sequence)?;
     database.materialize_touched_entities(&touched)
@@ -2728,7 +2728,7 @@ mod replicator_tests {
 
         rename_snippet(&database, "one", "after");
         database
-            .with_transaction(|tx| crate::sync_state::clear_dirty_if_generation(tx, generation))
+            .with_transaction(|tx| crate::db::sync_state::clear_dirty_if_generation(tx, generation))
             .unwrap();
         assert!(database.local_state_status().unwrap().0, "storing an older snapshot must not clear a later write");
     }
@@ -2935,7 +2935,7 @@ mod replicator_tests {
         EntityType::Draft.validate_payload(&payload).unwrap();
         let fields: BTreeSet<String> = payload.as_object().unwrap().keys().cloned().collect();
         database
-            .with_transaction(|tx| crate::sync_state::record_replicated_write_in_transaction(tx, EntityType::Draft, &draft.id, &fields, &payload))
+            .with_transaction(|tx| crate::db::sync_state::record_replicated_write_in_transaction(tx, EntityType::Draft, &draft.id, &fields, &payload))
             .unwrap();
     }
 
@@ -2956,7 +2956,7 @@ mod replicator_tests {
         pull_from_transports(&new, &kn, &transports).await.unwrap();
         assert_eq!(new.drafts().unwrap().iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), [mine.id.as_str()]);
 
-        old.with_transaction(|tx| crate::sync_state::record_replicated_deletion_in_transaction(tx, EntityType::Draft, &mine.id)).unwrap();
+        old.with_transaction(|tx| crate::db::sync_state::record_replicated_deletion_in_transaction(tx, EntityType::Draft, &mine.id)).unwrap();
         push_local_state(&old, &ko, &transports).await.unwrap();
         pull_from_transports(&new, &kn, &transports).await.unwrap();
         assert_eq!(new.drafts().unwrap().len(), 1, "a legacy deletion leaves local drafts alone");

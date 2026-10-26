@@ -191,7 +191,7 @@ impl Database {
             if enabled {
                 let record = connection.query_row(&format!("SELECT {COLUMNS} FROM sender_delivery_patterns WHERE id=?1"), [&id], confirmation_from_row)?;
                 let payload = serde_json::json!({"pattern": record});
-                crate::sync_state::record_replicated_write_in_transaction(connection, EntityType::SenderConfirmation, &id, &["pattern".to_string()].into(), &payload)?;
+                crate::db::sync_state::record_replicated_write_in_transaction(connection, EntityType::SenderConfirmation, &id, &["pattern".to_string()].into(), &payload)?;
             }
             Ok(())
         })
@@ -202,7 +202,7 @@ impl Database {
         self.with_transaction(|connection| {
             connection.execute("DELETE FROM sender_delivery_patterns WHERE id = ?1", [id])?;
             if enabled {
-                crate::sync_state::record_replicated_deletion_in_transaction(
+                crate::db::sync_state::record_replicated_deletion_in_transaction(
                     connection,
                     EntityType::SenderConfirmation,
                     id,
