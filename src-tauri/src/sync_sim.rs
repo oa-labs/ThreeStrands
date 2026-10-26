@@ -54,14 +54,14 @@ impl SimDevice {
 
     fn active_epoch(&self) -> u32 {
         self.database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row("SELECT active_epoch FROM sync_spaces", [], |row| row.get(0))
             .unwrap()
     }
 
     fn snippet_ids(&self) -> Vec<String> {
-        let connection = self.database.connection().unwrap();
+        let connection = self.database.test_connection().unwrap();
         let mut statement = connection.prepare("SELECT id FROM snippets ORDER BY id").unwrap();
         let ids = statement.query_map([], |row| row.get(0)).unwrap().collect::<Result<Vec<String>, _>>().unwrap();
         ids
@@ -296,7 +296,7 @@ impl Sim {
         if self.rng.random_bool(0.2) {
             let device = &self.devices[self.rng.random_range(0..self.devices.len())];
             let cids: Vec<String> = {
-                let connection = device.database.connection().unwrap();
+                let connection = device.database.test_connection().unwrap();
                 let mut statement = connection.prepare("SELECT cid FROM sync_objects ORDER BY cid").unwrap();
                 let cids = statement.query_map([], |row| row.get(0)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
                 cids
@@ -366,7 +366,7 @@ impl Sim {
             crate::sync_policy::set_test_clock(Some(self.now));
             let mut activity = Vec::new();
             for index in 0..self.devices.len() {
-                self.devices[index].database.connection().unwrap().execute("UPDATE sync_deliveries SET retry_at=NULL", []).unwrap();
+                self.devices[index].database.test_connection().unwrap().execute("UPDATE sync_deliveries SET retry_at=NULL", []).unwrap();
                 activity.extend(self.sync(index).await);
             }
             if activity.is_empty() && attempt > 0 {
@@ -384,7 +384,7 @@ impl Sim {
             return "not a simulated device".to_string();
         };
         let (states, cids) = {
-            let connection = device.database.connection().unwrap();
+            let connection = device.database.test_connection().unwrap();
             let mut statement =
                 connection.prepare("SELECT state, COUNT(*), MAX(last_error) FROM sync_deliveries GROUP BY state").unwrap();
             let states: Vec<(String, i64, Option<String>)> =
@@ -525,7 +525,7 @@ fn stamp(dot: Dot, lamport: u64) -> WinnerStamp {
 }
 
 fn snippet_rows(database: &Database) -> BTreeMap<String, (String, String)> {
-    let connection = database.connection().unwrap();
+    let connection = database.test_connection().unwrap();
     let mut statement = connection.prepare("SELECT id, name, body FROM snippets").unwrap();
     let rows = statement
         .query_map([], |row| Ok((row.get::<_, String>(0)?, (row.get::<_, String>(1)?, row.get::<_, String>(2)?))))

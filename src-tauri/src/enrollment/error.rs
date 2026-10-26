@@ -104,11 +104,6 @@ pub enum EnrollmentError {
     Invalid(String),
 }
 
-impl From<rusqlite::Error> for EnrollmentError {
-    fn from(error: rusqlite::Error) -> Self {
-        Self::Database(DatabaseError::Sqlite(error))
-    }
-}
 
 /// Compatibility conversion for the Tauri commands, which still report
 /// errors to the frontend as strings.

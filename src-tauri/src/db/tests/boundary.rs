@@ -1,81 +1,42 @@
-//! Persistence belongs in `db/` (see `docs/db-layer-plan.md`). This scan
-//! counts SQL statement literals, `rusqlite` references, and direct
-//! connection access in every source file outside `db/`, `db.rs`, and
-//! `schema.rs`, and holds each file to the allowance below. The allowances
-//! record what has not moved yet; they may only go down.
+//! Persistence belongs in `db/` (see `docs/db-layer-plan.md`). The compiler
+//! keeps the connection private to `db`; this scan covers the rest: no
+//! production code outside `db/`, `db.rs`, and `schema.rs` may hold an SQL
+//! statement literal or name `rusqlite`.
+//!
+//! Test code may still set up or inspect raw state, so the scan reads the
+//! crate's module tree from `lib.rs` and `main.rs`, skips every item marked
+//! `#[cfg(test)]`, and so never reads a file that only test code declares.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct Counts {
     sql: usize,
     rusqlite: usize,
-    connection: usize,
 }
-
-/// Files still holding persistence code, as (path under `src/`, SQL
-/// literals, `rusqlite` references, connection calls). Lower an entry when a
-/// phase of the plan moves code into `db/`, and remove it at zero.
-const ALLOWED: &[(&str, usize, usize, usize)] = &[
-    ("correspondence.rs", 30, 1, 33),
-    ("draft_push.rs", 12, 1, 12),
-    ("enrollment.rs", 47, 3, 36),
-    ("enrollment/error.rs", 0, 2, 0),
-    ("lib.rs", 1, 0, 1),
-    ("provider/imap/provider/tests/mod.rs", 13, 3, 10),
-    ("replicated_sync.rs", 39, 1, 42),
-    ("sync.rs", 7, 0, 7),
-    ("sync_projection.rs", 4, 0, 4),
-    ("sync_sim.rs", 7, 0, 6),
-    ("transfer.rs", 1, 0, 1),
-];
-
-const CONNECTION_CALLS: [&str; 3] = [".connection()", ".with_connection(", ".with_transaction("];
 
 #[test]
 fn persistence_stays_inside_the_db_module() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut found = BTreeMap::new();
-    collect(&src, &src, &mut found);
-    assert!(found.contains_key("lib.rs"), "the scan read no sources from {}", src.display());
-
-    let allowed: BTreeMap<&str, Counts> = ALLOWED
+    for root in ["lib.rs", "main.rs"] {
+        walk(&src, &src.join(root), &mut found);
+    }
+    for expected in ["lib.rs", "correspondence.rs", "replicated_sync.rs", "provider/imap/mod.rs", "commands/accounts.rs"] {
+        assert!(found.contains_key(expected), "the module walk never reached {expected}");
+    }
+    let problems: Vec<String> = found
         .iter()
-        .map(|&(path, sql, rusqlite, connection)| (path, Counts { sql, rusqlite, connection }))
+        .filter(|(_, counts)| **counts != Counts::default())
+        .map(|(path, counts)| {
+            format!(
+                "{path}: {} SQL literals, {} rusqlite references in production code. Add a named Database method in db/ instead.",
+                counts.sql, counts.rusqlite
+            )
+        })
         .collect();
-    let mut problems = Vec::new();
-    for (path, counts) in &found {
-        let allowance = allowed.get(path.as_str()).copied().unwrap_or_default();
-        if *counts == Counts::default() && !allowed.contains_key(path.as_str()) {
-            continue;
-        }
-        for (what, actual, limit) in [
-            ("SQL literals", counts.sql, allowance.sql),
-            ("rusqlite references", counts.rusqlite, allowance.rusqlite),
-            ("connection calls", counts.connection, allowance.connection),
-        ] {
-            if actual > limit {
-                problems.push(format!(
-                    "{path}: {actual} {what}, allowed {limit}. Add a named Database method in db/ instead."
-                ));
-            } else if actual < limit {
-                problems.push(format!(
-                    "{path}: {actual} {what}, allowance is {limit}. Lower its entry in ALLOWED."
-                ));
-            }
-        }
-    }
-    for path in allowed.keys() {
-        if !found.contains_key(*path) {
-            problems.push(format!("{path}: no longer exists. Remove its entry from ALLOWED."));
-        }
-    }
-    assert!(
-        problems.is_empty(),
-        "Persistence code outside db/ (see docs/db-layer-plan.md):\n{}",
-        problems.join("\n")
-    );
+    assert!(problems.is_empty(), "Persistence code outside db/:\n{}", problems.join("\n"));
 }
 
 #[test]
@@ -84,6 +45,7 @@ fn the_scan_ignores_comments_and_counts_sql_in_every_literal_form() {
         // conn.execute("DELETE FROM drafts", []) in a comment
         /* "SELECT id FROM drafts" in a block comment */
         let quote = '"';
+        let brace = '{';
         let imap = ["SELECT INBOX", "CREATE {mailbox}", "DELETE \"Archive\""];
         let plain = "SELECT id FROM drafts";
         let raw = r#"
@@ -91,33 +53,79 @@ fn the_scan_ignores_comments_and_counts_sql_in_every_literal_form() {
         "#;
         let escaped = "UPDATE drafts SET body = \"x\" WHERE id = ?1";
         use rusqlite::params;
-        database.with_connection(|c| Ok(()));
-        database.connection()?;
     "####;
-    assert_eq!(scan(source), Counts { sql: 3, rusqlite: 1, connection: 2 });
+    assert_eq!(scan(source).0, Counts { sql: 3, rusqlite: 1 });
 }
 
-fn collect(root: &Path, dir: &Path, found: &mut BTreeMap<String, Counts>) {
-    for entry in std::fs::read_dir(dir).unwrap() {
-        let path = entry.unwrap().path();
-        let relative = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
-        if relative == "db" || relative == "db.rs" || relative == "schema.rs" {
-            continue;
+#[test]
+fn the_scan_skips_test_items_and_finds_production_modules() {
+    let source = r####"
+        mod kept;
+        #[path = "elsewhere/named.rs"]
+        pub(crate) mod renamed;
+        #[cfg(test)]
+        mod only_tests;
+        #[cfg(test)]
+        use rusqlite::params;
+        #[cfg(test)]
+        mod tests {
+            fn seed() { let sql = "DELETE FROM drafts WHERE id=?1"; let brace = "}"; }
         }
-        if path.is_dir() {
-            collect(root, &path, found);
-        } else if relative.ends_with(".rs") {
-            found.insert(relative, scan(&std::fs::read_to_string(&path).unwrap()));
-        }
+        fn production() { let sql = "SELECT id FROM drafts"; }
+    "####;
+    let (counts, modules) = scan(source);
+    assert_eq!(counts, Counts { sql: 1, rusqlite: 0 });
+    assert_eq!(
+        modules,
+        vec![("kept".to_string(), None), ("renamed".to_string(), Some("elsewhere/named.rs".to_string()))]
+    );
+}
+
+/// Scans `file` and every production module it declares, recording counts
+/// for each file outside `db/` and `schema.rs`.
+fn walk(src: &Path, file: &Path, found: &mut BTreeMap<String, Counts>) {
+    let relative = file.strip_prefix(src).unwrap().to_string_lossy().replace('\\', "/");
+    if relative == "db.rs" || relative.starts_with("db/") || relative == "schema.rs" {
+        return;
+    }
+    let source = std::fs::read_to_string(file).unwrap_or_else(|error| panic!("cannot read {}: {error}", file.display()));
+    let (counts, modules) = scan(&source);
+    found.insert(relative, counts);
+    let directory = file.parent().unwrap();
+    let stem = file.file_stem().unwrap().to_string_lossy();
+    let children = if matches!(stem.as_ref(), "lib" | "main" | "mod") { directory.to_path_buf() } else { directory.join(stem.as_ref()) };
+    for (name, path) in modules {
+        let child: PathBuf = match path {
+            Some(path) => directory.join(path),
+            None if children.join(format!("{name}.rs")).exists() => children.join(format!("{name}.rs")),
+            None => children.join(&name).join("mod.rs"),
+        };
+        walk(src, &child, found);
     }
 }
 
-/// Splits source into code and string literals, skipping comments, and
-/// counts each kind of persistence access.
-fn scan(source: &str) -> Counts {
+/// Counts persistence access in `source`'s production code and lists the
+/// file modules it declares, as `(name, #[path] value)`. Comments and
+/// `#[cfg(test)]` items are skipped.
+fn scan(source: &str) -> (Counts, Vec<(String, Option<String>)>) {
+    let (code, literals) = tokenize(source);
+    let (code, literals) = strip_test_items(&code, literals);
+    let counts = Counts {
+        sql: literals.iter().filter(|literal| is_sql(literal)).count(),
+        rusqlite: code.matches("rusqlite").count(),
+    };
+    (counts, file_modules(&code, &literals))
+}
+
+/// Marks where each string literal was in the code.
+const LITERAL: char = '\u{1}';
+
+/// Splits source into code, with each string literal replaced by
+/// [`LITERAL`] and comments and char literals removed, and the literals' text.
+fn tokenize(source: &str) -> (String, Vec<String>) {
     let bytes = source.as_bytes();
     let mut code = String::new();
-    let mut counts = Counts::default();
+    let mut literals = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
         let rest = &source[i..];
@@ -129,21 +137,21 @@ fn scan(source: &str) -> Counts {
             let open = 2 + hashes;
             let close = format!("\"{}", "#".repeat(hashes));
             let end = rest[open..].find(&close).map_or(rest.len(), |end| open + end);
-            counts.sql += usize::from(is_sql(&rest[open..end]));
+            literals.push(rest[open..end].to_string());
             i += (end + close.len()).min(rest.len());
-            code.push(' ');
+            code.push(LITERAL);
         } else if rest.starts_with('"') {
             let mut end = 1;
             while end < bytes.len() - i && bytes[i + end] != b'"' {
                 end += if bytes[i + end] == b'\\' { 2 } else { 1 };
             }
-            counts.sql += usize::from(is_sql(&rest[1..end.min(rest.len())]));
+            literals.push(rest[1..end.min(rest.len())].to_string());
             i += end + 1;
-            code.push(' ');
+            code.push(LITERAL);
         } else if rest.starts_with("'\\") && rest.len() > 3 {
             i += rest[3..].find('\'').map_or(rest.len(), |end| end + 4);
         } else if rest.starts_with('\'') && rest.len() >= 3 && rest.is_char_boundary(2) && rest[2..].starts_with('\'') {
-            // A one-byte char literal such as '"'.
+            // A one-byte char literal such as '"' or '{'.
             i += 3;
         } else {
             let ch = rest.chars().next().unwrap();
@@ -151,9 +159,83 @@ fn scan(source: &str) -> Counts {
             i += ch.len_utf8();
         }
     }
-    counts.rusqlite = code.matches("rusqlite").count();
-    counts.connection = CONNECTION_CALLS.iter().map(|call| code.matches(call).count()).sum();
-    counts
+    (code, literals)
+}
+
+/// Removes every `#[cfg(test)]` item: up to its `;`, or through its braced
+/// body, and the literals inside it.
+fn strip_test_items(code: &str, literals: Vec<String>) -> (String, Vec<String>) {
+    const ATTRIBUTE: &str = "#[cfg(test)]";
+    let chars: Vec<char> = code.chars().collect();
+    let mut kept_code = String::new();
+    let mut kept_literals = Vec::new();
+    let mut literal_index = 0;
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i..].starts_with(&ATTRIBUTE.chars().collect::<Vec<_>>()) {
+            let mut end = i + ATTRIBUTE.len();
+            while end < chars.len() && chars[end] != ';' && chars[end] != '{' {
+                end += 1;
+            }
+            if end < chars.len() && chars[end] == '{' {
+                let mut depth = 0;
+                while end < chars.len() {
+                    match chars[end] {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    end += 1;
+                }
+            }
+            let end = (end + 1).min(chars.len());
+            literal_index += chars[i..end].iter().filter(|ch| **ch == LITERAL).count();
+            i = end;
+            continue;
+        }
+        if chars[i] == LITERAL {
+            kept_literals.push(literals[literal_index].clone());
+            literal_index += 1;
+        }
+        kept_code.push(chars[i]);
+        i += 1;
+    }
+    (kept_code, kept_literals)
+}
+
+/// The file modules `code` declares (`mod name;`), with any `#[path]` value.
+fn file_modules(code: &str, literals: &[String]) -> Vec<(String, Option<String>)> {
+    let mut modules = Vec::new();
+    let mut search = 0;
+    while let Some(offset) = code[search..].find("mod ") {
+        let start = search + offset;
+        search = start + 4;
+        let at_word_start = code[..start].chars().last().is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'));
+        let rest = &code[start + 4..];
+        let name: String = rest.trim_start().chars().take_while(|ch| ch.is_alphanumeric() || *ch == '_').collect();
+        let after = rest.trim_start()[name.len()..].trim_start();
+        if !at_word_start || name.is_empty() || !after.starts_with(';') {
+            continue;
+        }
+        // A `#[path = "..."]` attribute directly before this declaration.
+        let before = code[..start].trim_end();
+        let before = before.strip_suffix("pub(crate)").or_else(|| before.strip_suffix("pub")).unwrap_or(before).trim_end();
+        let path = before.strip_suffix(']').and_then(|head| {
+            let attribute = &head[head.rfind("#[")?..];
+            let compact: String = attribute.chars().filter(|ch| !ch.is_whitespace()).collect();
+            (compact == format!("#[path={LITERAL}")).then(|| {
+                let index = code[..start].rfind(LITERAL).map(|at| code[..at].matches(LITERAL).count()).unwrap();
+                literals[index].clone()
+            })
+        });
+        modules.push((name, path));
+    }
+    modules
 }
 
 /// The number of `#`s when `text` opens a raw string (`r"`, `r#"`, ...).

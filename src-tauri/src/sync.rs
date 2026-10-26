@@ -2772,7 +2772,7 @@ mod tests {
         // reconcile keeps instead (see
         // `reconcile_keeps_an_archive_that_has_not_been_delivered_yet`).
         database
-            .connection()
+            .test_connection()
             .unwrap()
             .execute("UPDATE mutations SET state = 'done'", [])
             .unwrap();
@@ -2861,7 +2861,7 @@ mod tests {
             .unwrap();
         assert!(thread.archived, "the user's pending archive must survive reconciliation");
         let pending: i64 = database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row("SELECT COUNT(*) FROM mutations WHERE state = 'pending'", [], |row| row.get(0))
             .unwrap();
@@ -2873,7 +2873,7 @@ mod tests {
         let account = "acct-reconcile-retry";
         let database = Database::open_memory();
         database
-            .connection()
+            .test_connection()
             .unwrap()
             .execute("INSERT INTO sync_state(account_id) VALUES (?1)", [account])
             .unwrap();
@@ -2948,7 +2948,7 @@ mod tests {
         // local-only demo thread onto the first adopted account, which would
         // otherwise leak into this test's fixture.
         database
-            .connection()
+            .test_connection()
             .unwrap()
             .execute("INSERT INTO sync_state(account_id) VALUES (?1)", [account])
             .unwrap();
@@ -3027,7 +3027,7 @@ mod tests {
         let account = "acct-resume";
         let database = Database::open_memory();
         database
-            .connection()
+            .test_connection()
             .unwrap()
             .execute("INSERT INTO sync_state(account_id) VALUES (?1)", [account])
             .unwrap();
@@ -3080,7 +3080,7 @@ mod tests {
         let account = "acct-invalid-thread-id";
         let database = Database::open_memory();
         database
-            .connection()
+            .test_connection()
             .unwrap()
             .execute("INSERT INTO sync_state(account_id) VALUES (?1)", [account])
             .unwrap();
@@ -3237,7 +3237,7 @@ mod tests {
     fn backfill_database() -> Database {
         let database = Database::open_memory();
         database
-            .connection()
+            .test_connection()
             .unwrap()
             .execute(
                 "INSERT INTO sync_state(account_id, cursor) VALUES (?1, 'synced')",

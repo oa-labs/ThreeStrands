@@ -1,6 +1,6 @@
 # Keeping persistence inside `db/`
 
-Status: accepted (2026-10-26). Phases 0 and 1 done (0.173.1); Phase 2 done (0.173.2); Phase 5 done (0.173.3); Phase 3 done (0.173.4 to 0.173.6); Phase 4 done (0.173.7). Phase 6 remains.
+Status: accepted (2026-10-26). Phases 0 and 1 done (0.173.1); Phase 2 done (0.173.2); Phase 5 done (0.173.3); Phase 3 done (0.173.4 to 0.173.6); Phase 4 done (0.173.7); Phase 6 done (0.173.8). All phases are done.
 
 `src-tauri/src/db.rs` says "Feature modules own their SQL and tests": `db/`
 owns persistence, and the rest of the app calls named `Database` methods.
@@ -151,11 +151,18 @@ the provider and calls the existing `Database` settings methods.
 
 ### Phase 6: let the compiler enforce it
 
-- Make `Database::connection`, `with_connection`, and `with_transaction`
-  private to `db`. A new leak then fails to compile.
-- Move test seeding outside `db/` to `db::test_support` helpers.
-- Reduce the Phase 0 scan to SQL literals and `rusqlite` references, with an
-  empty allowlist, and update the module comment in `db.rs`.
+- `Database::connection`, `with_connection`, and `with_transaction` are
+  private to `db`. Production code elsewhere that reaches for them fails to
+  compile.
+- Tests outside `db/` that set up or inspect raw state use
+  `test_connection`, `test_with_connection`, and `test_with_transaction`,
+  defined in `db::test_support` and compiled only for tests. Rewriting about
+  160 test-only statements as named helpers would have added indirection
+  without protecting production code, so they stayed.
+- The Phase 0 scan now reads the module tree from `lib.rs` and `main.rs`,
+  skips `#[cfg(test)]` items and test-only files, and requires production
+  code outside `db/`, `db.rs`, and `schema.rs` to have no SQL literals and no
+  `rusqlite` references. There is no allowlist.
 
 ## Risks
 

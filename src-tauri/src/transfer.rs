@@ -2078,7 +2078,7 @@ mod tests {
         // just asserted). An imported IMAP account must therefore carry no
         // detection row — detection re-runs on the new device's first send.
         let detection_rows: i64 = database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row("SELECT COUNT(*) FROM imap_sent_copy_detection", [], |r| r.get(0))
             .unwrap();

@@ -2313,7 +2313,7 @@ mod tests {
             updated_at: unix_millis(),
             server_draft: None,
         };
-        db.connection()
+        db.test_connection()
             .unwrap()
             .execute("INSERT INTO drafts VALUES (?1,?2,?3)", params![d.id, d.revision, json(&d).unwrap()])
             .unwrap();
@@ -2515,7 +2515,7 @@ mod tests {
         let d = saved(&db);
         let item = db.queue(&d.id, d.revision, false, &[], None, Path::new("/unused")).unwrap();
         let raw: Vec<u8> = db
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row(
                 "SELECT raw FROM outbox_messages WHERE id=?1",
@@ -2555,7 +2555,7 @@ mod tests {
             ("you@example.com", "other-thread"),
             ("other@example.com", "reply-thread"),
         ] {
-            db.connection().unwrap().execute(
+            db.test_connection().unwrap().execute(
                 "INSERT INTO threads SELECT ?1, ?2, subject, snippet, participants_json,
                     last_message_at, unread, starred, archived, labels_json, trashed, ?3,
                     summary, summary_generated_at, has_attachments, last_received_at,
@@ -2570,7 +2570,7 @@ mod tests {
             let draft = saved(&db);
             // Native reply creation owns routing fields; a regular save
             // deliberately refuses to change them.
-            db.connection().unwrap().execute(
+            db.test_connection().unwrap().execute(
                 "UPDATE drafts SET payload=json_set(payload, '$.mode', 'reply', '$.threadId', ?1)
                  WHERE id=?2",
                 params![thread_id, draft.id],
@@ -2597,7 +2597,7 @@ mod tests {
 
         // A completed send follows the ordinary archive mutation, rather
         // than retaining a stale post-send instruction.
-        db.connection().unwrap().execute(
+        db.test_connection().unwrap().execute(
             "UPDATE outbox_messages SET state='sent' WHERE id=?1", [&target.id],
         ).unwrap();
         archive(true);
@@ -2639,7 +2639,7 @@ mod tests {
         let gone_ready = queue(db);
         let gone_scheduled = queue(db);
         // Due next month: only the removal check, not the send loop, reaches it now.
-        db.connection().unwrap().execute(
+        db.test_connection().unwrap().execute(
             "UPDATE outbox_messages SET state='scheduled', deadline=?2 WHERE id=?1",
             params![gone_scheduled.id, unix_millis() + 30 * 24 * 60 * 60 * 1000],
         ).unwrap();
@@ -2673,7 +2673,7 @@ mod tests {
             let item = db
                 .queue(&queued.id, queued.revision, false, &[], None, Path::new("/unused"))
                 .unwrap();
-            db.connection()
+            db.test_connection()
                 .unwrap()
                 .execute(
                     "UPDATE outbox_messages SET state='sending' WHERE id=?1",
@@ -2698,7 +2698,7 @@ mod tests {
         let db = database();
         let d = saved(&db);
         let item = db.queue(&d.id, d.revision, false, &[], None, Path::new("/unused")).unwrap();
-        db.connection()
+        db.test_connection()
             .unwrap()
             .execute(
                 "UPDATE outbox_messages SET state='uncertain', error='dropped before 250' WHERE id=?1",
@@ -2736,7 +2736,7 @@ mod tests {
         for state in ["sent", "failed", "ready", "undo_pending", "sending"] {
             let d = saved(&db);
             let item = db.queue(&d.id, d.revision, false, &[], None, Path::new("/unused")).unwrap();
-            db.connection()
+            db.test_connection()
                 .unwrap()
                 .execute(
                     "UPDATE outbox_messages SET state=?2 WHERE id=?1",
@@ -2868,7 +2868,7 @@ mod tests {
                         .database
                         .queue(&draft.id, draft.revision, false, &[], None, &service.root)
                         .unwrap();
-                    service.database.connection().unwrap().execute(
+                    service.database.test_connection().unwrap().execute(
                         "UPDATE outbox_messages SET state='uncertain', error='Connection dropped before SMTP acceptance' WHERE id=?1",
                         [&item.id],
                     ).unwrap();
@@ -3079,7 +3079,7 @@ mod tests {
                 .unwrap();
             service
                 .database
-                .connection()
+                .test_connection()
                 .unwrap()
                 .execute(
                     "UPDATE outbox_messages SET state='ready', deadline=?2 WHERE id=?1",
@@ -3109,7 +3109,7 @@ mod tests {
         fn attempts_of(service: &Correspondence, id: &str) -> i64 {
             service
                 .database
-                .connection()
+                .test_connection()
                 .unwrap()
                 .query_row(
                     "SELECT attempts FROM outbox_messages WHERE id=?1",
@@ -3479,7 +3479,7 @@ mod tests {
                 .unwrap();
             service
                 .database
-                .connection()
+                .test_connection()
                 .unwrap()
                 .execute(
                     "UPDATE outbox_messages SET state='ready', deadline=?2 WHERE id=?1",
@@ -3505,7 +3505,7 @@ mod tests {
             next_at: i64,
             append_attempted: i64,
         ) {
-            let c = service.database.connection().unwrap();
+            let c = service.database.test_connection().unwrap();
             c.execute(
                 "INSERT INTO outbox_messages
                     (id, draft_id, revision, account, state, deadline, payload, raw, provider_id,
@@ -3523,7 +3523,7 @@ mod tests {
         ) -> (String, Option<String>, i64, Option<i64>, i64, String, Option<String>) {
             service
                 .database
-                .connection()
+                .test_connection()
                 .unwrap()
                 .query_row(
                     "SELECT state, sent_copy_state, sent_copy_attempts, sent_copy_next_at,
@@ -3749,7 +3749,7 @@ mod tests {
             // Make the job due now and point it at an account with no provider.
             service
                 .database
-                .connection()
+                .test_connection()
                 .unwrap()
                 .execute(
                     "UPDATE outbox_messages SET account='ghost@example.com', sent_copy_next_at=?2 WHERE id=?1",
@@ -4243,7 +4243,7 @@ mod tests {
     fn reply_all_excludes_self_preserves_cc_and_forward_joins_the_thread() {
         let db = database();
         let source = serde_json::json!({"id":"source","threadId":"thread","payload":{"mimeType":"text/plain","headers":[{"name":"From","value":"Other <other@example.com>"},{"name":"Reply-To","value":"reply@example.com"},{"name":"To","value":"you@example.com, colleague@example.com"},{"name":"Cc","value":"cc@example.com, colleague@example.com"},{"name":"Subject","value":"Topic"},{"name":"Message-ID","value":"<source@example.com>"}],"body":{"data":URL_SAFE_NO_PAD.encode("Hello")}}});
-        db.connection()
+        db.test_connection()
             .unwrap()
             .execute(
                 "INSERT INTO message_metadata(id, payload) VALUES ('source',?1)",
@@ -4294,7 +4294,7 @@ mod tests {
             ),
         ] {
             let source = serde_json::json!({"id":id,"threadId":"thread","payload":{"mimeType":"text/plain","headers":headers,"body":{"data":URL_SAFE_NO_PAD.encode("Hello")}}});
-            db.connection()
+            db.test_connection()
                 .unwrap()
                 .execute(
                     "INSERT INTO message_metadata(id, payload) VALUES (?1,?2)",
@@ -4375,7 +4375,7 @@ mod tests {
             let db = database();
             let source_id = format!("html-forward-{index}");
             let source = serde_json::json!({"id":source_id,"threadId":"thread","payload":{"mimeType":"multipart/alternative","headers":[{"name":"From","value":"Other <other@example.com>"},{"name":"To","value":"you@example.com"},{"name":"Subject","value":"Golf <Monday> & friends"}],"parts":[{"mimeType":"text/plain","body":{"data":URL_SAFE_NO_PAD.encode("Plain alternative [Profile] and [image]")}},{"mimeType":"text/html","body":{"data":URL_SAFE_NO_PAD.encode(html)}}]}});
-            db.connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES (?1, ?2)", params![source_id, source.to_string()]).unwrap();
+            db.test_connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES (?1, ?2)", params![source_id, source.to_string()]).unwrap();
             let mut draft = db.create_draft("forward", Some(source_id), "you@example.com", &[]).unwrap();
             let preserved = draft.forwarded_content.as_ref().unwrap();
             assert!(preserved.html.ends_with(html));
@@ -4405,7 +4405,7 @@ mod tests {
         let db = database();
         let html = "<p>Agenda</p><p>Private note for the team</p>";
         let source = serde_json::json!({"id":"edited-forward","threadId":"thread","payload":{"mimeType":"text/html","headers":[{"name":"From","value":"Other <other@example.com>"},{"name":"To","value":"you@example.com"},{"name":"Subject","value":"Plans"}],"body":{"data":URL_SAFE_NO_PAD.encode(html)}}});
-        db.connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES (?1, ?2)", params!["edited-forward", source.to_string()]).unwrap();
+        db.test_connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES (?1, ?2)", params!["edited-forward", source.to_string()]).unwrap();
         let mut draft = db.create_draft("forward", Some("edited-forward".into()), "you@example.com", &[]).unwrap();
         let original = draft.forwarded_content.clone().unwrap();
         draft.to = "friend@example.com".into();
@@ -4446,7 +4446,7 @@ mod tests {
     fn a_forwarded_edit_counts_toward_the_draft_size_limit() {
         let db = database();
         let source = serde_json::json!({"id":"large-forward","threadId":"thread","payload":{"mimeType":"text/html","headers":[{"name":"From","value":"other@example.com"},{"name":"Subject","value":"Large"}],"body":{"data":URL_SAFE_NO_PAD.encode("<p>Large</p>")}}});
-        db.connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES (?1, ?2)", params!["large-forward", source.to_string()]).unwrap();
+        db.test_connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES (?1, ?2)", params!["large-forward", source.to_string()]).unwrap();
         let mut draft = db.create_draft("forward", Some("large-forward".into()), "you@example.com", &[]).unwrap();
         draft.forwarded_edit = Some(ForwardedContent { html: "x".repeat(2 * 1024 * 1024), text: "x".into() });
         assert_eq!(db.save_draft(draft).unwrap_err(), "Draft is too large");
@@ -4561,7 +4561,7 @@ mod tests {
         let db = database();
         let html = "<p>Photos</p><img src=\"cid:first@example.com\"><table><tr><td><img src=\"cid:second@example.com\"></td></tr></table>";
         let source = serde_json::json!({"id":"inline-forward","threadId":"thread","payload":{"mimeType":"multipart/related","headers":[{"name":"From","value":"other@example.com"},{"name":"Subject","value":"Photos"}],"parts":[{"mimeType":"text/html","body":{"data":URL_SAFE_NO_PAD.encode(html)}},{"mimeType":"image/png","filename":"photo.png","headers":[{"name":"Content-ID","value":"<first@example.com>"}],"body":{"attachmentId":"remote-part","size":3}},{"mimeType":"image/png","headers":[{"name":"Content-ID","value":"<second@example.com>"},{"name":"Content-Disposition","value":"inline"}],"body":{"data":URL_SAFE_NO_PAD.encode("png"),"size":3}}]}});
-        db.connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES ('inline-forward', ?1)", [source.to_string()]).unwrap();
+        db.test_connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES ('inline-forward', ?1)", [source.to_string()]).unwrap();
         let mut draft = db.create_draft("forward", Some("inline-forward".into()), "you@example.com", &[]).unwrap();
         assert_eq!(draft.attachments.len(), 2);
         assert!(draft.attachments.iter().all(|attachment| attachment.inline && !attachment.ready));
@@ -4602,7 +4602,7 @@ mod tests {
     fn reply_and_forward_bodies_quote_the_source_with_a_readable_date() {
         let db = database();
         let source = serde_json::json!({"id":"source-q","threadId":"thread-q","internalDate":"1791210768000","payload":{"mimeType":"text/plain","headers":[{"name":"From","value":"Other <other@example.com>"},{"name":"To","value":"you@example.com"},{"name":"Subject","value":"Topic"},{"name":"Message-ID","value":"<source-q@example.com>"}],"body":{"data":URL_SAFE_NO_PAD.encode("Hello\n> earlier")}}});
-        db.connection()
+        db.test_connection()
             .unwrap()
             .execute(
                 "INSERT INTO message_metadata(id, payload) VALUES ('source-q',?1)",
@@ -4630,7 +4630,7 @@ mod tests {
         // the one this reply must actually send from.
         db.set_compose_identity("active@example.com").unwrap();
         let source = serde_json::json!({"id":"source-b","threadId":"thread-b","payload":{"mimeType":"text/plain","headers":[{"name":"From","value":"Other <other@example.com>"},{"name":"To","value":"you@example.com"},{"name":"Subject","value":"Topic"},{"name":"Message-ID","value":"<source-b@example.com>"}],"body":{"data":URL_SAFE_NO_PAD.encode("Hello")}}});
-        db.connection()
+        db.test_connection()
             .unwrap()
             .execute(
                 "INSERT INTO message_metadata(id, payload) VALUES ('source-b',?1)",
@@ -4651,7 +4651,7 @@ mod tests {
         assert!(updated.revision > d.revision);
 
         let source = serde_json::json!({"id":"source-c","threadId":"thread-c","payload":{"mimeType":"text/plain","headers":[{"name":"From","value":"Other <other@example.com>"},{"name":"To","value":"you@example.com"},{"name":"Subject","value":"Topic"},{"name":"Message-ID","value":"<source-c@example.com>"}],"body":{"data":URL_SAFE_NO_PAD.encode("Hello")}}});
-        db.connection()
+        db.test_connection()
             .unwrap()
             .execute(
                 "INSERT INTO message_metadata(id, payload) VALUES ('source-c',?1)",
@@ -4682,7 +4682,7 @@ mod tests {
     fn queuing_rejects_a_draft_whose_account_needs_reauth() {
         let db = database();
         db.adopt_account("you@example.com").unwrap();
-        db.connection()
+        db.test_connection()
             .unwrap()
             .execute(
                 "UPDATE accounts SET status='needs_reauth' WHERE email='you@example.com'",
@@ -4697,7 +4697,7 @@ mod tests {
         let db = database();
         let before = db.list_threads(None).unwrap().len();
         assert!(before > 0, "the fixture database must hold mail for this check to mean anything");
-        crate::schema::migrate(&mut db.connection().unwrap()).unwrap();
+        crate::schema::migrate(&mut db.test_connection().unwrap()).unwrap();
         assert_eq!(db.list_threads(None).unwrap().len(), before);
     }
     fn service() -> Correspondence {
@@ -4721,7 +4721,7 @@ mod tests {
         // open a reply to a message that is already cached.
         let service = service();
         let source = serde_json::json!({"id":"cached","threadId":"t","payload":{"mimeType":"text/plain","headers":[{"name":"From","value":"Other <other@example.com>"},{"name":"To","value":"you@example.com"},{"name":"Subject","value":"Topic"},{"name":"Message-ID","value":"<cached@example.com>"}],"body":{"data":URL_SAFE_NO_PAD.encode("Hello")}}});
-        service.database.connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES ('cached', ?1)", [source.to_string()]).unwrap();
+        service.database.test_connection().unwrap().execute("INSERT INTO message_metadata(id, payload) VALUES ('cached', ?1)", [source.to_string()]).unwrap();
         let value = service
             .request(Request::Create { mode: "reply".into(), source_id: Some("cached".into()), account: Some("you@example.com".into()) })
             .await
@@ -4838,12 +4838,12 @@ mod tests {
             .queue(&d.id, d.revision, false, &[], None, &service.root)
             .unwrap();
         let result=service.dispatch_due(&item,item.deadline,false,|_,_|async {
-            service.database.connection().unwrap().execute_batch("CREATE TRIGGER fail_ack BEFORE UPDATE ON outbox_messages WHEN NEW.state='sent' BEGIN SELECT RAISE(FAIL,'disk failure'); END;").unwrap();
+            service.database.test_connection().unwrap().execute_batch("CREATE TRIGGER fail_ack BEFORE UPDATE ON outbox_messages WHEN NEW.state='sent' BEGIN SELECT RAISE(FAIL,'disk failure'); END;").unwrap();
             Ok(DeliveryReceipt{provider_message_id:"accepted".into(),thread_id:Some("thread".into())})
         }).await;
         assert!(result.is_err());
         assert_eq!(service.database.outbox().unwrap()[0].state, "sending");
-        crate::schema::migrate(&mut service.database.connection().unwrap()).unwrap();
+        crate::schema::migrate(&mut service.database.test_connection().unwrap()).unwrap();
         assert_eq!(service.database.outbox().unwrap()[0].state, "uncertain");
     }
     #[test]
@@ -5029,7 +5029,7 @@ mod tests {
         owner.database.manage_schedule(&item.id,late.schedule.unwrap().report.report_revision,None,true,"00000000-0000-4000-8000-000000000001",item.deadline+60_001).unwrap();
         let now_send=owner.database.outbox().unwrap().remove(0);assert_eq!(now_send.state,"undo_pending");assert_eq!(now_send.deadline,item.deadline+70_001);
         let d=saved(&owner.database);let immediate=owner.database.queue(&d.id,d.revision,false,&[],None,&owner.root).unwrap();
-        crate::schema::migrate(&mut owner.database.connection().unwrap()).unwrap();
+        crate::schema::migrate(&mut owner.database.test_connection().unwrap()).unwrap();
         let items=owner.database.outbox().unwrap();
         assert!(items.iter().find(|o|o.id==immediate.id).unwrap().deadline>unix_millis());
         assert_eq!(items.iter().find(|o|o.id==item.id).unwrap().schedule.as_ref().unwrap().report.scheduled_at,item.deadline);
@@ -5038,10 +5038,10 @@ mod tests {
     #[tokio::test]
     async fn scheduled_send_uncertainty_is_persisted_without_retry_and_report_failure_rolls_back() {
         let owner=service();let item=scheduled(&owner);
-        owner.database.connection().unwrap().execute_batch("CREATE TRIGGER fail_report BEFORE UPDATE OF schedule_json ON outbox_messages BEGIN SELECT RAISE(FAIL,'report storage failed'); END;").unwrap();
+        owner.database.test_connection().unwrap().execute_batch("CREATE TRIGGER fail_report BEFORE UPDATE OF schedule_json ON outbox_messages BEGIN SELECT RAISE(FAIL,'report storage failed'); END;").unwrap();
         assert!(owner.dispatch_due(&item,item.deadline,false,|_,_|async {panic!("delivery before durable claim")}).await.is_err());
         assert_eq!(owner.database.outbox().unwrap()[0].state,"scheduled");
-        owner.database.connection().unwrap().execute_batch("DROP TRIGGER fail_report;").unwrap();
+        owner.database.test_connection().unwrap().execute_batch("DROP TRIGGER fail_report;").unwrap();
         owner.dispatch_due(&item,item.deadline,false,|_,_|async {Err((false,"lost acknowledgement".into()))}).await.unwrap();
         let uncertain=owner.database.outbox().unwrap().remove(0);
         assert_eq!(uncertain.state,"uncertain");assert_eq!(uncertain.schedule.as_ref().unwrap().report.state,"uncertain");

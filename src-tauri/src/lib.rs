@@ -430,7 +430,7 @@ mod account_startup_tests {
         database.adopt_mail_account("work@example.com", MailProviderKind::Gmail).unwrap();
         database.adopt_mail_account("future@example.com", MailProviderKind::Gmail).unwrap();
         database
-            .with_connection(|connection| {
+            .test_with_connection(|connection| {
                 connection.execute(
                     "UPDATE accounts SET provider = 'from-a-newer-build' WHERE email = 'future@example.com'",
                     [],

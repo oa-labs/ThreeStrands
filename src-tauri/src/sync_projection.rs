@@ -244,7 +244,7 @@ mod tests {
     use super::*;
 
     fn operation_count(db: &Database, entity_id: &str) -> i64 {
-        db.connection()
+        db.test_connection()
             .unwrap()
             .query_row(
                 "SELECT COUNT(*) FROM sync_values WHERE entity_id=?1",
@@ -360,7 +360,7 @@ mod tests {
         .unwrap();
         assert_eq!(operation_count(&db, "one"), 3);
         let counters: Vec<(String, i64)> = {
-            let connection = db.connection().unwrap();
+            let connection = db.test_connection().unwrap();
             let mut statement = connection.prepare("SELECT field, counter FROM sync_values WHERE entity_id='one' ORDER BY field").unwrap();
             let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?))).unwrap().collect::<Result<_, _>>().unwrap();
             rows
@@ -467,7 +467,7 @@ mod tests {
         }
         assert!(!db.update_synced_preferences(preferences).unwrap());
         assert_eq!(db.load_replica_state().unwrap(), after);
-        let stored: String = db.connection().unwrap().query_row(
+        let stored: String = db.test_connection().unwrap().query_row(
             "SELECT value FROM synced_preferences WHERE key='portable'", [], |row| row.get(0),
         ).unwrap();
         assert_eq!(serde_json::from_str::<Value>(&stored).unwrap()["deviceName:123"], "Laptop");
@@ -499,7 +499,7 @@ mod tests {
         db.set_beta_features_enabled(true).unwrap();
         db.update_synced_preferences(json!({"fontFamily": "system"})).unwrap();
         let before = db.load_replica_state().unwrap();
-        db.connection().unwrap().execute_batch(
+        db.test_connection().unwrap().execute_batch(
             "CREATE TRIGGER reject_preference_snapshot BEFORE UPDATE ON synced_preferences
              BEGIN SELECT RAISE(ABORT, 'snapshot write failed'); END;",
         ).unwrap();

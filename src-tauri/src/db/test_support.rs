@@ -1,8 +1,10 @@
 //! Shared seeded/empty database fixtures and isolated filesystem paths.
 
-use super::{recovery::insert_demo, Database};
+use super::{recovery::insert_demo, Database, DbResult};
 use crate::mime::NormalizedMessage;
+use rusqlite::Connection;
 use std::path::{Path, PathBuf};
+use std::sync::MutexGuard;
 use uuid::Uuid;
 
 pub(super) fn database() -> Database {
@@ -110,4 +112,23 @@ pub(super) fn table_rows(database: &Database, table: &str) -> Vec<Vec<rusqlite::
         .unwrap()
         .collect::<rusqlite::Result<Vec<_>>>()
         .unwrap()
+}
+
+/// Raw database access for tests outside `db/` that set up or inspect state
+/// directly. Production code cannot reach the connection.
+impl Database {
+    pub(crate) fn test_connection(&self) -> DbResult<MutexGuard<'_, Connection>> {
+        self.connection()
+    }
+
+    pub(crate) fn test_with_connection<R>(&self, work: impl FnOnce(&Connection) -> DbResult<R>) -> DbResult<R> {
+        self.with_connection(work)
+    }
+
+    pub(crate) fn test_with_transaction<R>(
+        &self,
+        work: impl FnOnce(&rusqlite::Transaction<'_>) -> DbResult<R>,
+    ) -> DbResult<R> {
+        self.with_transaction(work)
+    }
 }

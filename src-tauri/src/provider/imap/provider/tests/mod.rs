@@ -1119,7 +1119,7 @@ async fn merged_threads_ingest_atomically_and_replay_through_the_engine() {
     assert_eq!(threads.len(), 1);
     assert_eq!(db.get_thread(&threads[0].id).unwrap().messages.len(), 3);
     // Replay the journal after a simulated crash before cursor storage.
-    db.with_connection(|connection| {
+    db.test_with_connection(|connection| {
         connection.execute(
             "UPDATE sync_state SET cursor = ?1 WHERE account_id = ?2",
             rusqlite::params![previous_cursor, "me@example.com"],
@@ -1222,7 +1222,7 @@ async fn cache_miss_checks_uidvalidity_before_fetching() {
         .clone();
     store
         .database()
-        .with_connection(|c| {
+        .test_with_connection(|c| {
             c.execute("DELETE FROM imap_bodies", [])?;
             Ok(())
         })
@@ -1552,7 +1552,7 @@ async fn the_round_loader_does_not_read_cached_bodies() {
     // Drop every cached body: a body read now would fail to find anything.
     store
         .database()
-        .with_connection(|c| {
+        .test_with_connection(|c| {
             c.execute("DELETE FROM imap_bodies", [])?;
             Ok(())
         })
@@ -1606,7 +1606,7 @@ async fn upgrade_backfill_fills_tokens_then_a_late_linker_threads_like_before() 
     // anyway, and force "backfill needed".
     store
         .database()
-        .with_connection(|c| {
+        .test_with_connection(|c| {
             c.execute("DELETE FROM imap_message_tokens", [])?;
             c.execute(
                 "UPDATE imap_sync_state SET tokens_backfilled = 0 WHERE account_id = ?1",
@@ -1648,7 +1648,7 @@ async fn upgrade_backfill_is_idempotent_and_crash_resumable() {
         .unwrap();
     store
         .database()
-        .with_connection(|c| {
+        .test_with_connection(|c| {
             c.execute("DELETE FROM imap_message_tokens", [])?;
             c.execute("UPDATE imap_sync_state SET tokens_backfilled = 0", [])?;
             Ok(())
@@ -1685,7 +1685,7 @@ async fn a_message_with_no_cached_body_backfills_only_its_stable_id() {
     // No cache.put — the message has no cached body.
     store
         .database()
-        .with_connection(|c| {
+        .test_with_connection(|c| {
             c.execute("DELETE FROM imap_message_tokens", [])?;
             c.execute("UPDATE imap_sync_state SET tokens_backfilled = 0", [])?;
             Ok(())
@@ -1694,7 +1694,7 @@ async fn a_message_with_no_cached_body_backfills_only_its_stable_id() {
     provider.ensure_tokens_backfilled().unwrap();
     let tokens: Vec<String> = store
         .database()
-        .with_connection(|c| {
+        .test_with_connection(|c| {
             let mut st = c.prepare(
                 "SELECT token FROM imap_message_tokens WHERE message_id = 'imap:me@example.com:nb'",
             )?;
@@ -2702,7 +2702,7 @@ async fn baseline_replay_survives_journal_pruning_and_excludes_cold_threads() {
     provider.baseline_cursor().await.unwrap();
     let old = store.generation().unwrap();
     // Age the acquired Sent message out of journal retention.
-    db.with_connection(|connection| {
+    db.test_with_connection(|connection| {
         connection.execute(
             "UPDATE imap_sync_state SET generation = generation + ?1 WHERE account_id = ?2",
             rusqlite::params![(policy::JOURNAL_RETENTION_GENERATIONS + 1) as i64, "me@example.com"],
@@ -2853,7 +2853,7 @@ fn task_count_for(store: &ImapStateStore, provider_thread_id: &str) -> i64 {
     let local = format!("me@example.com:{provider_thread_id}");
     store
         .database()
-        .with_connection(|c| {
+        .test_with_connection(|c| {
             Ok(c.query_row(
                 "SELECT COUNT(*) FROM tasks WHERE thread_id = ?1",
                 [&local],
@@ -2869,7 +2869,7 @@ fn attach_task(store: &ImapStateStore, provider_thread_id: &str, task_id: &str) 
     let local = format!("me@example.com:{provider_thread_id}");
     store
         .database()
-        .with_connection(|c| {
+        .test_with_connection(|c| {
             c.execute(
                 "INSERT INTO tasks(id, account_id, thread_id, subject_snapshot, title, kind,
                     due_kind, status, created_at, updated_at)

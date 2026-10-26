@@ -661,7 +661,7 @@ pub(crate) mod tests {
         }
         fn link_due(&self, draft: &Draft) -> Option<i64> {
             self.db()
-                .connection()
+                .test_connection()
                 .unwrap()
                 .query_row("SELECT due_at FROM draft_server_links WHERE draft_id=?1", [&draft.id], |row| row.get(0))
                 .unwrap()
@@ -702,7 +702,7 @@ pub(crate) mod tests {
         // Back-date the first pending edit so the next save is near the cap.
         harness
             .db()
-            .connection()
+            .test_connection()
             .unwrap()
             .execute(
                 "UPDATE draft_server_links SET pending_since=?2 WHERE draft_id=?1",
@@ -735,7 +735,7 @@ pub(crate) mod tests {
         // Another device, or this one after a crash, knows the draft but not its server id.
         harness
             .db()
-            .connection()
+            .test_connection()
             .unwrap()
             .execute("UPDATE draft_server_links SET server_id=NULL WHERE draft_id=?1", [&draft.id])
             .unwrap();
@@ -831,7 +831,7 @@ pub(crate) mod tests {
         let harness = Harness::new();
         harness
             .db()
-            .connection()
+            .test_connection()
             .unwrap()
             .execute("UPDATE accounts SET provider='imap' WHERE email=?1", [ACCOUNT])
             .unwrap();
@@ -846,7 +846,7 @@ pub(crate) mod tests {
         let harness = Harness::new();
         harness
             .db()
-            .connection()
+            .test_connection()
             .unwrap()
             .execute("UPDATE accounts SET on_this_device=0 WHERE email=?1", [ACCOUNT])
             .unwrap();
@@ -935,7 +935,7 @@ pub(crate) mod tests {
         harness.db().discard_draft(&draft.id).unwrap();
         // The link was retired into a queued deletion that hasn't run yet.
         let late = crate::correspondence::DISCARD_SERVER_DELAY_MS + 1;
-        harness.service.database.connection().unwrap()
+        harness.service.database.test_connection().unwrap()
             .execute("UPDATE draft_server_deletions SET due_at=?1", [unix_millis() + 60 * 60 * 1000]).unwrap();
         harness.run_after(late).await;
         harness.db().restore_discarded_draft(&draft.id).unwrap();
@@ -966,13 +966,13 @@ pub(crate) mod tests {
             message_id: None, provider_id: None, inline: false, content_id: None,
         });
         let payload = serde_json::to_string(&draft).unwrap();
-        harness.db().connection().unwrap().execute("UPDATE drafts SET payload=?2 WHERE id=?1", params![draft.id, payload]).unwrap();
+        harness.db().test_connection().unwrap().execute("UPDATE drafts SET payload=?2 WHERE id=?1", params![draft.id, payload]).unwrap();
         harness.db().discard_draft(&draft.id).unwrap();
         harness.service.cleanup().unwrap();
         assert!(harness.root.0.join(&file).exists(), "Undo brings the file back too");
 
         let expired = unix_millis() - crate::correspondence::DISCARDED_DRAFT_RETENTION_MS - 1;
-        harness.db().connection().unwrap().execute("UPDATE discarded_drafts SET discarded_at=?1", [expired]).unwrap();
+        harness.db().test_connection().unwrap().execute("UPDATE discarded_drafts SET discarded_at=?1", [expired]).unwrap();
         harness.service.cleanup().unwrap();
         assert!(!harness.root.0.join(&file).exists());
         assert!(harness.db().restore_discarded_draft(&draft.id).is_err());
@@ -994,7 +994,7 @@ pub(crate) mod tests {
 
         harness
             .db()
-            .connection()
+            .test_connection()
             .unwrap()
             .execute("UPDATE outbox_messages SET state='sent' WHERE id=?1", [&item.id])
             .unwrap();
@@ -1033,7 +1033,7 @@ pub(crate) mod tests {
         assert!(harness.server.drafts().is_empty(), "the old account's copy is deleted");
         let pending: i64 = harness
             .db()
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row(
                 "SELECT count(*) FROM draft_server_links WHERE draft_id=?1 AND account='other@example.com' AND server_id IS NULL",
@@ -1051,7 +1051,7 @@ pub(crate) mod tests {
         harness.run_after(PAST_DELAY).await;
         harness
             .db()
-            .connection()
+            .test_connection()
             .unwrap()
             .execute("DELETE FROM drafts WHERE id=?1", [&draft.id])
             .unwrap();
@@ -1076,7 +1076,7 @@ pub(crate) mod tests {
         draft.body = "Body".into();
         let saved = database.save_draft(draft).unwrap();
         let payload: String = database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row("SELECT payload FROM drafts WHERE id=?1", [&saved.id], |row| row.get(0))
             .unwrap();

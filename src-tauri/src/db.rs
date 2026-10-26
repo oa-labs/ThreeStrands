@@ -1,7 +1,11 @@
 //! Shared database connection and error infrastructure.
 //!
-//! Feature modules own their SQL and tests. Operations that coordinate features
-//! (ingestion and settings transfer) keep a single caller-owned transaction.
+//! All persistence lives under `db/`: feature modules own their SQL and tests,
+//! and the rest of the app calls named `Database` methods. The connection is
+//! private to this module, and `db/tests/boundary.rs` rejects SQL or
+//! `rusqlite` in production code anywhere else (`docs/db-layer-plan.md`).
+//! Operations that coordinate features (ingestion and settings transfer) keep
+//! a single caller-owned transaction.
 
 use rusqlite::Connection;
 use std::{
@@ -126,14 +130,17 @@ pub struct Database {
 }
 
 impl Database {
-    pub(crate) fn connection(&self) -> DbResult<MutexGuard<'_, Connection>> {
+    // These three stay private to `db`: persistence goes through named
+    // `Database` methods. Tests elsewhere use the `test_*` accessors in
+    // `test_support`.
+    fn connection(&self) -> DbResult<MutexGuard<'_, Connection>> {
         self.connection
             .lock()
             .map_err(|_| DatabaseError::ConnectionPoisoned)
     }
 
     /// Runs one read or write operation while holding the connection guard.
-    pub(crate) fn with_connection<R>(
+    fn with_connection<R>(
         &self,
         work: impl FnOnce(&Connection) -> DbResult<R>,
     ) -> DbResult<R> {
@@ -143,7 +150,7 @@ impl Database {
 
     /// Runs an operation in a transaction and commits only when the operation
     /// succeeds. Dropping the transaction on an error rolls it back.
-    pub(crate) fn with_transaction<R>(
+    fn with_transaction<R>(
         &self,
         work: impl FnOnce(&rusqlite::Transaction<'_>) -> DbResult<R>,
     ) -> DbResult<R> {

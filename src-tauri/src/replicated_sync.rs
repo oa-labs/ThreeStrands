@@ -1675,7 +1675,7 @@ mod tests {
     }
 
     fn values(db: &Database, entity_id: &str) -> Vec<(String, i64, Option<String>)> {
-        let connection = db.connection().unwrap();
+        let connection = db.test_connection().unwrap();
         let mut statement = connection
             .prepare("SELECT field, counter, value FROM sync_values WHERE entity_id=?1 ORDER BY field, counter")
             .unwrap();
@@ -1688,7 +1688,7 @@ mod tests {
     }
 
     fn own_counter(db: &Database) -> i64 {
-        db.connection()
+        db.test_connection()
             .unwrap()
             .query_row(
                 "SELECT c.counter FROM sync_context c JOIN sync_devices d ON d.device_id = c.device_id WHERE d.is_self = 1",
@@ -1732,7 +1732,7 @@ mod tests {
     fn every_write_advances_lamport_time() {
         let db = Database::open_memory();
         let lamport = |db: &Database| -> i64 {
-            db.connection().unwrap().query_row("SELECT MAX(lamport) FROM sync_values", [], |row| row.get(0)).unwrap()
+            db.test_connection().unwrap().query_row("SELECT MAX(lamport) FROM sync_values", [], |row| row.get(0)).unwrap()
         };
         db.record_replicated_write(EntityType::Snippet, "one", &fields(&["name"]), &json!({"name": "n"})).unwrap();
         let first = lamport(&db);
@@ -1956,9 +1956,9 @@ mod replicator_tests {
         ).unwrap();
 
         db.materialize_touched_entities(&[(EntityType::Contact,"remote-contact".into()),(EntityType::Snippet,"remote-snippet".into())]).unwrap();
-        let snippet:Option<String>=db.connection().unwrap().query_row("SELECT name FROM snippets WHERE id='remote-snippet'",[],|row|row.get(0)).unwrap();
+        let snippet:Option<String>=db.test_connection().unwrap().query_row("SELECT name FROM snippets WHERE id='remote-snippet'",[],|row|row.get(0)).unwrap();
         assert_eq!(snippet.as_deref(),Some("Materialized despite contact conflict"));
-        let queued:i64=db.connection().unwrap().query_row("SELECT COUNT(*) FROM pending_entity_materializations WHERE entity_type='contact' AND entity_id='remote-contact'",[],|row|row.get(0)).unwrap();
+        let queued:i64=db.test_connection().unwrap().query_row("SELECT COUNT(*) FROM pending_entity_materializations WHERE entity_type='contact' AND entity_id='remote-contact'",[],|row|row.get(0)).unwrap();
         assert_eq!(queued,1);
         assert!(db.get_contact_profile("remote-contact").unwrap().is_none());
 
@@ -1970,7 +1970,7 @@ mod replicator_tests {
         // No newer remote snapshot is needed; pending projection state is
         // retried even when this call has no newly touched entities.
         db.materialize_touched_entities(&[]).unwrap();
-        let queued:i64=db.connection().unwrap().query_row("SELECT COUNT(*) FROM pending_entity_materializations WHERE entity_type='contact' AND entity_id='remote-contact'",[],|row|row.get(0)).unwrap();
+        let queued:i64=db.test_connection().unwrap().query_row("SELECT COUNT(*) FROM pending_entity_materializations WHERE entity_type='contact' AND entity_id='remote-contact'",[],|row|row.get(0)).unwrap();
         assert_eq!(queued,0);
         let remote=db.get_contact_profile("remote-contact").unwrap().unwrap();
         assert_eq!(remote.addresses,vec!["shared@example.com"]);
@@ -2078,7 +2078,7 @@ mod replicator_tests {
     /// `Database::local_replicated_keys`.
     fn test_keys(database: &Database) -> LocalKeys {
         let device_id = {
-            let mut connection = database.connection().unwrap();
+            let mut connection = database.test_connection().unwrap();
             let tx = connection.transaction().unwrap();
             let device_id = ensure_space_and_device(&tx).unwrap();
             tx.commit().unwrap();
@@ -2121,7 +2121,7 @@ mod replicator_tests {
     /// the replica.
     fn write_snippet(database: &Database, id: &str, name: &str) {
         database
-            .connection()
+            .test_connection()
             .unwrap()
             .execute(
                 "INSERT INTO snippets(id, name, body, created_at) VALUES (?1, ?2, 'body', '2026-01-01T00:00:00Z')
@@ -2135,20 +2135,20 @@ mod replicator_tests {
     }
 
     fn rename_snippet(database: &Database, id: &str, name: &str) {
-        database.connection().unwrap().execute("UPDATE snippets SET name=?2 WHERE id=?1", params![id, name]).unwrap();
+        database.test_connection().unwrap().execute("UPDATE snippets SET name=?2 WHERE id=?1", params![id, name]).unwrap();
         database
             .record_replicated_write(EntityType::Snippet, id, &fields(&["name"]), &snippet_payload(id, name))
             .unwrap();
     }
 
     fn delete_snippet(database: &Database, id: &str) {
-        database.connection().unwrap().execute("DELETE FROM snippets WHERE id=?1", params![id]).unwrap();
+        database.test_connection().unwrap().execute("DELETE FROM snippets WHERE id=?1", params![id]).unwrap();
         database.record_replicated_deletion(EntityType::Snippet, id).unwrap();
     }
 
     fn stored_snippet_name(database: &Database, id: &str) -> Option<String> {
         database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row("SELECT name FROM snippets WHERE id=?1", params![id], |row| row.get(0))
             .optional()
@@ -2156,7 +2156,7 @@ mod replicator_tests {
     }
 
     fn state_objects(database: &Database) -> Vec<(String, String, i64)> {
-        let connection = database.connection().unwrap();
+        let connection = database.test_connection().unwrap();
         let mut statement = connection
             .prepare("SELECT cid, object_kind, state_sequence FROM sync_objects WHERE state_sequence IS NOT NULL ORDER BY object_kind, cid")
             .unwrap();
@@ -2184,7 +2184,7 @@ mod replicator_tests {
 
         rename_snippet(&database, "one", "after");
         database
-            .with_transaction(|tx| crate::db::sync_state::clear_dirty_if_generation(tx, generation))
+            .test_with_transaction(|tx| crate::db::sync_state::clear_dirty_if_generation(tx, generation))
             .unwrap();
         assert!(database.local_state_status().unwrap().0, "storing an older snapshot must not clear a later write");
     }
@@ -2282,13 +2282,13 @@ mod replicator_tests {
             assert!(transports[0].get_object(&TransportCid(cid.clone())).await.is_ok(), "the snapshot the head names stays");
         }
 
-        database.connection().unwrap().execute("UPDATE sync_deliveries SET retry_at=NULL", []).unwrap();
+        database.test_connection().unwrap().execute("UPDATE sync_deliveries SET retry_at=NULL", []).unwrap();
         push_local_state(&database, &keys, &transports).await.unwrap();
         assert_eq!(published_head(&transports, &keys).await.unwrap().head.state_sequence, 2);
         for cid in &first_objects {
             assert_eq!(transports[0].get_object(&TransportCid(cid.clone())).await, Err(TransportError::NotFound));
         }
-        let retired: i64 = database.connection().unwrap().query_row("SELECT COUNT(*) FROM sync_retired_objects", [], |row| row.get(0)).unwrap();
+        let retired: i64 = database.test_connection().unwrap().query_row("SELECT COUNT(*) FROM sync_retired_objects", [], |row| row.get(0)).unwrap();
         assert_eq!(retired, 0);
     }
 
@@ -2345,7 +2345,7 @@ mod replicator_tests {
         let outcome = pull_from_transports(&database_a, &keys_a, &transports).await.unwrap();
         assert_eq!((outcome.merged_states, outcome.failed_transports), (0, 0));
         let observed_foreign_heads: i64 = database_a
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row(
                 "SELECT COUNT(*) FROM sync_remote_states WHERE device_id=?1 AND last_head_epoch IS NOT NULL",
@@ -2391,7 +2391,7 @@ mod replicator_tests {
         EntityType::Draft.validate_payload(&payload).unwrap();
         let fields: BTreeSet<String> = payload.as_object().unwrap().keys().cloned().collect();
         database
-            .with_transaction(|tx| crate::db::sync_state::record_replicated_write_in_transaction(tx, EntityType::Draft, &draft.id, &fields, &payload))
+            .test_with_transaction(|tx| crate::db::sync_state::record_replicated_write_in_transaction(tx, EntityType::Draft, &draft.id, &fields, &payload))
             .unwrap();
     }
 
@@ -2412,7 +2412,7 @@ mod replicator_tests {
         pull_from_transports(&new, &kn, &transports).await.unwrap();
         assert_eq!(new.drafts().unwrap().iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), [mine.id.as_str()]);
 
-        old.with_transaction(|tx| crate::db::sync_state::record_replicated_deletion_in_transaction(tx, EntityType::Draft, &mine.id)).unwrap();
+        old.test_with_transaction(|tx| crate::db::sync_state::record_replicated_deletion_in_transaction(tx, EntityType::Draft, &mine.id)).unwrap();
         push_local_state(&old, &ko, &transports).await.unwrap();
         pull_from_transports(&new, &kn, &transports).await.unwrap();
         assert_eq!(new.drafts().unwrap().len(), 1, "a legacy deletion leaves local drafts alone");
@@ -2510,7 +2510,7 @@ mod replicator_tests {
         push_local_state(&database_a, &keys_a, &transports).await.unwrap();
         pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
         assert_eq!(stored_snippet_name(&database_b, "doomed"), None);
-        let values: i64 = database_b.connection().unwrap().query_row("SELECT COUNT(*) FROM sync_values", [], |row| row.get(0)).unwrap();
+        let values: i64 = database_b.test_connection().unwrap().query_row("SELECT COUNT(*) FROM sync_values", [], |row| row.get(0)).unwrap();
         assert_eq!(values, 0, "a deletion leaves no tombstone behind");
 
         // C's older snapshot still holds the snippet; merging it brings
@@ -2679,7 +2679,7 @@ mod replicator_tests {
         // as a restore from before any of those writes would leave it.
         let restored = Database::open_memory();
         restored
-            .connection()
+            .test_connection()
             .unwrap()
             .execute(
                 "INSERT INTO sync_devices(device_id, status, is_self) VALUES (?1, 'active', 1)",
@@ -2691,7 +2691,7 @@ mod replicator_tests {
         pull_from_transports(&restored, &restored_keys, &transports).await.unwrap();
         write_snippet(&restored, "after-restore", "new");
         let counter: i64 = restored
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row("SELECT counter FROM sync_values WHERE entity_id='after-restore' AND field='name'", [], |row| row.get(0))
             .unwrap();
@@ -2743,7 +2743,7 @@ mod replicator_tests {
         trust(&database_b, &keys_a);
         pull_from_transports(&database_b, &keys_b, &transports).await.unwrap();
         let (published, seen, sequence): (i64, i64, i64) = database_b
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row(
                 "SELECT last_head_published_at_ms, last_head_seen_at_ms, state_sequence FROM sync_remote_states WHERE device_id=?1",
@@ -2847,7 +2847,7 @@ mod config_tests {
         let folder = TempFolder::new();
         database.add_folder_transport("folder-1", &folder.path).unwrap();
         database
-            .connection()
+            .test_connection()
             .unwrap()
             .execute(
                 "INSERT INTO sync_deliveries(cid,transport_instance_id,state,attempts) VALUES ('c1','folder-1','pending',0)",
@@ -2859,7 +2859,7 @@ mod config_tests {
 
         assert!(database.configured_transports().unwrap().is_empty());
         let remaining: i64 = database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row("SELECT COUNT(*) FROM sync_deliveries WHERE transport_instance_id='folder-1'", [], |row| row.get(0))
             .unwrap();
@@ -2872,7 +2872,7 @@ mod config_tests {
         let folder = TempFolder::new();
         database.add_folder_transport("folder-1", &folder.path).unwrap();
         database
-            .connection()
+            .test_connection()
             .unwrap()
             .execute(
                 "INSERT INTO sync_transports(instance_id,kind,config_json,required,enabled) VALUES ('folder-2','folder','{\"path\":\"/nonexistent/definitely-not-real\"}',1,1)",
@@ -2880,7 +2880,7 @@ mod config_tests {
             )
             .unwrap();
         database
-            .connection()
+            .test_connection()
             .unwrap()
             .execute(
                 "INSERT INTO sync_transports(instance_id,kind,config_json,required,enabled) VALUES ('folder-3','folder',?1,1,0)",
@@ -2995,7 +2995,7 @@ mod config_tests {
         let database = Database::open_memory();
         let config_json = TransportConfig::S3(s3_test_config("https://s3.us-east-1.amazonaws.com")).to_config_json().unwrap();
         database
-            .connection()
+            .test_connection()
             .unwrap()
             .execute(
                 "INSERT INTO sync_transports(instance_id,kind,config_json,required,enabled) VALUES (?1,'s3',?2,1,1)",
@@ -3044,7 +3044,7 @@ mod config_tests {
         let database = Database::open_memory();
         let id = format!("future-{}", Uuid::new_v4());
         database
-            .connection()
+            .test_connection()
             .unwrap()
             .execute(
                 "INSERT INTO sync_transports(instance_id,kind,config_json,required,enabled) VALUES (?1,'carrier-pigeon','{}',1,1)",
@@ -3060,7 +3060,7 @@ mod config_tests {
     async fn an_unknown_kind_is_skipped_and_reported_without_a_location() {
         let database = Database::open_memory();
         database
-            .connection()
+            .test_connection()
             .unwrap()
             .execute(
                 "INSERT INTO sync_transports(instance_id,kind,config_json,required,enabled) VALUES ('future-1','carrier-pigeon','{}',1,1)",
@@ -3083,7 +3083,7 @@ mod config_tests {
             .add_s3_transport(&id, &s3_test_config("https://s3.us-east-1.amazonaws.com"), &s3_test_credentials())
             .unwrap();
         database
-            .connection()
+            .test_connection()
             .unwrap()
             .execute(
                 "INSERT INTO sync_deliveries(cid,transport_instance_id,state,attempts) VALUES ('c1',?1,'delivered',1)",
@@ -3307,7 +3307,7 @@ mod reconciliation_tests {
 
     fn table_exists(database: &Database, table: &str) -> bool {
         database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)", [table], |row| row.get(0))
             .unwrap()
@@ -3326,7 +3326,7 @@ mod reconciliation_tests {
         assert_eq!(database.pending_keychain_cleanup().unwrap(), None);
 
         database
-            .connection()
+            .test_connection()
             .unwrap()
             .execute_batch(
                 "INSERT INTO sync_notices(kind, created_at) VALUES ('protocol_reset', '2026-09-01T00:00:00Z');
@@ -3358,7 +3358,7 @@ mod reconciliation_tests {
         // Simulates the crash window: the app-table write happened, but the
         // enqueue call that should follow it never ran.
         let snippet = database.create_snippet("Signature", "Best, Alex").unwrap();
-        let connection = database.connection().unwrap();
+        let connection = database.test_connection().unwrap();
         let before: i64 = connection
             .query_row("SELECT COUNT(*) FROM sync_values WHERE entity_id=?1", [&snippet.id], |row| row.get(0))
             .unwrap();
@@ -3368,7 +3368,7 @@ mod reconciliation_tests {
         let repaired = database.reconcile_replicated_sync_backlog().unwrap();
         assert!(repaired >= 1);
 
-        let connection = database.connection().unwrap();
+        let connection = database.test_connection().unwrap();
         let existence: String = connection
             .query_row(
                 "SELECT value FROM sync_values WHERE entity_id=?1 AND field='_entity'",
@@ -3398,7 +3398,7 @@ mod reconciliation_tests {
             .record_replicated_write(EntityType::Snippet, &snippet.id, &fields, &payload)
             .unwrap();
 
-        let connection = database.connection().unwrap();
+        let connection = database.test_connection().unwrap();
         let before: i64 = connection
             .query_row("SELECT COUNT(*) FROM sync_values WHERE entity_id=?1", [&snippet.id], |row| row.get(0))
             .unwrap();
@@ -3408,7 +3408,7 @@ mod reconciliation_tests {
         // found nothing to do.
         database.reconcile_replicated_sync_backlog().unwrap();
 
-        let connection = database.connection().unwrap();
+        let connection = database.test_connection().unwrap();
         let after: i64 = connection
             .query_row("SELECT COUNT(*) FROM sync_values WHERE entity_id=?1", [&snippet.id], |row| row.get(0))
             .unwrap();
@@ -3473,7 +3473,7 @@ mod reconciliation_tests {
 
     fn retention_operation_count(database: &Database) -> i64 {
         database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row(
                 "SELECT COUNT(*) FROM sync_values WHERE entity_type=?1 AND entity_id='mail'",
@@ -3499,7 +3499,7 @@ mod reconciliation_tests {
         let database = Database::open_memory();
         // Older installations represented Forever with no setting at all.
         database
-            .connection()
+            .test_connection()
             .unwrap()
             .execute(
                 "DELETE FROM compose_settings WHERE key='retention_days_default'",
@@ -3518,7 +3518,7 @@ mod reconciliation_tests {
         database.reconcile_replicated_sync_backlog().unwrap();
         assert!(retention_operation_count(&database) > 0);
         let days: String = database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row(
                 "SELECT value FROM sync_values WHERE entity_type=?1 AND entity_id='mail' AND field='days'",
@@ -3596,7 +3596,7 @@ mod frontier_conflict_tests {
         force_conflict(&database, "s1", "name", json!("Same"), json!("Same"));
 
         let values: i64 = database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row(
                 "SELECT COUNT(*) FROM sync_values WHERE entity_type='snippet' AND entity_id='s1' AND field='name'",
@@ -3706,7 +3706,7 @@ mod frontier_conflict_tests {
         // supersedes both candidates on every replica that merges it).
         assert!(database.list_frontier_conflicts().unwrap().is_empty());
         let rows: Vec<(String, Option<String>)> = {
-            let connection = database.connection().unwrap();
+            let connection = database.test_connection().unwrap();
             let mut statement = connection
                 .prepare("SELECT device_id, value FROM sync_values WHERE entity_type='snippet' AND entity_id='s1' AND field='name'")
                 .unwrap();
@@ -3714,7 +3714,7 @@ mod frontier_conflict_tests {
             rows
         };
         let self_device: String = database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row("SELECT device_id FROM sync_devices WHERE is_self=1", [], |row| row.get(0))
             .unwrap();

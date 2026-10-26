@@ -1296,7 +1296,7 @@ pub(crate) mod test_support {
     /// does in `replicated_sync.rs` — never touches the OS keychain.
     pub(crate) fn test_identity(database: &Database) -> DeviceIdentity {
         let device_id = {
-            let mut connection = database.connection().unwrap();
+            let mut connection = database.test_connection().unwrap();
             let tx = connection.transaction().unwrap();
             let device_id = crate::db::replicated_sync::ensure_space_and_device(&tx).unwrap();
             tx.commit().unwrap();
@@ -1348,7 +1348,7 @@ pub(crate) mod test_support {
     /// and so is never called from a test.
     pub(crate) fn local_keys_for(database: &Database, identity: &DeviceIdentity, epoch_keys: &FakeEpochKeyStore) -> LocalKeys {
         let active_epoch: u32 = database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row("SELECT active_epoch FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
             .unwrap();
@@ -1478,7 +1478,7 @@ mod tests {
             .unwrap();
 
         {
-            let connection = database.connection().unwrap();
+            let connection = database.test_connection().unwrap();
             for epoch in 1..=820 {
                 connection
                     .execute(
@@ -1495,7 +1495,7 @@ mod tests {
         ));
 
         database
-            .connection()
+            .test_connection()
             .unwrap()
             .execute("UPDATE sync_spaces SET active_epoch=820", [])
             .unwrap();
@@ -1662,7 +1662,7 @@ mod tests {
         let keys_a = local_keys_for(&database_a, &identity_a, &epoch_keys_a);
         let outcome = pull_from_transports(&database_a, &keys_a, &transports_a).await.unwrap();
         assert_eq!(outcome.merged_states, 1);
-        let name: String = database_a.connection().unwrap().query_row("SELECT name FROM snippets WHERE id='c-1'", [], |row| row.get(0)).unwrap();
+        let name: String = database_a.test_connection().unwrap().query_row("SELECT name FROM snippets WHERE id='c-1'", [], |row| row.get(0)).unwrap();
         assert_eq!(name, "From C over S3");
     }
 
@@ -1720,7 +1720,7 @@ mod tests {
 
         // B confirms (the human compared fingerprints across two screens).
         let outgoing_request_id: String = database_b
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row("SELECT request_id FROM replicated_sync_enrollment_requests WHERE direction='outgoing'", [], |row| row.get(0))
             .unwrap();
@@ -1741,7 +1741,7 @@ mod tests {
         let keys_a_after = local_keys_for(&database_a, &identity_a, &epoch_keys_a);
         let outcome = pull_from_transports(&database_a, &keys_a_after, &transports).await.unwrap();
         assert_eq!(outcome.merged_states, 1);
-        let snippet_name: String = database_a.connection().unwrap().query_row("SELECT name FROM snippets WHERE id='b-1'", [], |row| row.get(0)).unwrap();
+        let snippet_name: String = database_a.test_connection().unwrap().query_row("SELECT name FROM snippets WHERE id='b-1'", [], |row| row.get(0)).unwrap();
         assert_eq!(snippet_name, "From B");
     }
 
@@ -1763,7 +1763,7 @@ mod tests {
         approve_enrollment_request(&database_a, &identity_a, &keys_a, &pending[0].request_id, &transports).await.unwrap();
         run_enrollment_sweep(&database_b, &identity_b, &epoch_keys_b, &transports).await.unwrap();
         let outgoing_request_id: String = database_b
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row("SELECT request_id FROM replicated_sync_enrollment_requests WHERE direction='outgoing'", [], |row| row.get(0))
             .unwrap();
@@ -1795,7 +1795,7 @@ mod tests {
         let outcome = pull_from_transports(&database_a, &keys_a_after_revoke, &transports).await.unwrap();
         assert_eq!(outcome.merged_states, 0);
         let exists: Option<String> = database_a
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row("SELECT name FROM snippets WHERE id='after-revoke'", [], |row| row.get(0))
             .optional()
@@ -1850,7 +1850,7 @@ mod tests {
 
         fn active_epoch(&self) -> u32 {
             self.database
-                .connection()
+                .test_connection()
                 .unwrap()
                 .query_row("SELECT active_epoch FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
                 .unwrap()
@@ -1880,7 +1880,7 @@ mod tests {
 
         fn snippet(&self, id: &str) -> Option<String> {
             self.database
-                .connection()
+                .test_connection()
                 .unwrap()
                 .query_row("SELECT name FROM snippets WHERE id=?1", params![id], |row| row.get(0))
                 .optional()
@@ -1916,7 +1916,7 @@ mod tests {
         b.sweep(&transports).await;
         let request_id: String = b
             .database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row("SELECT request_id FROM replicated_sync_enrollment_requests WHERE direction='outgoing'", [], |row| row.get(0))
             .unwrap();
@@ -1948,7 +1948,7 @@ mod tests {
         // by the approver so only the sealing is wrong.
         let (request_id, grant_cbor): (String, Vec<u8>) = b
             .database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row(
                 "SELECT request_id, pending_grant_cbor FROM replicated_sync_enrollment_requests WHERE direction='outgoing'",
@@ -1960,7 +1960,7 @@ mod tests {
         grant.earlier_epoch_keys[0].sealed_key = ByteBuf::from(seal_to_x25519(&[9u8; 32], &[1u8; 32]));
         let resigned = encode_signed_enrollment_grant(&sign_enrollment_grant(&a.identity.signing_key, grant).unwrap()).unwrap();
         b.database
-            .connection()
+            .test_connection()
             .unwrap()
             .execute("UPDATE replicated_sync_enrollment_requests SET pending_grant_cbor=?1 WHERE request_id=?2", params![resigned, request_id])
             .unwrap();
@@ -2248,7 +2248,7 @@ mod tests {
         let b_hex = encode_id(b.identity.device_id.as_bytes());
         let status_on_c = || -> String {
             c.database
-                .connection()
+                .test_connection()
                 .unwrap()
                 .query_row("SELECT status FROM sync_devices WHERE device_id=?1", params![b_hex], |row| row.get(0))
                 .unwrap()
@@ -2333,7 +2333,7 @@ mod tests {
         // deliberately consumed without applying anything.
         let a_status: String = c
             .database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row(
                 "SELECT status FROM sync_devices WHERE device_id=?1",
@@ -2409,7 +2409,7 @@ mod tests {
         a.rotate(&transports).await;
 
         let rotation_cids: Vec<String> = {
-            let connection = a.database.connection().unwrap();
+            let connection = a.database.test_connection().unwrap();
             let mut statement = connection.prepare("SELECT cid FROM sync_control_objects_seen WHERE object_kind='key_rotation'").unwrap();
             let rows = statement.query_map([], |row| row.get(0)).unwrap().collect::<Result<Vec<String>, _>>().unwrap();
             rows
@@ -2480,7 +2480,7 @@ mod tests {
         assert!(b.epoch_keys.get(0).is_none());
         let recorded: i64 = b
             .database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row("SELECT (SELECT COUNT(*) FROM sync_epoch_history) + (SELECT COUNT(*) FROM replicated_sync_enrollment_requests)", [], |row| row.get(0))
             .unwrap();
@@ -2620,25 +2620,25 @@ mod tests {
         let new_group_objects_before = new_group_transports[0].scan(None).await.unwrap().unwrap().objects.len();
         let sync_values_before: i64 = existing
             .database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row("SELECT COUNT(*) FROM sync_values", [], |row| row.get(0))
             .unwrap();
         let sync_context_before: i64 = existing
             .database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row("SELECT COUNT(*) FROM sync_context", [], |row| row.get(0))
             .unwrap();
         let active_epoch_before: i64 = existing
             .database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row("SELECT active_epoch FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
             .unwrap();
         let sync_local_state_before: (bool, i64, i64, Option<i64>) = existing
             .database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row(
                 "SELECT dirty, generation, state_sequence, sealed_epoch FROM sync_local_state WHERE id=1",
@@ -2648,7 +2648,7 @@ mod tests {
             .unwrap();
         let recovery_keys_before: (Option<Vec<u8>>, Option<Vec<u8>>) = existing
             .database
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row(
                 "SELECT recovery_public_key, recovery_x25519_public FROM sync_spaces WHERE id=?1",
@@ -2658,7 +2658,7 @@ mod tests {
             .unwrap();
         let roster_before: Vec<String> = existing
             .database
-            .connection()
+            .test_connection()
             .unwrap()
             .prepare("SELECT device_id FROM sync_devices ORDER BY device_id")
             .unwrap()
@@ -2693,7 +2693,7 @@ mod tests {
         assert!(!existing.database.beta_features_enabled().unwrap());
         assert_eq!(existing.epoch_keys.get(0), Some(epoch_key_before));
         assert_eq!(existing.database.resolve_field_winner(EntityType::Snippet, "old-group-snippet", "name").unwrap(), Some(serde_json::json!("Private note")));
-        let connection = existing.database.connection().unwrap();
+        let connection = existing.database.test_connection().unwrap();
         let sync_values_after: i64 = connection
             .query_row("SELECT COUNT(*) FROM sync_values", [], |row| row.get(0))
             .unwrap();
@@ -2755,7 +2755,7 @@ mod tests {
         approve_enrollment_request(&database_a, &identity_a, &keys_a, &pending[0].request_id, &transports).await.unwrap();
         run_enrollment_sweep(&database_b, &identity_b, &epoch_keys_b, &transports).await.unwrap();
         let outgoing: String = database_b
-            .connection()
+            .test_connection()
             .unwrap()
             .query_row("SELECT request_id FROM replicated_sync_enrollment_requests WHERE direction='outgoing'", [], |row| row.get(0))
             .unwrap();
@@ -2782,7 +2782,7 @@ mod tests {
         let own = encode_id(identity_a.device_id.as_bytes());
         database_a.set_device_label(&peer, "  Work laptop  ").unwrap();
         database_a
-            .connection()
+            .test_connection()
             .unwrap()
             .execute(
                 "INSERT INTO sync_remote_states(device_id, state_sequence, merged_at) VALUES (?1, 2, '2026-09-21T10:00:00+00:00')",
@@ -2809,7 +2809,7 @@ mod tests {
         database.set_device_label("d1", &"x".repeat(MAX_DEVICE_LABEL_CHARS - 1)).unwrap();
         database.set_device_label("d1", &at_limit).unwrap();
         assert!(database.set_device_label("d1", &"x".repeat(MAX_DEVICE_LABEL_CHARS + 1)).is_err());
-        let stored: String = database.connection().unwrap().query_row("SELECT label FROM sync_device_labels", [], |row| row.get(0)).unwrap();
+        let stored: String = database.test_connection().unwrap().query_row("SELECT label FROM sync_device_labels", [], |row| row.get(0)).unwrap();
         assert_eq!(stored, at_limit);
     }
 
@@ -2817,7 +2817,7 @@ mod tests {
     async fn leaving_resets_membership_but_keeps_local_data_locations_and_the_beta() {
         let (_, database_b, _, identity_b, transports, phrase) = two_enrolled_devices().await;
         database_b
-            .connection()
+            .test_connection()
             .unwrap()
             .execute_batch(
                 "INSERT INTO snippets(id,name,body,created_at) VALUES ('s1','Kept','body','2026-09-22T00:00:00Z');
@@ -2832,7 +2832,7 @@ mod tests {
         assert!(database_b.device_roster().unwrap().is_empty());
         assert!(database_b.recovery_public_keys().unwrap().is_none());
         assert!(database_b.beta_features_enabled().unwrap());
-        let count = |sql: &str| -> i64 { database_b.connection().unwrap().query_row(sql, [], |row| row.get(0)).unwrap() };
+        let count = |sql: &str| -> i64 { database_b.test_connection().unwrap().query_row(sql, [], |row| row.get(0)).unwrap() };
         for table in ["sync_values", "sync_context", "sync_remote_states", "sync_local_state", "sync_objects"] {
             assert_eq!(count(&format!("SELECT COUNT(*) FROM {table}")), 0, "{table} should be empty");
         }
@@ -2949,7 +2949,7 @@ mod tests {
 
             fn active_epoch(&self) -> u32 {
                 self.database
-                    .connection()
+                    .test_connection()
                     .unwrap()
                     .query_row("SELECT active_epoch FROM sync_spaces WHERE id=?1", params![SPACE_ID], |row| row.get(0))
                     .unwrap()
@@ -2998,7 +2998,7 @@ mod tests {
         }
 
         fn snippet_name(database: &Database, id: &str) -> Option<String> {
-            database.connection().unwrap().query_row("SELECT name FROM snippets WHERE id=?1", params![id], |row| row.get(0)).optional().unwrap()
+            database.test_connection().unwrap().query_row("SELECT name FROM snippets WHERE id=?1", params![id], |row| row.get(0)).optional().unwrap()
         }
 
         #[tokio::test]
@@ -3134,7 +3134,7 @@ mod tests {
             let invitation_cid = decode_join_code(&code).unwrap().invitation_cid;
             let redemption_cid: String = b
                 .database
-                .connection()
+                .test_connection()
                 .unwrap()
                 .query_row("SELECT redemption_cid FROM replicated_sync_invitations WHERE direction='incoming'", [], |row| row.get(0))
                 .unwrap();
@@ -3152,7 +3152,7 @@ mod tests {
             run_enrollment_sweep(&c.database, &c.identity, &c.epoch_keys, &transports).await.unwrap();
             let state: String = c
                 .database
-                .connection()
+                .test_connection()
                 .unwrap()
                 .query_row(
                     "SELECT state FROM replicated_sync_invitation_redemptions WHERE redemption_cid=?1",
@@ -3460,7 +3460,7 @@ mod tests {
             b.database.leave_sync_space().unwrap();
             for database in [&a.database, &b.database] {
                 let count: i64 = database
-                    .connection()
+                    .test_connection()
                     .unwrap()
                     .query_row(
                         "SELECT (SELECT COUNT(*) FROM replicated_sync_invitations) + (SELECT COUNT(*) FROM replicated_sync_invitation_redemptions)",
@@ -3504,7 +3504,7 @@ mod tests {
         /// Every text or blob value in every table, for "this secret is
         /// stored nowhere in SQLite" assertions.
         fn database_contains(database: &Database, needle: &[u8]) -> bool {
-            let connection = database.connection().unwrap();
+            let connection = database.test_connection().unwrap();
             let tables: Vec<String> = connection
                 .prepare("SELECT name FROM sqlite_master WHERE type='table'")
                 .unwrap()
