@@ -71,11 +71,13 @@ You can narrow a search with `from:`, `to:`, `subject:`, `before:` and `after:` 
 
 Press <kbd>0</kbd> for your day at a glance. Today lists your agenda when a calendar is connected, with finished and declined events dimmed, a **Now** line before what is still ahead, the first few events **Tomorrow**, and a **Join** button for your next online meeting. Unread mail is sorted into **Invitations** (meeting requests to answer), **Needs a reply** (written to you and at most two others by someone you write to), **From people**, and **Updates** (newsletters, notifications, and no-reply senders). **Open Inbox**, **Open Calendar**, and **Open Tasks** at the foot of each column go to the full view. Tasks that are overdue or due today come first, followed by your other open tasks and people due for a **Keep in Touch** check-in. Mail and tasks follow the account you have selected; the agenda always includes every calendar you show in **Calendar**. To open the app on Today, choose **Today** under **Settings → Appearance → Start With**.
 
+<ts-shot scene="today" alt="Today with the day's agenda and tomorrow's first events, unread mail grouped by Needs a reply, From people, and Updates, and tasks due beside Keep in Touch reminders."></ts-shot>
+
 ## Inbox Zero
 
 An empty inbox shows **Inbox zero** and when that account was last checked, or whether it needs reconnecting or could not be checked. The side panel links to **Today** for your agenda, tasks, and Keep in Touch reminders. If filters hid every conversation, use **Clear Filters** to bring them back.
 
-<ts-shot scene="inbox-zero" alt="An empty inbox with last-check status and a side panel of open tasks, Keep in Touch reminders, and today’s agenda."></ts-shot>
+<ts-shot scene="inbox-zero" alt="An empty inbox with last-check status and a side panel linking to Today."></ts-shot>
 
 ## Newsletter Controls
 

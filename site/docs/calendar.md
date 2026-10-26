@@ -36,12 +36,16 @@ Press <kbd>2</kbd> for the Calendar view. Choose **Day**, **3-Day**, **Workweek*
 
 Drag across the grid or click **New Event**. Add a title, times, location, the calendar, people to invite, and a description. Choose **All day** for an event without a specific time, then click **Create event** or press <kbd>⌘/Ctrl + Enter</kbd>.
 
+**Invite People** suggests your contacts and contact groups as you type a name or address. Press **Enter** or click a suggestion to add someone, or choose a group to invite everyone in it. Text that isn't an email address stays in the field with a note until you fix it.
+
 When an email announces several events, **Get Brief** and **Ask About This Conversation** can offer each as an event at its stated time. Review each suggestion before adding it. A dated event without a time is added as all-day.
 
-Open an event you manage to edit or delete it. Guests are notified of changes.
+Open an event you manage to edit or delete it. Guests are notified of changes. Event details show who has answered: the guest count adds a tally such as "2 going, 1 not going", and each guest is marked **Going**, **Not going**, **Maybe**, or **Awaiting**.
 
 ## Answer Invitations
 
-Open an event and choose **Yes**, **No**, or **Maybe** under **Going?**.
+When you read an invitation email, its card in the side panel offers **Accept**, **Maybe**, and **Decline**, with your current answer selected, plus **Suggest a different time**, which prepares a reply with other times for you to review. Unanswered invitations say **Not responded.**, and the card links the meeting and expands to show the event details.
+
+In **Calendar**, open an event and choose **Yes**, **No**, or **Maybe** under **Going?**.
 
 You can make ThreeStrands the app that opens `.ics` invitation files in **Settings → Default Apps**. On Windows, that opens Windows Settings, where you choose ThreeStrands. An opened invitation shows whether it's already on your calendar, lets you answer it, or offers **Add to Calendar**.

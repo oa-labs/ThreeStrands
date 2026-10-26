@@ -100,9 +100,8 @@ const scenes: Scene[] = [
       }
       await expect(page.getByText("Inbox zero", { exact: true })).toBeVisible();
       const context = page.getByRole("complementary", { name: "Conversation context", exact: true });
-      await expect(context.getByRole("heading", { name: "Open tasks", exact: true })).toBeVisible();
-      await expect(context.getByRole("heading", { name: "Keep in touch", exact: true })).toBeVisible();
-      await expect(context.getByRole("heading", { name: "Today's agenda", exact: true })).toBeVisible();
+      await expect(context.getByRole("heading", { name: "What's next", exact: true })).toBeVisible();
+      await expect(context.getByRole("button", { name: "Open Today", exact: true })).toBeVisible();
       await page.getByRole("button", { name: "Dismiss", exact: true }).click();
     },
   },
@@ -182,6 +181,17 @@ const scenes: Scene[] = [
       await waitForMessage(page);
       await page.keyboard.press("t");
       await expect(page.getByText("Team standup").first()).toBeVisible();
+    },
+  },
+  {
+    name: "today",
+    capture: async (page) => {
+      await waitForMessage(page);
+      await page.keyboard.press("0");
+      const today = page.getByRole("region", { name: "Today", exact: true });
+      await expect(today.getByRole("group", { name: "Agenda", exact: true }).getByText("Team standup").first()).toBeVisible();
+      await expect(today.getByRole("group", { name: "Unread mail", exact: true }).getByText(/Design crit: onboarding flow v3/).first()).toBeVisible();
+      await expect(today.getByRole("group", { name: "Tasks", exact: true }).getByText("Send Marcus pricing for 35 seats", { exact: true })).toBeVisible();
     },
   },
   {

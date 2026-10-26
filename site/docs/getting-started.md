@@ -49,7 +49,7 @@ In **Settings → Mail Accounts**, each account has:
 
 ## Settings Worth a Look
 
-- **Appearance** — theme, accent color, font size, and when conversations are marked read.
+- **Appearance** — theme, accent color, font size, and when conversations are marked read. **Email Zoom** enlarges email text, images, and spacing together, and **Email Text Colors** lightens or darkens hard-to-read sender text just enough to read, or replaces it with your theme's colors. Press <kbd>⌘/Ctrl + d</kbd> to switch between light and dark mode from anywhere. Appearance settings stay on each computer.
 - **Availability** — your timezone, working-hour blocks with gaps for breaks, and **Drive Time Buffer** around events with a location.
 - **Signatures** — formatted sign-offs with logos, Gmail import, and separate defaults for new messages and replies.
 - **Muted Senders** — review senders whose new mail is marked read and archived automatically.
