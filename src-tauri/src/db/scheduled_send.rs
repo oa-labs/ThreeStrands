@@ -316,7 +316,7 @@ impl Database {
         })
     }
 
-    pub fn change_outbox(
+    pub(super) fn change_outbox(
         &self,
         sql: &str,
         values: impl rusqlite::Params,

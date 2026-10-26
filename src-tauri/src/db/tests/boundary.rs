@@ -18,9 +18,8 @@ struct Counts {
 /// literals, `rusqlite` references, connection calls). Lower an entry when a
 /// phase of the plan moves code into `db/`, and remove it at zero.
 const ALLOWED: &[(&str, usize, usize, usize)] = &[
-    ("correspondence.rs", 83, 3, 58),
-    ("draft_pull.rs", 21, 1, 6),
-    ("draft_push.rs", 36, 3, 27),
+    ("correspondence.rs", 30, 1, 33),
+    ("draft_push.rs", 12, 1, 12),
     ("enrollment.rs", 102, 3, 81),
     ("enrollment/error.rs", 0, 2, 0),
     ("enrollment/join_codes.rs", 22, 1, 21),

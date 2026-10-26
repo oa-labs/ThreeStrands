@@ -142,6 +142,17 @@ impl Database {
         })
     }
 
+    /// Whether a provider payload is cached for `id`, without decoding it.
+    pub(crate) fn has_message_metadata(&self, id: &str) -> DbResult<bool> {
+        self.with_connection(|connection| {
+            Ok(connection.query_row(
+                "SELECT count(*) FROM message_metadata WHERE id=?1",
+                [id],
+                |row| row.get::<_, i64>(0),
+            )? > 0)
+        })
+    }
+
     pub(crate) fn put_message_metadata(&self, id: &str, payload: &str) -> DbResult<()> {
         self.with_connection(|connection| store_message_metadata(connection, id, payload))
     }

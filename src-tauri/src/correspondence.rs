@@ -2,7 +2,7 @@
 use crate::clock::unix_millis;
 use crate::{
     auth::AccountAuth,
-    db::{Database, DatabaseError, DbResult},
+    db::Database,
     limits::MAX_ATTACHMENT_BYTES,
     mime::{MimePart, RawMessage},
     provider::{DeliveryReceipt, MailProvider},
@@ -13,7 +13,6 @@ use base64::{
 };
 use mail_builder::MessageBuilder;
 use mail_parser::MessageParser;
-use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -435,90 +434,6 @@ fn forward_attachments(source: &RawMessage, normalized: &crate::mime::Normalized
 }
 
 impl Database {
-    pub fn compose_identity(&self) -> Result<String, String> {
-        self.connection()?
-            .query_row(
-                "SELECT value FROM compose_settings WHERE key='identity'",
-                [],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(error)?
-            .ok_or("Connect Gmail once to establish your sender identity".into())
-    }
-    pub fn set_compose_identity(&self, identity: &str) -> Result<(), String> {
-        self.connection()?.execute("INSERT INTO compose_settings VALUES ('identity',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [identity]).map_err(error)?;
-        Ok(())
-    }
-    /// Establishes an initial sending identity without replacing the account
-    /// the user most recently chose in an existing installation.
-    pub fn ensure_compose_identity(&self, identity: &str) -> Result<(), String> {
-        self.connection()?
-            .execute(
-                "INSERT INTO compose_settings(key, value) VALUES ('identity', ?1)
-                 ON CONFLICT(key) DO NOTHING",
-                [identity],
-            )
-            .map(|_| ())
-            .map_err(error)
-    }
-    /// How long locally cached mail is kept before `prune_expired_threads`
-    /// removes it. New installations default to 90 days; existing unset
-    /// settings and an explicit Forever choice remain unlimited (`None`).
-    pub fn retention_days(&self) -> DbResult<Option<i64>> {
-        self.read_retention_days(true)
-    }
-
-    /// Only chosen values belong in sync reconciliation, not a new device's
-    /// untouched installation default. Explicit Forever writes are recorded
-    /// by the command, as before.
-    pub(crate) fn chosen_retention_days(&self) -> DbResult<Option<i64>> {
-        self.read_retention_days(false)
-    }
-
-    fn read_retention_days(&self, include_default: bool) -> DbResult<Option<i64>> {
-        self.connection()?
-            .query_row(
-                "SELECT value FROM compose_settings
-                 WHERE key='retention_days' OR (?1 AND key='retention_days_default')
-                 ORDER BY CASE key WHEN 'retention_days' THEN 0 ELSE 1 END LIMIT 1",
-                [include_default],
-                |r| r.get::<_, String>(0),
-            )
-            .optional()?
-            .map(|value| value.parse::<i64>().map_err(|e| DatabaseError::corrupt(e.to_string())))
-            .transpose()
-    }
-    pub fn set_retention_days(&self, days: Option<i64>) -> DbResult<()> {
-        validate_retention_days(days).map_err(DatabaseError::Validation)?;
-        self.with_transaction(|transaction| {
-            transaction.execute("DELETE FROM compose_settings WHERE key='retention_days_default'", [])?;
-            match days {
-                Some(days) => transaction.execute(
-                    "INSERT INTO compose_settings VALUES ('retention_days',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                    params![days.to_string()],
-                ),
-                None => transaction.execute("DELETE FROM compose_settings WHERE key='retention_days'", []),
-            }?;
-            Ok(())
-        })
-    }
-    pub fn drafts(&self) -> Result<Vec<Draft>, String> {
-        let c = self.connection()?;
-        let mut q = c
-            .prepare("SELECT payload FROM drafts ORDER BY rowid DESC")
-            .map_err(error)?;
-        let rows = q.query_map([], |r| r.get::<_, String>(0)).map_err(error)?;
-        rows.map(|r| serde_json::from_str(&r.map_err(error)?).map_err(error))
-            .collect()
-    }
-    pub fn draft(&self, id: &str) -> Result<Draft, String> {
-        let value: String = self
-            .connection()?
-            .query_row("SELECT payload FROM drafts WHERE id=?1", [id], |r| r.get(0))
-            .map_err(|_| "Draft no longer exists".to_string())?;
-        serde_json::from_str(&value).map_err(error)
-    }
     pub fn create_draft(
         &self,
         mode: &str,
@@ -711,9 +626,7 @@ impl Database {
             }
         }
         d.signature = self.default_draft_signature(&d.account, d.from_address(), &d.mode)?;
-        self.write_draft(&mut d, false, |tx, d, payload| {
-            tx.execute("INSERT INTO drafts VALUES (?1,?2,?3)", params![d.id, d.revision, payload])
-        })?;
+        self.insert_draft(&mut d)?;
         Ok(d)
     }
     /// "Edit as New": an unaddressed new message that starts from the
@@ -781,9 +694,7 @@ impl Database {
             updated_at: unix_millis(),
             server_draft: None,
         };
-        self.write_draft(&mut d, false, |tx, d, payload| {
-            tx.execute("INSERT INTO drafts VALUES (?1,?2,?3)", params![d.id, d.revision, payload])
-        })?;
+        self.insert_draft(&mut d)?;
         Ok(d)
     }
     pub fn save_draft(&self, mut draft: Draft) -> Result<Draft, String> {
@@ -910,120 +821,6 @@ impl Database {
         }
         Ok(d)
     }
-    /// Discards a draft. It is held for [`DISCARDED_DRAFT_RETENTION_MS`] so
-    /// [`restore_discarded_draft`](Self::restore_discarded_draft) can bring it
-    /// back, and its server copy waits [`DISCARD_SERVER_DELAY_MS`] before it
-    /// is deleted.
-    pub fn discard_draft(&self, id: &str) -> Result<(), String> {
-        let at = unix_millis();
-        self.with_transaction(|tx| {
-            tx.execute(
-                "INSERT OR REPLACE INTO discarded_drafts(id, revision, payload, discarded_at)
-                 SELECT id, revision, payload, ?2 FROM drafts WHERE id=?1",
-                params![id, at],
-            )?;
-            tx.execute("DELETE FROM drafts WHERE id=?1", [id])?;
-            Self::draft_left_drafts(tx, id, at + DISCARD_SERVER_DELAY_MS)?;
-            Ok(())
-        })?;
-        Ok(())
-    }
-    /// Brings back a draft discarded within [`DISCARDED_DRAFT_RETENTION_MS`].
-    /// A server copy not yet deleted stays as it is; otherwise the draft is
-    /// saved to the server again.
-    pub fn restore_discarded_draft(&self, id: &str) -> Result<Draft, String> {
-        let restored = self.with_transaction(|tx| {
-            let held: Option<(i64, String)> = tx
-                .query_row("SELECT revision, payload FROM discarded_drafts WHERE id=?1", [id], |row| Ok((row.get(0)?, row.get(1)?)))
-                .optional()?;
-            let Some((revision, payload)) = held else {
-                return Err(DatabaseError::invalid("This draft can no longer be restored"));
-            };
-            let mut draft: Draft = serde_json::from_str(&payload).map_err(crate::db::serialization_error)?;
-            draft.revision = revision + 1;
-            draft.updated_at = unix_millis();
-            tx.execute(
-                "INSERT INTO drafts VALUES (?1,?2,?3)",
-                params![draft.id, draft.revision, serde_json::to_string(&draft).map_err(crate::db::serialization_error)?],
-            )?;
-            tx.execute("DELETE FROM discarded_drafts WHERE id=?1", [id])?;
-            // Never delete the copy of a draft that came back.
-            tx.execute(
-                "DELETE FROM draft_server_deletions WHERE message_id=?1",
-                [crate::draft_push::server_message_local_part(id)],
-            )?;
-            let in_sync = tx.execute(
-                "UPDATE draft_server_links SET pushed_revision=?2, due_at=NULL, pending_since=NULL WHERE draft_id=?1 AND pushed_revision=?3 AND state='saved' AND server_id IS NOT NULL",
-                params![id, draft.revision, revision],
-            )?;
-            if in_sync == 0 {
-                Self::mark_draft_push_pending(tx, &draft, unix_millis())?;
-            }
-            Ok(draft)
-        });
-        restored.map_err(|error| error.to_string())
-    }
-    /// Forgets discarded drafts past [`DISCARDED_DRAFT_RETENTION_MS`].
-    fn purge_discarded_drafts(&self, at: i64) -> Result<(), String> {
-        self.connection()?
-            .execute("DELETE FROM discarded_drafts WHERE discarded_at < ?1", [at - DISCARDED_DRAFT_RETENTION_MS])
-            .map_err(error)?;
-        Ok(())
-    }
-    fn discarded_draft_attachments(&self) -> Result<Vec<String>, String> {
-        let c = self.connection()?;
-        let mut q = c.prepare("SELECT payload FROM discarded_drafts").map_err(error)?;
-        let rows = q.query_map([], |r| r.get::<_, String>(0)).map_err(error)?;
-        let mut ids = Vec::new();
-        for row in rows {
-            let draft: Draft = serde_json::from_str(&row.map_err(error)?).map_err(error)?;
-            ids.extend(draft.attachments.into_iter().map(|a| a.id));
-        }
-        Ok(ids)
-    }
-    /// Writes one draft row. `push` marks an edit that the account's server
-    /// drafts need, in the same transaction. Returns the rows `write` changed.
-    fn write_draft(
-        &self,
-        d: &mut Draft,
-        push: bool,
-        write: impl FnOnce(&rusqlite::Transaction, &Draft, &str) -> rusqlite::Result<usize>,
-    ) -> Result<usize, String> {
-        d.server_draft = None;
-        let payload = json(d)?;
-        let draft = &*d;
-        let changed = self.with_transaction(|tx| {
-            let changed = write(tx, draft, &payload)?;
-            if changed == 1 && push {
-                Self::mark_draft_push_pending(tx, draft, unix_millis())?;
-            }
-            Ok(changed)
-        })?;
-        Ok(changed)
-    }
-    /// For a change the server copy doesn't carry, such as which local
-    /// message a reply answers. A server copy that was current stays current.
-    fn update_draft_without_push(&self, d: &mut Draft, expected: i64) -> Result<usize, String> {
-        self.write_draft(d, false, |tx, d, payload| {
-            let changed = tx.execute(
-                "UPDATE drafts SET revision=?1,payload=?2 WHERE id=?3 AND revision=?4",
-                params![d.revision, payload, d.id, expected],
-            )?;
-            tx.execute(
-                "UPDATE draft_server_links SET pushed_revision=?2 WHERE draft_id=?1 AND pushed_revision=?3",
-                params![d.id, d.revision, expected],
-            )?;
-            Ok(changed)
-        })
-    }
-    fn update_draft(&self, d: &mut Draft, expected: i64) -> Result<usize, String> {
-        self.write_draft(d, true, |tx, d, payload| {
-            tx.execute(
-                "UPDATE drafts SET revision=?1,payload=?2 WHERE id=?3 AND revision=?4",
-                params![d.revision, payload, d.id, expected],
-            )
-        })
-    }
     fn save_attachment_draft(&self, mut d: Draft) -> Result<Draft, String> {
         let expected = d.revision;
         d.revision += 1;
@@ -1032,75 +829,6 @@ impl Database {
             return Err("Draft changed while preparing attachment; retry".into());
         }
         Ok(d)
-    }
-    pub fn outbox(&self) -> Result<Vec<OutboxItem>, String> {
-        let c = self.connection()?;
-        let mut q = c
-            .prepare(
-                "SELECT id,payload,state,deadline,error,provider_id,archive_on_send,schedule_json,last_attempt_at,sent_copy_state,sent_copy_error FROM outbox_messages ORDER BY rowid DESC",
-            )
-            .map_err(error)?;
-        let rows = q
-            .query_map([], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, i64>(3)?,
-                    r.get::<_, Option<String>>(4)?,
-                    r.get::<_, Option<String>>(5)?,
-                    r.get::<_, bool>(6)?,
-                    r.get::<_, Option<String>>(7)?,
-                    r.get::<_, Option<i64>>(8)?,
-                    r.get::<_, Option<String>>(9)?,
-                    r.get::<_, Option<String>>(10)?,
-                ))
-            })
-            .map_err(error)?;
-        rows.map(|r| {
-            let (id, payload, state, deadline, error, provider_id, archive_on_send, schedule_json, last_attempt_at, sent_copy_state, sent_copy_error) =
-                r.map_err(error)?;
-            Ok(OutboxItem {
-                id,
-                draft: serde_json::from_str(&payload).map_err(crate::correspondence::error)?,
-                state,
-                deadline,
-                error,
-                provider_id,
-                last_attempt_at,
-                archive_on_send,
-                schedule: schedule_json.map(|s|serde_json::from_str(&s)).transpose().map_err(crate::correspondence::error)?,
-                // A row with no Sent-copy job (Gmail, legacy, or a server that
-                // saves its own copy) has a NULL sent_copy_state -> no status.
-                sent_copy: sent_copy_state.map(|state| SentCopyStatus { state, error: sent_copy_error }),
-            })
-        })
-        .collect()
-    }
-    fn archive_on_send(&self, id: &str) -> Result<bool, String> {
-        self.connection()?
-            .query_row(
-                "SELECT archive_on_send FROM outbox_messages WHERE id=?1",
-                [id],
-                |row| row.get(0),
-            )
-            .map_err(error)
-    }
-    /// Resolves an `uncertain` send to the terminal `unverifiable` state:
-    /// the message was handed to the server (its data was sent) but the
-    /// outcome can never be confirmed, because this provider keeps no
-    /// server-side sent copy to reconcile against. Distinct from `sent`
-    /// (confirmed delivered), `failed` (confirmed not delivered), and
-    /// `uncertain` (unconfirmed but still worth re-checking). Terminal:
-    /// `tick` only re-processes `undo_pending`/`ready`/`uncertain`, so
-    /// `unverifiable` is never retried or reconciled again. The user is
-    /// shown "may have been sent" and decides whether to resend. The guard
-    /// on `state='uncertain'` makes this a no-op if the row has since moved
-    /// on. See `docs/imap-design.md` ("Sending").
-    pub fn mark_unverifiable(&self, id: &str) -> Result<(), String> {
-        let owner=self.outbox()?.into_iter().find(|o|o.id==id).and_then(|o|o.schedule).map(|s|s.report.owner_installation_id).unwrap_or_default();
-        self.change_outbox("UPDATE outbox_messages SET state='unverifiable', error='This message may have been sent, but delivery could not be confirmed. Confirm with the recipient before sending it again.' WHERE id=?1 AND state='uncertain'",[id],id,&owner,unix_millis())?;
-        Ok(())
     }
     pub fn queue(
         &self,
@@ -1155,107 +883,8 @@ impl Database {
             schedule: None,
             sent_copy: None,
         };
-        let mut c = self.connection()?;
-        let tx = c.transaction().map_err(error)?;
-        let removed = tx
-            .execute(
-                "DELETE FROM drafts WHERE id=?1 AND revision=?2",
-                params![id, revision],
-            )
-            .map_err(error)?;
-        if removed != 1 {
-            return Err("Draft changed while preparing send".into());
-        }
-        Self::draft_left_drafts(&tx, id, unix_millis())?;
-        tx.execute("INSERT INTO outbox_messages(id,draft_id,revision,account,state,deadline,payload,raw,archive_on_send) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![item.id,id,revision,d.account,item.state,item.deadline,json(&d)?,raw,item.archive_on_send]).map_err(error)?;
-        tx.commit().map_err(error)?;
+        self.insert_queued_send(&item, revision, &raw)?;
         Ok(item)
-    }
-    pub fn cancel_send(&self, id: &str, recover: bool) -> Result<Draft, String> {
-        let item = self
-            .outbox()?
-            .into_iter()
-            .find(|o| o.id == id)
-            .ok_or("Outbox item not found")?;
-        let allowed = if recover {
-            item.state == "failed"
-        } else {
-            ["undo_pending", "ready", "scheduled", "overdue"].contains(&item.state.as_str())
-        };
-        if !allowed {
-            return Err(
-                "Delivery has started or is uncertain; it cannot be safely canceled or retried"
-                    .into(),
-            );
-        }
-        let mut d = item.draft;
-        d.revision += 1;
-        let mut c = self.connection()?;
-        let tx = c.transaction().map_err(error)?;
-        let count = tx
-            .execute(
-                "UPDATE outbox_messages SET state='canceled' WHERE id=?1 AND state=?2",
-                params![id, item.state],
-            )
-            .map_err(error)?;
-        if count != 1 {
-            return Err("Delivery has already started".into());
-        }
-        tx.execute(
-            "INSERT INTO drafts VALUES (?1,?2,?3)",
-            params![d.id, d.revision, json(&d)?],
-        )
-        .map_err(error)?;
-        Self::mark_draft_push_pending(&tx, &d, unix_millis())?;
-        if let Some(schedule) = &item.schedule { crate::db::record_schedule_report(&tx,id,&schedule.report.owner_installation_id,unix_millis()).map_err(error)?; }
-        tx.commit().map_err(error)?;
-        Ok(d)
-    }
-    pub fn pending_undo(&self) -> Result<bool, String> {
-        Ok(self
-            .connection()?
-            .query_row(
-                "SELECT count(*) FROM outbox_messages WHERE state='undo_pending' AND deadline>?1",
-                [unix_millis()],
-                |r| r.get::<_, i64>(0),
-            )
-            .map_err(error)?
-            > 0)
-    }
-    /// Pauses undo-pending/ready outbox items for one account, so removing a
-    /// connected account never pauses another account's in-flight sends.
-    #[cfg(test)]
-    pub fn pause_ready_sends_for(&self, account: &str) -> Result<(), String> {
-        self.pause_ready_sends_for_owned(account,"")
-    }
-    pub fn pause_ready_sends_for_owned(&self, account: &str, owner: &str) -> Result<(), String> {
-        let items=self.outbox()?;
-        for item in items.into_iter().filter(|o|o.draft.account==account && ["undo_pending","ready","scheduled","overdue"].contains(&o.state.as_str())) {
-            self.change_outbox("UPDATE outbox_messages SET state='failed',error='Account disconnected. Reconnect and restore this draft to send.' WHERE id=?1 AND state IN ('undo_pending','ready','scheduled','overdue')",[&item.id],&item.id,owner,unix_millis())?;
-        }
-        Ok(())
-    }
-    /// Fails every queued or scheduled send whose account is gone from the
-    /// catalog, whatever its due time. Removing an account on another device
-    /// purges it here without touching this device's outbox, and a send left
-    /// waiting would otherwise go out unasked once the account is added again.
-    pub fn fail_sends_for_removed_accounts(&self, owner: &str) -> Result<(), String> {
-        let accounts: Vec<String> = {
-            let c = self.connection()?;
-            let mut q = c
-                .prepare(
-                    "SELECT DISTINCT account FROM outbox_messages
-                 WHERE state IN ('undo_pending','ready','scheduled','overdue')
-                   AND lower(account) NOT IN (SELECT lower(email) FROM accounts)",
-                )
-                .map_err(error)?;
-            let rows = q.query_map([], |r| r.get(0)).map_err(error)?;
-            rows.collect::<Result<Vec<_>, _>>().map_err(error)?
-        };
-        for account in accounts {
-            self.pause_ready_sends_for_owned(&account, owner)?;
-        }
-        Ok(())
     }
 }
 
@@ -1505,13 +1134,10 @@ impl Correspondence {
     }
     pub fn pause_account_schedules(&self,account:&str) -> Result<(),String> {
         let owner=self.schedule_owner(false).unwrap_or_default();
-        self.database.pause_ready_sends_for_owned(account,&owner)
+        Ok(self.database.pause_ready_sends_for_owned(account,&owner)?)
     }
     fn schedule_owner(&self, create: bool) -> Result<String,String> {
-        let has_schedules = self.database.connection()?.query_row(
-            "SELECT EXISTS(SELECT 1 FROM outbox_messages WHERE schedule_json IS NOT NULL)",
-            [], |row| row.get::<_, bool>(0),
-        ).map_err(error)?;
+        let has_schedules = self.database.has_scheduled_sends()?;
         if !create && !has_schedules { return Err("No scheduled messages".into()); }
         (self.sending_identity)(create && !has_schedules)
     }
@@ -1563,16 +1189,7 @@ impl Correspondence {
     }
     /// Caches a draft's source message so drafting from it works offline later.
     async fn ensure_source_metadata(&self, id: &str, account: &str) -> Result<(), String> {
-        let missing = self
-            .database
-            .connection()?
-            .query_row(
-                "SELECT count(*) FROM message_metadata WHERE id=?1",
-                [id],
-                |r| r.get::<_, i64>(0),
-            )
-            .map_err(error)?
-            == 0;
+        let missing = !self.database.has_message_metadata(id)?;
         if missing {
             let source = self
                 .provider_for(account)
@@ -2109,7 +1726,7 @@ impl Correspondence {
             .map_err(error)?
         {
             let owner = self.authorize_schedule_async(id).await?;
-            self.database.change_outbox("UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2 AND state='uncertain'",params![message.provider_message_id,id],id,&owner,unix_millis())?;
+            self.database.mark_uncertain_send_sent(id, &message.provider_message_id, &owner, unix_millis())?;
             if let Some(thread_id) = message.thread_id.as_deref() {
                 if self.database.archive_on_send(&item.id)? {
                     let _ = provider
@@ -2197,18 +1814,12 @@ impl Correspondence {
             for item in items {
                 if item.schedule.as_ref().is_some_and(|s|Some(s.report.owner_installation_id.as_str())!=owner.as_deref()) { continue; }
                 if item.draft.account != identity {
-                    self.database.connection()?.execute("UPDATE outbox_messages SET error='Paused: reconnect the original sender account to continue.' WHERE id=?1 AND state IN ('undo_pending','ready')", [&item.id]).map_err(error)?;
+                    self.database.pause_send_for_other_sender(&item.id)?;
                     continue;
                 }
                 if item.state == "uncertain" {
                     if item.deadline <= unix_millis() {
-                        self.database
-                            .connection()?
-                            .execute(
-                                "UPDATE outbox_messages SET deadline=?1 WHERE id=?2",
-                                params![unix_millis() + 60_000, item.id],
-                            )
-                            .map_err(error)?;
+                        self.database.defer_uncertain_send(&item.id, unix_millis() + 60_000)?;
                         let _ = self.reconcile(&item.id).await;
                     }
                     continue;
@@ -2372,13 +1983,7 @@ impl Correspondence {
         at: i64,
         message: &str,
     ) -> Result<(), String> {
-        self.database.change_outbox(
-            "UPDATE outbox_messages SET error=?2,last_attempt_at=?3 WHERE id=?1 AND state IN ('undo_pending','ready')",
-            params![item.id, message, at],
-            &item.id,
-            owner,
-            at,
-        )?;
+        self.database.note_send_prepare_retry(&item.id, message, owner, at)?;
         Ok(())
     }
 
@@ -2393,13 +1998,7 @@ impl Correspondence {
         at: i64,
         message: &str,
     ) -> Result<(), String> {
-        self.database.change_outbox(
-            "UPDATE outbox_messages SET state='failed',error=?2 WHERE id=?1 AND state IN ('undo_pending','ready')",
-            params![item.id, message],
-            &item.id,
-            owner,
-            at,
-        )?;
+        self.database.fail_queued_send(&item.id, message, owner, at)?;
         Ok(())
     }
     /// Drive every DUE Sent-copy job this tick (fact 4: NOT skipped by the
@@ -2427,17 +2026,7 @@ impl Correspondence {
     {
         // Resolve availability before applying the work cap. Otherwise a full
         // batch belonging to unavailable accounts can starve every later job.
-        let accounts: Vec<String> = {
-            let c = self.database.connection()?;
-            let mut q = c
-                .prepare(
-                    "SELECT DISTINCT account FROM outbox_messages
-                 WHERE sent_copy_state IN ('pending','verify') AND sent_copy_next_at <= ?1",
-                )
-                .map_err(error)?;
-            let rows = q.query_map([at], |r| r.get(0)).map_err(error)?;
-            rows.collect::<Result<Vec<_>, _>>().map_err(error)?
-        };
+        let accounts = self.database.sent_copy_job_accounts(at)?;
         let mut providers = HashMap::new();
         for account in accounts {
             if let Some(provider) = resolve(account.clone()).await {
@@ -2447,49 +2036,22 @@ impl Correspondence {
         if providers.is_empty() {
             return Ok(());
         }
-        let available = json(&providers.keys().collect::<Vec<_>>())?;
+        let available: Vec<&str> = providers.keys().map(String::as_str).collect();
         // Only eligible jobs load raw MIME, still oldest-first and bounded.
-        let due: Vec<(String, String, Vec<u8>, String, i64, i64)> = {
-            let c = self.database.connection()?;
-            let mut q = c
-                .prepare(
-                    "SELECT id, account, raw, sent_copy_state, sent_copy_attempts, \
-                     sent_copy_append_attempted FROM outbox_messages \
-                     WHERE sent_copy_state IN ('pending','verify') AND sent_copy_next_at <= ?1 \
-                     AND account IN (SELECT value FROM json_each(?3)) \
-                     ORDER BY sent_copy_next_at ASC, rowid ASC LIMIT ?2",
-                )
-                .map_err(error)?;
-            let rows = q
-                .query_map(
-                    params![
-                        at,
-                        crate::provider::imap::SENT_COPY_MAX_JOBS_PER_TICK as i64,
-                        available
-                    ],
-                    |r| {
-                        Ok((
-                            r.get::<_, String>(0)?,
-                            r.get::<_, String>(1)?,
-                            r.get::<_, Vec<u8>>(2)?,
-                            r.get::<_, String>(3)?,
-                            r.get::<_, i64>(4)?,
-                            r.get::<_, i64>(5)?,
-                        ))
-                    },
-                )
-                .map_err(error)?;
-            rows.collect::<Result<Vec<_>, _>>().map_err(error)?
-        };
-        for (id, account, raw, state, attempts, append_attempted) in due {
-            if let Some(provider) = providers.get(&account) {
+        let due = self.database.due_sent_copy_jobs(
+            at,
+            &available,
+            crate::provider::imap::SENT_COPY_MAX_JOBS_PER_TICK as i64,
+        )?;
+        for job in due {
+            if let Some(provider) = providers.get(&job.account) {
                 self.run_sent_copy_job(
                     provider.as_ref(),
-                    &id,
-                    &raw,
-                    &state,
-                    attempts,
-                    append_attempted != 0,
+                    &job.id,
+                    &job.raw,
+                    &job.state,
+                    job.attempts,
+                    job.append_attempted,
                     at,
                 )
                 .await?;
@@ -2537,13 +2099,7 @@ impl Correspondence {
         // copy as the server's own (the evidence rule). The verify phase never
         // appends, so it does not re-flag.
         if phase == SentCopyPhase::Pending && !append_attempted {
-            self.database.change_outbox(
-                "UPDATE outbox_messages SET sent_copy_append_attempted=1 WHERE id=?1 AND sent_copy_state='pending'",
-                params![id],
-                id,
-                "",
-                at,
-            )?;
+            self.database.mark_sent_copy_append_attempted(id, at)?;
         }
 
         let request = SentCopyRequest {
@@ -2555,25 +2111,11 @@ impl Correspondence {
 
         match provider.save_sent_copy(&request).await {
             Ok(SentCopyStep::Done) => {
-                self.database.change_outbox(
-                    "UPDATE outbox_messages SET sent_copy_state='done',sent_copy_error=NULL \
-                     WHERE id=?1 AND sent_copy_state IN ('pending','verify')",
-                    params![id],
-                    id,
-                    "",
-                    at,
-                )?;
+                self.database.complete_sent_copy_job(id, at)?;
             }
             Ok(SentCopyStep::Recheck { after }) => {
                 let next_at = at + after.as_millis() as i64;
-                self.database.change_outbox(
-                    "UPDATE outbox_messages SET sent_copy_state='verify',sent_copy_next_at=?2,\
-                     sent_copy_error=NULL WHERE id=?1 AND sent_copy_state IN ('pending','verify')",
-                    params![id, next_at],
-                    id,
-                    "",
-                    at,
-                )?;
+                self.database.recheck_sent_copy_job(id, next_at, at)?;
             }
             Err(err) => {
                 let permanent = matches!(
@@ -2583,41 +2125,19 @@ impl Correspondence {
                 );
                 let message = sent_copy_error_message(&err);
                 if permanent {
-                    self.database.change_outbox(
-                        "UPDATE outbox_messages SET sent_copy_state='abandoned',sent_copy_error=?2 \
-                         WHERE id=?1 AND sent_copy_state IN ('pending','verify')",
-                        params![id, message],
-                        id,
-                        "",
-                        at,
-                    )?;
+                    self.database.abandon_sent_copy_job(id, &message, at)?;
                 } else {
                     // Transient: count the attempt and reschedule from the
                     // backoff (floored at the settle window), or abandon at the
                     // cap. The state is KEPT (a verify stays verify).
                     let new_attempts = attempts + 1;
                     if new_attempts as u32 >= crate::provider::imap::SENT_COPY_MAX_ATTEMPTS {
-                        self.database.change_outbox(
-                            "UPDATE outbox_messages SET sent_copy_state='abandoned',\
-                             sent_copy_attempts=?2,sent_copy_error=?3 \
-                             WHERE id=?1 AND sent_copy_state IN ('pending','verify')",
-                            params![id, new_attempts, message],
-                            id,
-                            "",
-                            at,
-                        )?;
+                        self.database.abandon_sent_copy_job_after_attempts(id, new_attempts, &message, at)?;
                     } else {
                         let next_at = at
                             + crate::provider::imap::sent_copy_backoff(attempts as u32).as_millis()
                                 as i64;
-                        self.database.change_outbox(
-                            "UPDATE outbox_messages SET sent_copy_attempts=?2,sent_copy_next_at=?3,\
-                             sent_copy_error=?4 WHERE id=?1 AND sent_copy_state IN ('pending','verify')",
-                            params![id, new_attempts, next_at, message],
-                            id,
-                            "",
-                            at,
-                        )?;
+                        self.database.retry_sent_copy_job(id, new_attempts, next_at, &message, at)?;
                     }
                 }
             }
@@ -2636,17 +2156,9 @@ impl Correspondence {
         F: FnOnce(Vec<u8>, Option<String>) -> Fut,
         Fut: std::future::Future<Output = Result<DeliveryReceipt, (bool, String)>>,
     {
-        let raw: Vec<u8> = {
-            let c = self.database.connection()?;
-            c.query_row(
-                "SELECT raw FROM outbox_messages WHERE id=?1",
-                [&item.id],
-                |r| r.get(0),
-            )
-            .map_err(error)?
-        };
+        let raw = self.database.outbox_raw(&item.id)?;
         let owner=if item.schedule.is_some() { self.authorize_schedule_async(&item.id).await? } else {String::new()};
-        let claimed=self.database.change_outbox("UPDATE outbox_messages SET state='sending',attempts=attempts+1,last_attempt_at=?2,error=NULL WHERE id=?1 AND state IN ('undo_pending','ready','scheduled') AND deadline<=?2 AND (state!='scheduled' OR deadline>=?3) AND (schedule_json IS NULL OR (json_extract(schedule_json,'$.report.reportRevision')=?4 AND json_extract(schedule_json,'$.report.ownerInstallationId')=?5))",params![item.id,at,at.saturating_sub(crate::scheduled_send::DISPATCH_GRACE_MS),item.schedule.as_ref().map(|s|s.report.report_revision),owner],&item.id,&owner,at)?;
+        let claimed=self.database.claim_due_send(&item.id,at,at.saturating_sub(crate::scheduled_send::DISPATCH_GRACE_MS),item.schedule.as_ref().map(|s|s.report.report_revision),&owner)?;
         if claimed != 1 {
             return Ok(None);
         }
@@ -2662,33 +2174,13 @@ impl Correspondence {
                 // do so before first-send detection looks. Gmail-like providers
                 // pass `seed_sent_copy=false` and every sent_copy_* column stays
                 // NULL/default.
-                if seed_sent_copy {
-                    let next_at = at
-                        + crate::provider::imap::SENT_COPY_SETTLE.as_millis() as i64;
-                    self.database.change_outbox(
-                        "UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL,\
-                         sent_copy_state='pending',sent_copy_next_at=?3,sent_copy_attempts=0,\
-                         sent_copy_append_attempted=0,sent_copy_error=NULL WHERE id=?2",
-                        params![sent.provider_message_id, item.id, next_at],
-                        &item.id,
-                        &owner,
-                        at,
-                    )?;
-                } else {
-                    self.database.change_outbox("UPDATE outbox_messages SET state='sent',provider_id=?1,error=NULL WHERE id=?2",params![sent.provider_message_id,item.id],&item.id,&owner,at)?;
-                }
+                let sent_copy_next_at = seed_sent_copy
+                    .then(|| at + crate::provider::imap::SENT_COPY_SETTLE.as_millis() as i64);
+                self.database.record_send_accepted(&item.id, &sent.provider_message_id, sent_copy_next_at, &owner, at)?;
                 Ok(Some(sent))
             }
             Err((definite, message)) => {
-                self.database
-                    .change_outbox(
-                        "UPDATE outbox_messages SET state=?1,error=?2 WHERE id=?3",
-                        params![
-                            if definite { "failed" } else { "uncertain" },
-                            message,
-                            item.id
-                        ], &item.id,&owner,at,
-                    )?;
+                self.database.record_send_failed(&item.id, definite, &message, &owner, at)?;
                 Ok(None)
             }
         }
@@ -2705,6 +2197,7 @@ impl Correspondence {
 mod tests {
     use super::*;
     use mail_parser::MimeHeaders;
+    use rusqlite::params;
     fn database() -> Database {
         let db = Database::open_memory();
         db.set_compose_identity("you@example.com").unwrap();

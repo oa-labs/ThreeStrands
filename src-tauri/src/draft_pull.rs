@@ -8,12 +8,10 @@ use crate::clock::unix_millis;
 use std::{collections::HashMap, path::Path, sync::Arc};
 
 use mail_parser::{Address, MessageParser, MimeHeaders, PartType};
-use rusqlite::{params, OptionalExtension};
 use uuid::Uuid;
 
 use crate::{
     correspondence::{Attachment, Correspondence, Draft},
-    db::{serialization_error, Database, DatabaseError, DbResult},
     draft_push::{server_message_local_part, DraftEvent, Link},
     limits::MAX_ATTACHMENT_BYTES,
     provider::{FetchedServerDraft, MailProvider, ProviderError, ProviderResult, ServerDraft},
@@ -162,184 +160,10 @@ pub(crate) fn draft_from_server_copy(
 
 /// What a pull did to one server draft.
 #[derive(Debug, PartialEq, Eq)]
-enum Applied {
+pub(crate) enum Applied {
     Unchanged,
     Changed,
     Conflict,
-}
-
-impl Database {
-    /// Stores `imported`, the server's version of a draft, unless this
-    /// device has edits the server hasn't seen: then the server's version is
-    /// held back for the user to choose. Checked and written in one
-    /// transaction, so a save racing the pull is never overwritten.
-    fn apply_server_draft(&self, imported: &Draft, server: &ServerDraft) -> DbResult<Applied> {
-        self.with_transaction(|tx| {
-            let local: Option<i64> = tx
-                .query_row("SELECT revision FROM drafts WHERE id=?1", [&imported.id], |row| row.get(0))
-                .optional()?;
-            let pushed: Option<i64> = tx
-                .query_row("SELECT pushed_revision FROM draft_server_links WHERE draft_id=?1", [&imported.id], |row| row.get(0))
-                .optional()?;
-            if let (Some(local), Some(pushed)) = (local, pushed) {
-                if local > pushed {
-                    let held = serde_json::to_string(imported).map_err(serialization_error)?;
-                    tx.execute(
-                        "UPDATE draft_server_links SET conflict=?2, server_id=?3, server_version=?4 WHERE draft_id=?1",
-                        params![imported.id, held, server.id, server.version],
-                    )?;
-                    return Ok(Applied::Conflict);
-                }
-            }
-            let mut stored = imported.clone();
-            // Newer than any revision an open composer holds, so it follows.
-            stored.revision = local.map_or(1, |local| local + 1);
-            let payload = serde_json::to_string(&stored).map_err(serialization_error)?;
-            tx.execute(
-                "INSERT INTO drafts(id, revision, payload) VALUES (?1, ?2, ?3)
-                 ON CONFLICT(id) DO UPDATE SET revision=excluded.revision, payload=excluded.payload",
-                params![stored.id, stored.revision, payload],
-            )?;
-            tx.execute(
-                "INSERT INTO draft_server_links(draft_id, account, server_id, server_version, pushed_revision, state)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 'saved')
-                 ON CONFLICT(draft_id) DO UPDATE SET account=excluded.account, server_id=excluded.server_id,
-                     server_version=excluded.server_version, pushed_revision=excluded.pushed_revision,
-                     state='saved', error=NULL, attempts=0, due_at=NULL, pending_since=NULL, conflict=NULL",
-                params![stored.id, stored.account, server.id, server.version, stored.revision],
-            )?;
-            Ok(Applied::Changed)
-        })
-    }
-
-    fn draft_is_discarded(&self, draft_id: &str) -> DbResult<bool> {
-        self.with_connection(|connection| {
-            Ok(connection.query_row(
-                "SELECT EXISTS(SELECT 1 FROM discarded_drafts WHERE id=?1)",
-                [draft_id],
-                |row| row.get(0),
-            )?)
-        })
-    }
-
-    /// Links an existing local draft to the server copy carrying its
-    /// `Message-ID`, without changing either.
-    fn adopt_server_copy(&self, draft_id: &str, server_id: &str) -> DbResult<()> {
-        self.with_connection(|connection| {
-            connection.execute(
-                "UPDATE draft_server_links SET server_id=?2 WHERE draft_id=?1 AND server_id IS NULL",
-                params![draft_id, server_id],
-            )?;
-            Ok(())
-        })
-    }
-
-    /// Whether a server copy naming `draft_id` belongs to a draft this device
-    /// already sent, is sending, or is about to delete.
-    fn draft_left_this_device(&self, draft_id: &str) -> DbResult<bool> {
-        self.with_connection(|connection| {
-            let sending: bool = connection.query_row(
-                "SELECT EXISTS(SELECT 1 FROM outbox_messages WHERE draft_id=?1 AND state<>'canceled')",
-                [draft_id],
-                |row| row.get(0),
-            )?;
-            let deleting: bool = connection.query_row(
-                "SELECT EXISTS(SELECT 1 FROM draft_server_deletions WHERE message_id=?1)",
-                [server_message_local_part(draft_id)],
-                |row| row.get(0),
-            )?;
-            let linked: bool = connection.query_row(
-                "SELECT EXISTS(SELECT 1 FROM draft_server_links WHERE draft_id=?1)",
-                [draft_id],
-                |row| row.get(0),
-            )?;
-            let local: bool = connection.query_row(
-                "SELECT EXISTS(SELECT 1 FROM drafts WHERE id=?1)",
-                [draft_id],
-                |row| row.get(0),
-            )?;
-            // Linked but not stored: waiting for its send to settle.
-            Ok(sending || deleting || (linked && !local))
-        })
-    }
-
-    /// The server copy of `link` is gone. Drops the local draft unless it has
-    /// edits the server never saw; those are pushed again as a new copy.
-    /// Returns whether the local draft was removed.
-    fn server_copy_deleted(&self, link: &Link) -> DbResult<bool> {
-        self.with_transaction(|tx| {
-            // This pull may already have moved the link to a newer copy, as
-            // when a server stores every save as a new message.
-            let current: Option<Option<String>> = tx
-                .query_row("SELECT server_id FROM draft_server_links WHERE draft_id=?1", [&link.draft_id], |row| row.get(0))
-                .optional()?;
-            if current.flatten() != link.server_id {
-                return Ok(false);
-            }
-            let local: Option<i64> = tx
-                .query_row("SELECT revision FROM drafts WHERE id=?1", [&link.draft_id], |row| row.get(0))
-                .optional()?;
-            match local {
-                // Waiting for its send to settle; the push worker owns it.
-                None => Ok(false),
-                Some(revision) if revision > link.pushed_revision => {
-                    tx.execute(
-                        "UPDATE draft_server_links SET server_id=NULL, server_version=NULL, conflict=NULL, state='pending',
-                             due_at=?2, pending_since=COALESCE(pending_since, ?2) WHERE draft_id=?1",
-                        params![link.draft_id, unix_millis()],
-                    )?;
-                    Ok(false)
-                }
-                Some(_) => {
-                    tx.execute("DELETE FROM draft_server_links WHERE draft_id=?1", [&link.draft_id])?;
-                    tx.execute("DELETE FROM drafts WHERE id=?1", [&link.draft_id])?;
-                    Ok(true)
-                }
-            }
-        })
-    }
-
-    /// Settles a conflict: `keep_server` adopts the server's version,
-    /// otherwise this device's version is pushed over it.
-    pub(crate) fn resolve_draft_conflict(&self, id: &str, keep_server: bool) -> Result<Draft, String> {
-        let result = self.with_transaction(|tx| {
-            let held: Option<String> = tx
-                .query_row("SELECT conflict FROM draft_server_links WHERE draft_id=?1", [id], |row| row.get(0))
-                .optional()?
-                .flatten();
-            let Some(held) = held else {
-                return Err(DatabaseError::invalid("This draft no longer has another version"));
-            };
-            let local: Option<(i64, String)> = tx
-                .query_row("SELECT revision, payload FROM drafts WHERE id=?1", [id], |row| Ok((row.get(0)?, row.get(1)?)))
-                .optional()?;
-            let Some((revision, payload)) = local else {
-                return Err(DatabaseError::invalid("Draft no longer exists"));
-            };
-            if !keep_server {
-                tx.execute(
-                    "UPDATE draft_server_links SET conflict=NULL, state='pending', due_at=?2, pending_since=COALESCE(pending_since, ?2) WHERE draft_id=?1",
-                    params![id, unix_millis()],
-                )?;
-                return serde_json::from_str::<Draft>(&payload).map_err(serialization_error);
-            }
-            let mut server: Draft = serde_json::from_str(&held).map_err(serialization_error)?;
-            server.revision = revision + 1;
-            server.updated_at = unix_millis();
-            tx.execute(
-                "UPDATE drafts SET revision=?2, payload=?3 WHERE id=?1",
-                params![id, server.revision, serde_json::to_string(&server).map_err(serialization_error)?],
-            )?;
-            tx.execute(
-                "UPDATE draft_server_links SET conflict=NULL, pushed_revision=?2, state='saved', error=NULL, due_at=NULL, pending_since=NULL WHERE draft_id=?1",
-                params![id, server.revision],
-            )?;
-            Ok(server)
-        });
-        let mut draft = result.map_err(|error| error.to_string())?;
-        draft.server_draft = self.server_draft_status(&draft).map_err(|error| error.to_string())?;
-        Ok(draft)
-    }
 }
 
 impl Correspondence {
