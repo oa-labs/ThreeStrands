@@ -234,3 +234,7 @@ mod connection_tests;
 #[cfg(test)]
 #[path = "db/tests/boundary.rs"]
 mod boundary_tests;
+
+#[cfg(test)]
+#[path = "db/tests/write_paths.rs"]
+mod write_paths_tests;
