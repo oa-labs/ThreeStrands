@@ -245,6 +245,39 @@ impl Database {
     }
 }
 
+impl Database {
+    /// Removes a mute rule another device deleted.
+    pub(crate) fn delete_synced_sender_rule(&self, id: &str) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute("DELETE FROM sender_rules WHERE id=?1", [id])?;
+            Ok(())
+        })
+    }
+}
+
+/// Settings import: clears every mute rule before the file's are added.
+/// Removing a rule drops its action log.
+pub(super) fn delete_all_sender_rules(connection: &rusqlite::Connection) -> DbResult<()> {
+    connection.execute("DELETE FROM sender_rules", [])?;
+    Ok(())
+}
+
+/// Settings import: adds one mute rule from the file, with its match value
+/// already normalized.
+pub(super) fn insert_imported_sender_rule(
+    connection: &rusqlite::Connection,
+    rule: &crate::transfer::TransferSenderRule,
+    match_value: &str,
+    now: &str,
+) -> DbResult<()> {
+    connection.execute(
+        "INSERT INTO sender_rules(id, account_id, match_kind, match_value, action, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![rule.id, rule.account_id, rule.match_kind, match_value, rule.action, rule.created_at, now],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "tests/sender_rules.rs"]
 mod tests;

@@ -5,6 +5,8 @@ use super::{Database, DbResult};
 use crate::models::{Account, MailProviderKind};
 use chrono::Utc;
 use rusqlite::{params, OptionalExtension};
+use serde_json::{json, Value};
+use super::serialization_error;
 
 impl Database {
     /// The account the compose pipeline defaults to and the legacy
@@ -490,6 +492,77 @@ fn enrich_label_model(connection: &rusqlite::Connection, account: &mut Account) 
     if let Some(settings) = super::imap::read_settings_row(connection, &account.email)? {
         account.label_model = crate::provider::imap::label_model_for(settings.label_storage);
     }
+    Ok(())
+}
+
+impl Database {
+    /// Stores a mail account another device added or changed. A new one is
+    /// offered here as available, not set up on this device.
+    pub(crate) fn upsert_synced_account(&self, value: &Value) -> DbResult<()> {
+        let item: Account = serde_json::from_value(json!({
+            "email": value["email"],
+            "displayName": value.get("displayName").cloned().unwrap_or(Value::Null),
+            "nickname": value.get("nickname").cloned().unwrap_or(Value::Null),
+            "color": value["color"],
+            "status": "needs_reauth",
+            "provider": value["provider"],
+            "sortOrder": value["sortOrder"],
+            "connectedAt": Utc::now().to_rfc3339(),
+            "lastSyncedAt": null,
+        }))
+        .map_err(serialization_error)?;
+        self.with_connection(|connection| {
+            connection.execute(
+                // A new account from another device is offered here, not
+                // reported as broken: it stays "available" until the user
+                // sets it up on this device. An existing row keeps its state.
+                "INSERT INTO accounts(email,display_name,color,status,provider,sort_order,connected_at,nickname,on_this_device) VALUES(?1,?2,?3,'needs_reauth',?4,?5,?6,?7,0) ON CONFLICT(email) DO UPDATE SET display_name=excluded.display_name,nickname=excluded.nickname,color=excluded.color,provider=excluded.provider,sort_order=excluded.sort_order",
+                params![item.email, item.display_name, item.color, item.provider, item.sort_order, item.connected_at, item.nickname],
+            )?;
+            Ok(())
+        })
+    }
+}
+
+/// Settings import: moves existing accounts after the `count` imported ones.
+pub(super) fn shift_account_order(connection: &rusqlite::Connection, count: i64) -> DbResult<()> {
+    connection.execute("UPDATE accounts SET sort_order = sort_order + ?1", [count])?;
+    Ok(())
+}
+
+/// Settings import: adds an account from the file as `needs_reauth`, or
+/// updates one already here, which keeps its connection status. Choosing an
+/// account sets it up on this device; leaving it out never disconnects one
+/// already set up.
+pub(super) fn upsert_imported_account(
+    connection: &rusqlite::Connection,
+    account: &crate::transfer::TransferAccount,
+    connected_at: &str,
+    on_this_device: bool,
+) -> DbResult<()> {
+    connection.execute(
+        "INSERT INTO accounts(
+             email, display_name, color, status, provider, sort_order, connected_at, last_synced_at, nickname, on_this_device
+         ) VALUES (?1, ?2, ?3, 'needs_reauth', ?4, ?5, ?6, NULL, ?7, ?8)
+         ON CONFLICT(email) DO UPDATE SET
+             display_name = excluded.display_name,
+             nickname = excluded.nickname,
+             color = excluded.color,
+             sort_order = excluded.sort_order,
+             -- Choosing an account adds it here; leaving it
+             -- out never disconnects one already set up.
+             on_this_device = MAX(on_this_device, excluded.on_this_device)",
+        params![
+            account.email,
+            account.display_name,
+            account.color,
+            account.provider,
+            account.sort_order,
+            connected_at,
+            account.nickname,
+            on_this_device,
+        ],
+    )?;
     Ok(())
 }
 

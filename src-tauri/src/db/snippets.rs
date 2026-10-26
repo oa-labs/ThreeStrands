@@ -29,13 +29,7 @@ impl Database {
         }
         let id = Uuid::new_v4().to_string();
         let created_at = Utc::now().to_rfc3339();
-        self.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO snippets(id, name, body, created_at) VALUES (?1, ?2, ?3, ?4)",
-                params![id, name, body, created_at],
-            )?;
-            Ok(())
-        })?;
+        self.with_connection(|connection| insert_snippet_row(connection, &id, name, body, &created_at))?;
         Ok(Snippet {
             id,
             name: name.to_string(),
@@ -84,4 +78,47 @@ fn snippet_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Snippet> {
         body: row.get(2)?,
         created_at: row.get(3)?,
     })
+}
+
+impl Database {
+    /// Stores a snippet another device wrote. An existing row keeps its
+    /// `created_at`; `updated_at` records when it arrived here.
+    pub(crate) fn upsert_synced_snippet(&self, item: Snippet) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO snippets(id,name,body,created_at,updated_at) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(id) DO UPDATE SET name=excluded.name,body=excluded.body,updated_at=excluded.updated_at",
+                params![item.id, item.name, item.body, item.created_at, Utc::now().to_rfc3339()],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Removes a snippet another device deleted.
+    pub(crate) fn delete_synced_snippet(&self, id: &str) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute("DELETE FROM snippets WHERE id=?1", [id])?;
+            Ok(())
+        })
+    }
+}
+
+/// Stores a new snippet row. Used by local creation and settings import.
+pub(super) fn insert_snippet_row(
+    connection: &rusqlite::Connection,
+    id: &str,
+    name: &str,
+    body: &str,
+    created_at: &str,
+) -> DbResult<()> {
+    connection.execute(
+        "INSERT INTO snippets(id, name, body, created_at) VALUES (?1, ?2, ?3, ?4)",
+        params![id, name, body, created_at],
+    )?;
+    Ok(())
+}
+
+/// Settings import: clears every snippet before the file's are added.
+pub(super) fn delete_all_snippets(connection: &rusqlite::Connection) -> DbResult<()> {
+    connection.execute("DELETE FROM snippets", [])?;
+    Ok(())
 }

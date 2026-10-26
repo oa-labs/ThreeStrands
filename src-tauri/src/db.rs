@@ -45,6 +45,7 @@ mod signatures;
 mod snippets;
 mod split_inboxes;
 pub(crate) mod sync_state;
+mod synced_preferences;
 mod tasks;
 mod threads;
 mod today;
@@ -57,7 +58,6 @@ pub(crate) use join_codes::rfc3339_from_ms;
 pub use recovery::{open_with_recovery, OpenError, RecoveryOutcome};
 pub(crate) use scheduled_send::record_schedule_report;
 pub(crate) use sender::MAX_SENDER_THREADS;
-pub(crate) use signatures::record_signature_write;
 pub(crate) use today::PROMISE_LOOKBACK_DAYS;
 
 #[cfg(test)]

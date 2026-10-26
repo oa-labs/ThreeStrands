@@ -55,12 +55,7 @@ impl Database {
                 )?;
             let id = Uuid::new_v4().to_string();
             let created_at = Utc::now().to_rfc3339();
-            transaction
-                .execute(
-                    "INSERT INTO split_inboxes(id, name, match_kind, match_value, sort_order, created_at, account_id)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                    params![id, name, match_kind, match_value, sort_order, created_at, account_id],
-                )?;
+            insert_split_inbox_row(&transaction, &id, name, match_kind, &match_value, sort_order, &created_at, account_id)?;
             Ok(SplitInbox {
                 id,
                 name: name.to_string(),
@@ -179,6 +174,63 @@ pub(super) fn split_inbox_matches(rule: &SplitInbox, thread: &Thread) -> bool {
             .any(|participant| normalize_sender(participant).0.contains(&rule.match_value)),
         _ => false,
     }
+}
+
+impl Database {
+    /// Stores a split inbox another device wrote. An existing row keeps its
+    /// `created_at`; `updated_at` records when it arrived here.
+    pub(crate) fn upsert_synced_split(&self, item: SplitInbox) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO split_inboxes(id,name,match_kind,match_value,sort_order,created_at,account_id,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO UPDATE SET name=excluded.name,match_kind=excluded.match_kind,match_value=excluded.match_value,sort_order=excluded.sort_order,account_id=excluded.account_id,updated_at=excluded.updated_at",
+                params![
+                    item.id,
+                    item.name,
+                    item.match_kind,
+                    item.match_value,
+                    item.sort_order,
+                    item.created_at,
+                    item.account_id,
+                    Utc::now().to_rfc3339()
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Removes a split inbox another device deleted.
+    pub(crate) fn delete_synced_split(&self, id: &str) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute("DELETE FROM split_inboxes WHERE id=?1", [id])?;
+            Ok(())
+        })
+    }
+}
+
+/// Stores a new split inbox row. Used by local creation and settings import.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn insert_split_inbox_row(
+    connection: &rusqlite::Connection,
+    id: &str,
+    name: &str,
+    match_kind: &str,
+    match_value: &str,
+    sort_order: i64,
+    created_at: &str,
+    account_id: &str,
+) -> DbResult<()> {
+    connection.execute(
+        "INSERT INTO split_inboxes(id, name, match_kind, match_value, sort_order, created_at, account_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![id, name, match_kind, match_value, sort_order, created_at, account_id],
+    )?;
+    Ok(())
+}
+
+/// Settings import: clears every split inbox before the file's are added.
+pub(super) fn delete_all_split_inboxes(connection: &rusqlite::Connection) -> DbResult<()> {
+    connection.execute("DELETE FROM split_inboxes", [])?;
+    Ok(())
 }
 
 #[cfg(test)]

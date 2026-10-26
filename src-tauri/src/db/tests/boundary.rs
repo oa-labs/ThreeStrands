@@ -26,7 +26,7 @@ const ALLOWED: &[(&str, usize, usize, usize)] = &[
     ("provider/imap/provider/tests/mod.rs", 13, 3, 10),
     ("replicated_sync.rs", 39, 1, 42),
     ("sync.rs", 7, 0, 7),
-    ("sync_projection.rs", 20, 1, 14),
+    ("sync_projection.rs", 4, 0, 4),
     ("sync_sim.rs", 7, 0, 6),
     ("transfer.rs", 1, 0, 1),
 ];

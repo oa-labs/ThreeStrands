@@ -1,6 +1,6 @@
 # Keeping persistence inside `db/`
 
-Status: accepted (2026-10-26). Phases 0 and 1 done (0.173.1); Phase 2 done (0.173.2); Phase 5 done (0.173.3); Phase 3 done (0.173.4 to 0.173.6). Phases 4 and 6 remain.
+Status: accepted (2026-10-26). Phases 0 and 1 done (0.173.1); Phase 2 done (0.173.2); Phase 5 done (0.173.3); Phase 3 done (0.173.4 to 0.173.6); Phase 4 done (0.173.7). Phase 6 remains.
 
 `src-tauri/src/db.rs` says "Feature modules own their SQL and tests": `db/`
 owns persistence, and the rest of the app calls named `Database` methods.
@@ -121,17 +121,23 @@ Three merges.
 
 ### Phase 4: one copy of each table's SQL
 
-- Each feature module exposes `upsert_synced(tx, ...)` and
-  `delete_synced(tx, id)` on the caller's transaction. Local saves,
-  `sync_projection`, `db/settings_transfer.rs`, and the enrollment reset all
-  use them.
-- Where projection deliberately differs, it gets its own named function in the
-  feature module. Example: a projected account arrives as `needs_reauth` with
-  `on_this_device = 0`.
-- Add round-trip tests for each projected entity type, and keep the settings
-  transfer regression fixtures for earlier exports passing.
+Most copies turned out to differ on purpose, so they were not merged:
 
-This is the one phase that can change behavior, so review it most carefully.
+- Every write `sync_projection.rs` and `db/settings_transfer.rs` made to a
+  feature table moved, unchanged, into that table's feature module, so a
+  table's local, synced, and imported writes sit side by side in one file.
+  Examples of kept differences: a synced account arrives as `needs_reauth`
+  with `on_this_device = 0`; a synced snippet keeps `created_at` and sets
+  `updated_at`; import inserts after clearing a table where local saves
+  upsert.
+- Writes that were truly identical now share one function: the snippet,
+  split inbox, contact address, and group member inserts, the synced
+  preferences write, and the retention write.
+- `db/settings_transfer.rs` still applies an import in one transaction; it
+  now calls each feature's import row functions on that transaction.
+- `db/tests/write_paths.rs` pinned every column these paths write before the
+  change, and passes unchanged after it. The enrollment reset only clears
+  replica data and was left alone.
 
 ### Phase 5: IMAP state
 

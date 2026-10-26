@@ -370,6 +370,24 @@ impl Database {
     }
 }
 
+impl Database {
+    /// Stores another device's scheduled-send summary report.
+    pub(crate) fn upsert_scheduled_summary(&self, id: &str, report_json: &str) -> DbResult<()> {
+        self.with_connection(|c| {
+            c.execute("INSERT INTO scheduled_send_summaries(id,report) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET report=excluded.report",params![id,report_json])?;
+            Ok(())
+        })
+    }
+
+    /// Removes a scheduled-send summary another device deleted.
+    pub(crate) fn delete_scheduled_summary(&self, id: &str) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute("DELETE FROM scheduled_send_summaries WHERE id=?1", [id])?;
+            Ok(())
+        })
+    }
+}
+
 #[cfg(test)]
 #[path = "tests/scheduled_send.rs"]
 mod tests;

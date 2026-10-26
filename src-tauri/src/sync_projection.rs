@@ -10,18 +10,16 @@
 
 use std::collections::BTreeSet;
 
-use chrono::Utc;
 use keyring::Entry;
-use rusqlite::{params, OptionalExtension};
-use serde_json::{json, Value};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 use threestrands_sync_protocol::EntityType;
 use crate::models::ContactRecord;
 
 use crate::{
     db::{serialization_error, Database, DatabaseError, DbResult},
     enrollment::EnrollmentStatus,
-    error_text::display,
-    models::{Account, Snippet, SplitInbox, ThreadTask},
 };
 
 impl Database {
@@ -78,18 +76,18 @@ impl Database {
     ) -> DbResult<()> {
         if deleted {
             match entity_type {
-                EntityType::ScheduledSendSummary => self.delete_synced_row("DELETE FROM scheduled_send_summaries WHERE id=?1", entity_id)?,
-                EntityType::Task => self.delete_synced_row("DELETE FROM tasks WHERE id=?1", entity_id)?,
+                EntityType::ScheduledSendSummary => self.delete_scheduled_summary(entity_id)?,
+                EntityType::Task => self.delete_synced_task(entity_id)?,
                 EntityType::Signature => self.delete_signature(entity_id)?,
                 EntityType::SignatureDefaults => self.delete_signature_defaults(entity_id)?,
                 // Drafts reach other devices through the account's server
                 // drafts now. Records from earlier versions are ignored, so
                 // a device that hasn't updated can't remove a draft here.
                 EntityType::Draft => {}
-                EntityType::Snippet => self.delete_synced_row("DELETE FROM snippets WHERE id=?1", entity_id)?,
-                EntityType::SplitInbox => self.delete_synced_row("DELETE FROM split_inboxes WHERE id=?1", entity_id)?,
+                EntityType::Snippet => self.delete_synced_snippet(entity_id)?,
+                EntityType::SplitInbox => self.delete_synced_split(entity_id)?,
                 EntityType::SenderConfirmation => self.forget_sender_delivery(entity_id)?,
-                EntityType::SenderRule => self.delete_synced_row("DELETE FROM sender_rules WHERE id=?1", entity_id)?,
+                EntityType::SenderRule => self.delete_synced_sender_rule(entity_id)?,
                 EntityType::Contact => self.delete_contact_profile(entity_id)?,
                 // Unlinks local tasks and goals the same way the deleting device did.
                 EntityType::Goal => {
@@ -113,10 +111,7 @@ impl Database {
                     entity_type.validate_payload(payload).map_err(DatabaseError::invalid)?;
                     let report: threestrands_sync_protocol::ScheduledSendReport = serde_json::from_value(payload["report"].clone()).map_err(serialization_error)?;
                     if report.entity_id()!=entity_id { return Err(DatabaseError::invalid("Scheduled summary identity mismatch")); }
-                    self.with_connection(|c| {
-                        c.execute("INSERT INTO scheduled_send_summaries(id,report) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET report=excluded.report",params![entity_id,payload["report"].to_string()])?;
-                        Ok(())
-                    })?;
+                    self.upsert_scheduled_summary(entity_id, &payload["report"].to_string())?;
                 }
                 EntityType::Task => {
                     self.upsert_synced_task(serde_json::from_value(payload.clone()).map_err(serialization_error)?)?
@@ -165,57 +160,12 @@ impl Database {
                             self.materialize_device_name(device_id_hex, value.as_str())?;
                         }
                     }
-                    self.with_connection(|connection| {
-                        connection.execute(
-                            "INSERT INTO synced_preferences(key,value,updated_at) VALUES('portable',?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
-                            params![payload.to_string(), Utc::now().to_rfc3339()],
-                        )?;
-                        Ok(())
-                    })?
+                    self.store_synced_preferences(&payload.to_string())?
                 }
                 EntityType::Retention => self.set_retention_days(payload.get("days").and_then(Value::as_i64))?,
             }
         }
         Ok(())
-    }
-
-    /// Runs one single-id `DELETE` for a synced deletion.
-    fn delete_synced_row(&self, sql: &str, entity_id: &str) -> DbResult<()> {
-        self.with_connection(|connection| {
-            connection.execute(sql, [entity_id])?;
-            Ok(())
-        })
-    }
-
-    fn upsert_synced_task(&self, task: ThreadTask) -> DbResult<()> {
-        self.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO tasks(id,account_id,thread_id,source_message_id,subject_snapshot,title,notes,kind,due_kind,due_value,time_zone,repeat_interval_days,status,completion_source,evidence_text,wait_after,created_at,updated_at,completed_at,goal_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20) ON CONFLICT(id) DO UPDATE SET goal_id=excluded.goal_id, account_id=excluded.account_id,thread_id=excluded.thread_id,source_message_id=excluded.source_message_id,subject_snapshot=excluded.subject_snapshot,title=excluded.title,notes=excluded.notes,kind=excluded.kind,due_kind=excluded.due_kind,due_value=excluded.due_value,time_zone=excluded.time_zone,repeat_interval_days=excluded.repeat_interval_days,status=excluded.status,completion_source=excluded.completion_source,evidence_text=excluded.evidence_text,wait_after=excluded.wait_after,updated_at=excluded.updated_at,completed_at=excluded.completed_at",
-                params![
-                    task.id,
-                    task.account_id,
-                    task.thread_id,
-                    task.source_message_id,
-                    task.subject_snapshot,
-                    task.title,
-                    task.notes,
-                    task.kind,
-                    task.due_kind,
-                    task.due_value,
-                    task.time_zone,
-                    task.repeat_interval_days,
-                    task.status,
-                    task.completion_source,
-                    task.evidence_text,
-                    task.wait_after,
-                    task.created_at,
-                    task.updated_at,
-                    task.completed_at,
-                    task.goal_id
-                ],
-            )?;
-            Ok(())
-        })
     }
 
     pub(crate) fn upsert_synced_contact(&self, value: &Value) -> DbResult<()> {
@@ -244,76 +194,6 @@ impl Database {
         }).map(|_|())
     }
 
-    fn upsert_synced_snippet(&self, item: Snippet) -> DbResult<()> {
-        self.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO snippets(id,name,body,created_at,updated_at) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(id) DO UPDATE SET name=excluded.name,body=excluded.body,updated_at=excluded.updated_at",
-                params![item.id, item.name, item.body, item.created_at, Utc::now().to_rfc3339()],
-            )?;
-            Ok(())
-        })
-    }
-
-    fn upsert_synced_split(&self, item: SplitInbox) -> DbResult<()> {
-        self.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO split_inboxes(id,name,match_kind,match_value,sort_order,created_at,account_id,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO UPDATE SET name=excluded.name,match_kind=excluded.match_kind,match_value=excluded.match_value,sort_order=excluded.sort_order,account_id=excluded.account_id,updated_at=excluded.updated_at",
-                params![
-                    item.id,
-                    item.name,
-                    item.match_kind,
-                    item.match_value,
-                    item.sort_order,
-                    item.created_at,
-                    item.account_id,
-                    Utc::now().to_rfc3339()
-                ],
-            )?;
-            Ok(())
-        })
-    }
-
-    fn upsert_synced_account(&self, value: &Value) -> DbResult<()> {
-        let item: Account = serde_json::from_value(json!({
-            "email": value["email"],
-            "displayName": value.get("displayName").cloned().unwrap_or(Value::Null),
-            "nickname": value.get("nickname").cloned().unwrap_or(Value::Null),
-            "color": value["color"],
-            "status": "needs_reauth",
-            "provider": value["provider"],
-            "sortOrder": value["sortOrder"],
-            "connectedAt": Utc::now().to_rfc3339(),
-            "lastSyncedAt": null,
-        }))
-        .map_err(serialization_error)?;
-        self.with_connection(|connection| {
-            connection.execute(
-                // A new account from another device is offered here, not
-                // reported as broken: it stays "available" until the user
-                // sets it up on this device. An existing row keeps its state.
-                "INSERT INTO accounts(email,display_name,color,status,provider,sort_order,connected_at,nickname,on_this_device) VALUES(?1,?2,?3,'needs_reauth',?4,?5,?6,?7,0) ON CONFLICT(email) DO UPDATE SET display_name=excluded.display_name,nickname=excluded.nickname,color=excluded.color,provider=excluded.provider,sort_order=excluded.sort_order",
-                params![item.email, item.display_name, item.color, item.provider, item.sort_order, item.connected_at, item.nickname],
-            )?;
-            Ok(())
-        })
-    }
-
-    fn upsert_synced_calendar(&self, value: &Value) -> DbResult<()> {
-        let email = value.get("email").and_then(Value::as_str).ok_or_else(|| DatabaseError::corrupt("Invalid calendar account"))?;
-        // Devices from before calendar ordering send no sortOrder: a new
-        // account then goes last and an existing one keeps its place.
-        let sort_order = value.get("sortOrder").and_then(Value::as_i64);
-        self.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO calendar_accounts(email,connected_at,status,sort_order)
-                 VALUES(?1,?2,'needs_reauth',COALESCE(?3,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM calendar_accounts)))
-                 ON CONFLICT(email) DO UPDATE SET sort_order=COALESCE(?3,sort_order)",
-                params![email, Utc::now().to_rfc3339(), sort_order],
-            )?;
-            Ok(())
-        })
-    }
-
     fn upsert_synced_calendar_selection(&self, value: &Value) -> DbResult<()> {
         let email = value.get("accountId").and_then(Value::as_str).ok_or_else(|| DatabaseError::corrupt("Invalid calendar selection"))?;
         let ids = value
@@ -328,83 +208,6 @@ impl Database {
             self.set_calendar_selection(email, &ids)?;
         }
         Ok(())
-    }
-
-    /// The most recently materialized portable preferences, if any device
-    /// has synchronized them yet.
-    pub fn synced_preferences(&self) -> Result<Option<Value>, String> {
-        let value = self.with_connection(|connection| {
-            Ok(connection
-                .query_row(
-                    "SELECT value FROM synced_preferences WHERE key='portable'",
-                    [],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()?)
-        })?;
-        let Some(value) = value else { return Ok(None) };
-        let mut preferences: Value = serde_json::from_str(&value).map_err(display)?;
-        if let Some(object) = preferences.as_object_mut() {
-            object.retain(|key, _| !key.starts_with("deviceName:"));
-            if object.is_empty() {
-                return Ok(None);
-            }
-        }
-        Ok(Some(preferences))
-    }
-
-    /// Saves a local portable preference edit. The replica and the snapshot
-    /// read by sync-status refreshes commit together, so a completed save
-    /// cannot be undone by reading the preceding materialized preferences.
-    /// Returns whether a replica write was needed.
-    pub fn update_synced_preferences(&self, preferences: Value) -> Result<bool, String> {
-        let incoming = preferences
-            .as_object()
-            .ok_or_else(|| "Synced preferences must be an object".to_string())?;
-        if !self.replicated_sync_active()? {
-            return Ok(false);
-        }
-        self.with_transaction(|tx| {
-            let stored: Option<String> = tx.query_row(
-                "SELECT value FROM synced_preferences WHERE key='portable'",
-                [],
-                |row| row.get(0),
-            ).optional()?;
-            let current: Value = stored
-                .map(|value| serde_json::from_str(&value))
-                .transpose()
-                .map_err(serialization_error)?
-                .unwrap_or_else(|| json!({}));
-            let has_synced_record: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM sync_values WHERE entity_type='preferences' AND entity_id='portable')",
-                [],
-                |row| row.get(0),
-            )?;
-            let fields = incoming.iter()
-                .filter_map(|(key, value)| {
-                    (!has_synced_record || current.get(key) != Some(value)).then_some(key.clone())
-                })
-                .collect::<BTreeSet<_>>();
-            if fields.is_empty() {
-                return Ok(false);
-            }
-            // This is an explicit local edit, even if another thread is
-            // projecting remote entities. It must not be silently suppressed.
-            crate::db::sync_state::record_replicated_write_in_transaction(
-                tx, EntityType::Preferences, "portable", &fields, &preferences,
-            )?;
-            // Retain native-owned device names and fields from newer clients
-            // that this frontend does not include in its portable allowlist.
-            let mut updated = current.as_object().cloned().unwrap_or_default();
-            updated.extend(incoming.clone());
-            tx.execute(
-                "INSERT INTO synced_preferences(key,value,updated_at) VALUES('portable',?1,?2)
-                 ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
-                params![Value::Object(updated).to_string(), Utc::now().to_rfc3339()],
-            )?;
-            Ok(true)
-        })
-        .map_err(String::from)
     }
 
     /// Applies a synchronized mail-account deletion. The id is lowercased,

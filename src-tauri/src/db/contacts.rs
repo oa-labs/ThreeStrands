@@ -968,10 +968,7 @@ pub(super) fn save_contact_on(
                 kit_last_touch_at=CASE WHEN ?18 THEN excluded.kit_last_touch_at ELSE contacts.kit_last_touch_at END",params![id,name,role,company,location,bio,notes,links_json,request.photo_data,request.favorite,Utc::now().to_rfc3339(),birthday,keep_in_touch.interval_days,keep_in_touch.started_at,keep_in_touch.snoozed_until,keep_in_touch.snoozed_at,keep_in_touch.last_touch_at,replace_keep_in_touch])?;
         tx.execute("DELETE FROM contact_addresses WHERE contact_id=?1", [&id])?;
         for (position, email) in addresses.iter().enumerate() {
-            tx.execute(
-                "INSERT INTO contact_addresses(contact_id,email,position) VALUES(?1,?2,?3)",
-                params![id, email, position as i64],
-            )?;
+            insert_contact_address(tx, &id, email, position as i64)?;
         }
     }
     Ok(id)
@@ -1099,6 +1096,37 @@ mod tests {
             assert!(normalize_birthday(Some(invalid)).is_err(), "{invalid}");
         }
     }
+}
+
+/// Stores one of a contact's addresses at `position`. Used by local saves
+/// and settings import.
+pub(super) fn insert_contact_address(
+    connection: &rusqlite::Connection,
+    contact_id: &str,
+    email: &str,
+    position: i64,
+) -> DbResult<()> {
+    connection.execute(
+        "INSERT INTO contact_addresses(contact_id,email,position) VALUES(?1,?2,?3)",
+        params![contact_id, email, position],
+    )?;
+    Ok(())
+}
+
+/// Settings import: clears every contact before the file's are added.
+pub(super) fn delete_all_contacts(connection: &rusqlite::Connection) -> DbResult<()> {
+    connection.execute("DELETE FROM contacts", [])?;
+    Ok(())
+}
+
+/// Settings import: adds one contact from the file, keep-in-touch included.
+pub(super) fn insert_imported_contact(
+    connection: &rusqlite::Connection,
+    contact: &crate::transfer::TransferContact,
+) -> DbResult<()> {
+    let kit=&contact.keep_in_touch;
+    connection.execute("INSERT INTO contacts(id,display_name,role,company,location,bio,notes,links_json,photo_data,favorite,updated_at,birthday,kit_interval_days,kit_started_at,kit_snoozed_until,kit_snoozed_at,kit_last_touch_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",params![contact.id,contact.display_name,contact.role,contact.company,contact.location,contact.bio,contact.notes,serde_json::to_string(&contact.links).map_err(super::serialization_error)?,contact.photo_data,contact.favorite,Utc::now().to_rfc3339(),contact.birthday,kit.interval_days,kit.started_at,kit.snoozed_until,kit.snoozed_at,kit.last_touch_at])?;
+    Ok(())
 }
 
 #[cfg(test)]

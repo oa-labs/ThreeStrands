@@ -217,7 +217,7 @@ impl Database {
                 return Err(DatabaseError::invalid(format!("A group can have at most {MAX_GROUP_MEMBERS} members")));
             }
             for member in &added {
-                tx.execute("INSERT INTO contact_group_members(group_id,contact_id) VALUES(?1,?2)", params![id, member])?;
+                insert_group_member(tx, id, member)?;
             }
             if !added.is_empty() {
                 tx.execute("UPDATE contact_groups SET updated_at=?1 WHERE id=?2", params![Utc::now().to_rfc3339(), id])?;
@@ -342,7 +342,7 @@ impl Database {
             )?;
             tx.execute("DELETE FROM contact_group_members WHERE group_id=?1", [id])?;
             for member in &members {
-                tx.execute("INSERT INTO contact_group_members(group_id,contact_id) VALUES(?1,?2)", params![id, member])?;
+                insert_group_member(tx, id, member)?;
             }
             Ok(())
         })
@@ -371,6 +371,34 @@ pub(super) fn contact_group_record_on(
         record.insert(member_field(&member), Value::Bool(true));
     }
     Ok(Some(Value::Object(record)))
+}
+
+/// Adds one member to a group. Used by local edits, synced groups, and
+/// settings import.
+pub(super) fn insert_group_member(connection: &rusqlite::Connection, group_id: &str, contact_id: &str) -> DbResult<()> {
+    connection.execute("INSERT INTO contact_group_members(group_id,contact_id) VALUES(?1,?2)", params![group_id, contact_id])?;
+    Ok(())
+}
+
+/// Settings import: clears every group and membership before the file's are
+/// added.
+pub(super) fn delete_all_contact_groups(connection: &rusqlite::Connection) -> DbResult<()> {
+    connection.execute("DELETE FROM contact_groups", [])?;
+    connection.execute("DELETE FROM contact_group_members", [])?;
+    Ok(())
+}
+
+/// Settings import: adds one group from the file, without its members.
+pub(super) fn insert_imported_group(
+    connection: &rusqlite::Connection,
+    group: &crate::transfer::TransferContactGroup,
+    now: &str,
+) -> DbResult<()> {
+    connection.execute(
+        "INSERT INTO contact_groups(id,name,created_at,updated_at) VALUES(?1,?2,?3,?4)",
+        params![group.id, group.name.trim(), group.created_at, now],
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]

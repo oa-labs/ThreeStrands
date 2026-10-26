@@ -5,6 +5,7 @@ use super::{Database, DatabaseError, DbResult};
 use crate::models::CalendarAccount;
 use chrono::Utc;
 use rusqlite::{params, OptionalExtension};
+use serde_json::Value;
 
 impl Database {
     pub fn list_calendar_accounts(&self) -> DbResult<Vec<CalendarAccount>> {
@@ -114,6 +115,25 @@ impl Database {
                     params![email, calendar_id],
                 )?;
             }
+            Ok(())
+        })
+    }
+}
+
+impl Database {
+    /// Stores a calendar account another device added or reordered.
+    pub(crate) fn upsert_synced_calendar(&self, value: &Value) -> DbResult<()> {
+        let email = value.get("email").and_then(Value::as_str).ok_or_else(|| DatabaseError::corrupt("Invalid calendar account"))?;
+        // Devices from before calendar ordering send no sortOrder: a new
+        // account then goes last and an existing one keeps its place.
+        let sort_order = value.get("sortOrder").and_then(Value::as_i64);
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO calendar_accounts(email,connected_at,status,sort_order)
+                 VALUES(?1,?2,'needs_reauth',COALESCE(?3,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM calendar_accounts)))
+                 ON CONFLICT(email) DO UPDATE SET sort_order=COALESCE(?3,sort_order)",
+                params![email, Utc::now().to_rfc3339(), sort_order],
+            )?;
             Ok(())
         })
     }

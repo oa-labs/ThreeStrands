@@ -374,6 +374,49 @@ impl Database {
     }
 }
 
+impl Database {
+    /// Stores a task another device wrote. An existing row keeps its
+    /// `created_at`.
+    pub(crate) fn upsert_synced_task(&self, task: ThreadTask) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO tasks(id,account_id,thread_id,source_message_id,subject_snapshot,title,notes,kind,due_kind,due_value,time_zone,repeat_interval_days,status,completion_source,evidence_text,wait_after,created_at,updated_at,completed_at,goal_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20) ON CONFLICT(id) DO UPDATE SET goal_id=excluded.goal_id, account_id=excluded.account_id,thread_id=excluded.thread_id,source_message_id=excluded.source_message_id,subject_snapshot=excluded.subject_snapshot,title=excluded.title,notes=excluded.notes,kind=excluded.kind,due_kind=excluded.due_kind,due_value=excluded.due_value,time_zone=excluded.time_zone,repeat_interval_days=excluded.repeat_interval_days,status=excluded.status,completion_source=excluded.completion_source,evidence_text=excluded.evidence_text,wait_after=excluded.wait_after,updated_at=excluded.updated_at,completed_at=excluded.completed_at",
+                params![
+                    task.id,
+                    task.account_id,
+                    task.thread_id,
+                    task.source_message_id,
+                    task.subject_snapshot,
+                    task.title,
+                    task.notes,
+                    task.kind,
+                    task.due_kind,
+                    task.due_value,
+                    task.time_zone,
+                    task.repeat_interval_days,
+                    task.status,
+                    task.completion_source,
+                    task.evidence_text,
+                    task.wait_after,
+                    task.created_at,
+                    task.updated_at,
+                    task.completed_at,
+                    task.goal_id
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Removes a task another device deleted.
+    pub(crate) fn delete_synced_task(&self, id: &str) -> DbResult<()> {
+        self.with_connection(|connection| {
+            connection.execute("DELETE FROM tasks WHERE id=?1", [id])?;
+            Ok(())
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -242,6 +242,40 @@ pub(crate) fn record_signature_write(
     Ok(())
 }
 
+/// Settings import: replaces the signature library with `library`. When
+/// `sync` is set, templates and defaults that leave are recorded as
+/// replicated deletions and every imported one as a replicated write.
+pub(super) fn replace_signature_library(
+    transaction: &rusqlite::Transaction,
+    library: &SignatureLibrary,
+    sync: bool,
+) -> DbResult<()> {
+    library.validate().map_err(DatabaseError::invalid)?;
+    if sync {
+        for (table, entity_type, keep) in [
+            ("signatures", threestrands_sync_protocol::EntityType::Signature, library.signatures.iter().map(|s| s.id.as_str()).collect::<std::collections::HashSet<_>>()),
+            ("signature_defaults", threestrands_sync_protocol::EntityType::SignatureDefaults, library.defaults.iter().map(|d| d.id.as_str()).collect::<std::collections::HashSet<_>>()),
+        ] {
+            let mut query = transaction.prepare(&format!("SELECT id FROM {table}"))?;
+            let ids = query.query_map([], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+            for id in ids.into_iter().filter(|id| !keep.contains(id.as_str())) {
+                crate::db::sync_state::record_replicated_deletion_in_transaction(transaction, entity_type, &id)?;
+            }
+        }
+    }
+    transaction.execute("DELETE FROM signatures", [])?;
+    transaction.execute("DELETE FROM signature_defaults", [])?;
+    for signature in &library.signatures {
+        transaction.execute("INSERT INTO signatures(id,payload) VALUES(?1,?2)", params![signature.id, serde_json::to_string(signature).map_err(serialization_error)?])?;
+        if sync { record_signature_write(transaction, threestrands_sync_protocol::EntityType::Signature, &signature.id, &serde_json::to_value(signature).map_err(serialization_error)?)?; }
+    }
+    for defaults in &library.defaults {
+        transaction.execute("INSERT INTO signature_defaults(id,payload) VALUES(?1,?2)", params![defaults.id, serde_json::to_string(defaults).map_err(serialization_error)?])?;
+        if sync { record_signature_write(transaction, threestrands_sync_protocol::EntityType::SignatureDefaults, &defaults.id, &serde_json::to_value(defaults).map_err(serialization_error)?)?; }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "tests/signatures.rs"]
 mod tests;
