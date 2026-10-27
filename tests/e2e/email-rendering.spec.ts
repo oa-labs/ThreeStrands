@@ -4,6 +4,26 @@ import { composite, contrastRatio, parseComputedColor } from "../../src/emailTex
 import { EMAIL_TEXT_COLORS } from "../../src/emailRenderingPolicy";
 
 test.describe("email rendering fixtures", () => {
+  for (const fixture of ["gradientTable", "gradientFlow"]) {
+    test(`${fixture} keeps generated backgrounds and readable sender text`, async ({ page }) => {
+      await page.goto(`/tests/email-rendering.html?theme=light&fixture=${fixture}`);
+      const heading = page.locator("iframe.message-body").contentFrame().getByRole("heading", { name: "Gradient headline" });
+      await expect(heading).toBeVisible();
+      const paint = await heading.evaluate((element) => {
+        const view = element.ownerDocument.defaultView!;
+        const images: string[] = [];
+        for (let parent: Element | null = element; parent; parent = parent.parentElement) {
+          const image = view.getComputedStyle(parent).backgroundImage;
+          if (image !== "none") images.push(image);
+        }
+        return { images, color: view.getComputedStyle(element).color };
+      });
+      expect(paint.images.join(" ")).toContain(fixture === "gradientTable" ? "linear-gradient(" : "radial-gradient(");
+      expect(paint.color).toBe(fixture === "gradientTable" ? "rgb(254, 254, 254)" : "rgb(255, 255, 255)");
+      expect(paint.images.join(" ")).not.toContain("url(");
+    });
+  }
+
   for (const fixture of ["zoomTable", "zoomFlow"]) {
     for (const theme of ["light", "dark"]) {
       for (const width of [390, 1200]) {

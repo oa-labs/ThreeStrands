@@ -18,6 +18,7 @@ export const EMAIL_CSS_LIMITS = {
   maxLineHeightPercentage: 1600,
   maxUnitlessFactor: 16,
   maxOpacity: 1,
+  maxGradientAngleDeg: 360,
   maxFrameHeightPx: 50_000,
 } as const;
 
@@ -324,6 +325,82 @@ function backgroundSize(value: string): string | null {
   return valid ? parts.join(" ") : null;
 }
 
+// Generated background painting: bounded linear/radial gradients (including
+// repeating variants), colors, and the existing background layout family.
+// Only literal colors and geometry are accepted: no URLs, escapes, variables,
+// resource functions, or executable CSS. Painting stays inside the element's
+// box and adds no interaction or ability to escape the sandboxed iframe.
+function backgroundTokens(value: string, separator: "comma" | "space"): string[] | null {
+  if (/[\\\\;{}<>"']/.test(value)) return null;
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < value.length; i++) {
+    const char = value[i];
+    if (char === "(") depth++;
+    if (char === ")" && --depth < 0) return null;
+    if (depth === 0 && (separator === "comma" ? char === "," : /\s/.test(char))) {
+      const part = value.slice(start, i).trim();
+      if (part || separator === "comma") parts.push(part);
+      start = i + 1;
+    }
+  }
+  if (depth !== 0) return null;
+  const last = value.slice(start).trim();
+  if (last || separator === "comma") parts.push(last);
+  return parts;
+}
+
+function gradientAngle(value: string): boolean {
+  const match = value.match(/^(-?\d+(?:\.\d+)?)deg$/);
+  return !!match && Math.abs(Number(match[1])) <= EMAIL_CSS_LIMITS.maxGradientAngleDeg;
+}
+
+function backgroundGradient(value: string): string | null {
+  const trimmed = value.trim().toLowerCase();
+  const match = trimmed.match(/^(?:repeating-)?(linear|radial)-gradient\((.*)\)$/);
+  if (!match) return null;
+  const args = backgroundTokens(match[2], "comma");
+  if (!args) return null;
+  const first = args[0];
+  const linearDirection = gradientAngle(first)
+    || /^to (?:left|right|top|bottom)(?: (?:left|right|top|bottom))?$/.test(first);
+  const radialDirection = /^(?:(?:circle|ellipse)(?: (?:closest-side|farthest-side|closest-corner|farthest-corner))?|(?:closest-side|farthest-side|closest-corner|farthest-corner))(?: at .+)?$/.test(first)
+    || /^at .+$/.test(first);
+  if (match[1] === "linear" ? linearDirection : radialDirection) {
+    if (match[1] === "radial" && first.includes("at ") && backgroundPosition(first.split("at ")[1]) === null) return null;
+    args.shift();
+  }
+  if (args.length < 2) return null;
+  for (const stop of args) {
+    const tokens = backgroundTokens(stop, "space");
+    if (!tokens || tokens.length < 1 || tokens.length > 3 || !safeColor.test(tokens[0])) return null;
+    if (!tokens.slice(1).every((token) => boundedLength(token, { allowNegative: true, allowPercentage: true }) !== null)) return null;
+  }
+  return trimmed;
+}
+
+function backgroundPaint(value: string): string | null {
+  const trimmed = value.trim().toLowerCase();
+  if (safeColor.test(trimmed) || trimmed === "none") return trimmed;
+  const tokens = backgroundTokens(trimmed, "space");
+  if (!tokens) return null;
+  const images = tokens.filter((token) => backgroundGradient(token) !== null);
+  if (images.length !== 1) return null;
+  const remaining = tokens.filter((token) => token !== images[0]);
+  // A single generated image with an optional fallback color and repeat mode.
+  // Positions and sizes remain available through their typed longhands.
+  let colorSeen = false;
+  const repeat: string[] = [];
+  for (const token of remaining) {
+    if (backgroundRepeatKeyword.test(token)) repeat.push(token);
+    else if (!colorSeen && safeColor.test(token)) colorSeen = true;
+    else return null;
+  }
+  if (repeat.length && backgroundRepeat(repeat.join(" ")) === null) return null;
+  return trimmed;
+}
+
 type Validator = (value: string) => string | null;
 const regex = (pattern: RegExp): Validator => (value) => pattern.test(value.trim().toLowerCase()) ? value.trim().toLowerCase() : null;
 const keyword = (values: string[]) => regex(namedValue(values));
@@ -348,7 +425,8 @@ const validators: Record<string, Validator> = {
     const parts = value.trim().toLowerCase().split(/\s+/);
     return parts.length <= 2 && parts.every((part) => boundedLength(part) !== null) ? parts.join(" ") : null;
   },
-  background: (value) => safeColor.test(value.trim()) || /^(none|transparent)$/.test(value.trim().toLowerCase()) ? value.trim().toLowerCase() : null,
+  background: backgroundPaint,
+  "background-image": (value) => value.trim().toLowerCase() === "none" ? "none" : backgroundGradient(value),
   color: regex(safeColor),
   "background-color": regex(safeColor),
   "background-position": backgroundPosition,

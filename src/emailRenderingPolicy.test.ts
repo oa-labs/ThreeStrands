@@ -290,3 +290,50 @@ describe("email rendering numeric policy", () => {
     expect(sanitizeCssDeclaration("list-style", "disc url(https://tracker.invalid/dot.gif)")).toBeNull();
   });
 });
+
+
+describe("generated background painting", () => {
+  it("preserves gradient shorthand and generated image variants", () => {
+    for (const image of [
+      "linear-gradient(-12deg, #f6f6f6 35%, #0b2157 35.3%)",
+      "linear-gradient(to bottom right, rgb(0, 20, 80), white 100%)",
+      "radial-gradient(circle at center, navy, transparent 100%)",
+      "repeating-linear-gradient(45deg, black 0px 10px, white 20px)",
+      "repeating-radial-gradient(ellipse closest-side, red, blue)",
+    ]) {
+      expect(sanitizeCssDeclaration("background-image", image)).toBe(image);
+      expect(sanitizeCssDeclaration("background", `#f6f6f6 ${image} repeat-x`)).toBe(`#f6f6f6 ${image} repeat-x`);
+    }
+  });
+
+  it("bounds angles and stop geometry through the shared policy", () => {
+    const limit = EMAIL_CSS_LIMITS.maxGradientAngleDeg;
+    for (const angle of [limit - 1, limit, -limit]) {
+      expect(sanitizeCssDeclaration("background-image", `linear-gradient(${angle}deg, red, blue)`)).not.toBeNull();
+    }
+    expect(sanitizeCssDeclaration("background-image", `linear-gradient(${limit + 1}deg, red, blue)`)).toBeNull();
+    for (const offset of [-1, 0, 1]) {
+      const result = sanitizeCssDeclaration("background-image", `linear-gradient(red, blue ${EMAIL_CSS_LIMITS.maxPercentage + offset}%)`);
+      expect(result === null).toBe(offset > 0);
+    }
+  });
+
+  it("rejects resources, active CSS, escaped functions, layers, and malformed gradients", () => {
+    for (const value of [
+      'url(https://tracker.invalid/pixel)',
+      'linear-gradient(red, url(https://tracker.invalid/pixel))',
+      'linear-gradient(red, blue), url(https://tracker.invalid/pixel)',
+      'image-set(url(https://tracker.invalid/pixel) 1x)',
+      'linear-gradient(red, expression(alert(1)))',
+      'linear-gradient(red, var(--sender-color))',
+      'linear-gradient(red, blue);position:fixed',
+      'linear-gradient(red)', 'linear-gradient(red, blue',
+      'linear-gradient(red,,blue)', 'linear-gradient(red, blue), linear-gradient(black, white)',
+      String.raw`linear-gradient(red, u\72l(https://tracker.invalid/pixel))`,
+    ]) {
+      for (const property of ["background", "background-image"]) {
+        expect([property, value, sanitizeCssDeclaration(property, value)]).toEqual([property, value, null]);
+      }
+    }
+  });
+});

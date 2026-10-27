@@ -50,6 +50,8 @@ const legacyDimensionAttributes = "<p>Legacy dimension attributes</p>" + legacyD
   </tr></table>`).join("");
 
 export const emailRenderingFixtures = {
+  gradientTable: `<table bgcolor="#f6f6f6"><tr><td><table style="background:#f6f6f6 linear-gradient(-12deg, #f6f6f6 35%, #0b2157 35.3%) repeat-x;background-size:auto 500px"><tr><td><div style="background:#0b2157"><div style="height:30px">&nbsp;</div><table align="left"><tr><td><h2 style="color:#fefefe">Gradient headline</h2><p style="color:#fefefe">Readable table content</p></td></tr></table></div></td></tr></table></td></tr></table>`,
+  gradientFlow: `<style>.gradient-panel {background:radial-gradient(circle at center, #223366, #0b2157);color:#ffffff;padding:24px}</style><section class="gradient-panel"><h2>Gradient headline</h2><p>Readable flow content</p></section>`,
   legacyDimensionAttributes,
   zoomTable: `
     <table cellpadding="0" cellspacing="0" style="width:240px;font-family:Arial;font-size:12px;line-height:18px"><tr>

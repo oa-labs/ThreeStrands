@@ -2335,3 +2335,32 @@ it("keeps a responsive image's max-width/max-height caps alongside width: 100%",
   expect(wrapper.style.maxHeight).toBe("80px");
   expect(wrapper.querySelector("img")?.style.width).toBe("100%");
 });
+
+
+describe("generated background fixtures", () => {
+  it("keeps resource-bearing gradients out of inline styles and stylesheets", () => {
+    const unsafe = "linear-gradient(red, blue), url(https://tracker.invalid/pixel)";
+    const html = `<style>.panel {background-image:${unsafe};color:white}</style><div class="panel" style="background-image:${unsafe};color:white">Text</div>`;
+    expect(extractSafeStyleSheet(html)).not.toContain("background-image");
+    const clean = sanitizeMessageHtml(html);
+    expect(clean).not.toContain("tracker.invalid");
+    expect(clean).not.toContain("background-image");
+    expect(clean).toContain("Text");
+  });
+
+  it("preserves the angled table background and its layout", () => {
+    const doc = new DOMParser().parseFromString(sanitizeMessageHtml(emailRenderingFixtures.gradientTable), "text/html");
+    const panel = doc.querySelectorAll("table")[1];
+    expect(panel.style.backgroundImage).toContain("linear-gradient(-12deg");
+    expect(panel.style.backgroundImage).toContain("35.3%");
+    expect(panel.style.backgroundSize).toBe("auto 500px");
+    expect(panel.style.backgroundRepeat).toBe("repeat-x");
+    expect(doc.querySelector("h2")!.style.color).toBe("rgb(254, 254, 254)");
+    expect(doc.querySelectorAll("table")).toHaveLength(3);
+  });
+
+  it("preserves a stylesheet gradient on a flow section", () => {
+    expect(extractSafeStyleSheet(emailRenderingFixtures.gradientFlow)).toContain("radial-gradient(circle at center, #223366, #0b2157)");
+    expect(sanitizeMessageHtml(emailRenderingFixtures.gradientFlow)).toContain('<section class="gradient-panel">');
+  });
+});

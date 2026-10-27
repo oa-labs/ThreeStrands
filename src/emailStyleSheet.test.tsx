@@ -160,7 +160,7 @@ describe("sanitizeStyleSheet", () => {
   });
 
   it("drops any declaration whose value carries a url(), even on an otherwise-allowed property", () => {
-    // background-image isn't in the shared allowlist to begin with, but this
+    // Generated background images are allowed, but this
     // guards the general case: a selector can match zero, one, or many
     // elements, so there's no single DOM node to gate through the image
     // proxy the way inline style="background-image:..." and <img src> both
