@@ -289,7 +289,7 @@ mod calendar_event_request_tests {
             title: "Planning".into(), start: "2026-09-22T09:00:00Z".into(),
             end: "2026-09-22T10:00:00Z".into(), all_day: false, location: String::new(),
             description: "Agenda".into(), attendees: vec!["guest@example.com".into()],
-            source_message_id: None,
+            source_message_id: None, source_task_id: None,
         }
     }
 

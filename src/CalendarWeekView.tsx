@@ -4,9 +4,10 @@ import { WorkspaceContextRail } from "./WorkspaceContextRail";
 import { WorkspaceRelatedContext } from "./WorkspaceRelatedContext";
 import { ContextSectionHeader } from "./ContextSections";
 import { CalendarAgenda } from "./CalendarAgenda";
+import { BookedTask, CalendarTasks, useAccountTasks } from "./CalendarTasks";
 import { calendarRange, CALENDAR_RANGES, CALENDAR_RANGE_KEY, readCalendarRange, rangeForEvent, type CalendarRangeMode } from "./calendarRange";
 import { CalendarDays, ChevronLeft, ChevronRight, Plus } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { EventViewer, eventCalendarLabel } from "./CalendarSidebar";
 import { HoverTooltip } from "./AppChrome";
 import {
@@ -29,8 +30,12 @@ import { responseLabel } from "./calendarResponse";
 import { CreateCalendarEventDialog } from "./CreateCalendarEventDialog";
 import { CalendarColorRow } from "./CalendarColorMenu";
 import { calendarColorStyle, useCalendarColors } from "./calendarColors";
-import type { CalendarAccount, CalendarOption, ScheduleEvent } from "./domain";
+import { mailClient } from "./data/client";
+import type { CalendarAccount, CalendarOption, ScheduleEvent, ThreadTask } from "./domain";
+import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
+import { defaultEventCalendar, openTasksFor, showCalendar, TASK_BLOCK_MINUTES, taskBlockRequest, writableCalendars } from "./taskBooking";
+import type { Notice } from "./useNotice";
 
 export const WEEK_SCROLL_TOP_KEY = "threestrands.calendarWeek.scrollTop";
 /** Calendar accounts collapsed in the week view's calendar list, remembered on this device. */
@@ -40,6 +45,11 @@ const MAX_WEEK_SCROLL_TOP = 24 * HOUR_HEIGHT;
 /** How often the "now" indicator re-renders, in milliseconds. */
 const NOW_TICK_MS = 60_000;
 const SLOT_MINUTES = 15;
+/** How far, in pixels, a task row moves before it counts as dragged rather than clicked. */
+const TASK_DRAG_THRESHOLD = 4;
+/** Distance from the grid's top or bottom edge, in pixels, that scrolls it during a task drag. */
+const TASK_DRAG_SCROLL_EDGE = 40;
+const TASK_DRAG_SCROLL_STEP = 16;
 
 function sameEvent(left: ScheduleEvent | null, right: ScheduleEvent): boolean {
   return left?.id === right.id && left.accountId === right.accountId && left.calendarId === right.calendarId;
@@ -55,6 +65,11 @@ function eventRangeFromSlots(day: Date, anchor: number, current: number, dragged
   const endMinutes = dragged ? Math.max(anchor, current) + SLOT_MINUTES : anchor + 60;
   const at = (minutes: number) => new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, minutes);
   return { start: at(startMinutes), end: at(endMinutes), startMinutes, endMinutes };
+}
+
+/** The start of a task block dropped at `clientY`, kept within the day. */
+function taskBlockStartAt(clientY: number, column: HTMLElement): number {
+  return Math.min(slotAt(clientY, column), 24 * 60 - TASK_BLOCK_MINUTES);
 }
 
 function readWeekScrollTop(): number {
@@ -227,10 +242,18 @@ export function CalendarWeekView({
   onCreated,
   mailAccountIds = [],
   onOpenThread = () => {},
+  taskRefreshKey = 0,
+  onTasksChanged,
+  onNotice,
   active = true,
   session,
 }: {
   session?: RefObject<CalendarWorkspaceSnapshot | null>;
+  /** Changes whenever tasks change elsewhere, to reload Open tasks. */
+  taskRefreshKey?: number;
+  onTasksChanged?(): void;
+  /** Says a task block was booked, with Undo, or why it was not. */
+  onNotice?(notice: Notice): void;
   active?: boolean;
   mailAccountIds?: string[];
   onOpenThread?(id: string): void;
@@ -252,8 +275,12 @@ export function CalendarWeekView({
   const eventTrigger = useRef<HTMLButtonElement | null>(null);
   const focusAgendaDetails = useRef(false);
   const calendarColors = useCalendarColors();
-  const [newEventRange, setNewEventRange] = useState<{ start: Date; end: Date } | null>(null);
-  const [dragPreview, setDragPreview] = useState<{ dayIndex: number; startMinutes: number; endMinutes: number } | null>(null);
+  const [newEventRange, setNewEventRange] = useState<{ start: Date; end: Date; task?: ThreadTask } | null>(null);
+  const [dragPreview, setDragPreview] = useState<{ dayIndex: number; startMinutes: number; endMinutes: number; label?: string } | null>(null);
+  const taskDragRef = useRef<{ task: ThreadTask; pointerId: number; x: number; y: number; moved: boolean } | null>(null);
+  const endTaskDrag = useRef<(() => void) | null>(null);
+  const suppressTaskClick = useRef(false);
+  const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const dragRef = useRef<{ dayIndex: number; anchor: number; pointerId: number } | null>(null);
   const [now, setNow] = useState(() => new Date());
   const gridRef = useRef<HTMLDivElement>(null);
@@ -351,6 +378,113 @@ export function CalendarWeekView({
     setNewEventRange({ start: range.start, end: range.end });
   };
 
+  const { tasks: accountTasks, loading: tasksLoading, error: tasksError, reload: reloadTasks } = useAccountTasks(mailAccountIds, taskRefreshKey);
+  const openTasks = openTasksFor(accountTasks, mailAccountIds);
+  const bookedTask = selectedEvent?.sourceTaskId ? accountTasks.find((task) => task.id === selectedEvent.sourceTaskId) : undefined;
+  const tasksChanged = () => { reloadTasks(); onTasksChanged?.(); };
+
+  const bookTask = async (task: ThreadTask, day: Date, startMinutes: number) => {
+    const calendar = defaultEventCalendar(writableCalendars(accounts, calendars), task.accountId);
+    if (!calendar) {
+      onNotice?.({ message: "Connect a Google Calendar account with event access to book time for tasks." });
+      return;
+    }
+    try {
+      await showCalendar(calendar, calendars);
+      const created = await mailClient.createCalendarEvent(taskBlockRequest(task, calendar, new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, startMinutes)));
+      revalidateScheduleCache();
+      onCreated?.();
+      const when = `${new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(new Date(created.start))} ${formatEventTime(created)}`;
+      onNotice?.({ message: `Booked ${when} for “${task.title}”`, undo: () => void (async () => {
+        try {
+          await mailClient.deleteCalendarEvent(created);
+          revalidateScheduleCache();
+          onNotice?.({ message: "Booked time removed" });
+        } catch (reason) {
+          onNotice?.({ message: errorMessage(reason) });
+        }
+      })() });
+    } catch (reason) {
+      onNotice?.({ message: errorMessage(reason) });
+    }
+  };
+
+  /** The week column under the pointer, and where a task block dropped there starts. */
+  const taskDropAt = (clientX: number, clientY: number) => {
+    const target = document.elementFromPoint(clientX, clientY);
+    const column = target instanceof Element ? target.closest<HTMLElement>(".calendar-week-column") : null;
+    if (!column || !gridRef.current?.contains(column)) return null;
+    return { dayIndex: Number(column.dataset.dayIndex), startMinutes: taskBlockStartAt(clientY, column) };
+  };
+
+  const startTaskDrag = (task: ThreadTask, event: ReactPointerEvent<HTMLElement>) => {
+    if (event.button !== 0 || taskDragRef.current) return;
+    taskDragRef.current = { task, pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
+    const move = (pointer: PointerEvent) => {
+      const drag = taskDragRef.current;
+      if (!drag || pointer.pointerId !== drag.pointerId) return;
+      if (!drag.moved) {
+        if (Math.hypot(pointer.clientX - drag.x, pointer.clientY - drag.y) < TASK_DRAG_THRESHOLD) return;
+        drag.moved = true;
+        setDraggingTaskId(drag.task.id);
+      }
+      pointer.preventDefault();
+      const grid = gridRef.current?.getBoundingClientRect();
+      if (grid && pointer.clientX >= grid.left && pointer.clientX <= grid.right) {
+        if (pointer.clientY < grid.top + TASK_DRAG_SCROLL_EDGE) gridRef.current!.scrollTop -= TASK_DRAG_SCROLL_STEP;
+        else if (pointer.clientY > grid.bottom - TASK_DRAG_SCROLL_EDGE) gridRef.current!.scrollTop += TASK_DRAG_SCROLL_STEP;
+      }
+      const drop = taskDropAt(pointer.clientX, pointer.clientY);
+      setDragPreview(drop ? { ...drop, endMinutes: drop.startMinutes + TASK_BLOCK_MINUTES, label: drag.task.title } : null);
+    };
+    const finish = (pointer: PointerEvent) => {
+      const drag = taskDragRef.current;
+      if (!drag || pointer.pointerId !== drag.pointerId) return;
+      end();
+      if (!drag.moved) return;
+      // The click that may follow a drag released over the row is not a request to schedule it.
+      suppressTaskClick.current = true;
+      window.setTimeout(() => { suppressTaskClick.current = false; }, 0);
+      const drop = taskDropAt(pointer.clientX, pointer.clientY);
+      if (drop && days[drop.dayIndex]) void bookTask(drag.task, days[drop.dayIndex], drop.startMinutes);
+    };
+    const cancel = (pointer: PointerEvent) => { if (pointer.pointerId === taskDragRef.current?.pointerId) end(); };
+    const escape = (key: KeyboardEvent) => {
+      if (key.key !== "Escape") return;
+      key.preventDefault();
+      key.stopPropagation();
+      end();
+    };
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("keydown", escape, true);
+      taskDragRef.current = null;
+      endTaskDrag.current = null;
+      setDraggingTaskId(null);
+      setDragPreview(null);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("keydown", escape, true);
+    endTaskDrag.current = end;
+  };
+  useEffect(() => () => endTaskDrag.current?.(), []);
+
+  /** Opens New Event for the task, at the next half hour on the shown day. */
+  const scheduleTask = (task: ThreadTask) => {
+    if (suppressTaskClick.current) return;
+    const day = startOfLocalDay(anchor);
+    const minutes = isSameDay(day, now)
+      ? Math.min(Math.ceil((now.getHours() * 60 + now.getMinutes()) / TASK_BLOCK_MINUTES) * TASK_BLOCK_MINUTES, 24 * 60 - TASK_BLOCK_MINUTES)
+      : 9 * 60;
+    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, minutes);
+    setSelectedEvent(null);
+    setNewEventRange({ start, end: new Date(start.getTime() + TASK_BLOCK_MINUTES * 60_000), task });
+  };
+
   const selectDate = useCallback((date: Date) => {
     const target = startOfLocalDay(date);
     onAnchorChange(target);
@@ -394,7 +528,7 @@ export function CalendarWeekView({
   );
 
   return (
-    <section className="calendar-week" aria-label="Calendar week" style={{ "--calendar-day-count": days.length } as CSSProperties}>
+    <section className={`calendar-week${draggingTaskId ? " calendar-week-task-drag" : ""}`} aria-label="Calendar week" style={{ "--calendar-day-count": days.length } as CSSProperties}>
       <div className="calendar-week-main">
         <header className="calendar-week-header">
           <div className="calendar-week-heading"><span className="eyebrow">Calendar <span className="eyebrow-account" title={selectedAccountEmails.join(", ") || undefined}>· {accountScope}</span></span><h1>{monthTitle(weekStart)}</h1><p className="calendar-visible-range">{weekStart.toLocaleDateString(undefined, { month: "short", day: "numeric" })}{days.length > 1 ? ` – ${days.at(-1)!.toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</p></div>
@@ -471,6 +605,7 @@ export function CalendarWeekView({
               <div
                 className="calendar-week-column"
                 key={day.toDateString()}
+                data-day-index={dayIndex}
                 aria-label={`Create event on ${new Intl.DateTimeFormat(undefined, { dateStyle: "full" }).format(day)}`}
                 onPointerDown={(event) => {
                   if (event.button !== 0 || (event.target as HTMLElement).closest("[data-calendar-event-trigger]")) return;
@@ -494,7 +629,7 @@ export function CalendarWeekView({
                   <div className="calendar-create-selection" aria-hidden="true" style={{
                     top: dragPreview.startMinutes / 60 * HOUR_HEIGHT,
                     height: (dragPreview.endMinutes - dragPreview.startMinutes) / 60 * HOUR_HEIGHT,
-                  }} />
+                  }}>{dragPreview.label ? <span>{dragPreview.label}</span> : null}</div>
                 ) : null}
                 {timedByDay[dayIndex].map(({ event, lane, lanes, span }) => {
                   const start = new Date(event.start);
@@ -552,6 +687,8 @@ export function CalendarWeekView({
           end={newEventRange.end}
           accounts={accounts}
           calendars={calendars}
+          initialTitle={newEventRange.task?.title}
+          sourceTask={newEventRange.task}
           onClose={() => setNewEventRange(null)}
           onCreated={(event) => { setNewEventRange(null); setSelectedEvent(event); revalidateScheduleCache(); onCreated?.(); }}
         /> : null}
@@ -579,8 +716,23 @@ export function CalendarWeekView({
             setSelectedEvent(null);
             if (!eventTrigger.current) document.getElementById("workspace-Meeting-context")?.focus();
           }} onUpdated={setSelectedEvent} />
+          {bookedTask ? <BookedTask task={bookedTask} onChanged={tasksChanged} /> : null}
           <WorkspaceRelatedContext target={{ kind: "meeting", event: selectedEvent }} accountIds={mailAccountIds} onOpenThread={onOpenThread} />
-        </> : <CalendarAgenda today={today} calendars={calendars} onOpenEvent={openAgendaEvent} schedule={todayVisible ? { events, loading, error, reload } : undefined} />}
+        </> : <>
+          <CalendarAgenda today={today} calendars={calendars} onOpenEvent={openAgendaEvent} schedule={todayVisible ? { events, loading, error, reload } : undefined} />
+          <CalendarTasks
+            tasks={openTasks}
+            loading={tasksLoading}
+            error={tasksError}
+            reload={reloadTasks}
+            events={events}
+            now={now}
+            multipleAccounts={new Set(mailAccountIds).size > 1}
+            draggingTaskId={draggingTaskId}
+            onSchedule={scheduleTask}
+            onDragStart={startTaskDrag}
+          />
+        </>}
       </WorkspaceContextRail>
     </section>
   );

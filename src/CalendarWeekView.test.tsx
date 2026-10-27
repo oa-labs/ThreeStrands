@@ -9,7 +9,7 @@ import { clearScheduleCache } from "./calendarScheduleCache";
 import { CALENDAR_COLORS_KEY, resetCalendarColorsForTests } from "./calendarColors";
 import { expectSharedButtons } from "./test/sharedButtons";
 import { expectContextRows } from "./test/contextRows";
-import type { CalendarAccount, CalendarOption, ScheduleEvent } from "./domain";
+import type { CalendarAccount, CalendarOption, ScheduleEvent, ThreadTask } from "./domain";
 
 const accounts: CalendarAccount[] = [
   { email: "joel@example.com", connectedAt: "2026-01-01T00:00:00Z", status: "connected" },
@@ -57,6 +57,7 @@ describe("CalendarWeekView", () => {
     localStorage.setItem("threestrands.calendar.range", "week");
     vi.setSystemTime(new Date(2026, 8, 22, 14, 30));
     vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+    vi.spyOn(mailClient, "listTasks").mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -738,6 +739,215 @@ describe("CalendarWeekView", () => {
     renderWeek();
     await screen.findByText("Sun 20");
     expect(screen.getByRole("checkbox", { name: "Holidays in United States" })).toBeInTheDocument();
+  });
+
+  describe("open tasks", () => {
+    function task(id: string, overrides: Partial<ThreadTask> = {}): ThreadTask {
+      return {
+        id, accountId: "joel@example.com", threadId: null, subjectSnapshot: null, title: id, kind: "action",
+        dueKind: "none", status: "open", createdAt: "2026-09-01T00:00:00Z", updatedAt: "2026-09-01T00:00:00Z", ...overrides,
+      };
+    }
+
+    const proposal = task("proposal", { title: "Write proposal" });
+
+    function openTasks() {
+      return screen.getByRole("region", { name: "Open tasks" });
+    }
+
+    /** Drags the row onto the week, releasing over `target` (null: outside the grid). */
+    function dragTask(row: HTMLElement, target: HTMLElement | null, clientY: number) {
+      document.elementFromPoint = vi.fn(() => target);
+      fireEvent.pointerDown(row, { button: 0, pointerId: 7, clientX: 900, clientY: 10 });
+      fireEvent.pointerMove(document.body, { pointerId: 7, clientX: 50, clientY });
+    }
+
+    function tuesdayColumn(container: HTMLElement) {
+      const column = container.querySelectorAll<HTMLElement>(".calendar-week-column")[2]!;
+      vi.spyOn(column, "getBoundingClientRect").mockReturnValue({ top: 0 } as DOMRect);
+      return column;
+    }
+
+    afterEach(() => {
+      Reflect.deleteProperty(document, "elementFromPoint");
+    });
+
+    it("lists the To Do and In Progress tasks of the shown accounts in board order and says which have time booked", async () => {
+      vi.mocked(mailClient.listTasks).mockResolvedValue([
+        task("someday", { title: "Clean up notes", createdAt: "2026-09-02T00:00:00Z" }),
+        task("doing", { title: "Draft budget", status: "in_progress", createdAt: "2026-09-01T00:00:00Z" }),
+        task("due", { title: "Send invoice", dueKind: "date", dueValue: "2026-09-21" }),
+        task("done", { title: "Finished", status: "completed" }),
+        task("dropped", { title: "Dropped", status: "cancelled" }),
+        task("elsewhere", { title: "Other account", accountId: "other@example.com" }),
+      ]);
+      vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [
+        { ...event("block", "2026-09-23T10:00:00", "2026-09-23T10:30:00", "Draft budget"), sourceTaskId: "doing" },
+      ], errors: [] });
+      renderWeek({ mailAccountIds: ["joel@example.com"] });
+
+      const section = openTasks();
+      await within(section).findByRole("button", { name: /Send invoice/ });
+      expectContextRows(section);
+      expect([...section.querySelectorAll(".context-row-title")].map((row) => row.textContent)).toEqual(["Send invoice", "Draft budget", "Clean up notes"]);
+      expect(within(section).getByRole("button", { name: /Send invoice/ }).closest(".context-row")).toHaveTextContent("Due");
+      await waitFor(() => expect(within(section).getByRole("button", { name: /Draft budget/ })).toHaveTextContent("In progress · Booked Wed 10:00 am"));
+      expect(mailClient.listTasks).toHaveBeenCalledWith("joel@example.com");
+      // The card sits below the agenda in the same rail.
+      const agenda = screen.getByRole("region", { name: "Today's agenda" });
+      expect(agenda.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it("says when there are no open tasks and retries a failed load", async () => {
+      vi.mocked(mailClient.listTasks).mockRejectedValueOnce(new Error("offline"));
+      renderWeek({ mailAccountIds: ["joel@example.com"] });
+      fireEvent.click(await within(openTasks()).findByRole("button", { name: "Retry tasks" }));
+      expect(await within(openTasks()).findByText("No open tasks.")).toBeInTheDocument();
+    });
+
+    it("books thirty minutes where a task is dropped, tagged with the task, and Undo removes it", async () => {
+      vi.mocked(mailClient.listTasks).mockResolvedValue([proposal]);
+      const created = { ...event("block", "2026-09-22T09:15:00", "2026-09-22T09:45:00", "Write proposal"), calendarId: "primary", sourceTaskId: "proposal" };
+      const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(created);
+      const remove = vi.spyOn(mailClient, "deleteCalendarEvent").mockResolvedValue();
+      const onNotice = vi.fn();
+      const onCreated = vi.fn();
+      const { container } = renderWeek({ mailAccountIds: ["joel@example.com"], onNotice, onCreated });
+      const column = tuesdayColumn(container);
+      const row = (await within(openTasks()).findByRole("button", { name: /Write proposal/ })).closest<HTMLElement>(".context-row")!;
+
+      dragTask(row, column, 9.25 * 64);
+      expect(row).toHaveClass("calendar-task-dragging");
+      const preview = container.querySelector(".calendar-create-selection");
+      expect(preview).toHaveStyle({ top: `${9.25 * 64}px`, height: `${0.5 * 64}px` });
+      expect(preview).toHaveTextContent("Write proposal");
+      fireEvent.pointerUp(document.body, { pointerId: 7, clientX: 50, clientY: 9.25 * 64 });
+
+      await waitFor(() => expect(create).toHaveBeenCalledWith({
+        accountId: "joel@example.com", calendarId: "primary", title: "Write proposal",
+        start: new Date(2026, 8, 22, 9, 15).toISOString(), end: new Date(2026, 8, 22, 9, 45).toISOString(),
+        description: "", attendees: [], sourceTaskId: "proposal",
+      }));
+      expect(container.querySelector(".calendar-create-selection")).not.toBeInTheDocument();
+      expect(row).not.toHaveClass("calendar-task-dragging");
+      // Dropping books at once; it never opens New Event.
+      expect(screen.queryByRole("dialog", { name: "New event" })).not.toBeInTheDocument();
+      await waitFor(() => expect(onNotice).toHaveBeenCalledWith({ message: "Booked Tue 9:15–9:45 am for “Write proposal”", undo: expect.any(Function) }));
+      expect(onCreated).toHaveBeenCalledOnce();
+
+      act(() => onNotice.mock.calls[0]![0].undo());
+      await waitFor(() => expect(remove).toHaveBeenCalledWith(created));
+      await waitFor(() => expect(onNotice).toHaveBeenLastCalledWith({ message: "Booked time removed" }));
+    });
+
+    it("books on the task's own account, showing a hidden calendar first", async () => {
+      const otherAccounts: CalendarAccount[] = [...accounts, { email: "work@example.com", connectedAt: "2026-01-01T00:00:00Z", status: "connected" }];
+      const otherCalendars: CalendarOption[] = [...calendars, { id: "work-primary", accountId: "work@example.com", name: "work@example.com", primary: true, selected: false, writable: true }];
+      vi.mocked(mailClient.listTasks).mockResolvedValue([{ ...proposal, accountId: "work@example.com" }]);
+      const select = vi.spyOn(mailClient, "setCalendarSelection").mockResolvedValue([]);
+      const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(event("block", "2026-09-22T13:00:00", "2026-09-22T13:30:00"));
+      const { container } = renderWeek({ accounts: otherAccounts, calendars: otherCalendars, mailAccountIds: ["joel@example.com", "work@example.com"], onNotice: vi.fn() });
+      const column = tuesdayColumn(container);
+      const row = (await within(openTasks()).findByRole("button", { name: /Write proposal/ })).closest<HTMLElement>(".context-row")!;
+      expect(row).toHaveTextContent("work@example.com");
+
+      dragTask(row, column, 13 * 64);
+      fireEvent.pointerUp(document.body, { pointerId: 7, clientX: 50, clientY: 13 * 64 });
+      await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ accountId: "work@example.com", calendarId: "work-primary" })));
+      expect(select).toHaveBeenCalledWith("work@example.com", ["work-primary"]);
+      expect(select.mock.invocationCallOrder[0]).toBeLessThan(create.mock.invocationCallOrder[0]!);
+    });
+
+    it("keeps a dropped block inside its day", async () => {
+      vi.mocked(mailClient.listTasks).mockResolvedValue([proposal]);
+      const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(event("block", "2026-09-22T23:30:00", "2026-09-23T00:00:00"));
+      const { container } = renderWeek({ mailAccountIds: ["joel@example.com"], onNotice: vi.fn() });
+      const column = tuesdayColumn(container);
+      const row = (await within(openTasks()).findByRole("button", { name: /Write proposal/ })).closest<HTMLElement>(".context-row")!;
+      dragTask(row, column, 23.9 * 64);
+      fireEvent.pointerUp(document.body, { pointerId: 7, clientX: 50, clientY: 23.9 * 64 });
+      await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        start: new Date(2026, 8, 22, 23, 30).toISOString(), end: new Date(2026, 8, 23, 0, 0).toISOString(),
+      })));
+    });
+
+    it("books nothing when a drag ends outside the week, is cancelled with Escape, or never moves", async () => {
+      vi.mocked(mailClient.listTasks).mockResolvedValue([proposal]);
+      const create = vi.spyOn(mailClient, "createCalendarEvent");
+      const { container } = renderWeek({ mailAccountIds: ["joel@example.com"], onNotice: vi.fn() });
+      const column = tuesdayColumn(container);
+      const row = (await within(openTasks()).findByRole("button", { name: /Write proposal/ })).closest<HTMLElement>(".context-row")!;
+
+      dragTask(row, null, 9 * 64);
+      expect(container.querySelector(".calendar-create-selection")).not.toBeInTheDocument();
+      fireEvent.pointerUp(document.body, { pointerId: 7, clientX: 50, clientY: 9 * 64 });
+
+      dragTask(row, column, 9 * 64);
+      expect(container.querySelector(".calendar-create-selection")).toBeInTheDocument();
+      const keydown = vi.fn();
+      window.addEventListener("keydown", keydown);
+      fireEvent.keyDown(document.body, { key: "Escape" });
+      window.removeEventListener("keydown", keydown);
+      // Escape ends only the drag; it doesn't reach the app's own Escape handling.
+      expect(keydown).not.toHaveBeenCalled();
+      expect(container.querySelector(".calendar-create-selection")).not.toBeInTheDocument();
+      expect(row).not.toHaveClass("calendar-task-dragging");
+      fireEvent.pointerUp(document.body, { pointerId: 7, clientX: 50, clientY: 9 * 64 });
+
+      // A press that stays put is a click, handled by the row's button.
+      document.elementFromPoint = vi.fn(() => column);
+      fireEvent.pointerDown(row, { button: 0, pointerId: 8, clientX: 900, clientY: 10 });
+      fireEvent.pointerMove(document.body, { pointerId: 8, clientX: 902, clientY: 11 });
+      fireEvent.pointerUp(document.body, { pointerId: 8, clientX: 902, clientY: 11 });
+      await act(async () => {});
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("opens New Event for a clicked task at the coming half hour, tagged with the task", async () => {
+      vi.setSystemTime(new Date(2026, 8, 22, 14, 40));
+      vi.mocked(mailClient.listTasks).mockResolvedValue([proposal]);
+      const create = vi.spyOn(mailClient, "createCalendarEvent").mockResolvedValue(event("block", "2026-09-22T15:00:00", "2026-09-22T15:30:00", "Write proposal"));
+      renderWeek({ mailAccountIds: ["joel@example.com"] });
+      fireEvent.click(await within(openTasks()).findByRole("button", { name: /Write proposal/ }));
+
+      const dialog = await screen.findByRole("dialog", { name: "New event" });
+      expect(within(dialog).getByLabelText("Title")).toHaveValue("Write proposal");
+      expect(within(dialog).getByLabelText("Starts")).toHaveValue("2026-09-22T15:00");
+      expect(within(dialog).getByLabelText("Ends")).toHaveValue("2026-09-22T15:30");
+      expect(within(dialog).getByLabelText("Calendar")).toHaveValue("joel@example.com\nprimary");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create event" }));
+      await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: "Write proposal", sourceTaskId: "proposal" })));
+    });
+
+    it("explains when no calendar can take the booked time", async () => {
+      vi.mocked(mailClient.listTasks).mockResolvedValue([proposal]);
+      const create = vi.spyOn(mailClient, "createCalendarEvent");
+      const onNotice = vi.fn();
+      const { container } = renderWeek({ calendars: calendars.map((calendar) => ({ ...calendar, writable: false })), mailAccountIds: ["joel@example.com"], onNotice });
+      const column = tuesdayColumn(container);
+      const row = (await within(openTasks()).findByRole("button", { name: /Write proposal/ })).closest<HTMLElement>(".context-row")!;
+      dragTask(row, column, 9 * 64);
+      fireEvent.pointerUp(document.body, { pointerId: 7, clientX: 50, clientY: 9 * 64 });
+      await waitFor(() => expect(onNotice).toHaveBeenCalledWith({ message: "Connect a Google Calendar account with event access to book time for tasks." }));
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("names the booked task in event details, where it can be marked done", async () => {
+      vi.mocked(mailClient.listTasks).mockResolvedValue([proposal]);
+      vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [
+        { ...event("block", "2026-09-22T09:00:00", "2026-09-22T09:30:00", "Write proposal"), calendarId: "primary", sourceTaskId: "proposal" },
+      ], errors: [] });
+      const setStatus = vi.spyOn(mailClient, "setTaskStatus").mockResolvedValue({ ...proposal, status: "completed" });
+      const onTasksChanged = vi.fn();
+      renderWeek({ mailAccountIds: ["joel@example.com"], onTasksChanged });
+      await within(openTasks()).findByRole("button", { name: /Write proposal/ });
+      fireEvent.click(await calendarGrid().findByRole("button", { name: "Write proposal" }));
+
+      const booked = await screen.findByRole("region", { name: "Task" });
+      fireEvent.click(within(booked).getByRole("checkbox", { name: "Mark Write proposal done" }));
+      await waitFor(() => expect(setStatus).toHaveBeenCalledWith("proposal", "completed"));
+      expect(onTasksChanged).toHaveBeenCalledOnce();
+    });
   });
 
   it("opens an hour-long event from a clicked time and saves its details on the primary calendar", async () => {

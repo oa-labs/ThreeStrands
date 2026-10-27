@@ -110,6 +110,8 @@ export type CreateCalendarEventRequest = {
   attendees: string[];
   /** The email the event is added from, kept privately on the event to recognize it later. */
   sourceMessageId?: string;
+  /** The task the event books time for, kept privately on the event the same way. */
+  sourceTaskId?: string;
 };
 
 /** All-day events carry `YYYY-MM-DD` dates with an exclusive end; timed events carry ISO times. */
@@ -149,6 +151,8 @@ export type ScheduleEvent = {
   attendeeResponses?: Record<string, AttendeeResponseStatus>;
   /** The email ThreeStrands added this event from, when it did. */
   sourceMessageId?: string | null;
+  /** The task ThreeStrands booked this event for, when it did. */
+  sourceTaskId?: string | null;
 };
 
 export type ScheduleResult = {
