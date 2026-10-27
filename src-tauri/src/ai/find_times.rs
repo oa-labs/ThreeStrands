@@ -7,10 +7,9 @@ use chrono::{DateTime, Duration, NaiveTime};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::{
-    action_context, call_provider, decode_json_output, truncate_chars, ActionMessageInput, AiProvider,
-    OutputDecodeError, OutputSchema, STRUCTURED_OUTPUT_TOKENS,
-};
+use super::context::{action_context, truncate_chars, ActionMessageInput};
+use super::output::{decode_json_output, OutputDecodeError};
+use super::provider::{call_provider, AiProvider, OutputSchema, STRUCTURED_OUTPUT_TOKENS};
 use crate::error_text::display;
 
 /// Longest range a search may cover, matching the app's own scheduling cards.
