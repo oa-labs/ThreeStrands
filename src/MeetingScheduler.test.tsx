@@ -160,6 +160,15 @@ describe("MeetingScheduler", () => {
     expect(handlers.onOpenCalendarSettings).toHaveBeenCalled();
   });
 
+  it("identifies inaccessible calendars even when there are no open times", async () => {
+    vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
+      candidates: [], checkedCalendarCount: 1, totalCalendarCount: 2, uncheckedCalendars: ["alex@example.com"], errors: [],
+    });
+    renderScheduler(range, { coworkers: { accountId: "me@example.com", emails: ["alex@example.com"] } });
+    expect(await screen.findByText("No open times in your working hours for this range.")).toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent("Couldn’t check alex@example.com");
+  });
+
   it("says when no calendar could be checked for a range", async () => {
     vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
       candidates: [{ ...candidate(20), status: "unverified" }], checkedCalendarCount: 0, totalCalendarCount: 0, uncheckedCalendars: [], errors: [],

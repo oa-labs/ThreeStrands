@@ -1,3 +1,4 @@
+import type { FindAvailabilityRequest } from "../domain";
 import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
 import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
 import {
@@ -12,7 +13,6 @@ import type {
   AiActivity,
   AiUsageDay,
   AuthStatus,
-  AvailabilityPreferences,
   AvailabilityResult,
   MeetingAvailabilityRequest,
   MeetingAvailabilityResult,
@@ -324,7 +324,7 @@ export interface MailClient extends CorrespondenceClient {
   /** Deletes an event the user organizes and notifies its guests. */
   deleteCalendarEvent(event: ScheduleEvent): Promise<void>;
   /** `maxPerDay` spreads the candidates across days instead of the earliest slots of one day. */
-  findAvailability(request: { rangeStart: string; rangeEnd: string; preferences: AvailabilityPreferences; maxPerDay?: number }): Promise<AvailabilityResult>;
+  findAvailability(request: FindAvailabilityRequest): Promise<AvailabilityResult>;
   meetingAvailability(request: MeetingAvailabilityRequest): Promise<MeetingAvailabilityResult>;
   checkProposedTime(request: { start: string; end: string; timeZone: string; driveTimeBufferMinutes?: number }): Promise<ProposedTimeCheck>;
   /** Lists labels for the primary account, or for the specified account when provided. */

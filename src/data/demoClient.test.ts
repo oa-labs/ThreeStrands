@@ -554,6 +554,24 @@ describe("demoClient availability", () => {
     expect(result.candidates.every((candidate) => candidate.status === "partiallyChecked")).toBe(true);
   });
 
+  it("reports coworker calendars as unknown in Find Times", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2099-09-20T12:00:00-04:00"));
+    const dataset = defaultDemoDataset();
+    dataset.calendarOptions = [{ id: DEMO_ACCOUNT_ID, accountId: DEMO_ACCOUNT_ID, name: "Personal", primary: true, selected: true, writable: true }];
+    dataset.scheduleEvents = [];
+    const result = await createDemoClient(dataset).findAvailability({
+      rangeStart: "2099-09-21T13:00:00-04:00", rangeEnd: "2099-09-21T16:00:00-04:00",
+      preferences: { ...DEFAULT_AVAILABILITY_PREFERENCES, timeZone: "America/New_York" },
+      coworkers: { accountId: DEMO_ACCOUNT_ID, emails: ["coworker@example.com"] },
+    });
+    expect(result.uncheckedCalendars).toEqual(["coworker@example.com"]);
+    expect(result.checkedCalendarCount).toBe(1);
+    expect(result.totalCalendarCount).toBe(2);
+    expect(result.candidates.length).toBeGreaterThan(0);
+    expect(result.candidates.every((slot) => slot.status === "partiallyChecked")).toBe(true);
+  });
+
   it("leaves drive time before and after located events for both checks and suggestions", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2099-09-20T12:00:00-04:00"));

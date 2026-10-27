@@ -705,3 +705,34 @@ test("the composer shows a sending-address picker for a multi-identity account a
   // The chosen identity reached setDraftFrom.
   await expect.poll(() => page.evaluate(() => (window as unknown as { __lastSetFrom?: string }).__lastSetFrom)).toBe("work@example.com");
 });
+
+
+test("Find Times includes selected coworkers and marks their inaccessible calendars", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await settings.getByRole("button", { name: "Calendar Accounts", exact: true }).click();
+  await settings.getByRole("button", { name: "Connect Calendar", exact: true }).click();
+  await expect(settings.getByRole("button", { name: "Connect Calendar", exact: true })).toBeEnabled();
+  await settings.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("button", { name: "New Message (c)" }).click();
+  const composer = page.getByRole("dialog", { name: "New Message" });
+  const to = composer.getByRole("textbox", { name: "To", exact: true });
+  await to.fill("coworker@example.com");
+  await to.press(",");
+  await to.fill("client@outside.org");
+  await to.press(",");
+  await composer.getByRole("textbox", { name: "Subject" }).fill("Find a time together");
+  const availability = page.getByRole("complementary", { name: "Compose context" }).getByRole("region", { name: "Availability" });
+  await availability.getByRole("button", { name: "Find Times", exact: true }).click();
+  const coworker = availability.getByRole("checkbox", { name: "coworker@example.com" });
+  await expect(coworker).not.toBeChecked();
+  await expect(availability.getByRole("checkbox")).toHaveCount(1);
+  await coworker.check();
+  await expect(availability.getByRole("note")).toContainText("Couldn’t check coworker@example.com");
+  await availability.getByRole("button", { name: "Mornings", exact: true }).click();
+  await expect(coworker).toBeChecked();
+  await expect(availability.getByRole("note")).toContainText("Couldn’t check coworker@example.com");
+  await coworker.uncheck();
+  await expect(availability.getByRole("note")).toHaveCount(0);
+});

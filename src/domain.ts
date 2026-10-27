@@ -200,6 +200,17 @@ export type AvailabilityCandidate = {
   status: "verified" | "partiallyChecked" | "unverified";
 };
 
+/** Explicitly selected recipients, checked using the sending account's calendar connection. */
+export type CoworkerCalendars = { accountId: string; emails: string[] };
+
+export type FindAvailabilityRequest = {
+  rangeStart: string;
+  rangeEnd: string;
+  preferences: AvailabilityPreferences;
+  maxPerDay?: number;
+  coworkers?: CoworkerCalendars;
+};
+
 export type AvailabilityResult = {
   candidates: AvailabilityCandidate[];
   checkedCalendarCount: number;

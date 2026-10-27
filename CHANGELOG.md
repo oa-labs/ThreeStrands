@@ -4,6 +4,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### New
+- **Find Times** can include coworkers on your email. Select recipients from your organization to find times when you are all free; calendars that cannot be checked are clearly identified.
+
 ## 0.174.3 — 2026-10-27
 
 ### New

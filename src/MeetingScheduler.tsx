@@ -1,6 +1,6 @@
 import { CalendarCheck, CalendarPlus, Check, ChevronLeft, ChevronRight, CircleCheck, CircleAlert, RotateCcw } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import type { AvailabilityCandidate, AvailabilityPreferences, ProposedTimeCheck, ScheduleEvent } from "./domain";
+import type { AvailabilityCandidate, AvailabilityPreferences, CoworkerCalendars, ProposedTimeCheck, ScheduleEvent } from "./domain";
 import { findCalendarMatch, findDayMatch, SAME_EVENT_START_TOLERANCE_MINUTES, type CalendarMatch, type EventIdentity } from "./eventMatching";
 import { mailClient } from "./data/client";
 import { refreshScheduleCache } from "./calendarScheduleCache";
@@ -136,6 +136,7 @@ export function MeetingScheduler({
   onOpenCalendarSettings,
   onSearchChange,
   adjustInput,
+  coworkers: latestCoworkers,
   identity: latestIdentity,
   onOpenCalendarEvent,
   onMatchChange,
@@ -156,6 +157,7 @@ export function MeetingScheduler({
   onSearchChange?(search: EffectiveSearch): void;
   /** Shown with the adjustment chips, for example a field to adjust with AI. */
   adjustInput?: ReactNode;
+  coworkers?: CoworkerCalendars;
   /** What the event is called and where, to recognize it already on the calendar. */
   identity?: EventIdentity;
   /** Opens a calendar event the suggestion already appears as. */
@@ -191,6 +193,10 @@ export function MeetingScheduler({
   const identityKey = latestIdentity ? `${latestIdentity.title}|${latestIdentity.location ?? ""}|${latestIdentity.sourceMessageId ?? ""}` : "";
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const identity = useMemo(() => latestIdentity, [identityKey]);
+  const coworkersKey = JSON.stringify(latestCoworkers);
+  // Stable across draft edits that do not change the selected calendars.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const coworkers = useMemo(() => latestCoworkers, [coworkersKey]);
   const timeZone = preferences.timeZone;
   const announced = plan.announced === true;
 
@@ -217,6 +223,7 @@ export function MeetingScheduler({
             defaultDurationMinutes: plan.durationMinutes,
           },
           maxPerDay: SLOTS_PER_DAY,
+          ...(coworkers ? { coworkers } : {}),
         });
         const candidates = spreadAcrossDays(result.candidates, timeZone);
         if (!isCurrent()) return;
@@ -232,7 +239,7 @@ export function MeetingScheduler({
     } catch (reason) {
       if (isCurrent()) setState({ phase: "error", message: errorMessage(reason) });
     }
-  }, [bounds, identity, plan.durationMinutes, preferences, timeZone]);
+  }, [bounds, coworkers, identity, plan.durationMinutes, preferences, timeZone]);
 
   const boundsKey = `${bounds.weekdays.join(",")}|${bounds.dayStart ?? ""}|${bounds.dayEnd ?? ""}`;
   const queryKey = query ? `${query.kind}:${query.start}:${query.end}:${query.kind === "range" ? boundsKey : ""}` : "none";
@@ -411,10 +418,10 @@ export function MeetingScheduler({
               : null}
           </div>;
         })()}
-        {state.verified ? null : coverageNote(state.unchecked.length === 0 && !state.candidates.some((candidate) => candidate.status === "partiallyChecked")
+      </>}
+      {state.verified ? null : coverageNote(state.unchecked.length === 0 && !state.candidates.some((candidate) => candidate.status === "partiallyChecked")
           ? "No calendar could be checked, so these times may conflict."
           : uncheckedNote(state.unchecked, "these times"))}
-      </>}
     </> : null}
     {state.phase === "range" ? null : assumedZone}
   </div>;

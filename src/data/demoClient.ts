@@ -1,3 +1,4 @@
+import type { FindAvailabilityRequest } from "../domain";
 import { demoSignatureClient } from "./demoSignatures";
 import type { WorkspaceFile } from "../domain";
 import { attachmentKind } from "../attachmentKind";
@@ -18,7 +19,6 @@ import type {
   ActionAnalysis,
   AiActivity,
   AiUsageDay,
-  AvailabilityPreferences,
   AvailabilityResult,
   CalendarAccount,
   ContactActivity,
@@ -1485,7 +1485,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       if (index === -1 || !scheduleEvents[index].canEdit) throw new Error("Only events you organize can be changed");
       scheduleEvents.splice(index, 1);
     },
-    async findAvailability(request: { rangeStart: string; rangeEnd: string; preferences: AvailabilityPreferences; maxPerDay?: number }): Promise<AvailabilityResult> {
+    async findAvailability(request: FindAvailabilityRequest): Promise<AvailabilityResult> {
       const start = new Date(request.rangeStart);
       const end = new Date(request.rangeEnd);
       const total = calendarOptions.filter((option) => option.selected).length;
@@ -1511,10 +1511,10 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         candidates.push({
           start: cursor.toISOString(),
           end: slotEnd.toISOString(),
-          status: total > 0 ? "verified" : "unverified",
+          status: total > 0 ? (request.coworkers?.emails.length ? "partiallyChecked" : "verified") : "unverified",
         });
       }
-      return { candidates, checkedCalendarCount: total, totalCalendarCount: total, uncheckedCalendars: [], errors: [] };
+      return { candidates, checkedCalendarCount: total, totalCalendarCount: total + (request.coworkers?.emails.length ?? 0), uncheckedCalendars: request.coworkers?.emails ?? [], errors: [] };
     },
     async meetingAvailability(request) {
       // Demo has no access to other people's calendars: don't invent coverage.

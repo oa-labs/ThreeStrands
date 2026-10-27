@@ -1611,6 +1611,10 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .meeting-scheduler-hours { display: flex; }
 .meeting-scheduler-hours .segment { flex: 1; }
 .find-times-reason { margin: 0 0 var(--space-1-5); color: var(--text); font-size: var(--text-meta); }
+.find-times-coworkers { display: grid; gap: var(--space-1); margin: 0 0 var(--space-2); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); min-width: 0; }
+.find-times-coworkers legend { color: var(--text-secondary); font-size: var(--text-body); }
+.find-times-coworkers label { display: flex; align-items: baseline; gap: var(--space-1); font-size: var(--text-body); overflow-wrap: anywhere; }
+.find-times-coworkers input { flex: none; accent-color: var(--accent); }
 .find-times-adjust { display: flex; gap: var(--space-1); }
 .find-times-adjust input { flex: 1; width: 100%; min-width: 0; height: var(--control-h-sm); padding: 0 var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background: var(--input); font-size: var(--text-body); }
 .ai-usage { display: grid; gap: var(--space-2); margin-top: var(--space-2); }

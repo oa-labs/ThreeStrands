@@ -253,6 +253,82 @@ describe("Find Times with AI", () => {
 
   const section = () => screen.getByRole("region", { name: "Availability" });
 
+  it("opts coworkers in, keeps them through adjustments and searches, and drops removed recipients", async () => {
+    vi.mocked(mailClient.findTimes).mockResolvedValue(search);
+    const current = { ...reply, to: '"Alex, Smith" <ALEX@acme.com>, ann@partner.com, me@acme.com', cc: "alex@acme.com, sam@acme.com, me@gmail.com", bcc: "hidden@acme.com" };
+    const props = { preferences, ai: true, draft: current, ownEmails: accounts.map((account) => account.email), onInsertTimes: vi.fn(), onOpenCalendarSettings: vi.fn() };
+    const view = render(<AvailabilitySection {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Find Times" }));
+    const alex = await screen.findByRole("checkbox", { name: "Alex, Smith (alex@acme.com)" });
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+    expect(alex).not.toBeChecked();
+    await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(mailClient.findAvailability).mock.lastCall?.[0].coworkers).toBeUndefined();
+    fireEvent.click(alex);
+    await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(mailClient.findAvailability).mock.lastCall?.[0].coworkers).toEqual({ accountId: "me@acme.com", emails: ["alex@acme.com"] });
+    fireEvent.click(await screen.findByRole("button", { name: "Mornings" }));
+    await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalledTimes(3));
+    expect(vi.mocked(mailClient.findAvailability).mock.lastCall?.[0].coworkers?.emails).toEqual(["alex@acme.com"]);
+    fireEvent.click(screen.getByRole("button", { name: "Search Again" }));
+    await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalledTimes(4));
+    expect(screen.getByRole("checkbox", { name: /Alex, Smith/ })).toBeChecked();
+    view.rerender(<AvailabilitySection {...props} draft={{ ...current, to: "ann@partner.com", cc: "sam@acme.com" }} />);
+    await waitFor(() => expect(mailClient.findAvailability).toHaveBeenCalledTimes(5));
+    expect(vi.mocked(mailClient.findAvailability).mock.lastCall?.[0].coworkers).toBeUndefined();
+    view.rerender(<AvailabilitySection {...props} />);
+    expect(screen.getByRole("checkbox", { name: /Alex, Smith/ })).not.toBeChecked();
+  });
+
+  it("includes multiple coworkers independently", async () => {
+    render(<AvailabilitySection preferences={preferences} ai={false} draft={{ ...reply, to: "alex@acme.com", cc: "sam@acme.com" }} onInsertTimes={vi.fn()} onOpenCalendarSettings={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Find Times" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "alex@acme.com" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "sam@acme.com" }));
+    await waitFor(() => expect(vi.mocked(mailClient.findAvailability).mock.lastCall?.[0].coworkers?.emails).toEqual(["alex@acme.com", "sam@acme.com"]));
+    fireEvent.click(screen.getByRole("checkbox", { name: "alex@acme.com" }));
+    await waitFor(() => expect(vi.mocked(mailClient.findAvailability).mock.lastCall?.[0].coworkers?.emails).toEqual(["sam@acme.com"]));
+  });
+
+  it("ignores stale results and identifies an inaccessible coworker calendar", async () => {
+    type Result = Awaited<ReturnType<typeof mailClient.findAvailability>>;
+    let finishOwn!: (value: Result) => void;
+    const checked: Result = { candidates: [{ start: search.rangeStart, end: new Date(Date.parse(search.rangeStart) + 1_800_000).toISOString(), status: "verified" }], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] };
+    vi.mocked(mailClient.findAvailability)
+      .mockImplementationOnce(() => new Promise((resolve) => { finishOwn = resolve; }))
+      .mockResolvedValue({ ...checked, candidates: checked.candidates.map((slot) => ({ ...slot, status: "partiallyChecked" })), totalCalendarCount: 2, uncheckedCalendars: ["alex@acme.com"] });
+    render(<AvailabilitySection preferences={preferences} ai={false} draft={{ ...reply, to: "alex@acme.com" }} onInsertTimes={vi.fn()} onOpenCalendarSettings={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Find Times" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "alex@acme.com" }));
+    expect(await screen.findByRole("note")).toHaveTextContent("Couldn’t check alex@acme.com");
+    finishOwn(checked);
+    await waitFor(() => expect(screen.getByRole("note")).toHaveTextContent("Couldn’t check alex@acme.com"));
+    fireEvent.click(screen.getByRole("checkbox", { name: "alex@acme.com" }));
+    await waitFor(() => expect(vi.mocked(mailClient.findAvailability).mock.lastCall?.[0].coworkers).toBeUndefined());
+  });
+
+  it("uses the sending identity's domain and clears choices when switching senders", async () => {
+    const current = { ...reply, from: "alias@other.org", to: "alex@acme.com, sam@other.org" };
+    const props = { preferences, ai: false, draft: current, onInsertTimes: vi.fn(), onOpenCalendarSettings: vi.fn() };
+    const view = render(<AvailabilitySection {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Find Times" }));
+    const sam = await screen.findByRole("checkbox", { name: "sam@other.org" });
+    expect(screen.queryByRole("checkbox", { name: "alex@acme.com" })).not.toBeInTheDocument();
+    fireEvent.click(sam);
+    await waitFor(() => expect(vi.mocked(mailClient.findAvailability).mock.lastCall?.[0].coworkers).toEqual({ accountId: "me@acme.com", emails: ["sam@other.org"] }));
+    view.rerender(<AvailabilitySection {...props} draft={{ ...current, from: null }} />);
+    expect(screen.getByRole("checkbox", { name: "alex@acme.com" })).not.toBeChecked();
+    view.rerender(<AvailabilitySection {...props} />);
+    expect(screen.getByRole("checkbox", { name: "sam@other.org" })).not.toBeChecked();
+  });
+
+  it("does not treat other personal email users as coworkers", async () => {
+    render(<AvailabilitySection preferences={preferences} ai={false} draft={{ ...reply, account: "me@gmail.com", to: "other@gmail.com" }} onInsertTimes={vi.fn()} onOpenCalendarSettings={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Find Times" }));
+    await screen.findByRole("group", { name: "Open times" });
+    expect(screen.queryByRole("group", { name: "Include coworkers" })).not.toBeInTheDocument();
+  });
+
   it("reads the conversation and draft, explains the search, and searches only the days and hours it found", async () => {
     let answer!: (value: typeof search) => void;
     vi.mocked(mailClient.findTimes).mockReturnValue(new Promise((resolve) => { answer = resolve; }));

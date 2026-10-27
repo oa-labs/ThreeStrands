@@ -3,7 +3,7 @@
 
 import { type ReactNode, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
-import type { AvailabilityCandidate, AvailabilityPreferences, ScheduleEvent, TimeSearch } from "./domain";
+import type { AvailabilityCandidate, AvailabilityPreferences, CoworkerCalendars, ScheduleEvent, TimeSearch } from "./domain";
 import type { EventIdentity } from "./eventMatching";
 import { readAiRequestConfig } from "./aiSettings";
 import { mailClient } from "./data/client";
@@ -44,13 +44,14 @@ export function askFindTimes(
 export function FindTimesCard({
   plan, reason = null, preferences, calendarConnected, ai, intoDraft,
   onAddToCalendar, onReplyWithTimes, onConfirmTime, onOpenCalendarSettings, identity, onOpenCalendarEvent,
-  onMatchChange, matchedActions, moreActions,
+  onMatchChange, matchedActions, moreActions, coworkers,
 }: {
   plan: SchedulePlan;
   /** Why these days were chosen, shown above the times. */
   reason?: string | null;
   preferences: AvailabilityPreferences;
   calendarConnected: boolean;
+  coworkers?: CoworkerCalendars;
   /** Reads what to share when the user adjusts in words; null when Find Times AI is off. */
   ai: (() => FindTimesContext) | null;
   intoDraft?: boolean;
@@ -124,6 +125,7 @@ export function FindTimesCard({
       preferences={preferences}
       calendarConnected={calendarConnected}
       intoDraft={intoDraft}
+      coworkers={coworkers}
       onAddToCalendar={onAddToCalendar}
       onReplyWithTimes={onReplyWithTimes}
       onConfirmTime={onConfirmTime}

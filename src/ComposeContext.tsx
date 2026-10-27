@@ -224,6 +224,7 @@ export function ComposeContext({
           preferences={preferences}
           ai={findTimesAi}
           draft={draft}
+          ownEmails={ownEmails}
           onInsertTimes={onInsertTimes}
           onOpenCalendarSettings={onOpenCalendarSettings}
         />

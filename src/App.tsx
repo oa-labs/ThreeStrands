@@ -1402,6 +1402,7 @@ export function App() {
             <AvailabilitySection
               key={visibleDetail.thread.id}
               compact
+              ownEmails={accounts.map((account) => account.email)}
               preferences={availabilityPreferences}
               ai={aiDraftAvailable}
               draft={composerBelongsToVisibleThread && correspondence.liveDraft

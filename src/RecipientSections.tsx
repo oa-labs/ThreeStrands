@@ -1,6 +1,8 @@
 // Sections about the people a draft is going to, shared by a new message's panel and a reply's.
 
 import { useRef, useState } from "react";
+import { draftRecipients } from "./composeChecks";
+import { isPersonalMailDomain } from "./contactContext";
 import { CalendarDays, Sparkles, UserRound } from "lucide-react";
 import type { Draft } from "./correspondence";
 import type { AvailabilityCandidate, AvailabilityPreferences, ContactProfile } from "./domain";
@@ -28,12 +30,13 @@ type FindTimesState = {
  * it, the coming week is searched. Search Again always reads afresh. The
  * provider never sees the calendar.
  */
-export function AvailabilitySection({ preferences, ai, draft, suggest, intoDraft = true, compact = false, onInsertTimes, onOpenCalendarSettings }: {
+export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], suggest, intoDraft = true, compact = false, onInsertTimes, onOpenCalendarSettings }: {
   preferences: AvailabilityPreferences;
   /** Draft Assist is on and an AI provider is ready. */
   ai: boolean;
   /** The draft the times are for, read when Find Times is pressed. */
-  draft: Pick<Draft, "sourceId" | "subject" | "body">;
+  draft: Pick<Draft, "sourceId" | "subject" | "body"> & Partial<Pick<Draft, "id" | "account" | "from" | "to" | "cc">>;
+  ownEmails?: string[];
   /** The search a meeting suggestion already found for this conversation, if any. */
   suggest?: () => SuggestedSearch | null;
   /** The times go into an open draft; otherwise choosing them starts a reply. */
@@ -47,6 +50,15 @@ export function AvailabilitySection({ preferences, ai, draft, suggest, intoDraft
   onOpenCalendarSettings(): void;
 }) {
   const [search, setSearch] = useState<FindTimesState | null>(null);
+  const sender = (draft.from || draft.account || "").toLowerCase();
+  const domain = sender.split("@")[1];
+  const coworkers = domain && !isPersonalMailDomain(domain) ? draftRecipients({ to: draft.to ?? "", cc: draft.cc ?? "", bcc: "" }, [...ownEmails, sender, draft.account ?? ""])
+    .filter((recipient) => recipient.email.split("@")[1] === domain) : [];
+  // Drop removed recipients immediately; adding them again requires opting in again.
+  const scope = `${draft.id ?? draft.sourceId ?? ""}|${draft.account ?? ""}|${sender}`;
+  const [included, setIncluded] = useState<{ scope: string; emails: string[] }>({ scope, emails: [] });
+  const emails = included.scope === scope ? included.emails.filter((email) => coworkers.some((person) => person.email === email)) : [];
+  if (included.scope !== scope || included.emails.length !== emails.length) setIncluded({ scope, emails });
   const [reading, setReading] = useState(false);
   // Only the latest request may update the card.
   const latest = useRef(0);
@@ -107,12 +119,22 @@ export function AvailabilitySection({ preferences, ai, draft, suggest, intoDraft
       {reading ? <p className="context-status" role="status">Reading the conversation…</p> : null}
       {search && !reading ? <>
         {search.fallback ? <p className="context-status" role="alert">{search.fallback}</p> : null}
+        {coworkers.length > 0 ? <fieldset className="find-times-coworkers">
+          <legend>Include coworkers</legend>
+          {coworkers.map((person) => <label key={person.email}>
+            <input type="checkbox" checked={emails.includes(person.email)} onChange={(event) => {
+              setIncluded({ scope, emails: event.target.checked ? [...emails, person.email] : emails.filter((email) => email !== person.email) });
+            }} />
+            <span>{person.name ? `${person.name} (${person.email})` : person.email}</span>
+          </label>)}
+        </fieldset> : null}
         <FindTimesCard
           key={search.key}
           plan={search.plan}
           reason={search.reason}
           preferences={preferences}
           calendarConnected
+          coworkers={emails.length && draft.account ? { accountId: draft.account, emails } : undefined}
           ai={ai ? context : null}
           intoDraft={intoDraft}
           // A range search never yields a single proposed time to add or confirm.

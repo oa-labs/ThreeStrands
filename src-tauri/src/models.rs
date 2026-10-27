@@ -275,7 +275,16 @@ pub struct AvailabilityPreferences {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CoworkerCalendars {
+    pub account_id: String,
+    pub emails: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FindAvailabilityRequest {
+    #[serde(default)]
+    pub coworkers: Option<CoworkerCalendars>,
     pub range_start: String,
     pub range_end: String,
     pub preferences: AvailabilityPreferences,

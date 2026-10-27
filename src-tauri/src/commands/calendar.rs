@@ -647,6 +647,63 @@ mod meeting_availability_tests {
         }
     }
 
+    fn find_request() -> FindAvailabilityRequest {
+        serde_json::from_value(serde_json::json!({
+            "rangeStart": "2099-09-21T09:00:00Z", "rangeEnd": "2099-09-21T12:00:00Z",
+            "preferences": { "timeZone": "UTC", "workingWindows": [{"weekday":1,"start":"09:00","end":"12:00"}],
+                "defaultDurationMinutes":30,"slotIncrementMinutes":30 },
+        })).unwrap()
+    }
+
+    #[test]
+    fn coworker_requests_default_to_none_and_validate_before_querying() {
+        let mut value = find_request();
+        assert!(coworker_emails(&value).unwrap().is_empty());
+        value.coworkers = Some(models::CoworkerCalendars { account_id: "me@example.com".into(),
+            emails: vec!["ME@example.com".into(), "A@example.com".into(), "a@example.com".into()] });
+        assert_eq!(coworker_emails(&value).unwrap(), vec!["a@example.com"]);
+        for count in [99, 100, 101] {
+            value.coworkers.as_mut().unwrap().emails = vec!["guest@example.com".into(); count];
+            assert_eq!(coworker_emails(&value).is_ok(), count <= 100);
+        }
+        value.coworkers.as_mut().unwrap().emails = vec!["invalid".into()];
+        assert!(coworker_emails(&value).is_err());
+        value.coworkers.as_mut().unwrap().emails = vec!["guest@example.com".into()];
+        value.coworkers.as_mut().unwrap().account_id = "invalid".into();
+        assert!(coworker_emails(&value).is_err());
+    }
+
+    #[test]
+    fn checking_a_coworker_does_not_verify_unchecked_own_calendars() {
+        let mut coverage = FreeBusyCoverage { busy: Vec::new(), checked: 0, total: 0, unchecked: Vec::new(), errors: Vec::new() };
+        include_coworker_coverage(&mut coverage, vec![models::AttendeeAvailability {
+            email: "alex@example.com".into(), checked: true, busy: Vec::new(),
+        }]);
+        assert_eq!((coverage.checked, coverage.total), (1, 2));
+        assert_eq!(coverage.unchecked, vec!["Your calendars"]);
+    }
+
+    #[test]
+    fn coworker_busy_times_block_suggestions_and_unknown_calendars_stay_partial() {
+        let request = find_request();
+        let mut coverage = FreeBusyCoverage { busy: vec![BusyInterval {
+            start: "2099-09-21T09:00:00Z".into(), end: "2099-09-21T09:30:00Z".into(),
+        }], checked: 1, total: 1, unchecked: Vec::new(), errors: Vec::new() };
+        include_coworker_coverage(&mut coverage, vec![models::AttendeeAvailability {
+            email: "alex@example.com".into(), checked: true, busy: vec![BusyInterval {
+                start: "2099-09-21T09:30:00Z".into(), end: "2099-09-21T11:00:00Z".into(),
+            }],
+        }, models::AttendeeAvailability { email: "sam@example.com".into(), checked: false, busy: Vec::new() }]);
+        assert_eq!((coverage.checked, coverage.total), (2, 3));
+        assert_eq!(coverage.unchecked, vec!["sam@example.com"]);
+        let candidates = availability::find_candidates(&request.range_start, &request.range_end, &request.preferences,
+            &coverage.busy, coverage.checked, coverage.total, None).unwrap();
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates.iter().all(|slot| slot.status == "partiallyChecked" && slot.start.as_str() >= "2099-09-21T11:00:00"));
+        include_coworker_coverage(&mut coverage, vec![models::AttendeeAvailability { email: "empty@example.com".into(), checked: true, busy: Vec::new() }]);
+        assert_eq!((coverage.checked, coverage.total), (3, 4));
+    }
+
     #[test]
     fn bounds_meeting_searches_and_rejects_invalid_input() {
         for hours in [167, 168, 169] {
@@ -719,6 +776,46 @@ pub(crate) async fn meeting_availability(
     })
 }
 
+/// Reuse the attendee validation and bounds before any network request.
+fn coworker_emails(request: &FindAvailabilityRequest) -> AppResult<Vec<String>> {
+    let Some(coworkers) = &request.coworkers else { return Ok(Vec::new()); };
+    validate_calendar_event_fields("Availability", "", &request.range_start, &request.range_end, false, &coworkers.emails)?;
+    validate_calendar_event_fields("Availability", "", &request.range_start, &request.range_end, false, &[coworkers.account_id.clone()])?;
+    let mut seen = HashSet::new();
+    Ok(coworkers.emails.iter().map(|email| email.to_ascii_lowercase())
+        .filter(|email| !email.eq_ignore_ascii_case(&coworkers.account_id) && seen.insert(email.clone())).collect())
+}
+
+fn include_coworker_coverage(coverage: &mut FreeBusyCoverage, guests: Vec<models::AttendeeAvailability>) {
+    if !guests.is_empty() && coverage.total == 0 {
+        coverage.total = 1;
+        coverage.unchecked.push("Your calendars".into());
+    }
+    for guest in guests {
+        coverage.total += 1;
+        if guest.checked {
+            coverage.checked += 1;
+            coverage.busy.extend(guest.busy);
+        } else {
+            coverage.unchecked.push(guest.email);
+        }
+    }
+}
+
+async fn coworker_coverage(request: &FindAvailabilityRequest, emails: &[String], state: &AppState) -> AppResult<Vec<models::AttendeeAvailability>> {
+    if emails.is_empty() { return Ok(Vec::new()); }
+    if let (Some(coworkers), Ok(config)) = (&request.coworkers, state.auth_config.google()) {
+        // Never query through a different connected account: permissions belong
+        // to the sending account, independently of the user's own calendars.
+        if let Some(account) = connected_calendar_accounts(config, &state.database)?.into_iter()
+            .find(|account| account.email.eq_ignore_ascii_case(&coworkers.account_id)) {
+            return Ok(calendar::fetch_guest_availability(config.calendar_account(&account.email), emails,
+                &request.range_start, &request.range_end, &request.preferences.time_zone).await);
+        }
+    }
+    Ok(emails.iter().map(|email| models::AttendeeAvailability { email: email.clone(), busy: Vec::new(), checked: false }).collect())
+}
+
 #[tauri::command]
 pub(crate) async fn find_availability(
     request: FindAvailabilityRequest,
@@ -726,7 +823,8 @@ pub(crate) async fn find_availability(
 ) -> AppResult<models::AvailabilityResult> {
     availability::validate_preferences(&request.preferences)?;
     availability::buffered_range(&request.range_start, &request.range_end, request.preferences.drive_time_buffer_minutes)?;
-    let FreeBusyCoverage { busy, checked, total, unchecked, errors } = freebusy_coverage(
+    let emails = coworker_emails(&request)?;
+    let mut coverage = freebusy_coverage(
         &request.range_start,
         &request.range_end,
         &request.preferences.time_zone,
@@ -734,6 +832,8 @@ pub(crate) async fn find_availability(
         &state,
     )
     .await?;
+    include_coworker_coverage(&mut coverage, coworker_coverage(&request, &emails, &state).await?);
+    let FreeBusyCoverage { busy, checked, total, unchecked, errors } = coverage;
     let candidates = availability::find_candidates(
         &request.range_start,
         &request.range_end,
