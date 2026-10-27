@@ -293,6 +293,7 @@ export function Settings({
               onRemoveEverywhere={calendarAccounts.removeEverywhere}
               onReorder={calendarAccounts.reorder}
               onSetSelection={calendarAccounts.setSelection}
+              onSetAvailabilitySelection={calendarAccounts.setAvailabilitySelection}
             />
           ) : null}
           {section === "availability" ? (

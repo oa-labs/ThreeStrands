@@ -554,6 +554,54 @@ describe("demoClient availability", () => {
     expect(result.candidates.every((candidate) => candidate.status === "partiallyChecked")).toBe(true);
   });
 
+  it("uses primary availability even when hidden, and saves extra availability choices independently", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2099-09-20T12:00:00-04:00"));
+    const dataset = defaultDemoDataset();
+    dataset.calendarAccounts = [{ email: DEMO_ACCOUNT_ID, connectedAt: "2099-09-20T12:00:00-04:00", status: "connected" }];
+    dataset.calendarOptions = [
+      { id: DEMO_ACCOUNT_ID, accountId: DEMO_ACCOUNT_ID, name: "Primary", primary: true, selected: false, writable: true },
+      { id: "team", accountId: DEMO_ACCOUNT_ID, name: "Team", primary: false, selected: true, writable: true },
+    ];
+    dataset.scheduleEvents = [
+      { id: "own", accountId: DEMO_ACCOUNT_ID, calendarId: DEMO_ACCOUNT_ID, title: "Busy", allDay: false, start: "2099-09-21T14:00:00-04:00", end: "2099-09-21T14:30:00-04:00" },
+      { id: "shared", accountId: DEMO_ACCOUNT_ID, calendarId: "team", title: "Busy", allDay: false, start: "2099-09-21T15:00:00-04:00", end: "2099-09-21T15:30:00-04:00" },
+    ];
+    const client = createDemoClient(dataset);
+    const check = (hour: number) => client.checkProposedTime({ start: `2099-09-21T${hour}:00:00-04:00`, end: `2099-09-21T${hour}:30:00-04:00`, timeZone: "America/New_York" });
+    expect((await check(14)).status).toBe("conflicting");
+    expect((await check(15)).status).toBe("free");
+    const calendars = await client.setAvailabilityCalendarSelection(DEMO_ACCOUNT_ID, ["team"]);
+    expect(calendars.map((calendar) => calendar.selected)).toEqual([false, true]);
+    expect((await check(14)).status).toBe("free");
+    expect((await check(15)).status).toBe("conflicting");
+    await client.setCalendarSelection(DEMO_ACCOUNT_ID, [DEMO_ACCOUNT_ID]);
+    expect((await check(15)).status).toBe("conflicting");
+  });
+
+  it("always avoids available holiday dates and has no warning when there is no holiday subscription", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2099-09-20T12:00:00-04:00"));
+    const dataset = defaultDemoDataset();
+    const holiday = "en.usa#holiday@group.v.calendar.google.com";
+    dataset.calendarAccounts = [{ email: DEMO_ACCOUNT_ID, connectedAt: "2099-09-20T12:00:00-04:00", status: "connected" }];
+    dataset.calendarOptions = [
+      { id: DEMO_ACCOUNT_ID, accountId: DEMO_ACCOUNT_ID, name: "Primary", primary: true, selected: false, writable: true },
+      { id: holiday, accountId: DEMO_ACCOUNT_ID, name: "Holidays", primary: false, selected: false, writable: false, availabilitySelected: false },
+    ];
+    dataset.scheduleEvents = [{ id: "holiday", accountId: DEMO_ACCOUNT_ID, calendarId: holiday, title: "Holiday", allDay: true, start: "2099-09-21", end: "2099-09-22" }];
+    const request = { start:"2099-09-21T14:00:00-04:00",end:"2099-09-21T14:30:00-04:00",timeZone:"America/New_York" };
+    const result = await createDemoClient(dataset).checkProposedTime(request);
+    expect(result.status).toBe("conflicting");
+    expect(result.errors).toEqual([]);
+    expect(result.totalCalendarCount).toBe(1);
+    dataset.calendarOptions = dataset.calendarOptions.filter((calendar) => calendar.primary);
+    const without = await createDemoClient(dataset).checkProposedTime(request);
+    expect(without.status).toBe("free");
+    expect(without.errors).toEqual([]);
+    expect(without.uncheckedCalendars).toEqual([]);
+  });
+
   it("reports coworker calendars as unknown in Find Times", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2099-09-20T12:00:00-04:00"));

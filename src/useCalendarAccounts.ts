@@ -1,3 +1,4 @@
+import { CALENDAR_AVAILABILITY_CHANGED } from "./calendarAvailability";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { removeSyncedCalendarAccount } from "./replicatedSync";
@@ -37,7 +38,10 @@ export function useCalendarAccounts({ onLastAccountRemoved }: { onLastAccountRem
     try {
       const next = await mailClient.listCalendarOptions();
       const scope = JSON.stringify(next);
-      if (selectionScope.current !== scope) clearScheduleCache();
+      if (selectionScope.current !== scope) {
+        clearScheduleCache();
+        window.dispatchEvent(new Event(CALENDAR_AVAILABILITY_CHANGED));
+      }
       selectionScope.current = scope;
       setCalendars(next);
       setCalendarsError(null);
@@ -112,6 +116,12 @@ export function useCalendarAccounts({ onLastAccountRemoved }: { onLastAccountRem
     ]);
   }, []);
 
+  const setAvailabilitySelection = useCallback(async (accountId: string, calendarIds: string[]) => {
+    const updated = await mailClient.setAvailabilityCalendarSelection(accountId, calendarIds);
+    window.dispatchEvent(new Event(CALENDAR_AVAILABILITY_CHANGED));
+    setCalendars((current) => [...current.filter((calendar) => calendar.accountId !== accountId), ...updated]);
+  }, []);
+
   return {
     accounts,
     calendars,
@@ -125,5 +135,6 @@ export function useCalendarAccounts({ onLastAccountRemoved }: { onLastAccountRem
     removeEverywhere,
     reorder,
     setSelection,
+    setAvailabilitySelection,
   };
 }

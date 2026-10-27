@@ -1,3 +1,4 @@
+import { CALENDAR_AVAILABILITY_CHANGED } from "./calendarAvailability";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mailClient } from "./data/client";
@@ -108,6 +109,21 @@ describe("useCalendarAccounts", () => {
       calendar("home-main", home.email),
       calendar("work-main", work.email, false),
     ]);
+  });
+
+  it("saves availability separately and notifies open searches without changing visibility", async () => {
+    const { result } = await renderWithCalendars([work, home]);
+    const changed = vi.fn();
+    window.addEventListener(CALENDAR_AVAILABILITY_CHANGED, changed);
+    const updated = { ...calendar("work-main", work.email), availabilitySelected: false };
+    vi.spyOn(mailClient, "setAvailabilityCalendarSelection").mockResolvedValue([updated]);
+    try {
+      await act(async () => { await result.current.setAvailabilitySelection(work.email, []); });
+      expect(mailClient.setAvailabilityCalendarSelection).toHaveBeenCalledWith(work.email, []);
+      expect(result.current.calendars.find((calendar) => calendar.accountId === work.email)).toEqual(updated);
+      expect(updated.selected).toBe(true);
+      expect(changed).toHaveBeenCalledTimes(1);
+    } finally { window.removeEventListener(CALENDAR_AVAILABILITY_CHANGED, changed); }
   });
 
   it("keeps the cache on unchanged refreshes and clears it for externally changed selections", async () => {

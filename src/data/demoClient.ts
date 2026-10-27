@@ -1,3 +1,4 @@
+import { isHolidayCalendar } from "../calendarAvailability";
 import type { FindAvailabilityRequest } from "../domain";
 import { demoSignatureClient } from "./demoSignatures";
 import type { WorkspaceFile } from "../domain";
@@ -345,10 +346,12 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
   function demoBusyIntervals(driveTimeBufferMinutes = 0): [number, number][] {
     const connected = new Set(calendarAccounts.filter((account) => account.status === "connected").map((account) => account.email));
     return scheduleEvents
-      .filter((event) => !event.allDay && connected.has(event.accountId))
+      .filter((event) => connected.has(event.accountId) && calendarOptions.some((option) =>
+        option.accountId === event.accountId && (event.calendarId ? option.id === event.calendarId : option.primary)
+        && (isHolidayCalendar(option.id) || (!event.allDay && (option.availabilitySelected ?? option.primary)))))
       .map((event) => {
         const [start, end] = eventRange(event);
-        const buffer = event.location?.trim() ? driveTimeBufferMinutes * 60_000 : 0;
+        const buffer = !event.allDay && event.location?.trim() ? driveTimeBufferMinutes * 60_000 : 0;
         return [start - buffer, end + buffer];
       });
   }
@@ -1403,6 +1406,11 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     async listCalendarOptions() {
       return structuredClone(calendarOptions);
     },
+    async setAvailabilityCalendarSelection(accountId, calendarIds) {
+      calendarOptions = calendarOptions.map((calendar) => calendar.accountId === accountId
+        ? { ...calendar, availabilitySelected: isHolidayCalendar(calendar.id) || calendarIds.includes(calendar.id) } : calendar);
+      return structuredClone(calendarOptions.filter((calendar) => calendar.accountId === accountId));
+    },
     async setCalendarSelection(accountId, calendarIds) {
       const selected = new Set(calendarIds);
       calendarOptions = calendarOptions.map((calendar) =>
@@ -1489,7 +1497,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     async findAvailability(request: FindAvailabilityRequest): Promise<AvailabilityResult> {
       const start = new Date(request.rangeStart);
       const end = new Date(request.rangeEnd);
-      const total = calendarOptions.filter((option) => option.selected).length;
+      const total = calendarOptions.filter((option) => !isHolidayCalendar(option.id) && (option.availabilitySelected ?? option.primary)).length;
       const candidates: AvailabilityResult["candidates"] = [];
       const perDay = new Map<string, number>();
       const busy = demoBusyIntervals(request.preferences.driveTimeBufferMinutes);
@@ -1528,7 +1536,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         candidates: result.candidates.map((candidate) => ({ ...candidate, status: guests.length ? "partiallyChecked" as const : candidate.status })) };
     },
     async checkProposedTime(request: { start: string; end: string; timeZone: string; driveTimeBufferMinutes?: number }): Promise<ProposedTimeCheck> {
-      const total = calendarOptions.filter((option) => option.selected).length;
+      const total = calendarOptions.filter((option) => !isHolidayCalendar(option.id) && (option.availabilitySelected ?? option.primary)).length;
       const start = Date.parse(request.start);
       const end = Date.parse(request.end);
       const conflicts = demoBusyIntervals(request.driveTimeBufferMinutes)

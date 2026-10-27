@@ -114,27 +114,41 @@ async fn calendar_options_for_account(
             defaults
         }
     };
-    let selected = selected.into_iter().collect::<HashSet<_>>();
-    for option in &mut options {
-        option.selected = selected.contains(&option.id);
-    }
+    let availability = database.availability_calendar_selection(email)?;
+    apply_calendar_selections(&mut options, &selected, availability.as_deref());
     Ok(options)
 }
 
-async fn selected_calendar_ids(
-    config: &auth::OAuthApp,
-    database: &Database,
-    email: &str,
-) -> AppResult<Vec<String>> {
-    match database.calendar_selection(email)? {
-        Some(selected) => Ok(selected),
-        None => Ok(calendar_options_for_account(config, database, email)
-            .await?
-            .into_iter()
-            .filter(|option| option.selected)
-            .map(|option| option.id)
-            .collect()),
+fn apply_calendar_selections(options: &mut [CalendarOption], visible: &[String], availability: Option<&[String]>) {
+    for option in options {
+        option.selected = visible.contains(&option.id);
+        option.availability_selected = calendar::is_holiday_calendar(&option.id) || availability.map_or(option.primary, |ids| ids.contains(&option.id));
     }
+}
+
+fn availability_calendar_ids(database: &Database, email: &str) -> AppResult<Vec<String>> {
+    // The account address identifies Google's primary calendar. Calendar-list
+    // failure must not prevent its busy times from being checked.
+    Ok(database.availability_calendar_selection(email)?.unwrap_or_else(|| vec![email.to_string()])
+        .into_iter().filter(|id| !calendar::is_holiday_calendar(id)).collect())
+}
+
+async fn optional_holiday_busy(config: &auth::OAuthApp, email: &str, start: &str, end: &str, zone: &str) -> Vec<Result<Vec<BusyInterval>, String>> {
+    let options = match calendar::list_calendar_options(config.calendar_account(email), email).await {
+        Ok(options) => options,
+        Err(error) => return vec![Err(error)],
+    };
+    let mut results = Vec::new();
+    for option in options.into_iter().filter(|option| calendar::is_holiday_calendar(&option.id)) {
+        results.push(calendar::fetch_holiday_busy(config.calendar_account(email), &option.id, start, end, zone).await);
+    }
+    results
+}
+
+fn include_optional_holidays(coverage: &mut FreeBusyCoverage, results: Vec<Result<Vec<BusyInterval>, String>>) {
+    // Optional holiday failures neither reduce primary-calendar verification
+    // nor create user-facing errors; successful feeds still block their dates.
+    coverage.busy.extend(results.into_iter().filter_map(Result::ok).flatten());
 }
 
 struct FreeBusyCoverage {
@@ -149,10 +163,13 @@ struct FreeBusyCoverage {
 /// Display names for calendars that could not be checked, falling back to
 /// the calendar ID when the account's calendar list cannot be read.
 async fn calendar_names(config: &auth::OAuthApp, email: &str, ids: &[String]) -> Vec<String> {
+    if ids.is_empty() { return Vec::new(); }
     let options = calendar::list_calendar_options(config.calendar_account(email), email).await.unwrap_or_default();
-    ids.iter()
-        .map(|id| options.iter().find(|option| &option.id == id).map_or_else(|| id.clone(), |option| option.name.clone()))
-        .collect()
+    calendar_labels(&options, email, ids)
+}
+
+fn calendar_labels(options: &[CalendarOption], email: &str, ids: &[String]) -> Vec<String> {
+    ids.iter().map(|id| format!("{} ({email})", options.iter().find(|option| &option.id == id).map_or(id.as_str(), |option| option.name.as_str()))).collect()
 }
 
 async fn freebusy_coverage(
@@ -167,7 +184,7 @@ async fn freebusy_coverage(
         return Ok(coverage);
     };
     for account in connected_calendar_accounts(config, &state.database)? {
-        let calendar_ids = match selected_calendar_ids(config, &state.database, &account.email).await {
+        let calendar_ids = match availability_calendar_ids(&state.database, &account.email) {
             Ok(ids) => ids,
             Err(error) => {
                 coverage.unchecked.push(account.email.clone());
@@ -176,30 +193,29 @@ async fn freebusy_coverage(
             }
         };
         coverage.total += calendar_ids.len();
-        if calendar_ids.is_empty() {
-            continue;
-        }
-        match calendar::fetch_freebusy(
-            config.calendar_account(&account.email),
-            &calendar_ids,
-            time_min,
-            time_max,
-            time_zone,
-            drive_time_buffer_minutes,
-        )
-        .await
-        {
+        let (result, holidays) = tokio::join!(
+            calendar::fetch_freebusy(config.calendar_account(&account.email), &calendar_ids,
+                time_min, time_max, time_zone, drive_time_buffer_minutes),
+            optional_holiday_busy(config, &account.email, time_min, time_max, time_zone),
+        );
+        include_optional_holidays(&mut coverage, holidays);
+        match result {
             Ok(result) => {
                 coverage.checked += result.checked_calendar_count;
                 coverage.busy.extend(result.busy);
-                if !result.unchecked_calendar_ids.is_empty() {
-                    coverage.unchecked.extend(calendar_names(config, &account.email, &result.unchecked_calendar_ids).await);
-                }
-                coverage.errors.extend(result.errors.into_iter().map(|error| format!("{}: {error}", account.email)));
+                let names = calendar_names(config, &account.email, &result.unchecked_calendar_ids).await;
+                coverage.errors.extend(result.errors.into_iter().map(|mut error| {
+                    for (id, name) in result.unchecked_calendar_ids.iter().zip(&names) {
+                        if error.starts_with(&format!("Calendar {id}:")) || error.starts_with(&format!("Calendar {id} was ")) { error = error.replacen(id, name, 1); break; }
+                    }
+                    error
+                }));
+                coverage.unchecked.extend(names);
             }
             Err(error) => {
-                coverage.unchecked.push(account.email.clone());
-                coverage.errors.push(format!("{}: {error}", account.email));
+                let names = calendar_names(config, &account.email, &calendar_ids).await;
+                coverage.errors.extend(names.iter().map(|name| format!("{name}: {error}")));
+                coverage.unchecked.extend(names);
             }
         }
     }
@@ -478,12 +494,29 @@ pub(crate) async fn set_calendar_selection(
         &state,
         threestrands_sync_protocol::EntityType::CalendarSelection,
         &account_id.to_ascii_lowercase(),
-        &serde_json::json!({ "accountId": account_id, "calendarIds": calendar_ids }),
-        None,
+        &state.database.calendar_selection_payload(&account_id)?,
+        Some(std::collections::BTreeSet::from(["calendarIds".to_string()])) ,
     )?;
-    for option in &mut available {
-        option.selected = unique.contains(&option.id);
+    let availability = state.database.availability_calendar_selection(&account_id)?;
+    apply_calendar_selections(&mut available, &calendar_ids, availability.as_deref());
+    Ok(available)
+}
+
+#[tauri::command]
+pub(crate) async fn set_availability_calendar_selection(
+    account_id: String, calendar_ids: Vec<String>, state: State<'_, AppState>,
+) -> AppResult<Vec<CalendarOption>> {
+    let config = state.auth_config.google()?;
+    let mut available = calendar_options_for_account(config, &state.database, &account_id).await?;
+    let unique: HashSet<_> = calendar_ids.iter().collect();
+    if unique.len() != calendar_ids.len() || calendar_ids.iter().any(|id| !available.iter().any(|option| &option.id == id)) {
+        return Err("Availability selection contained an unknown or duplicate calendar".into());
     }
+    state.database.set_availability_calendar_selection(&account_id, &calendar_ids)?;
+    record_synced_value(&state, threestrands_sync_protocol::EntityType::CalendarSelection,
+        &account_id.to_ascii_lowercase(), &state.database.calendar_selection_payload(&account_id)?,
+        Some(std::collections::BTreeSet::from(["availabilityCalendarIds".to_string()])))?;
+    for option in &mut available { option.availability_selected = calendar::is_holiday_calendar(&option.id) || calendar_ids.contains(&option.id); }
     Ok(available)
 }
 
@@ -645,6 +678,66 @@ mod meeting_availability_tests {
             attendees: vec!["guest@example.com".into()], range_start: "2099-09-21T00:00:00Z".into(), range_end: "2099-09-28T00:00:00Z".into(),
             preferences: models::AvailabilityPreferences { time_zone: "UTC".into(), working_windows: vec![], default_duration_minutes: 30, slot_increment_minutes: 15, drive_time_buffer_minutes: 0 },
         }
+    }
+
+    fn options() -> Vec<CalendarOption> {
+        [("me@example.com", "Personal", true), ("public-feed", "Holidays in United States", false), ("team", "Team", false)]
+            .into_iter().map(|(id, name, primary)| CalendarOption {
+                id: id.into(), name: name.into(), account_id: "me@example.com".into(), primary,
+                selected: false, availability_selected: false, writable: primary,
+            }).collect()
+    }
+
+    #[test]
+    fn availability_defaults_to_primary_independently_of_visible_calendars() {
+        let mut options = options();
+        apply_calendar_selections(&mut options, &["public-feed".into(), "team".into()], None);
+        assert!(!options[0].selected);
+        assert!(options[0].availability_selected);
+        assert!(options[1].selected && !options[1].availability_selected);
+        assert!(options[2].selected && !options[2].availability_selected);
+        apply_calendar_selections(&mut options, &["me@example.com".into()], Some(&["team".into()]));
+        assert!(options[0].selected && !options[0].availability_selected);
+        assert!(!options[2].selected && options[2].availability_selected);
+        apply_calendar_selections(&mut options, &[], Some(&[]));
+        assert!(options.iter().all(|option| !option.availability_selected));
+    }
+
+    #[test]
+    fn holiday_subscriptions_are_automatic_and_never_sent_to_freebusy() {
+        let database = Database::open_memory();
+        database.adopt_calendar_account("me@example.com").unwrap();
+        assert_eq!(availability_calendar_ids(&database, "me@example.com").unwrap(), vec!["me@example.com"]);
+        let holiday = "en.usa#holiday@group.v.calendar.google.com".to_string();
+        database.set_availability_calendar_selection("me@example.com", &[holiday.clone(), "team".into()]).unwrap();
+        assert_eq!(availability_calendar_ids(&database, "me@example.com").unwrap(), vec!["team"]);
+        let mut options = options();
+        options[1].id = holiday;
+        apply_calendar_selections(&mut options, &[], Some(&[]));
+        assert!(options[1].availability_selected && !options[1].selected);
+    }
+
+    #[test]
+    fn missing_or_failed_holiday_calendars_do_not_create_warnings_or_hide_other_failures() {
+        let mut coverage = FreeBusyCoverage { busy: Vec::new(), checked: 1, total: 2,
+            unchecked: vec!["Team (me@example.com)".into()], errors: vec!["Team: notFound".into()] };
+        include_optional_holidays(&mut coverage, vec![Err("notFound".into()), Err("network unavailable".into()), Ok(vec![BusyInterval {
+            start:"2099-09-21T00:00:00Z".into(), end:"2099-09-22T00:00:00Z".into(),
+        }])]);
+        assert_eq!((coverage.checked, coverage.total), (1, 2));
+        assert_eq!(coverage.unchecked, vec!["Team (me@example.com)"]);
+        assert_eq!(coverage.errors, vec!["Team: notFound"]);
+        assert_eq!(coverage.busy.len(), 1);
+        include_optional_holidays(&mut coverage, vec![]);
+        assert_eq!(coverage.busy.len(), 1);
+    }
+
+    #[test]
+    fn failed_calendar_labels_distinguish_accounts_and_fall_back_to_ids() {
+        let options = options();
+        assert_eq!(calendar_labels(&options, "me@example.com", &["public-feed".into()]), vec!["Holidays in United States (me@example.com)"]);
+        assert_eq!(calendar_labels(&options, "other@example.com", &["public-feed".into()]), vec!["Holidays in United States (other@example.com)"]);
+        assert_eq!(calendar_labels(&[], "me@example.com", &["unknown".into()]), vec!["unknown (me@example.com)"]);
     }
 
     fn find_request() -> FindAvailabilityRequest {

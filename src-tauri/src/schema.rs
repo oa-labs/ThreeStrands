@@ -14,7 +14,7 @@ pub(crate) const BASELINE_VERSION: i64 = 74;
 
 /// The current schema version. A new schema change adds an
 /// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 87;
+pub(crate) const LATEST_VERSION: i64 = 88;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -978,6 +978,10 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
             tx.execute("UPDATE sender_delivery_patterns SET id=?1 WHERE id=?2", rusqlite::params![stable, id]).map_err(error)?;
         }
     }
+    if version < 88 {
+        // NULL retains the primary-only default independently of visibility.
+        tx.execute_batch("ALTER TABLE calendar_accounts ADD COLUMN availability_calendar_ids TEXT;").map_err(error)?;
+    }
     if stored == 0 {
         // Only new installations get the 90-day default. Existing databases
         // without a retention setting still mean Forever. Keep the default
@@ -1301,11 +1305,27 @@ mod tests {
     }
 
     #[test]
+    fn v88_defaults_availability_to_primary_without_reusing_visible_calendars() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
+        super::migrate(&mut connection).unwrap();
+        connection.execute_batch("ALTER TABLE calendar_accounts DROP COLUMN availability_calendar_ids; PRAGMA user_version=87;
+            INSERT INTO calendar_accounts(email,connected_at,selection_initialized) VALUES('me@example.com','2026-10-27',1);
+            INSERT INTO calendar_selections(account_id,calendar_id) VALUES('me@example.com','holiday-feed');").unwrap();
+        super::migrate(&mut connection).unwrap();
+        let selection: Option<String> = connection.query_row("SELECT availability_calendar_ids FROM calendar_accounts", [], |row| row.get(0)).unwrap();
+        assert_eq!(selection, None);
+        let visible: String = connection.query_row("SELECT calendar_id FROM calendar_selections", [], |row| row.get(0)).unwrap();
+        assert_eq!(visible, "holiday-feed");
+        super::migrate(&mut connection).unwrap();
+    }
+
+    #[test]
     fn v87_preserves_existing_confirmation_evidence_with_stable_sync_ids() {
         let mut connection = rusqlite::Connection::open_in_memory().unwrap();
         connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
         super::migrate(&mut connection).unwrap();
-        connection.execute_batch("INSERT INTO sender_delivery_patterns VALUES ('old-uuid','you@example.com','ana@partner.example','requests@service.example','ana@partner.example','[\"https://service.example\"]',0,'old-message','2026-10-26T12:00:00Z'); PRAGMA user_version=86;").unwrap();
+        connection.execute_batch("INSERT INTO sender_delivery_patterns VALUES ('old-uuid','you@example.com','ana@partner.example','requests@service.example','ana@partner.example','[\"https://service.example\"]',0,'old-message','2026-10-26T12:00:00Z'); ALTER TABLE calendar_accounts DROP COLUMN availability_calendar_ids; PRAGMA user_version=86;").unwrap();
         super::migrate(&mut connection).unwrap();
         let (id, authenticated, source, origins): (String, bool, String, String) = connection.query_row("SELECT id,authenticated,source_message_id,link_origins FROM sender_delivery_patterns", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
         assert_eq!(id, crate::db::sender_feedback::confirmation_id("you@example.com", "ana@partner.example", "requests@service.example", &origins));
@@ -1319,7 +1339,7 @@ mod tests {
         let mut connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(super::INITIAL_SCHEMA).unwrap();
         super::migrate(&mut connection).unwrap();
-        connection.execute_batch("DROP TABLE sender_delivery_patterns; PRAGMA user_version = 85;").unwrap();
+        connection.execute_batch("DROP TABLE sender_delivery_patterns; ALTER TABLE calendar_accounts DROP COLUMN availability_calendar_ids; PRAGMA user_version = 85;").unwrap();
         connection.execute("INSERT INTO compose_settings(key, value) VALUES ('feedback-upgrade-test', 'preserved')", []).unwrap();
         super::migrate(&mut connection).unwrap();
         let value: String = connection.query_row("SELECT value FROM compose_settings WHERE key = 'feedback-upgrade-test'", [], |row| row.get(0)).unwrap();
@@ -1381,7 +1401,7 @@ mod tests {
         super::migrate(&mut connection).unwrap();
         // Roll back to what a 0.147 database looks like.
         connection
-            .execute_batch("DROP TABLE draft_server_links; DROP TABLE draft_server_deletions; ALTER TABLE messages DROP COLUMN cc_json; ALTER TABLE calendar_accounts DROP COLUMN sort_order; ALTER TABLE threads DROP COLUMN summary_focus_from; ALTER TABLE ai_thread_analyses DROP COLUMN focus_from; DROP TABLE ai_activity;")
+            .execute_batch("ALTER TABLE calendar_accounts DROP COLUMN availability_calendar_ids; DROP TABLE draft_server_links; DROP TABLE draft_server_deletions; ALTER TABLE messages DROP COLUMN cc_json; ALTER TABLE calendar_accounts DROP COLUMN sort_order; ALTER TABLE threads DROP COLUMN summary_focus_from; ALTER TABLE ai_thread_analyses DROP COLUMN focus_from; DROP TABLE ai_activity;")
             .unwrap();
         connection.pragma_update(None, "user_version", 78).unwrap();
         connection
@@ -1487,7 +1507,7 @@ mod tests {
         super::migrate(&mut connection).unwrap();
         connection
             .execute_batch(
-                "ALTER TABLE threads DROP COLUMN summary_focus_from;
+                "ALTER TABLE calendar_accounts DROP COLUMN availability_calendar_ids; ALTER TABLE threads DROP COLUMN summary_focus_from;
                  ALTER TABLE ai_thread_analyses DROP COLUMN focus_from;
                  DROP TABLE ai_activity;
                  INSERT INTO threads(id, provider_thread_id, subject, snippet, participants_json, last_message_at, labels_json, account_id, summary, summary_revision)
@@ -1599,7 +1619,7 @@ mod tests {
                         ('thread-b', 'b', 'B', 'Hello', '[]', '2026-01-02T00:00:00Z', '[]', 'you@example.com');",
             )
             .unwrap();
-        connection.execute_batch("ALTER TABLE messages DROP COLUMN cc_json; ALTER TABLE calendar_accounts DROP COLUMN sort_order; ALTER TABLE threads DROP COLUMN summary_focus_from; ALTER TABLE ai_thread_analyses DROP COLUMN focus_from; DROP TABLE ai_activity;").unwrap();
+        connection.execute_batch("ALTER TABLE calendar_accounts DROP COLUMN availability_calendar_ids; ALTER TABLE messages DROP COLUMN cc_json; ALTER TABLE calendar_accounts DROP COLUMN sort_order; ALTER TABLE threads DROP COLUMN summary_focus_from; ALTER TABLE ai_thread_analyses DROP COLUMN focus_from; DROP TABLE ai_activity;").unwrap();
         connection.pragma_update(None, "user_version", 80).unwrap();
         super::migrate(&mut connection).unwrap();
         let queued: Vec<String> = connection

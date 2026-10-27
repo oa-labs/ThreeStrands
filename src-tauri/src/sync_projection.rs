@@ -206,6 +206,12 @@ impl Database {
             .collect::<Vec<_>>();
         if self.list_calendar_accounts()?.iter().any(|a| a.email == email) {
             self.set_calendar_selection(email, &ids)?;
+            // Older devices do not know this choice; an omitted field must
+            // preserve it instead of copying their visibility selection.
+            if let Some(ids) = value.get("availabilityCalendarIds") {
+                let ids: Vec<String> = serde_json::from_value(ids.clone()).map_err(serialization_error)?;
+                self.set_availability_calendar_selection(email, &ids)?;
+            }
         }
         Ok(())
     }
@@ -252,6 +258,21 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap()
+    }
+
+    #[test]
+    fn availability_selection_syncs_without_older_devices_overwriting_it() {
+        let db = Database::open_memory();
+        db.adopt_calendar_account("me@example.com").unwrap();
+        let project = |payload: Value| db.materialize_entity(EntityType::CalendarSelection, "me@example.com", Some(&payload), false).unwrap();
+        project(json!({"accountId":"me@example.com","calendarIds":["visible"]}));
+        assert_eq!(db.availability_calendar_selection("me@example.com").unwrap(), None);
+        project(json!({"accountId":"me@example.com","calendarIds":["visible"],"availabilityCalendarIds":["primary"]}));
+        assert_eq!(db.availability_calendar_selection("me@example.com").unwrap(), Some(vec!["primary".into()]));
+        project(json!({"accountId":"me@example.com","calendarIds":[]}));
+        assert_eq!(db.availability_calendar_selection("me@example.com").unwrap(), Some(vec!["primary".into()]));
+        project(json!({"accountId":"me@example.com","calendarIds":[],"availabilityCalendarIds":[]}));
+        assert_eq!(db.availability_calendar_selection("me@example.com").unwrap(), Some(vec![]));
     }
 
     #[test]

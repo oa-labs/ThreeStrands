@@ -311,6 +311,7 @@ export interface MailClient extends CorrespondenceClient {
   reorderCalendarAccounts(emails: string[]): Promise<void>;
   listCalendarOptions(): Promise<CalendarOption[]>;
   setCalendarSelection(accountId: string, calendarIds: string[]): Promise<CalendarOption[]>;
+  setAvailabilityCalendarSelection(accountId: string, calendarIds: string[]): Promise<CalendarOption[]>;
   listScheduleEvents(timeMin: string, timeMax: string, timeZone: string): Promise<ScheduleResult>;
   updateCalendarResponse(event: ScheduleEvent, responseStatus: "accepted" | "declined" | "tentative"): Promise<ScheduleEvent>;
   /** Finds an invitation on the connected calendars by its iCalendar UID; null when none has it. */
@@ -499,6 +500,7 @@ const tauriClient: MailClient = {
   removeCalendarAccount: (email) => complete("remove_calendar_account", { email }),
   reorderCalendarAccounts: (emails) => complete("reorder_calendar_accounts", { emails }),
   listCalendarOptions: () => complete("list_calendar_options"),
+  setAvailabilityCalendarSelection: (accountId, calendarIds) => complete("set_availability_calendar_selection", { accountId, calendarIds }),
   setCalendarSelection: (accountId, calendarIds) =>
     complete("set_calendar_selection", { accountId, calendarIds }),
   listScheduleEvents: (timeMin, timeMax, timeZone) =>

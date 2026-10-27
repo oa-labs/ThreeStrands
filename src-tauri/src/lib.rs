@@ -1478,6 +1478,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::calendar::update_calendar_event,
         commands::calendar::delete_calendar_event,
         commands::calendar::set_calendar_selection,
+        commands::calendar::set_availability_calendar_selection,
         commands::calendar::remove_calendar_account,
         commands::calendar::reorder_calendar_accounts,
         commands::calendar::remove_synced_calendar_account,

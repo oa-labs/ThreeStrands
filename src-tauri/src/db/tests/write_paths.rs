@@ -229,8 +229,8 @@ id=split-1 | name=Newsletters | match_kind=domain | match_value=example.com | so
 email=existing@example.com | display_name=Me | color=#112233 | status=connected | sort_order=5 | connected_at=<now> | last_synced_at=NULL | provider=gmail | nickname=Work | on_this_device=1
 email=new@example.com | display_name=NULL | color=#445566 | status=needs_reauth | sort_order=6 | connected_at=<now> | last_synced_at=NULL | provider=imap | nickname=NULL | on_this_device=0
 [calendar_accounts]
-email=cal-a@example.com | connected_at=<now> | selection_initialized=0 | status=needs_reauth | sort_order=4
-email=cal-b@example.com | connected_at=<now> | selection_initialized=0 | status=needs_reauth | sort_order=9
+email=cal-a@example.com | connected_at=<now> | selection_initialized=0 | status=needs_reauth | sort_order=4 | availability_calendar_ids=NULL
+email=cal-b@example.com | connected_at=<now> | selection_initialized=0 | status=needs_reauth | sort_order=9 | availability_calendar_ids=NULL
 [scheduled_send_summaries]
 id=00000000-0000-4000-8000-000000000001:00000000-0000-4000-8000-0000000000a1 | report={"account":"me@example.com","blockedReason":null,"operationId":"00000000-0000-4000-8000-0000000000a1","ownerInstallationId":"00000000-0000-4000-8000-000000000001","ownerNameAtCreation":"Laptop","ownerSyncDeviceId":null,"reportRevision":2,"scheduledAt":1900000000000,"state":"scheduled","statusChangedAt":1800000000000,"subject":"Later","timeZone":"UTC"}
 [sender_rules]

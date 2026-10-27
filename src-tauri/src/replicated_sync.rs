@@ -227,8 +227,8 @@ impl Database {
             if self.reconcile_one_entity(EntityType::CalendarAccount, &email, json!({ "email": account.email, "sortOrder": account.sort_order }))? {
                 repaired += 1;
             }
-            if let Some(ids) = self.calendar_selection(&account.email)? {
-                let payload = json!({ "accountId": account.email, "calendarIds": ids });
+            if self.calendar_selection(&account.email)?.is_some() || self.availability_calendar_selection(&account.email)?.is_some() {
+                let payload = self.calendar_selection_payload(&account.email)?;
                 if self.reconcile_one_entity(EntityType::CalendarSelection, &email, payload)? {
                     repaired += 1;
                 }

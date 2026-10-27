@@ -92,6 +92,35 @@ impl Database {
         })
     }
 
+    /// None means primary only. An explicit empty list disables availability
+    /// checks for this account without changing the visible calendars.
+    pub fn availability_calendar_selection(&self, email: &str) -> DbResult<Option<Vec<String>>> {
+        self.with_connection(|connection| {
+            let value: Option<String> = connection.query_row(
+                "SELECT availability_calendar_ids FROM calendar_accounts WHERE email=?1", [email], |row| row.get(0),
+            ).optional()?.ok_or(DatabaseError::NotFound("Calendar account"))?;
+            value.map(|value| serde_json::from_str(&value).map_err(|_| DatabaseError::corrupt("Invalid availability calendar selection"))).transpose()
+        })
+    }
+
+    pub fn set_availability_calendar_selection(&self, email: &str, ids: &[String]) -> DbResult<()> {
+        let value = serde_json::to_string(ids).map_err(|_| DatabaseError::invalid("Invalid availability calendar selection"))?;
+        self.with_connection(|connection| {
+            if connection.execute("UPDATE calendar_accounts SET availability_calendar_ids=?1 WHERE email=?2", params![value, email])? == 0 {
+                return Err(DatabaseError::NotFound("Calendar account"));
+            }
+            Ok(())
+        })
+    }
+
+    pub(crate) fn calendar_selection_payload(&self, email: &str) -> DbResult<Value> {
+        let mut payload = serde_json::json!({ "accountId": email, "calendarIds": self.calendar_selection(email)?.unwrap_or_default() });
+        if let Some(ids) = self.availability_calendar_selection(email)? {
+            payload["availabilityCalendarIds"] = serde_json::json!(ids);
+        }
+        Ok(payload)
+    }
+
     pub fn set_calendar_selection(
         &self,
         email: &str,
@@ -181,6 +210,22 @@ mod tests {
 
         database.adopt_calendar_account("new@example.com").unwrap();
         assert_eq!(emails(&database).last().map(String::as_str), Some("new@example.com"));
+    }
+
+    #[test]
+    fn availability_selection_is_independent_persistent_and_preserved_on_reconnect() {
+        let database = Database::open_memory();
+        database.adopt_calendar_account("calendar@example.com").unwrap();
+        database.set_calendar_selection("calendar@example.com", &["holidays".into(), "shared".into()]).unwrap();
+        assert_eq!(database.availability_calendar_selection("calendar@example.com").unwrap(), None);
+        database.set_availability_calendar_selection("calendar@example.com", &["calendar@example.com".into()]).unwrap();
+        database.set_calendar_selection("calendar@example.com", &[]).unwrap();
+        database.adopt_calendar_account("calendar@example.com").unwrap();
+        assert_eq!(database.availability_calendar_selection("calendar@example.com").unwrap(), Some(vec!["calendar@example.com".into()]));
+        assert_eq!(database.calendar_selection("calendar@example.com").unwrap(), Some(vec![]));
+        database.set_availability_calendar_selection("calendar@example.com", &[]).unwrap();
+        assert_eq!(database.availability_calendar_selection("calendar@example.com").unwrap(), Some(vec![]));
+        assert_eq!(database.calendar_selection_payload("calendar@example.com").unwrap()["availabilityCalendarIds"], serde_json::json!([]));
     }
 
     #[test]

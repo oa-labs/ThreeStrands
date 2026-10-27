@@ -736,3 +736,32 @@ test("Find Times includes selected coworkers and marks their inaccessible calend
   await coworker.uncheck();
   await expect(availability.getByRole("note")).toHaveCount(0);
 });
+
+
+test("availability calendars are independent of visibility and update an open Find Times search", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await settings.getByRole("button", { name: "Calendar Accounts", exact: true }).click();
+  await settings.getByRole("button", { name: "Connect Calendar", exact: true }).click();
+  const shown = settings.getByRole("group", { name: "Calendars shown in the sidebar" });
+  const availability = settings.getByRole("group", { name: "Calendars used for availability" });
+  await expect(availability.getByRole("checkbox")).toBeChecked();
+  await availability.getByRole("checkbox").uncheck();
+  await expect(shown.getByRole("checkbox")).toBeChecked();
+  await settings.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("button", { name: "New Message (c)" }).click();
+  const composer = page.getByRole("dialog", { name: "New Message" });
+  await composer.getByRole("textbox", { name: "To", exact: true }).fill("client@outside.org");
+  await composer.getByRole("textbox", { name: "Subject" }).fill("Pick a time");
+  const times = page.getByRole("complementary", { name: "Compose context" }).getByRole("region", { name: "Availability" });
+  await times.getByRole("button", { name: "Find Times", exact: true }).click();
+  await expect(times.getByRole("note")).toContainText("No calendar could be checked");
+  await times.getByRole("button", { name: "Calendar Settings", exact: true }).click();
+  await availability.getByRole("checkbox").check();
+  await expect(shown.getByRole("checkbox")).toBeChecked();
+  await settings.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(times.getByRole("note")).toHaveCount(0);
+  await page.getByRole("button", { name: "Settings (⌘,)" }).click();
+  await expect(availability.getByRole("checkbox")).toBeChecked();
+});

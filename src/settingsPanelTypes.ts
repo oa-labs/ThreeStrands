@@ -80,6 +80,7 @@ export type CalendarAccountSettingsState = {
   removeEverywhere(email: string): Promise<void>;
   reorder(emails: string[]): Promise<void>;
   setSelection(accountId: string, calendarIds: string[]): Promise<void>;
+  setAvailabilitySelection(accountId: string, calendarIds: string[]): Promise<void>;
 };
 
 export type SplitInboxSettingsState = {

@@ -178,16 +178,13 @@ impl EntityType {
             Self::CalendarAccount => required_string(object, "email", 320)?,
             Self::CalendarSelection => {
                 required_string(object, "accountId", 320)?;
-                let values = object
-                    .get("calendarIds")
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| "calendarIds must be an array".to_string())?;
-                if values.len() > 500
-                    || values.iter().any(|value| {
-                        value.as_str().is_none_or(|value| value.len() > 1_000)
-                    })
-                {
-                    return Err("calendarIds is invalid".to_string());
+                for field in ["calendarIds", "availabilityCalendarIds"] {
+                    if field == "availabilityCalendarIds" && !object.contains_key(field) { continue; }
+                    let values = object.get(field).and_then(Value::as_array)
+                        .ok_or_else(|| format!("{field} must be an array"))?;
+                    if values.len() > 500 || values.iter().any(|value| value.as_str().is_none_or(|value| value.len() > 1_000)) {
+                        return Err(format!("{field} is invalid"));
+                    }
                 }
             }
             Self::Preferences => validate_preferences(object)?,
@@ -546,6 +543,21 @@ mod tests {
         assert!(EntityType::Task.validate_payload(&valid).is_ok());
         let invalid = json!({ "title": "x", "kind": "action", "dueKind": "none", "status": "lost" });
         assert!(EntityType::Task.validate_payload(&invalid).is_err());
+    }
+
+    #[test]
+    fn calendar_availability_selection_is_optional_and_bounded() {
+        let old = serde_json::json!({"accountId":"me@example.com","calendarIds":["primary"]});
+        assert!(EntityType::CalendarSelection.validate_payload(&old).is_ok());
+        for count in [499, 500, 501] {
+            let mut value = old.clone();
+            value["availabilityCalendarIds"] = serde_json::json!(vec!["calendar"; count]);
+            assert_eq!(EntityType::CalendarSelection.validate_payload(&value).is_ok(), count <= 500);
+        }
+        for value in [serde_json::json!(null), serde_json::json!([1]), serde_json::json!(["x".repeat(1001)])] {
+            let mut payload = old.clone(); payload["availabilityCalendarIds"] = value;
+            assert!(EntityType::CalendarSelection.validate_payload(&payload).is_err());
+        }
     }
 
     #[test]

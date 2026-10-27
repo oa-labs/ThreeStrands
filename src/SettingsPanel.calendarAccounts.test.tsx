@@ -33,6 +33,7 @@ function renderPicker(props: {
       onRemoveEverywhere={props.onRemoveEverywhere ?? vi.fn()}
       onReorder={vi.fn()}
       onSetSelection={vi.fn()}
+      onSetAvailabilitySelection={vi.fn()}
     />,
   );
   return screen.getByRole("group", { name: "Calendars shown in the sidebar" });
@@ -61,6 +62,35 @@ describe("calendar account picker", () => {
       calendars: [{ id: "primary", accountId: account.email, name: "Me", primary: true, selected: true } as CalendarOption],
     });
     expect(within(picker).getByRole("checkbox", { name: "Me (Primary)" })).toBeChecked();
+  });
+
+  it("defaults availability to primary while keeping visibility separate", async () => {
+    const change = vi.fn().mockResolvedValue(undefined);
+    const visible = vi.fn().mockResolvedValue(undefined);
+    const calendars: CalendarOption[] = [
+      { id: "primary", accountId: account.email, name: "Me", primary: true, selected: false, writable: true },
+      { id: "holiday", accountId: account.email, name: "Holidays", primary: false, selected: true, writable: false },
+    ];
+    render(<CalendarAccountsSettings authStatus={null} accounts={[account]} calendars={calendars} calendarsLoaded calendarsError={null}
+      onAdd={vi.fn()} onReconnect={vi.fn()} onRemove={vi.fn()} onRemoveEverywhere={vi.fn()} onReorder={vi.fn()}
+      onSetSelection={visible} onSetAvailabilitySelection={change} />);
+    const availability = screen.getByRole("group", { name: "Calendars used for availability" });
+    const shown = screen.getByRole("group", { name: "Calendars shown in the sidebar" });
+    expect(within(availability).getByRole("checkbox", { name: "Me (Primary)" })).toBeChecked();
+    expect(within(availability).getByRole("checkbox", { name: "Holidays" })).not.toBeChecked();
+    expect(within(shown).getByRole("checkbox", { name: "Holidays" })).toBeChecked();
+    fireEvent.click(within(availability).getByRole("checkbox", { name: "Holidays" }));
+    await waitFor(() => expect(change).toHaveBeenCalledWith(account.email, ["primary", "holiday"]));
+    expect(visible).not.toHaveBeenCalled();
+  });
+
+  it("always includes an available holiday subscription without requiring it to be visible", () => {
+    renderPicker({ calendarsLoaded: true, calendars: [{ id: "fr.fr#holiday@group.v.calendar.google.com", accountId: account.email, name: "Jours fériés", primary: false, selected: false, writable: false, availabilitySelected: false }] });
+    const availability = screen.getByRole("group", { name: "Calendars used for availability" });
+    expect(within(availability).getByRole("checkbox", { name: "Jours fériés (Included when available)" })).toBeChecked();
+    expect(within(availability).getByRole("checkbox")).toBeDisabled();
+    const shown = screen.getByRole("group", { name: "Calendars shown in the sidebar" });
+    expect(within(shown).getByRole("checkbox", { name: "Jours fériés" })).not.toBeChecked();
   });
 
   it("picks a calendar's meeting color from its options menu", () => {
@@ -153,6 +183,7 @@ describe("calendar account order", () => {
         onRemoveEverywhere={vi.fn()}
         onReorder={onReorder}
         onSetSelection={vi.fn()}
+      onSetAvailabilitySelection={vi.fn()}
       />,
     );
     return onReorder;

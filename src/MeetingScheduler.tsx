@@ -1,3 +1,4 @@
+import { CALENDAR_AVAILABILITY_CHANGED } from "./calendarAvailability";
 import { CalendarCheck, CalendarPlus, Check, ChevronLeft, ChevronRight, CircleCheck, CircleAlert, RotateCcw } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import type { AvailabilityCandidate, AvailabilityPreferences, CoworkerCalendars, ProposedTimeCheck, ScheduleEvent } from "./domain";
@@ -21,7 +22,7 @@ type CheckState =
   | { phase: "idle" | "loading" }
   | { phase: "error"; message: string }
   | { phase: "specific"; check: ProposedTimeCheck; conflictTitles: string[]; match: CalendarMatch | null }
-  | { phase: "range"; candidates: AvailabilityCandidate[]; verified: boolean; unchecked: string[] };
+  | { phase: "range"; candidates: AvailabilityCandidate[]; verified: boolean; unchecked: string[]; errors: string[] };
 
 /** Names the calendars a check could not read, once for the whole card, such as "Couldn't check Team, so these times may conflict with it." */
 export function uncheckedNote(unchecked: string[], subject: "this time" | "these times"): string {
@@ -189,6 +190,11 @@ export function MeetingScheduler({
   const [state, setState] = useState<CheckState>({ phase: "idle" });
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    const refresh = () => setAttempt((value) => value + 1);
+    window.addEventListener(CALENDAR_AVAILABILITY_CHANGED, refresh);
+    return () => window.removeEventListener(CALENDAR_AVAILABILITY_CHANGED, refresh);
+  }, []);
   // Callers build the identity on each render; re-check only when its values change.
   const identityKey = latestIdentity ? `${latestIdentity.title}|${latestIdentity.location ?? ""}|${latestIdentity.sourceMessageId ?? ""}` : "";
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -232,6 +238,7 @@ export function MeetingScheduler({
           candidates,
           verified: result.totalCalendarCount > 0 && result.checkedCalendarCount === result.totalCalendarCount,
           unchecked: result.uncheckedCalendars,
+          errors: result.errors,
         });
         setVisibleCount(SUGGESTED_SLOT_COUNT);
         setSelected(new Set(candidates.slice(0, SUGGESTED_SLOT_COUNT).map(slotKey)));
@@ -363,6 +370,7 @@ export function MeetingScheduler({
         {state.check.status === "unverified" ? <>No calendar could be checked</> : null}
       </p>}
       {state.check.status === "partiallyChecked" ? coverageNote(uncheckedNote(state.check.uncheckedCalendars, "this time")) : null}
+      {state.check.errors.length > 0 ? <details className="meeting-scheduler-note"><summary>Calendar check details</summary><ul>{state.check.errors.map((error, index) => <li key={index}>{error}</li>)}</ul></details> : null}
       <div className="meeting-scheduler-actions">
         {state.match && onOpenCalendarEvent ? <button type="button" className={`btn btn-sm${matched ? " btn-primary" : ""}`} onClick={() => onOpenCalendarEvent(state.match!.event)}><CalendarCheck size={ICON_SIZE.sm} /> Open in Calendar</button> : null}
         {/* Adding a second copy of an event already there takes a deliberate choice, so it waits in the ⋯ menu. */}
@@ -422,6 +430,10 @@ export function MeetingScheduler({
       {state.verified ? null : coverageNote(state.unchecked.length === 0 && !state.candidates.some((candidate) => candidate.status === "partiallyChecked")
           ? "No calendar could be checked, so these times may conflict."
           : uncheckedNote(state.unchecked, "these times"))}
+      {!state.verified && state.errors.length > 0 ? <details className="meeting-scheduler-note">
+        <summary>Calendar check details</summary>
+        <ul>{state.errors.map((error, index) => <li key={index}>{error}</li>)}</ul>
+      </details> : null}
     </> : null}
     {state.phase === "range" ? null : assumedZone}
   </div>;

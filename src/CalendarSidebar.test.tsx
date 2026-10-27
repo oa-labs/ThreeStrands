@@ -623,7 +623,8 @@ describe("calendar sidebar", () => {
     fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
     fireEvent.click(await screen.findByRole("button", { name: "Calendar Accounts" }));
 
-    const primary = await screen.findByRole("checkbox", { name: "Personal (Primary)" });
+    const shown = await screen.findByRole("group", { name: "Calendars shown in the sidebar" });
+    const primary = within(shown).getByRole("checkbox", { name: "Personal (Primary)" });
     expect(primary).toBeChecked();
     fireEvent.click(primary);
 

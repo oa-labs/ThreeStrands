@@ -93,6 +93,8 @@ export type CalendarOption = {
   name: string;
   primary: boolean;
   selected: boolean;
+  /** Defaults to primary for older calendar lists. Independent of visibility. */
+  availabilitySelected?: boolean;
   writable: boolean;
 };
 

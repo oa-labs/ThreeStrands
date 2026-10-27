@@ -1,3 +1,4 @@
+import { isHolidayCalendar } from "./calendarAvailability";
 import { CircleAlert, CalendarDays, ChevronDown, ChevronUp, Plus } from "lucide-react";
 import { CalendarColorRow } from "./CalendarColorMenu";
 import { useState } from "react";
@@ -18,6 +19,7 @@ export function CalendarAccountsSettings({
   onRemoveEverywhere,
   onReorder,
   onSetSelection,
+  onSetAvailabilitySelection,
 }: {
   authStatus: AuthStatus | null;
   accounts: CalendarAccount[];
@@ -30,6 +32,7 @@ export function CalendarAccountsSettings({
   onRemoveEverywhere(email: string): Promise<void>;
   onReorder(emails: string[]): Promise<void>;
   onSetSelection(accountId: string, calendarIds: string[]): Promise<void>;
+  onSetAvailabilitySelection(accountId: string, calendarIds: string[]): Promise<void>;
 }) {
   const { pending: busyEmail, error, runFor } = useSettingsOperation();
   const [confirmEmail, setConfirmEmail] = useState<string | null>(null);
@@ -188,6 +191,18 @@ export function CalendarAccountsSettings({
                     ))}
                 </fieldset>
               ) : null}
+              {account.status === "connected" && accountCalendars.length > 0 ? <fieldset className="calendar-picker">
+                <legend>Calendars used for availability</legend>
+                <p>Primary calendars are used by default. Holiday calendars are always included when available. These choices do not change which calendars are shown. Coworkers are checked using their primary calendar only.</p>
+                {accountCalendars.map((calendar) => <label key={calendar.id}>
+                  <input type="checkbox" checked={isHolidayCalendar(calendar.id) || (calendar.availabilitySelected ?? calendar.primary)} disabled={busyEmail !== null || isHolidayCalendar(calendar.id)} onChange={(event) => {
+                    const ids = accountCalendars.filter((candidate) => candidate.id !== calendar.id && (candidate.availabilitySelected ?? candidate.primary)).map((candidate) => candidate.id);
+                    if (event.target.checked) ids.push(calendar.id);
+                    runFor(account.email, () => onSetAvailabilitySelection(account.email, ids));
+                  }} />
+                  <span>{calendar.name}{calendar.primary ? " (Primary)" : isHolidayCalendar(calendar.id) ? " (Included when available)" : ""}</span>
+                </label>)}
+              </fieldset> : null}
             </li>
             );
           })}

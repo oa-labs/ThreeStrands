@@ -27,6 +27,7 @@ pub struct CalendarOption {
     pub name: String,
     pub primary: bool,
     pub selected: bool,
+    pub availability_selected: bool,
     pub writable: bool,
 }
 

@@ -62,9 +62,11 @@ const CALENDAR_ID_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b'}');
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct GoogleCalendarList {
     #[serde(default)]
     items: Vec<GoogleCalendarListEntry>,
+    next_page_token: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -260,6 +262,49 @@ async fn fetch_drive_time_pages(
     time_zone: &str,
     minutes: u32,
 ) -> Result<Vec<BusyInterval>, String> {
+    fetch_busy_pages(client, access_token, url, time_min, time_max, time_zone, minutes, false).await
+}
+
+pub(crate) async fn fetch_holiday_busy(auth: OAuthCredential, calendar_id: &str, time_min: &str, time_max: &str, time_zone: &str) -> Result<Vec<BusyInterval>, String> {
+    let token = auth.access_token().await.map_err(|error| error.to_string())?;
+    let url = events_url(calendar_id)?.ok_or("Calendar has no ID")?;
+    fetch_busy_pages(&calendar_client()?, &token, url, time_min, time_max, time_zone, 0, true).await
+}
+
+/// Holiday feeds are often transparent and unavailable through FreeBusy.
+/// Read their actual dates, blocking the full local day without travel buffers.
+fn holiday_interval(event: DriveTimeEvent, time_zone: &str) -> Result<Option<BusyInterval>, String> {
+    use chrono::TimeZone;
+    if event.status.as_deref() == Some("cancelled") { return Ok(None); }
+    let zone: chrono_tz::Tz = time_zone.parse().map_err(|_| "Invalid holiday time zone")?;
+    let convert = |time: GoogleEventTime| -> Result<String, String> {
+        if let Some(date) = time.date {
+            let date = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d").map_err(|error| error.to_string())?;
+            // Midnight can be skipped by DST. Find the first existing local
+            // hour of that date rather than shifting the holiday to UTC.
+            for hour in 0..24 {
+                if let Some(instant) = zone.from_local_datetime(&date.and_hms_opt(hour, 0, 0).unwrap()).earliest() {
+                    return Ok(instant.to_rfc3339());
+                }
+            }
+            return Err("Holiday date does not exist in this time zone".into());
+        }
+        let value = time.date_time.ok_or("Holiday has no date")?;
+        chrono::DateTime::parse_from_rfc3339(&value).map_err(|error| error.to_string())?;
+        Ok(value)
+    };
+    let start = convert(event.start.ok_or("Holiday has no start")?)?;
+    let end = convert(event.end.ok_or("Holiday has no end")?)?;
+    if chrono::DateTime::parse_from_rfc3339(&end).map_err(|error| error.to_string())? <= chrono::DateTime::parse_from_rfc3339(&start).map_err(|error| error.to_string())? {
+        return Err("Holiday end must follow its start".into());
+    }
+    Ok(Some(BusyInterval { start, end }))
+}
+
+async fn fetch_busy_pages(
+    client: &reqwest::Client, access_token: &str, url: url::Url,
+    time_min: &str, time_max: &str, time_zone: &str, minutes: u32, holidays: bool,
+) -> Result<Vec<BusyInterval>, String> {
     let (time_min, time_max) = crate::availability::buffered_range(time_min, time_max, minutes)?;
     let mut page_token = None;
     let mut seen_tokens = std::collections::HashSet::new();
@@ -274,7 +319,8 @@ async fn fetch_drive_time_pages(
         if let Some(token) = &page_token { request = request.query(&[("pageToken", token)]); }
         let page: DriveTimeEvents = checked_json(request.send().await.map_err(|error| error.to_string())?).await?;
         for event in page.items {
-            if let Some(interval) = drive_time_interval(event, minutes)? { busy.push(interval); }
+            let interval = if holidays { holiday_interval(event, time_zone)? } else { drive_time_interval(event, minutes)? };
+            if let Some(interval) = interval { busy.push(interval); }
         }
         match page.next_page_token.filter(|token| !token.is_empty()) {
             None => return Ok(busy),
@@ -423,6 +469,13 @@ fn calendar_client() -> Result<reqwest::Client, String> {
         .map_err(|error| error.to_string())
 }
 
+/// Google-managed holiday subscriptions identify the feed in the calendar ID,
+/// independently of country or translated display name. No feed is invented
+/// for an account that has not subscribed to one.
+pub(crate) fn is_holiday_calendar(id: &str) -> bool {
+    id.to_ascii_lowercase().ends_with("#holiday@group.v.calendar.google.com")
+}
+
 pub async fn list_calendar_options(
     auth: OAuthCredential,
     account_id: &str,
@@ -431,20 +484,32 @@ pub async fn list_calendar_options(
         .access_token()
         .await
         .map_err(|error| error.to_string())?;
+    let entries = fetch_calendar_list_pages(&calendar_client()?, &access_token, CALENDAR_LIST_URL).await?;
+    Ok(calendar_options(entries, account_id))
+}
+
+async fn fetch_calendar_list_pages(client: &reqwest::Client, token: &str, url: &str) -> Result<Vec<GoogleCalendarListEntry>, String> {
     let max_results = MAX_SCHEDULE_EVENTS.to_string();
-    let response = calendar_client()?
-        .get(CALENDAR_LIST_URL)
-        .bearer_auth(&access_token)
-        .query(&[
-            ("showHidden", "false"),
-            ("minAccessRole", "reader"),
-            ("maxResults", max_results.as_str()),
-        ])
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    let calendars: GoogleCalendarList = checked_json(response).await?;
-    Ok(calendar_options(calendars.items, account_id))
+    let mut entries = Vec::new();
+    let mut page_token = None;
+    let mut seen = std::collections::HashSet::new();
+    loop {
+        // App visibility is independent of Google's hidden-calendar flag.
+        // In particular, a hidden holiday subscription is still available.
+        let mut request = client.get(url).bearer_auth(token).query(&[
+            ("showHidden", "true"), ("minAccessRole", "reader"), ("maxResults", max_results.as_str()),
+        ]);
+        if let Some(token) = &page_token { request = request.query(&[("pageToken", token)]); }
+        let page: GoogleCalendarList = checked_json(request.send().await.map_err(|error| error.to_string())?).await?;
+        entries.extend(page.items);
+        match page.next_page_token.filter(|token| !token.is_empty()) {
+            None => return Ok(entries),
+            Some(token) => {
+                if !seen.insert(token.clone()) { return Err("Calendar list repeated a page".into()); }
+                page_token = Some(token);
+            }
+        }
+    }
 }
 
 fn calendar_options(
@@ -459,6 +524,7 @@ fn calendar_options(
             name: entry.summary,
             primary: entry.primary,
             selected: false,
+            availability_selected: entry.primary,
             writable: writable_access_role(&entry.access_role),
         })
         .collect()
@@ -702,9 +768,15 @@ fn freebusy_result(calendar_ids: &[String], freebusy: GoogleFreeBusy) -> FreeBus
                 }));
                 checked += 1;
             }
-            Some(_calendar) => {
+            Some(calendar) => {
                 unchecked.push(calendar_id.clone());
-                errors.push(format!("Calendar {calendar_id} returned a FreeBusy error"));
+                let reasons = calendar.errors.iter().filter_map(|error| error.get("reason").and_then(serde_json::Value::as_str)).map(|reason| match reason {
+                    "notFound" => "Google could not find this calendar or permit access to its availability (notFound)",
+                    "internalError" => "Google could not check this calendar because of a temporary error (internalError)",
+                    reason => reason,
+                }).collect::<Vec<_>>();
+                let reason = if reasons.is_empty() { "invalid busy-time response".to_string() } else { reasons.join(", ") };
+                errors.push(format!("Calendar {calendar_id}: {reason}"));
             }
             None => {
                 unchecked.push(calendar_id.clone());
@@ -1712,6 +1784,79 @@ mod tests {
         })
     }
 
+    #[tokio::test]
+    async fn discovers_hidden_holiday_subscriptions_on_later_calendar_list_pages() {
+        use axum::{extract::Query, routing::get, Json, Router};
+        let router = Router::new().route("/calendars", get(|Query(query): Query<HashMap<String, String>>| async move {
+            assert_eq!(query.get("showHidden").map(String::as_str), Some("true"));
+            if query.contains_key("pageToken") {
+                Json(serde_json::json!({"items":[{"id":"en.usa#holiday@group.v.calendar.google.com","summary":"Holidays","hidden":true}]}))
+            } else {
+                Json(serde_json::json!({"nextPageToken":"page2","items":[{"id":"me@example.com","summary":"Primary","primary":true}]}))
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/calendars", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap(); });
+        let entries = fetch_calendar_list_pages(&reqwest::Client::new(), "token", &url).await.unwrap();
+        server.abort();
+        assert_eq!(entries.len(), 2);
+        assert!(entries[0].primary);
+        assert!(is_holiday_calendar(&entries[1].id));
+    }
+
+    #[test]
+    fn holiday_feeds_are_identified_by_id_instead_of_country_or_display_name() {
+        assert!(is_holiday_calendar("en.usa#holiday@group.v.calendar.google.com"));
+        assert!(is_holiday_calendar("es.uk.official#holiday@group.v.calendar.google.com"));
+        assert!(!is_holiday_calendar("Holidays in United States"));
+        assert!(!is_holiday_calendar("team@group.calendar.google.com"));
+        assert!(!is_holiday_calendar("en.usa#holiday@group.v.calendar.google.com.evil"));
+    }
+
+    #[test]
+    fn holidays_block_local_dates_even_when_transparent_and_handle_dst() {
+        let event: DriveTimeEvent = serde_json::from_value(serde_json::json!({
+            "transparency":"transparent", "start":{"date":"2026-03-08"}, "end":{"date":"2026-03-09"},
+        })).unwrap();
+        let interval = holiday_interval(event, "America/New_York").unwrap().unwrap();
+        assert_eq!(interval.start, "2026-03-08T00:00:00-05:00");
+        assert_eq!(interval.end, "2026-03-09T00:00:00-04:00");
+        let cancelled = serde_json::from_value(serde_json::json!({"status":"cancelled"})).unwrap();
+        assert!(holiday_interval(cancelled, "UTC").unwrap().is_none());
+        for event in [serde_json::json!({"start":{"date":"bad"},"end":{"date":"2026-03-09"}}),
+            serde_json::json!({"start":{"date":"2026-03-09"},"end":{"date":"2026-03-08"}})] {
+            assert!(holiday_interval(serde_json::from_value(event).unwrap(), "UTC").is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn holiday_reads_every_page_and_avoids_the_whole_holiday() {
+        use axum::{extract::Query, routing::get, Json, Router};
+        let router = Router::new().route("/events", get(|Query(query): Query<HashMap<String, String>>| async move {
+            assert_eq!(query.get("singleEvents").map(String::as_str), Some("true"));
+            if query.contains_key("pageToken") {
+                Json(serde_json::json!({"items":[{"transparency":"transparent","start":{"date":"2099-09-22"},"end":{"date":"2099-09-23"}}]}))
+            } else {
+                Json(serde_json::json!({"nextPageToken":"page2","items":[{"transparency":"transparent","start":{"date":"2099-09-21"},"end":{"date":"2099-09-22"}}]}))
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/events", listener.local_addr().unwrap()).parse().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap(); });
+        let busy = fetch_busy_pages(&reqwest::Client::new(), "token", url, "2099-09-21T00:00:00Z", "2099-09-24T00:00:00Z", "UTC", 0, true).await.unwrap();
+        server.abort();
+        assert_eq!(busy.len(), 2);
+        let preferences = crate::models::AvailabilityPreferences { time_zone:"UTC".into(), working_windows: vec![
+            crate::models::AvailabilityWindow { weekday:1,start:"09:00".into(),end:"17:00".into() },
+            crate::models::AvailabilityWindow { weekday:2,start:"09:00".into(),end:"17:00".into() },
+            crate::models::AvailabilityWindow { weekday:3,start:"09:00".into(),end:"17:00".into() },
+        ], default_duration_minutes:30,slot_increment_minutes:30,drive_time_buffer_minutes:0 };
+        let slots = crate::availability::find_candidates("2099-09-21T00:00:00Z", "2099-09-24T00:00:00Z", &preferences, &busy, 1, 1, None).unwrap();
+        assert!(!slots.is_empty());
+        assert!(slots.iter().all(|slot| slot.start.starts_with("2099-09-23")));
+    }
+
     #[test]
     fn drive_time_blocks_haircut_departure_and_return_with_exact_boundaries_free() {
         let event = serde_json::from_value(located_event()).unwrap();
@@ -1897,6 +2042,8 @@ mod tests {
         assert_eq!(result.unchecked_calendar_ids, ["team@group.calendar.google.com", "missing@group.calendar.google.com"]);
         assert_eq!(result.busy.len(), 1);
         assert_eq!(result.errors.len(), 2);
+        assert!(result.errors[0].contains("notFound"));
+        assert!(result.errors[1].contains("was not returned"));
     }
 
     #[test]

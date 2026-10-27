@@ -1,3 +1,5 @@
+import { act } from "@testing-library/react";
+import { CALENDAR_AVAILABILITY_CHANGED } from "./calendarAvailability";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MeetingScheduler, uncheckedNote, zoneName } from "./MeetingScheduler";
@@ -158,6 +160,26 @@ describe("MeetingScheduler", () => {
     expect(note).toHaveTextContent("Couldn’t check Team Shared, so these times may conflict with it.");
     fireEvent.click(within(note).getByRole("button", { name: "Calendar Settings" }));
     expect(handlers.onOpenCalendarSettings).toHaveBeenCalled();
+  });
+
+  it("identifies accounts and shows failure details, then refreshes when availability settings change", async () => {
+    const first = "Personal (work@example.com)";
+    const second = "Personal (home@example.com)";
+    const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
+      candidates: [{ ...candidate(20), status: "partiallyChecked" }], checkedCalendarCount: 1, totalCalendarCount: 3,
+      uncheckedCalendars: [first, second], errors: [`${first}: notFound`, `${second}: internalError`],
+    });
+    renderScheduler(range);
+    const note = await screen.findByRole("note");
+    expect(note).toHaveTextContent(first);
+    expect(note).toHaveTextContent(second);
+    fireEvent.click(screen.getByText("Calendar check details"));
+    expect(screen.getByText(`${first}: notFound`)).toBeVisible();
+    expect(screen.getByText(`${second}: internalError`)).toBeVisible();
+    find.mockResolvedValue({ candidates: [candidate(20)], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
+    act(() => window.dispatchEvent(new Event(CALENDAR_AVAILABILITY_CHANGED)));
+    await waitFor(() => expect(screen.queryByRole("note")).not.toBeInTheDocument());
+    expect(screen.queryByText("Calendar check details")).not.toBeInTheDocument();
   });
 
   it("identifies inaccessible calendars even when there are no open times", async () => {
