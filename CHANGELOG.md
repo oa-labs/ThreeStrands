@@ -4,6 +4,8 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+## 0.174.3 — 2026-10-27
+
 ### New
 - Choose **Reschedule** on a meeting you organize to see guests’ busy times and suggested alternatives within your working hours. Calendars that cannot be checked are marked as unknown, and guests are notified when you save the new time.
 - **Today** now reads your day for you. A line under the date says how many meetings you have, when you're free until, when you're double-booked, and when your last meeting ends. Overlapping meetings are marked on the agenda, with **Recorded** when the invite says the session will be recorded, so you know which one is safer to miss. An unread message from someone you're meeting later today says so, such as "Also in your 2:00 pm meeting".
