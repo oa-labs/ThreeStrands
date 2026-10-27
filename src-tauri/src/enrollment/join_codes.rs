@@ -37,10 +37,11 @@ use threestrands_sync_envelope::{
 };
 use threestrands_sync_transport::{Cid as TransportCid, SyncTransport, TransportError};
 
-use super::{
-    open_earlier_epoch_keys, protocol_marker_missing, require_not_started, roster_entry_verifying_key,
-    seal_earlier_epoch_keys, store_earlier_epoch_keys, EnrollmentError, EnrollmentResult, EpochKeyStore,
+use super::crypto::{
+    open_earlier_epoch_keys, roster_entry_verifying_key, seal_earlier_epoch_keys, store_earlier_epoch_keys, EpochKeyStore,
 };
+use super::service::{protocol_marker_missing, require_not_started};
+use super::{EnrollmentError, EnrollmentResult};
 use crate::db::{rfc3339_from_ms, Database, DatabaseError};
 use crate::replicated_sync::{decode_id, encode_id, x25519_public_bytes, DeviceIdentity, LocalKeys};
 use crate::sync_connectors::{

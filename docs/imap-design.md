@@ -557,12 +557,12 @@ How this differs from Gmail's delivery:
   `find_sent_copy`-based reconciliation assumes a server-side copy, so the
   delivery state machine needs an `Unverifiable` outcome for IMAP.
 - **Threading:** replies already set `In-Reply-To` and `References`
-  (`correspondence.rs`), so local threading places the sent copy in its
+  (`correspondence/mime.rs`), so local threading places the sent copy in its
   thread.
 - **Message-ID domain** (decided 2026-10-08): IMAP sends generate
   `<uuid@sender-domain>`, where the domain comes from the From address
   actually used, so it follows the identity choice. Today every send uses
-  `@threestrands.local` (`correspondence.rs`). That domain is reserved and owned
+  `@threestrands.local` (`correspondence/mime.rs`). That domain is reserved and owned
   by no one, receiving spam filters can see it, and it reveals which client
   sent the message. Gmail sends can switch to the same rule later, since it's
   harmless there too. `find_sent_copy` compares the exact Message-ID value, so
