@@ -100,7 +100,7 @@ When a message supports it, press <kbd>⌘/Ctrl + u</kbd> or use the reader's un
 ThreeStrands checks each message for common email tricks, entirely on your computer, and shows what it finds beside the sender's name:
 
 - A small gray shield marks a **Known sender**: someone you write to or have saved as a contact, whose email is verified as coming from them. It is not a promise that every message is safe.
-- An amber warning names what looks wrong, such as a familiar name used by a new address, a lookalike domain, a subject line that disguises words with look-alike letters, a misleading link, or a risky attachment from someone you have not written to.
+- An amber **Be careful** warning names what looks wrong, such as a familiar name used by a new address, a lookalike domain, a subject line that disguises words with look-alike letters, a misleading link, or a risky attachment from someone you have not written to.
 
 Hover over the shield or warning to see every finding and the sender details, or click it to keep them open. The most serious warnings (a borrowed name, a lookalike address or link, or a risky attachment) also appear above the message itself, and the warning beside the sender's name then shows just its icon. For newsletters and other bulk mail with nothing to warn about, the side panel shows a **Sender checks** section with the same details.
 
