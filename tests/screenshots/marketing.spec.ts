@@ -192,6 +192,7 @@ const scenes: Scene[] = [
       await expect(today.getByRole("group", { name: "Agenda", exact: true }).getByText("Team standup").first()).toBeVisible();
       await expect(today.getByRole("group", { name: "Unread mail", exact: true }).getByText(/Design crit: onboarding flow v3/).first()).toBeVisible();
       await expect(today.getByRole("group", { name: "Tasks", exact: true }).getByText("Send Marcus pricing for 35 seats", { exact: true })).toBeVisible();
+      await expect(today.getByRole("region", { name: "You said you would", exact: true }).getByText(/interview notes/).first()).toBeVisible();
     },
   },
   {
@@ -199,6 +200,7 @@ const scenes: Scene[] = [
     capture: async (page) => {
       await page.keyboard.press("2");
       await expect(page.getByRole("region", { name: "Calendar week" }).getByText("Q4 launch plan sign-off")).toBeVisible();
+      await expect(page.getByRole("region", { name: "Open tasks", exact: true }).getByText("Send Marcus pricing for 35 seats", { exact: true })).toBeVisible();
     },
   },
   {

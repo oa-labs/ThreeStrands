@@ -27,6 +27,7 @@ import type {
   ContactProfile,
   ContactTimelineItem,
   KeepInTouch,
+  OpenPromise,
   SaveContactRequest,
   CreateTaskRequest,
   CreateGoalRequest,
@@ -443,9 +444,14 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       });
       return { threads: items, total: unread.length };
     },
-    /** The demo mailbox has no sent promises; promise detection runs natively over stored bodies. */
-    async listOpenPromises() {
-      return [];
+    /** Promise detection runs natively over stored bodies, so the demo lists only the dataset's fixtures. */
+    async listOpenPromises(accountId) {
+      return (seed.openPromises ?? []).flatMap(({ threadId, excerpt }): OpenPromise[] => {
+        const [thread] = visibleWhere(accountId, (candidate) => candidate.id === threadId && !candidate.trashed);
+        const message = thread ? messagesFor(thread).at(-1) : undefined;
+        if (!thread || !message) return [];
+        return [{ thread: { ...thread }, messageId: message.id, sentAt: message.sentAt, recipients: [...message.recipients], excerpt }];
+      });
     },
     async mailboxUnreadCounts(accountId) {
       const splits: Record<string, number> = {};

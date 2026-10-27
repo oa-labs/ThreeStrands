@@ -222,6 +222,20 @@ function threadSeeds(): ThreadSeed[] {
       ],
     },
     {
+      id: "interview-notes",
+      accountId: SHOWCASE_WORK_ACCOUNT,
+      subject: "Re: Customer interviews for onboarding v3",
+      labels: [],
+      archived: true,
+      messages: [
+        message(people.daniel, [me.work], 60 * 30, paragraphs("Did the interviews last week turn up anything we should fold into onboarding v3?")),
+        message(me.work, [people.daniel], 60 * 26, paragraphs(
+          "A few things, mostly around the first-run checklist.",
+          "I'll send over the interview notes by Thursday so you can pull quotes for the review.",
+        )),
+      ],
+    },
+    {
       id: "offsite",
       accountId: SHOWCASE_WORK_ACCOUNT,
       subject: "Offsite logistics — Lisbon, Oct 14–16",
@@ -627,5 +641,6 @@ export function buildShowcaseDataset(now: Date = new Date()): DemoDataset {
       { id: SHOWCASE_PERSONAL_ACCOUNT, accountId: SHOWCASE_PERSONAL_ACCOUNT, name: "Personal", primary: true, selected: true, writable: true },
     ],
     scheduleEvents: buildSchedule(now),
+    openPromises: [{ threadId: "interview-notes", excerpt: "I'll send over the interview notes by Thursday so you can pull quotes for the review." }],
   };
 }

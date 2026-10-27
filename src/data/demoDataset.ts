@@ -57,6 +57,8 @@ export type DemoDataset = {
   aiFixtures?: Record<string, { summary?: string; analysis?: ActionAnalysis; chat?: Omit<ThreadChatReply, "attachments"> }>;
   /** Optional fictional raster data URIs by attachment id, for reader thumbnails; absent from the default test dataset. */
   attachmentImages?: Record<string, string>;
+  /** Optional fictional promises for Today, each made in its thread's latest message; absent from the default test dataset. */
+  openPromises?: { threadId: string; excerpt: string }[];
 };
 
 /**
