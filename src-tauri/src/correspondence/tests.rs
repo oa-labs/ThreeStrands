@@ -990,6 +990,7 @@ mod prepare_failures {
     async fn every_non_permanent_prepare_failure_keeps_the_send_queued() {
         for make in [
             (|| ProviderError::ReauthenticationRequired("token revoked".into())) as fn() -> ProviderError,
+            || ProviderError::CertificateChanged("SMTP server".into()),
             || ProviderError::Authentication("bad token".into()),
             || ProviderError::RetryableServer("429".into()),
             || ProviderError::Other("dns".into()),
@@ -1021,6 +1022,20 @@ mod prepare_failures {
         service.send_due_item(&item, &provider, "you@example.com", "", unix_millis()).await.unwrap();
         let row = service.database.outbox().unwrap().remove(0);
         assert!(row.error.as_deref().unwrap().contains("Reconnect this account"), "{:?}", row.error);
+    }
+
+    #[tokio::test]
+    async fn a_changed_certificate_message_points_to_the_review_not_the_password() {
+        let service = service();
+        let item = ready_item(&service);
+        let provider = FakeSender {
+            behaviour: PrepareBehaviour::Fail(|| ProviderError::CertificateChanged("SMTP server".into())),
+        };
+        service.send_due_item(&item, &provider, "you@example.com", "", unix_millis()).await.unwrap();
+        let row = service.database.outbox().unwrap().remove(0);
+        let note = row.error.as_deref().unwrap();
+        assert!(note.contains("certificate changed"), "{note}");
+        assert!(!note.contains("password"), "{note}");
     }
 
     #[tokio::test]

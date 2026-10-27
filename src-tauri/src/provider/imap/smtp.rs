@@ -54,7 +54,8 @@ use tokio_rustls::client::TlsStream;
 use crate::provider::imap::policy;
 use crate::provider::imap::settings::SecurityMode;
 use crate::provider::imap::tls::{
-    CertificateInfo, CollectingCertVerifier, PinnedCertVerifier, Sha256Fingerprint,
+    certificate_change, certificate_change_in_io, CertificateInfo, CollectingCertVerifier,
+    PinnedCertVerifier, Sha256Fingerprint,
 };
 use crate::provider::imap::connection;
 use crate::provider::ProviderError;
@@ -116,6 +117,12 @@ async fn connect_smtp_tls_with_verifier(
     let server_name = rustls::pki_types::ServerName::try_from(host.to_string())
         .map_err(|e| ProviderError::InvalidOperation(format!("invalid SMTP server name: {e}")))?;
     let transport = |message: String| ProviderError::TransientTransport(message);
+    let handshake = |error: std::io::Error, step: &str| match certificate_change_in_io(&error) {
+        Some(change) => ProviderError::CertificateChanged(format!(
+            "SMTP server {host}:{port} ({change})"
+        )),
+        None => transport(format!("SMTP {step} handshake failed: {error}")),
+    };
 
     let tcp = TcpStream::connect((host, port))
         .await
@@ -126,7 +133,7 @@ async fn connect_smtp_tls_with_verifier(
             let tls = connector
                 .connect(server_name, tcp)
                 .await
-                .map_err(|e| transport(format!("SMTP TLS handshake failed: {e}")))?;
+                .map_err(|e| handshake(e, "TLS"))?;
             Box::new(tls)
         }
         SecurityMode::StartTls => {
@@ -137,7 +144,7 @@ async fn connect_smtp_tls_with_verifier(
             let tls = connector
                 .connect(server_name, plain)
                 .await
-                .map_err(|e| transport(format!("SMTP STARTTLS handshake failed: {e}")))?;
+                .map_err(|e| handshake(e, "STARTTLS"))?;
             Box::new(tls)
         }
     };
@@ -937,8 +944,9 @@ fn classify_rcpt_rejection(rcpt: &str, reply: &SmtpReply) -> ProviderError {
 
 /// Map a mail-send connect error to a [`ProviderError`] class. AUTH failure is
 /// the reauth class (like IMAP's `AUTHENTICATIONFAILED`); a missing STARTTLS,
-/// a TLS error (which includes a pin mismatch) and a timeout are all definite,
-/// transport-class failures — nothing was sent.
+/// a TLS error and a timeout are all definite, transport-class failures —
+/// nothing was sent. A pin mismatch is the certificate-changed class, which
+/// pauses the account for review instead of retrying.
 fn map_connect_error(e: &mail_send::Error) -> ProviderError {
     use mail_send::Error as E;
     match e {
@@ -955,12 +963,18 @@ fn map_connect_error(e: &mail_send::Error) -> ProviderError {
             "the SMTP server does not offer STARTTLS; refusing to send credentials in the clear"
                 .into(),
         ),
-        E::Tls(err) => ProviderError::TransientTransport(format!(
-            "SMTP TLS failed (certificate pin or handshake): {err}"
-        )),
-        E::Io(err) => {
-            ProviderError::TransientTransport(format!("could not reach the SMTP server: {err}"))
-        }
+        E::Tls(err) => match certificate_change(err) {
+            Some(change) => ProviderError::CertificateChanged(format!("SMTP server ({change})")),
+            None => ProviderError::TransientTransport(format!(
+                "SMTP TLS failed (certificate pin or handshake): {err}"
+            )),
+        },
+        E::Io(err) => match certificate_change_in_io(err) {
+            Some(change) => ProviderError::CertificateChanged(format!("SMTP server ({change})")),
+            None => {
+                ProviderError::TransientTransport(format!("could not reach the SMTP server: {err}"))
+            }
+        },
         E::Timeout => {
             ProviderError::TransientTransport("the SMTP server did not respond in time".into())
         }

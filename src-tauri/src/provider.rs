@@ -35,6 +35,11 @@ pub enum ProviderError {
     Authentication(String),
     #[error("credentials require reconnection: {0}")]
     ReauthenticationRequired(String),
+    /// A server the user pinned presented a different certificate. Like
+    /// [`Self::ReauthenticationRequired`] it pauses the account until the user
+    /// reviews and trusts the new certificate; it is never retried.
+    #[error("the server's certificate changed since it was trusted: {0}")]
+    CertificateChanged(String),
     #[error("the server rejected a retryable request: {0}")]
     RetryableServer(String),
     #[error("invalid operation: {0}")]
@@ -54,7 +59,10 @@ impl ProviderError {
     }
 
     pub fn requires_reauthentication(&self) -> bool {
-        matches!(self, Self::ReauthenticationRequired(_))
+        matches!(
+            self,
+            Self::ReauthenticationRequired(_) | Self::CertificateChanged(_)
+        )
     }
 }
 

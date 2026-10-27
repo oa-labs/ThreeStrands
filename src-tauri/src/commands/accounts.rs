@@ -631,6 +631,60 @@ pub(crate) fn get_imap_connection_settings(
     Ok(ImapConnectionSettings::from(&settings))
 }
 
+/// For each endpoint whose pinned certificate the server no longer presents,
+/// the certificate it presents now, so **Server Settings** can show it for
+/// review. `None` when the endpoint is unpinned, unchanged, or unreachable.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ImapCertificateChanges {
+    imap: Option<imap::CertificateProbe>,
+    smtp: Option<imap::CertificateProbe>,
+}
+
+/// The probed certificate when it differs from the pin for `host:port`.
+fn changed_certificate(
+    settings: &imap::ImapAccountSettings,
+    host: &str,
+    port: u16,
+    probe: Result<imap::CertificateProbe, crate::provider::ProviderError>,
+) -> Option<imap::CertificateProbe> {
+    let probe = probe.ok()?;
+    let presented = imap::parse_sha256_fingerprint(&probe.certificate.sha256_fingerprint).ok()?;
+    settings
+        .certificate_changed(host, port, &presented)
+        .then_some(probe)
+}
+
+/// Probe an IMAP account's pinned servers without logging in and report any
+/// whose certificate changed since the user trusted it. Unpinned endpoints are
+/// not contacted.
+#[tauri::command]
+pub(crate) async fn check_imap_certificate_changes(
+    account: String,
+    state: State<'_, AppState>,
+) -> AppResult<ImapCertificateChanges> {
+    let settings = imap_settings_or_reject(&state.database, &account)?;
+    let imap = match settings.pinned_for(&settings.imap_host, settings.imap_port) {
+        Some(_) => {
+            let probe =
+                imap::probe_imap_certificate(&settings.imap_host, settings.imap_port, settings.imap_security)
+                    .await;
+            changed_certificate(&settings, &settings.imap_host, settings.imap_port, probe)
+        }
+        None => None,
+    };
+    let smtp = match settings.pinned_for(&settings.smtp_host, settings.smtp_port) {
+        Some(_) => {
+            let probe =
+                imap::probe_smtp_certificate(&settings.smtp_host, settings.smtp_port, settings.smtp_security)
+                    .await;
+            changed_certificate(&settings, &settings.smtp_host, settings.smtp_port, probe)
+        }
+        None => None,
+    };
+    Ok(ImapCertificateChanges { imap, smtp })
+}
+
 /// The edited server settings for an existing IMAP account.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1266,6 +1320,39 @@ mod imap_setup_tests {
         let update = connection_update(serde_json::json!({ "imapPort": 1143 }));
         let merged = super::merge_imap_connection_update(settings, &update, None, None);
         assert!(merged.pinned_fingerprints.is_empty());
+    }
+
+    #[test]
+    fn only_a_reachable_pinned_server_with_a_different_certificate_is_reported() {
+        let database = Database::open_memory();
+        let request = imap_setup_request();
+        let pinned = super::imap::Sha256Fingerprint::from_bytes([1; 32]);
+        let rotated = super::imap::Sha256Fingerprint::from_bytes([3; 32]);
+        super::save_tested_imap_settings(&database, &request, Some(pinned), None).unwrap();
+        let settings = database.imap_account_settings(&request.email).unwrap().unwrap();
+        let probe = |fingerprint: super::imap::Sha256Fingerprint| {
+            Ok(super::imap::CertificateProbe {
+                certificate: super::imap::CertificateInfo {
+                    subject: "CN=127.0.0.1".into(),
+                    issuer: "CN=127.0.0.1".into(),
+                    sha256_fingerprint: fingerprint.to_hex(),
+                },
+                trusted_by_platform: false,
+            })
+        };
+        let changed = |host: &str, port: u16, result| {
+            super::changed_certificate(&settings, host, port, result).is_some()
+        };
+        assert!(changed("incoming.example.com", 993, probe(rotated)));
+        assert!(!changed("incoming.example.com", 993, probe(pinned)));
+        // The unpinned SMTP endpoint is never "changed".
+        assert!(!changed("outgoing.example.com", 587, probe(rotated)));
+        // An unreachable server is not evidence of a change.
+        assert!(!changed(
+            "incoming.example.com",
+            993,
+            Err(crate::provider::ProviderError::TransientTransport("refused".into()))
+        ));
     }
 
     #[test]

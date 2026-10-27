@@ -95,10 +95,15 @@ async fn upgrade_to_tls(
     // the hostname that is checked, so pass the configured host.
     let server_name = ServerName::try_from(config.host.clone())
         .map_err(|e| ProviderError::InvalidOperation(format!("invalid server name: {e}")))?;
-    connector
-        .connect(server_name, tcp)
-        .await
-        .map_err(|io| map_imap_error(&async_imap::error::Error::Io(io)))
+    connector.connect(server_name, tcp).await.map_err(|io| {
+        match super::tls::certificate_change_in_io(&io) {
+            Some(change) => ProviderError::CertificateChanged(format!(
+                "IMAP server {}:{} ({change})",
+                config.host, config.port
+            )),
+            None => map_imap_error(&async_imap::error::Error::Io(io)),
+        }
+    })
 }
 
 /// The outcome of a setup-time certificate probe: the certificate the server
@@ -552,11 +557,66 @@ mod tests {
             Ok(_) => panic!("a wrong pin must reject the live TLS handshake, never LOGIN"),
             Err(err) => err,
         };
-        // The handshake failure surfaces as transport (an IO/TLS error), never
-        // as a successful connection.
+        // The handshake failure surfaces as a certificate change, never as a
+        // successful connection.
         assert!(
-            matches!(err, ProviderError::TransientTransport(_)),
-            "wrong-pin rejection should be a transport error, got {err:?}"
+            matches!(err, ProviderError::CertificateChanged(_)),
+            "wrong-pin rejection should be a certificate change, got {err:?}"
         );
+    }
+
+    /// A local implicit-TLS server with a fresh self-signed certificate, its
+    /// fingerprint, and a log of whether any bytes arrived after the handshake.
+    async fn self_signed_server() -> (u16, Sha256Fingerprint, tokio::task::JoinHandle<bool>) {
+        use rustls::pki_types::PrivatePkcs8KeyDer;
+        use tokio::io::AsyncReadExt;
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let cert = rcgen::generate_simple_self_signed(vec!["127.0.0.1".into()]).unwrap();
+        let fingerprint = Sha256Fingerprint::of_certificate(cert.cert.der());
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![cert.cert.der().clone()],
+                PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()).into(),
+            )
+            .unwrap();
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let Ok(mut tls) = acceptor.accept(tcp).await else {
+                return false;
+            };
+            let mut byte = [0u8; 1];
+            matches!(tls.read(&mut byte).await, Ok(n) if n > 0)
+        });
+        (port, fingerprint, server)
+    }
+
+    #[tokio::test]
+    async fn a_changed_certificate_is_reported_as_such_before_login() {
+        let (port, actual, server) = self_signed_server().await;
+        let pinned = Sha256Fingerprint::from_bytes([0xAB; 32]);
+        let cfg = ConnectionConfig {
+            host: "127.0.0.1".into(),
+            port,
+            tls_mode: TlsMode::Implicit,
+            pinned_fingerprint: Some(pinned),
+        };
+        let err = match connect(&cfg, "user", "secret").await {
+            Ok(_) => panic!("a wrong pin must never connect"),
+            Err(err) => err,
+        };
+        match &err {
+            ProviderError::CertificateChanged(detail) => {
+                assert!(detail.contains(&format!("127.0.0.1:{port}")), "{detail}");
+                assert!(detail.contains(&actual.to_hex()), "{detail}");
+            }
+            other => panic!("expected CertificateChanged, got {other:?}"),
+        }
+        assert!(err.requires_reauthentication(), "the account pauses for review");
+        assert!(!err.retry_mutation(), "a changed certificate is never retried blindly");
+        assert!(!server.await.unwrap(), "no LOGIN bytes reached the server");
     }
 }

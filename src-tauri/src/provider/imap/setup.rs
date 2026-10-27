@@ -53,6 +53,11 @@ pub fn plain_language(error: &ProviderError) -> String {
              authentication, you may need an app-specific password."
                 .to_string()
         }
+        ProviderError::CertificateChanged(_) => {
+            "The server's security certificate has changed since you trusted it. Check the \
+             certificate below, and trust it only if you expected the change."
+                .to_string()
+        }
         ProviderError::TransientTransport(message) => {
             format!(
                 "Could not reach the server. Check the host, port, and that the port is not \
@@ -143,6 +148,10 @@ mod tests {
             .contains("over quota"));
         assert!(plain_language(&ProviderError::InvalidOperation("bad".into()))
             .contains("rejected the request"));
+        // A changed certificate is not reported as a password problem.
+        let changed = plain_language(&ProviderError::CertificateChanged("IMAP".into()));
+        assert!(changed.contains("certificate has changed"), "{changed}");
+        assert!(!changed.contains("password"), "{changed}");
     }
 
     // Optional live coverage of the IMAP half of "test and save" against the

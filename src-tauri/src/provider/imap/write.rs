@@ -903,6 +903,7 @@ pub(super) fn classified_partial_relocate_error(
         ProviderError::RetryableServer(_) => ProviderError::RetryableServer(text),
         ProviderError::Authentication(_) => ProviderError::Authentication(text),
         ProviderError::ReauthenticationRequired(_) => ProviderError::ReauthenticationRequired(text),
+        ProviderError::CertificateChanged(_) => ProviderError::CertificateChanged(text),
         _ => ProviderError::InvalidOperation(text),
     }
 }
@@ -1602,6 +1603,7 @@ fn no_sent_mailbox_error(mailbox: &str, cause: &ProviderError) -> ProviderError 
         ProviderError::ReauthenticationRequired(_) => {
             ProviderError::ReauthenticationRequired(text)
         }
+        ProviderError::CertificateChanged(_) => ProviderError::CertificateChanged(text),
         // Any other failure (a plain NO/BAD) is a permanent inability to reach
         // the Sent mailbox.
         _ => ProviderError::InvalidOperation(format!(

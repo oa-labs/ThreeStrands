@@ -939,6 +939,12 @@ impl Correspondence {
                 at,
                 "The mail server rejected the saved password. Reconnect this account and the message will be sent.",
             ),
+            ProviderError::CertificateChanged(_) => self.note_prepare_retry(
+                item,
+                owner,
+                at,
+                "The mail server's security certificate changed. Review it in Settings → Mail Accounts and the message will be sent.",
+            ),
             _ => self.note_prepare_retry(item, owner, at, "Can't reach the mail server. Will retry."),
         }
     }

@@ -163,6 +163,14 @@ impl ImapAccountSettings {
             .get(&host_port_key(host, port))
             .and_then(|hex| parse_sha256_fingerprint(hex).ok())
     }
+
+    /// Whether `host:port` has a pin and `presented` is a DIFFERENT
+    /// certificate. An unpinned endpoint never counts as changed: it verifies
+    /// against the platform roots instead.
+    pub fn certificate_changed(&self, host: &str, port: u16, presented: &Sha256Fingerprint) -> bool {
+        self.pinned_for(host, port)
+            .is_some_and(|pinned| &pinned != presented)
+    }
 }
 
 #[cfg(test)]
@@ -236,6 +244,22 @@ mod tests {
             .imap_account_settings("me@proton.me")
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn only_a_different_certificate_on_a_pinned_endpoint_counts_as_changed() {
+        let original = Sha256Fingerprint::from_bytes([0x11; 32]);
+        let rotated = Sha256Fingerprint::from_bytes([0x22; 32]);
+        let mut settings = sample();
+        // Unpinned: nothing to compare against.
+        assert!(!settings.certificate_changed("127.0.0.1", 1143, &rotated));
+        settings
+            .pinned_fingerprints
+            .insert(host_port_key("127.0.0.1", 1143), original.to_hex());
+        assert!(!settings.certificate_changed("127.0.0.1", 1143, &original));
+        assert!(settings.certificate_changed("127.0.0.1", 1143, &rotated));
+        // A pin belongs to exactly one host:port.
+        assert!(!settings.certificate_changed("127.0.0.1", 1025, &rotated));
     }
 
     #[test]

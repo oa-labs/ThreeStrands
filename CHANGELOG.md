@@ -23,6 +23,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ### Fixed
 - Emails with no visible recipients, such as Bcc-only messages, no longer show an empty “to” line.
 - **Draft Review** now shows a sparkle icon beside its heading instead of an empty gap.
+- When an IMAP mail server's security certificate changes after you trusted it, the account now pauses and asks you to review the new certificate in **Settings → Mail Accounts**, instead of retrying with a "Could not reach the server" message or asking for your password. Messages waiting to send say the same and go out once you trust the new certificate.
 - Moving the start date or time in **Edit event** now moves the end along with it, keeping the event’s duration. Changing the end date or time sets the duration for subsequent moves, including all-day events.
 - Pressing **Escape** after opening a calendar event from **Today** now returns you to **Today**, just as it does after opening an email.
 

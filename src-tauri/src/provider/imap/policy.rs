@@ -1220,7 +1220,7 @@ pub fn search_acquire_share(budget: usize, mailbox_count: usize) -> usize {
 // long a single pin survives before the sync releases it. Neither silently
 // drops data — the acquire path reports exactly how many over-cap UIDs it
 // refused ([`cap_search_pins`] returns the dropped count), and TTL release is
-// a comparison ([`search_pin_expired`]) after which the location simply
+// a comparison against [`search_pin_cutoff`] after which the location simply
 // follows normal window rules again.
 
 /// Most search pins ONE account may hold at once.
@@ -1273,14 +1273,14 @@ pub fn cap_search_pins(existing: usize, requested: usize) -> PinCapSelection {
     }
 }
 
-/// Whether a pin acquired at `pinned_at` (unix seconds) has EXPIRED at `now`
-/// and should be released: at least [`SEARCH_PIN_TTL`] seconds have elapsed.
-/// The boundary is inclusive — exactly at the TTL the pin is released. A clock
-/// that went backwards (`now < pinned_at`) is treated as not expired rather
-/// than panicking on the subtraction.
-#[cfg(test)]
-pub fn search_pin_expired(pinned_at: i64, now: i64) -> bool {
-    now.saturating_sub(pinned_at) >= SEARCH_PIN_TTL
+/// The newest `pinned_at` (unix seconds) that has EXPIRED at `now`: a pin is
+/// released once `pinned_at <= search_pin_cutoff(now)`, i.e. at least
+/// [`SEARCH_PIN_TTL`] seconds have elapsed. The boundary is inclusive —
+/// exactly at the TTL the pin is released. A pin stamped after `now` (a clock
+/// that went backwards) is never expired, and the subtraction saturates
+/// rather than overflowing.
+pub fn search_pin_cutoff(now: i64) -> i64 {
+    now.saturating_sub(SEARCH_PIN_TTL)
 }
 
 #[cfg(test)]
@@ -2338,15 +2338,18 @@ mod tests {
     #[test]
     fn search_pin_ttl_release_below_at_and_above_the_bound() {
         let pinned_at = 1_000_000i64;
+        let expired = |now: i64| pinned_at <= search_pin_cutoff(now);
         // Just inside the TTL (one second short): not yet expired.
-        assert!(!search_pin_expired(pinned_at, pinned_at + SEARCH_PIN_TTL - 1));
+        assert!(!expired(pinned_at + SEARCH_PIN_TTL - 1));
         // Exactly at the TTL: released (inclusive boundary).
-        assert!(search_pin_expired(pinned_at, pinned_at + SEARCH_PIN_TTL));
+        assert!(expired(pinned_at + SEARCH_PIN_TTL));
         // Past the TTL: released.
-        assert!(search_pin_expired(pinned_at, pinned_at + SEARCH_PIN_TTL + 1));
+        assert!(expired(pinned_at + SEARCH_PIN_TTL + 1));
         // Just acquired (zero elapsed): not expired.
-        assert!(!search_pin_expired(pinned_at, pinned_at));
-        // A clock that went backwards is treated as not expired, never a panic.
-        assert!(!search_pin_expired(pinned_at, pinned_at - 5));
+        assert!(!expired(pinned_at));
+        // A clock that went backwards is treated as not expired.
+        assert!(!expired(pinned_at - 5));
+        // An extreme clock value saturates instead of overflowing.
+        assert_eq!(search_pin_cutoff(i64::MIN), i64::MIN);
     }
 }

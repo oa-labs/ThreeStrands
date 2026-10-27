@@ -147,6 +147,11 @@ export function ImapServerSettings({
   );
 }
 
+function changedServers(changed: Record<Kind, boolean>): string {
+  if (changed.imap && changed.smtp) return "The incoming (IMAP) and outgoing (SMTP) servers'";
+  return changed.imap ? "The incoming (IMAP) server's" : "The outgoing (SMTP) server's";
+}
+
 function ServerEditor({
   account,
   settings,
@@ -174,7 +179,37 @@ function ServerEditor({
   const [certificates, setCertificates] = useState<Record<Kind, CertificateState | null>>({ imap: null, smtp: null });
   const [probing, setProbing] = useState<Kind | null>(null);
   const [probeError, setProbeError] = useState<string | null>(null);
+  const [changed, setChanged] = useState<Record<Kind, boolean>>({ imap: false, smtp: false });
   const passwordHint = useId();
+
+  // A pinned server that now presents a different certificate is shown for
+  // review straight away, so the user trusts the change deliberately instead
+  // of retyping a password that was never the problem.
+  useEffect(() => {
+    let cancelled = false;
+    mailClient.checkImapCertificateChanges(account).then((changes) => {
+      if (cancelled) return;
+      const found = { imap: changes.imap !== null, smtp: changes.smtp !== null };
+      setChanged(found);
+      setCertificates((current) => {
+        const next = { ...current };
+        for (const kind of ["imap", "smtp"] as const) {
+          const probe = changes[kind];
+          // Never replace a certificate the user is already reviewing.
+          if (probe && !current[kind]) {
+            const { host, port, security } = initial[kind];
+            next[kind] = { endpoint: endpointKey(host, port, security), probe, pin: null };
+          }
+        }
+        return next;
+      });
+    }).catch(() => {
+      // An unreachable server is not evidence of a change; saving reports it.
+    });
+    return () => { cancelled = true; };
+    // `initial` is derived from `settings`, which is fixed while the editor is open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account]);
 
   const key = (kind: Kind) => endpointKey(values[kind].host, values[kind].port, values[kind].security);
   // A trust decision belongs only to the endpoint that was probed.
@@ -229,7 +264,12 @@ function ServerEditor({
         });
       }}
     >
-      {needsReconnect ? (
+      {changed.imap || changed.smtp ? (
+        <p className="imap-server-reconnect-notice">
+          {changedServers(changed)} security certificate has changed since you trusted it. Compare the new
+          fingerprint below with the one your server reports, and trust it only if you expected the change.
+        </p>
+      ) : needsReconnect ? (
         <p className="imap-server-reconnect-notice">
           ThreeStrands couldn&apos;t sign in to this account. Enter your current password, check the server
           details, then test the connection.
@@ -258,7 +298,7 @@ function ServerEditor({
           value={values[kind]}
           disabled={disabled}
           certificate={trust(kind)}
-          pinnedNow={kind === "imap" ? settings.imapCertificatePinned : settings.smtpCertificatePinned}
+          pinnedNow={!changed[kind] && (kind === "imap" ? settings.imapCertificatePinned : settings.smtpCertificatePinned)}
           unchanged={key(kind) === endpointKey(initial[kind].host, initial[kind].port, initial[kind].security)}
           onChange={(patch) => update(kind, patch)}
           onProbe={() => void probe(kind)}

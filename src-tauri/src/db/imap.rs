@@ -1106,8 +1106,8 @@ impl ImapStateStore {
 
     /// Every pin in one `(mailbox, uidvalidity)` whose `pinned_at` is at or
     /// before `cutoff` — the TTL-expired pins the sync round releases. The
-    /// caller computes `cutoff = now - SEARCH_PIN_TTL` (via
-    /// [`policy::search_pin_expired`]) and releases each returned UID so its
+    /// caller computes the cutoff with
+    /// [`policy::search_pin_cutoff`] and releases each returned UID so its
     /// location follows normal window rules again. Returned ascending.
     pub fn expired_pins(&self, mailbox: &str, uidvalidity: i64, cutoff: i64) -> DbResult<Vec<u32>> {
         self.database.with_connection(|connection| {

@@ -83,6 +83,7 @@ import type {
 } from "../domain";
 import type {
   ImapDiscoveryResult,
+  ImapCertificateChanges,
   ImapCertificateProbe,
   ImapSecurityMode,
   ImapSetupRequest,
@@ -293,6 +294,8 @@ export interface MailClient extends CorrespondenceClient {
   resetImapSentCopyDetection(account: string): Promise<void>;
   /** An IMAP account's non-secret server settings. Refuses a non-IMAP account. */
   getImapConnectionSettings(account: string): Promise<ImapConnectionSettings>;
+  /** Probe an IMAP account's pinned servers (no login) and return any certificate that changed since it was trusted. */
+  checkImapCertificateChanges(account: string): Promise<ImapCertificateChanges>;
   /** Test and save edited server settings or a new password; marks the account connected and restarts sync. */
   updateImapConnection(update: ImapConnectionUpdate): Promise<Account>;
   removeAccount(email: string): Promise<void>;
@@ -482,6 +485,7 @@ const tauriClient: MailClient = {
   setImapServerSavesSent: (account, enabled) => complete("set_imap_server_saves_sent", { account, enabled }),
   resetImapSentCopyDetection: (account) => complete("reset_imap_sent_copy_detection", { account }),
   getImapConnectionSettings: (account) => complete("get_imap_connection_settings", { account }),
+  checkImapCertificateChanges: (account) => complete("check_imap_certificate_changes", { account }),
   updateImapConnection: (update) => complete("update_imap_connection", { update }),
   removeAccount: (email) => complete("remove_account", { email }),
   reconnectAccount: (email) => complete("reconnect_account", { email }),

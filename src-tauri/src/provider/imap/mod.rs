@@ -49,6 +49,8 @@ mod write;
 pub use connection::{CertificateProbe, ConnectionConfig, ImapConnectionManager};
 pub use session::ImapSession;
 pub use tls::{parse_sha256_fingerprint, Sha256Fingerprint};
+#[cfg(test)]
+pub use tls::CertificateInfo;
 
 // Account-setup surface, consumed by the tauri commands: autodiscovery, the
 // non-secret settings, and the test-and-save / cert-probe orchestration.

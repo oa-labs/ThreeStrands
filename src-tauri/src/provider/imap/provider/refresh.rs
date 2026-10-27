@@ -441,7 +441,7 @@ impl ImapProvider {
         let has_expired_pins = !uidvalidity_changed
             && !self
                 .store
-                .expired_pins(mailbox, server_uidvalidity, now - policy::SEARCH_PIN_TTL)
+                .expired_pins(mailbox, server_uidvalidity, policy::search_pin_cutoff(now))
                 .map_err(db_err)?
                 .is_empty();
         let sweep_due = match stored {
@@ -543,8 +543,7 @@ impl ImapProvider {
             }
             std::collections::BTreeSet::new()
         } else {
-            let now_secs = now;
-            let cutoff = now_secs - policy::SEARCH_PIN_TTL;
+            let cutoff = policy::search_pin_cutoff(now);
             let expired: std::collections::BTreeSet<u32> = self
                 .store
                 .expired_pins(mailbox, server_uidvalidity, cutoff)

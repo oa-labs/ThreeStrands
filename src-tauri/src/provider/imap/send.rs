@@ -1156,7 +1156,8 @@ mod provider_level_tests {
             settings,
         });
         let err = prepare_err(provider.prepare_delivery().await);
-        assert!(matches!(err, ProviderError::TransientTransport(_)), "{err:?}");
+        assert!(matches!(err, ProviderError::CertificateChanged(_)), "{err:?}");
+        assert!(err.requires_reauthentication(), "a changed certificate pauses the account");
         // Nothing authenticated.
         assert!(!srv.saw("AUTH"));
     }

@@ -32,6 +32,7 @@ import type {
   Goal,
   ImapMailboxMapping,
   ImapSendingOptions,
+  ImapCertificateChanges,
   ImapConnectionSettings,
   SendingIdentity,
   Label,
@@ -1313,6 +1314,10 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         smtpHost: "127.0.0.1", smtpPort: 1025, smtpSecurity: "start_tls", smtpUsername: account,
         imapCertificatePinned: true, smtpCertificatePinned: true,
       };
+    },
+    async checkImapCertificateChanges(): Promise<ImapCertificateChanges> {
+      // The browser preview's local servers never rotate their certificates.
+      return { imap: null, smtp: null };
     },
     async updateImapConnection(update) {
       const account = accounts.find((candidate) => candidate.email === update.email);

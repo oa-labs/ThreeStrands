@@ -1012,6 +1012,12 @@ export type ImapCertificateProbe = {
   trustedByPlatform: boolean;
 };
 
+/** For each pinned server whose certificate changed since it was trusted, the certificate it presents now. */
+export type ImapCertificateChanges = {
+  imap: ImapCertificateProbe | null;
+  smtp: ImapCertificateProbe | null;
+};
+
 /** One of the app's system mailbox roles discovery maps a server mailbox onto. Mirrors the Rust `MailboxRole`. */
 export type ImapMailboxRole = "sent" | "archive" | "drafts" | "trash" | "junk" | "all";
 

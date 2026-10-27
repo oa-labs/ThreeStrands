@@ -26,7 +26,13 @@ const account: Account = {
 
 beforeEach(() => {
   vi.spyOn(mailClient, "getImapConnectionSettings").mockResolvedValue(settings);
+  vi.spyOn(mailClient, "checkImapCertificateChanges").mockResolvedValue({ imap: null, smtp: null });
 });
+
+const rotated = {
+  certificate: { subject: "CN=127.0.0.1", issuer: "CN=127.0.0.1", sha256Fingerprint: "CC:DD" },
+  trustedByPlatform: false,
+};
 
 afterEach(() => {
   cleanup();
@@ -98,6 +104,44 @@ describe("ImapServerSettings", () => {
     expect(save).toBeEnabled();
     await act(async () => { fireEvent.submit(form); });
     await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ imapPinnedFingerprint: "AA:BB", smtpPinnedFingerprint: null })));
+  });
+
+  it("shows a changed certificate for review instead of asking for the password", async () => {
+    vi.spyOn(mailClient, "checkImapCertificateChanges").mockResolvedValue({ imap: rotated, smtp: null });
+    const update = vi.spyOn(mailClient, "updateImapConnection").mockResolvedValue(account);
+    render(<ImapServerSettings account="me@proton.me" needsReconnect />);
+    expect(await screen.findByText(/incoming \(IMAP\) server's security certificate has changed/)).toBeInTheDocument();
+    expect(screen.queryByText(/couldn't sign in to this account/)).not.toBeInTheDocument();
+    const form = screen.getByRole("button", { name: "Test and Save" }).closest("form")!;
+    const incoming = within(form).getByRole("group", { name: "Incoming Mail (IMAP)" });
+    // The old pin is no longer described as in use for the changed server...
+    expect(incoming).not.toHaveTextContent("Using the certificate you trusted for this server.");
+    // ...while the unchanged SMTP server still is.
+    expect(within(form).getByRole("group", { name: "Outgoing Mail (SMTP)" }))
+      .toHaveTextContent("Using the certificate you trusted for this server.");
+    expect(within(form).getByLabelText("IMAP Certificate")).toHaveTextContent("CC:DD");
+    // Nothing is sent until the new certificate is trusted deliberately.
+    const save = within(form).getByRole("button", { name: "Test and Save" });
+    expect(save).toBeDisabled();
+    await act(async () => { fireEvent.click(within(form).getByRole("button", { name: /Trust This IMAP Certificate/ })); });
+    expect(save).toBeEnabled();
+    await act(async () => { fireEvent.submit(form); });
+    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ imapPinnedFingerprint: "CC:DD", smtpPinnedFingerprint: null })));
+  });
+
+  it("names both servers when both certificates changed", async () => {
+    vi.spyOn(mailClient, "checkImapCertificateChanges").mockResolvedValue({ imap: rotated, smtp: rotated });
+    render(<ImapServerSettings account="me@proton.me" needsReconnect={false} />);
+    await openEditor();
+    expect(await screen.findByText(/incoming \(IMAP\) and outgoing \(SMTP\) servers' security certificate/)).toBeInTheDocument();
+  });
+
+  it("keeps the password explanation when the certificate check cannot reach the server", async () => {
+    vi.spyOn(mailClient, "checkImapCertificateChanges").mockRejectedValue(new Error("unreachable"));
+    render(<ImapServerSettings account="me@proton.me" needsReconnect />);
+    expect(await screen.findByText(/couldn't sign in to this account/)).toBeInTheDocument();
+    expect(screen.queryByText(/security certificate has changed/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("opens the editor with an explanation when the account needs reconnecting", async () => {

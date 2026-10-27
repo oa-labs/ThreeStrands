@@ -92,6 +92,48 @@ pub fn parse_sha256_fingerprint(s: &str) -> Result<Sha256Fingerprint, String> {
     Ok(Sha256Fingerprint(out))
 }
 
+/// A pinned server presented a different leaf certificate than the one the
+/// user trusted. Carried inside the rustls handshake error so the connection
+/// layers can report it as its own outcome instead of a network failure.
+#[derive(Debug)]
+pub struct CertificateChanged {
+    pub pinned: Sha256Fingerprint,
+    pub presented: Sha256Fingerprint,
+}
+
+impl std::fmt::Display for CertificateChanged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "certificate fingerprint mismatch: pinned {} got {}",
+            self.pinned.to_hex(),
+            self.presented.to_hex()
+        )
+    }
+}
+
+impl std::error::Error for CertificateChanged {}
+
+/// The [`CertificateChanged`] inside a rustls handshake error, if that is why
+/// the handshake failed.
+pub fn certificate_change(error: &TlsError) -> Option<&CertificateChanged> {
+    match error {
+        TlsError::InvalidCertificate(rustls::CertificateError::Other(other)) => {
+            other.0.downcast_ref::<CertificateChanged>()
+        }
+        _ => None,
+    }
+}
+
+/// [`certificate_change`] for the `io::Error` tokio-rustls wraps a handshake
+/// failure in.
+pub fn certificate_change_in_io(error: &std::io::Error) -> Option<&CertificateChanged> {
+    error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<TlsError>())
+        .and_then(certificate_change)
+}
+
 /// A `ServerCertVerifier` that trusts a leaf certificate iff its SHA-256
 /// matches a pinned fingerprint, and otherwise defers to normal WebPKI
 /// verification against the platform roots.
@@ -164,10 +206,11 @@ impl ServerCertVerifier for PinnedCertVerifier {
                 if pin.ct_eq(&got) {
                     Ok(ServerCertVerified::assertion())
                 } else {
-                    Err(TlsError::General(format!(
-                        "certificate fingerprint mismatch: pinned {} got {}",
-                        pin.to_hex(),
-                        got.to_hex(),
+                    Err(TlsError::InvalidCertificate(rustls::CertificateError::Other(
+                        rustls::OtherError(Arc::new(CertificateChanged {
+                            pinned: pin,
+                            presented: got,
+                        })),
                     )))
                 }
             }
@@ -477,10 +520,15 @@ mod tests {
         let wrong = Sha256Fingerprint::from_bytes([0xAA; 32]);
         let verifier = PinnedCertVerifier::pinned(wrong);
         let err = verify(&verifier, &leaf).unwrap_err();
-        assert!(
-            format!("{err}").contains("fingerprint mismatch"),
-            "expected a fingerprint-mismatch rejection, got: {err}"
-        );
+        let change = certificate_change(&err).expect("a typed certificate change");
+        assert_eq!(change.pinned, wrong);
+        assert_eq!(change.presented, Sha256Fingerprint::of_certificate(&leaf));
+        // The same error, wrapped the way tokio-rustls reports a handshake
+        // failure, is still recognised.
+        let wrapped = std::io::Error::new(std::io::ErrorKind::InvalidData, err);
+        assert!(certificate_change_in_io(&wrapped).is_some());
+        // Any other TLS failure is not a certificate change.
+        assert!(certificate_change(&TlsError::General("handshake".into())).is_none());
     }
 
     #[test]

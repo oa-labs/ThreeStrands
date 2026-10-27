@@ -1451,6 +1451,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::accounts::discover_imap_settings,
         commands::accounts::probe_imap_certificate,
         commands::accounts::probe_smtp_certificate,
+        commands::accounts::check_imap_certificate_changes,
         commands::accounts::test_and_save_imap_account,
         commands::accounts::discover_imap_mailboxes,
         commands::accounts::commit_imap_mailbox_mapping,

@@ -441,9 +441,11 @@ async fn a_wrong_pin_fails_before_auth_in_both_modes() {
         .await;
         let fail = res.err().expect("wrong pin must fail connect");
         assert_eq!(fail.phase, Phase::Prepare);
+        // A changed certificate pauses the account for review rather than
+        // retrying as if the network were down.
         assert!(
-            matches!(fail.error, ProviderError::TransientTransport(_)),
-            "{implicit} wrong pin is transport-class, got {:?}",
+            matches!(fail.error, ProviderError::CertificateChanged(_)),
+            "{implicit} wrong pin is a certificate change, got {:?}",
             fail.error
         );
         // No AUTH bytes ever reached the server.
