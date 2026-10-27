@@ -194,7 +194,7 @@ export const MessageCard = memo(function MessageCard({
     <div className="message-header-details">
       <div className="message-sender-row">
         <strong><MessageAddress address={message.sender} displayName={senderDisplayName} own={ownEmails} /></strong>
-        {trust ? <TrustBadge report={trust} onShowLink={showTrustLink} /> : null}
+        {trust ? <TrustBadge messageId={message.id} report={trust} onShowLink={showTrustLink} /> : null}
         {queuedItem ? null : (
           <div className="message-header-actions">
             <HoverTooltip label="Reply" placement="bottom">

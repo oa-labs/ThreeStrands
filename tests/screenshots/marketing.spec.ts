@@ -81,8 +81,8 @@ const scenes: Scene[] = [
       await page.keyboard.press("g");
       await page.keyboard.press("a");
       await openThread(page, /Please confirm your billing details/);
-      const trust = page.getByRole("region", { name: "Be careful", exact: true });
-      await expect(trust.getByRole("heading", { name: "Be careful", exact: true })).toBeVisible();
+      await page.getByRole("button", { name: /^Be careful:/ }).click();
+      const trust = page.getByRole("group", { name: "Sender details: Be careful", exact: true });
       await expect(trust.getByRole("button", { name: "Show link", exact: true }).first()).toBeVisible();
       await trust.getByRole("button", { name: /^Details/ }).click();
       await expect(trust.getByText(/cloudline-payments.example/).first()).toBeVisible();

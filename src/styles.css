@@ -1114,6 +1114,7 @@ kbd {
 .message-trust-headline { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .message-trust-card { padding: var(--space-2) 0; }
 .message-trust-card > .context-trust-summary { display: flex; padding: var(--space-1) var(--context-row-inset); }
+.message-trust-card > .context-sender-feedback { margin-top: var(--space-1); }
 /* The strongest warnings sit above the body in the shared warning notice. */
 .message-trust-banner { margin-bottom: var(--space-3); font-size: var(--text-secondary); }
 .message-trust-banner > svg { flex: 0 0 auto; margin-top: var(--space-0-5); }
@@ -2393,7 +2394,6 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 /* Trust: a one-word verdict in the heading, then the tricks found, then Details folded below. */
 .context-trust-summary { display:inline-flex; align-items:center; gap:var(--space-1); color:var(--muted); font-size:var(--text-meta); font-weight:var(--weight-medium); }
 .context-trust-careful { color:var(--warning); }
-.context-trust-warning .context-section-header h3 { color:var(--warning); }
 .context-trust-known { color:var(--success); }
 .context-trust-details { margin-top:var(--space-1); }
 .context-trust-details-toggle { display:flex; align-items:center; width:100%; min-width:0; padding:var(--space-0-5) var(--context-row-inset); border:0; border-radius:var(--radius-sm); color:var(--muted); background:transparent; font:inherit; font-size:var(--text-meta); text-align:left; cursor:pointer; }

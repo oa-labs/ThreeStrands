@@ -13,10 +13,11 @@ const TRUST_CARD_CLOSE_DELAY_MS = 150;
  * The trust verdict beside the sender's name. A known sender gets a quiet
  * shield; a message that warns gets its first warning in words, unless the
  * banner above the body already says it, when the icon alone shows. Hovering
- * previews the same rows as the Trust section, and clicking keeps them open
- * until the user clicks again, presses Escape, or moves focus away.
+ * shows every row and the folded Details, and clicking keeps them open until
+ * the user clicks again, presses Escape, or moves focus away. A warning's
+ * details are the only place for them, so they also offer This is legitimate.
  */
-export function TrustBadge({ report, onShowLink }: { report: TrustReport; onShowLink?(link: TrustLink): void }) {
+export function TrustBadge({ messageId, report, onShowLink }: { messageId: string; report: TrustReport; onShowLink?(link: TrustLink): void }) {
   const [hovered, setHovered] = useState(false);
   const [pinned, setPinned] = useState(false);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
@@ -116,6 +117,7 @@ export function TrustBadge({ report, onShowLink }: { report: TrustReport; onShow
           </div>
           {report.rows.map((finding) => trustRow(finding, onShowLink ? (link) => { close(); onShowLink(link); } : undefined))}
           <TrustDetails details={report.details} />
+          {careful && report.feedback ? <SenderFeedback key={messageId} messageId={messageId} feedback={report.feedback} /> : null}
         </div>,
         document.body,
       ) : null}

@@ -272,17 +272,15 @@ export function SenderFeedback({ messageId, feedback, compact = false }: { messa
 }
 
 /**
- * Whether the latest message from someone else can be trusted. The section
- * is titled Be careful when anything warns, and Sender checks for bulk mail
- * with nothing to warn about. A known sender gets no section: the reader's
- * shield beside their name already offers the same details. Rows give the
- * concrete tricks, such as a display name borrowed from a contact, a
- * look-alike domain or subject word, a link that hides where it goes, or a risky attachment,
- * and then the sender's history with the user; link rows can show their
- * link in the message. Sender checks, the sites links open, and tracking
- * images fold under Details. Bulk mail from anyone but a known sender always
- * shows the section; other conversations only when something warns. Links are read only from the part shown
- * before folded quoted history; `prior` is the conversation text before the
+ * Sender checks for the latest message from someone else when nothing warns:
+ * a remembered confirmation to forget, a request whose Reply-To may need a
+ * confirmation, or bulk mail from anyone but a known sender. Warnings live
+ * in the reader, where the badge beside the sender and the banner above the
+ * body name them and the badge's details offer This is legitimate; a known
+ * sender's shield offers its details the same way. Rows give the sender's
+ * history with the user; sender checks, the sites links open, and tracking
+ * images fold under Details. Links are read only from the part shown before
+ * folded quoted history; `prior` is the conversation text before the
  * message, as the reader folds it.
  */
 export function TrustSection({ message, subject, bulk, prior, onShowLink }: {
@@ -293,17 +291,16 @@ export function TrustSection({ message, subject, bulk, prior, onShowLink }: {
   onShowLink?(link: TrustLink): void;
 }) {
   const report = useTrustReport({ message, subject, bulk, prior });
-  if (!report) return null;
+  if (!report || report.summary === "careful") return null;
   if (report.rows.length === 0 && report.details.length === 0) return null;
   if (!report.feedback?.relevant && (report.summary === "known" || (!bulk && !report.summary))) return null;
-  const title = report.summary === "careful" ? "Be careful" : "Sender checks";
   return (
     // The id keeps the collapse state the section had under its earlier Trust title.
     <ContextSection
       id="trust"
-      className={report.summary === "careful" ? "context-trust context-trust-warning" : "context-trust"}
-      title={title}
-      label={title}
+      className="context-trust"
+      title="Sender checks"
+      label="Sender checks"
       limit={report.rows.length}
       rows={report.rows.map((finding) => trustRow(finding, onShowLink))}
       closing={<><TrustDetails key={message.id} details={report.details} />{report.feedback ? <SenderFeedback key={message.id} messageId={message.id} feedback={report.feedback} /> : null}</>}

@@ -102,15 +102,13 @@ ThreeStrands checks each message for common email tricks, entirely on your compu
 - A small gray shield marks a **Known sender**: someone you write to or have saved as a contact, whose email is verified as coming from them. It is not a promise that every message is safe.
 - An amber warning names what looks wrong, such as a familiar name used by a new address, a lookalike domain, a subject line that disguises words with look-alike letters, a misleading link, or a risky attachment from someone you have not written to.
 
-Hover over the shield or warning to see the sender details, or click it to keep them open. The most serious warnings (a borrowed name, a lookalike address or link, or a risky attachment) also appear above the message itself.
+Hover over the shield or warning to see every finding and the sender details, or click it to keep them open. The most serious warnings (a borrowed name, a lookalike address or link, or a risky attachment) also appear above the message itself, and the warning beside the sender's name then shows just its icon. For newsletters and other bulk mail with nothing to warn about, the side panel shows a **Sender checks** section with the same details.
 
-When something looks wrong, the side panel shows a **Be careful** section with every finding. For newsletters and other bulk mail, a **Sender checks** section shows the same details even when nothing looks wrong.
-
-If a warning is about mail you expected, such as a colleague writing from a new address, choose **This is legitimate**, in that section or in the warning above the message when it's about a borrowed name. ThreeStrands remembers that sending address and its link destinations, so matching verified mail gets a quieter assessment. Changes in how the mail is delivered and other security concerns still warn. Confirmations sync to your other devices for the same mail account; choose **Forget confirmation** to undo one.
+If a warning is about mail you expected, such as a colleague writing from a new address, choose **This is legitimate** in the warning's details, or in the warning above the message when it's about a borrowed name. ThreeStrands remembers that sending address and its link destinations, so matching verified mail gets a quieter assessment. Changes in how the mail is delivered and other security concerns still warn. Confirmations sync to your other devices for the same mail account; choose **Forget confirmation** in the side panel's **Sender checks** section to undo one.
 
 Choose **Show link** to find the link in the message. **Details** expands the mail server’s sender checks, the sites links open, and tracking images. Links in folded quoted history are left out of these warnings. Remote images remain blocked until you allow them, subject to your privacy settings.
 
-<ts-shot scene="trust" alt="The Be careful section explains a misleading link and offers a Show link action."></ts-shot>
+<ts-shot scene="trust" alt="The warning's details explain a misleading link and offer a Show link action."></ts-shot>
 
 Risky attachments, including programs, macro-enabled Office files, disk images, attached web pages, and disguised filenames such as invoice.pdf.exe, show a warning and reason before opening. They are never previewed.
 

@@ -377,9 +377,13 @@ describe("MessageCard", () => {
         patterns = [{ id: "feedback", senderEmail: "ada@example.com", replyTo: "person@customer.example", linkOrigins: [], authenticated: true, sourceMessageId: message.id, confirmedAt: "2026-10-26T12:00:00Z" }];
       });
       render(<><MessageCard message={message} isExpanded {...stableProps} subject="Hello" /><TrustSection message={message} subject="Hello" bulk={false} /></>);
-      await screen.findByRole("button", { name: /^Be careful: Replies go elsewhere/ });
-      fireEvent.click(screen.getByRole("button", { name: "This is legitimate" }));
-      await screen.findByText("You confirmed this email is legitimate");
+      fireEvent.click(await screen.findByRole("button", { name: /^Be careful: Replies go elsewhere/ }));
+      // The side panel leaves the warning to the reader until it is confirmed.
+      expect(screen.queryByRole("region", { name: "Sender checks" })).not.toBeInTheDocument();
+      const card = screen.getByRole("group", { name: "Sender details: Be careful" });
+      expect(card).toHaveTextContent("Remembers this sending address and link destinations for person@customer.example");
+      fireEvent.click(within(card).getByRole("button", { name: "This is legitimate" }));
+      expect(await screen.findByRole("region", { name: "Sender checks" })).toHaveTextContent("You confirmed this email is legitimate");
       await waitFor(() => expect(screen.queryByRole("button", { name: /^Be careful:/ })).not.toBeInTheDocument());
       expect(screen.queryByRole("button", { name: "Known sender. Show sender details" })).not.toBeInTheDocument();
     });
@@ -388,9 +392,9 @@ describe("MessageCard", () => {
       Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: {} });
       const stop = vi.fn(); vi.mocked(listen).mockResolvedValue(stop);
       const { familiarity } = reads({ ...stranger, deliveryPatterns: [] }, { ...verified, replyTo: "person@customer.example" });
-      const { unmount } = render(<TrustSection message={message} subject="Hello" bulk={false} />);
+      const { unmount } = render(<><MessageCard message={message} isExpanded {...stableProps} subject="Hello" /><TrustSection message={message} subject="Hello" bulk={false} /></>);
       try {
-        await screen.findByRole("button", { name: "This is legitimate" });
+        await screen.findByRole("button", { name: /^Be careful: Replies go elsewhere/ });
         await waitFor(() => expect(listen).toHaveBeenCalledWith("replicated-sync-status", expect.any(Function)));
         const refresh = vi.mocked(listen).mock.calls.at(-1)![1] as () => void;
         familiarity.mockResolvedValue({ ...stranger, deliveryPatterns: [{ id: "feedback", senderEmail: "ada@example.com", replyTo: "person@customer.example", linkOrigins: [], authenticated: true, sourceMessageId: message.id, confirmedAt: "2026-10-26T12:00:00Z" }] });
@@ -398,7 +402,7 @@ describe("MessageCard", () => {
         await screen.findByRole("button", { name: "Forget confirmation" });
         familiarity.mockResolvedValue({ ...stranger, deliveryPatterns: [] });
         await act(async () => { refresh(); });
-        await screen.findByRole("button", { name: "This is legitimate" });
+        await screen.findByRole("button", { name: /^Be careful: Replies go elsewhere/ });
         expect(screen.queryByRole("button", { name: "Forget confirmation" })).not.toBeInTheDocument();
         unmount(); expect(stop).toHaveBeenCalled();
       } finally {
@@ -493,6 +497,64 @@ describe("MessageCard", () => {
       expect(screen.queryByRole("group", { name: "Sender details: Be careful" })).not.toBeInTheDocument();
     });
 
+    it("shows feedback failures in the warning's details, permits retry, and never claims an unsuccessful save worked", async () => {
+      reads({ ...stranger, deliveryPatterns: [] }, { ...verified, replyTo: "person@customer.example" });
+      let fail!: (reason: Error) => void;
+      vi.spyOn(mailClient, "confirmSenderDelivery").mockImplementation(() => new Promise<void>((_resolve, reject) => { fail = reject; }));
+      render(<MessageCard message={message} isExpanded {...stableProps} subject="Hello" />);
+      fireEvent.click(await screen.findByRole("button", { name: /^Be careful: Replies go elsewhere/ }));
+      const card = screen.getByRole("group", { name: "Sender details: Be careful" });
+      fireEvent.click(within(card).getByRole("button", { name: "This is legitimate" }));
+      expect(within(card).getByRole("button", { name: "Saving…" })).toBeDisabled();
+      await act(async () => { fail(new Error("Database is locked")); });
+      expect(await within(card).findByRole("alert")).toHaveTextContent("Database is locked");
+      expect(within(card).getByRole("button", { name: "This is legitimate" })).toBeEnabled();
+      expect(screen.queryByText("You confirmed this email is legitimate")).not.toBeInTheDocument();
+    });
+
+    it("folds the sender checks under Details in the warning's details", async () => {
+      reads(stranger);
+      render(<MessageCard message={{ ...message, bodyHtml: lookalikeLink }} isExpanded {...stableProps} subject="Invoice" />);
+      fireEvent.click(await screen.findByRole("button", { name: /^Be careful: Link looks like partner\.example/ }));
+      const card = screen.getByRole("group", { name: "Sender details: Be careful" });
+      const toggle = within(card).getByRole("button", { name: /^Details/ });
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      expect(toggle).toHaveTextContent("Sender checks · 1 site");
+      expect(within(card).queryByText("Sender verified")).not.toBeVisible();
+      fireEvent.click(toggle);
+      expect(within(card).getByText("Sender verified")).toBeVisible();
+      // A link warning has nothing to confirm without a requester to remember.
+      expect(within(card).queryByRole("button", { name: "This is legitimate" })).not.toBeInTheDocument();
+    });
+
+    it("does not warn about links in the quoted history the reader folds away", async () => {
+      const signature = 'Ada Lovelace<br>Partnerships, Example Co<br><a href="https://scan.relay.example/r?u=partner.example">partner.example</a>';
+      const reply: Message = { ...message, bodyHtml: `Fixed now.<br><br>${signature}<br><br>On Mon, Jane Doe wrote:<blockquote>Is the feed fixed? <a href="https://scan.relay.example/r?u=feed.example">feed.example</a></blockquote>` };
+      const earlier = (bodyHtml: string): Message => ({ ...message, id: "m0", sender: "Jane Doe <jane@partner.example>", bodyHtml, bodyText: "" });
+      // The thread showed Ada's signature before, so the reader folds it with the quote.
+      const folded = earlier(`<p>Can you check the feed?</p><p>${signature}</p>`);
+      const { trust } = reads(stranger);
+      render(<MessageCard message={reply} isExpanded {...stableProps} index={1} threadText={threadTextIndex([folded, reply])} subject="Feed" />);
+      await waitFor(() => expect(trust).toHaveBeenCalled());
+      await act(async () => {});
+      expect(document.querySelector(".message-trust")).toBeNull();
+      cleanup();
+
+      const plain = earlier("<p>Can you check the feed?</p>");
+      render(<MessageCard message={reply} isExpanded {...stableProps} index={1} threadText={threadTextIndex([plain, reply])} subject="Feed" />);
+      fireEvent.click(await screen.findByRole("button", { name: /^Be careful:/ }));
+      const card = screen.getByRole("group", { name: "Sender details: Be careful" });
+      expect(card).toHaveTextContent("Shows partner.example, opens relay.example");
+      expect(card).not.toHaveTextContent("feed.example");
+    });
+
+    it("still reads the headers when the sender's history cannot be read", async () => {
+      vi.spyOn(mailClient, "messageTrust").mockResolvedValue({ ...verified, replyTo: "desk@elsewhere.example" });
+      vi.spyOn(mailClient, "senderFamiliarity").mockRejectedValue(new Error("locked"));
+      render(<MessageCard message={message} isExpanded {...stableProps} subject="Hello" />);
+      expect(await screen.findByRole("button", { name: /^Be careful: Replies go elsewhere/ })).toBeInTheDocument();
+    });
+
     it("shows nothing for a stranger with nothing to warn about", async () => {
       const { familiarity } = reads(stranger);
       render(<MessageCard message={message} isExpanded {...stableProps} subject="Hello" />);
@@ -510,7 +572,7 @@ describe("MessageCard", () => {
       expect(trust).not.toHaveBeenCalled();
     });
 
-    it("agrees with the Trust section and reads the message once for both", async () => {
+    it("leaves a warning to the reader and reads the message once for it and the Trust section", async () => {
       const { trust, familiarity } = reads(stranger);
       const suspect = { ...message, bodyHtml: lookalikeLink };
       render(<>
@@ -518,7 +580,7 @@ describe("MessageCard", () => {
         <TrustSection message={suspect} subject="Invoice" bulk={false} />
       </>);
       await screen.findByRole("button", { name: /^Be careful: Link looks like partner\.example/ });
-      expect(await screen.findByText("Be careful")).toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: /^(Be careful|Sender checks)$/ })).not.toBeInTheDocument();
       expect(trust).toHaveBeenCalledTimes(1);
       expect(familiarity).toHaveBeenCalledTimes(1);
     });

@@ -27,7 +27,7 @@ function renderPanel(overrides:Partial<Parameters<typeof ContextPanel>[0]>={}){
   return render(<ContextPanel detail={detail} accounts={[account]} onOpenThread={vi.fn()} {...overrides}/>);
 }
 
-/** The trust section's titles: Be careful when something warns, Sender checks for quiet bulk mail. */
+/** The trust section's title, and the one it had when it also listed warnings. */
 const TRUST_TITLES=/^(Be careful|Sender checks)$/;
 
 describe("ContextPanel",()=>{
@@ -613,7 +613,7 @@ describe("ContextPanel",()=>{
       expect(sender.onMute).toHaveBeenCalledWith({accountId:"you@example.com",email:news,name:"Launch News"},[]);
     });
 
-    it("leaves the sender section out of personal mail and shows Be careful there only when something needs a look",async()=>{
+    it("leaves the sender section out of personal mail, and leaves warnings to the reader",async()=>{
       vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
       renderPanel({sender:actions()});
       await personLoaded(bob.id);
@@ -625,29 +625,25 @@ describe("ContextPanel",()=>{
 
       vi.mocked(mailClient.messageTrust).mockResolvedValue({...verified,fromDomain:"example.com",replyTo:"desk@elsewhere.example"});
       renderPanel({sender:actions()});
-      const trust=await screen.findByRole("region",{name:"Be careful"});
-      expect(trust).toHaveTextContent("Replies go elsewhere");
-      expect(trust).toHaveTextContent("Reply-To is desk@elsewhere.example");
+      await waitFor(()=>expect(mailClient.senderFamiliarity).toHaveBeenCalled());
+      await act(async()=>{});
+      expect(screen.queryByRole("region",{name:TRUST_TITLES})).not.toBeInTheDocument();
+      expect(screen.queryByText("Replies go elsewhere")).not.toBeInTheDocument();
     });
 
-    it("confirms a legitimate request, retains a place to forget it, and restores the warning when forgotten",async()=>{
+    it("retains a place to forget a confirmed request, and hands the warning back to the reader when forgotten",async()=>{
       const pattern:SenderDeliveryPattern={id:"feedback-1",senderEmail:"bob@example.com",replyTo:"requester@customer.example",linkOrigins:[],authenticated:true,sourceMessageId:"2",confirmedAt:"2026-10-26T12:00:00Z"};
-      let patterns:SenderDeliveryPattern[]=[];
+      let patterns:SenderDeliveryPattern[]=[pattern];
       vi.mocked(mailClient.messageTrust).mockResolvedValue({...verified,fromDomain:"example.com",replyTo:pattern.replyTo});
       vi.mocked(mailClient.senderFamiliarity).mockImplementation(async()=>({...unfamiliar,deliveryPatterns:patterns}));
-      vi.mocked(mailClient.confirmSenderDelivery).mockImplementation(async()=>{patterns=[pattern];});
       vi.mocked(mailClient.forgetSenderDelivery).mockImplementation(async()=>{patterns=[];});
       renderPanel();
-      const trust=await screen.findByRole("region",{name:"Be careful"});
-      fireEvent.click(within(trust).getByRole("button",{name:"This is legitimate"}));
-      expect(await screen.findByText("You confirmed this email is legitimate")).toBeVisible();
-      expect(mailClient.confirmSenderDelivery).toHaveBeenCalledWith("2",[]);
-      expect(screen.queryByRole("region",{name:"Be careful"})).not.toBeInTheDocument();
-      const checks=screen.getByRole("region",{name:"Sender checks"});
+      const checks=await screen.findByRole("region",{name:"Sender checks"});
+      expect(checks).toHaveTextContent("You confirmed this email is legitimate");
       expect(checks).toHaveTextContent("requester@customer.example for this mail account");
       expect(checks).toHaveTextContent("Security checks still apply.");
       fireEvent.click(within(checks).getByRole("button",{name:"Forget confirmation"}));
-      expect(await screen.findByRole("region",{name:"Be careful"})).toHaveTextContent("Replies go elsewhere");
+      await waitFor(()=>expect(screen.queryByRole("region",{name:TRUST_TITLES})).not.toBeInTheDocument());
       expect(mailClient.forgetSenderDelivery).toHaveBeenCalledWith("feedback-1");
     });
 
@@ -659,60 +655,16 @@ describe("ContextPanel",()=>{
       expect(within(trust).getByRole("button",{name:"This is legitimate"})).toBeVisible();
     });
 
-    it("shows feedback failures, permits retry, and never claims an unsuccessful save worked",async()=>{
-      vi.mocked(mailClient.messageTrust).mockResolvedValue({...verified,fromDomain:"example.com",replyTo:"requester@customer.example"});
-      vi.mocked(mailClient.senderFamiliarity).mockResolvedValue({...unfamiliar,deliveryPatterns:[]});
-      let fail!:(reason:Error)=>void;
-      vi.mocked(mailClient.confirmSenderDelivery).mockImplementation(()=>new Promise<void>((_resolve,reject)=>{fail=reject;}));
-      renderPanel();
-      fireEvent.click(await screen.findByRole("button",{name:"This is legitimate"}));
-      expect(screen.getByRole("button",{name:"Saving…"})).toBeDisabled();
-      await act(async()=>{fail(new Error("Database is locked"));});
-      expect(await screen.findByRole("alert")).toHaveTextContent("Database is locked");
-      expect(screen.getByRole("region",{name:"Be careful"})).toBeInTheDocument();
-      expect(screen.queryByText("You confirmed this email is legitimate")).not.toBeInTheDocument();
-      expect(screen.getByRole("button",{name:"This is legitimate"})).toBeEnabled();
-    });
-
-    it("does not warn about links in the quoted history the reader folds away",async()=>{
-      vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
-      vi.mocked(mailClient.messageTrust).mockResolvedValue({...verified,fromDomain:"example.com"});
-      const signature='Bob Lee<br>Partnerships, Example Co<br><a href="https://scan.relay.example/r?u=partner.example">partner.example</a>';
-      const reply=`Fixed now.<br><br>${signature}<br><br>On Mon, Jane Doe wrote:<blockquote>Is the feed fixed? <a href="https://scan.relay.example/r?u=feed.example">feed.example</a></blockquote>`;
-      const thread=(earlier:string)=>({...detail,messages:[{...detail.messages[0],bodyHtml:earlier},{...detail.messages[1],bodyHtml:reply}]}) as unknown as ThreadDetail;
-      // The thread showed Bob's signature before, so the reader folds it with the quote.
-      renderPanel({detail:thread(`<p>Can you check the feed?</p><p>${signature}</p>`)});
-      await personLoaded(bob.id);
-      await waitFor(()=>expect(mailClient.messageTrust).toHaveBeenCalledWith("2"));
-      expect(screen.queryByRole("region",{name:TRUST_TITLES})).not.toBeInTheDocument();
-      cleanup();
-
-      renderPanel({detail:thread("<p>Can you check the feed?</p>")});
-      const trust=await screen.findByRole("region",{name:"Be careful"});
-      expect(trust).toHaveTextContent("Shows partner.example, opens relay.example");
-      expect(trust).not.toHaveTextContent("feed.example");
-    });
-
-    it("titles a warning Be careful, shows the link it is about, and folds the sender checks under Details",async()=>{
+    it("leaves a warning, its link, and its details to the reader",async()=>{
       vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
       vi.mocked(mailClient.messageTrust).mockResolvedValue({...verified,fromDomain:"example.com"});
       vi.mocked(mailClient.senderFamiliarity).mockResolvedValue({...unfamiliar,knownDomains:["partner.example"]});
-      const href="https://partnr.example/pay";
-      const onShowLink=vi.fn();
-      renderPanel({onShowLink,detail:{...detail,messages:[detail.messages[0],{...detail.messages[1],bodyHtml:`<p>Please <a href="${href}">pay the invoice</a>.</p>`}]} as unknown as ThreadDetail});
-      const trust=await screen.findByRole("region",{name:"Be careful"});
-      expect(mailClient.senderFamiliarity).toHaveBeenCalledWith("2","bob@example.com","Bob Lee");
-      expect(within(trust).getByText("Be careful")).toBeInTheDocument();
-      expect(trust).toHaveTextContent("Link looks like partner.example");
-      fireEvent.click(within(trust).getByRole("button",{name:"Show link"}));
-      expect(onShowLink).toHaveBeenCalledWith("thread-1","2",{href,text:"pay the invoice"});
-
-      const toggle=within(trust).getByRole("button",{name:/^Details/});
-      expect(toggle).toHaveAttribute("aria-expanded","false");
-      expect(toggle).toHaveTextContent("Sender checks · 1 site");
-      expect(within(trust).queryByText("Sender verified")).not.toBeVisible();
-      fireEvent.click(toggle);
-      expect(within(trust).getByText("Sender verified")).toBeVisible();
+      renderPanel({detail:{...detail,messages:[detail.messages[0],{...detail.messages[1],bodyHtml:'<p>Please <a href="https://partnr.example/pay">pay the invoice</a>.</p>'}]} as unknown as ThreadDetail});
+      await personLoaded(bob.id);
+      await waitFor(()=>expect(mailClient.senderFamiliarity).toHaveBeenCalledWith("2","bob@example.com","Bob Lee"));
+      await act(async()=>{});
+      expect(screen.queryByRole("region",{name:TRUST_TITLES})).not.toBeInTheDocument();
+      expect(screen.queryByText("Link looks like partner.example")).not.toBeInTheDocument();
     });
 
     it("leaves a verified sender the user writes to to the reader's shield, in personal and bulk mail",async()=>{
@@ -741,15 +693,6 @@ describe("ContextPanel",()=>{
       await personLoaded(bob.id);
       await waitFor(()=>expect(mailClient.senderFamiliarity).toHaveBeenCalled());
       expect(screen.queryByRole("region",{name:TRUST_TITLES})).not.toBeInTheDocument();
-    });
-
-    it("still reads the headers when the sender's history cannot be read",async()=>{
-      vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
-      vi.mocked(mailClient.messageTrust).mockResolvedValue({...verified,fromDomain:"example.com",replyTo:"desk@elsewhere.example"});
-      vi.mocked(mailClient.senderFamiliarity).mockRejectedValue(new Error("locked"));
-      renderPanel();
-      const trust=await screen.findByRole("region",{name:"Be careful"});
-      expect(trust).toHaveTextContent("Replies go elsewhere");
     });
   });
 });
