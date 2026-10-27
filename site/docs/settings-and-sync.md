@@ -12,11 +12,11 @@ Use an encrypted export to set up a new computer or keep a backup.
 2. Enter an **Export Password** of at least eight characters, confirm it, and click **Export Encrypted Settings**.
 3. On the other computer, enter the **Backup File Password** and click **Choose Encrypted Settings File**.
 
-The file includes your preferences, account list, Split Inboxes, retention setting, snippets, signatures and their defaults, muted senders, and saved contacts and groups. It never includes mail, sign-in tokens, passwords, or API keys, and lets you choose which mail accounts to set up on this computer. Accounts not connected here appear in **Settings → Mail Accounts → On Your Other Devices**; choose **Set Up Here** to connect only the ones you want.
+The file includes your preferences, account list, Split Inboxes, retention setting, snippets, signatures and their defaults, each account's **Writing Profile**, muted senders, and saved contacts and groups. It never includes mail, sign-in tokens, passwords, or API keys, and lets you choose which mail accounts to set up on this computer. Accounts not connected here appear in **Settings → Mail Accounts → On Your Other Devices**; choose **Set Up Here** to connect only the ones you want.
 
 ## Replicated Sync
 
-Replicated Sync keeps tasks, goals, saved contacts and groups, snippets, signatures and their defaults, muted senders, Split Inboxes, account details, and preferences the same across your computers. Drafts reach your other computers through your mail account's Drafts instead. It is end-to-end encrypted, and it uses storage you choose rather than a ThreeStrands server.
+Replicated Sync keeps tasks, goals, saved contacts and groups, snippets, signatures and their defaults, **Writing Profile**, muted senders, **This is legitimate** confirmations, Split Inboxes, account details, and preferences the same across your computers. **Appearance** settings stay on each computer, so you can use larger text on a laptop than on a big monitor. Drafts reach your other computers through your mail account's Drafts instead. It is end-to-end encrypted, and it uses storage you choose rather than a ThreeStrands server.
 
 1. Open **Settings → Replicated Sync** and check **Enable replicated sync**.
 2. **Add a connector** — choose where encrypted data is kept:

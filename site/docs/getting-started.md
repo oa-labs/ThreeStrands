@@ -38,6 +38,8 @@ Proton Mail works through [Proton Mail Bridge](https://proton.me/mail/bridge), w
 2. Copy the host (usually `127.0.0.1`), both ports, the security mode, the username, and the Bridge password into ThreeStrands. Use the Bridge password, not your Proton password.
 3. Bridge uses its own certificate. Click **Check IMAP Certificate** (and **Check SMTP Certificate**), review it, and choose **Trust This IMAP Certificate for This Server** before **Test and Save**.
 
+If a server's certificate changes after you trusted it, the account pauses and asks you to review the new certificate in **Settings → Mail Accounts**. Messages waiting to send go out once you trust it.
+
 ## Make Your Accounts Recognizable
 
 In **Settings → Mail Accounts**, each account has:

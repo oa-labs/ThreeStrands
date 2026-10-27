@@ -15,6 +15,8 @@ Single-letter shortcuts work whenever you're reading and no text field has focus
 
 Archiving shows a *Conversation archived* notice with **Undo**. Press <kbd>Shift + e</kbd> (**Mark Not Done**) to bring a conversation back to the inbox.
 
+Reopen a long email you were partway through, such as a newsletter, and it picks up where you left off. Your place is kept on this computer for two days, and the email opens at the top again once you've read to the end or a new reply arrives.
+
 ## Everyday Actions
 
 | Action | Shortcut |
@@ -65,11 +67,15 @@ You can narrow a search with `from:`, `to:`, `subject:`, `before:` and `after:` 
 
 - <kbd>0</kbd> opens Today, and <kbd>1</kbd>–<kbd>5</kbd> switch between Mail, Calendar, Tasks, Contacts, and Files.
 - <kbd>g</kbd> then <kbd>i</kbd>, <kbd>a</kbd>, <kbd>t</kbd>, <kbd>d</kbd>, <kbd>o</kbd>, or <kbd>s</kbd> goes to Inbox, All Mail, Trash, Drafts, Outbox, or Sent.
-- <kbd>Escape</kbd> goes back after you jump from one conversation to another, for example from a task or a contact.
+- <kbd>Escape</kbd> goes back after you jump from one conversation to another, for example from a task or a contact, and returns to Today after you open an email or event from it.
 
 ## Today
 
-Press <kbd>0</kbd> for your day at a glance. Today lists your agenda when a calendar is connected, with finished and declined events dimmed, a **Now** line before what is still ahead, the first few events **Tomorrow**, and a **Join** button for your next online meeting. Unread mail is sorted into **Invitations** (meeting requests to answer), **Needs a reply** (written to you and at most two others by someone you write to), **From people**, and **Updates** (newsletters, notifications, and no-reply senders). **Open Inbox**, **Open Calendar**, and **Open Tasks** at the foot of each column go to the full view. Tasks that are overdue or due today come first, followed by your other open tasks and people due for a **Keep in Touch** check-in. Mail and tasks follow the account you have selected; the agenda always includes every calendar you show in **Calendar**. To open the app on Today, choose **Today** under **Settings → Appearance → Start With**.
+Press <kbd>0</kbd> for your day at a glance. A line under the date sums up the rest of your day: how many meetings you have, when you're free until, when you're double-booked, and when your last meeting ends.
+
+Today lists your agenda when a calendar is connected, with finished and declined events dimmed, a **Now** line before what is still ahead, the first few events **Tomorrow**, and a **Join** button for your next online meeting. Overlapping meetings are marked, with **Recorded** when the invite says the session will be recorded, so you know which one is safer to miss. Unread mail is sorted into **Invitations** (meeting requests to answer), **Needs a reply** (written to you and at most two others by someone you write to), **From people**, and **Updates** (newsletters, notifications, and no-reply senders). A message from someone you're meeting later today says so, such as "Also in your 2:00 pm meeting". **Open Inbox**, **Open Calendar**, and **Open Tasks** at the foot of each column go to the full view. Tasks that are overdue or due today come first, followed by your other open tasks and people due for a **Keep in Touch** check-in. Mail and tasks follow the account you have selected; the agenda always includes every calendar you show in **Calendar**. To open the app on Today, choose **Today** under **Settings → Appearance → Start With**.
+
+**You said you would** lists promises from your own sent mail in the last two weeks, like "I'll send the report over", when you haven't written to that person since. Click one to open the conversation, turn it into a task, or dismiss it. These are found on your computer, without AI.
 
 <ts-shot scene="today" alt="Today with the day's agenda and tomorrow's first events, unread mail grouped by Needs a reply, From people, and Updates, and tasks due beside Keep in Touch reminders."></ts-shot>
 
@@ -99,6 +105,8 @@ ThreeStrands checks each message for common email tricks, entirely on your compu
 Hover over the shield or warning to see the sender details, or click it to keep them open. The most serious warnings (a borrowed name, a lookalike address or link, or a risky attachment) also appear above the message itself.
 
 When something looks wrong, the side panel shows a **Be careful** section with every finding. For newsletters and other bulk mail, a **Sender checks** section shows the same details even when nothing looks wrong.
+
+If a warning is about mail you expected, such as a colleague writing from a new address, choose **This is legitimate**, in that section or in the warning above the message when it's about a borrowed name. ThreeStrands remembers that sending address and its link destinations, so matching verified mail gets a quieter assessment. Changes in how the mail is delivered and other security concerns still warn. Confirmations sync to your other devices for the same mail account; choose **Forget confirmation** to undo one.
 
 Choose **Show link** to find the link in the message. **Details** expands the mail server’s sender checks, the sites links open, and tracking images. Links in folded quoted history are left out of these warnings. Remote images remain blocked until you allow them, subject to your privacy settings.
 

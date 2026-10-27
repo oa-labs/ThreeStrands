@@ -8,6 +8,7 @@ summary: Turn conversations into actions, follow-ups, and waiting-fors, then lin
 
 - **From a conversation** — press <kbd>d</kbd>, or click **+ Add task** in the conversation's Tasks section. The task stays linked to the conversation.
 - **On its own** — press <kbd>3</kbd> for Tasks and click **Add Task**.
+- **From a promise** — **Today** lists things you said you would do in your sent mail under **You said you would**; turn one into a task from there.
 
 Each task has a **Type**:
 
@@ -32,6 +33,8 @@ Press <kbd>v</kbd> to switch between **List** and **Board**. The board has To Do
 | Move between board columns | <kbd>]</kbd> / <kbd>[</kbd> |
 
 Task details save automatically as you edit them.
+
+To set aside time for a task, drag it from **Open tasks** in **Calendar** onto the week. See [Book Time for Tasks](calendar.html#book-time-for-tasks).
 
 ## Goals
 

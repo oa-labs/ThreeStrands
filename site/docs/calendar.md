@@ -11,6 +11,9 @@ Calendar connects separately from mail and works alongside Gmail or IMAP account
 1. Open **Settings → Calendar Accounts**.
 2. Click **Connect Calendar** and sign in to Google in your browser.
 3. Under **Calendars shown in the sidebar**, choose which calendars to show and pick their colors.
+4. Under **Calendars used for availability**, choose which calendars count when ThreeStrands looks for free time. Primary calendars are used by default, and holiday calendars are always included when available. This doesn't change which calendars are shown.
+
+With two or more calendar accounts, move them up or down with the arrows. The **Calendar** sidebar follows the same order.
 
 Google Calendar is the only calendar provider today. CalDAV is not yet supported.
 
@@ -23,6 +26,8 @@ Press <kbd>t</kbd> to switch the column on the right of your mail between the co
 ## Find Times Beside a Conversation
 
 Click **Find Times** at the top of the conversation side panel, beside **Get Brief**, while reading or writing a message. ThreeStrands offers open times from your working hours, spread across the coming days. With an AI provider set up and **Writing** on under **Settings → AI Provider → Show AI In**, Find Times first reads the conversation and your draft, so a request to meet next week shows times next week, with a line saying why. Type a change such as "Thursday or Friday afternoon" and click **Adjust** to search again. If a brief already suggested a meeting for that conversation, Find Times starts from the dates it found; click **Search Again** to read the conversation afresh. Meeting suggestions and answers from **Ask About This Conversation** show the same times and choices. Choose **Mornings** or **Afternoons** to narrow them, **Later** to look at the following week, or **Show More** for more times on the same days, then click **Draft Reply With These Times** while reading to start a reply, or **Insert These Times** while composing. Meeting suggestions in a conversation offer the same choices. Calendar searches also work without AI, using your working hours for the coming days.
+
+While you write to people at your own work domain, **Include coworkers** lists them under Find Times. Check the ones who should be free too, and ThreeStrands checks their primary calendars as well as yours. If a calendar can't be checked, a note names the calendar and account, and **Calendar check details** says why.
 
 <ts-shot scene="find-times" alt="Find Times shows open calendar slots beside the conversation, with selected times ready for a reply."></ts-shot>
 
@@ -40,7 +45,9 @@ Drag across the grid or click **New Event**. Add a title, times, location, the c
 
 When an email announces several events, **Get Brief** and **Ask About This Conversation** can offer each as an event at its stated time. Review each suggestion before adding it. A dated event without a time is added as all-day.
 
-Open an event you manage to edit or delete it. Guests are notified of changes. Event details show who has answered: the guest count adds a tally such as "2 going, 1 not going", and each guest is marked **Going**, **Not going**, **Maybe**, or **Awaiting**.
+Click **Find a time** while creating or editing an event with guests to see each guest's busy times beside yours for the week, with **Suggested times** inside your working hours. Guests whose calendars can't be checked are marked **Availability unknown**.
+
+Open an event you manage to edit or delete it. Moving the start moves the end with it, keeping the event's length. Choose **Reschedule** on a meeting you organize to open the editor with guests' availability already showing. Guests are notified of changes. Event details show who has answered: the guest count adds a tally such as "2 going, 1 not going", and each guest is marked **Going**, **Not going**, **Maybe**, or **Awaiting**.
 
 ## Book Time for Tasks
 

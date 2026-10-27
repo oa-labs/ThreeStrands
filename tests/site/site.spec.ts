@@ -195,7 +195,8 @@ test.describe("feature claims", () => {
     await expect(ai).toContainText("You review and apply tasks, calendar events, contact changes, and drafts. You choose when to send.");
     await expect(ai).toContainText("estimated costs");
     await expect(ai).toContainText("optional fast model");
-    await expect(ai).toContainText("preview of the subject, written text, and optional goal");
+    await expect(ai).toContainText("subject, written text, and any goal you add when you click Review");
+    await expect(ai).toContainText("What was sent shows exactly what went to your provider");
     await expect(ai).toContainText("Recipient fields, separately stored quoted history, and attachments are excluded");
     await expect(ai).toContainText("Review suggested wording before applying it; revisions can be undone");
     for (const scene of ["thread-assist", "thread-chat"]) {
