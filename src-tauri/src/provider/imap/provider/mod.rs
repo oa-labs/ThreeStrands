@@ -19,7 +19,7 @@
 //! 2. UIDVALIDITY reset? Drop INBOX locations (bodies survive — keyed by the
 //!    stable id), treat the whole mailbox as new.
 //! 3. New mail: `UID FETCH` identity pass (reuse [`fetch_identity`]), derive
-//!    sticky ids, cache bodies with [`ensure_body`].
+//!    sticky ids, cache bodies with [`resolve_and_cache_body`].
 //! 4. Flag sweep over the window; deletion check via `UID SEARCH ALL`. Without
 //!    CONDSTORE these run EVERY poll (a flag change moves neither UIDNEXT nor
 //!    MESSAGES, so there is no gate to skip them for INBOX).

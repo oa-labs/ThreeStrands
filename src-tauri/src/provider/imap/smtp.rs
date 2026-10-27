@@ -291,15 +291,6 @@ pub async fn probe_smtp_certificate(
         })?
 }
 
-/// Pick a sensible default SMTP port: 465 implicit / 587 STARTTLS.
-#[cfg(test)]
-pub fn default_smtp_port(security: SecurityMode) -> u16 {
-    match security {
-        SecurityMode::ImplicitTls => 465,
-        SecurityMode::StartTls => 587,
-    }
-}
-
 // ===========================================================================
 // Input safety: address validation, body framing, reply sanitising.
 // ===========================================================================

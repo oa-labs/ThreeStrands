@@ -39,7 +39,7 @@
 //!   confirms the change took (the Slice 0 finding: a flag outside
 //!   `PERMANENTFLAGS` can be silently ignored). A mismatch is a typed error,
 //!   not a false success.
-//! * **A crash-honest relocate.** [`relocate_uids`] picks `UID MOVE`, else
+//! * **A crash-honest relocate.** [`relocate_uids_recording`] picks `UID MOVE`, else
 //!   `UID COPY` + `\Deleted` + `UID EXPUNGE` (UIDPLUS only), else reports the
 //!   operation unsupported. If the copy succeeded but the delete/expunge step
 //!   failed it reports exactly that partial state (the message now exists in
@@ -644,12 +644,6 @@ impl WriteCaps {
         !flag.starts_with('\\') && self.permits_new_keywords
     }
 
-    /// Whether an atomic server-side `UID MOVE` is available.
-    #[cfg(test)]
-    pub fn can_move(&self) -> bool {
-        self.has_move
-    }
-
     /// Whether a targeted `UID EXPUNGE` of named UIDs is available (UIDPLUS).
     /// Without it the layer never expunges, because a plain `EXPUNGE` would
     /// remove other clients' `\Deleted` mail.
@@ -685,7 +679,7 @@ impl WriteCaps {
 /// expressible.
 ///
 /// Holds the (already-encoded) destination arg too would be wrong — this guards
-/// the SOURCE mailbox a write acts in; `relocate_uids` encodes the destination
+/// the SOURCE mailbox a write acts in; `relocate_uids_recording` quotes the destination
 /// separately. The `caps` captured here come from THIS writable select, so a
 /// flag or strategy decision is made against the mailbox actually selected.
 #[derive(Clone, Debug)]
@@ -875,7 +869,8 @@ fn flags_equal(a: &str, b: &str) -> bool {
 // Relocate helper
 // ===========================================================================
 
-/// The result of a [`relocate_uids`] call that at least copied the messages.
+/// The result of a [`relocate_uids_recording`] call that at least copied the
+/// messages.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct RelocateOutcome {
     /// The `COPYUID` source->dest mapping when the server returned one; `None`
@@ -884,120 +879,9 @@ pub struct RelocateOutcome {
     pub copyuid: Option<CopyUid>,
 }
 
-/// Move a UID set from the guarded source mailbox to `dest`, choosing the safe
-/// strategy from capabilities:
-///
-/// * `UID MOVE` when `MOVE` is advertised (atomic).
-/// * else `UID COPY` + `UID STORE +FLAGS.SILENT (\Deleted)` on the SOURCE +
-///   `UID EXPUNGE <set>` (UIDPLUS only).
-/// * else [`RelocationStrategy::Unsupported`] → a permanent `InvalidOperation`
-///   with the plain-language reason.
-///
-/// CRASH-HONEST: in the copy+delete+expunge path, if the COPY succeeded but the
-/// `\Deleted` store or the `UID EXPUNGE` failed, the error names exactly that
-/// partial state — the message now exists in BOTH the source and the
-/// destination — so Phase 3's retry can be made idempotent. It never expunges
-/// a UID the caller did not name (the expunge targets the SAME set). A
-/// `TRYCREATE` on the COPY/MOVE surfaces as [`WriteError::TryCreate`], not a
-/// retryable transport error.
-///
-/// `dest` is the destination's persisted LIST wire name, quoted through
-/// [`build_wire_mailbox_arg`] without a second modified UTF-7 encoding.
-/// `uids` is compressed/batched through the one audited builder.
-#[cfg(test)]
-pub async fn relocate_uids(
-    session: &mut dyn ImapWriteSession,
-    ctx: &WriteContext,
-    uids: &[u32],
-    dest: &str,
-) -> WriteResult<RelocateOutcome> {
-    if uids.is_empty() {
-        return Ok(RelocateOutcome::default());
-    }
-    let dest_arg = build_wire_mailbox_arg(dest).map_err(WriteError::Provider)?;
-
-    match ctx.caps.relocation_strategy() {
-        RelocationStrategy::Move => {
-            let mut merged = CopyUid::default();
-            let mut saw_copyuid = false;
-            for batch in build_uid_set_batches(uids) {
-                let outcome = session.uid_move(&batch, &dest_arg).await?;
-                if let Some(copyuid) = outcome.copyuid {
-                    merge_copyuid(&mut merged, copyuid);
-                    saw_copyuid = true;
-                }
-            }
-            Ok(RelocateOutcome {
-                copyuid: saw_copyuid.then_some(merged),
-            })
-        }
-        RelocationStrategy::CopyDeleteExpunge => {
-            require_targeted_delete(ctx).map_err(WriteError::Provider)?;
-            let mut merged = CopyUid::default();
-            let mut saw_copyuid = false;
-            for batch_uids in uid_batches(uids) {
-                let batch = build_uid_set(&batch_uids).expect("non-empty batch");
-                // 1. COPY. A TRYCREATE here is the typed outcome (dest absent).
-                let outcome = session.uid_copy(&batch, &dest_arg).await?;
-                if let Some(copyuid) = outcome.copyuid {
-                    merge_copyuid(&mut merged, copyuid);
-                    saw_copyuid = true;
-                }
-                // 2. Mark the SOURCE copies \Deleted. The COPY already
-                // succeeded, so a failure now is a PARTIAL state.
-                let deleted = vec!["\\Deleted".to_string()];
-                if let Err(error) =
-                    verified_store(session, ctx, &batch_uids, StoreOp::Add, &deleted).await
-                {
-                    return Err(WriteError::Provider(partial_relocate_error(
-                        &ctx.mailbox,
-                        dest,
-                        &batch,
-                        "COPY succeeded but marking the source copies \\Deleted failed",
-                        &error,
-                    )));
-                }
-                // 3. Expunge ONLY the named UIDs (UIDPLUS). Still partial if it
-                // fails: the copies exist in both places and the source ones
-                // are flagged \Deleted.
-                if let Err(error) = verified_expunge(session, &batch).await {
-                    return Err(WriteError::Provider(partial_relocate_error(
-                        &ctx.mailbox,
-                        dest,
-                        &batch,
-                        "COPY and \\Deleted store succeeded but UID EXPUNGE of the source failed",
-                        &error,
-                    )));
-                }
-            }
-            Ok(RelocateOutcome {
-                copyuid: saw_copyuid.then_some(merged),
-            })
-        }
-        RelocationStrategy::Unsupported(reason) => {
-            Err(WriteError::Provider(ProviderError::InvalidOperation(reason)))
-        }
-    }
-}
-
 /// Build the typed partial-relocate error, naming the two mailboxes, the UID
-/// set left in both places, and the underlying failure. Phase 3 uses this to
-/// make the retry idempotent (the message now has two locations).
-#[cfg(test)]
-fn partial_relocate_error(
-    source: &str,
-    dest: &str,
-    uid_set: &str,
-    stage: &str,
-    cause: &ProviderError,
-) -> ProviderError {
-    ProviderError::InvalidOperation(format!(
-        "partial relocate from {source:?} to {dest:?} for UIDs {uid_set}: {stage}; the messages \
-         now exist in BOTH mailboxes — a retry must be idempotent. Cause: {cause}"
-    ))
-}
-
-/// Like [`partial_relocate_error`], but keeps the CAUSE's retry class. The
+/// set left in both places, and the underlying failure, while keeping the
+/// CAUSE's retry class. The
 /// recording relocate backs the system-move path, whose idempotent retry only
 /// runs if the engine actually retries; wrapping a dropped connection or an
 /// `UNAVAILABLE` as a permanent `InvalidOperation` would roll the mutation
@@ -1055,11 +939,12 @@ pub struct RelocateFailure {
 /// far and the error to propagate.
 pub type RecordingRelocateResult = Result<RelocateOutcome, RelocateFailure>;
 
-/// Move a UID set from the guarded source mailbox to `dest`, exactly like
-/// [`relocate_uids`], but surfacing a PARTIAL failure's destination mapping so
-/// the caller can persist the destination location rows before returning the
-/// error (idempotent retry). The strategy choice is unchanged (`MOVE`, else
-/// `UID COPY`+`\Deleted`+`UID EXPUNGE`, else `Unsupported`).
+/// Move a UID set from the guarded source mailbox to `dest`, choosing the safe
+/// strategy from capabilities (`MOVE`, else `UID COPY`+`\Deleted`+
+/// `UID EXPUNGE` with UIDPLUS, else `Unsupported`), and surfacing a PARTIAL
+/// failure's destination mapping so the caller can persist the destination
+/// location rows before returning the error (idempotent retry). It never
+/// expunges a UID the caller did not name.
 ///
 /// On the copy+delete+expunge path a failure AFTER the COPY returns
 /// `Err(RelocateFailure { copyuid: Some(..), error })`: the copies are in the
@@ -2191,7 +2076,6 @@ mod tests {
     fn relocation_strategy_table() {
         let both = WriteCaps::derive(&["MOVE".into(), "UIDPLUS".into()], &status(&[], false));
         assert_eq!(both.relocation_strategy(), RelocationStrategy::Move);
-        assert!(both.can_move());
         assert!(both.can_expunge_uids());
 
         let uidplus_only = WriteCaps::derive(&["UIDPLUS".into()], &status(&[], false));
@@ -2199,7 +2083,6 @@ mod tests {
             uidplus_only.relocation_strategy(),
             RelocationStrategy::CopyDeleteExpunge
         );
-        assert!(!uidplus_only.can_move());
         assert!(uidplus_only.can_expunge_uids());
 
         let move_only = WriteCaps::derive(&["MOVE".into()], &status(&[], false));
@@ -2214,7 +2097,6 @@ mod tests {
             }
             other => panic!("expected Unsupported, got {other:?}"),
         }
-        assert!(!neither.can_move());
         assert!(!neither.can_expunge_uids());
     }
 

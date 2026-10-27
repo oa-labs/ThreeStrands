@@ -142,17 +142,6 @@ pub trait ImapSession: Send {
         command: &str,
     ) -> Result<Option<String>, ProviderError>;
 
-    /// Enter IDLE on the selected mailbox. Slice 5 (incremental sync) owns the
-    /// 25-minute re-issue loop; the trait reserves the method so the pool and
-    /// the sync engine agree on the surface, but Slice 1 has no IDLE caller.
-    #[cfg(test)]
-    async fn idle_reserved(&mut self) -> Result<(), ProviderError> {
-        // Slice 5: IDLE + 25-min re-issue. No caller in Slice 1.
-        Err(ProviderError::InvalidOperation(
-            "IDLE is not wired until Slice 5 (incremental sync)".into(),
-        ))
-    }
-
     /// CREATE a mailbox. Used by Slice 3's confirmed-mapping commit when the
     /// user chooses to create a missing Archive mailbox, and by the
     /// `TRYCREATE` create-then-retry flow. Succeeds (or maps the server's
@@ -809,44 +798,4 @@ mod tests {
 
     // The reserved IDLE method refuses until Slice 5 wires it, rather than
     // silently doing nothing.
-    #[tokio::test]
-    async fn idle_is_reserved_until_slice_5() {
-        struct Stub;
-        #[async_trait]
-        impl ImapSession for Stub {
-            async fn select(&mut self, _: &str) -> Result<MailboxStatus, ProviderError> {
-                unreachable!()
-            }
-            async fn examine(&mut self, _: &str) -> Result<MailboxStatus, ProviderError> {
-                unreachable!()
-            }
-            async fn uid_search(&mut self, _: &str) -> Result<Vec<u32>, ProviderError> {
-                unreachable!()
-            }
-            async fn uid_fetch(&mut self, _: &str, _: &str) -> Result<Vec<Fetch>, ProviderError> {
-                unreachable!()
-            }
-            async fn capabilities(&mut self) -> Result<Vec<String>, ProviderError> {
-                unreachable!()
-            }
-            async fn list_mailboxes(&mut self) -> Result<Vec<MailboxEntry>, ProviderError> {
-                unreachable!()
-            }
-            async fn run_command_capture_code(
-                &mut self,
-                _: &str,
-            ) -> Result<Option<String>, ProviderError> {
-                unreachable!()
-            }
-            async fn create_mailbox(&mut self, _: &str) -> Result<(), ProviderError> {
-                unreachable!()
-            }
-            async fn logout(&mut self) -> Result<(), ProviderError> {
-                unreachable!()
-            }
-        }
-        let mut stub = Stub;
-        let err = stub.idle_reserved().await.unwrap_err();
-        assert!(matches!(err, ProviderError::InvalidOperation(_)));
-    }
 }

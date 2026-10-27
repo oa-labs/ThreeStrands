@@ -19,9 +19,7 @@
 //! 3. **Keep the `imap-next` swap cheap.** These helpers go THROUGH the
 //!    existing `ImapSession` trait rather than widening it. async-imap's
 //!    `Fetch` does not surface the RFC 8474 `EMAILID`, so on the live path the
-//!    id takes the mandatory hash route; the best-effort OBJECTID route is
-//!    exercised by [`parse_email_id`] against a synthetic response (see its
-//!    doc and the report).
+//!    id takes the mandatory hash route (see the EMAILID note below).
 //!
 //! ### EMAILID (RFC 8474), investigated
 //!
@@ -35,14 +33,9 @@
 //! synthetic response, ready for the day the trait is backed by `imap-next`
 //! (which exposes attributes) — the swap stays local to the session impl.
 
-#[cfg(test)]
-use async_imap::imap_proto::{AttributeValue, Response};
-
 use super::identity::{derive_message_id, IdentityInputs};
 use super::policy;
 use super::session::{flag_to_wire, ImapSession};
-#[cfg(test)]
-use super::ImapLocation;
 use super::ImapStateStore;
 use crate::provider::ProviderError;
 
@@ -110,25 +103,6 @@ pub fn parse_identity_headers(header_block: &[u8], rfc822_size: u32) -> Identity
         }
     }
     inputs
-}
-
-/// Best-effort RFC 8474 `EMAILID` extraction from a raw FETCH response line.
-///
-/// Pure and panic-free: parses the bytes with `imap-proto` and returns the
-/// `EMAILID` object id when present. This is the OBJECTID path; it is unit-
-/// tested with a synthetic server response because async-imap's typed `Fetch`
-/// cannot surface the attribute on the live route (see the module doc).
-#[cfg(test)]
-pub fn parse_email_id(fetch_line: &[u8]) -> Option<String> {
-    match Response::parse(fetch_line) {
-        Ok((_rest, Response::Fetch(_seq, attrs))) => {
-            attrs.into_iter().find_map(|attr| match attr {
-                AttributeValue::EmailId(id) => Some(id.into_owned()),
-                _ => None,
-            })
-        }
-        _ => None,
-    }
 }
 
 /// Fetch just the flags for a UID set with [`FLAGS_ITEMS`] — no body, no
@@ -242,13 +216,13 @@ pub enum BodyRead {
     TooLarge(usize),
 }
 
-/// The single operation [`ensure_body`] needs from the wire: fetch one UID's
+/// The single operation [`resolve_and_cache_body`] needs from the wire: fetch one UID's
 /// whole body with `BODY.PEEK[]`.
 ///
 /// This is a NARROW seam over [`ImapSession`], not a widening of it: the real
 /// implementation ([`SessionBodyFetcher`]) wraps an `ImapSession` and calls its
 /// `uid_fetch`. async-imap's `Fetch` cannot be constructed outside its crate,
-/// so this trait is also what lets `ensure_body` be unit-tested with a counting
+/// so this trait is also what lets the body cache be unit-tested with a counting
 /// fake that returns bytes directly — proving "fetched once" without a server.
 #[async_trait::async_trait]
 pub trait BodyFetcher: Send {
@@ -312,71 +286,6 @@ impl BodyFetcher for SessionBodyFetcher<'_> {
 
 pub use crate::db::imap::BodyCache;
 
-/// Resolve a message's stable id, record its location, and cache its body
-/// exactly once.
-///
-/// The sequence (`docs/imap-design.md` "Bodies"):
-/// 1. **Sticky id.** If `(mailbox, uidvalidity, uid)` is already in
-///    `imap_locations`, reuse its recorded `message_id`. A server that later
-///    starts advertising OBJECTID must not re-key a message we already know.
-/// 2. Otherwise derive the id from the identity inputs (hash route live).
-/// 3. Upsert the `imap_locations` row (with flags).
-/// 4. If the body is not cached, `BODY.PEEK[]` once and store it.
-///
-/// A second call for the same message, OR a second copy of it in another
-/// mailbox, resolves to the same id and performs NO second body fetch.
-/// `fetched_at` is caller-supplied for deterministic tests.
-#[allow(clippy::too_many_arguments)]
-#[cfg(test)]
-pub async fn ensure_body(
-    body_fetcher: &mut dyn BodyFetcher,
-    store: &ImapStateStore,
-    cache: &BodyCache,
-    mailbox: &str,
-    uidvalidity: i64,
-    row: &IdentityRow,
-    fetched_at: i64,
-) -> Result<String, ProviderError> {
-    let uid = row.uid as i64;
-
-    // 1. Sticky id: an existing location for this exact coordinate wins.
-    let existing = store
-        .location_message_id(mailbox, uidvalidity, uid)
-        .map_err(db_to_provider)?;
-    let message_id = match existing {
-        Some(id) => id,
-        None => derive_message_id(store.account_id(), &row.inputs),
-    };
-
-    // 3. Record where this UID lives (and its flags), id resolved above.
-    store
-        .upsert_location(&ImapLocation {
-            mailbox: mailbox.to_string(),
-            uidvalidity,
-            uid,
-            message_id: message_id.clone(),
-            flags_json: serde_json::to_string(&row.flags).unwrap_or_else(|_| "[]".to_string()),
-            modseq: None,
-        })
-        .map_err(db_to_provider)?;
-
-    // 4. Body once: a cached id (reached from any mailbox) is never refetched.
-    if !cache.contains(&message_id).map_err(db_to_provider)? {
-        // The cheap pass already tells us when the body cannot fit. Do not
-        // issue any body request for it; the bounded request also protects
-        // against an absent or understated advertised size.
-        policy::check_raw_message_bytes(row.inputs.rfc822_size as usize)?;
-        if let Some(raw) = body_fetcher.fetch_raw_body(row.uid).await? {
-            policy::check_raw_message_bytes(raw.len())?;
-            cache
-                .put(&message_id, &raw, fetched_at)
-                .map_err(db_to_provider)?;
-        }
-    }
-
-    Ok(message_id)
-}
-
 fn db_to_provider(error: crate::db::DatabaseError) -> ProviderError {
     ProviderError::Other(error.to_string())
 }
@@ -401,16 +310,24 @@ pub struct ResolvedBody {
     pub body_skipped: bool,
 }
 
-/// Like [`ensure_body`], but it does NOT write the `imap_locations` row — it
-/// resolves the sticky-or-derived id and caches the body, and leaves the
-/// location write to the caller's atomic round commit. It also NEVER returns a
+/// Resolve a message's stable id and cache its body exactly once.
+///
+/// 1. **Sticky id.** If `(mailbox, uidvalidity, uid)` is already in
+///    `imap_locations`, reuse its recorded `message_id`. A server that later
+///    starts advertising OBJECTID must not re-key a message we already know.
+/// 2. Otherwise derive the id from the identity inputs (hash route live).
+/// 3. If the body is not cached, `BODY.PEEK[]` once and store it. A second
+///    call for the same message, OR a second copy of it in another mailbox,
+///    resolves to the same id and performs NO second body fetch.
+///
+/// It does NOT write the `imap_locations` row: the location write belongs to
+/// the caller's atomic round commit. It also NEVER returns a
 /// policy rejection for an oversize message: such a message is recorded with
 /// `body_skipped = true` and a logged reason so one bad message cannot wedge a
 /// round (SLICE5A_FIXES item 2). Genuine server/auth/transport errors from
 /// the body fetch still propagate.
 ///
-/// `ensure_body`'s Slice-4 contract is untouched; this is the restructured
-/// variant the live sync routine uses.
+/// `fetched_at` is caller-supplied for deterministic tests.
 pub async fn resolve_and_cache_body(
     body_fetcher: &mut dyn BodyFetcher,
     store: &ImapStateStore,
@@ -502,6 +419,7 @@ pub async fn resolve_and_cache_body(
 mod tests {
     use super::*;
     use crate::db::Database;
+    use crate::provider::imap::ImapLocation;
     use async_trait::async_trait;
     use std::sync::Arc;
 
@@ -557,19 +475,6 @@ mod tests {
         assert_eq!(inputs.rfc822_size, 4242);
     }
 
-    #[test]
-    fn email_id_parses_off_a_synthetic_objectid_response() {
-        // The OBJECTID path, proven with a synthetic FETCH response because the
-        // live async-imap Fetch cannot surface EMAILID.
-        let line = b"* 1 FETCH (UID 123 EMAILID (M6d952b5c6f82bfd8) RFC822.SIZE 42)\r\n";
-        assert_eq!(parse_email_id(line).as_deref(), Some("M6d952b5c6f82bfd8"));
-        // A response with no EMAILID yields None, not a panic.
-        let none = b"* 1 FETCH (UID 123 RFC822.SIZE 42)\r\n";
-        assert_eq!(parse_email_id(none), None);
-        // Garbage never panics.
-        assert_eq!(parse_email_id(b"not a fetch line"), None);
-    }
-
     fn store() -> ImapStateStore {
         ImapStateStore::new(Arc::new(Database::open_memory()), "me@example.com")
     }
@@ -589,6 +494,32 @@ mod tests {
             self.fetches += 1;
             Ok(Some(self.body.clone()))
         }
+    }
+
+    /// Resolve and cache the body, then record the location the way the
+    /// sync round's commit does, returning the resolved id.
+    async fn resolve_and_record(
+        fetcher: &mut dyn BodyFetcher,
+        store: &ImapStateStore,
+        cache: &BodyCache,
+        mailbox: &str,
+        uidvalidity: i64,
+        row: &IdentityRow,
+    ) -> ResolvedBody {
+        let resolved = resolve_and_cache_body(fetcher, store, cache, mailbox, uidvalidity, row, 1)
+            .await
+            .unwrap();
+        store
+            .upsert_location(&ImapLocation {
+                mailbox: mailbox.to_string(),
+                uidvalidity,
+                uid: row.uid as i64,
+                message_id: resolved.message_id.clone(),
+                flags_json: serde_json::to_string(&row.flags).unwrap(),
+                modseq: None,
+            })
+            .unwrap();
+        resolved
     }
 
     fn row(uid: u32, message_id: &str) -> IdentityRow {
@@ -677,9 +608,9 @@ mod tests {
         let mut fetcher = SessionBodyFetcher {
             session: &mut session,
         };
-        let id = ensure_body(&mut fetcher, &store, &cache, "INBOX", 1, &rows[0], 1)
+        let id = resolve_and_record(&mut fetcher, &store, &cache, "INBOX", 1, &rows[0])
             .await
-            .unwrap();
+            .message_id;
         assert_eq!(cache.get(&id).unwrap().unwrap().raw, body.as_bytes());
         let locations = store.locations_for_message(&id).unwrap();
         let stored_flags: Vec<String> = serde_json::from_str(&locations[0].flags_json).unwrap();
@@ -703,16 +634,15 @@ mod tests {
             let mut row = row(7, "<size@example.com>");
             row.inputs.rfc822_size = size as u32;
             let id = derive_message_id(store.account_id(), &row.inputs);
-            let result = ensure_body(&mut fetcher, &store, &cache, "INBOX", 1, &row, 1).await;
+            let resolved = resolve_and_cache_body(&mut fetcher, &store, &cache, "INBOX", 1, &row, 1)
+                .await
+                .unwrap();
             if size > policy::MAX_RAW_MESSAGE_BYTES {
-                assert!(matches!(
-                    result,
-                    Err(ProviderError::PermanentClientRejection(_))
-                ));
+                assert!(resolved.body_skipped);
                 assert_eq!(fetcher.fetches, 0);
                 assert!(!cache.contains(&id).unwrap());
             } else {
-                assert!(result.is_ok());
+                assert!(!resolved.body_skipped);
                 assert_eq!(fetcher.fetches, 1);
                 assert!(cache.contains(&id).unwrap());
             }
@@ -764,11 +694,10 @@ mod tests {
         for advertised in [0, 10] {
             let mut row = row(7, "<size@example.com>");
             row.inputs.rfc822_size = advertised;
-            let result = ensure_body(&mut fetcher, &store, &cache, "INBOX", 1, &row, 1).await;
-            assert!(matches!(
-                result,
-                Err(ProviderError::PermanentClientRejection(_))
-            ));
+            let resolved = resolve_and_cache_body(&mut fetcher, &store, &cache, "INBOX", 1, &row, 1)
+                .await
+                .unwrap();
+            assert!(resolved.body_skipped);
             assert_eq!(cache.total_size().unwrap(), 0);
         }
         assert_eq!(fetcher.fetches, 2);
@@ -909,12 +838,12 @@ mod tests {
         let mut in_sent = shared.clone();
         in_sent.uid = 20; // a different UID in the Sent mailbox
 
-        let id_inbox = ensure_body(&mut fetcher, &store, &cache, "INBOX", 1, &shared, 1000)
+        let id_inbox = resolve_and_record(&mut fetcher, &store, &cache, "INBOX", 1, &shared)
             .await
-            .unwrap();
-        let id_sent = ensure_body(&mut fetcher, &store, &cache, "Sent", 1, &in_sent, 1000)
+            .message_id;
+        let id_sent = resolve_and_record(&mut fetcher, &store, &cache, "Sent", 1, &in_sent)
             .await
-            .unwrap();
+            .message_id;
 
         assert_eq!(id_inbox, id_sent, "one message id for both copies");
         assert_eq!(fetcher.fetches, 1, "body fetched exactly once");
@@ -934,18 +863,14 @@ mod tests {
             fetches: 0,
         };
         let r = row(5, "<a@x>");
-        ensure_body(&mut fetcher, &store, &cache, "INBOX", 1, &r, 1)
-            .await
-            .unwrap();
-        ensure_body(&mut fetcher, &store, &cache, "INBOX", 1, &r, 1)
-            .await
-            .unwrap();
+        resolve_and_record(&mut fetcher, &store, &cache, "INBOX", 1, &r).await;
+        resolve_and_record(&mut fetcher, &store, &cache, "INBOX", 1, &r).await;
         assert_eq!(fetcher.fetches, 1);
     }
 
     #[tokio::test]
     async fn a_sticky_id_is_reused_even_if_the_inputs_would_now_derive_differently() {
-        // Pre-seed a location with a known id, then call ensure_body with
+        // Pre-seed a location with a known id, then resolve with
         // inputs that WOULD derive a different id (as if the server began
         // advertising OBJECTID). The recorded id must win.
         let store = store();
@@ -966,9 +891,10 @@ mod tests {
         };
         let mut r = row(7, "<would-derive-differently@x>");
         r.inputs.email_id = Some("NEWOBJECTID".into());
-        let id = ensure_body(&mut fetcher, &store, &cache, "INBOX", 1, &r, 1)
+        let id = resolve_and_cache_body(&mut fetcher, &store, &cache, "INBOX", 1, &r, 1)
             .await
-            .unwrap();
+            .unwrap()
+            .message_id;
         assert_eq!(
             id, "imap:me@example.com:STICKY",
             "the recorded id is reused"
@@ -1118,7 +1044,7 @@ mod tests {
             let store = ImapStateStore::new(Arc::new(Database::open_memory()), USER);
             let cache = BodyCache::new(store.clone());
 
-            // Walk INBOX then Sent, running the full ensure_body path for every
+            // Walk INBOX then Sent, resolving and recording every
             // message. The seeded shared Message-ID lives in both.
             let mut ids = std::collections::BTreeSet::new();
             for mailbox in ["INBOX", "Sent"] {
@@ -1139,17 +1065,10 @@ mod tests {
                     let mut fetcher = SessionBodyFetcher {
                         session: &mut session,
                     };
-                    let id = ensure_body(
-                        &mut fetcher,
-                        &store,
-                        &cache,
-                        mailbox,
-                        uidvalidity,
-                        &row,
-                        1_700_000_000,
-                    )
-                    .await
-                    .expect("ensure_body");
+                    let id =
+                        resolve_and_record(&mut fetcher, &store, &cache, mailbox, uidvalidity, &row)
+                            .await
+                            .message_id;
                     ids.insert(id);
                 }
             }

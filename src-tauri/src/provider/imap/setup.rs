@@ -19,7 +19,7 @@
 //! used to live here. As of Phase 4 run 1 they moved to the sibling
 //! [`smtp`](crate::provider::imap::smtp) module, next to the real submission
 //! client, so both the dry-run and the client share one pinned-TLS connect
-//! helper. `test_smtp`, `probe_smtp_certificate` and `default_smtp_port` are
+//! helper. `test_smtp` and `probe_smtp_certificate` are
 //! re-exported from this module's public surface (see `mod.rs`) so no caller
 //! changed, and their observable behaviour is identical.
 
@@ -128,17 +128,6 @@ pub async fn test_imap(
     Ok((capabilities, mailboxes.len(), inbox.permanent_keywords))
 }
 
-/// Pick a sensible default IMAP port for a security mode when the user leaves
-/// it blank: 993 implicit / 143 STARTTLS. (The SMTP default lives in
-/// [`smtp::default_smtp_port`](crate::provider::imap::smtp::default_smtp_port).)
-#[cfg(test)]
-pub fn default_imap_port(security: SecurityMode) -> u16 {
-    match security {
-        SecurityMode::ImplicitTls => 993,
-        SecurityMode::StartTls => 143,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,12 +143,6 @@ mod tests {
             .contains("over quota"));
         assert!(plain_language(&ProviderError::InvalidOperation("bad".into()))
             .contains("rejected the request"));
-    }
-
-    #[test]
-    fn default_imap_ports_follow_the_security_mode() {
-        assert_eq!(default_imap_port(SecurityMode::ImplicitTls), 993);
-        assert_eq!(default_imap_port(SecurityMode::StartTls), 143);
     }
 
     // Optional live coverage of the IMAP half of "test and save" against the

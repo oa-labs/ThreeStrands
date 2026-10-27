@@ -1204,11 +1204,6 @@ mod dry_run {
         finish(server).await;
     }
 
-    #[test]
-    fn default_smtp_ports_follow_the_security_mode() {
-        assert_eq!(default_smtp_port(SecurityMode::ImplicitTls), 465);
-        assert_eq!(default_smtp_port(SecurityMode::StartTls), 587);
-    }
 }
 
 // ---------------------------------------------------------------------------

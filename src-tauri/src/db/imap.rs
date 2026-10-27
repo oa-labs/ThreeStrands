@@ -174,7 +174,7 @@ impl ImapStateStore {
     }
 
     /// The stable message id already recorded for one `(mailbox, uidvalidity,
-    /// uid)` coordinate, if any. This is the sticky-id lookup `ensure_body`
+    /// uid)` coordinate, if any. This is the sticky-id lookup `resolve_and_cache_body`
     /// does before deriving: a message we already know keeps its id even if the
     /// server later begins advertising OBJECTID.
     pub fn location_message_id(

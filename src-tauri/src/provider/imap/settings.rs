@@ -15,21 +15,16 @@
 //! export. Keeping the secret out of this type by construction is what lets
 //! the whole struct be serialized into a settings export safely.
 //!
-//! The pinned-fingerprint map is the enforcement point for the design's
-//! cert-trust rule: a self-signed server is trusted only against the exact
-//! leaf the user pinned at setup, and a *changed* certificate on a pinned
-//! `host:port` is a hard stop that re-prompts rather than a silent re-pin
-//! (see [`ImapSettingsStore::pin_fingerprint`] /
-//! [`ImapAccountSettings::fingerprint_decision`]).
+//! The pinned-fingerprint map feeds the design's cert-trust rule: a
+//! self-signed server is trusted only against the exact leaf the user pinned
+//! at setup. The TLS verifier ([`PinnedCertVerifier`](super::tls)) refuses
+//! any other leaf on a pinned `host:port`, and a pin changes only when the
+//! user trusts a reviewed certificate in setup or **Server Settings**, never
+//! as a fallback.
 
 use std::collections::BTreeMap;
-#[cfg(test)]
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-
-#[cfg(test)]
-use crate::db::{Database, DbResult};
 
 use super::tls::{parse_sha256_fingerprint, Sha256Fingerprint};
 
@@ -117,20 +112,6 @@ pub struct Identity {
     pub display_name: Option<String>,
 }
 
-/// What to do with a certificate presented on connect, given what is pinned.
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FingerprintDecision {
-    /// No pin for this `host:port`: a real-CA server verifies normally; a
-    /// self-signed one must be reviewed and pinned at setup.
-    Unpinned,
-    /// The presented leaf matches the pin — connect.
-    Matches,
-    /// A DIFFERENT certificate is pinned for this `host:port`. Never a silent
-    /// re-pin: pause the account and re-prompt the user to review the change.
-    Changed,
-}
-
 /// All non-secret settings for one IMAP account. Serialized as-is into the
 /// transfer export (see `crate::transfer`), so adding a field here is a
 /// transfer-format change that must stay backward compatible.
@@ -182,98 +163,7 @@ impl ImapAccountSettings {
             .get(&host_port_key(host, port))
             .and_then(|hex| parse_sha256_fingerprint(hex).ok())
     }
-
-    /// Decide what to do with the certificate `presented` on `host:port`,
-    /// given what (if anything) is pinned. This is the single place the
-    /// "never silently re-pin" rule is expressed.
-    #[cfg(test)]
-    pub fn fingerprint_decision(
-        &self,
-        host: &str,
-        port: u16,
-        presented: &Sha256Fingerprint,
-    ) -> FingerprintDecision {
-        match self.pinned_for(host, port) {
-            None => FingerprintDecision::Unpinned,
-            Some(pinned) if &pinned == presented => FingerprintDecision::Matches,
-            Some(_) => FingerprintDecision::Changed,
-        }
-    }
 }
-
-/// A narrow, account-scoped handle onto one account's `imap_account_settings`
-/// row. Constructed with the account email it serves, so one account can never
-/// read another's settings. A thin wrapper over the shared [`Database`].
-#[cfg(test)]
-#[derive(Clone)]
-pub struct ImapSettingsStore {
-    database: Arc<Database>,
-    account_id: String,
-}
-
-#[cfg(test)]
-impl ImapSettingsStore {
-    pub fn new(database: Arc<Database>, account_id: impl Into<String>) -> Self {
-        Self {
-            database,
-            account_id: account_id.into(),
-        }
-    }
-
-    /// Inserts or replaces this account's settings row.
-    pub fn save(&self, settings: &ImapAccountSettings) -> DbResult<()> {
-        self.database
-            .save_imap_account_settings(&self.account_id, settings)
-    }
-
-    /// Reads this account's settings, or `None` when it has no IMAP row (a
-    /// Gmail account, or an IMAP account imported without having been set up
-    /// here yet).
-    pub fn load(&self) -> DbResult<Option<ImapAccountSettings>> {
-        self.database.imap_account_settings(&self.account_id)
-    }
-
-    /// Records the pin for `host:port`, failing loudly if a DIFFERENT
-    /// certificate is already pinned there — the design forbids a silent
-    /// re-pin. The caller re-prompts the user, who confirms a deliberate pin
-    /// through [`Self::force_repin`].
-    pub fn pin_fingerprint(
-        &self,
-        settings: &mut ImapAccountSettings,
-        host: &str,
-        port: u16,
-        fingerprint: &Sha256Fingerprint,
-    ) -> Result<(), String> {
-        if let FingerprintDecision::Changed =
-            settings.fingerprint_decision(host, port, fingerprint)
-        {
-            return Err(format!(
-                "a different certificate is already pinned for {}; review the change before trusting it",
-                host_port_key(host, port)
-            ));
-        }
-        settings
-            .pinned_fingerprints
-            .insert(host_port_key(host, port), fingerprint.to_hex());
-        Ok(())
-    }
-
-    /// Deliberately replaces the pin for `host:port` after the user has
-    /// reviewed a certificate change. Separate from [`Self::pin_fingerprint`]
-    /// so a re-pin is always an explicit, reviewed action, never a fallback.
-    pub fn force_repin(
-        &self,
-        settings: &mut ImapAccountSettings,
-        host: &str,
-        port: u16,
-        fingerprint: &Sha256Fingerprint,
-    ) {
-        settings
-            .pinned_fingerprints
-            .insert(host_port_key(host, port), fingerprint.to_hex());
-    }
-}
-
 
 #[cfg(test)]
 mod tests {
@@ -302,11 +192,6 @@ mod tests {
         }
     }
 
-    fn store() -> ImapSettingsStore {
-        let database = Arc::new(Database::open_memory());
-        ImapSettingsStore::new(database, "me@proton.me")
-    }
-
     #[test]
     fn starttls_keeps_its_transfer_spelling_and_accepts_the_legacy_setup_spelling() {
         assert_eq!(
@@ -326,71 +211,31 @@ mod tests {
 
     #[test]
     fn settings_round_trip_through_the_table_without_a_password_column() {
-        let store = store();
-        assert!(store.load().unwrap().is_none(), "no row before save");
+        let database = crate::db::Database::open_memory();
+        let load = || database.imap_account_settings("me@proton.me").unwrap();
+        assert!(load().is_none(), "no row before save");
         let settings = sample();
-        store.save(&settings).unwrap();
-        assert_eq!(store.load().unwrap().unwrap(), settings);
+        database.save_imap_account_settings("me@proton.me", &settings).unwrap();
+        assert_eq!(load().unwrap(), settings);
         // A second save updates in place rather than erroring on the PK.
         let changed = ImapAccountSettings {
             server_saves_sent: false,
             ..settings.clone()
         };
-        store.save(&changed).unwrap();
-        assert_eq!(store.load().unwrap().unwrap(), changed);
+        database.save_imap_account_settings("me@proton.me", &changed).unwrap();
+        assert_eq!(load().unwrap(), changed);
     }
 
     #[test]
-    fn a_store_only_sees_its_own_accounts_row() {
-        let database = Arc::new(Database::open_memory());
-        let mine = ImapSettingsStore::new(database.clone(), "me@proton.me");
-        let theirs = ImapSettingsStore::new(database, "other@example.com");
-        theirs.save(&sample()).unwrap();
-        assert!(mine.load().unwrap().is_none());
-    }
-
-    #[test]
-    fn an_unpinned_host_reports_unpinned_then_matches_once_pinned() {
-        let store = store();
-        let mut settings = sample();
-        let fp = Sha256Fingerprint::from_bytes([0x11; 32]);
-        assert_eq!(
-            settings.fingerprint_decision("127.0.0.1", 1143, &fp),
-            FingerprintDecision::Unpinned
-        );
-        store
-            .pin_fingerprint(&mut settings, "127.0.0.1", 1143, &fp)
+    fn settings_are_read_back_only_for_their_own_account() {
+        let database = crate::db::Database::open_memory();
+        database
+            .save_imap_account_settings("other@example.com", &sample())
             .unwrap();
-        assert_eq!(
-            settings.fingerprint_decision("127.0.0.1", 1143, &fp),
-            FingerprintDecision::Matches
-        );
-    }
-
-    #[test]
-    fn a_changed_certificate_is_a_hard_stop_not_a_silent_repin() {
-        let store = store();
-        let mut settings = sample();
-        let original = Sha256Fingerprint::from_bytes([0x11; 32]);
-        let rotated = Sha256Fingerprint::from_bytes([0x22; 32]);
-        store
-            .pin_fingerprint(&mut settings, "127.0.0.1", 1143, &original)
-            .unwrap();
-        // The rotated cert is reported as a change...
-        assert_eq!(
-            settings.fingerprint_decision("127.0.0.1", 1143, &rotated),
-            FingerprintDecision::Changed
-        );
-        // ...and pin_fingerprint refuses to overwrite it silently.
-        let err = store
-            .pin_fingerprint(&mut settings, "127.0.0.1", 1143, &rotated)
-            .unwrap_err();
-        assert!(err.contains("already pinned"), "{err}");
-        // The pin is untouched by the refused attempt.
-        assert_eq!(settings.pinned_for("127.0.0.1", 1143), Some(original));
-        // Only an explicit, reviewed re-pin replaces it.
-        store.force_repin(&mut settings, "127.0.0.1", 1143, &rotated);
-        assert_eq!(settings.pinned_for("127.0.0.1", 1143), Some(rotated));
+        assert!(database
+            .imap_account_settings("me@proton.me")
+            .unwrap()
+            .is_none());
     }
 
     #[test]

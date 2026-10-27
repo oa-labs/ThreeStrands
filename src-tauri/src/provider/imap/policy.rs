@@ -559,26 +559,6 @@ impl SyncLimits {
         }
     }
 
-    /// Folder limits (Archive/Junk/Trash/user folders): the folder window,
-    /// sliding (evicts). Trash and Junk are Folder-class in run 2.
-    #[cfg(test)]
-    pub const fn folder() -> Self {
-        Self {
-            mailbox_window: FOLDER_SYNC_WINDOW,
-            evicts: true,
-        }
-    }
-
-    /// Sent limits: the Sent acquisition bound, NON-evicting. Run 3 drives the
-    /// Sent round in chunks of [`SENT_ROUND_MESSAGES`], newest first.
-    #[cfg(test)]
-    pub const fn sent() -> Self {
-        Self {
-            mailbox_window: SENT_SYNC_WINDOW,
-            evicts: false,
-        }
-    }
-
     /// The limits for a [`SyncWindowClass`]. `NotSynced` yields a zero window
     /// that evicts nothing (nothing is ever in it).
     pub const fn for_class(class: SyncWindowClass) -> Self {
@@ -1476,14 +1456,14 @@ mod tests {
     #[test]
     fn sync_limits_constructors_match_their_classes() {
         assert_eq!(SyncLimits::inbox(), SyncLimits::for_class(SyncWindowClass::Inbox));
-        assert_eq!(SyncLimits::folder(), SyncLimits::for_class(SyncWindowClass::Folder));
-        assert_eq!(SyncLimits::sent(), SyncLimits::for_class(SyncWindowClass::Sent));
         assert_eq!(SyncLimits::inbox().mailbox_window, MAX_INBOX_SYNC_MESSAGES);
         assert!(SyncLimits::inbox().evicts);
-        assert_eq!(SyncLimits::folder().mailbox_window, FOLDER_SYNC_WINDOW);
-        assert!(SyncLimits::folder().evicts);
-        assert_eq!(SyncLimits::sent().mailbox_window, SENT_SYNC_WINDOW);
-        assert!(!SyncLimits::sent().evicts, "Sent does not evict");
+        let folder = SyncLimits::for_class(SyncWindowClass::Folder);
+        assert_eq!(folder.mailbox_window, FOLDER_SYNC_WINDOW);
+        assert!(folder.evicts);
+        let sent = SyncLimits::for_class(SyncWindowClass::Sent);
+        assert_eq!(sent.mailbox_window, SENT_SYNC_WINDOW);
+        assert!(!sent.evicts, "Sent does not evict");
     }
 
     #[test]

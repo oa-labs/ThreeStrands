@@ -422,7 +422,7 @@ async fn relocate_uses_move_when_advertised() {
     let (mut session, log, task) = connect(ServerScript::default()).await;
     let store = store();
     let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
-    let outcome = relocate_uids(&mut session, &ctx, &[10], "Archive")
+    let outcome = relocate_uids_recording(&mut session, &ctx, &[10], "Archive")
         .await
         .expect("MOVE relocate");
     assert_eq!(outcome.copyuid.unwrap().dest, vec![90]);
@@ -445,7 +445,7 @@ async fn relocate_uses_copy_delete_expunge_when_only_uidplus() {
         ctx.caps.relocation_strategy(),
         RelocationStrategy::CopyDeleteExpunge
     );
-    let outcome = relocate_uids(&mut session, &ctx, &[10], "Archive")
+    let outcome = relocate_uids_recording(&mut session, &ctx, &[10], "Archive")
         .await
         .expect("copy+delete+expunge relocate");
     assert_eq!(outcome.copyuid.unwrap().dest, vec![90]);
@@ -470,9 +470,10 @@ async fn relocate_is_unsupported_without_move_or_uidplus_and_sends_nothing() {
     let (mut session, log, task) = connect(script).await;
     let store = store();
     let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
-    let err = relocate_uids(&mut session, &ctx, &[10], "Archive")
+    let err = relocate_uids_recording(&mut session, &ctx, &[10], "Archive")
         .await
         .unwrap_err()
+        .error
         .into_provider_error();
     match err {
         ProviderError::InvalidOperation(m) => assert!(m.contains("EXPUNGE"), "{m}"),
@@ -496,9 +497,10 @@ async fn a_partial_relocate_reports_the_message_in_both_mailboxes() {
     let (mut session, log, task) = connect(script).await;
     let store = store();
     let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
-    let err = relocate_uids(&mut session, &ctx, &[10], "Archive")
+    let err = relocate_uids_recording(&mut session, &ctx, &[10], "Archive")
         .await
         .unwrap_err()
+        .error
         .into_provider_error();
     match err {
         ProviderError::InvalidOperation(m) => {
@@ -520,31 +522,6 @@ async fn a_partial_relocate_reports_the_message_in_both_mailboxes() {
 }
 
 #[tokio::test]
-async fn a_partial_relocate_after_a_failed_expunge_reports_the_partial_state() {
-    let script = ServerScript {
-        capabilities: vec!["IMAP4REV1".into(), "UIDPLUS".into()],
-        fail_expunge: Some("expunge refused".into()),
-        ..Default::default()
-    };
-    let (mut session, _log, task) = connect(script).await;
-    let store = store();
-    let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
-    let err = relocate_uids(&mut session, &ctx, &[10], "Archive")
-        .await
-        .unwrap_err()
-        .into_provider_error();
-    match err {
-        ProviderError::InvalidOperation(m) => {
-            assert!(m.contains("EXPUNGE"), "{m}");
-            assert!(m.contains("BOTH"), "{m}");
-        }
-        other => panic!("expected partial-state InvalidOperation, got {other:?}"),
-    }
-    let _ = session.logout().await;
-    task.await.unwrap();
-}
-
-#[tokio::test]
 async fn a_copy_trycreate_surfaces_as_the_typed_outcome() {
     let script = ServerScript {
         capabilities: vec!["IMAP4REV1".into(), "UIDPLUS".into()], // copy path
@@ -554,9 +531,10 @@ async fn a_copy_trycreate_surfaces_as_the_typed_outcome() {
     let (mut session, log, task) = connect(script).await;
     let store = store();
     let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
-    let err = relocate_uids(&mut session, &ctx, &[10], "Labels/New")
+    let err = relocate_uids_recording(&mut session, &ctx, &[10], "Labels/New")
         .await
-        .unwrap_err();
+        .unwrap_err()
+        .error;
     match err {
         WriteError::TryCreate(text) => assert!(text.contains("Labels/New"), "{text}"),
         other => panic!("expected a typed TryCreate, got {other:?}"),
@@ -684,11 +662,12 @@ async fn a_hostile_destination_name_never_reaches_the_wire() {
     let (mut session, log, task) = connect(ServerScript::default()).await;
     let store = store();
     let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
-    // relocate_uids encodes the destination through build_mailbox_arg, which
-    // rejects a CRLF-injection name before any command is built.
-    let err = relocate_uids(&mut session, &ctx, &[10], "Archive\r\nA1 DELETE INBOX")
+    // The destination is quoted through build_wire_mailbox_arg, which rejects
+    // a CRLF-injection name before any command is built.
+    let err = relocate_uids_recording(&mut session, &ctx, &[10], "Archive\r\nA1 DELETE INBOX")
         .await
         .unwrap_err()
+        .error
         .into_provider_error();
     assert!(matches!(err, ProviderError::InvalidOperation(_)));
     assert_eq!(log.count_starting("UID MOVE"), 0);
@@ -1774,7 +1753,7 @@ mod live {
         let ctx = select_for_write(&mut session, &store, source, uidvalidity)
             .await
             .unwrap();
-        let outcome = relocate_uids(&mut session, &ctx, &uids, dest)
+        let outcome = relocate_uids_recording(&mut session, &ctx, &uids, dest)
             .await
             .expect("relocate to the destination");
         // On a UIDPLUS server a COPYUID is returned.
