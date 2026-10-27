@@ -399,8 +399,9 @@ describe("trust signals from the user's own history", () => {
     const report = trustReport(value);
     expect(report.summary).toBe("careful");
     expect(report.rows[0]).toMatchObject({
-      tone: "warning", kind: "impersonation", title: "Name matches Jane Rivera, but from a new address",
-      detail: "jane.rivera.office@freemail.example · You know Jane Rivera as jane@partner.example and 1 more",
+      tone: "warning", kind: "impersonation", title: "Familiar name, different email address",
+      detail: "Jane Rivera · Sending address: jane.rivera.office@freemail.example · Previously seen: jane@partner.example and 1 more",
+      addressComparison: { name: "Jane Rivera", sending: "jane.rivera.office@freemail.example", previous: ["jane@partner.example", "j.rivera@partner.example"] },
     });
     // Someone the user writes to at this address is the person, not an impostor.
     expect(warnings({ ...value, familiarity: { ...stranger, sentCount: 1, nameMatches: ["jane@partner.example"] } })).toEqual([]);

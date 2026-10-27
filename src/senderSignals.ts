@@ -196,6 +196,8 @@ export type TrustFinding = {
   kind: "authentication" | "replyTo" | "mismatch" | "sites" | "tracking" | "impersonation" | "lookalike" | "subject" | "link" | "attachment" | "history" | "delivery";
   title: string;
   detail: string;
+  /** Addresses to compare when a familiar display name uses a different address. */
+  addressComparison?: { name: string; sending: string; previous: string[] };
   /** The link a link finding is about, so the reader can show it. */
   link?: TrustLink;
   /**
@@ -218,6 +220,7 @@ export type TrustReport = {
   details: TrustFinding[];
   feedback?: {
     requester: string;
+    replyTo: string | null;
     linkOrigins: string[];
     patterns: SenderDeliveryPattern[];
     matching: SenderDeliveryPattern | null;
@@ -411,7 +414,7 @@ export function trustReport({ messageId, trust, links, familiarity, sender, subj
     && pattern.linkOrigins.length === linkOrigins.length
     && pattern.linkOrigins.every((origin, index) => origin === linkOrigins[index])) ?? null;
   const feedback = trust && patterns && email.includes("@") && domain === trust.fromDomain && links.links.length < TRUST_LINK_LIMIT
-    ? { requester, linkOrigins, patterns, matching, relevant: Boolean(trust.replyTo || patterns.length) }
+    ? { requester, replyTo: trust.replyTo, linkOrigins, patterns, matching, relevant: Boolean(trust.replyTo || patterns.length) }
     : undefined;
   const recognizedDelivery = Boolean(feedback && matching?.authenticated && trust?.authentication?.dmarc === "pass");
   const confirmedMessage = Boolean(feedback && messageId && matching?.sourceMessageId === messageId);
@@ -426,9 +429,10 @@ export function trustReport({ messageId, trust, links, familiarity, sender, subj
     warn({
       key: "impersonation",
       kind: "impersonation",
-      title: `Name matches ${from.name}, but from a new address`,
+      title: "Familiar name, different email address",
+      addressComparison: { name: from.name, sending: email, previous: familiarity.nameMatches },
       strong: true,
-      detail: `${email} · You know ${from.name} as ${familiarity.nameMatches[0]}${others > 0 ? ` and ${others} more` : ""}`,
+      detail: `${from.name} · Sending address: ${email} · Previously seen: ${familiarity.nameMatches[0]}${others > 0 ? ` and ${others} more` : ""}`,
     });
   }
   const claimed = from.name ? claimedInName(from.name, email) : null;

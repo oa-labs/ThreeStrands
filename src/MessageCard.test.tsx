@@ -381,8 +381,8 @@ describe("MessageCard", () => {
       // The side panel leaves the warning to the reader until it is confirmed.
       expect(screen.queryByRole("region", { name: "Sender checks" })).not.toBeInTheDocument();
       const card = screen.getByRole("group", { name: "Sender details: Be careful" });
-      expect(card).toHaveTextContent("Remembers this sending address and link destinations for person@customer.example");
-      fireEvent.click(within(card).getByRole("button", { name: "This is legitimate" }));
+      expect(card).toHaveTextContent("Trust will apply to this sending address and its current link destinations for this mail account. Includes replies to person@customer.example.");
+      fireEvent.click(within(card).getByRole("button", { name: "Trust this address for this account" }));
       expect(await screen.findByRole("region", { name: "Sender checks" })).toHaveTextContent("You confirmed this email is legitimate");
       await waitFor(() => expect(screen.queryByRole("button", { name: /^Be careful:/ })).not.toBeInTheDocument());
       expect(screen.queryByRole("button", { name: "Known sender. Show sender details" })).not.toBeInTheDocument();
@@ -450,19 +450,32 @@ describe("MessageCard", () => {
       expect(screen.queryByRole("note", { name: "Be careful" })).not.toBeInTheDocument();
     });
 
-    it("confirms a borrowed name from the banner, which then clears it", async () => {
+    it.each([
+      ["another domain", ["ada@engines.example"]],
+      ["the same domain", ["ada@example.com", "a.lovelace@example.com"]],
+    ])("compares addresses from %s and trusts the exact delivery from the banner", async (_scenario, previous) => {
       let patterns: SenderDeliveryPattern[] = [];
       const borrowed = { ...message, sender: "Ada Lovelace <hello@example.com>" };
-      const { familiarity } = reads({ ...stranger, nameMatches: ["ada@engines.example"], deliveryPatterns: [] });
-      familiarity.mockImplementation(async () => ({ ...stranger, nameMatches: ["ada@engines.example"], deliveryPatterns: patterns }));
+      const { familiarity } = reads({ ...stranger, nameMatches: previous, deliveryPatterns: [] });
+      familiarity.mockImplementation(async () => ({ ...stranger, nameMatches: previous, deliveryPatterns: patterns }));
       const confirm = vi.spyOn(mailClient, "confirmSenderDelivery").mockImplementation(async () => {
         patterns = [{ id: "feedback", senderEmail: "hello@example.com", replyTo: null, linkOrigins: [], authenticated: true, sourceMessageId: message.id, confirmedAt: "2026-10-27T12:00:00Z" }];
       });
       render(<MessageCard message={borrowed} isExpanded {...stableProps} subject="Hello" />);
       const banner = await screen.findByRole("note", { name: "Be careful" });
-      expect(banner).toHaveTextContent("Name matches Ada Lovelace, but from a new address");
-      expect(banner).toHaveTextContent("Remembers this sending address and link destinations");
-      fireEvent.click(within(banner).getByRole("button", { name: "This is legitimate" }));
+      expect(banner).toHaveTextContent("Familiar name, different email address");
+      expect(banner).toHaveTextContent("Trust will apply to this sending address and its current link destinations");
+      expect(within(banner).getByText("Ada Lovelace")).toBeVisible();
+      const sending = within(banner).getByText("Sending address");
+      const seen = within(banner).getByText("Previously seen");
+      expect(sending.nextElementSibling).toHaveTextContent("hello@example.com");
+      expect(seen.nextElementSibling).toHaveTextContent(previous.join(", "));
+      const trustButton = within(banner).getByRole("button", { name: "Trust this address for this account" });
+      expect(trustButton).toHaveClass("btn");
+      expect(trustButton).toHaveAccessibleDescription("Trust will apply to this sending address and its current link destinations for this mail account. Authentication failures and suspicious links still warn.");
+      const scope = document.getElementById(trustButton.getAttribute("aria-describedby")!);
+      expect(scope!.compareDocumentPosition(trustButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      fireEvent.click(trustButton);
       expect(confirm).toHaveBeenCalledWith("m1", []);
       await waitFor(() => expect(screen.queryByRole("note", { name: "Be careful" })).not.toBeInTheDocument());
       expect(screen.queryByRole("button", { name: /^Be careful:/ })).not.toBeInTheDocument();
@@ -472,7 +485,7 @@ describe("MessageCard", () => {
       reads({ ...stranger, deliveryPatterns: [] });
       render(<MessageCard message={{ ...message, bodyHtml: lookalikeLink }} isExpanded {...stableProps} subject="Invoice" />);
       const banner = await screen.findByRole("note", { name: "Be careful" });
-      expect(within(banner).queryByRole("button", { name: "This is legitimate" })).not.toBeInTheDocument();
+      expect(within(banner).queryByRole("button", { name: "Trust this address for this account" })).not.toBeInTheDocument();
     });
 
     it("keeps the details open on click until clicked again or Escape, and shows a link from them", async () => {
@@ -504,11 +517,11 @@ describe("MessageCard", () => {
       render(<MessageCard message={message} isExpanded {...stableProps} subject="Hello" />);
       fireEvent.click(await screen.findByRole("button", { name: /^Be careful: Replies go elsewhere/ }));
       const card = screen.getByRole("group", { name: "Sender details: Be careful" });
-      fireEvent.click(within(card).getByRole("button", { name: "This is legitimate" }));
+      fireEvent.click(within(card).getByRole("button", { name: "Trust this address for this account" }));
       expect(within(card).getByRole("button", { name: "Saving…" })).toBeDisabled();
       await act(async () => { fail(new Error("Database is locked")); });
       expect(await within(card).findByRole("alert")).toHaveTextContent("Database is locked");
-      expect(within(card).getByRole("button", { name: "This is legitimate" })).toBeEnabled();
+      expect(within(card).getByRole("button", { name: "Trust this address for this account" })).toBeEnabled();
       expect(screen.queryByText("You confirmed this email is legitimate")).not.toBeInTheDocument();
     });
 
@@ -524,7 +537,7 @@ describe("MessageCard", () => {
       fireEvent.click(toggle);
       expect(within(card).getByText("Sender verified")).toBeVisible();
       // A link warning has nothing to confirm without a requester to remember.
-      expect(within(card).queryByRole("button", { name: "This is legitimate" })).not.toBeInTheDocument();
+      expect(within(card).queryByRole("button", { name: "Trust this address for this account" })).not.toBeInTheDocument();
     });
 
     it("does not warn about links in the quoted history the reader folds away", async () => {

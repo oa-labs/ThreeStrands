@@ -640,8 +640,8 @@ describe("ContextPanel",()=>{
       renderPanel();
       const checks=await screen.findByRole("region",{name:"Sender checks"});
       expect(checks).toHaveTextContent("You confirmed this email is legitimate");
-      expect(checks).toHaveTextContent("requester@customer.example for this mail account");
-      expect(checks).toHaveTextContent("Security checks still apply.");
+      expect(checks).toHaveTextContent("Includes replies to requester@customer.example.");
+      expect(checks).toHaveTextContent("Authentication failures and suspicious links still warn.");
       fireEvent.click(within(checks).getByRole("button",{name:"Forget confirmation"}));
       await waitFor(()=>expect(screen.queryByRole("region",{name:TRUST_TITLES})).not.toBeInTheDocument());
       expect(mailClient.forgetSenderDelivery).toHaveBeenCalledWith("feedback-1");
@@ -652,7 +652,7 @@ describe("ContextPanel",()=>{
       vi.mocked(mailClient.senderFamiliarity).mockResolvedValue({...unfamiliar,knownDomains:["customer.example"],deliveryPatterns:[]});
       renderPanel();
       const trust=await screen.findByRole("region",{name:"Sender checks"});
-      expect(within(trust).getByRole("button",{name:"This is legitimate"})).toBeVisible();
+      expect(within(trust).getByRole("button",{name:"Trust this address for this account"})).toBeVisible();
     });
 
     it("leaves a warning, its link, and its details to the reader",async()=>{
