@@ -5,7 +5,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ## Unreleased
 
 ### Improved
-- Sender warnings now appear only in the email itself, no longer repeated in a **Be careful** section in the side panel. Hover over or click the warning beside the sender's name to see every finding, **Details**, and **This is legitimate**. To undo a confirmation, choose **Forget confirmation** in the side panel's **Sender checks** section.
+- Sender warnings stay in the email rather than repeating in the side panel, with familiar-name warnings showing the sending and previously seen addresses on separate labeled lines. Choose **Trust this address for this account** after reviewing its scope, or undo it with **Forget confirmation** in the side panel’s **Sender checks** section.
 
 ### Fixed
 - Emails with gradient backgrounds now keep their background colors and patterns, so light text stays readable.

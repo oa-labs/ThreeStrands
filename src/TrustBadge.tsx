@@ -15,7 +15,7 @@ const TRUST_CARD_CLOSE_DELAY_MS = 150;
  * banner above the body already says it, when the icon alone shows. Hovering
  * shows every row and the folded Details, and clicking keeps them open until
  * the user clicks again, presses Escape, or moves focus away. A warning's
- * details are the only place for them, so they also offer This is legitimate.
+ * details also offer the account-scoped trust action.
  */
 export function TrustBadge({ messageId, report, onShowLink }: { messageId: string; report: TrustReport; onShowLink?(link: TrustLink): void }) {
   const [hovered, setHovered] = useState(false);
@@ -129,8 +129,8 @@ export function TrustBadge({ messageId, report, onShowLink }: { messageId: strin
  * The strongest warnings above the message body, where they can't be missed:
  * a borrowed name, a look-alike sender or link domain, or a risky attachment.
  * Weaker warnings stay on the header badge. A borrowed name can be answered
- * here with This is legitimate, the same confirmation as the Be careful
- * section, which quiets that warning for this exact delivery.
+ * here with the same account-scoped trust action as the badge details,
+ * which quiets that warning for this exact delivery.
  */
 export function TrustBanner({ messageId, report, onShowLink }: { messageId: string; report: TrustReport; onShowLink?(link: TrustLink): void }) {
   const strong = strongWarnings(report);
@@ -146,7 +146,13 @@ export function TrustBanner({ messageId, report, onShowLink }: { messageId: stri
             return (
               <li key={finding.key}>
                 <span className="message-trust-banner-title">{finding.title}</span>
-                {finding.detail ? <span className="message-trust-banner-detail">{finding.detail}</span> : null}
+                {finding.addressComparison ? <div className="message-trust-address-comparison">
+                  <span className="message-trust-sender-name">{finding.addressComparison.name}</span>
+                  <dl>
+                    <div><dt>Sending address</dt><dd>{finding.addressComparison.sending}</dd></div>
+                    <div><dt>Previously seen</dt><dd>{finding.addressComparison.previous.join(", ")}</dd></div>
+                  </dl>
+                </div> : finding.detail ? <span className="message-trust-banner-detail">{finding.detail}</span> : null}
                 {link && onShowLink ? <button type="button" className="btn-link" onClick={() => onShowLink(link)}>Show link</button> : null}
               </li>
             );

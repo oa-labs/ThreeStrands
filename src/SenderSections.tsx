@@ -252,14 +252,18 @@ export function SenderFeedback({ messageId, feedback, compact = false }: { messa
     }
   };
   const matchingId = feedback.matching?.id;
+  const scopeId = useId();
   return (
     <div className="context-sender-feedback">
+      <p id={scopeId} className="context-sender-feedback-scope">
+        Trust {matchingId ? "applies" : "will apply"} to this sending address and its current link destinations for this mail account.
+        {feedback.replyTo ? <> Includes replies to {feedback.replyTo}.</> : null} Authentication failures and suspicious links still warn.
+      </p>
       <div className="context-sender-actions">
         {matchingId
           ? <button type="button" className="btn-link" disabled={busy} onClick={() => { void save(matchingId); }}>Forget confirmation</button>
-          : <button type="button" className="btn-link" disabled={busy} onClick={() => { void save(); }}>{busy ? "Saving…" : "This is legitimate"}</button>}
+          : <button type="button" className="btn btn-sm btn-wrap" aria-describedby={scopeId} disabled={busy} onClick={() => { void save(); }}>{busy ? "Saving…" : "Trust this address for this account"}</button>}
       </div>
-      <p className="context-sender-feedback-scope">{matchingId ? "Remembered" : "Remembers"} this sending address and link destinations for {feedback.requester} for this mail account. Security checks still apply.</p>
       {!compact && !matchingId && feedback.patterns.length > 0 ? (
         <details>
           <summary>Remembered senders</summary>
@@ -276,7 +280,7 @@ export function SenderFeedback({ messageId, feedback, compact = false }: { messa
  * a remembered confirmation to forget, a request whose Reply-To may need a
  * confirmation, or bulk mail from anyone but a known sender. Warnings live
  * in the reader, where the badge beside the sender and the banner above the
- * body name them and the badge's details offer This is legitimate; a known
+ * body name them and the badge's details offer the trust action; a known
  * sender's shield offers its details the same way. Rows give the sender's
  * history with the user; sender checks, the sites links open, and tracking
  * images fold under Details. Links are read only from the part shown before
