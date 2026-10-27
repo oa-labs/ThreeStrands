@@ -561,6 +561,7 @@ impl SyncLimits {
 
     /// Folder limits (Archive/Junk/Trash/user folders): the folder window,
     /// sliding (evicts). Trash and Junk are Folder-class in run 2.
+    #[cfg(test)]
     pub const fn folder() -> Self {
         Self {
             mailbox_window: FOLDER_SYNC_WINDOW,
@@ -570,6 +571,7 @@ impl SyncLimits {
 
     /// Sent limits: the Sent acquisition bound, NON-evicting. Run 3 drives the
     /// Sent round in chunks of [`SENT_ROUND_MESSAGES`], newest first.
+    #[cfg(test)]
     pub const fn sent() -> Self {
         Self {
             mailbox_window: SENT_SYNC_WINDOW,
@@ -1296,6 +1298,7 @@ pub fn cap_search_pins(existing: usize, requested: usize) -> PinCapSelection {
 /// The boundary is inclusive — exactly at the TTL the pin is released. A clock
 /// that went backwards (`now < pinned_at`) is treated as not expired rather
 /// than panicking on the subtraction.
+#[cfg(test)]
 pub fn search_pin_expired(pinned_at: i64, now: i64) -> bool {
     now.saturating_sub(pinned_at) >= SEARCH_PIN_TTL
 }
@@ -1348,10 +1351,10 @@ mod tests {
     fn sent_copy_job_limits_are_sane_bounds() {
         // A per-tick cap exists and is positive (an unbounded cap would let one
         // tick run long on a backlog).
-        assert!(SENT_COPY_MAX_JOBS_PER_TICK >= 1);
+        const { assert!(SENT_COPY_MAX_JOBS_PER_TICK >= 1) };
         // Enough transient attempts to ride out a long outage, bounded so a
         // broken account does not retry forever.
-        assert!(SENT_COPY_MAX_ATTEMPTS >= 2);
+        const { assert!(SENT_COPY_MAX_ATTEMPTS >= 2) };
         assert!(!SENT_COPY_BACKOFF.is_empty());
     }
 
@@ -1406,7 +1409,7 @@ mod tests {
     #[test]
     fn ingest_depth_limit_matches_the_shared_normalize_limit() {
         assert_eq!(MAX_MIME_DEPTH, crate::mime::MAX_MIME_DEPTH);
-        assert!(MAX_MIME_PART_COUNT >= crate::mime::MAX_MIME_PARTS);
+        const { assert!(MAX_MIME_PART_COUNT >= crate::mime::MAX_MIME_PARTS) };
     }
 
     // --- sync window ---------------------------------------------------
@@ -1509,9 +1512,9 @@ mod tests {
 
     #[test]
     fn the_folder_cadence_constants_are_positive_bounds() {
-        assert!(FOLDER_SWEEP_INTERVAL_SECS > 0);
+        const { assert!(FOLDER_SWEEP_INTERVAL_SECS > 0) };
         assert_eq!(FOLDER_SWEEP_INTERVAL_SECS, 15 * 60);
-        assert!(FOLDER_ROUNDS_PER_POLL > 0);
+        const { assert!(FOLDER_ROUNDS_PER_POLL > 0) };
         assert_eq!(FOLDER_ROUNDS_PER_POLL, 8);
     }
 
@@ -1677,7 +1680,7 @@ mod tests {
 
     #[test]
     fn the_cap_is_a_positive_bound() {
-        assert!(MAX_SYNCED_MAILBOXES > 0);
+        const { assert!(MAX_SYNCED_MAILBOXES > 0) };
         assert_eq!(MAX_SYNCED_MAILBOXES, 500);
     }
 
@@ -1722,7 +1725,7 @@ mod tests {
 
     #[test]
     fn the_grace_constant_is_a_positive_bound() {
-        assert!(EMPTIED_THREAD_GRACE_WALKS > 0);
+        const { assert!(EMPTIED_THREAD_GRACE_WALKS > 0) };
         assert_eq!(EMPTIED_THREAD_GRACE_WALKS, 2);
     }
 
@@ -1753,7 +1756,7 @@ mod tests {
             GMAIL_SENT_FETCHES_PER_STEP * GMAIL_SENT_STEPS_PER_POLL
         );
         assert_eq!(SENT_ROUND_MESSAGES, 100);
-        assert!(SENT_ROUND_MESSAGES > 0);
+        const { assert!(SENT_ROUND_MESSAGES > 0) };
     }
 
     #[test]
@@ -1867,16 +1870,16 @@ mod tests {
 
     #[test]
     fn the_uid_batch_size_is_a_positive_bound() {
-        assert!(UID_BATCH_SIZE > 0);
+        const { assert!(UID_BATCH_SIZE > 0) };
         assert_eq!(UID_BATCH_SIZE, 500);
     }
 
     #[test]
     fn the_token_backfill_batch_size_is_a_positive_bound() {
-        assert!(TOKEN_BACKFILL_BATCH_SIZE > 0);
+        const { assert!(TOKEN_BACKFILL_BATCH_SIZE > 0) };
         // One bound variable is the account id; the chunk plus it must stay
         // under SQLite's oldest default limit of 999.
-        assert!(TOKEN_QUERY_CHUNK > 0 && TOKEN_QUERY_CHUNK + 1 <= 999);
+        const { assert!(TOKEN_QUERY_CHUNK > 0 && TOKEN_QUERY_CHUNK < 999) };
         assert_eq!(TOKEN_BACKFILL_BATCH_SIZE, 500);
     }
 
@@ -1925,14 +1928,14 @@ mod tests {
 
     #[test]
     fn the_write_command_limits_are_positive_bounds() {
-        assert!(MAX_MAILBOX_NAME_BYTES > 0);
+        const { assert!(MAX_MAILBOX_NAME_BYTES > 0) };
         assert_eq!(MAX_MAILBOX_NAME_BYTES, 1024);
-        assert!(MAX_FLAGS_PER_COMMAND > 0);
+        const { assert!(MAX_FLAGS_PER_COMMAND > 0) };
         assert_eq!(MAX_FLAGS_PER_COMMAND, 64);
         // The write-side UID batch mirrors the read-side one, so a relocate and
         // a fetch split a large UID set identically.
         assert_eq!(MAX_UIDS_PER_COMMAND, UID_BATCH_SIZE);
-        assert!(MAX_UIDS_PER_COMMAND > 0);
+        const { assert!(MAX_UIDS_PER_COMMAND > 0) };
     }
 
     // --- Phase 4 run 4a: the Sent-copy APPEND primitive --------------------
@@ -2007,8 +2010,8 @@ mod tests {
         // must never drift.
         assert_eq!(APPEND_MAX_BYTES, MAX_RAW_MESSAGE_BYTES);
         assert_eq!(MAX_MESSAGE_ID_SEARCH_HITS, 64);
-        assert!(MAX_MESSAGE_ID_SEARCH_HITS > 0);
-        assert!(SENT_COPY_RELOCATE_RECHECKS >= 1);
+        const { assert!(MAX_MESSAGE_ID_SEARCH_HITS > 0) };
+        const { assert!(SENT_COPY_RELOCATE_RECHECKS >= 1) };
     }
 
     // --- Phase 4 run 1: SMTP submission limits -----------------------------
@@ -2200,10 +2203,10 @@ mod tests {
         assert_eq!(MAX_SEARCH_TERM_BYTES, 256);
         assert_eq!(MAX_SEARCH_QUERY_BYTES, 1024);
         assert_eq!(MAX_SEARCH_TARGET_MAILBOXES, 12);
-        assert!(MAX_SEARCH_TERMS > 0);
-        assert!(MAX_SEARCH_TERM_BYTES > 0);
-        assert!(MAX_SEARCH_QUERY_BYTES > 0);
-        assert!(MAX_SEARCH_TARGET_MAILBOXES > 0);
+        const { assert!(MAX_SEARCH_TERMS > 0) };
+        const { assert!(MAX_SEARCH_TERM_BYTES > 0) };
+        const { assert!(MAX_SEARCH_QUERY_BYTES > 0) };
+        const { assert!(MAX_SEARCH_TARGET_MAILBOXES > 0) };
     }
 
     #[test]

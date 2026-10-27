@@ -42,6 +42,7 @@
 /// contributes no location label (an aggregate `\All`/`\Flagged`, Drafts, or a
 /// `\Noselect` container) is simply never one of these.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(test)]
 pub enum MailboxLabel {
     /// INBOX -> `INBOX`.
     Inbox,
@@ -59,6 +60,7 @@ pub enum MailboxLabel {
     // typed spelling of the fixed SYSTEM roles for the plan's own tests.
 }
 
+#[cfg(test)]
 impl MailboxLabel {
     /// The canonical system label id a mailbox role contributes.
     pub fn label_id(self) -> &'static str {
@@ -110,6 +112,7 @@ fn is_flagged(flags: &[String]) -> bool {
 /// on any copy. A copy whose role contributes no location label (Archive,
 /// Drafts, an aggregate, or an unresolved mailbox) yields only its state
 /// labels — the forward-compatible shape Slice 5b-2 extends.
+#[cfg(test)]
 pub fn labels_for(location: Option<MailboxLabel>, flags: &[String]) -> Vec<String> {
     let mut labels = Vec::new();
     if let Some(location) = location {

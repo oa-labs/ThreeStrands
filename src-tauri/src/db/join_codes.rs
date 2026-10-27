@@ -12,6 +12,7 @@ use crate::replicated_sync::{encode_id, DeviceIdentity};
 /// A pending redemption of one of this device's codes: redemption cid,
 /// invitation cid, device id, Ed25519 and X25519 public keys, device name.
 pub(crate) type PendingRedemption = (String, String, String, Vec<u8>, Vec<u8>, String);
+type RedemptionInvitation = (String, Option<Vec<u8>>, String);
 
 pub(crate) fn rfc3339_from_ms(ms: i64) -> String {
     chrono::DateTime::from_timestamp_millis(ms).map(|time| time.to_rfc3339()).unwrap_or_default()
@@ -190,7 +191,7 @@ impl Database {
     }
 
     /// An invitation's direction, invite key, and inviter, if known here.
-    pub(crate) fn invitation_for_redemption(&self, invitation_cid: &str) -> DbResult<Option<(String, Option<Vec<u8>>, String)>> {
+    pub(crate) fn invitation_for_redemption(&self, invitation_cid: &str) -> DbResult<Option<RedemptionInvitation>> {
         Ok(self
             .connection()?
             .query_row(

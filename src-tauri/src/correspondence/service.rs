@@ -302,13 +302,13 @@ impl Correspondence {
             ScheduleChoices {local_time,time_zone} => Ok(serde_json::to_value(crate::scheduled_send::choices(&local_time,&time_zone)?).map_err(error)?),
             Schedule {id,revision,selection} => {
                 if let Some(item)=self.database.outbox()?.into_iter().find(|o|o.draft.id==id && o.draft.revision==revision) {
-                    return Ok(serde_json::to_value(item).map_err(error)?);
+                    return serde_json::to_value(item).map_err(error);
                 }
                 let draft=self.database.draft(&id)?;
                 let provider = self.provider_for(&draft.account).await?;
                 if !provider.capabilities().send_supported { return Err("Scheduled sending is not supported for this account yet".into()); }
                 let identities = provider.identities(&draft.account).await.map_err(error)?;
-                let message_id_domain = provider.message_id_domain(draft.from_address()).map_err(error)?;
+                let message_id_domain = provider.message_id_domain(draft.sender_address()).map_err(error)?;
                 let owner=schedule_owner;
                 Ok(serde_json::to_value(self.database.schedule_draft(&id,revision,&selection,&owner,&identities,message_id_domain.as_deref(),&self.root,unix_millis())?).map_err(error)?)
             }
@@ -381,7 +381,7 @@ impl Correspondence {
             )
             .map_err(error)?),
             Save { draft } => {
-                let mut saved = self.database.save_draft(draft)?;
+                let mut saved = self.database.save_draft(*draft)?;
                 saved.server_draft = self.database.server_draft_status(&saved)?;
                 Ok(serde_json::to_value(saved).map_err(error)?)
             }
@@ -414,7 +414,7 @@ impl Correspondence {
                     .into_iter()
                     .find(|o| o.draft.id == id && o.draft.revision == revision)
                 {
-                    return Ok(serde_json::to_value(item).map_err(error)?);
+                    return serde_json::to_value(item).map_err(error);
                 }
                 // Resolve the account's sending identities and the Message-ID
                 // domain from the provider BEFORE building the MIME, so the
@@ -426,7 +426,7 @@ impl Correspondence {
                 let provider = self.provider_for(&draft.account).await?;
                 let identities = provider.identities(&draft.account).await.map_err(error)?;
                 let message_id_domain = provider
-                    .message_id_domain(draft.from_address())
+                    .message_id_domain(draft.sender_address())
                     .map_err(error)?;
                 Ok(serde_json::to_value(self.database.queue(
                     &id,

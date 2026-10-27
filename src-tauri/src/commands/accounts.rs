@@ -123,7 +123,6 @@ pub(crate) async fn probe_imap_certificate(
 ) -> AppResult<imap::CertificateProbe> {
     imap::probe_imap_certificate(&host, port, security)
         .await
-        .map(|probe| probe) // CertificateProbe is Serialize
         .map_err(|error| AppError::message(imap::plain_language(&error)))
 }
 

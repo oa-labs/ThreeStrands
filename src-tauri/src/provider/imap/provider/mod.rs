@@ -141,11 +141,9 @@ impl ImapSession for LeasedSession {
     async fn list_mailboxes(&mut self) -> ProviderResult<Vec<super::session::MailboxEntry>> {
         self.session.list_mailboxes().await
     }
+    #[cfg(test)]
     async fn run_command_capture_code(&mut self, command: &str) -> ProviderResult<Option<String>> {
         self.session.run_command_capture_code(command).await
-    }
-    async fn noop(&mut self) -> ProviderResult<()> {
-        self.session.noop().await
     }
     async fn create_mailbox(&mut self, mailbox: &str) -> ProviderResult<()> {
         self.session.create_mailbox(mailbox).await
@@ -193,9 +191,6 @@ impl super::write::ImapWriteSession for LeasedSession {
     async fn delete_mailbox_arg(&mut self, arg: &str) -> ProviderResult<()> {
         self.session.delete_mailbox_arg(arg).await
     }
-    async fn rename_mailbox_arg(&mut self, from: &str, to: &str) -> ProviderResult<()> {
-        self.session.rename_mailbox_arg(from, to).await
-    }
     async fn append(
         &mut self,
         mailbox: &str,
@@ -218,9 +213,8 @@ impl super::write::ImapWriteSession for LeasedSession {
 pub struct ImapProvider {
     store: ImapStateStore,
     cache: BodyCache,
-    username: String,
     /// The account KEY (the email address entered at setup). May DIFFER from
-    /// `username` (the IMAP LOGIN) — e.g. Proton Bridge login `joel` for the
+    /// the IMAP LOGIN username — e.g. Proton Bridge login `joel` for the
     /// account `joel@proton.me`. This is the account's own sending address and
     /// the value `sender_identity()` / `identities()[0]` must report so the
     /// outbox tick does not pause every send whose `draft.account` is the
@@ -472,7 +466,6 @@ impl ImapProvider {
         Self {
             store: config.store,
             cache: config.cache,
-            username: config.username,
             account_id: config.account_id,
             smtp_password: config.smtp_password.unwrap_or(config.password),
             label_model: config.label_model,

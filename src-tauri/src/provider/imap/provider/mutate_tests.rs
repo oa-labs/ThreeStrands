@@ -301,12 +301,12 @@ fn build_response(
         if state.create_trycreate_once.as_deref() == Some(name.as_str()) {
             state.create_trycreate_once = None;
             (format!("{tag} NO [TRYCREATE] missing parent\r\n"), false)
-        } else if state.folders.contains_key(&name) {
-            (format!("{tag} NO [ALREADYEXISTS] exists\r\n"), false)
-        } else {
+        } else if let std::collections::btree_map::Entry::Vacant(e) = state.folders.entry(name) {
             // A freshly-created destination gets its own UIDVALIDITY.
-            state.folders.insert(name, MutFolder::new(700));
+            e.insert(MutFolder::new(700));
             (format!("{tag} OK CREATE done\r\n"), false)
+        } else {
+            (format!("{tag} NO [ALREADYEXISTS] exists\r\n"), false)
         }
     } else if upper.starts_with("DELETE") {
         // DELETE <mailbox>: remove the folder. Deleting an absent one
@@ -611,7 +611,6 @@ fn provider_with(server: Arc<Mutex<MutServer>>) -> (ImapProvider, ImapStateStore
     let provider = ImapProvider {
         store: store.clone(),
         cache,
-        username: "me@example.com".into(),
         account_id: "me@example.com".into(),
         smtp_password: "test-password".into(),
         label_model: LabelModel::ImapLabelFolders,
@@ -748,7 +747,7 @@ async fn star_adds_flagged_and_unstar_removes_it() {
     let (provider, store) = provider_with(server.clone());
     let id = seed(&store, &provider, "INBOX", 100, 1, "m1", &["\\Seen"]);
 
-    provider.modify_messages(&[id.clone()], &["STARRED".into()], &[]).await.expect("star");
+    provider.modify_messages(std::slice::from_ref(&id), &["STARRED".into()], &[]).await.expect("star");
     assert!(server.lock().unwrap().flags_of("INBOX", 1).iter().any(|f| f == "\\Flagged"));
     assert!(local_flags(&store, "INBOX", 1).iter().any(|f| f == "\\Flagged"));
 
@@ -999,7 +998,7 @@ async fn an_unsupported_or_mixed_request_is_rejected_before_any_command() {
 
     // STARRED + INBOX (an unsupported location id) is rejected permanently.
     let err = provider
-        .modify_messages(&[id.clone()], &["STARRED".into(), "INBOX".into()], &[])
+        .modify_messages(std::slice::from_ref(&id), &["STARRED".into(), "INBOX".into()], &[])
         .await
         .unwrap_err();
     assert!(matches!(err, ProviderError::InvalidOperation(_)), "{err:?}");
@@ -1152,6 +1151,7 @@ async fn after_a_mutation_a_following_sweep_sees_no_change() {
 /// WITHOUT advancing a shared uid counter (callers choose the uid). Returns
 /// the stable message id. Unlike `seed`, this lets several copies of one
 /// message id live in different mailboxes.
+#[allow(clippy::too_many_arguments)]
 fn seed_loc(
     store: &ImapStateStore,
     provider: &ImapProvider,
@@ -1854,7 +1854,7 @@ async fn add_label_copies_the_inbox_message_into_the_label_mailbox() {
     let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
 
     provider
-        .modify_messages(&[id.clone()], &["lf:Clients".into()], &[])
+        .modify_messages(std::slice::from_ref(&id), &["lf:Clients".into()], &[])
         .await
         .expect("add label");
 
@@ -1902,7 +1902,7 @@ async fn add_label_is_idempotent_and_sends_no_command_the_second_time() {
     let (provider, store) = provider_with(server.clone());
     let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &["\\Seen"]);
 
-    provider.modify_messages(&[id.clone()], &["lf:Clients".into()], &[]).await.expect("add 1");
+    provider.modify_messages(std::slice::from_ref(&id), &["lf:Clients".into()], &[]).await.expect("add 1");
     server.lock().unwrap().commands.lock().unwrap().clear();
     // Second add: already satisfied — ZERO commands (not even a SELECT).
     provider.modify_messages(&[id], &["lf:Clients".into()], &[]).await.expect("add 2 no-op");
@@ -1931,7 +1931,7 @@ async fn add_label_source_priority_prefers_inbox_then_archive() {
         })
         .unwrap();
 
-    provider.modify_messages(&[id.clone()], &["lf:Clients".into()], &[]).await.expect("add");
+    provider.modify_messages(std::slice::from_ref(&id), &["lf:Clients".into()], &[]).await.expect("add");
 
     // The COPY was issued from Archive, not Sent.
     let g = server.lock().unwrap();
@@ -2034,7 +2034,7 @@ async fn remove_label_expunges_only_the_label_copy_and_keeps_the_inbox_copy() {
         .unwrap();
 
     provider
-        .modify_messages(&[id.clone()], &[], &["lf:Clients".into()])
+        .modify_messages(std::slice::from_ref(&id), &[], &["lf:Clients".into()])
         .await
         .expect("remove label");
 
@@ -2147,7 +2147,7 @@ async fn remove_label_half_applied_expunge_failure_is_retryable_and_the_retry_fi
 
         // First attempt: COPY-side \Deleted store lands, EXPUNGE fails once.
         let err = provider
-            .modify_messages(&[id.clone()], &[], &["lf:Clients".into()])
+            .modify_messages(std::slice::from_ref(&id), &[], &["lf:Clients".into()])
             .await
             .unwrap_err();
         assert_eq!(
@@ -2162,7 +2162,7 @@ async fn remove_label_half_applied_expunge_failure_is_retryable_and_the_retry_fi
         // Retry: the one-shot failure is cleared, the expunge completes,
         // the label copy and its local row are gone, INBOX is untouched.
         provider
-            .modify_messages(&[id.clone()], &[], &["lf:Clients".into()])
+            .modify_messages(std::slice::from_ref(&id), &[], &["lf:Clients".into()])
             .await
             .expect("retry finishes the remove");
         assert_eq!(uids_in(&server, "Labels/Clients").len(), 0, "copy expunged on retry");
@@ -2216,7 +2216,7 @@ async fn label_ops_in_non_folders_storage_mode_are_rejected_with_zero_commands()
         (vec!["lf:Clients".to_string()], vec![]),
         (vec![], vec!["lf:Clients".to_string()]),
     ] {
-        let err = provider.modify_messages(&[id.clone()], &add, &remove).await.unwrap_err();
+        let err = provider.modify_messages(std::slice::from_ref(&id), &add, &remove).await.unwrap_err();
         match err {
             ProviderError::InvalidOperation(m) => assert!(m.contains("keyword labels"), "{m}"),
             other => panic!("expected InvalidOperation naming the mode, got {other:?}"),
@@ -2246,7 +2246,7 @@ async fn a_mixed_or_multi_label_message_request_is_rejected_before_any_command()
         (vec!["lf:Clients".into(), "INBOX".into()], vec![]),    // label + system
     ];
     for (add, remove) in bad {
-        let err = provider.modify_messages(&[id.clone()], &add, &remove).await.unwrap_err();
+        let err = provider.modify_messages(std::slice::from_ref(&id), &add, &remove).await.unwrap_err();
         assert!(matches!(err, ProviderError::InvalidOperation(_)), "add={add:?} remove={remove:?} -> {err:?}");
         assert!(!err.retry_mutation());
     }
@@ -2482,7 +2482,7 @@ async fn after_add_label_a_following_sweep_sees_no_change_and_no_duplicate() {
     provider.baseline_cursor().await.unwrap();
     let id = store.locations_in_mailbox("INBOX").unwrap()[0].message_id.clone();
 
-    provider.modify_messages(&[id.clone()], &["lf:Clients".into()], &[]).await.expect("add label");
+    provider.modify_messages(std::slice::from_ref(&id), &["lf:Clients".into()], &[]).await.expect("add label");
     let copies_before = store.locations_for_message(&id).unwrap().len();
     assert_eq!(copies_before, 2, "INBOX + Labels/Clients");
     let gen_after = store.generation().unwrap();
@@ -2517,7 +2517,7 @@ async fn remove_label_catches_a_silently_ignored_permanent_deleted_flag() {
     let (server, provider, store, id) = paired_label_message();
     server.lock().unwrap().silently_ignore_flag = Some("\\Deleted".into());
     let err = provider
-        .modify_messages(&[id.clone()], &[], &["lf:Clients".into()])
+        .modify_messages(std::slice::from_ref(&id), &[], &["lf:Clients".into()])
         .await
         .unwrap_err();
     assert!(
@@ -2533,7 +2533,7 @@ async fn remove_label_keeps_its_location_until_expunge_really_removes_the_copy()
     let (server, provider, store, id) = paired_label_message();
     server.lock().unwrap().ignore_expunge = true;
     let err = provider
-        .modify_messages(&[id.clone()], &[], &["lf:Clients".into()])
+        .modify_messages(std::slice::from_ref(&id), &[], &["lf:Clients".into()])
         .await
         .unwrap_err();
     assert!(err.retry_mutation());
@@ -2603,11 +2603,11 @@ async fn encoded_labels_round_trip_creation_catalog_flags_removal_and_deletion()
             .iter()
             .any(|item| item.id == label.id && item.name == label.name));
         provider
-            .modify_messages(&[id.clone()], &[label.id.clone()], &[])
+            .modify_messages(std::slice::from_ref(&id), std::slice::from_ref(&label.id), &[])
             .await
             .unwrap();
         provider
-            .modify_messages(&[id.clone()], &[], &["UNREAD".into()])
+            .modify_messages(std::slice::from_ref(&id), &[], &["UNREAD".into()])
             .await
             .unwrap();
         assert!(server
@@ -2616,7 +2616,7 @@ async fn encoded_labels_round_trip_creation_catalog_flags_removal_and_deletion()
             .flags_of(&format!("Labels/{wire}"), 1)
             .contains(&"\\Seen".into()));
         provider
-            .modify_messages(&[id], &[], &[label.id.clone()])
+            .modify_messages(&[id], &[], std::slice::from_ref(&label.id))
             .await
             .unwrap();
         provider.delete_label(&label.id).await.unwrap();
@@ -2653,11 +2653,11 @@ async fn existing_wire_label_ids_and_encoded_container_are_preserved() {
     assert_eq!(label.name, "Café");
     assert_eq!(server.lock().unwrap().count_starting("CREATE"), 0);
     provider
-        .modify_messages(&[id.clone()], &[label.id.clone()], &[])
+        .modify_messages(std::slice::from_ref(&id), std::slice::from_ref(&label.id), &[])
         .await
         .unwrap();
     provider
-        .modify_messages(&[id], &[], &[label.id.clone()])
+        .modify_messages(&[id], &[], std::slice::from_ref(&label.id))
         .await
         .unwrap();
     provider.delete_label(&label.id).await.unwrap();
@@ -2721,11 +2721,11 @@ async fn copy_without_copyuid_reconciles_before_reporting_success() {
     let (provider, store) = provider_with(server.clone());
     let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &[]);
     provider
-        .modify_messages(&[id.clone()], &["lf:Clients".into()], &[])
+        .modify_messages(std::slice::from_ref(&id), &["lf:Clients".into()], &[])
         .await
         .unwrap();
     provider
-        .modify_messages(&[id.clone()], &["lf:Clients".into()], &[])
+        .modify_messages(std::slice::from_ref(&id), &["lf:Clients".into()], &[])
         .await
         .unwrap();
     assert_eq!(server.lock().unwrap().count_starting("UID COPY"), 1);
@@ -2757,16 +2757,16 @@ async fn an_intent_saved_before_copy_can_retry_when_no_copy_landed() {
         .add(&[], &message("<m1@x>"));
     let (provider, store) = provider_with(server.clone());
     let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &[]);
-    let identity = crate::provider::imap::derive_message_id(
+    let identity = crate::provider::imap::identity::derive_message_id(
         store.account_id(),
-        &crate::provider::imap::IdentityInputs {
+        &crate::provider::imap::identity::IdentityInputs {
             message_id: Some("<m1@x>".into()),
             ..Default::default()
         },
     );
     store.begin_copy(&id, "Labels/Clients", &identity).unwrap();
     provider
-        .modify_messages(&[id.clone()], &["lf:Clients".into()], &[])
+        .modify_messages(std::slice::from_ref(&id), &["lf:Clients".into()], &[])
         .await
         .unwrap();
     assert_eq!(server.lock().unwrap().count_starting("UID COPY"), 1);
@@ -2836,7 +2836,7 @@ async fn remove_label_must_check_and_verify_deleted_flag() {
         g.silently_ignore_flag = Some("\\Deleted".into());
     }
     let result = provider
-        .modify_messages(&[id.clone()], &[], &["lf:Clients".into()])
+        .modify_messages(std::slice::from_ref(&id), &[], &["lf:Clients".into()])
         .await;
     assert!(result.is_err(), "must not report a successful removal when Deleted is unsupported and the server retained the message; got {result:?}; server UIDs {:?}; local copies {:?}", uids_in(&server, "Labels/Clients"), local_mailboxes_of(&store, &id));
 }
@@ -2862,7 +2862,7 @@ async fn created_ampersand_label_must_be_removable() {
     );
     let label = provider.create_label("R&D").await.unwrap();
     provider
-        .modify_messages(&[id.clone()], &[label.id.clone()], &[])
+        .modify_messages(std::slice::from_ref(&id), std::slice::from_ref(&label.id), &[])
         .await
         .unwrap();
     assert_eq!(uids_in(&server, "Labels/R&-D").len(), 1);
@@ -2889,7 +2889,7 @@ async fn copy_response_loss_must_not_duplicate_on_retry() {
         let (provider, store) = provider_with(server.clone());
         let id = seed_loc(&store, &provider, "m1", "imap:t:m1", "INBOX", 100, 1, &[]);
         let first = provider
-            .modify_messages(&[id.clone()], &["lf:Clients".into()], &[])
+            .modify_messages(std::slice::from_ref(&id), &["lf:Clients".into()], &[])
             .await
             .unwrap_err();
         assert!(first.retry_mutation(), "{first:?}");
@@ -2899,7 +2899,7 @@ async fn copy_response_loss_must_not_duplicate_on_retry() {
             .unwrap()
             .is_some());
         provider
-            .modify_messages(&[id.clone()], &["lf:Clients".into()], &[])
+            .modify_messages(std::slice::from_ref(&id), &["lf:Clients".into()], &[])
             .await
             .unwrap();
         assert_eq!(server.lock().unwrap().count_starting("UID COPY"), 1);
@@ -2967,7 +2967,7 @@ async fn removing_or_deleting_a_label_refuses_stale_or_deleted_backup_coordinate
                 provider.delete_label("lf:Clients").await
             } else {
                 provider
-                    .modify_messages(&[id.clone()], &[], &["lf:Clients".into()])
+                    .modify_messages(std::slice::from_ref(&id), &[], &["lf:Clients".into()])
                     .await
             };
             assert!(

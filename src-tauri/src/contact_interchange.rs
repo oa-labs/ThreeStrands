@@ -619,7 +619,7 @@ mod tests {
         contact.favorite = true;
         let profile = db.save_contact_profile(&contact).unwrap();
         for format in [ContactFormat::Csv, ContactFormat::Vcard] {
-            let bytes = export(&[profile.clone()], format).unwrap();
+            let bytes = export(std::slice::from_ref(&profile), format).unwrap();
             let data = String::from_utf8(bytes).unwrap();
             if matches!(format, ContactFormat::Vcard) {
                 assert!(data.split("\r\n").all(|line| line.len() <= 75));

@@ -2056,8 +2056,8 @@ mod replicator_tests {
         exchange(&a, &b);
         assert_eq!(b.get_contact_group(&group.id).unwrap().unwrap().member_ids, vec![ada.clone(), bob.clone()]);
 
-        record(&a, a.remove_contact_group_members(&group.id, &[bob.clone()]).unwrap());
-        record(&b, b.add_contact_group_members(&group.id, &[cyd.clone()], &[]).unwrap());
+        record(&a, a.remove_contact_group_members(&group.id, std::slice::from_ref(&bob)).unwrap());
+        record(&b, b.add_contact_group_members(&group.id, std::slice::from_ref(&cyd), &[]).unwrap());
         exchange(&a, &b);
         exchange(&b, &a);
         for database in [&a, &b] {

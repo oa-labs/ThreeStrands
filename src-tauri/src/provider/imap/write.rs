@@ -46,8 +46,6 @@
 //!   two places) rather than claiming success, and never expunges a UID the
 //!   caller did not name.
 
-#![allow(dead_code)] // First caller is Phase 3 run 2 (flags / moves / labels).
-
 use async_trait::async_trait;
 
 use crate::provider::ProviderError;
@@ -72,13 +70,6 @@ pub enum StoreOp {
 }
 
 impl StoreOp {
-    /// The `UID STORE` data-item name for this operation.
-    fn item(self) -> &'static str {
-        match self {
-            StoreOp::Add => "+FLAGS.SILENT",
-            StoreOp::Remove => "-FLAGS.SILENT",
-        }
-    }
 }
 
 /// One UIDPLUS `COPYUID` / `APPENDUID` mapping, parsed from the TYPED
@@ -209,10 +200,6 @@ pub trait ImapWriteSession: ImapSession {
     /// idempotent success).
     async fn delete_mailbox_arg(&mut self, arg: &str) -> Result<(), ProviderError>;
 
-    /// `RENAME <from> <to>` where both are already-encoded mailbox arguments.
-    /// Maps `NO`/`BAD` through the RFC 5530 map.
-    async fn rename_mailbox_arg(&mut self, from: &str, to: &str) -> Result<(), ProviderError>;
-
     /// `APPEND <mailbox> (<flags>) {<n>}` + the message literal, through the
     /// async-imap library `append` (which performs the `+`-continuation
     /// handshake and writes the literal correctly — Phase 3 run 1 proved a
@@ -270,6 +257,7 @@ pub trait ImapWriteSession: ImapSession {
 /// modified UTF-7 (RFC 3501 §5.1.3), then quoted with `"` and `\` escaped,
 /// matching async-imap's own `quote!` on the read path so a round trip is
 /// faithful.
+#[cfg(test)]
 pub fn build_mailbox_arg(name: &str) -> Result<String, ProviderError> {
     reject_control_chars(name, "mailbox name")?;
     policy::check_mailbox_name_len(name.len())?;
@@ -315,7 +303,7 @@ pub(super) fn decode_modified_utf7(input: &str) -> Result<String, ProviderError>
                 return Err(invalid());
             }
             let units: Vec<u16> = bytes
-                .chunks_exact(2)
+                .as_chunks::<2>().0.iter()
                 .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
                 .collect();
             out.push_str(&String::from_utf16(&units).map_err(|_| invalid())?);
@@ -657,6 +645,7 @@ impl WriteCaps {
     }
 
     /// Whether an atomic server-side `UID MOVE` is available.
+    #[cfg(test)]
     pub fn can_move(&self) -> bool {
         self.has_move
     }
@@ -915,6 +904,7 @@ pub struct RelocateOutcome {
 /// `dest` is the destination's persisted LIST wire name, quoted through
 /// [`build_wire_mailbox_arg`] without a second modified UTF-7 encoding.
 /// `uids` is compressed/batched through the one audited builder.
+#[cfg(test)]
 pub async fn relocate_uids(
     session: &mut dyn ImapWriteSession,
     ctx: &WriteContext,
@@ -993,6 +983,7 @@ pub async fn relocate_uids(
 /// Build the typed partial-relocate error, naming the two mailboxes, the UID
 /// set left in both places, and the underlying failure. Phase 3 uses this to
 /// make the retry idempotent (the message now has two locations).
+#[cfg(test)]
 fn partial_relocate_error(
     source: &str,
     dest: &str,
@@ -1295,6 +1286,7 @@ pub(super) fn copyuid_from_code(
 /// completion. (Most servers answer a plain `NO` for a read-only mailbox,
 /// which the error map already handles; this covers the `OK [READ-ONLY]`
 /// variant some servers send.)
+#[cfg(test)]
 pub(super) fn select_is_read_only(code: &async_imap::imap_proto::ResponseCode<'_>) -> bool {
     matches!(code, async_imap::imap_proto::ResponseCode::ReadOnly)
 }

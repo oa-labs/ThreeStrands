@@ -365,6 +365,6 @@ mod tests {
         // A reasoning model filling the larger budget at a modest ~150
         // tokens per second must finish before the request times out.
         assert!(REQUEST_TIMEOUT.as_secs() * 150 >= STRUCTURED_OUTPUT_TOKENS as u64);
-        assert!(TEXT_OUTPUT_TOKENS <= STRUCTURED_OUTPUT_TOKENS);
+        const { assert!(TEXT_OUTPUT_TOKENS <= STRUCTURED_OUTPUT_TOKENS) };
     }
 }

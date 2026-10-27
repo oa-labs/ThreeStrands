@@ -74,7 +74,7 @@ fn open_fallback(
         _ => return Err("Invalid unsubscribe fallback".to_string()),
     }
     Ok(UnsubscribeResult {
-        method: target.method.clone(),
+        method: target.method,
         outcome: "opened".into(),
         http_status: None,
     })

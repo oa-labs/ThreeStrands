@@ -23,10 +23,12 @@
 //! [`ImapAccountSettings::fingerprint_decision`]).
 
 use std::collections::BTreeMap;
+#[cfg(test)]
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
 use crate::db::{Database, DbResult};
 
 use super::tls::{parse_sha256_fingerprint, Sha256Fingerprint};
@@ -116,6 +118,7 @@ pub struct Identity {
 }
 
 /// What to do with a certificate presented on connect, given what is pinned.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FingerprintDecision {
     /// No pin for this `host:port`: a real-CA server verifies normally; a
@@ -183,6 +186,7 @@ impl ImapAccountSettings {
     /// Decide what to do with the certificate `presented` on `host:port`,
     /// given what (if anything) is pinned. This is the single place the
     /// "never silently re-pin" rule is expressed.
+    #[cfg(test)]
     pub fn fingerprint_decision(
         &self,
         host: &str,
@@ -200,22 +204,20 @@ impl ImapAccountSettings {
 /// A narrow, account-scoped handle onto one account's `imap_account_settings`
 /// row. Constructed with the account email it serves, so one account can never
 /// read another's settings. A thin wrapper over the shared [`Database`].
+#[cfg(test)]
 #[derive(Clone)]
 pub struct ImapSettingsStore {
     database: Arc<Database>,
     account_id: String,
 }
 
+#[cfg(test)]
 impl ImapSettingsStore {
     pub fn new(database: Arc<Database>, account_id: impl Into<String>) -> Self {
         Self {
             database,
             account_id: account_id.into(),
         }
-    }
-
-    pub fn account_id(&self) -> &str {
-        &self.account_id
     }
 
     /// Inserts or replaces this account's settings row.

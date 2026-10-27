@@ -3,10 +3,6 @@
 //! cadence, search pins, copy intents, the body cache, and the account's
 //! non-secret settings row. Only the IMAP provider reads these tables.
 
-// Carried over from the IMAP provider module, where this store lived: some
-// methods are exercised only by tests until their first production caller.
-#![allow(dead_code)]
-
 use std::sync::Arc;
 
 use rusqlite::OptionalExtension;
@@ -375,6 +371,7 @@ impl ImapStateStore {
     /// Drops every location in one mailbox: used on a `UIDVALIDITY` reset,
     /// which invalidates that mailbox's UIDs without touching cached bodies
     /// (keyed by the stable message id) or any other mailbox's rows.
+    #[cfg(test)]
     pub fn drop_mailbox_locations(&self, mailbox: &str) -> DbResult<()> {
         self.database.with_connection(|connection| {
             connection.execute(
@@ -534,6 +531,7 @@ impl ImapStateStore {
     /// the threader's prior state — including each thread's PERSISTED creation
     /// generation, so a merge picks the genuinely older thread rather than a
     /// hash ordering.
+    #[cfg(test)]
     pub fn all_message_threads(&self) -> DbResult<Vec<(String, String, u64)>> {
         self.database.with_connection(|connection| {
             let mut statement = connection.prepare(
@@ -596,8 +594,7 @@ impl ImapStateStore {
             // of messages in one round, so query the token set in chunks.
             let unique_tokens: Vec<&str> = unique.iter().copied().collect();
             for chunk in unique_tokens.chunks(policy::TOKEN_QUERY_CHUNK) {
-                let placeholders = std::iter::repeat("?")
-                    .take(chunk.len())
+                let placeholders = std::iter::repeat_n("?", chunk.len())
                     .collect::<Vec<_>>()
                     .join(",");
                 let sql = format!(
@@ -889,6 +886,7 @@ impl ImapStateStore {
     ///   * journals every HOT thread that lost a location (so the engine
     ///     re-ingests it: a hot thread left with no locations then flows
     ///     through the existing emptied-thread grace in `fetch_thread`).
+    ///
     /// Bodies and threading tokens are untouched — a mailbox that re-appears
     /// later is simply re-added and its messages re-sync normally.
     ///
@@ -1091,6 +1089,7 @@ impl ImapStateStore {
     /// Insert or refresh one pin's `pinned_at`. Re-acquiring an already-pinned
     /// UID refreshes its timestamp (resetting the TTL) rather than inserting a
     /// duplicate. Used by the acquire round, in that round's transaction.
+    #[cfg(test)]
     pub fn upsert_pin(&self, mailbox: &str, uidvalidity: i64, uid: i64, pinned_at: i64) -> DbResult<()> {
         self.database.with_connection(|connection| {
             connection.execute(
@@ -1100,34 +1099,6 @@ impl ImapStateStore {
                  ON CONFLICT(account_id, mailbox, uidvalidity, uid) DO UPDATE SET
                      pinned_at = excluded.pinned_at",
                 rusqlite::params![self.account_id, mailbox, uidvalidity, uid, pinned_at],
-            )?;
-            Ok(())
-        })
-    }
-
-    /// Release one pin. The location then follows normal window rules again.
-    /// A no-op when there is no such pin. Used by TTL release and by the delta
-    /// when a pinned UID is reported deleted (expunged on the server).
-    pub fn release_pin(&self, mailbox: &str, uidvalidity: i64, uid: i64) -> DbResult<()> {
-        self.database.with_connection(|connection| {
-            connection.execute(
-                "DELETE FROM imap_search_pins
-                 WHERE account_id = ?1 AND mailbox = ?2 AND uidvalidity = ?3 AND uid = ?4",
-                rusqlite::params![self.account_id, mailbox, uidvalidity, uid],
-            )?;
-            Ok(())
-        })
-    }
-
-    /// Drop every pin in one mailbox at a given incarnation. Called on a
-    /// UIDVALIDITY reset for that mailbox (alongside dropping its locations):
-    /// the old incarnation's UIDs are renumbered, so its pins are meaningless.
-    pub fn drop_pins_in_mailbox(&self, mailbox: &str, uidvalidity: i64) -> DbResult<()> {
-        self.database.with_connection(|connection| {
-            connection.execute(
-                "DELETE FROM imap_search_pins
-                 WHERE account_id = ?1 AND mailbox = ?2 AND uidvalidity = ?3",
-                rusqlite::params![self.account_id, mailbox, uidvalidity],
             )?;
             Ok(())
         })
@@ -1757,6 +1728,7 @@ impl ImapStateStore {
     /// A thread's persisted creation generation (the minimum across its
     /// messages), used to decide which of two threads is older on a merge. A
     /// thread with no rows yet returns `None`.
+    #[cfg(test)]
     pub fn thread_created_generation(&self, thread_id: &str) -> DbResult<Option<u64>> {
         self.database.with_connection(|connection| {
             let created: Option<i64> = connection
@@ -1978,6 +1950,7 @@ impl BodyCache {
     }
 
     /// Total cached body bytes for this account (size accounting).
+    #[cfg(test)]
     pub fn total_size(&self) -> DbResult<i64> {
         let account = self.account().to_string();
         self.store.database().with_connection(|connection| {

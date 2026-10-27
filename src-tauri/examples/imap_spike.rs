@@ -188,15 +188,14 @@ where
                 }
                 let _ = status;
             }
-            Response::Done { tag, status, outcome } => {
-                if tag.as_bytes() == id.as_bytes() {
+            Response::Done { tag, status, outcome }
+                if tag.as_bytes() == id.as_bytes() => {
                     if let Some(c) = outcome.code.as_ref().and_then(OwnedCode::from_code) {
                         captured = Some(c);
                     }
                     final_status = format!("{status:?}");
                     break;
                 }
-            }
             _ => {}
         }
     }
@@ -593,7 +592,6 @@ async fn check3_copyuid_appenduid(report: &mut Report, pin: [u8; 32]) {
 // the observed PERMANENTFLAGS (should omit \*).
 async fn check4_keyword_store(report: &mut Report, pin: [u8; 32]) {
     let mut evidence = String::new();
-    let pass;
 
     let pin = live_pin(pin, &mut evidence).await;
 
@@ -694,7 +692,7 @@ async fn check4_keyword_store(report: &mut Report, pin: [u8; 32]) {
     } else {
         !persisted
     };
-    pass = consistent;
+    let pass = consistent;
     evidence.push_str(&format!(
         "keyword persisted after re-fetch? {persisted}; consistent with PERMANENTFLAGS? {consistent}\n"
     ));

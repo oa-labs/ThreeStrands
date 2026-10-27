@@ -98,6 +98,7 @@ pub fn resolve(selection: &Selection, at: i64) -> Result<i64, String> {
 }
 
 impl Database {
+    #[allow(clippy::too_many_arguments)]
     pub fn schedule_draft(
         &self,
         id: &str,

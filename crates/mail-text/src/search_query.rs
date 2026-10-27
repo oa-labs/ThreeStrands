@@ -659,7 +659,7 @@ fn group_start(token: &str) -> Option<(bool, Option<String>, &str)> {
     let (field, value) = split_field(body)?;
     value
         .starts_with(['(', '{'])
-        .then(|| (negated, Some(field), value))
+        .then_some((negated, Some(field), value))
 }
 
 /// Parse one token that is not part of a group: a term, or `-term`.
@@ -1490,8 +1490,8 @@ mod tests {
     fn local_search_limits_are_the_documented_bounds() {
         assert_eq!(MAX_LOCAL_SEARCH_TERMS, 16);
         assert_eq!(MAX_LOCAL_SEARCH_TERM_BYTES, 256);
-        assert!(MAX_LOCAL_SEARCH_TERMS > 0);
-        assert!(MAX_LOCAL_SEARCH_TERM_BYTES > 0);
+        const { assert!(MAX_LOCAL_SEARCH_TERMS > 0) };
+        const { assert!(MAX_LOCAL_SEARCH_TERM_BYTES > 0) };
     }
 
     /// A structured plan of `n` `from:` operator terms.
@@ -1701,8 +1701,8 @@ mod tests {
         // a message just before the boundary sorts below it and one at/after
         // sorts at-or-above it — the property the SQL `<` / `>=` relies on.
         let bound = utc_day_start_rfc3339(d);
-        assert!("2023-12-31T23:59:59+00:00".to_string() < bound);
-        assert!("2024-01-01T00:00:00+00:00".to_string() >= bound);
-        assert!("2024-01-01T00:00:01+00:00".to_string() >= bound);
+        assert!("2023-12-31T23:59:59+00:00" < bound.as_str());
+        assert!("2024-01-01T00:00:00+00:00" >= bound.as_str());
+        assert!("2024-01-01T00:00:01+00:00" >= bound.as_str());
     }
 }

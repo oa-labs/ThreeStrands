@@ -53,15 +53,6 @@ fn thread_hash(normalized_message_id: &str) -> String {
     out
 }
 
-/// The thread id a brand-new thread takes, fixed from the first (already
-/// normalized) message token it saw: `imap:<account>:t:<hash>`.
-pub fn new_thread_id(account: &str, first_message_id: &str) -> String {
-    format!(
-        "imap:{account}:t:{}",
-        thread_hash(&normalize_message_id(first_message_id))
-    )
-}
-
 /// One message handed to the threader: its already-derived stable id, and the
 /// raw reference headers as the identity pass collected them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

@@ -345,9 +345,11 @@ async fn a_verified_store_succeeds_when_the_flag_is_actually_set() {
 
 #[tokio::test]
 async fn a_verified_store_catches_a_silently_ignored_flag() {
-    let mut script = ServerScript::default();
-    // The server ACKs the STORE but never records \Flagged.
-    script.silently_ignore_flag = Some("\\Flagged".into());
+    let script = ServerScript {
+        // The server ACKs the STORE but never records \Flagged.
+        silently_ignore_flag: Some("\\Flagged".into()),
+        ..Default::default()
+    };
     let (mut session, _log, task) = connect(script).await;
     let store = store();
     let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
@@ -432,8 +434,10 @@ async fn relocate_uses_move_when_advertised() {
 
 #[tokio::test]
 async fn relocate_uses_copy_delete_expunge_when_only_uidplus() {
-    let mut script = ServerScript::default();
-    script.capabilities = vec!["IMAP4REV1".into(), "UIDPLUS".into()]; // no MOVE
+    let script = ServerScript {
+        capabilities: vec!["IMAP4REV1".into(), "UIDPLUS".into()], // no MOVE
+        ..Default::default()
+    };
     let (mut session, log, task) = connect(script).await;
     let store = store();
     let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
@@ -452,15 +456,17 @@ async fn relocate_uses_copy_delete_expunge_when_only_uidplus() {
     assert!(log
         .seen()
         .iter()
-        .any(|c| c.to_ascii_uppercase() == "UID EXPUNGE 10"));
+        .any(|c| c.eq_ignore_ascii_case("UID EXPUNGE 10")));
     let _ = session.logout().await;
     task.await.unwrap();
 }
 
 #[tokio::test]
 async fn relocate_is_unsupported_without_move_or_uidplus_and_sends_nothing() {
-    let mut script = ServerScript::default();
-    script.capabilities = vec!["IMAP4REV1".into()]; // neither MOVE nor UIDPLUS
+    let script = ServerScript {
+        capabilities: vec!["IMAP4REV1".into()], // neither MOVE nor UIDPLUS
+        ..Default::default()
+    };
     let (mut session, log, task) = connect(script).await;
     let store = store();
     let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
@@ -482,9 +488,11 @@ async fn relocate_is_unsupported_without_move_or_uidplus_and_sends_nothing() {
 #[tokio::test]
 async fn a_partial_relocate_reports_the_message_in_both_mailboxes() {
     // COPY succeeds, but the \Deleted store on the source fails.
-    let mut script = ServerScript::default();
-    script.capabilities = vec!["IMAP4REV1".into(), "UIDPLUS".into()]; // copy-delete-expunge path
-    script.fail_deleted_store = Some("server rejected the store".into());
+    let script = ServerScript {
+        capabilities: vec!["IMAP4REV1".into(), "UIDPLUS".into()], // copy-delete-expunge path
+        fail_deleted_store: Some("server rejected the store".into()),
+        ..Default::default()
+    };
     let (mut session, log, task) = connect(script).await;
     let store = store();
     let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
@@ -513,9 +521,11 @@ async fn a_partial_relocate_reports_the_message_in_both_mailboxes() {
 
 #[tokio::test]
 async fn a_partial_relocate_after_a_failed_expunge_reports_the_partial_state() {
-    let mut script = ServerScript::default();
-    script.capabilities = vec!["IMAP4REV1".into(), "UIDPLUS".into()];
-    script.fail_expunge = Some("expunge refused".into());
+    let script = ServerScript {
+        capabilities: vec!["IMAP4REV1".into(), "UIDPLUS".into()],
+        fail_expunge: Some("expunge refused".into()),
+        ..Default::default()
+    };
     let (mut session, _log, task) = connect(script).await;
     let store = store();
     let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
@@ -536,9 +546,11 @@ async fn a_partial_relocate_after_a_failed_expunge_reports_the_partial_state() {
 
 #[tokio::test]
 async fn a_copy_trycreate_surfaces_as_the_typed_outcome() {
-    let mut script = ServerScript::default();
-    script.capabilities = vec!["IMAP4REV1".into(), "UIDPLUS".into()]; // copy path
-    script.copy_trycreate = Some("Mailbox doesn't exist: Labels/New".into());
+    let script = ServerScript {
+        capabilities: vec!["IMAP4REV1".into(), "UIDPLUS".into()], // copy path
+        copy_trycreate: Some("Mailbox doesn't exist: Labels/New".into()),
+        ..Default::default()
+    };
     let (mut session, log, task) = connect(script).await;
     let store = store();
     let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
@@ -568,9 +580,11 @@ async fn a_recording_relocate_hands_back_the_copyuid_when_the_expunge_fails() {
     // \Deleted store landed, so the destination holds the copy. The recording
     // relocate must return that destination mapping so the caller can persist
     // it and keep the retry idempotent.
-    let mut script = ServerScript::default();
-    script.capabilities = vec!["IMAP4REV1".into(), "UIDPLUS".into()];
-    script.fail_expunge = Some("expunge refused".into());
+    let script = ServerScript {
+        capabilities: vec!["IMAP4REV1".into(), "UIDPLUS".into()],
+        fail_expunge: Some("expunge refused".into()),
+        ..Default::default()
+    };
     let (mut session, log, task) = connect(script).await;
     let store = store();
     let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
@@ -597,9 +611,11 @@ async fn a_recording_relocate_hands_back_the_copyuid_when_the_expunge_fails() {
 #[tokio::test]
 async fn a_recording_relocate_trycreate_reports_no_destination_landed() {
     // The COPY draws a TRYCREATE before anything lands: no destination mapping.
-    let mut script = ServerScript::default();
-    script.capabilities = vec!["IMAP4REV1".into(), "UIDPLUS".into()];
-    script.copy_trycreate = Some("Mailbox doesn't exist: Archive".into());
+    let script = ServerScript {
+        capabilities: vec!["IMAP4REV1".into(), "UIDPLUS".into()],
+        copy_trycreate: Some("Mailbox doesn't exist: Archive".into()),
+        ..Default::default()
+    };
     let (mut session, log, task) = connect(script).await;
     let store = store();
     let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
@@ -618,8 +634,10 @@ async fn a_recording_relocate_trycreate_reports_no_destination_landed() {
 async fn expunge_source_copies_marks_deleted_then_expunges_without_copying() {
     // The source-only finisher used on an idempotent retry: it stores \Deleted
     // and UID EXPUNGEs the source UID, and never issues a COPY/MOVE.
-    let mut script = ServerScript::default();
-    script.capabilities = vec!["IMAP4REV1".into(), "UIDPLUS".into()];
+    let script = ServerScript {
+        capabilities: vec!["IMAP4REV1".into(), "UIDPLUS".into()],
+        ..Default::default()
+    };
     let (mut session, log, task) = connect(script).await;
     let store = store();
     let ctx = select_for_write(&mut session, &store, "INBOX", 100).await.unwrap();
@@ -1050,18 +1068,19 @@ mod sent_copy_tests {
         }
         // Exactly one stored copy, byte-identical to raw (incl. the Bcc header,
         // the non-ASCII subject, CRLF, and the single-dot line).
-        let msgs = state.messages.lock().unwrap();
-        assert_eq!(msgs.len(), 1);
-        assert_eq!(msgs[0].bytes, raw, "stored bytes are byte-identical to raw");
-        assert!(
-            String::from_utf8_lossy(&msgs[0].bytes).contains("Bcc: blind@z.test"),
-            "the Sent copy KEEPS its Bcc header"
-        );
-        // Flags = \Seen only.
-        assert_eq!(msgs[0].flags, vec!["\\Seen".to_string()]);
-        // One APPEND reached the wire.
-        assert_eq!(log.count_starting("APPEND"), 1);
-        drop(msgs);
+        {
+            let msgs = state.messages.lock().unwrap();
+            assert_eq!(msgs.len(), 1);
+            assert_eq!(msgs[0].bytes, raw, "stored bytes are byte-identical to raw");
+            assert!(
+                String::from_utf8_lossy(&msgs[0].bytes).contains("Bcc: blind@z.test"),
+                "the Sent copy KEEPS its Bcc header"
+            );
+            // Flags = \Seen only.
+            assert_eq!(msgs[0].flags, vec!["\\Seen".to_string()]);
+            // One APPEND reached the wire.
+            assert_eq!(log.count_starting("APPEND"), 1);
+        }
         let _ = session.logout().await;
         task.await.unwrap();
     }

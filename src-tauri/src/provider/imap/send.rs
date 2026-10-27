@@ -923,7 +923,7 @@ mod provider_level_tests {
         let body = srv.body_bytes();
         let text = String::from_utf8_lossy(&body);
         assert!(!text.contains("Bcc:"), "the Bcc header must not be transmitted");
-        assert!(text.contains("hidden@z.test") == false, "the blind address is not disclosed in the header block\n{text}");
+        assert!(!text.contains("hidden@z.test"), "the blind address is not disclosed in the header block\n{text}");
         assert!(text.contains("hello"));
         assert!(body.ends_with(b"\r\n.\r\n"));
     }

@@ -509,7 +509,7 @@ pub async fn fetch_schedule(
             .map_err(|error| error.to_string())?;
         let events: GoogleEvents = checked_json(response).await?;
         let writable = writable_access_role(&events.access_role);
-        schedule.extend(normalize_events(events.items, account_id, &calendar_id, writable));
+        schedule.extend(normalize_events(events.items, account_id, calendar_id, writable));
     }
     schedule.sort_by(|left, right| left.start.cmp(&right.start));
     Ok(schedule)
@@ -638,7 +638,7 @@ pub async fn fetch_freebusy(
         .post(FREEBUSY_URL)
         .bearer_auth(&access_token)
         .json(&FreeBusyRequest {
-            time_min: time_min,
+            time_min,
             time_max,
             time_zone,
             items: calendar_ids

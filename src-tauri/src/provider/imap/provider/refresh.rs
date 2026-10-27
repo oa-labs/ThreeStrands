@@ -340,6 +340,7 @@ impl ImapProvider {
     /// Run the INBOX round against an already-open session (kept for the
     /// engine-level tests and callers that drive INBOX directly). Equivalent to
     /// a forced full sweep of the INBOX plan entry.
+    #[cfg(test)]
     pub(super) async fn refresh_inbox_with(
         &self,
         session: &mut dyn ImapSession,
@@ -466,13 +467,14 @@ impl ImapProvider {
             // Nothing to do: record the (unchanged) counters WITHOUT bumping
             // the generation, keeping last_sweep_at as stored.
             let last_sweep_at = stored.map(|(_, _, s)| s).unwrap_or(now);
-            let mut round = SyncRoundWrite::default();
-            // A cadence-gate no-op still COUNTS as a visit: stamp
-            // last_visited_at=now AND visited_in_epoch=epoch so the fair
-            // scheduler rotates this mailbox forward and the coverage epoch
-            // counts it as visited, even though no full sweep ran (item 2/4).
-            round.mailbox_state =
-                Some((mailbox.to_string(), server_exists, server_uidnext, last_sweep_at, now, epoch));
+            let round = SyncRoundWrite {
+                // A cadence-gate no-op still COUNTS as a visit: stamp
+                // last_visited_at=now AND visited_in_epoch=epoch so the fair
+                // scheduler rotates this mailbox forward and the coverage epoch
+                // counts it as visited, even though no full sweep ran (item 2/4).
+                mailbox_state: Some((mailbox.to_string(), server_exists, server_uidnext, last_sweep_at, now, epoch)),
+                ..Default::default()
+            };
             return self.store.commit_sync_round(&round).map_err(db_err);
         }
         // A full sweep is happening now: advance the sweep clock when due (or
@@ -654,13 +656,14 @@ impl ImapProvider {
             );
         }
 
-        let mut round = SyncRoundWrite::default();
-        round.mailbox_state =
-            Some((mailbox.to_string(), server_exists, server_uidnext, new_last_sweep_at, now, epoch));
-        // Sent backfill watermark, written in the SAME transaction as this
-        // round's acquired chunk so progress is exactly as crash-safe as the
-        // locations it accompanies (item 2). `None` for every non-Sent mailbox.
-        round.sent_backfill_low_uid = sent_backfill_write;
+        let mut round = SyncRoundWrite {
+            mailbox_state: Some((mailbox.to_string(), server_exists, server_uidnext, new_last_sweep_at, now, epoch)),
+            // Sent backfill watermark, written in the SAME transaction as this
+            // round's acquired chunk so progress is exactly as crash-safe as the
+            // locations it accompanies (item 2). `None` for every non-Sent mailbox.
+            sent_backfill_low_uid: sent_backfill_write,
+            ..Default::default()
+        };
 
         // Search-pin releases decided above (TTL-expired pins, or every pin of
         // the old incarnation on a UIDVALIDITY reset), committed in this same

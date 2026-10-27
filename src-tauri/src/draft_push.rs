@@ -286,7 +286,7 @@ impl Correspondence {
         let server_id = server_id.as_deref();
         let identities = provider.identities(&draft.account).await.map_err(PushError::Provider)?;
         let domain = provider
-            .message_id_domain(draft.from_address())
+            .message_id_domain(draft.sender_address())
             .map_err(PushError::Provider)?;
         let display_name = self
             .database

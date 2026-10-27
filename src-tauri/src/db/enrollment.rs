@@ -20,6 +20,7 @@ use crate::replicated_sync::{decode_id, SPACE_ID};
 
 pub(crate) type RecoveryPublicKeys = ([u8; 32], [u8; 32]);
 type RawRecoveryPublicKeyRow = (Option<Vec<u8>>, Option<Vec<u8>>);
+type UnresolvedRequest = (String, Vec<u8>, Vec<u8>);
 
 pub(crate) fn default_device_name() -> String {
     let hostname = gethostname::gethostname().to_string_lossy().trim().to_string();
@@ -444,7 +445,7 @@ impl Database {
     }
 
     /// The requester of an incoming request not yet approved.
-    pub(crate) fn unresolved_incoming_request(&self, request_id: &str) -> DbResult<Option<(String, Vec<u8>, Vec<u8>)>> {
+    pub(crate) fn unresolved_incoming_request(&self, request_id: &str) -> DbResult<Option<UnresolvedRequest>> {
         Ok(self
             .connection()?
             .query_row(

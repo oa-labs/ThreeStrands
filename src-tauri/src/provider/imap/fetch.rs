@@ -35,12 +35,15 @@
 //! synthetic response, ready for the day the trait is backed by `imap-next`
 //! (which exposes attributes) — the swap stays local to the session impl.
 
+#[cfg(test)]
 use async_imap::imap_proto::{AttributeValue, Response};
 
 use super::identity::{derive_message_id, IdentityInputs};
 use super::policy;
 use super::session::{flag_to_wire, ImapSession};
-use super::{ImapLocation, ImapStateStore};
+#[cfg(test)]
+use super::ImapLocation;
+use super::ImapStateStore;
 use crate::provider::ProviderError;
 
 /// The identity/flags pass: cheap, no body. `BODY.PEEK[HEADER.FIELDS (...)]`
@@ -115,6 +118,7 @@ pub fn parse_identity_headers(header_block: &[u8], rfc822_size: u32) -> Identity
 /// `EMAILID` object id when present. This is the OBJECTID path; it is unit-
 /// tested with a synthetic server response because async-imap's typed `Fetch`
 /// cannot surface the attribute on the live route (see the module doc).
+#[cfg(test)]
 pub fn parse_email_id(fetch_line: &[u8]) -> Option<String> {
     match Response::parse(fetch_line) {
         Ok((_rest, Response::Fetch(_seq, attrs))) => {
@@ -306,7 +310,7 @@ impl BodyFetcher for SessionBodyFetcher<'_> {
     }
 }
 
-pub use crate::db::imap::{BodyCache, CachedBody};
+pub use crate::db::imap::BodyCache;
 
 /// Resolve a message's stable id, record its location, and cache its body
 /// exactly once.
@@ -323,6 +327,7 @@ pub use crate::db::imap::{BodyCache, CachedBody};
 /// mailbox, resolves to the same id and performs NO second body fetch.
 /// `fetched_at` is caller-supplied for deterministic tests.
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub async fn ensure_body(
     body_fetcher: &mut dyn BodyFetcher,
     store: &ImapStateStore,

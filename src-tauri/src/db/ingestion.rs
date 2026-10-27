@@ -9,6 +9,10 @@ use crate::mime::NormalizedMessage;
 use chrono::Utc;
 use rusqlite::{params, Transaction};
 
+/// A provider thread id, its normalized messages, and the `(message_id, error)`
+/// pairs quarantined from it.
+type IngestedThread = (String, Vec<NormalizedMessage>, Vec<(String, String)>);
+
 impl Database {
     fn apply_thread(
         transaction: &Transaction<'_>,
@@ -227,7 +231,7 @@ impl Database {
     pub fn apply_ingested_threads(
         &self,
         account_id: &str,
-        threads: &[(String, Vec<NormalizedMessage>, Vec<(String, String)>)],
+        threads: &[IngestedThread],
     ) -> DbResult<()> {
         self.apply_ingested_threads_with_aliases(account_id, threads, &[])
     }
@@ -235,7 +239,7 @@ impl Database {
     pub fn apply_ingested_threads_with_aliases(
         &self,
         account_id: &str,
-        threads: &[(String, Vec<NormalizedMessage>, Vec<(String, String)>)],
+        threads: &[IngestedThread],
         aliases: &[(String, String)],
     ) -> DbResult<()> {
         if threads.is_empty() {

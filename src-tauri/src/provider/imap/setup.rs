@@ -131,6 +131,7 @@ pub async fn test_imap(
 /// Pick a sensible default IMAP port for a security mode when the user leaves
 /// it blank: 993 implicit / 143 STARTTLS. (The SMTP default lives in
 /// [`smtp::default_smtp_port`](crate::provider::imap::smtp::default_smtp_port).)
+#[cfg(test)]
 pub fn default_imap_port(security: SecurityMode) -> u16 {
     match security {
         SecurityMode::ImplicitTls => 993,

@@ -235,6 +235,7 @@ impl From<String> for ProviderError {
 /// provider, model, and (on OpenRouter) routed endpoint, so a request the
 /// provider rejects is retried once without the schema; callers parse either
 /// reply with the same tolerant, evidence-validating parser.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn call_provider(
     provider: AiProvider,
     model: &str,
@@ -272,6 +273,7 @@ pub(super) struct ProviderReply {
 
 /// Like `call_provider`, but keeps the reported stop reason for diagnostics
 /// and can ask the model to skip reasoning.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn call_provider_reply(
     provider: AiProvider,
     model: &str,
@@ -1099,7 +1101,7 @@ mod tests {
         assert_eq!(serde_json::from_value::<Reasoning>(json!("off")).unwrap(), Reasoning::Off);
         assert_eq!(serde_json::from_value::<Reasoning>(json!("default")).unwrap(), Reasoning::Default);
         assert!(serde_json::from_value::<Reasoning>(json!("none")).is_err());
-        assert_eq!(Option::<Reasoning>::None.unwrap_or_default(), Reasoning::Default);
+        assert_eq!(Reasoning::default(), Reasoning::Default);
     }
 
     #[tokio::test]

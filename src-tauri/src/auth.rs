@@ -929,8 +929,10 @@ mod tests {
         google_app().mail_credential(key)
     }
 
+    type CapturedForms = Arc<Mutex<Vec<HashMap<String, String>>>>;
+
     async fn capture_token_request(
-        State(requests): State<Arc<Mutex<Vec<HashMap<String, String>>>>>,
+        State(requests): State<CapturedForms>,
         Form(form): Form<HashMap<String, String>>,
     ) -> Json<Value> {
         requests.lock().unwrap().push(form);

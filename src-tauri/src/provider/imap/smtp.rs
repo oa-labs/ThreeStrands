@@ -292,6 +292,7 @@ pub async fn probe_smtp_certificate(
 }
 
 /// Pick a sensible default SMTP port: 465 implicit / 587 STARTTLS.
+#[cfg(test)]
 pub fn default_smtp_port(security: SecurityMode) -> u16 {
     match security {
         SecurityMode::ImplicitTls => 465,
@@ -419,11 +420,7 @@ pub fn frame_message(raw: &[u8]) -> Vec<u8> {
         }
         stuffed.push(b);
         // The next byte is at a line start iff we just emitted the \n of a CRLF.
-        if b == b'\n' {
-            at_line_start = true;
-        } else {
-            at_line_start = false;
-        }
+        at_line_start = b == b'\n';
         j += 1;
     }
 
@@ -495,6 +492,7 @@ impl Phase {
     /// body byte through the final-reply wait; false everywhere before, and
     /// false once the final reply has been fully read (that is a definite
     /// server verdict, classified separately by its code).
+    #[cfg(test)]
     pub fn is_unknown_on_failure(self) -> bool {
         matches!(self, Phase::Body | Phase::FinalReply)
     }
@@ -619,8 +617,8 @@ pub struct SmtpFailure {
 /// resending").
 #[derive(Clone, Debug)]
 pub struct SmtpUnknown {
+    #[cfg_attr(not(test), expect(dead_code, reason = "tests assert which phase went unknown; send reports every unknown alike"))]
     pub phase: Phase,
-    pub detail: String,
 }
 
 /// The result of a submission attempt. Three states, because the one the
@@ -628,12 +626,18 @@ pub struct SmtpUnknown {
 #[derive(Debug)]
 pub enum SmtpOutcome {
     /// The server accepted the message (2xx final reply). Carries that reply.
-    Accepted { reply: SmtpReply },
+    Accepted {
+        #[cfg_attr(not(test), expect(dead_code, reason = "tests assert the accepting reply; send only needs the verdict"))]
+        reply: SmtpReply,
+    },
     /// Definite non-delivery; the server never took responsibility.
     NotDelivered(SmtpFailure),
     /// The message data may or may not have been received; do not resend
     /// automatically.
-    Unknown(SmtpUnknown),
+    Unknown(
+        #[cfg_attr(not(test), expect(dead_code, reason = "tests assert the phase; send reports every unknown alike"))]
+        SmtpUnknown,
+    ),
 }
 
 /// Timeouts for the submission phases, injectable so tests can drive the
@@ -780,7 +784,7 @@ impl SmtpSession {
             {
                 Ok(reply) if is_2xx(reply.code) => {}
                 Ok(reply) => {
-                    let err = ProviderError::from(classify_rcpt_rejection(rcpt, &reply));
+                    let err = classify_rcpt_rejection(rcpt, &reply);
                     return self.abort_not_delivered(Phase::Rcpt, err, Some(reply)).await;
                 }
                 Err(fail) => return SmtpOutcome::NotDelivered(fail),
@@ -801,12 +805,11 @@ impl SmtpSession {
 
         // === UNKNOWN zone opens here: the first body byte is on the wire. ===
         let framed = frame_message(raw_message);
-        if let Err(e) = self.write_body(&framed).await {
+        if self.write_body(&framed).await.is_err() {
             // A drop/error DURING the body write is conservatively UNKNOWN:
             // the server may already hold a prefix (or the whole thing).
             return SmtpOutcome::Unknown(SmtpUnknown {
                 phase: Phase::Body,
-                detail: format!("the connection failed while sending the message body: {e}"),
             });
         }
 
@@ -814,11 +817,9 @@ impl SmtpSession {
         match tokio::time::timeout(self.timeouts.final_reply, self.client.read()).await {
             Err(_) => SmtpOutcome::Unknown(SmtpUnknown {
                 phase: Phase::FinalReply,
-                detail: "the server did not reply after the message body within the timeout".into(),
             }),
             Ok(Err(_)) => SmtpOutcome::Unknown(SmtpUnknown {
                 phase: Phase::FinalReply,
-                detail: "the connection dropped before the server's final reply".into(),
             }),
             Ok(Ok(resp)) => {
                 let reply = SmtpReply::from_response(&resp);
@@ -829,10 +830,6 @@ impl SmtpSession {
                     // definite non-delivery.
                     return SmtpOutcome::Unknown(SmtpUnknown {
                         phase: Phase::FinalReply,
-                        detail: format!(
-                            "the server sent an unexpected reply after the message body ({})",
-                            reply.summary()
-                        ),
                     });
                 }
                 if is_2xx(reply.code) {

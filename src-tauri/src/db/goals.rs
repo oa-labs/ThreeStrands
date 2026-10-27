@@ -49,11 +49,10 @@ fn period_encloses(outer: &str, inner: &str) -> bool {
     if outer_year != inner_year {
         return false;
     }
-    match (outer.get(5..), inner.get(5..)) {
-        (None, Some(_)) => true,
-        (Some("H1"), Some("Q1" | "Q2")) | (Some("H2"), Some("Q3" | "Q4")) => true,
-        _ => false,
-    }
+    matches!(
+        (outer.get(5..), inner.get(5..)),
+        (None, Some(_)) | (Some("H1"), Some("Q1" | "Q2")) | (Some("H2"), Some("Q3" | "Q4"))
+    )
 }
 
 fn goal_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Goal> {

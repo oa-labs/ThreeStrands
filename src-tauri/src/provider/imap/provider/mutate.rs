@@ -327,9 +327,9 @@ async fn run_store(
 /// path is only ever driven over a write-capable session, so `None` means a
 /// programming mistake, surfaced as a non-retryable `Other` rather than a
 /// panic.
-pub(super) fn as_write_session<'a>(
-    session: &'a mut dyn ImapSession,
-) -> ProviderResult<&'a mut dyn crate::provider::imap::write::ImapWriteSession> {
+pub(super) fn as_write_session(
+    session: &mut dyn ImapSession,
+) -> ProviderResult<&mut dyn crate::provider::imap::write::ImapWriteSession> {
     session.as_write_session().ok_or_else(|| {
         ProviderError::Other(
             "internal error: flag mutation driven over a non-write-capable IMAP session".into(),

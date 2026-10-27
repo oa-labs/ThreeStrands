@@ -133,7 +133,7 @@ impl Database {
             .as_ref()
             .map(|s| (s.html_offset, s.text_offset));
         draft.signature =
-            self.default_draft_signature(&draft.account, draft.from_address(), &draft.mode)?;
+            self.default_draft_signature(&draft.account, draft.sender_address(), &draft.mode)?;
         if let (Some(s), Some((html, text))) = (&mut draft.signature, previous) {
             s.html_offset = html;
             s.text_offset = text;

@@ -18,6 +18,7 @@ impl Database {
     /// destination accounts keep their connection status because their
     /// keychain credentials are deliberately not part of the transfer. An
     /// account seen only in the imported file is created as `needs_reauth`.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn import_transfer_data(
         &self,
         accounts: &[TransferAccount],

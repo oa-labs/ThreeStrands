@@ -210,11 +210,10 @@ fn parse_autoconfig(xml: &str, email: &str, source: &str) -> Option<DiscoveryRes
                             ..ParsedServer::default()
                         }));
                     }
-                    "hostname" | "port" | "socketType" | "username" => {
-                        if server.is_some() {
+                    "hostname" | "port" | "socketType" | "username"
+                        if server.is_some() => {
                             field = Some(name);
                         }
-                    }
                     _ => {}
                 }
             }

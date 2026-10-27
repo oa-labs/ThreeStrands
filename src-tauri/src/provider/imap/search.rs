@@ -47,10 +47,6 @@ use super::policy;
 use super::settings::LabelStorage;
 use super::write::validate_flag;
 
-// This module has no non-test caller until a later Phase 5 run wires it into
-// `MailSync::search`; the module tree's `#![allow(dead_code)]` already covers
-// that, so no new allow is added here.
-
 // ===========================================================================
 // Public outcome types
 // ===========================================================================

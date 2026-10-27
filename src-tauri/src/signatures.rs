@@ -138,13 +138,15 @@ pub fn insert_signature(
     ))
 }
 
+type EmbeddedImage = (String, String, Vec<u8>);
+
 /// Signature editor HTML uses canonical double-quoted raster data URIs. No
 /// remote fetch or local file read is permitted here. Validate decoded pixels
 /// again at the native boundary and send each image as a MIME related part.
 pub fn embed_images(
     html: &str,
     message_id: &str,
-) -> Result<(String, Vec<(String, String, Vec<u8>)>), String> {
+) -> Result<(String, Vec<EmbeddedImage>), String> {
     use base64::{engine::general_purpose::STANDARD, Engine};
     let mut output = String::new();
     let mut rest = html;
@@ -223,6 +225,101 @@ fn canonical_image_sources(html: &str) -> std::collections::BTreeSet<usize> {
         }
     }
     sources
+}
+
+/// Each chunk is one envelope value. The hash identifies a complete HTML
+/// and text pair; choosing a concurrent content hash therefore selects one
+/// coherent version, never chunks from different edits.
+pub(crate) fn signature_sync_payload(item: &Signature) -> Result<serde_json::Value, String> {
+    use serde_json::json;
+    let hash = signature_content_hash(&item.html, &item.text)?;
+    let mut value = json!({"id": item.id, "name": item.name, "contentHash": hash});
+    for (kind, content) in [("html", &item.html), ("text", &item.text)] {
+        for (index, chunk) in value_sized_chunks(content).into_iter().enumerate() {
+            value[format!("{kind}:{hash}:{index}")] = json!(chunk);
+        }
+    }
+    EntityType::Signature.validate_payload(&value)?;
+    Ok(value)
+}
+
+/// Splits `content` into pieces whose JSON string encoding each fits the
+/// envelope's per-value budget. Always returns at least one piece.
+pub(crate) fn value_sized_chunks(content: &str) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut chunk = String::new();
+    let mut size = 2; // JSON's surrounding quotes.
+    for ch in content.chars() {
+        let cost = match ch {
+            '"' | '\\' | '\n' | '\r' | '\t' | '\x08' | '\x0c' => 2,
+            ch if ch <= '\x1f' => 6,
+            ch => ch.len_utf8(),
+        };
+        if size + cost > threestrands_sync_envelope::limits::MAX_VALUE_BYTES {
+            chunks.push(std::mem::take(&mut chunk));
+            size = 2;
+        }
+        chunk.push(ch);
+        size += cost;
+    }
+    chunks.push(chunk);
+    chunks
+}
+
+/// Inactive concurrent chunks remain in the replica until the next local
+/// edit observes and removes them. Only the chosen version materializes.
+pub(crate) fn selected_signature_payload(
+    value: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    if value.get("html").is_some() {
+        return Ok(value.clone());
+    }
+    let hash = value
+        .get("contentHash")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("Missing signature content hash")?;
+    let mut selected = value.as_object().ok_or("Invalid signature record")?.clone();
+    selected.retain(|key, _| {
+        let parts: Vec<_> = key.split(':').collect();
+        !(parts.len() == 3
+            && ["html", "text"].contains(&parts[0])
+            && parts[1].len() == 64
+            && parts[1].bytes().all(|ch| ch.is_ascii_hexdigit())
+            && parts[1] != hash)
+    });
+    Ok(serde_json::Value::Object(selected))
+}
+
+pub(crate) fn signature_from_sync(value: &serde_json::Value) -> Result<Signature, String> {
+    let (html, text) = threestrands_sync_protocol::signature_content(value)?;
+    if let Some(hash) = value.get("contentHash").and_then(serde_json::Value::as_str) {
+        let actual = signature_content_hash(&html, &text)?;
+        if hash != actual {
+            return Err("Signature content checksum mismatch".into());
+        }
+    }
+    Ok(Signature {
+        id: value["id"].as_str().ok_or("Missing signature id")?.into(),
+        name: value["name"]
+            .as_str()
+            .ok_or("Missing signature name")?
+            .into(),
+        html,
+        text,
+    })
+}
+
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+fn signature_content_hash(html: &str, text: &str) -> Result<String, String> {
+    Ok(sha256_hex(
+        &serde_json::to_vec(&(html, text)).map_err(|e| e.to_string())?,
+    ))
 }
 
 #[cfg(test)]
@@ -351,99 +448,4 @@ pub(crate) mod tests {
         let literal = "<img alt='Example src=\"data:text/plain;base64,aA==\"'>";
         assert!(embed_images(literal, "message").unwrap().1.is_empty());
     }
-}
-
-/// Each chunk is one envelope value. The hash identifies a complete HTML
-/// and text pair; choosing a concurrent content hash therefore selects one
-/// coherent version, never chunks from different edits.
-pub(crate) fn signature_sync_payload(item: &Signature) -> Result<serde_json::Value, String> {
-    use serde_json::json;
-    let hash = signature_content_hash(&item.html, &item.text)?;
-    let mut value = json!({"id": item.id, "name": item.name, "contentHash": hash});
-    for (kind, content) in [("html", &item.html), ("text", &item.text)] {
-        for (index, chunk) in value_sized_chunks(content).into_iter().enumerate() {
-            value[format!("{kind}:{hash}:{index}")] = json!(chunk);
-        }
-    }
-    EntityType::Signature.validate_payload(&value)?;
-    Ok(value)
-}
-
-/// Splits `content` into pieces whose JSON string encoding each fits the
-/// envelope's per-value budget. Always returns at least one piece.
-pub(crate) fn value_sized_chunks(content: &str) -> Vec<String> {
-    let mut chunks = Vec::new();
-    let mut chunk = String::new();
-    let mut size = 2; // JSON's surrounding quotes.
-    for ch in content.chars() {
-        let cost = match ch {
-            '"' | '\\' | '\n' | '\r' | '\t' | '\x08' | '\x0c' => 2,
-            ch if ch <= '\x1f' => 6,
-            ch => ch.len_utf8(),
-        };
-        if size + cost > threestrands_sync_envelope::limits::MAX_VALUE_BYTES {
-            chunks.push(std::mem::take(&mut chunk));
-            size = 2;
-        }
-        chunk.push(ch);
-        size += cost;
-    }
-    chunks.push(chunk);
-    chunks
-}
-
-/// Inactive concurrent chunks remain in the replica until the next local
-/// edit observes and removes them. Only the chosen version materializes.
-pub(crate) fn selected_signature_payload(
-    value: &serde_json::Value,
-) -> Result<serde_json::Value, String> {
-    if value.get("html").is_some() {
-        return Ok(value.clone());
-    }
-    let hash = value
-        .get("contentHash")
-        .and_then(serde_json::Value::as_str)
-        .ok_or("Missing signature content hash")?;
-    let mut selected = value.as_object().ok_or("Invalid signature record")?.clone();
-    selected.retain(|key, _| {
-        let parts: Vec<_> = key.split(':').collect();
-        !(parts.len() == 3
-            && ["html", "text"].contains(&parts[0])
-            && parts[1].len() == 64
-            && parts[1].bytes().all(|ch| ch.is_ascii_hexdigit())
-            && parts[1] != hash)
-    });
-    Ok(serde_json::Value::Object(selected))
-}
-
-pub(crate) fn signature_from_sync(value: &serde_json::Value) -> Result<Signature, String> {
-    let (html, text) = threestrands_sync_protocol::signature_content(value)?;
-    if let Some(hash) = value.get("contentHash").and_then(serde_json::Value::as_str) {
-        let actual = signature_content_hash(&html, &text)?;
-        if hash != actual {
-            return Err("Signature content checksum mismatch".into());
-        }
-    }
-    Ok(Signature {
-        id: value["id"].as_str().ok_or("Missing signature id")?.into(),
-        name: value["name"]
-            .as_str()
-            .ok_or("Missing signature name")?
-            .into(),
-        html,
-        text,
-    })
-}
-
-pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-fn signature_content_hash(html: &str, text: &str) -> Result<String, String> {
-    Ok(sha256_hex(
-        &serde_json::to_vec(&(html, text)).map_err(|e| e.to_string())?,
-    ))
 }

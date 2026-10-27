@@ -707,6 +707,7 @@ pub(crate) async fn ai_brief_thread(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn ai_enrich_contact(
     id: String,
     provider: ai::AiProvider,

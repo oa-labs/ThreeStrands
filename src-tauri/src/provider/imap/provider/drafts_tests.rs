@@ -230,7 +230,6 @@ fn provider(server: Arc<Mutex<DraftsServer>>, with_drafts: bool) -> ImapProvider
     ImapProvider {
         cache: BodyCache::new(store.clone()),
         store,
-        username: "me@example.com".into(),
         account_id: "me@example.com".into(),
         smtp_password: "test-password".into(),
         label_model: crate::provider::LabelModel::ImapLabelFolders,

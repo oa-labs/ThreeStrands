@@ -69,6 +69,8 @@ impl FakeFolder {
     }
 }
 
+type CommandCounts = Arc<Mutex<std::collections::BTreeMap<String, (usize, usize, usize)>>>;
+
 /// A tiny in-memory server with one or more named mailboxes, shared
 /// (Arc<Mutex>) so a test can mutate it (add mail, change a flag, expunge,
 /// move a message between folders) between polls and the next opened
@@ -85,7 +87,7 @@ struct FakeMailbox {
     /// Per-mailbox `(searches, body_fetches, identity_fetches)` counters,
     /// accumulated across every session opened against this snapshot's
     /// shared handle. Shared so a test reads them after sync.
-    command_counts: Arc<Mutex<std::collections::BTreeMap<String, (usize, usize, usize)>>>,
+    command_counts: CommandCounts,
     /// When true, the server answers `LIST` with a NO (catalog refresh must
     /// swallow it and never abort the poll).
     list_fails: bool,
@@ -406,7 +408,6 @@ fn provider_with(mailbox: Arc<Mutex<FakeMailbox>>) -> (ImapProvider, ImapStateSt
     let provider = ImapProvider {
         store: store.clone(),
         cache,
-        username: "me@example.com".into(),
         account_id: "me@example.com".into(),
         smtp_password: "test-password".into(),
         label_model: LabelModel::ImapLabelFolders,
@@ -1330,7 +1331,7 @@ async fn assert_loaders_agree(
         .load_thread_state_from_tokens(&batch_tokens)
         .unwrap();
     let mut oracle_state = provider.load_thread_state().unwrap();
-    let token_outcome = threading::thread_batch(&mut token_state, &[probe.clone()]);
+    let token_outcome = threading::thread_batch(&mut token_state, std::slice::from_ref(&probe));
     let oracle_outcome = threading::thread_batch(&mut oracle_state, &[probe]);
     assert_eq!(
         token_outcome, oracle_outcome,

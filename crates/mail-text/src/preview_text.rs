@@ -29,7 +29,7 @@ pub fn decode_entity_references(text: &str) -> String {
             .map(|end| end + 2);
         match reference_len {
             Some(len) => {
-                mail_parser::decoders::html::add_html_token(&mut decoded, rest[..len].as_bytes(), false);
+                mail_parser::decoders::html::add_html_token(&mut decoded, &rest.as_bytes()[..len], false);
                 rest = &rest[len..];
             }
             None => {

@@ -290,7 +290,7 @@ pub fn choose_reply_identity(identities: &[SendingIdentity], headers: &ReplyHead
 /// `<{operation}@{domain}>` using the domain of the draft's From — the SAME
 /// value this computes — so it has to store or recompute the From's domain.
 /// The outbox item keeps the whole draft in its payload (`OutboxItem.draft`),
-/// and `Draft::from_address()` recovers the From address, so the domain is
+/// and `Draft::sender_address()` recovers the From address, so the domain is
 /// recomputable from the outbox item alone; nothing extra needs persisting.
 pub fn message_id_domain_for_address(from_address: &str) -> Result<String, ProviderError> {
     let address = from_address.trim();

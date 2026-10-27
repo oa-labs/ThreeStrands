@@ -86,7 +86,7 @@ impl Draft {
     /// existing draft and every single-identity/Gmail account sends as
     /// `account`, exactly as before. Returns a borrowed `&str` because both
     /// sources are owned by the draft.
-    pub fn from_address(&self) -> &str {
+    pub fn sender_address(&self) -> &str {
         self.from.as_deref().unwrap_or(&self.account)
     }
 }
@@ -181,7 +181,7 @@ pub enum Request {
         from: Option<String>,
     },
     Save {
-        draft: Draft,
+        draft: Box<Draft>,
     },
     Discard {
         id: String,
@@ -431,7 +431,7 @@ impl Database {
                 // Gmail requires matching subjects for an existing thread.
             }
         }
-        d.signature = self.default_draft_signature(&d.account, d.from_address(), &d.mode)?;
+        d.signature = self.default_draft_signature(&d.account, d.sender_address(), &d.mode)?;
         self.insert_draft(&mut d)?;
         Ok(d)
     }

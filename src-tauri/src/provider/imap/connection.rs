@@ -256,6 +256,7 @@ pub struct ImapConnectionManager {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConnectionRole {
     /// The single long-lived connection that idles on INBOX.
+    #[cfg_attr(not(test), expect(dead_code, reason = "IDLE is not implemented yet; the pool already reserves its slot"))]
     Idle,
     /// The connection that runs commands (one at a time).
     Command,
@@ -265,12 +266,14 @@ pub enum ConnectionRole {
 /// permits is taken; dropping it frees the slot. Each reservation also holds
 /// its role's exclusive lock for its lifetime.
 pub struct ConnectionLease {
+    #[cfg_attr(not(test), expect(dead_code, reason = "read only by tests through `role()`"))]
     role: ConnectionRole,
     _permit: OwnedSemaphorePermit,
     _role_guard: tokio::sync::OwnedMutexGuard<()>,
 }
 
 impl ConnectionLease {
+    #[cfg(test)]
     pub fn role(&self) -> ConnectionRole {
         self.role
     }
@@ -287,10 +290,6 @@ impl ImapConnectionManager {
             command_lock: Arc::new(Mutex::new(())),
             idle_lock: Arc::new(Mutex::new(())),
         }
-    }
-
-    pub fn config(&self) -> &ConnectionConfig {
-        &self.config
     }
 
     /// Reserve the single slot for `role`. Await the role lock before taking
@@ -317,6 +316,7 @@ impl ImapConnectionManager {
     }
 
     /// How many of the two slots are free right now (test/diagnostic view).
+    #[cfg(test)]
     pub fn available_slots(&self) -> usize {
         self.connections.available_permits()
     }

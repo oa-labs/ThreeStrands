@@ -178,6 +178,7 @@ pub struct MailboxMapping {
 
 impl MailboxMapping {
     /// The mailbox proposed for `role`, if any.
+    #[cfg(test)]
     pub fn mailbox_for(&self, role: MailboxRole) -> Option<&str> {
         self.proposals
             .iter()
@@ -669,9 +670,6 @@ mod discovery_tests {
             Ok(self.list.clone())
         }
         async fn run_command_capture_code(&mut self, _: &str) -> Result<Option<String>, ProviderError> {
-            unreachable!()
-        }
-        async fn noop(&mut self) -> Result<(), ProviderError> {
             unreachable!()
         }
         async fn create_mailbox(&mut self, mailbox: &str) -> Result<(), ProviderError> {

@@ -685,8 +685,7 @@ fn unsubscribe_metadata(part: &MimePart) -> Option<UnsubscribeMetadata> {
 fn parse_list_urls(value: &str) -> Vec<Url> {
     let mut urls = Vec::new();
     let mut rest = value;
-    loop {
-        let Some(start) = rest.find('<') else { break };
+    while let Some(start) = rest.find('<') {
         let after_start = &rest[start + 1..];
         let Some(end) = after_start.find('>') else {
             break;

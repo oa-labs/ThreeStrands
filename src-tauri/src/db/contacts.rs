@@ -610,7 +610,7 @@ impl Database {
         if addresses.is_empty() {
             return Ok(Vec::new());
         }
-        let marks = std::iter::repeat("?").take(addresses.len()).collect::<Vec<_>>().join(",");
+        let marks = std::iter::repeat_n("?", addresses.len()).collect::<Vec<_>>().join(",");
         let mut values = addresses
             .iter()
             .map(|email| rusqlite::types::Value::Text(email.to_ascii_lowercase()))
@@ -649,7 +649,7 @@ impl Database {
             return Ok(empty);
         }
         self.with_connection(|connection|{
-            let marks=std::iter::repeat("?").take(addresses.len()).collect::<Vec<_>>().join(",");
+            let marks=std::iter::repeat_n("?", addresses.len()).collect::<Vec<_>>().join(",");
             let values=addresses.iter().map(|email|rusqlite::types::Value::Text(email.to_ascii_lowercase())).collect::<Vec<_>>();
             let (sent_count,received_count,thread_count,first_at,last_sent_at)=connection.query_row(
                 &format!("SELECT COUNT(DISTINCT CASE WHEN direction='sent' THEN message_id END),COUNT(DISTINCT CASE WHEN direction='received' THEN message_id END),COUNT(DISTINCT thread_id),MIN(sent_at),MAX(CASE WHEN direction='sent' THEN sent_at END) FROM contact_interactions WHERE email IN ({marks})"),
@@ -673,7 +673,7 @@ impl Database {
             return Ok(ContactFiles { files: Vec::new(), total: 0 });
         }
         self.with_connection(|connection|{
-            let marks=std::iter::repeat("?").take(addresses.len()).collect::<Vec<_>>().join(",");
+            let marks=std::iter::repeat_n("?", addresses.len()).collect::<Vec<_>>().join(",");
             let values=addresses.iter().map(|email|rusqlite::types::Value::Text(email.to_ascii_lowercase())).collect::<Vec<_>>();
             let from=format!("FROM (SELECT DISTINCT message_id FROM contact_interactions WHERE direction='received' AND email IN ({marks})) sent JOIN messages m ON m.id=sent.message_id JOIN threads t ON t.id=m.thread_id, json_each(m.attachments_json) a WHERE COALESCE(json_extract(a.value,'$.inline'),0)=0 AND trim(lower(COALESCE(json_extract(a.value,'$.mimeType'),''))) NOT LIKE 'text/calendar%' AND lower(COALESCE(json_extract(a.value,'$.filename'),'')) NOT LIKE '%.ics'");
             let distinct=format!("FROM (SELECT m.id AS message_id,m.thread_id,t.subject,m.sent_at,a.key AS part,a.value AS attachment,ROW_NUMBER() OVER (PARTITION BY lower(trim(COALESCE(json_extract(a.value,'$.filename'),''))),COALESCE(json_extract(a.value,'$.size'),-1) ORDER BY m.sent_at DESC,m.id,a.key) AS copy {from}) WHERE copy=1");
@@ -743,7 +743,7 @@ impl Database {
             return Ok((0, 0, None));
         }
         self.with_connection(|connection|{
-            let marks=std::iter::repeat("?").take(addresses.len()).collect::<Vec<_>>().join(",");
+            let marks=std::iter::repeat_n("?", addresses.len()).collect::<Vec<_>>().join(",");
             let sql=format!("SELECT COUNT(DISTINCT CASE WHEN direction='sent' THEN message_id END),COUNT(DISTINCT CASE WHEN direction='received' THEN message_id END),MAX(sent_at) FROM contact_interactions WHERE email IN ({marks})");
             let values=addresses.iter().map(|email|rusqlite::types::Value::Text(email.to_ascii_lowercase())).collect::<Vec<_>>();
             connection.query_row(&sql,rusqlite::params_from_iter(values),|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).map_err(Into::into)

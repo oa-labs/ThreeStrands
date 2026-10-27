@@ -603,7 +603,7 @@ pub(super) fn apply_incoming_invitation(
         return Ok(());
     }
     database.record_observed_invitation(
-        &cid,
+        cid,
         &encode_id(invitation.inviter_device_id.as_bytes()),
         &invitation.invite_ed25519_public,
         invitation.created_at_ms,
@@ -641,7 +641,7 @@ pub(super) fn apply_incoming_redemption(
     }
     let state = if direction == "outgoing" { "pending" } else { "observed" };
     database.record_redemption(
-        &cid,
+        cid,
         &redemption.invitation_cid,
         &inviter_device_id,
         &encode_id(redemption.device_id.as_bytes()),

@@ -170,7 +170,7 @@ fn build_message(
 
     // Resolve the From address and its display name from the account's
     // identity list (the one source of truth), NOT from a value stored on the
-    // draft. `from_address()` is `d.from` when a non-primary identity was
+    // draft. `sender_address()` is `d.from` when a non-primary identity was
     // chosen, else the account's own address.
     //
     // An EMPTY identity list is treated as the single identity `[account]`:
@@ -186,7 +186,7 @@ fn build_message(
     } else {
         identities
     };
-    let from_address = d.from_address();
+    let from_address = d.sender_address();
     let from_normalized =
         crate::provider::imap::normalize_identity_address(from_address);
     let matched = identities

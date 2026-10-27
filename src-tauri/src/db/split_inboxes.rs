@@ -55,7 +55,7 @@ impl Database {
                 )?;
             let id = Uuid::new_v4().to_string();
             let created_at = Utc::now().to_rfc3339();
-            insert_split_inbox_row(&transaction, &id, name, match_kind, &match_value, sort_order, &created_at, account_id)?;
+            insert_split_inbox_row(transaction, &id, name, match_kind, &match_value, sort_order, &created_at, account_id)?;
             Ok(SplitInbox {
                 id,
                 name: name.to_string(),

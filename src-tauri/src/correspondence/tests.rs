@@ -1115,9 +1115,8 @@ mod prepare_failures {
 
     #[test]
     fn the_retry_gate_honours_the_interval_below_at_and_above() {
-        use crate::provider::imap::{
-            smtp_prepare_retry_due, SMTP_PREPARE_RETRY_INTERVAL_MS as INTERVAL,
-        };
+        use crate::provider::imap::policy::SMTP_PREPARE_RETRY_INTERVAL_MS as INTERVAL;
+        use crate::provider::imap::smtp_prepare_retry_due;
         let last = 1_000_000i64;
         // Never attempted: always eligible.
         assert!(smtp_prepare_retry_due(None, last));
@@ -2759,7 +2758,7 @@ async fn blocked_keychain_poll_and_schedule_edit_leave_compose_responsive() {
             let value = service.request(Request::Create { mode: "new".into(), source_id: None, account: None }).await?;
             let mut draft: Draft = serde_json::from_value(value).map_err(error)?;
             draft.body = "Typed while the keychain was locked".into();
-            service.request(Request::Save { draft }).await
+            service.request(Request::Save { draft: Box::new(draft) }).await
         }).await;
         // Always release the worker before asserting, so failures cannot strand it.
         release.send(()).unwrap();

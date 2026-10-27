@@ -12,6 +12,10 @@ use crate::search_query::{
 };
 use rusqlite::{params, types::Value, OptionalExtension};
 
+/// A message id, its stored body text, the corrected body text, and its
+/// `(cc, cc_bcc)` recipients when the metadata parses.
+type IndexedMessageRow = (String, String, String, Option<(Vec<String>, Vec<String>)>);
+
 impl Database {
     /// `account_id` merges every account when `None` — the unified inbox —
     /// or scopes to just that account when set, same as [`Self::list_threads`].
@@ -231,7 +235,7 @@ impl Database {
                     )
                     .optional()?;
                 if let Some(rowid) = rowid {
-                    let messages: Vec<(String, String, String, Option<(Vec<String>, Vec<String>)>)> = transaction
+                    let messages: Vec<IndexedMessageRow> = transaction
                         .prepare(
                             "SELECT m.id, m.body_text, m.body_text_z,
                                     COALESCE(mm.payload, ''), mm.payload_z

@@ -136,17 +136,16 @@ pub trait ImapSession: Send {
     /// string, if any — the escape hatch for `COPYUID`/`APPENDUID` that typed
     /// calls discard (Slice 0 spike finding). Later mutation slices use it.
     /// Only a matching OK completion succeeds; NO/BAD return provider errors.
+    #[cfg(test)]
     async fn run_command_capture_code(
         &mut self,
         command: &str,
     ) -> Result<Option<String>, ProviderError>;
 
-    /// NOOP — a liveness probe / unsolicited-response pump.
-    async fn noop(&mut self) -> Result<(), ProviderError>;
-
     /// Enter IDLE on the selected mailbox. Slice 5 (incremental sync) owns the
     /// 25-minute re-issue loop; the trait reserves the method so the pool and
     /// the sync engine agree on the surface, but Slice 1 has no IDLE caller.
+    #[cfg(test)]
     async fn idle_reserved(&mut self) -> Result<(), ProviderError> {
         // Slice 5: IDLE + 25-min re-issue. No caller in Slice 1.
         Err(ProviderError::InvalidOperation(
@@ -292,6 +291,7 @@ where
         Ok(entries)
     }
 
+    #[cfg(test)]
     async fn run_command_capture_code(
         &mut self,
         command: &str,
@@ -326,37 +326,31 @@ where
                     tag,
                     status,
                     outcome,
-                } => {
-                    if tag.as_bytes() == id.as_bytes() {
-                        match status {
-                            Status::Ok => {}
-                            Status::No | Status::Bad => {
-                                return Err(classify_response_code(
-                                    outcome.code.as_ref(),
-                                    outcome.information.as_deref().unwrap_or_default(),
-                                )
-                                .into_provider_error());
-                            }
-                            _ => {
-                                return Err(ProviderError::InvalidOperation(format!(
-                                    "unexpected tagged IMAP status: {status:?}"
-                                )));
-                            }
+                } if tag.as_bytes() == id.as_bytes() => {
+                    match status {
+                        Status::Ok => {}
+                        Status::No | Status::Bad => {
+                            return Err(classify_response_code(
+                                outcome.code.as_ref(),
+                                outcome.information.as_deref().unwrap_or_default(),
+                            )
+                            .into_provider_error());
                         }
-                        if let Some(code) = outcome.code.as_ref() {
-                            captured = Some(format!("{code:?}"));
+                        _ => {
+                            return Err(ProviderError::InvalidOperation(format!(
+                                "unexpected tagged IMAP status: {status:?}"
+                            )));
                         }
-                        break;
                     }
+                    if let Some(code) = outcome.code.as_ref() {
+                        captured = Some(format!("{code:?}"));
+                    }
+                    break;
                 }
                 _ => {}
             }
         }
         Ok(captured)
-    }
-
-    async fn noop(&mut self) -> Result<(), ProviderError> {
-        self.session.noop().await.map_err(|e| map_imap_error(&e))
     }
 
     async fn create_mailbox(&mut self, mailbox: &str) -> Result<(), ProviderError> {
@@ -560,11 +554,6 @@ where
 
     async fn delete_mailbox_arg(&mut self, arg: &str) -> Result<(), ProviderError> {
         self.run_write_command_plain(&format!("DELETE {arg}")).await
-    }
-
-    async fn rename_mailbox_arg(&mut self, from: &str, to: &str) -> Result<(), ProviderError> {
-        self.run_write_command_plain(&format!("RENAME {from} {to}"))
-            .await
     }
 
     async fn append(
@@ -800,11 +789,13 @@ mod tests {
     #[test]
     fn mailbox_status_reads_permanent_keywords_from_the_wildcard_flag() {
         use async_imap::types::Flag;
-        let mut mb = Mailbox::default();
-        mb.exists = 3;
-        mb.uid_next = Some(42);
-        mb.uid_validity = Some(95479608);
-        mb.permanent_flags = vec![Flag::Seen, Flag::Flagged];
+        let mut mb = Mailbox {
+            exists: 3,
+            uid_next: Some(42),
+            uid_validity: Some(95479608),
+            permanent_flags: vec![Flag::Seen, Flag::Flagged],
+            ..Default::default()
+        };
         let without = MailboxStatus::from_mailbox(&mb);
         assert_eq!(without.exists, 3);
         assert_eq!(without.uid_next, Some(42));
@@ -845,9 +836,6 @@ mod tests {
                 &mut self,
                 _: &str,
             ) -> Result<Option<String>, ProviderError> {
-                unreachable!()
-            }
-            async fn noop(&mut self) -> Result<(), ProviderError> {
                 unreachable!()
             }
             async fn create_mailbox(&mut self, _: &str) -> Result<(), ProviderError> {

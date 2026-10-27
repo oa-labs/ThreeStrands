@@ -1343,6 +1343,10 @@ async fn genesis_and_recovery_join_refuse_devices_already_in_a_sync_group() {
     assert!(!existing.database.beta_features_enabled().unwrap());
     assert_eq!(existing.epoch_keys.get(0), Some(epoch_key_before));
     assert_eq!(existing.database.resolve_field_winner(EntityType::Snippet, "old-group-snippet", "name").unwrap(), Some(serde_json::json!("Private note")));
+    assert_eq!(
+        new_group_transports[0].scan(None).await.unwrap().unwrap().objects.len(),
+        new_group_objects_before
+    );
     let connection = existing.database.test_connection().unwrap();
     let sync_values_after: i64 = connection
         .query_row("SELECT COUNT(*) FROM sync_values", [], |row| row.get(0))
@@ -1381,10 +1385,6 @@ async fn genesis_and_recovery_join_refuse_devices_already_in_a_sync_group() {
     assert_eq!(sync_local_state_after, sync_local_state_before);
     assert_eq!(recovery_keys_after, recovery_keys_before);
     assert_eq!(roster_after, roster_before);
-    assert_eq!(
-        new_group_transports[0].scan(None).await.unwrap().unwrap().objects.len(),
-        new_group_objects_before
-    );
 }
 
 /// A and B enrolled into one space through peer approval.

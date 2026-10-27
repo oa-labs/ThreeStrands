@@ -33,6 +33,7 @@ pub struct Sha256Fingerprint([u8; 32]);
 
 impl Sha256Fingerprint {
     /// Wraps 32 raw bytes.
+    #[cfg(test)]
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }

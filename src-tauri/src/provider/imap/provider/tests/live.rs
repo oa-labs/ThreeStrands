@@ -501,7 +501,7 @@ async fn live_provider_adds_removes_and_deletes_a_user_label() {
     };
 
     // Add the label, sync, and observe lf:<name> on the message.
-    if let Err(error) = provider.modify_messages(&[scratch_id.clone()], &[created.id.clone()], &[]).await {
+    if let Err(error) = provider.modify_messages(std::slice::from_ref(&scratch_id), std::slice::from_ref(&created.id), &[]).await {
         cleanup(config.clone()).await;
         panic!("add label failed: {error:?}");
     }
@@ -522,7 +522,7 @@ async fn live_provider_adds_removes_and_deletes_a_user_label() {
 
     // Remove the label (expunges only the label copy), then delete the
     // now-empty scratch label.
-    if let Err(error) = provider.modify_messages(&[scratch_id.clone()], &[], &[created.id.clone()]).await {
+    if let Err(error) = provider.modify_messages(std::slice::from_ref(&scratch_id), &[], std::slice::from_ref(&created.id)).await {
         cleanup(config.clone()).await;
         panic!("remove label failed: {error:?}");
     }

@@ -198,55 +198,6 @@ impl ImapProvider {
             .map(|e| e.mailbox.clone())
     }
 
-    /// Save the sender's own copy of a just-sent message into the account's
-    /// Sent mailbox, IDEMPOTENTLY (Phase 4 run 4a). Resolves the Sent mailbox
-    /// from the sync plan (overrides > RFC 6154 `\Sent` > name match, exactly
-    /// like the move paths resolve Archive/Trash/Junk), opens its OWN leased
-    /// session (the command slot, like every other write path), and runs the
-    /// [`crate::provider::imap::write::save_sent_copy`] primitive.
-    ///
-    /// `raw` is the OUTBOX raw bytes UNMODIFIED — the Sent copy keeps its
-    /// `Bcc:` header (only the SMTP wire copy stripped it). `message_id` is our
-    /// own generated id for the message (its raw `Message-ID` header value).
-    ///
-    /// Run 4b owns WHEN this is called (first-send detection against
-    /// `settings.server_saves_sent`, a durable retry job, per-message
-    /// serialisation + settle delay); nothing in shipped code calls it yet, so
-    /// it carries the module's scoped `dead_code` allow until then. A missing
-    /// Sent mailbox is a typed permanent error naming it (this never creates
-    /// one).
-    async fn save_sent_copy_for(
-        &self,
-        raw: &[u8],
-        message_id: &str,
-        config: crate::provider::imap::write::SaveSentConfig,
-    ) -> crate::provider::imap::write::WriteResult<crate::provider::imap::write::SentCopy> {
-        let plan = self
-            .build_sync_plan()
-            .map_err(crate::provider::imap::write::WriteError::Provider)?;
-        let mailbox = self
-            .mailbox_with_role(&plan, crate::provider::imap::MailboxRole::Sent)
-            .ok_or_else(|| {
-                crate::provider::imap::write::WriteError::Provider(ProviderError::InvalidOperation(
-                    "cannot save the Sent copy: this account has no Sent mailbox configured; \
-                     refusing permanently"
-                        .into(),
-                ))
-            })?;
-
-        let mut session = self
-            .open_session()
-            .await
-            .map_err(crate::provider::imap::write::WriteError::Provider)?;
-        let result = {
-            let write_session =
-                as_write_session(session.as_mut()).map_err(crate::provider::imap::write::WriteError::Provider)?;
-            crate::provider::imap::write::save_sent_copy(write_session, &mailbox, raw, message_id, config).await
-        };
-        let _ = session.logout().await;
-        result
-    }
-
     /// Apply a system-label move to every (surviving) message of a thread,
     /// idempotently and with partial-failure honesty.
     ///

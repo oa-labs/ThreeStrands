@@ -226,7 +226,7 @@ pub(super) const CONTACT_FIELDS: [&str; 6] = ["displayName", "role", "company", 
 /// empty only while there are no links at all: enhancement never appends to a
 /// list the user has already started.
 fn empty_contact_fields(profile: &ContactProfile) -> Vec<&'static str> {
-    let blank = |value: Option<&str>| value.map_or(true, |text| text.trim().is_empty());
+    let blank = |value: Option<&str>| value.is_none_or(|text| text.trim().is_empty());
     CONTACT_FIELDS
         .iter()
         .copied()
@@ -303,7 +303,7 @@ fn retain_contact_suggestions_for_fields(
     suggestions
         .into_iter()
         .filter(|suggestion| {
-            if !allowed.iter().any(|field| *field == suggestion.field.as_str()) {
+            if !allowed.contains(&suggestion.field.as_str()) {
                 tally.dropped.push(ContactSuggestionDrop::FieldNotEmpty);
                 return false;
             }
@@ -1071,21 +1071,22 @@ mod tests {
                 .suggestions;
         assert_eq!(suggestions.len(), 1);
         assert_eq!(suggestions[0].field, "role");
-        let recorded = prompts.lock().unwrap();
-        assert_eq!(recorded.len(), 1);
-        let (system, field_schema) = &recorded[0];
-        assert!(system.contains("Allowed fields: role, location, link."));
-        assert!(!system.contains("displayName"));
-        assert!(!system.contains("company"));
-        assert!(!system.contains("bio"));
-        assert_eq!(field_schema["enum"], json!(["role", "location", "link"]));
-        // Each allowed field is defined, in the instructions and in the output
-        // schema alike, and a fact that fits no allowed field is left out.
-        let definitions = "role: their job title or position; location: the city, region, or country where they are based; link: an https URL of their own website or public profile";
-        assert!(system.contains(&format!("Field definitions: {definitions}.")));
-        assert_eq!(field_schema["description"], definitions);
-        assert!(system.contains("even when no allowed field fits it; leave that fact out instead."));
-        drop(recorded);
+        {
+            let recorded = prompts.lock().unwrap();
+            assert_eq!(recorded.len(), 1);
+            let (system, field_schema) = &recorded[0];
+            assert!(system.contains("Allowed fields: role, location, link."));
+            assert!(!system.contains("displayName"));
+            assert!(!system.contains("company"));
+            assert!(!system.contains("bio"));
+            assert_eq!(field_schema["enum"], json!(["role", "location", "link"]));
+            // Each allowed field is defined, in the instructions and in the output
+            // schema alike, and a fact that fits no allowed field is left out.
+            let definitions = "role: their job title or position; location: the city, region, or country where they are based; link: an https URL of their own website or public profile";
+            assert!(system.contains(&format!("Field definitions: {definitions}.")));
+            assert_eq!(field_schema["description"], definitions);
+            assert!(system.contains("even when no allowed field fits it; leave that fact out instead."));
+        }
 
         // Nothing left empty: no provider call is made at all.
         let full = ContactProfile {

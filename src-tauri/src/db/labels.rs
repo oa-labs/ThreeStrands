@@ -142,7 +142,7 @@ impl Database {
     /// how production resolves them: the structured search path (run 2b-2,
     /// `db::search::label_name_sql`) does the resolution INLINE as an `EXISTS`
     /// join against `account_labels` within the single search query, so it
-    /// never calls this helper. It is kept — with `#[allow(dead_code)]` — as a
+    /// never calls this helper. It is kept — with `#[expect(dead_code)]` — as a
     /// tested, standalone name->ids lookup for callers that need it outside a
     /// search query; until such a caller lands it is exercised only by this
     /// module's tests.

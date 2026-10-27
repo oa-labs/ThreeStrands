@@ -25,9 +25,6 @@ use tokio::net::TcpListener;
 enum Script {
     /// Full happy path, 250 to everything, 250 final.
     Accept,
-    /// Refuse the TCP connection (nothing listens). Driven by using a dead
-    /// port, not this server.
-    RefuseConnect,
     /// STARTTLS mode but the EHLO before TLS does NOT advertise STARTTLS.
     NoStartTls,
     /// 535 on AUTH.
@@ -189,11 +186,10 @@ async fn run_session<S>(
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
     let mut s = BufReader::new(stream);
-    if greet {
-        if s.write_all(b"220 fake ready\r\n").await.is_err() {
+    if greet
+        && s.write_all(b"220 fake ready\r\n").await.is_err() {
             return;
         }
-    }
     let mut rcpt_seen = 0usize;
     let mut line = String::new();
     loop {
@@ -344,7 +340,7 @@ async fn run_session<S>(
                 }
                 Script::VeryLongFinal => {
                     let mut long = b"250 2.0.0 ".to_vec();
-                    long.extend(std::iter::repeat(b'x').take(4000));
+                    long.extend(std::iter::repeat_n(b'x', 4000));
                     long.extend_from_slice(b"\r\n");
                     let _ = s.write_all(&long).await;
                 }

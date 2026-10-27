@@ -523,7 +523,7 @@ fn apply_incoming_grant(database: &Database, identity: &DeviceIdentity, epoch_ke
                         database.record_approved_incoming_request(
                             &request_id_hex,
                             &requester_id,
-                            &requester_ed25519,
+                            requester_ed25519,
                             &requester_x25519,
                             &fingerprint,
                         )?;
@@ -743,7 +743,7 @@ pub async fn reject_enrollment_request(
     request_id_hex: &str,
     transports: &[Arc<dyn SyncTransport>],
 ) -> EnrollmentResult<()> {
-    let exists = database.incoming_request_pending(&request_id_hex)?;
+    let exists = database.incoming_request_pending(request_id_hex)?;
     if !exists {
         return Err(EnrollmentError::RequestNotPending);
     }
@@ -757,7 +757,7 @@ pub async fn reject_enrollment_request(
     let bytes = encode_signed_enrollment_rejection(&signed)?;
     let cid = publish_control_object(database, transports, &bytes).await?;
     database.mark_control_object_seen(&cid, "enrollment_rejection")?;
-    database.reject_pending_incoming_request(&request_id_hex)?;
+    database.reject_pending_incoming_request(request_id_hex)?;
     Ok(())
 }
 
@@ -840,7 +840,7 @@ fn apply_rotation_common(database: &Database, identity: &DeviceIdentity, epoch_k
 /// [`enrollment_fingerprint`] on both screens: imports a staged grant,
 /// adopting the epoch key and the whole roster it carries.
 pub async fn confirm_and_import_grant(database: &Database, identity: &DeviceIdentity, epoch_keys: &dyn EpochKeyStore, request_id_hex: &str) -> EnrollmentResult<()> {
-    let grant_cbor = database.staged_enrollment_grant(&request_id_hex)?;
+    let grant_cbor = database.staged_enrollment_grant(request_id_hex)?;
     let signed = decode_signed_enrollment_grant(&grant_cbor)?;
     let k_epoch_bytes = try_open_sealed_box(&identity.x25519_secret, &signed.grant.sealed_epoch_key)
         .ok_or(EnrollmentError::NotSealedToThisDevice("This grant was not sealed to this device"))?;
@@ -859,7 +859,7 @@ pub async fn confirm_and_import_grant(database: &Database, identity: &DeviceIden
     database.record_epoch_activation(signed.grant.key_epoch, &source_cid)?;
     store_earlier_epoch_keys(database, epoch_keys, &earlier, &source_cid)?;
 
-    database.set_enrollment_request_status(&request_id_hex, "completed")?;
+    database.set_enrollment_request_status(request_id_hex, "completed")?;
     Ok(())
 }
 
@@ -876,7 +876,7 @@ pub async fn approve_enrollment_request(
     request_id_hex: &str,
     transports: &[Arc<dyn SyncTransport>],
 ) -> EnrollmentResult<()> {
-    let (requester_device_id, requester_ed25519, requester_x25519) = database.pending_incoming_request(&request_id_hex)?;
+    let (requester_device_id, requester_ed25519, requester_x25519) = database.pending_incoming_request(request_id_hex)?;
     let requester_x25519: [u8; 32] = requester_x25519.try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid requester X25519 key"))?;
     let requester_ed25519_bytes: [u8; 32] = requester_ed25519.try_into().map_err(|_| EnrollmentError::MalformedKey("Invalid requester Ed25519 key"))?;
     let requester_verifying_key = VerifyingKey::from_bytes(&requester_ed25519_bytes).map_err(|_| EnrollmentError::MalformedKey("Invalid requester Ed25519 key"))?;
@@ -907,7 +907,7 @@ pub async fn approve_enrollment_request(
     let cid = publish_control_object(database, transports, &bytes).await?;
     database.mark_control_object_seen(&cid, "enrollment_grant")?;
 
-    database.set_enrollment_request_status(&request_id_hex, "approved")?;
+    database.set_enrollment_request_status(request_id_hex, "approved")?;
     Ok(())
 }
 

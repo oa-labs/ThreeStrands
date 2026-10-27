@@ -472,7 +472,7 @@ mod tests {
         assert!(write.group.member_ids.contains(&ada));
         assert!(database.add_contact_group_members(&group.id, &[], &["not an address".into()]).is_err());
         // Re-adding an existing member changes nothing to replicate.
-        let again = database.add_contact_group_members(&group.id, &[ada.clone()], &[]).unwrap();
+        let again = database.add_contact_group_members(&group.id, std::slice::from_ref(&ada), &[]).unwrap();
         assert!(again.fields.is_empty());
     }
 
@@ -543,7 +543,7 @@ mod tests {
     fn sync_records_carry_every_stored_member_and_materialize_back() {
         let database = Database::open_memory();
         let ada = contact(&database, "Ada", "ada@example.com");
-        let group = database.create_contact_group("Board", &[ada.clone()], &[]).unwrap().group;
+        let group = database.create_contact_group("Board", std::slice::from_ref(&ada), &[]).unwrap().group;
         let record = database.contact_group_record(&group.id).unwrap().unwrap();
         assert_eq!(record["name"], "Board");
         assert_eq!(record[member_field(&ada)], true);

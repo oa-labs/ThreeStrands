@@ -1300,12 +1300,14 @@ mod tests {
         assert_eq!(service.clone().exclusive(async { 7 }).await, Some(7));
     }
 
+    type ModifyCall = (Vec<String>, Vec<String>, Vec<String>);
+
     struct ContractProvider {
         invalidate_stale_cursor: AtomicBool,
         full_lists: AtomicUsize,
         thread_fetches: AtomicUsize,
         modifies: AtomicUsize,
-        message_modifies: StdMutex<Vec<(Vec<String>, Vec<String>, Vec<String>)>>,
+        message_modifies: StdMutex<Vec<ModifyCall>>,
         fail_mutation: bool,
         permanently_fail_mutation: bool,
         reauth_mutation: bool,
@@ -1492,7 +1494,9 @@ mod tests {
         }
     }
 
-    fn recording_activity() -> (SyncActivity, Arc<StdMutex<Vec<(String, bool)>>>) {
+    type RecordedActivity = Arc<StdMutex<Vec<(String, bool)>>>;
+
+    fn recording_activity() -> (SyncActivity, RecordedActivity) {
         let events = Arc::new(StdMutex::new(Vec::new()));
         let recorded = Arc::clone(&events);
         let activity = SyncActivity::with_listener(move |account_id, active| {

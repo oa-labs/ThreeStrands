@@ -308,7 +308,8 @@ mod tests {
     #[test]
     fn write_path_response_codes_classify_with_the_right_retry_policy() {
         use crate::provider::ProviderError;
-        let cases: &[(&str, fn(&ProviderError) -> bool)] = &[
+        type Case = (&'static str, fn(&ProviderError) -> bool);
+        let cases: &[Case] = &[
             // OVERQUOTA — permanent, the user must free space.
             ("a1 NO [OVERQUOTA] mailbox full", |e| {
                 matches!(e, ProviderError::PermanentClientRejection(_))
