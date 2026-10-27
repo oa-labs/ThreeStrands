@@ -127,6 +127,19 @@ describe("showcase dataset", () => {
     }
   });
 
+  it("lists the showcase's fictional promise from its latest sent message, scoped by account", async () => {
+    const client = createDemoClient(buildShowcaseDataset(now));
+    const [promise] = await client.listOpenPromises(SHOWCASE_WORK_ACCOUNT);
+    expect(promise).toMatchObject({
+      thread: { id: "interview-notes", accountId: SHOWCASE_WORK_ACCOUNT },
+      messageId: "interview-notes-message-2",
+      recipients: ["Daniel Kim <daniel@harborlight.example>"],
+      excerpt: expect.stringContaining("I'll send over the interview notes"),
+    });
+    expect(await client.listOpenPromises("maya.chen@example.com")).toEqual([]);
+    expect(await createDemoClient(defaultDemoDataset()).listOpenPromises()).toEqual([]);
+  });
+
   it("returns bundled raster pictures for showcase image attachments and refuses everything else", async () => {
     const dataset = buildShowcaseDataset(now);
     const client = createDemoClient(dataset);
