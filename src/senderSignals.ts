@@ -419,7 +419,9 @@ export function trustReport({ messageId, trust, links, familiarity, sender, subj
     warn({ key: "delivery-changed", kind: "delivery", title: "Different delivery pattern", detail: `You've confirmed other requests for ${requester}; this sending address or its link destinations are different` });
   }
 
-  if (familiarity && !acquainted && familiarity.nameMatches.length > 0 && from.name) {
+  // Confirming this exact delivery answers the borrowed-name question, but
+  // only for authenticated mail or the message the user confirmed.
+  if (familiarity && !acquainted && familiarity.nameMatches.length > 0 && from.name && !recognizedDelivery && !confirmedMessage) {
     const others = familiarity.nameMatches.length - 1;
     warn({
       key: "impersonation",

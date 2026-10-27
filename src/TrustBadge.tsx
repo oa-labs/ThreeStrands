@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { ShieldCheck, TriangleAlert } from "lucide-react";
 import { placeHoverCard } from "./AddressWithCard";
 import { ICON_SIZE } from "./iconSizes";
-import { TrustDetails, trustRow } from "./SenderSections";
+import { SenderFeedback, TrustDetails, trustRow } from "./SenderSections";
 import { trustHeadline, type TrustLink, type TrustReport } from "./senderSignals";
 
 /** How long the details stay open after the pointer leaves, so it can cross into them. */
@@ -11,7 +11,8 @@ const TRUST_CARD_CLOSE_DELAY_MS = 150;
 
 /**
  * The trust verdict beside the sender's name. A known sender gets a quiet
- * shield; a message that warns gets its first warning in words. Hovering
+ * shield; a message that warns gets its first warning in words, unless the
+ * banner above the body already says it, when the icon alone shows. Hovering
  * previews the same rows as the Trust section, and clicking keeps them open
  * until the user clicks again, presses Escape, or moves focus away.
  */
@@ -73,6 +74,7 @@ export function TrustBadge({ report, onShowLink }: { report: TrustReport; onShow
   if (report.summary === null) return null;
   const careful = report.summary === "careful";
   const label = careful ? "Be careful" : "Known sender";
+  const bannered = strongWarnings(report).length > 0;
   return (
     <span
       ref={anchorRef}
@@ -92,7 +94,7 @@ export function TrustBadge({ report, onShowLink }: { report: TrustReport; onShow
         onClick={() => { cancelClose(); setPinned(!pinned); }}
       >
         {careful ? <TriangleAlert size={ICON_SIZE.xs} aria-hidden="true" /> : <ShieldCheck size={ICON_SIZE.xs} aria-hidden="true" />}
-        {careful ? <span className="message-trust-headline">{headline}</span> : null}
+        {careful && !bannered ? <span className="message-trust-headline">{headline}</span> : null}
       </button>
       {open ? createPortal(
         <div
@@ -124,26 +126,36 @@ export function TrustBadge({ report, onShowLink }: { report: TrustReport; onShow
 /**
  * The strongest warnings above the message body, where they can't be missed:
  * a borrowed name, a look-alike sender or link domain, or a risky attachment.
- * Weaker warnings stay on the header badge.
+ * Weaker warnings stay on the header badge. A borrowed name can be answered
+ * here with This is legitimate, the same confirmation as the Be careful
+ * section, which quiets that warning for this exact delivery.
  */
-export function TrustBanner({ report, onShowLink }: { report: TrustReport; onShowLink?(link: TrustLink): void }) {
-  const strong = report.rows.filter((finding) => finding.tone === "warning" && finding.strong);
+export function TrustBanner({ messageId, report, onShowLink }: { messageId: string; report: TrustReport; onShowLink?(link: TrustLink): void }) {
+  const strong = strongWarnings(report);
   if (strong.length === 0) return null;
+  const confirmable = report.feedback && strong.some((finding) => finding.key === "impersonation");
   return (
     <div className="notice notice--warning message-trust-banner" role="note" aria-label="Be careful">
       <TriangleAlert size={ICON_SIZE.sm} aria-hidden="true" />
-      <ul className="message-trust-banner-list">
-        {strong.map((finding) => {
-          const link = finding.link;
-          return (
-            <li key={finding.key}>
-              <span className="message-trust-banner-title">{finding.title}</span>
-              {finding.detail ? <span className="message-trust-banner-detail">{finding.detail}</span> : null}
-              {link && onShowLink ? <button type="button" className="btn-link" onClick={() => onShowLink(link)}>Show link</button> : null}
-            </li>
-          );
-        })}
-      </ul>
+      <div className="message-trust-banner-body">
+        <ul className="message-trust-banner-list">
+          {strong.map((finding) => {
+            const link = finding.link;
+            return (
+              <li key={finding.key}>
+                <span className="message-trust-banner-title">{finding.title}</span>
+                {finding.detail ? <span className="message-trust-banner-detail">{finding.detail}</span> : null}
+                {link && onShowLink ? <button type="button" className="btn-link" onClick={() => onShowLink(link)}>Show link</button> : null}
+              </li>
+            );
+          })}
+        </ul>
+        {confirmable && report.feedback ? <SenderFeedback key={messageId} messageId={messageId} feedback={report.feedback} compact /> : null}
+      </div>
     </div>
   );
+}
+
+function strongWarnings(report: TrustReport) {
+  return report.rows.filter((finding) => finding.tone === "warning" && finding.strong);
 }

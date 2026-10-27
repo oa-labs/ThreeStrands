@@ -427,7 +427,8 @@ describe("MessageCard", () => {
       render(<MessageCard message={{ ...message, bodyHtml: lookalikeLink }} isExpanded {...stableProps} subject="COMPLETE REVlEW" onShowLink={onShowLink} />);
       const badge = await screen.findByRole("button", { name: /^Be careful: Subject uses look-alike letters · 1 more/ });
       expect(badge).toHaveClass("message-trust-careful");
-      expect(badge).toHaveTextContent("Subject uses look-alike letters · 1 more");
+      // The banner says it in words, so the badge doesn't repeat it.
+      expect(badge).toHaveTextContent("");
 
       // Only the look-alike link is strong enough for the body; the subject trick stays on the badge.
       const banner = screen.getByRole("note", { name: "Be careful" });
@@ -435,6 +436,39 @@ describe("MessageCard", () => {
       expect(banner).not.toHaveTextContent("Subject");
       fireEvent.click(within(banner).getByRole("button", { name: "Show link" }));
       expect(onShowLink).toHaveBeenCalledWith("m1", { href: "https://partnr.example/pay", text: "pay the invoice" });
+    });
+
+    it("still names a weaker warning beside the sender when nothing is strong enough for the banner", async () => {
+      reads(stranger);
+      render(<MessageCard message={message} isExpanded {...stableProps} subject="COMPLETE REVlEW" />);
+      const badge = await screen.findByRole("button", { name: /^Be careful: Subject uses look-alike letters/ });
+      expect(badge).toHaveTextContent("Subject uses look-alike letters");
+      expect(screen.queryByRole("note", { name: "Be careful" })).not.toBeInTheDocument();
+    });
+
+    it("confirms a borrowed name from the banner, which then clears it", async () => {
+      let patterns: SenderDeliveryPattern[] = [];
+      const borrowed = { ...message, sender: "Ada Lovelace <hello@example.com>" };
+      const { familiarity } = reads({ ...stranger, nameMatches: ["ada@engines.example"], deliveryPatterns: [] });
+      familiarity.mockImplementation(async () => ({ ...stranger, nameMatches: ["ada@engines.example"], deliveryPatterns: patterns }));
+      const confirm = vi.spyOn(mailClient, "confirmSenderDelivery").mockImplementation(async () => {
+        patterns = [{ id: "feedback", senderEmail: "hello@example.com", replyTo: null, linkOrigins: [], authenticated: true, sourceMessageId: message.id, confirmedAt: "2026-10-27T12:00:00Z" }];
+      });
+      render(<MessageCard message={borrowed} isExpanded {...stableProps} subject="Hello" />);
+      const banner = await screen.findByRole("note", { name: "Be careful" });
+      expect(banner).toHaveTextContent("Name matches Ada Lovelace, but from a new address");
+      expect(banner).toHaveTextContent("Remembers this sending address and link destinations");
+      fireEvent.click(within(banner).getByRole("button", { name: "This is legitimate" }));
+      expect(confirm).toHaveBeenCalledWith("m1", []);
+      await waitFor(() => expect(screen.queryByRole("note", { name: "Be careful" })).not.toBeInTheDocument());
+      expect(screen.queryByRole("button", { name: /^Be careful:/ })).not.toBeInTheDocument();
+    });
+
+    it("offers no confirmation in the banner for warnings it would not clear", async () => {
+      reads({ ...stranger, deliveryPatterns: [] });
+      render(<MessageCard message={{ ...message, bodyHtml: lookalikeLink }} isExpanded {...stableProps} subject="Invoice" />);
+      const banner = await screen.findByRole("note", { name: "Be careful" });
+      expect(within(banner).queryByRole("button", { name: "This is legitimate" })).not.toBeInTheDocument();
     });
 
     it("keeps the details open on click until clicked again or Escape, and shows a link from them", async () => {

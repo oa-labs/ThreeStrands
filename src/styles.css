@@ -1117,6 +1117,10 @@ kbd {
 /* The strongest warnings sit above the body in the shared warning notice. */
 .message-trust-banner { margin-bottom: var(--space-3); font-size: var(--text-secondary); }
 .message-trust-banner > svg { flex: 0 0 auto; margin-top: var(--space-0-5); }
+.message-trust-banner-body { display: grid; gap: var(--space-1-5); min-width: 0; }
+.message-trust-banner .context-sender-feedback { padding: 0; }
+.message-trust-banner .context-sender-actions { margin: 0; }
+.message-trust-banner .context-sender-feedback-scope { margin: 0; }
 .message-trust-banner-list { display: grid; gap: var(--space-1); min-width: 0; margin: 0; padding: 0; list-style: none; }
 .message-trust-banner-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-2); }
 .message-trust-banner-title { color: var(--text); font-weight: var(--weight-medium); }

@@ -8,6 +8,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - **Find Times** can include selected coworkers on your email, checking their primary calendars. In **Settings → Calendar Accounts**, choose which of your own calendars affect availability separately from those shown in Calendar; primary calendars are used by default, available holiday calendars are included automatically, and failures identify the affected calendar and account.
 - **Calendar** now lists your **Open tasks** under **Today's agenda**: everything in your **To Do** and **In Progress** columns. Drag a task onto the week to book 30 minutes for it, with **Undo** if you change your mind, or click it to pick a time yourself. Booked tasks say when their time is, and opening the event lets you mark the task done.
 
+### Improved
+- When an email uses the name of someone you know but comes from a new address, you can now choose **This is legitimate** right in the warning above the email. Confirming that address stops the name warning for its later mail, while other security checks still apply, and the warning beside the sender's name no longer repeats what the box above the email already says.
+
 ## 0.174.3 — 2026-10-27
 
 ### New

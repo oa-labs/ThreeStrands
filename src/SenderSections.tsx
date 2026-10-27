@@ -229,8 +229,12 @@ export function useTrustReport({ message, subject, bulk, prior, enabled = true }
   }, [enabled, links, reads, key, message.id, message.sender, message.attachments, subject, bulk]);
 }
 
-/** A user assertion about this request, with an explicit scope and reversible storage. */
-function SenderFeedback({ messageId, feedback }: { messageId: string; feedback: NonNullable<TrustReport["feedback"]> }) {
+/**
+ * A user assertion about this request, with an explicit scope and reversible
+ * storage. `compact` leaves out the list of remembered senders, for the
+ * warning above the message body.
+ */
+export function SenderFeedback({ messageId, feedback, compact = false }: { messageId: string; feedback: NonNullable<TrustReport["feedback"]>; compact?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const save = async (forgetId?: string) => {
@@ -256,7 +260,7 @@ function SenderFeedback({ messageId, feedback }: { messageId: string; feedback: 
           : <button type="button" className="btn-link" disabled={busy} onClick={() => { void save(); }}>{busy ? "Saving…" : "This is legitimate"}</button>}
       </div>
       <p className="context-sender-feedback-scope">{matchingId ? "Remembered" : "Remembers"} this sending address and link destinations for {feedback.requester} for this mail account. Security checks still apply.</p>
-      {!matchingId && feedback.patterns.length > 0 ? (
+      {!compact && !matchingId && feedback.patterns.length > 0 ? (
         <details>
           <summary>Remembered senders</summary>
           {feedback.patterns.map((pattern) => <div className="context-sender-actions" key={pattern.id}><span>{pattern.senderEmail}</span><button type="button" className="btn-link" disabled={busy} aria-label={`Forget confirmation for ${pattern.senderEmail}`} onClick={() => { void save(pattern.id); }}>Forget</button></div>)}

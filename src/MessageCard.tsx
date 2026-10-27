@@ -303,7 +303,7 @@ export const MessageCard = memo(function MessageCard({
         </button>
       </header>
       <div id={cardBodyId} className="message-card-body">
-        {trust ? <TrustBanner report={trust} onShowLink={showTrustLink} /> : null}
+        {trust ? <TrustBanner messageId={message.id} report={trust} onShowLink={showTrustLink} /> : null}
         <SafeMessage
           html={message.bodyHtml}
           text={message.bodyText}

@@ -302,6 +302,39 @@ describe("trust signals from the user's own history", () => {
     }
   });
 
+  it("answers a borrowed name only for the confirmed message or the same authenticated delivery", () => {
+    const borrowed = (overrides: Partial<TrustInput> = {}) => deliveryInput({
+      sender: "Ana Ortiz <requests@signing.example>",
+      familiarity: { ...stranger, knownDomains: [], nameMatches: ["ana@customer.example"], deliveryPatterns: [confirmedPattern] },
+      ...overrides,
+    });
+    const named = (value: TrustInput) => warnings(value).some((finding) => finding.key === "impersonation");
+    expect(named(borrowed())).toBe(false);
+    expect(named(borrowed({ messageId: "confirmed-request", familiarity: { ...stranger, knownDomains: [], nameMatches: ["ana@customer.example"], deliveryPatterns: [{ ...confirmedPattern, authenticated: false }] } }))).toBe(false);
+
+    // A structurally different delivery: no Reply-To, one link origin.
+    const newsletter = { ...confirmedPattern, senderEmail: "hello@studio.example", replyTo: null, linkOrigins: ["https://studio.example"] };
+    const plain = (overrides: Partial<TrustInput> = {}) => input({
+      messageId: "later", sender: "Jane Rivera <hello@studio.example>",
+      trust: { ...verified, fromDomain: "studio.example" },
+      links: analyzeLinks('<table><tr><td><a href="https://studio.example/news">Read</a></td></tr></table>'),
+      familiarity: { ...stranger, nameMatches: ["jane@partner.example"], deliveryPatterns: [newsletter] },
+      ...overrides,
+    });
+    expect(named(plain())).toBe(false);
+    expect(trustReport(plain()).summary).toBeNull();
+
+    for (const value of [
+      plain({ familiarity: { ...stranger, nameMatches: ["jane@partner.example"], deliveryPatterns: [] } }),
+      plain({ familiarity: { ...stranger, nameMatches: ["jane@partner.example"], deliveryPatterns: [{ ...newsletter, authenticated: false }] } }),
+      plain({ trust: { ...verified, fromDomain: "studio.example", authentication: { ...verified.authentication!, dmarc: "fail" } } }),
+      plain({ sender: "Jane Rivera <hi@studio.example>" }),
+      plain({ links: analyzeLinks('<a href="https://other.example/pay">Read</a>') }),
+    ]) {
+      expect(named(value)).toBe(true);
+    }
+  });
+
   it("requires DMARC on both the confirmed request and the current message and preserves every other warning", () => {
     for (const dmarc of ["fail", "none", null]) {
       const value = deliveryInput({ trust: { ...verified, fromDomain: "signing.example", replyTo: confirmedPattern.replyTo, authentication: { ...verified.authentication!, dmarc } } });
