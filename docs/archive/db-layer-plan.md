@@ -8,7 +8,7 @@ Today SQL, `rusqlite` imports, and connection access also appear in about 16
 modules outside `db/`. This plan moves that code back into `db/` in small
 phases, then makes the compiler enforce the boundary.
 
-[`commands/accounts.rs`](../src-tauri/src/commands/accounts.rs) is the model
+[`commands/accounts.rs`](../../src-tauri/src/commands/accounts.rs) is the model
 to copy. It has no SQL, and every persistence step is one named `Database`
 call (`list_accounts`, `adopt_mail_account`, `save_imap_account_settings`).
 

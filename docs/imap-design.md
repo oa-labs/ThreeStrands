@@ -3,8 +3,9 @@
 Status: accepted (2026-10-08); implementation in progress. Phases 1–4 of
 [Phasing](#phasing) are implemented (2026-10-09 to 2026-10-11, through 0.104.0):
 the provider seam, read-only sync, changes, and SMTP sending with identities.
-Phase 6 is partly done: account setup UI exists, and settings transfer accepts
-IMAP accounts. Server search (phase 5) and hardening (phase 7) remain. The
+Server search (phase 5) followed on 2026-10-12. Phase 6 is partly done: account
+setup UI exists, and settings transfer accepts IMAP accounts. Hardening
+(phase 7) remains. The
 `async-imap` spike result is archived in
 [imap-spike-findings.md](archive/imap-spike-findings.md).
 

@@ -1,6 +1,6 @@
 //! Pins the exact rows that synced projection, local saves, and settings
 //! import write, column by column, so moving their SQL into the feature
-//! modules (`docs/db-layer-plan.md`, Phase 4) cannot change what is stored.
+//! modules (`docs/archive/db-layer-plan.md`, Phase 4) cannot change what is stored.
 //! Timestamps generated during the test read `<now>` and generated ids read
 //! `<uuid>`; every other value is compared exactly.
 

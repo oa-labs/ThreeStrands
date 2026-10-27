@@ -3,7 +3,7 @@
 //! All persistence lives under `db/`: feature modules own their SQL and tests,
 //! and the rest of the app calls named `Database` methods. The connection is
 //! private to this module, and `db/tests/boundary.rs` rejects SQL or
-//! `rusqlite` in production code anywhere else (`docs/db-layer-plan.md`).
+//! `rusqlite` in production code anywhere else (`docs/archive/db-layer-plan.md`).
 //! Operations that coordinate features (ingestion and settings transfer) keep
 //! a single caller-owned transaction.
 

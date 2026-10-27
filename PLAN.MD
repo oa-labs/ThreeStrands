@@ -1,7 +1,8 @@
 # ThreeStrands product plan
 
 **Status:** Current product baseline and forward-looking roadmap
-**Reviewed:** 2026-10-02 against the 0.55.1 codebase
+**Reviewed:** 2026-10-02 against the 0.55.1 codebase; provider, drafts, and
+roadmap status corrected 2026-10-26 for 0.174.0
 **Contact capabilities updated:** 2026-10-08 for 0.83.0
 
 ## Product direction
@@ -15,10 +16,10 @@ Project licensing is governed by the [PolyForm Perimeter License 1.0.1](LICENSE)
 The source can be inspected, built, used, and modified for permitted purposes;
 providing others with a competing product built from it is prohibited.
 
-The product is local-first. The desktop app connects directly to Gmail; it does
-not require a ThreeStrands account or an application-operated mail backend.
-Mail is cached in SQLite for fast reading, search, and offline work. Gmail
-remains the source of truth for mail. The app stores OAuth credentials in the
+The product is local-first. The desktop app connects directly to Gmail and to
+IMAP/SMTP servers; it does not require a ThreeStrands account or an application-operated mail backend.
+Mail is cached in SQLite for fast reading, search, and offline work. The mail
+provider remains the source of truth for mail. The app stores credentials in the
 operating system's credential store and sends mail through a durable local
 outbox. Optional AI sends bounded mail context to a provider the user
 configures. Optional cross-device sync replicates selected
@@ -41,11 +42,11 @@ particular platform package, or always-on service behavior.
 
 - Navigate conversations, messages, accounts, and views from the keyboard.
   Use a command palette and shortcut help to discover actions.
-- Read and triage multiple Gmail accounts in one merged view, or focus on one
+- Read and triage multiple Gmail and IMAP accounts in one merged view, or focus on one
   account. Archive, restore, trash, mark as spam, mark read or unread, star,
   label, and process selected conversations in batches, with undo for
   reversible actions.
-- Search the local mail index; when relevant mail is outside the cache, Gmail
+- Search the local mail index; when relevant mail is outside the cache, server
   search can bring older results into the local view. Filter the mailbox by
   unread, starred, important, or unanswered conversations.
 - Create account-specific Split Inboxes using a sending domain, Gmail label,
@@ -57,7 +58,8 @@ particular platform package, or always-on service behavior.
 - Compose, reply, reply all, and forward with rich text, attachments, and
   reusable snippets. Recipient suggestions come from correspondence history
   and addresses pinned in the composer.
-- Drafts save locally. A queued send has a ten-second undo window, and the
+- Drafts save locally and to the account's Drafts on the server, so they
+  follow you to other devices and mail apps. A queued send has a ten-second undo window, and the
   durable outbox preserves pending work across restarts. Sent mail is
   reconciled with Gmail when the delivery result is uncertain.
 - Turn a conversation into an action, follow-up, or waiting-for task; create
@@ -122,12 +124,11 @@ from the current feature set when publishing a website.
 
 | Direction | What users could expect |
 | --- | --- |
-| Snooze and scheduled sending | Put a conversation aside until a chosen time and queue a message for later delivery, with clear behavior when the desktop app is closed. |
-| Sending aliases and signatures | Send from verified Gmail aliases, with a signature for each identity. |
-| Drafts across devices | Start a reply on one computer and finish it on another, with clear controls over draft synchronization. |
+| Snooze | Put a conversation aside until a chosen time, with clear behavior when the desktop app is closed. |
+| Gmail sending aliases | Send from verified Gmail aliases. IMAP identities and per-account signatures exist today. |
 | Connected address books | Import existing Google Contacts and keep them connected to local profiles, notes, and correspondence history. |
 | Smarter inbox rules | Explore inspectable, user-controlled classification beyond today's domain, label, and address rules. |
-| More mail providers | Finish IMAP/SMTP (design and progress in `docs/imap-design.md`; read, triage, and sending work today, server search and hardening remain), then Microsoft 365. |
+| More mail providers | Finish IMAP/SMTP (design and progress in `docs/imap-design.md`; read, triage, and sending work today, read, triage, server search, and sending work today; hardening remains), then Microsoft 365. |
 | Encrypted sync reliability | Keep hardening optional encrypted sync across devices and app versions, especially upgrades and interrupted joins. |
 | Shared and mobile workflows | Explore a mobile companion and shared conversations or drafts where demand justifies the additional architecture. |
 
@@ -135,17 +136,18 @@ The roadmap should be revised as research and reliability work change
 priorities. Contact browsing and editing, meeting proposals, available-time
 replies, and reviewed calendar-event creation exist today. Task follow-ups exist
 today. Scheduled sending with one fixed sending device and synchronized
-summary visibility is implemented; conversation snoozing remains planned.
+summary visibility is implemented, and drafts follow the account across devices; conversation
+snoozing remains planned.
 
 ## Current product model and decisions
 
 ### Audience and scope
 
 The primary user is an individual who wants a fast daily mail workflow across
-one or more Gmail accounts. Tasks, calendar context, and optional AI support
+one or more mail accounts. Tasks, calendar context, and optional AI support
 that workflow. ThreeStrands is not yet a general-purpose mail client: Gmail is
 the mature adapter, and an IMAP/SMTP adapter (aimed first at Proton Mail
-Bridge) reads, triages, and sends but is still being completed.
+Bridge) reads, triages, searches, and sends but is still being hardened.
 
 The app does not operate a backend for mailbox access or cross-device sync.
 Polling, task reconciliation, queued sends, and replication run while the
@@ -162,6 +164,7 @@ flowchart LR
     Core --> DB[(Local SQLite and FTS5)]
     Core --> Vault[OS credential store]
     Core --> Gmail[Gmail API]
+    Core --> IMAP[IMAP and SMTP servers]
     Core --> Calendar[Google Calendar API]
     Core --> AI[User-selected AI provider]
     Core --> Transport[Optional encrypted sync connectors]
@@ -177,8 +180,9 @@ flowchart LR
   durable mutation queue and reconcile with Gmail.
 - Sending uses a separate durable outbox with immutable MIME snapshots,
   cancellation during the undo window, and explicit handling for uncertain
-  delivery. Drafts and outbox records are local to an installation; they do
-  not synchronize through Gmail Drafts or optional cross-device sync.
+  delivery. Outbox records are local to an installation. Drafts are pushed to and
+  pulled from the account's Drafts (Gmail Drafts or the mapped IMAP mailbox),
+  never through optional cross-device sync.
 - The SQLite cache provides local full-text search, workflow records, and
   periodic backups. Settings include a local mail-retention policy. Provider
   data and application-owned workflow data have deliberately different sync
@@ -259,4 +263,4 @@ flowchart LR
 - [Features and known limitations](docs/features.md) and [contact management](docs/address-book.md) — current capabilities, shortcuts, and outstanding live-account checks.
 - [IMAP/SMTP provider design](docs/imap-design.md) — provider design and phase progress.
 - [Today view design](docs/today-design.md) — what Today works out without AI, and the phase 2 AI layer (meaning sort, Top of mind strip).
-- [Archived plans](docs/archive/) — completed plans (multi-account, database recovery and modularization, Phase 2 compose, IMAP spike) kept for design history.
+- [Archived plans](docs/archive/) — completed plans (multi-account, database recovery, modularization, and layer boundary, Phase 2 compose, IMAP spike, Files workspace) kept for design history.

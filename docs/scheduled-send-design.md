@@ -40,7 +40,7 @@ scheduling are separate features.
 - `finish_exit` in `src-tauri/src/commands/mail.rs` waits for pending undo windows.
   A scheduled message must not keep the app open until its scheduled time.
 - Replicated sync carries selected entities through `sync-protocol`,
-  `sync_state.rs`, and `sync_projection.rs`. It currently excludes queued mail.
+  `db/sync_state.rs`, and `sync_projection.rs`. It currently excludes queued mail.
   Add a summary entity, rather than replicating the outbox table.
 - `src/correspondence.ts`, `src/useCorrespondence.tsx`, `src/Composer.tsx`, and
   `src/data/demoCorrespondence.ts` own the existing compose/outbox contracts.

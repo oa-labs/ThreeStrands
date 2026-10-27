@@ -19,8 +19,8 @@ and message rendering each have their own document in this folder.
   (`app.threestrands.mail`), never in SQLite or the webview. Credential setup
   for builds is in [DEVELOPERS.md](../DEVELOPERS.md#gmail-oauth-credentials).
 - **IMAP/SMTP:** password or app-password accounts, aimed first at Proton Mail
-  Bridge. Reading, triage, labels, and sending with multiple identities work;
-  server search and hardening are still in progress. See the
+  Bridge. Reading, triage, labels, server search, and sending with multiple
+  identities work; hardening is still in progress. See the
   [IMAP/SMTP design](imap-design.md) for status and behavior.
 
 ## Reading and triage
@@ -220,5 +220,5 @@ composing another message.
   actions. Source-email navigation supports returning to the workspace selection
   and filters. Files cover mail synchronized on this device.
 
-See [the implementation plan](workspace-context-and-files-plan.md) for scope,
-acceptance criteria, and deferred work.
+See [the archived implementation plan](archive/workspace-context-and-files-plan.md)
+for scope, acceptance criteria, and deferred work.

@@ -1,4 +1,4 @@
-//! Persistence belongs in `db/` (see `docs/db-layer-plan.md`). The compiler
+//! Persistence belongs in `db/` (see `docs/archive/db-layer-plan.md`). The compiler
 //! keeps the connection private to `db`; this scan covers the rest: no
 //! production code outside `db/`, `db.rs`, and `schema.rs` may hold an SQL
 //! statement literal or name `rusqlite`.

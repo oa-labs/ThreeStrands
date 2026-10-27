@@ -8,11 +8,9 @@
 //! the terms the server cannot express that the caller must apply to the
 //! fetched results locally (today only `has:attachment`).
 //!
-//! This run is a PURE module plus its policy limits and tests. NOTHING calls
-//! it yet — no provider wiring, no `MailSync::search`, no `server_search:
-//! true`, no frontend. Later runs (local operator filtering, acquire-by-UID +
-//! pinning, the IMAP `search()`, UI) consume [`render_imap`], so the surface
-//! is kept small, typed and easy to review.
+//! This is a PURE module plus its policy limits and tests. The IMAP provider's
+//! server search (`provider/server_search.rs`) consumes [`render_imap`], so
+//! the surface is kept small, typed and easy to review.
 //!
 //! ## Design decisions recorded here (also noted in `docs/imap-design.md`)
 //!

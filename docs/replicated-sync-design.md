@@ -2,8 +2,8 @@
 
 **Status:** Implemented in 0.30.0 (sync protocol version 3)
 **Date:** 2026-09-23
-**Scope:** `crates/sync-core`, `crates/sync-envelope`, `src-tauri/src/sync_state.rs`,
-`src-tauri/src/replicated_sync.rs`, `src-tauri/src/enrollment.rs`
+**Scope:** `crates/sync-core`, `crates/sync-envelope`, `src-tauri/src/db/sync_state.rs`,
+`src-tauri/src/replicated_sync.rs`, `src-tauri/src/enrollment/`
 
 This replaces the event-log design, protocol versions 1 and 2, and the
 compaction plan that went with it. In that design each device published an
@@ -75,7 +75,7 @@ as that reference.
 
 ## Engine
 
-### Local store (`sync_state.rs`, schema v36)
+### Local store (`db/sync_state.rs`)
 
 - **Tables:** `sync_values` holds one row per surviving value, `sync_context`
   holds the version vector, and `sync_local_state` records whether the
@@ -215,9 +215,9 @@ A connector holds about one snapshot per device, plus control objects.
   needs its own fix, for example a deterministic tie-break plus a follow-up
   rotation.
 - **Whole-state republishing:** every change reseals and re-uploads the whole
-  snapshot. That is fine for kilobytes to a few megabytes. Drafts are capped
-  at 512 KB each and 8 MB together (`MAX_SYNCED_DRAFT_BYTES`,
-  `MAX_SYNCED_DRAFTS_TOTAL_BYTES`) to stay inside that. A much larger
+  snapshot. That is fine for kilobytes to a few megabytes, which is why
+  compose drafts moved to the mail server in 0.149.0 instead of riding in
+  snapshots. A much larger
   synchronized data set, such as attachment files, would need snapshots split
   by entity type, or sent as deltas.
 - **Snapshot size:** one message holds at most 32 MB decompressed (4 MB
