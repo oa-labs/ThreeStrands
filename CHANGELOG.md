@@ -6,6 +6,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ### New
 - **Find Times** can include coworkers on your email. Select recipients from your organization to find times when you are all free; calendars that cannot be checked are clearly identified.
+- **Calendar** now lists your **Open tasks** under **Today's agenda**: everything in your **To Do** and **In Progress** columns. Drag a task onto the week to book 30 minutes for it, with **Undo** if you change your mind, or click it to pick a time yourself. Booked tasks say when their time is, and opening the event lets you mark the task done.
 
 ## 0.174.3 — 2026-10-27
 

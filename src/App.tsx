@@ -1325,6 +1325,9 @@ export function App() {
               openSettingsAt("calendarAccounts");
             }}
             onCreated={() => void refreshCalendarOptions().catch(logBackgroundFailure("Calendar listing"))}
+            taskRefreshKey={taskRevision}
+            onTasksChanged={() => { setTaskRevision((current) => current + 1); void refreshTaskIndicators(); }}
+            onNotice={setNotice}
           />
         </Suspense>
         </ErrorBoundary>

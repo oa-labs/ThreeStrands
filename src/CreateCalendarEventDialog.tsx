@@ -10,6 +10,7 @@ import type { CalendarAccount, CalendarOption, CreateCalendarEventRequest, Sched
 import { errorMessage } from "./errors";
 import { EmailBadgeField } from "./ContactAddressField";
 import { isEmailAddress } from "./emailAddress";
+import { defaultEventCalendar, showCalendar, writableCalendars } from "./taskBooking";
 
 function localDateTimeValue(date: Date): string {
   const pad = (value: number) => String(value).padStart(2, "0");
@@ -54,6 +55,7 @@ export function CreateCalendarEventDialog({
   initialLocation = "",
   initialAllDay = false,
   sourceMessageId,
+  sourceTask,
   onClose,
   onCreated,
 }: {
@@ -70,15 +72,13 @@ export function CreateCalendarEventDialog({
   initialAllDay?: boolean;
   /** The email the event comes from, so it can be recognized on the calendar later. */
   sourceMessageId?: string;
+  /** The task the event books time for; its account's calendar comes first. */
+  sourceTask?: { id: string; accountId: string };
   onClose(): void;
   onCreated(event: ScheduleEvent): void;
 }) {
-  const writable = useMemo(() => calendars.filter((calendar) =>
-    calendar.writable && accounts.some((account) => account.email === calendar.accountId && account.status === "connected"),
-  ), [accounts, calendars]);
-  const visible = writable.filter((calendar) => calendar.selected);
-  const defaultCalendar = visible.find((calendar) => calendar.primary) ?? visible[0]
-    ?? writable.find((calendar) => calendar.primary) ?? writable[0];
+  const writable = useMemo(() => writableCalendars(accounts, calendars), [accounts, calendars]);
+  const defaultCalendar = defaultEventCalendar(writable, sourceTask?.accountId);
   const [calendarKey, setCalendarKey] = useState(() => defaultCalendar ? `${defaultCalendar.accountId}\n${defaultCalendar.id}` : "");
   const selectedCalendarKey = writable.some((calendar) => `${calendar.accountId}\n${calendar.id}` === calendarKey)
     ? calendarKey : defaultCalendar ? `${defaultCalendar.accountId}\n${defaultCalendar.id}` : "";
@@ -146,17 +146,13 @@ export function CreateCalendarEventDialog({
       description,
       attendees: [...new Set(attendees.map((email) => email.toLowerCase()))],
       ...(sourceMessageId ? { sourceMessageId } : {}),
+      ...(sourceTask ? { sourceTaskId: sourceTask.id } : {}),
     };
     setSaving(true);
     try {
       // A new event must be visible in the schedule. Do this before creating
       // it, so a selection failure cannot leave an event that a retry duplicates.
-      if (!calendar.selected) {
-        await mailClient.setCalendarSelection(calendar.accountId, [
-          ...calendars.filter((option) => option.accountId === calendar.accountId && option.selected).map((option) => option.id),
-          calendar.id,
-        ]);
-      }
+      await showCalendar(calendar, calendars);
       onCreated(await mailClient.createCalendarEvent(request));
     } catch (reason) {
       setError(errorMessage(reason));

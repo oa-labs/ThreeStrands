@@ -1797,6 +1797,10 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
   background: color-mix(in srgb, var(--accent) 30%, transparent);
   pointer-events: none;
 }
+.calendar-create-selection span { display: block; overflow: hidden; padding: 0 var(--space-1); color: var(--text); font-size: var(--text-secondary); font-weight: var(--weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
+.calendar-task .context-row-main { cursor: grab; touch-action: none; user-select: none; }
+.calendar-task-dragging { opacity: var(--opacity-dragging); }
+.calendar-week-task-drag, .calendar-week-task-drag * { cursor: grabbing; user-select: none; }
 .calendar-week-column .calendar-schedule-event { right: auto; left: 0; padding: var(--space-1) var(--space-1); }
 .calendar-now-indicator {
   position: absolute;

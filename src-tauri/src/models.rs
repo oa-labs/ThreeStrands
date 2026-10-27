@@ -50,6 +50,9 @@ pub struct CreateCalendarEventRequest {
     /// that do not come from an email.
     #[serde(default)]
     pub source_message_id: Option<String>,
+    /// The task the event books time for, kept privately on the event the same way.
+    #[serde(default)]
+    pub source_task_id: Option<String>,
 }
 
 /// Replaces an owned event's editable fields. All-day events carry `YYYY-MM-DD`
@@ -94,6 +97,8 @@ pub struct ScheduleEvent {
     pub can_edit: bool,
     /// The local id of the email ThreeStrands added this event from, if it did.
     pub source_message_id: Option<String>,
+    /// The task ThreeStrands booked this event for, if it did.
+    pub source_task_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

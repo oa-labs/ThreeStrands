@@ -200,6 +200,11 @@ composing another message.
 - Calendar offers Day, 3-day, Workweek (default), and Week. Calendar navigation
   and selections are available from the Calendars control. Opening a weekend
   event temporarily uses Day when the saved preference is Workweek.
+- Calendar's rail lists Open tasks (To Do and In Progress, board order) under
+  Today's agenda. Dragging one onto the week books a 30-minute block on the
+  task's account calendar immediately, with Undo; clicking one opens New Event
+  prefilled. The event carries a private task tag, so the task shows when time is
+  booked and the event's details show the task with a done checkbox.
 - Find Times searches beside the conversation, with optional AI writing help to
   interpret date requests. Select times to insert into a draft or start a reply.
   Working hours can have multiple blocks per day, and Drive Time Buffer reserves

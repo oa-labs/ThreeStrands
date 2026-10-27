@@ -1461,6 +1461,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         attendees: request.attendees.map((email) => email.toLowerCase()),
         canEdit: true,
         sourceMessageId: request.sourceMessageId ?? null,
+        sourceTaskId: request.sourceTaskId ?? null,
       };
       scheduleEvents.push(created);
       return structuredClone(created);

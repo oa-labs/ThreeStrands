@@ -1,6 +1,6 @@
 import { readLocalStorage, writeLocalStorage } from "./useLocalStorageState";
 import { FileStarButton } from "./FileStarButton";
-import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, Mail, MessageSquareText } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { Account, ContactFiles, ContactTimelineItem, Message, ThreadDetail } from "./domain";
@@ -108,7 +108,7 @@ function revealIfTruncated(line: HTMLElement | null) {
  * off shows its full text on hover. A small icon `action` sits at the end of
  * the detail line, under the date, so dates keep the panel's right edge.
  */
-export function ContextRow({ as: Element = "div", icon, control, title, date, dateClassName, detail, onActivate, actions, trailing, wrapTitle, className }: {
+export function ContextRow({ as: Element = "div", icon, control, title, date, dateClassName, detail, onActivate, onPointerDown, actions, trailing, wrapTitle, className }: {
   as?: "div" | "article";
   /** A decorative glyph, drawn inside the row's button. */
   icon?: ReactNode;
@@ -123,6 +123,8 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
   detail?: ReactNode;
   /** Makes the glyph and text one button. */
   onActivate?(): void;
+  /** Starts a drag from the row, such as a task dragged onto the calendar. */
+  onPointerDown?(event: ReactPointerEvent<HTMLElement>): void;
   /** Up to two small icon buttons (.btn-icon-sm) in a row under the date, outside the row's own button. */
   actions?: ReactNode[];
   /** Wider controls after the text, such as a labelled button; these do push the date in. */
@@ -146,7 +148,7 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
     </span>
   </>;
   return (
-    <Element className={classes} style={actions?.length ? { "--context-row-action-count": actions.length } as CSSProperties : undefined} onMouseEnter={revealTruncated}>
+    <Element className={classes} style={actions?.length ? { "--context-row-action-count": actions.length } as CSSProperties : undefined} onMouseEnter={revealTruncated} onPointerDown={onPointerDown}>
       {control ? <span className="context-row-glyph context-row-control">{control}</span> : null}
       {onActivate
         ? <button type="button" className="context-row-main" onClick={onActivate}>{body}</button>

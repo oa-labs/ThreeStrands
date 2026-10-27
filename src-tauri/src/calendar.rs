@@ -21,6 +21,8 @@ const MAX_SCHEDULE_EVENTS: usize = 250;
 /// The private extended property naming the email an event was added from.
 /// Private properties live on this calendar's copy only: guests never see them.
 const SOURCE_MESSAGE_PROPERTY: &str = "threestrandsSourceMessage";
+/// The private extended property naming the task an event books time for.
+const SOURCE_TASK_PROPERTY: &str = "threestrandsSourceTask";
 /// Google's limit on an extended property value; a longer id is not stored.
 const MAX_EXTENDED_PROPERTY_VALUE_BYTES: usize = 1024;
 /// Bounds the attendee addresses kept per event; Google may list hundreds on
@@ -127,10 +129,22 @@ fn create_body(request: &CreateCalendarEventRequest) -> GoogleCreateEvent<'_> {
         start: GoogleCreateEventTime::new(&request.start, request.all_day),
         end: GoogleCreateEventTime::new(&request.end, request.all_day),
         attendees: request.attendees.iter().map(|email| GoogleCreateAttendee { email }).collect(),
-        extended_properties: request.source_message_id.as_deref().map(str::trim)
-            .filter(|id| !id.is_empty() && id.len() <= MAX_EXTENDED_PROPERTY_VALUE_BYTES)
-            .map(|id| GoogleCreateExtendedProperties { private: HashMap::from([(SOURCE_MESSAGE_PROPERTY, id)]) }),
+        extended_properties: private_tags(request),
     }
+}
+
+/// The private tags a new event carries; ids Google could not store are left off.
+fn private_tags(request: &CreateCalendarEventRequest) -> Option<GoogleCreateExtendedProperties<'_>> {
+    let private: HashMap<_, _> = [
+        (SOURCE_MESSAGE_PROPERTY, request.source_message_id.as_deref()),
+        (SOURCE_TASK_PROPERTY, request.source_task_id.as_deref()),
+    ]
+    .into_iter()
+    .filter_map(|(key, id)| id.map(str::trim)
+        .filter(|id| !id.is_empty() && id.len() <= MAX_EXTENDED_PROPERTY_VALUE_BYTES)
+        .map(|id| (key, id)))
+    .collect();
+    (!private.is_empty()).then_some(GoogleCreateExtendedProperties { private })
 }
 
 #[derive(Serialize)]
@@ -896,6 +910,13 @@ async fn checked_json<T: serde::de::DeserializeOwned>(
     Err(format!("Google Calendar request failed ({status})."))
 }
 
+/// A non-blank private tag; shared properties are visible to every guest and never count.
+fn private_tag(properties: Option<&GoogleExtendedProperties>, key: &str) -> Option<String> {
+    properties.and_then(|properties| properties.private.get(key))
+        .filter(|id| !id.trim().is_empty())
+        .cloned()
+}
+
 /// `writable` is whether this account can write to the calendar; only events
 /// it also organizes become editable.
 fn normalize_events(
@@ -933,9 +954,8 @@ fn normalize_events(
                 response_status,
                 can_respond,
                 can_edit: writable && organized_by_self,
-                source_message_id: event.extended_properties
-                    .and_then(|properties| properties.private.get(SOURCE_MESSAGE_PROPERTY).cloned())
-                    .filter(|id| !id.trim().is_empty()),
+                source_message_id: private_tag(event.extended_properties.as_ref(), SOURCE_MESSAGE_PROPERTY),
+                source_task_id: private_tag(event.extended_properties.as_ref(), SOURCE_TASK_PROPERTY),
                 conference_url: event.hangout_link.or_else(|| {
                     event.conference_data.and_then(|conference| {
                         conference.entry_points.into_iter().find_map(|entry| {
@@ -1450,7 +1470,7 @@ mod tests {
             start: if all_day { "2026-11-07".into() } else { "2026-10-17T18:45:00-04:00".into() },
             end: if all_day { "2026-11-08".into() } else { "2026-10-17T20:45:00-04:00".into() },
             all_day, location: location.into(), description: " From the email ".into(), attendees: Vec::new(),
-            source_message_id: None,
+            source_message_id: None, source_task_id: None,
         }
     }
 
@@ -1483,6 +1503,27 @@ mod tests {
     }
 
     #[test]
+    fn create_body_tags_the_booked_task_privately_beside_the_source_email() {
+        let tags = |message: Option<&str>, task: Option<&str>| {
+            let request = CreateCalendarEventRequest {
+                source_message_id: message.map(str::to_string),
+                source_task_id: task.map(str::to_string),
+                ..create_request(false, "")
+            };
+            serde_json::to_value(create_body(&request)).unwrap().get("extendedProperties").cloned()
+        };
+        assert_eq!(tags(None, Some(" task-1 ")), Some(serde_json::json!({ "private": { "threestrandsSourceTask": "task-1" } })));
+        assert_eq!(
+            tags(Some("message-1"), Some("task-1")),
+            Some(serde_json::json!({ "private": { "threestrandsSourceMessage": "message-1", "threestrandsSourceTask": "task-1" } })),
+        );
+        // A tag Google could not store is left off without dropping the other.
+        let too_long = "t".repeat(MAX_EXTENDED_PROPERTY_VALUE_BYTES + 1);
+        assert_eq!(tags(Some("message-1"), Some(&too_long)), Some(serde_json::json!({ "private": { "threestrandsSourceMessage": "message-1" } })));
+        assert_eq!(tags(None, Some(" ")), None);
+    }
+
+    #[test]
     fn reads_the_source_email_tag_and_ignores_other_properties() {
         let event = |properties: serde_json::Value| -> Option<String> {
             let event: GoogleEvent = serde_json::from_value(serde_json::json!({
@@ -1498,6 +1539,22 @@ mod tests {
         assert_eq!(event(serde_json::json!({ "private": { "otherApp": "message-1" } })), None);
         assert_eq!(event(serde_json::json!({ "private": { "threestrandsSourceMessage": " " } })), None);
         assert!(normalize_events(vec![organized_event(true)], "work@example.com", "primary", true)[0].source_message_id.is_none());
+    }
+
+    #[test]
+    fn reads_the_booked_task_tag_only_from_private_properties() {
+        let task = |properties: serde_json::Value| -> Option<String> {
+            let event: GoogleEvent = serde_json::from_value(serde_json::json!({
+                "id": "booked", "summary": "Write proposal",
+                "start": {"dateTime": "2026-10-27T14:00:00-04:00"}, "end": {"dateTime": "2026-10-27T14:30:00-04:00"},
+                "extendedProperties": properties,
+            })).unwrap();
+            normalize_events(vec![event], "work@example.com", "primary", true).remove(0).source_task_id
+        };
+        assert_eq!(task(serde_json::json!({ "private": { "threestrandsSourceTask": "task-1" } })).as_deref(), Some("task-1"));
+        assert_eq!(task(serde_json::json!({ "shared": { "threestrandsSourceTask": "task-1" } })), None);
+        assert_eq!(task(serde_json::json!({ "private": { "threestrandsSourceTask": "  " } })), None);
+        assert_eq!(task(serde_json::json!({ "private": { "threestrandsSourceMessage": "message-1" } })), None);
     }
 
     #[test]
