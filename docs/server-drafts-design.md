@@ -104,7 +104,7 @@ local revisions to the provider:
 
 ### Server message
 
-Pushes need a variant of `build_mime` ([correspondence.rs](../src-tauri/src/correspondence.rs))
+Pushes need a variant of `build_mime` ([correspondence/mime.rs](../src-tauri/src/correspondence/mime.rs))
 that builds a draft rather than a send:
 
 - No recipients is valid. `build_mime` currently refuses that.

@@ -17,7 +17,7 @@ use threestrands_sync_transport::TransportError;
 use crate::db::DatabaseError;
 
 use super::join_codes::{CREDENTIALS_REJECTED, INVITATION_NOT_FOUND, STORAGE_UNREACHABLE};
-use super::{EXISTING_SPACE_REFUSAL, LEGACY_SPACE_REFUSAL, RECOVERY_INCOMPLETE};
+use super::service::{EXISTING_SPACE_REFUSAL, LEGACY_SPACE_REFUSAL, RECOVERY_INCOMPLETE};
 
 pub(crate) type EnrollmentResult<T> = Result<T, EnrollmentError>;
 
