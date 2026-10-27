@@ -14,6 +14,8 @@ import type {
   AuthStatus,
   AvailabilityPreferences,
   AvailabilityResult,
+  MeetingAvailabilityRequest,
+  MeetingAvailabilityResult,
   CalendarAccount,
   CalendarOption,
   CalendarPreview,
@@ -320,6 +322,7 @@ export interface MailClient extends CorrespondenceClient {
   deleteCalendarEvent(event: ScheduleEvent): Promise<void>;
   /** `maxPerDay` spreads the candidates across days instead of the earliest slots of one day. */
   findAvailability(request: { rangeStart: string; rangeEnd: string; preferences: AvailabilityPreferences; maxPerDay?: number }): Promise<AvailabilityResult>;
+  meetingAvailability(request: MeetingAvailabilityRequest): Promise<MeetingAvailabilityResult>;
   checkProposedTime(request: { start: string; end: string; timeZone: string; driveTimeBufferMinutes?: number }): Promise<ProposedTimeCheck>;
   /** Lists labels for the primary account, or for the specified account when provided. */
   listLabels(accountId?: string): Promise<Label[]>;
@@ -506,6 +509,7 @@ const tauriClient: MailClient = {
   deleteCalendarEvent: (event) =>
     complete("delete_calendar_event", { accountId: event.accountId, calendarId: event.calendarId, eventId: event.id }),
   findAvailability: (request) => complete("find_availability", { request }),
+  meetingAvailability: (request) => complete("meeting_availability", { request }),
   checkProposedTime: (request) => complete("check_proposed_time", { request }),
   listLabels: (accountId) => read("list_labels", { accountId }),
   createLabel: (name, accountId) => complete("create_label", { request: { name, accountId } }),

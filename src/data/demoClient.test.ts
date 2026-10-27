@@ -539,6 +539,21 @@ describe("demoClient contact group recipients", () => {
 describe("demoClient availability", () => {
   afterEach(() => vi.useRealTimers());
 
+  it("marks demo guests unknown rather than inventing their availability", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2099-09-20T12:00:00-04:00"));
+    const dataset = defaultDemoDataset();
+    dataset.calendarAccounts = [{ email: DEMO_ACCOUNT_ID, connectedAt: "2099-09-20T12:00:00-04:00", status: "connected" }];
+    dataset.calendarOptions = [{ id: DEMO_ACCOUNT_ID, accountId: DEMO_ACCOUNT_ID, name: "Personal", primary: true, selected: true, writable: true }];
+    dataset.scheduleEvents = [];
+    const result = await createDemoClient(dataset).meetingAvailability({ eventId: "meeting", accountId: DEMO_ACCOUNT_ID, calendarId: DEMO_ACCOUNT_ID,
+      attendees: ["guest@example.com", "GUEST@example.com"], rangeStart: "2099-09-21T13:00:00-04:00", rangeEnd: "2099-09-21T16:00:00-04:00",
+      preferences: { ...DEFAULT_AVAILABILITY_PREFERENCES, timeZone: "America/New_York" } });
+    expect(result.guests).toEqual([{ email: "guest@example.com", busy: [], checked: false }]);
+    expect(result.candidates.length).toBeGreaterThan(0);
+    expect(result.candidates.every((candidate) => candidate.status === "partiallyChecked")).toBe(true);
+  });
+
   it("leaves drive time before and after located events for both checks and suggestions", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2099-09-20T12:00:00-04:00"));

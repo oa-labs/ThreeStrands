@@ -165,6 +165,7 @@ export function EventViewer({ event, onDismiss, onUpdated, embedded = false, cal
   const locationUrl = safeWebUrl(event.location?.trim());
   const showLocation = Boolean(event.location) && !(locationUrl && locationUrl === conferenceUrl);
   const [editing, setEditing] = useState(false);
+  const [rescheduling, setRescheduling] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -211,7 +212,7 @@ export function EventViewer({ event, onDismiss, onUpdated, embedded = false, cal
         <h3>{event.title}</h3>
         <div className="calendar-event-viewer-actions">
           {event.canEdit ? <>
-            <HoverTooltip title="Edit event"><button type="button" className="btn-icon btn-icon-sm" aria-label="Edit Event" disabled={deletePending} onClick={() => setEditing(true)}><Pencil size={ICON_SIZE.sm} /></button></HoverTooltip>
+            <HoverTooltip title="Edit event"><button type="button" className="btn-icon btn-icon-sm" aria-label="Edit Event" disabled={deletePending} onClick={() => { setRescheduling(false); setEditing(true); }}><Pencil size={ICON_SIZE.sm} /></button></HoverTooltip>
             <HoverTooltip title="Delete event"><button type="button" className="btn-icon btn-icon-sm" aria-label="Delete Event" aria-expanded={confirmingDelete} disabled={deletePending} onClick={() => { setDeleteError(null); setConfirmingDelete(true); }}><Trash size={ICON_SIZE.sm} /></button></HoverTooltip>
           </> : null}
           <button type="button" className="btn-icon btn-icon-sm" aria-label="Close Event Details" onClick={onDismiss}><X size={ICON_SIZE.sm} /></button>
@@ -241,8 +242,10 @@ export function EventViewer({ event, onDismiss, onUpdated, embedded = false, cal
         {event.attendees?.length ? <EventAttendees event={event} attendees={event.attendees} /> : null}
         {event.description ? embedded ? <details className="calendar-event-viewer-description"><summary><TextAlignStart size={ICON_SIZE.lg} /><span>Description<DisclosureChevron /></span></summary><p>{calendarDescriptionText(event.description)}</p></details> : <p className="calendar-event-viewer-description"><TextAlignStart size={ICON_SIZE.lg} /><span>{calendarDescriptionText(event.description)}</span></p> : null}
       </div>
+      {event.canEdit && !event.allDay ? <button type="button" className="btn btn-sm" disabled={deletePending} onClick={() => { setRescheduling(true); setEditing(true); }}>Reschedule</button> : null}
       {editing ? <EditCalendarEventDialog
         event={event}
+        initialFindingTime={rescheduling}
         onClose={() => setEditing(false)}
         onSaved={(updated) => {
           setEditing(false);

@@ -1511,6 +1511,16 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       }
       return { candidates, checkedCalendarCount: total, totalCalendarCount: total, uncheckedCalendars: [], errors: [] };
     },
+    async meetingAvailability(request) {
+      // Demo has no access to other people's calendars: don't invent coverage.
+      const ownBusy = demoBusyIntervals(request.preferences.driveTimeBufferMinutes).map(([start, end]) => ({ start: new Date(start).toISOString(), end: new Date(end).toISOString() }));
+      const result = await this.findAvailability({ ...request, maxPerDay: 3 });
+      const guests = [...new Set(request.attendees.map((email) => email.toLowerCase()))]
+        .filter((email) => email !== request.accountId.toLowerCase())
+        .map((email) => ({ email, busy: [], checked: false }));
+      return { own: { email: request.accountId, busy: ownBusy, checked: result.totalCalendarCount > 0 }, guests,
+        candidates: result.candidates.map((candidate) => ({ ...candidate, status: guests.length ? "partiallyChecked" as const : candidate.status })) };
+    },
     async checkProposedTime(request: { start: string; end: string; timeZone: string; driveTimeBufferMinutes?: number }): Promise<ProposedTimeCheck> {
       const total = calendarOptions.filter((option) => option.selected).length;
       const start = Date.parse(request.start);

@@ -1,3 +1,6 @@
+import { MeetingAvailabilityPicker } from "./MeetingAvailabilityPicker";
+import { readAvailabilityPreferences } from "./settings";
+import { schedulingConflicts, schedulingCoverage } from "./meetingAvailability";
 import { useMemo, useState, type FormEvent } from "react";
 import { Modal } from "./AppChrome";
 import { calendarDescriptionText } from "./calendarDescription";
@@ -210,10 +213,12 @@ export function CreateCalendarEventDialog({
  */
 export function EditCalendarEventDialog({
   event,
+  initialFindingTime = false,
   onClose,
   onSaved,
 }: {
   event: ScheduleEvent;
+  initialFindingTime?: boolean;
   onClose(): void;
   onSaved(event: ScheduleEvent): void;
 }) {
@@ -236,6 +241,14 @@ export function EditCalendarEventDialog({
   const [description, setDescription] = useState(initialDescription);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [findingTime, setFindingTime] = useState(initialFindingTime);
+  const [availabilityUsed, setAvailabilityUsed] = useState(initialFindingTime);
+  const [availabilityReviewed, setAvailabilityReviewed] = useState<string | null>(null);
+
+  function selectTime(startTime: number, endTime: number) {
+    setRange({ startTime, endTime, startValue: localDateTimeValue(new Date(startTime)), endValue: localDateTimeValue(new Date(endTime)), duration: endTime - startTime });
+    setAvailabilityReviewed(null);
+  }
 
   function changeStart(next: string) {
     setRange((previous) => {
@@ -259,6 +272,7 @@ export function EditCalendarEventDialog({
   }
 
   function changeAllDay(next: boolean) {
+    setAvailabilityReviewed(null);
     setAllDay(next);
     const nextStart = next ? startValue.slice(0, 10) : `${startValue.slice(0, 10)}T09:00`;
     const nextEnd = next
@@ -313,6 +327,21 @@ export function EditCalendarEventDialog({
     };
     setSaving(true);
     try {
+      if (availabilityUsed && !allDay) {
+        const result = await mailClient.meetingAvailability({
+          eventId: event.id, accountId: event.accountId, calendarId: event.calendarId,
+          attendees: request.attendees, rangeStart: start, rangeEnd: end,
+          preferences: { ...readAvailabilityPreferences(), defaultDurationMinutes: (range.endTime - range.startTime) / 60_000 },
+        });
+        const conflicts = schedulingConflicts(result, range.startTime, range.endTime);
+        const unknown = [result.own, ...result.guests].filter((person) => !person.checked);
+        const reviewKey = JSON.stringify({ start, end, attendees: request.attendees, conflicts, unknown });
+        if ((conflicts.length || unknown.length) && reviewKey !== availabilityReviewed) {
+          setAvailabilityReviewed(reviewKey);
+          setError(`${conflicts.length ? `This time overlaps ${conflicts.map((person) => person === result.own ? "your calendar" : person.email).join(", ")}. ` : ""}${unknown.length ? schedulingCoverage(result) + " " : ""}Review the time, then choose Save changes again to notify guests anyway.`);
+          return;
+        }
+      }
       onSaved(await mailClient.updateCalendarEvent(request));
     } catch (reason) {
       setError(errorMessage(reason));
@@ -323,28 +352,36 @@ export function EditCalendarEventDialog({
 
   const timeType = allDay ? "date" : "datetime-local";
   return (
-    <Modal title="Edit event" className="calendar-event-modal" onClose={onClose} dismissible={!saving}>
+    <Modal title="Edit event" className={`calendar-event-modal${findingTime && !allDay ? " calendar-event-modal-scheduling" : ""}`} onClose={onClose} dismissible={!saving}>
       <form className="modal-form" onSubmit={(formEvent) => { void submit(formEvent); }} onKeyDown={(keyEvent) => {
         if ((keyEvent.metaKey || keyEvent.ctrlKey) && keyEvent.key === "Enter") {
           keyEvent.preventDefault();
           keyEvent.currentTarget.requestSubmit();
         }
       }}>
-        <label>Title<input value={title} onChange={(change) => setTitle(change.target.value)} maxLength={1024} required placeholder="Add title" /></label>
-        <label className="calendar-event-all-day-field"><input type="checkbox" checked={allDay} onChange={(change) => changeAllDay(change.target.checked)} />All day</label>
-        <div className="calendar-event-time-fields">
-          <label>Starts<input type={timeType} value={startValue} onChange={(change) => changeStart(change.target.value)} required /></label>
-          <label>Ends<input type={timeType} value={endValue} onChange={(change) => changeEnd(change.target.value)} required /></label>
-        </div>
-        <label>Location<input value={location} onChange={(change) => setLocation(change.target.value)} maxLength={4096} placeholder="Add location" /></label>
-        <EmailBadgeField label="Invite People" values={invitees} disabled={saving} onChange={setInvitees} onPendingChange={setPendingInvitee} />
-        <label>Description<textarea value={description} onChange={(change) => setDescription(change.target.value)} rows={5} maxLength={32768} placeholder="Add meeting details" /></label>
-        <p className="modal-form-context">Guests are notified of changes.</p>
-        {error ? <p className="form-error" role="alert">{error}</p> : null}
-        <div className="modal-form-actions">
-          <button type="button" className="btn" onClick={onClose} disabled={saving}>Cancel</button>
-          <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? "Saving…" : "Save changes"}</button>
-        </div>
+        <fieldset disabled={saving} className="calendar-event-fields">
+          <label>Title<input value={title} onChange={(change) => setTitle(change.target.value)} maxLength={1024} required placeholder="Add title" /></label>
+          <label className="calendar-event-all-day-field"><input type="checkbox" checked={allDay} onChange={(change) => changeAllDay(change.target.checked)} />All day</label>
+          <div className="calendar-event-time-fields">
+            <label>Starts<input type={timeType} value={startValue} onChange={(change) => changeStart(change.target.value)} required /></label>
+            <label>Ends<input type={timeType} value={endValue} onChange={(change) => changeEnd(change.target.value)} required /></label>
+          </div>
+          {!allDay ? <button type="button" className="btn btn-sm" aria-expanded={findingTime} disabled={saving || !event.calendarId} onClick={() => { setAvailabilityUsed(true); setFindingTime((value) => !value); }}>{findingTime ? "Hide availability" : "Find a time"}</button> : null}
+          {findingTime && !allDay && event.calendarId ? <MeetingAvailabilityPicker
+            eventId={event.id} accountId={event.accountId} calendarId={event.calendarId} attendees={invitees}
+            originalStart={event.start} originalEnd={event.end} start={range.startTime} end={range.endTime}
+            disabled={saving} onSelect={selectTime}
+          /> : null}
+          <label>Location<input value={location} onChange={(change) => setLocation(change.target.value)} maxLength={4096} placeholder="Add location" /></label>
+          <EmailBadgeField label="Invite People" values={invitees} disabled={saving} onChange={setInvitees} onPendingChange={setPendingInvitee} />
+          <label>Description<textarea value={description} onChange={(change) => setDescription(change.target.value)} rows={5} maxLength={32768} placeholder="Add meeting details" /></label>
+          <p className="modal-form-context">Guests are notified of changes.</p>
+          {error ? <p className="form-error" role="alert">{error}</p> : null}
+          <div className="modal-form-actions">
+            <button type="button" className="btn" onClick={onClose} disabled={saving}>Cancel</button>
+            <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? "Saving…" : "Save changes"}</button>
+          </div>
+        </fieldset>
       </form>
     </Modal>
   );

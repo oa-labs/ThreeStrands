@@ -103,6 +103,36 @@ pub struct ScheduleResult {
     pub errors: Vec<String>,
 }
 
+/// A transient scheduling query; never part of settings transfer.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingAvailabilityRequest {
+    pub event_id: String,
+    pub account_id: String,
+    pub calendar_id: String,
+    pub attendees: Vec<String>,
+    pub range_start: String,
+    pub range_end: String,
+    pub preferences: AvailabilityPreferences,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttendeeAvailability {
+    pub email: String,
+    pub busy: Vec<BusyInterval>,
+    /// False includes permission failures, missing calendars and malformed data.
+    pub checked: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingAvailabilityResult {
+    pub own: AttendeeAvailability,
+    pub guests: Vec<AttendeeAvailability>,
+    pub candidates: Vec<AvailabilityCandidate>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AvailabilityCandidate {

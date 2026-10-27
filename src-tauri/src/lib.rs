@@ -1483,6 +1483,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::calendar::list_schedule_events,
         commands::calendar::update_calendar_response,
         commands::calendar::find_availability,
+        commands::calendar::meeting_availability,
         commands::calendar::check_proposed_time,
         // Settings transfer and retention
         commands::settings::export_settings,

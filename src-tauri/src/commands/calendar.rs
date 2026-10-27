@@ -635,6 +635,90 @@ pub(crate) async fn find_calendar_invitation(
     }
 }
 
+#[cfg(test)]
+mod meeting_availability_tests {
+    use super::*;
+
+    fn request() -> models::MeetingAvailabilityRequest {
+        models::MeetingAvailabilityRequest {
+            event_id: "event".into(), account_id: "me@example.com".into(), calendar_id: "primary".into(),
+            attendees: vec!["guest@example.com".into()], range_start: "2099-09-21T00:00:00Z".into(), range_end: "2099-09-28T00:00:00Z".into(),
+            preferences: models::AvailabilityPreferences { time_zone: "UTC".into(), working_windows: vec![], default_duration_minutes: 30, slot_increment_minutes: 15, drive_time_buffer_minutes: 0 },
+        }
+    }
+
+    #[test]
+    fn bounds_meeting_searches_and_rejects_invalid_input() {
+        for hours in [167, 168, 169] {
+            let mut value = request();
+            value.range_end = (chrono::DateTime::parse_from_rfc3339(&value.range_start).unwrap() + chrono::Duration::hours(hours)).to_rfc3339();
+            assert!(validate_meeting_availability(&value).is_ok());
+        }
+        let mut value = request();
+        value.range_end = "2099-09-28T01:00:01Z".into();
+        assert!(validate_meeting_availability(&value).is_err());
+        for count in [99, 100, 101] {
+            let mut value = request(); value.attendees = vec!["guest@example.com".into(); count];
+            assert_eq!(validate_meeting_availability(&value).is_ok(), count <= 100);
+        }
+        for (start, end) in [("invalid", "2099-09-28T00:00:00Z"), ("2099-09-28T00:00:00Z", "2099-09-21T00:00:00Z")] {
+            let mut value = request(); value.range_start = start.into(); value.range_end = end.into();
+            assert!(validate_meeting_availability(&value).is_err());
+        }
+        let mut value = request(); value.attendees = vec!["not-an-email".into()];
+        assert!(validate_meeting_availability(&value).is_err());
+        value = request(); value.preferences.time_zone = "invalid".into();
+        assert!(validate_meeting_availability(&value).is_err());
+    }
+}
+
+fn validate_meeting_availability(request: &models::MeetingAvailabilityRequest) -> AppResult<()> {
+    availability::validate_preferences(&request.preferences)?;
+    validate_calendar_event_fields("Meeting", "", &request.range_start, &request.range_end, false, &request.attendees)?;
+    let start = chrono::DateTime::parse_from_rfc3339(&request.range_start).map_err(|error| error.to_string())?;
+    let end = chrono::DateTime::parse_from_rfc3339(&request.range_end).map_err(|error| error.to_string())?;
+    // A displayed week may include an extra hour when daylight saving ends.
+    if end - start > chrono::Duration::hours(7 * 24 + 1) {
+        return Err("Check at most one week at a time".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn meeting_availability(
+    request: models::MeetingAvailabilityRequest,
+    state: State<'_, AppState>,
+) -> AppResult<models::MeetingAvailabilityResult> {
+    validate_meeting_availability(&request)?;
+    let email = writable_calendar_account(&state, &request.account_id, &request.calendar_id).await?;
+    let config = state.auth_config.google()?;
+    calendar::validate_rescheduling_event(config.calendar_account(&email), &request.calendar_id, &request.event_id).await?;
+    let mut coverage = freebusy_coverage(&request.range_start, &request.range_end,
+        &request.preferences.time_zone, request.preferences.drive_time_buffer_minutes, &state).await?;
+    // Always include the event's calendar, even when hidden in the main view.
+    coverage.total += 1;
+    if let Ok(result) = calendar::fetch_freebusy(config.calendar_account(&email), &[request.calendar_id],
+        &request.range_start, &request.range_end, &request.preferences.time_zone,
+        request.preferences.drive_time_buffer_minutes).await {
+        coverage.checked += result.checked_calendar_count;
+        coverage.busy.extend(result.busy);
+    }
+    let mut seen = HashSet::new();
+    let emails: Vec<String> = request.attendees.iter().map(|address| address.to_ascii_lowercase())
+        .filter(|address| !address.eq_ignore_ascii_case(&email) && seen.insert(address.clone())).collect();
+    let guests = calendar::fetch_guest_availability(config.calendar_account(&email), &emails,
+        &request.range_start, &request.range_end, &request.preferences.time_zone).await;
+    let mut busy = coverage.busy.clone();
+    for guest in &guests { busy.extend(guest.busy.clone()); }
+    let candidates = availability::find_candidates(&request.range_start, &request.range_end,
+        &request.preferences, &busy, coverage.checked + guests.iter().filter(|guest| guest.checked).count(),
+        coverage.total + guests.len(), Some(3))?;
+    Ok(models::MeetingAvailabilityResult {
+        own: models::AttendeeAvailability { email, busy: coverage.busy, checked: coverage.checked == coverage.total },
+        guests, candidates,
+    })
+}
+
 #[tauri::command]
 pub(crate) async fn find_availability(
     request: FindAvailabilityRequest,

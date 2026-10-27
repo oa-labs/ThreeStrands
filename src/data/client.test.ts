@@ -49,6 +49,14 @@ describe("native account requests", () => {
     vi.mocked(invoke).mockResolvedValue({});
   });
 
+  it("checks meeting guests through the event's calendar account", async () => {
+    const request = { eventId: "meeting", accountId: "work@example.com", calendarId: "team", attendees: ["guest@example.com"],
+      rangeStart: "2099-09-21T00:00:00Z", rangeEnd: "2099-09-28T00:00:00Z",
+      preferences: { timeZone: "UTC", workingWindows: [], defaultDurationMinutes: 30, slotIncrementMinutes: 15, driveTimeBufferMinutes: 0 } };
+    await client.meetingAvailability(request);
+    expect(invoke).toHaveBeenCalledWith("meeting_availability", { request });
+  });
+
   it("reads Gmail signatures and saves the reviewed import through distinct commands", async () => {
     await client.listGmailSignatures("me@example.com");
     const signature = { id: "gmail", name: "Gmail", html: "<p>Alex</p>", text: "Alex" };

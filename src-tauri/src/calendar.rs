@@ -172,8 +172,7 @@ struct GoogleFreeBusy {
 
 #[derive(Deserialize)]
 struct GoogleFreeBusyCalendar {
-    #[serde(default)]
-    busy: Vec<GoogleBusyInterval>,
+    busy: Option<Vec<GoogleBusyInterval>>,
     #[serde(default)]
     errors: Vec<serde_json::Value>,
 }
@@ -544,6 +543,72 @@ fn invitation_from(events: GoogleEvents, account_id: &str) -> Option<ScheduleEve
     normalize_events(events.items, account_id, account_id, writable).into_iter().next()
 }
 
+/// Scheduling changes one concrete event, never an entire recurrence master.
+pub async fn validate_rescheduling_event(auth: OAuthCredential, calendar_id: &str, event_id: &str) -> Result<(), String> {
+    let token = auth.access_token().await.map_err(|error| error.to_string())?;
+    let url = event_url(calendar_id, google_event_id(calendar_id, event_id)?)?;
+    let event = owned_event(&calendar_client()?, &token, &url).await?;
+    validate_rescheduling_resource(&event)
+}
+
+fn validate_rescheduling_resource(event: &serde_json::Value) -> Result<(), String> {
+    if event.get("recurrence").and_then(serde_json::Value::as_array).is_some_and(|rules| !rules.is_empty()) {
+        return Err("Open a specific occurrence from the calendar to reschedule a recurring meeting".into());
+    }
+    Ok(())
+}
+
+/// Keep guest identities separate; never require event-detail access just to
+/// check availability. Query in Google's maximum batches of 50 calendars.
+pub async fn fetch_guest_availability(
+    auth: OAuthCredential,
+    emails: &[String],
+    time_min: &str,
+    time_max: &str,
+    time_zone: &str,
+) -> Vec<crate::models::AttendeeAvailability> {
+    if emails.is_empty() { return Vec::new(); }
+    let Ok(token) = auth.access_token().await else { return guest_availability_result(emails, None); };
+    let Ok(client) = calendar_client() else { return guest_availability_result(emails, None); };
+    fetch_guest_batches(&client, &token, FREEBUSY_URL, emails, time_min, time_max, time_zone).await
+}
+
+async fn fetch_guest_batches(
+    client: &reqwest::Client, token: &str, url: &str, emails: &[String],
+    time_min: &str, time_max: &str, time_zone: &str,
+) -> Vec<crate::models::AttendeeAvailability> {
+    let mut result = Vec::new();
+    for batch in emails.chunks(50) {
+        let response = async {
+            let response = client.post(url).bearer_auth(token).json(&FreeBusyRequest {
+                time_min, time_max, time_zone,
+                items: batch.iter().cloned().map(|id| FreeBusyItem { id }).collect(),
+            }).send().await.map_err(|error| error.to_string())?;
+            checked_json::<serde_json::Value>(response).await
+        }.await;
+        result.extend(guest_availability_result(batch, response.as_ref().ok()));
+    }
+    result
+}
+
+fn guest_availability_result(emails: &[String], response: Option<&serde_json::Value>) -> Vec<crate::models::AttendeeAvailability> {
+    emails.iter().map(|email| {
+        let intervals = (|| {
+            let calendar = response?.get("calendars")?.get(email)?;
+            if calendar.get("errors").is_some_and(|errors| errors.as_array().is_none_or(|errors| !errors.is_empty())) {
+                return None;
+            }
+            calendar.get("busy")?.as_array()?.iter().map(|interval| {
+                let start = interval.get("start")?.as_str()?;
+                let end = interval.get("end")?.as_str()?;
+                if chrono::DateTime::parse_from_rfc3339(end).ok()? <= chrono::DateTime::parse_from_rfc3339(start).ok()? { return None; }
+                Some(BusyInterval { start: start.into(), end: end.into() })
+            }).collect::<Option<Vec<_>>>()
+        })();
+        crate::models::AttendeeAvailability { email: email.clone(), checked: intervals.is_some(), busy: intervals.unwrap_or_default() }
+    }).collect()
+}
+
 /// Queries Google's FreeBusy endpoint once for all selected calendars on an
 /// account. Calendar-level errors are returned as partial failures so callers
 /// never mistake an incomplete response for confirmed availability.
@@ -611,8 +676,13 @@ fn freebusy_result(calendar_ids: &[String], freebusy: GoogleFreeBusy) -> FreeBus
     let mut errors = Vec::new();
     for calendar_id in calendar_ids {
         match freebusy.calendars.get(calendar_id) {
-            Some(calendar) if calendar.errors.is_empty() => {
-                busy.extend(calendar.busy.iter().map(|interval| BusyInterval {
+            Some(calendar) if calendar.errors.is_empty() && calendar.busy.as_ref().is_some_and(|busy| busy.iter().all(|interval| {
+                match (chrono::DateTime::parse_from_rfc3339(&interval.start), chrono::DateTime::parse_from_rfc3339(&interval.end)) {
+                    (Ok(start), Ok(end)) => end > start,
+                    _ => false,
+                }
+            })) => {
+                busy.extend(calendar.busy.iter().flatten().map(|interval| BusyInterval {
                     start: interval.start.clone(),
                     end: interval.end.clone(),
                 }));
@@ -1652,6 +1722,94 @@ mod tests {
         server.abort();
         assert_eq!(busy.len(), 1);
         assert_eq!(busy[0].end, "2099-09-21T19:30:00+00:00");
+    }
+
+    #[tokio::test]
+    async fn guest_queries_batch_at_fifty_and_keep_a_failed_batch_unknown() {
+        use axum::{extract::State, http::{HeaderMap, StatusCode}, routing::post, Json, Router};
+        use std::sync::{Arc, Mutex};
+        async fn query(State(sizes): State<Arc<Mutex<Vec<usize>>>>, headers: HeaderMap, Json(body): Json<serde_json::Value>) -> (StatusCode, Json<serde_json::Value>) {
+            assert_eq!(headers["authorization"], "Bearer test-token");
+            assert_eq!(body["timeMin"], "2099-09-21T00:00:00Z");
+            assert_eq!(body["timeZone"], "UTC");
+            let items = body["items"].as_array().unwrap();
+            sizes.lock().unwrap().push(items.len());
+            if items.len() == 1 { return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "denied"}))); }
+            let calendars = items.iter().map(|item| (item["id"].as_str().unwrap().to_string(), serde_json::json!({"busy":[]}))).collect::<serde_json::Map<_, _>>();
+            (StatusCode::OK, Json(serde_json::json!({"calendars": calendars})))
+        }
+        let sizes = Arc::new(Mutex::new(Vec::new()));
+        let router = Router::new().route("/freeBusy", post(query)).with_state(sizes.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/freeBusy", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let emails = (0..51).map(|number| format!("guest{number}@example.com")).collect::<Vec<_>>();
+        let result = fetch_guest_batches(&reqwest::Client::new(), "test-token", &url, &emails,
+            "2099-09-21T00:00:00Z", "2099-09-28T00:00:00Z", "UTC").await;
+        server.abort();
+        assert_eq!(*sizes.lock().unwrap(), [50, 1]);
+        assert_eq!(result.len(), 51);
+        assert!(result[..50].iter().all(|person| person.checked));
+        assert_eq!(result[50].email, "guest50@example.com");
+        assert!(!result[50].checked);
+    }
+
+    #[test]
+    fn scheduling_refuses_recurrence_masters_but_accepts_individual_instances() {
+        assert!(validate_rescheduling_resource(&serde_json::json!({"recurrence":["RRULE:FREQ=WEEKLY"]})).is_err());
+        assert!(validate_rescheduling_resource(&serde_json::json!({"recurringEventId":"series", "originalStartTime":{"dateTime":"2099-09-21T13:00:00Z"}})).is_ok());
+        assert!(validate_rescheduling_resource(&serde_json::json!({"id":"single-event"})).is_ok());
+    }
+
+    #[test]
+    fn guest_availability_keeps_identity_and_never_calls_unknown_free() {
+        let emails = ["a@example.com", "b@example.com", "c@example.com", "d@example.com", "e@example.com"].map(String::from);
+        let response = serde_json::json!({"calendars": {
+            "a@example.com": {"busy": [{"start": "2099-09-21T13:00:00Z", "end": "2099-09-21T14:00:00Z"}]},
+            "b@example.com": {"busy": []},
+            "c@example.com": {"errors": [{"reason": "notFound"}]},
+            "d@example.com": {}
+        }});
+        let result = guest_availability_result(&emails, Some(&response));
+        assert_eq!(result.iter().map(|person| person.checked).collect::<Vec<_>>(), [true, true, false, false, false]);
+        assert_eq!(result[0].email, emails[0]);
+        assert_eq!(result[0].busy.len(), 1);
+        assert!(result[1].busy.is_empty());
+        assert!(guest_availability_result(&emails, None).iter().all(|person| !person.checked));
+    }
+
+    #[test]
+    fn malformed_guest_intervals_are_unknown_instead_of_available() {
+        let emails = ["a@example.com".to_string()];
+        for busy in [serde_json::json!([{}]),
+            serde_json::json!([{"start":"invalid", "end":"2099-09-21T14:00:00Z"}]),
+            serde_json::json!([{"start":"2099-09-21T14:00:00Z", "end":"2099-09-21T13:00:00Z"}]),
+            serde_json::json!([{"start":"2099-09-21T14:00:00Z", "end":"2099-09-21T14:00:00Z"}]),
+            serde_json::json!(null)] {
+            let response = serde_json::json!({"calendars":{"a@example.com":{"busy":busy}}});
+            assert!(!guest_availability_result(&emails, Some(&response))[0].checked);
+            let own: GoogleFreeBusy = serde_json::from_value(response).unwrap_or(GoogleFreeBusy { calendars: HashMap::new() });
+            assert_eq!(freebusy_result(&emails, own).checked_calendar_count, 0);
+        }
+    }
+
+    #[test]
+    fn guest_suggestions_avoid_every_known_calendar_and_keep_partial_coverage() {
+        let emails = ["a@example.com", "b@example.com"].map(String::from);
+        let response = serde_json::json!({"calendars":{
+            "a@example.com":{"busy":[{"start":"2099-09-21T13:00:00Z","end":"2099-09-21T14:00:00Z"}]},
+            "b@example.com":{"errors":[{"reason":"notFound"}]}
+        }});
+        let guests = guest_availability_result(&emails, Some(&response));
+        let busy = guests.iter().flat_map(|person| person.busy.clone()).collect::<Vec<_>>();
+        let preferences = crate::models::AvailabilityPreferences {
+            time_zone: "UTC".into(), working_windows: vec![crate::models::AvailabilityWindow { weekday: 1, start: "13:00".into(), end: "16:00".into() }],
+            default_duration_minutes: 30, slot_increment_minutes: 30, drive_time_buffer_minutes: 0,
+        };
+        let candidates = crate::availability::find_candidates("2099-09-21T00:00:00Z", "2099-09-22T00:00:00Z", &preferences,
+            &busy, 1, 2, Some(3)).unwrap();
+        assert_eq!(candidates[0].start, "2099-09-21T14:00:00+00:00");
+        assert!(candidates.iter().all(|candidate| candidate.status == "partiallyChecked"));
     }
 
     #[test]

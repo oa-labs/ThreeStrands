@@ -38,6 +38,19 @@ describe("calendar sidebar", () => {
     localStorage.removeItem("threestrands.settings.availabilityPreferences");
   });
 
+  it("opens guest scheduling directly from an owned event's Reschedule action", async () => {
+    vi.spyOn(mailClient, "meetingAvailability").mockResolvedValue({ own: { email: "me@example.com", busy: [], checked: true }, guests: [], candidates: [] });
+    const event = { id: "meeting", accountId: "me@example.com", calendarId: "primary", canEdit: true,
+      title: "Planning", start: "2099-09-21T13:00:00Z", end: "2099-09-21T13:30:00Z", allDay: false };
+    const view = render(<EventViewer event={event} onDismiss={vi.fn()} onUpdated={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Reschedule" }));
+    expect(await screen.findByRole("complementary", { name: "Suggested times" })).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Edit event" })).toBeVisible();
+    view.unmount();
+    render(<EventViewer event={{ ...event, canEdit: false }} onDismiss={vi.fn()} onUpdated={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Reschedule" })).not.toBeInTheDocument();
+  });
+
   it("opens http(s) URLs in an event location in the system browser", () => {
     const event = {
       id: "prep",

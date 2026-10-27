@@ -170,6 +170,30 @@ export type AvailabilityPreferences = {
   driveTimeBufferMinutes: number;
 };
 
+export type MeetingAvailabilityRequest = {
+  eventId: string;
+  accountId: string;
+  calendarId: string;
+  attendees: string[];
+  rangeStart: string;
+  rangeEnd: string;
+  preferences: AvailabilityPreferences;
+};
+
+export type BusyInterval = { start: string; end: string };
+
+export type AttendeeAvailability = {
+  email: string;
+  busy: BusyInterval[];
+  checked: boolean;
+};
+
+export type MeetingAvailabilityResult = {
+  own: AttendeeAvailability;
+  guests: AttendeeAvailability[];
+  candidates: AvailabilityCandidate[];
+};
+
 export type AvailabilityCandidate = {
   start: string;
   end: string;

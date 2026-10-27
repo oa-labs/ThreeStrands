@@ -3605,3 +3605,38 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .signature-more { align-self: flex-end; color: var(--secondary); font-size: var(--text-control); }
 .signature-more summary { cursor: pointer; }
 .signature-more .btn { margin-top: var(--space-2); }
+
+/* Scheduling keeps busy details private and distinguishes unknown coverage. */
+.calendar-event-modal.calendar-event-modal-scheduling { width: min(76rem, calc(100vw - var(--dialog-edge))); }
+.meeting-availability { min-width: 0; border-block: 1px solid var(--border-strong); padding-block: var(--space-3); }
+.meeting-availability-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.meeting-availability-toolbar > span { color: var(--muted); font-size: var(--text-secondary); }
+.meeting-availability-days { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-block: var(--space-2); }
+.meeting-availability-days [aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.meeting-availability-layout { display: grid; grid-template-columns: minmax(0, 1fr) 17rem; gap: var(--space-4); }
+.meeting-availability-calendar { min-width: 0; overflow-x: auto; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+.meeting-availability-lane-headings { display: grid; min-width: max-content; border-bottom: 1px solid var(--border-strong); }
+.meeting-availability-lane-headings > span { padding: var(--space-2); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.meeting-availability-lane-headings small { display: block; color: var(--muted); font-size: var(--text-meta); }
+.meeting-availability-scroll { height: 24rem; overflow-y: auto; min-width: max-content; }
+.meeting-availability-timeline { position: relative; min-width: calc(4.5rem + 6rem); }
+.meeting-availability-time-labels { position: absolute; width: 4.5rem; inset-block: 0; font-size: var(--text-meta); color: var(--muted); }
+.meeting-availability-time-labels span { position: absolute; padding-left: var(--space-1); }
+.meeting-availability-lanes { position: absolute; inset: 0 0 0 4.5rem; display: grid; min-width: max-content; background: repeating-linear-gradient(to bottom, transparent 0, transparent 47px, var(--border-strong) 47px, var(--border-strong) 48px); }
+.meeting-availability-lane { position: relative; min-width: 6rem; border-left: 1px solid var(--border-strong); }
+.meeting-availability-lane.is-unknown { background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--muted) 14%, transparent) 6px 8px); }
+.meeting-availability-busy { position: absolute; inset-inline: 3px; z-index: var(--z-local-front); pointer-events: none; overflow: hidden; padding-inline: var(--space-1); border-inline-start: 3px solid var(--accent); background: color-mix(in srgb, var(--accent) 22%, var(--surface)); font-size: var(--text-meta); }
+.meeting-availability-busy.busy-color-1 { border-color: var(--success); background: color-mix(in srgb, var(--success) 25%, var(--surface)); }
+.meeting-availability-busy.busy-color-2 { border-color: var(--warning); background: color-mix(in srgb, var(--warning) 25%, var(--surface)); }
+.meeting-availability-busy.busy-color-3 { border-color: var(--secondary); background: color-mix(in srgb, var(--secondary) 25%, var(--surface)); }
+.meeting-availability-time-targets { position: absolute; inset: 0; }
+.meeting-availability-slot { position: absolute; inset-inline: 0; width: 100%; border: 0; background: transparent; cursor: pointer; }
+.meeting-availability-slot:hover, .meeting-availability-slot:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; background: color-mix(in srgb, var(--accent) 10%, transparent); z-index: var(--z-local-panel); }
+.meeting-availability-proposal { position: absolute; inset-inline: 0; z-index: var(--z-local-popover); pointer-events: none; overflow: hidden; border: 2px dashed var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); padding-inline: var(--space-1); font-size: var(--text-meta); }
+.meeting-availability-suggestions { display: flex; flex-direction: column; gap: var(--space-2); }
+.meeting-availability-suggestions h3 { margin: 0; font-size: var(--text-secondary); }
+@media (max-width: 850px) { .meeting-availability-layout { grid-template-columns: minmax(0, 1fr); } }
+
+.calendar-event-fields { display: flex; flex-direction: column; gap: var(--space-3); border: 0; padding: 0; margin: 0; min-width: 0; }
+
+.meeting-availability .modal-form-context { white-space: normal; overflow: visible; }
