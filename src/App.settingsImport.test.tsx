@@ -83,7 +83,8 @@ describe("settings import navigation", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
-    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    // Settings is lazy-loaded; the first import can outlast the default wait on slow CI runners.
+    const dialog = await screen.findByRole("dialog", { name: "Settings" }, { timeout: 10_000 });
     fireEvent.click(within(dialog).getByRole("button", { name: "Data Transfer" }));
 
     const dataTransfer = within(dialog).getByRole("region", { name: "Data transfer" });
@@ -374,7 +375,8 @@ describe("settings section keyboard navigation", () => {
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
 
     fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
-    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    // Settings is lazy-loaded; the first import can outlast the default wait on slow CI runners.
+    const dialog = await screen.findByRole("dialog", { name: "Settings" }, { timeout: 10_000 });
     fireEvent.click(within(dialog).getByRole("button", { name: "Data Transfer" }));
     for (const label of ["Export Password", "Confirm Password", "Backup File Password"]) {
       fireEvent.change(within(dialog).getByLabelText(label), { target: { value: "temporary password" } });

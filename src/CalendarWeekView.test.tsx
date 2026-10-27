@@ -832,7 +832,9 @@ describe("CalendarWeekView", () => {
       expect(row).not.toHaveClass("calendar-task-dragging");
       // Dropping books at once; it never opens New Event.
       expect(screen.queryByRole("dialog", { name: "New event" })).not.toBeInTheDocument();
-      await waitFor(() => expect(onNotice).toHaveBeenCalledWith({ message: "Booked Tue 9:15–9:45 am for “Write proposal”", undo: expect.any(Function) }));
+      await waitFor(() => expect(onNotice).toHaveBeenCalledWith({ message: expect.any(String), undo: expect.any(Function) }));
+      // ICU versions differ on the space before "am" (plain or narrow no-break).
+      expect(onNotice.mock.calls[0]![0].message.replace(/\s/gu, " ")).toBe("Booked Tue 9:15–9:45 am for “Write proposal”");
       expect(onCreated).toHaveBeenCalledOnce();
 
       act(() => onNotice.mock.calls[0]![0].undo());
