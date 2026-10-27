@@ -220,45 +220,48 @@ export function RecipientField({ id, label, value, account, disabled, labelExpan
 
   return (
     <>
-    <div className="compose-field recipient-field">
+    <div
+      className={`compose-field recipient-field${dragOver ? " drag-over" : ""}`}
+      onDragEnter={(event) => {
+        if (disabled || !dragOrigin || dragOrigin.field === id) return;
+        event.preventDefault();
+        setDragOver(true);
+      }}
+      onDragOver={(event) => {
+        if (disabled || !dragOrigin || dragOrigin.field === id) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(event) => {
+        setDragOver(false);
+        if (disabled || !dragOrigin) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const raw = event.dataTransfer.getData("application/x-threestrands-recipient");
+        const origin = dragOrigin;
+        dragOrigin = null;
+        if (!raw || origin?.field === id) return;
+        let dropped: Chip;
+        try {
+          dropped = JSON.parse(raw);
+          if (typeof dropped?.email !== "string" ||
+              (dropped.displayName !== null && typeof dropped.displayName !== "string")) return;
+        } catch {
+          return;
+        }
+        if (!chips.some((chip) => chip.email.toLowerCase() === dropped.email.toLowerCase())) {
+          emit([...chips, dropped], draftText);
+        }
+        origin?.remove();
+      }}
+    >
       {onLabelClick ? (
         <button type="button" className="recipient-field-label" aria-expanded={labelExpanded} title={labelExpanded ? "Click to hide Cc/Bcc" : "Click to show Cc/Bcc"} onClick={onLabelClick} disabled={disabled}>{label}</button>
       ) : (
         <label htmlFor={inputId}>{label}</label>
       )}
-      <div
-        className={`recipient-chip-row${dragOver ? " drag-over" : ""}`}
-        onDragEnter={(event) => {
-          if (disabled) return;
-          event.preventDefault();
-          setDragOver(true);
-        }}
-        onDragOver={(event) => {
-          if (disabled) return;
-          event.preventDefault();
-          event.dataTransfer.dropEffect = "move";
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(event) => {
-          event.preventDefault();
-          setDragOver(false);
-          if (disabled) return;
-          const raw = event.dataTransfer.getData("application/x-threestrands-recipient");
-          const origin = dragOrigin;
-          dragOrigin = null;
-          if (!raw || origin?.field === id) return;
-          let dropped: Chip;
-          try {
-            dropped = JSON.parse(raw);
-          } catch {
-            return;
-          }
-          if (!chips.some((chip) => chip.email.toLowerCase() === dropped.email.toLowerCase())) {
-            emit([...chips, dropped], draftText);
-          }
-          origin?.remove();
-        }}
-      >
+      <div className="recipient-chip-row">
         {chips.map((chip) => (
           <span
             key={chip.email}
