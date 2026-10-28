@@ -4,7 +4,7 @@ import { attachmentKey, type ChatAttachmentOption } from "./chatAttachments";
 import { mailClient } from "./data/client";
 import type { Account, ActionProposal, ScheduleEvent, SummaryResult, Thread, ThreadDetail } from "./domain";
 import { errorMessage, logBackgroundFailure } from "./errors";
-import { hasEmailedBefore, proactiveBriefSender, proactiveDwellMs } from "./proactiveBrief";
+import { endsWithOwnMessage, hasEmailedBefore, proactiveBriefSender, proactiveDwellMs } from "./proactiveBrief";
 import { describeAnalysisError } from "./ThreadAssist";
 import { sharedChatAttachments, type ChatEntry } from "./ThreadChat";
 import { isSummaryStale } from "./threadPresentation";
@@ -219,7 +219,8 @@ export function useThreadIntelligence({
   ]);
 
   // Proactive briefs: once the reader stays on a qualifying conversation for
-  // the mark-read delay, fetch whatever part of the brief is missing. Each
+  // the mark-read delay, fetch whatever part of the brief is missing; not
+  // after the user's own reply, which has nothing new to cover. Each
   // conversation revision is attempted at most once per session, so a
   // failure is not retried automatically.
   const runBriefRef = useRef(runBrief);
@@ -232,7 +233,7 @@ export function useThreadIntelligence({
   useEffect(() => {
     const detail = proactiveDetailRef.current;
     if (!aiProactive.enabled || !(aiSummaryAvailable || aiActionAvailable) || !isThreadMailbox || !detail || !proactiveKey) return;
-    if (proactiveAttempted.current.has(proactiveKey)) return;
+    if (proactiveAttempted.current.has(proactiveKey) || endsWithOwnMessage(detail, ownAddresses)) return;
     const sender = proactiveBriefSender(detail, ownAddresses);
     if (!sender) return;
     let active = true;

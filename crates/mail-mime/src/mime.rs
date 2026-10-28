@@ -562,6 +562,7 @@ fn content_words(text: &str) -> HashSet<String> {
 
 /// Delimiters of common template merge fields (`${name}`, `{{name}}`,
 /// `%%name%%`, `*|NAME|*`) that a mailing system replaces before sending.
+/// `%name%` is matched separately by [`template_fields`].
 const TEMPLATE_FIELD_DELIMITERS: [(&str, &str); 4] = [("${", "}"), ("{{", "}}"), ("%%", "%%"), ("*|", "|*")];
 
 /// The merge fields left in `text`, each as its opening delimiter and name.
@@ -581,6 +582,21 @@ fn template_fields(text: &str) -> HashSet<(&'static str, &str)> {
             {
                 fields.insert((open, name));
                 rest = &rest[end + close.len()..];
+            }
+        }
+    }
+    // `%name%`, held to a stricter name: three or more letters or `_`, in a
+    // word that is not a link, so percent-encoding (`%C2%A0text%20`) and
+    // percentages never match.
+    for word in text.split_whitespace().filter(|word| !(word.contains("://") || word.starts_with("www."))) {
+        let mut rest = word;
+        while let Some(start) = rest.find('%') {
+            rest = &rest[start + 1..];
+            let Some(end) = rest.find('%') else { break };
+            let name = &rest[..end];
+            if (3..=64).contains(&name.len()) && name.chars().all(|c| c.is_ascii_alphabetic() || c == '_') {
+                fields.insert(("%", name));
+                rest = &rest[end + 1..];
             }
         }
     }
@@ -1073,6 +1089,14 @@ mod tests {
                 "Innovation Week kicks off today",
             ),
             (related, "Hi Sam,\nInnovation Week kicks off today"),
+            // A single-percent field the HTML left only in its <title>.
+            (
+                alternative(
+                    &format!("%title%\nApplied AI {story}."),
+                    &format!("<html><head><title>%title%</title></head><body><p>Applied AI {story}.</p></body></html>"),
+                ),
+                "Applied AI kicks off today",
+            ),
         ] {
             let text = body_text_of(payload);
             assert!(text.starts_with(expected), "{text}");
@@ -1094,6 +1118,11 @@ mod tests {
             ("${Headline}\nSee you there", "<h1>${Headline}</h1><p>See you there</p>"),
             // Braces and percents that are not merge fields.
             ("Prices up 5%% to 10%% {{ }} ${1}", "<p>Prices up 5%% to 10%% {{ }} ${1}</p>"),
+            // Percentages, short names, and percent-encoded links in the plain part only.
+            (
+                "Save 20% today, 15% later, %ab% codes. Shop <https://example.com/a%C2%A0text%20b>",
+                "<p>Save 20% today, 15% later, %ab% codes. <a href=\"https://example.com/a%C2%A0text%20b\">Shop</a></p>",
+            ),
             // Links spelled out in the plain part only.
             ("Read the report <https://example.com/r> today", "<p>Read the <a href=\"https://example.com/r\">report</a> today</p>"),
         ] {

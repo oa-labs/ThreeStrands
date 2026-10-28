@@ -71,15 +71,10 @@ pub fn brief_focus_start(
     {
         return Some(focus_from.to_string());
     }
-    let own = |sender: &str| {
-        crate::correspondence::stored_addresses(sender).iter().any(|(_, address)| {
-            user_addresses.iter().any(|mine| mine.eq_ignore_ascii_case(address))
-        })
-    };
     let replied = messages
         .iter()
         .rev()
-        .find(|(_, sender)| own(sender))
+        .find(|(_, sender)| is_own_sender(sender, user_addresses))
         .map(|(sent_at, _)| *sent_at);
     let briefed = prior
         .iter()
@@ -136,6 +131,8 @@ Each message's isNew field marks the messages the user has not been briefed on y
 
 userAddresses lists the user's own email addresses, and each message's to field lists who it was sent to. A message asks the user to do something only when it is sent to one of userAddresses or its greeting names the user; when it is sent or addressed to other people and the user is only copied, its requests belong to those people. Describe such a request with names, for example "Pete asks David to send the rejection text", never as something the user must do, and do not propose a task from it.
 
+A message whose sender is one of userAddresses is the user's own: it answers what it quotes or replies to, and times it offers are the user's availability, already sent. Never propose a reply, a meeting to schedule, or a task to answer a request from the user's own message; from it, propose only an event it confirms at a set time or something the user promised to do or is waiting for.
+
 Return ONLY a JSON object of the form {"proposals":[...]}, with no markdown fences, commentary, prose, or extra keys. Each proposal must be one of these valid JSON shapes (use null for uncertain optional values):
 Meeting: {"type":"meeting","intent":"schedule","title":"Meeting","participants":[],"location":null,"rawTimeLanguage":"next Friday","normalizedStart":null,"normalizedEnd":null,"eventDate":null,"searchRangeStart":null,"searchRangeEnd":null,"durationMinutes":30,"timeZone":null,"confidence":0.5,"evidence":{"sourceMessageId":"message-id","excerpt":"exact text from the email"}}
 Task: {"type":"task","kind":"action","title":"Follow up","notes":null,"dueKind":"none","dueValue":null,"timeZone":null,"repeatIntervalDays":null,"goalId":null,"confidence":0.5,"evidence":{"sourceMessageId":"message-id","excerpt":"exact text from the email"}}
@@ -150,6 +147,8 @@ const BRIEF_SYSTEM_PROMPT: &str = r#"You brief the user on an email thread for a
 Each message's isNew field marks the messages the user has not been briefed on yet; the others are earlier messages the user already knows, sent only as background for understanding the new ones. Base every proposal on a new message, and cite a new message as its evidence; never propose a meeting or task from an earlier message, even one a new message mentions without repeating the request.
 
 userAddresses lists the user's own email addresses, and each message's to field lists who it was sent to. A message asks the user to do something only when it is sent to one of userAddresses or its greeting names the user; when it is sent or addressed to other people and the user is only copied, its requests belong to those people. Describe such a request with names, for example "Pete asks David to send the rejection text", never as something the user must do, and do not propose a task from it.
+
+A message whose sender is one of userAddresses is the user's own: it answers what it quotes or replies to, and times it offers are the user's availability, already sent. Never propose a reply, a meeting to schedule, or a task to answer a request from the user's own message; from it, propose only an event it confirms at a set time or something the user promised to do or is waiting for.
 
 Return ONLY a JSON object of the form {"summary":[...],"proposals":[...]}, with no markdown fences, commentary, prose, or extra keys. The summary is an array of 1 to 5 short plain-text strings capturing the key facts, decisions, and anything the user is being asked to do in the new messages, without bullet characters or markdown. Summarize only the new messages; do not restate earlier messages. When there are earlier messages, the summary may end with one string beginning "Earlier: " that recaps the conversation before the new messages in one sentence, only when the new messages are hard to follow without it. Scale the summary to the email: a short message of a few sentences gets one string, and a longer thread gets another string only for each further distinct fact or decision. The whole summary must read in a fraction of the time the email takes; never pad, and leave out background the reader already knows from the subject. Put what the user is asked to do, and by when, first, then the supporting context. Each string must add information not already stated in an earlier string: do not repeat names, dates, times, or the event itself, and fold related requests into one string. The proposals array may be empty. Each proposal must be one of these valid JSON shapes (use null for uncertain optional values):
 Meeting: {"type":"meeting","intent":"schedule","title":"Meeting","participants":[],"location":null,"rawTimeLanguage":"next Friday","normalizedStart":null,"normalizedEnd":null,"eventDate":null,"searchRangeStart":null,"searchRangeEnd":null,"durationMinutes":30,"timeZone":null,"confidence":0.5,"evidence":{"sourceMessageId":"message-id","excerpt":"exact text from the email"}}
@@ -193,6 +192,7 @@ pub async fn brief(request: AnalyzeRequest, api_key: &str) -> Result<ThreadBrief
     let mut brief = parse_thread_brief(&content, &bounded)?;
     keep_known_goal_links(&mut brief.analysis, &request.goals);
     drop_background_proposals(&mut brief.analysis, &bounded, focus_from);
+    drop_own_scheduling_proposals(&mut brief.analysis, &bounded, &request.user_addresses);
     Ok(brief)
 }
 
@@ -224,6 +224,7 @@ pub async fn analyze(request: AnalyzeRequest, api_key: &str) -> Result<ActionAna
     let mut analysis = parse_action_proposals(&content, &bounded)?;
     keep_known_goal_links(&mut analysis, &request.goals);
     drop_background_proposals(&mut analysis, &bounded, focus_from);
+    drop_own_scheduling_proposals(&mut analysis, &bounded, &request.user_addresses);
     Ok(analysis)
 }
 
@@ -276,6 +277,37 @@ fn drop_background_proposals(
     let dropped = before - analysis.proposals.len();
     if dropped > 0 {
         log::info!(target: "ai_analyze_thread", "dropped {dropped} proposal(s) citing earlier messages");
+    }
+}
+
+/// Whether `sender` is one of the user's own addresses.
+fn is_own_sender(sender: &str, user_addresses: &[String]) -> bool {
+    crate::correspondence::stored_addresses(sender)
+        .iter()
+        .any(|(_, address)| user_addresses.iter().any(|mine| mine.eq_ignore_ascii_case(address)))
+}
+
+/// Drops meetings still to be scheduled whose evidence is the user's own
+/// message: the user raised or answered that request themselves, often by
+/// offering times, so offering to find times again is noise. Events the
+/// user's message confirms at a set time are kept.
+fn drop_own_scheduling_proposals(
+    analysis: &mut ActionAnalysis,
+    messages: &[ActionMessageInput],
+    user_addresses: &[String],
+) {
+    let before = analysis.proposals.len();
+    analysis.proposals.retain(|proposal| {
+        let ActionProposal::Meeting(meeting) = proposal else { return true };
+        meeting.intent != "schedule"
+            || !messages
+                .iter()
+                .find(|message| message.id == meeting.evidence.source_message_id)
+                .is_some_and(|message| is_own_sender(&message.sender, user_addresses))
+    });
+    let dropped = before - analysis.proposals.len();
+    if dropped > 0 {
+        log::info!(target: "ai_analyze_thread", "dropped {dropped} meeting(s) to schedule citing the user's own message");
     }
 }
 
@@ -888,6 +920,53 @@ mod tests {
         let mut brief = parse_thread_brief(&miscited, &bounded).unwrap();
         drop_background_proposals(&mut brief.analysis, &bounded, focus_from);
         assert_eq!(brief.analysis.proposals.len(), 1);
+    }
+
+    #[test]
+    fn meetings_to_schedule_from_the_users_own_reply_are_dropped() {
+        let message = |id: &str, sender: &str, sent_at: &str, body: &str| ActionMessageInput {
+            id: id.into(),
+            sender: sender.into(),
+            recipients: vec!["ana@example.com".into()],
+            sent_at: sent_at.into(),
+            body_text: body.into(),
+        };
+        let me = vec!["me@example.com".to_string()];
+        let meeting = |id: &str, intent: &str, excerpt: &str| format!(
+            r#"{{"type":"meeting","intent":"{intent}","title":"Coffee","participants":[],"location":null,"rawTimeLanguage":"next week","normalizedStart":null,"normalizedEnd":null,"eventDate":null,"searchRangeStart":null,"searchRangeEnd":null,"durationMinutes":30,"timeZone":null,"confidence":0.8,"evidence":{{"sourceMessageId":"{id}","excerpt":"{excerpt}"}}}}"#
+        );
+        // A reply offering times, and one confirming a set time, each from the user.
+        let thread = vec![
+            message("ask", "Ana <ana@example.com>", "2026-10-01T09:00:00Z", "Could I pick your brain over coffee next week?"),
+            message("offer", "Me <ME@example.com>", "2026-10-02T09:00:00Z", "Happy to. I am free Tuesday at 10am or Wednesday at 2pm."),
+            message("confirm", "me@example.com", "2026-10-03T09:00:00Z", "See you Friday at 9am at the cafe."),
+        ];
+        let content = format!(
+            "[{},{},{},{}]",
+            meeting("ask", "schedule", "Could I pick your brain over coffee next week?"),
+            meeting("offer", "schedule", "I am free Tuesday at 10am or Wednesday at 2pm."),
+            meeting("confirm", "attend", "See you Friday at 9am at the cafe."),
+            task_proposal_json("offer", "Happy to."),
+        );
+        let mut analysis = parse_action_proposals(&content, &thread).unwrap();
+        assert_eq!(analysis.proposals.len(), 4);
+        drop_own_scheduling_proposals(&mut analysis, &thread, &me);
+        let cited: Vec<&str> = analysis.proposals.iter().map(|proposal| proposal_evidence(proposal).source_message_id.as_str()).collect();
+        assert_eq!(cited, ["ask", "confirm", "offer"]);
+        assert!(matches!(analysis.proposals[2], ActionProposal::Task(_)));
+        assert_eq!(analysis.hidden_count, 0);
+        // Without the user's addresses nothing is the user's own.
+        let mut analysis = parse_action_proposals(&content, &thread).unwrap();
+        drop_own_scheduling_proposals(&mut analysis, &thread, &[]);
+        assert_eq!(analysis.proposals.len(), 4);
+    }
+
+    #[test]
+    fn brief_prompts_treat_the_users_own_messages_as_answers() {
+        for prompt in [ACTION_SYSTEM_PROMPT, BRIEF_SYSTEM_PROMPT] {
+            assert!(prompt.contains("A message whose sender is one of userAddresses is the user's own"));
+            assert!(prompt.contains("Never propose a reply, a meeting to schedule, or a task to answer a request from the user's own message"));
+        }
     }
 
     #[test]

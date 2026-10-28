@@ -279,14 +279,11 @@ impl Database {
                     }
                     // The stored preview is still the provider's until this
                     // rewrite; it remains the fallback for a body without text.
-                    let provider_snippet: String = transaction.query_row(
-                        "SELECT snippet FROM threads WHERE id = ?1",
+                    let (provider_snippet, subject): (String, String) = transaction.query_row(
+                        "SELECT snippet, subject FROM threads WHERE id = ?1",
                         [thread_id],
-                        |row| row.get(0),
+                        |row| Ok((row.get(0)?, row.get(1)?)),
                     )?;
-                    let mut text = crate::quoted_history::searchable_thread_text(
-                        messages.iter().map(|(_, _, text, _)| text.as_str()),
-                    );
                     let latest_html = match messages.last() {
                         Some((id, ..)) => transaction
                             .query_row(
@@ -297,6 +294,10 @@ impl Database {
                             .optional()?,
                         None => None,
                     };
+                    let mut text = crate::quoted_history::searchable_thread_text_with(
+                        messages.iter().map(|(_, _, text, _)| text.as_str()),
+                        &preview_context(&subject, latest_html.as_deref()),
+                    );
                     lead_with_preheader(&mut text, latest_html.as_deref());
                     transaction.execute(
                         "UPDATE thread_search SET body = ?1, snippet = ?2 WHERE rowid = ?3",
@@ -566,6 +567,18 @@ fn fts_query(input: &str) -> String {
         }
     }
     terms.join(" AND ")
+}
+
+/// What the latest message's preview may use beyond its plain text: the
+/// thread's subject, and the words its HTML shows only as image text.
+pub(super) fn preview_context(
+    subject: &str,
+    latest_html: Option<&str>,
+) -> threestrands_mail_text::preview_text::PreviewContext {
+    threestrands_mail_text::preview_text::PreviewContext {
+        subject: subject.to_string(),
+        image_only_words: latest_html.map(crate::html_plain_text::image_only_words).unwrap_or_default(),
+    }
 }
 
 /// Leads the latest message's preview with the preheader its HTML hides for
