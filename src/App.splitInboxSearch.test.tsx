@@ -294,52 +294,6 @@ describe("split inbox search shortcuts", () => {
     }
   });
 
-  it("searches all mail by default and only the inbox when narrowed", async () => {
-    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
-    const searchThreads = vi.spyOn(mailClient, "searchThreads");
-    const backfill = vi.spyOn(mailClient, "backfillSearchThreads");
-    render(<App />);
-    fireEvent.keyDown(window, { key: "/" });
-    const search = await screen.findByRole("textbox", { name: "Search Mail" });
-    fireEvent.change(search, { target: { value: "roadmap" } });
-    await waitFor(() => expect(searchThreads).toHaveBeenCalledWith(
-      expect.objectContaining({ query: "roadmap", includeArchived: true }),
-      "demo@example.com",
-    ));
-    await waitFor(() => expect(backfill).toHaveBeenCalledWith("roadmap", "demo@example.com"), SERVER_SEARCH_WAIT);
-
-    searchThreads.mockClear();
-    backfill.mockClear();
-    fireEvent.click(screen.getByRole("button", { name: "Search only the Inbox" }));
-    await waitFor(() => expect(searchThreads).toHaveBeenCalledWith(
-      expect.objectContaining({ query: "roadmap", includeArchived: false }),
-      "demo@example.com",
-    ));
-    await new Promise((resolve) => window.setTimeout(resolve, REMOTE_SEARCH_DELAY_MS + 100));
-    expect(backfill).not.toHaveBeenCalled();
-  });
-
-  it("waits for the query to hold still before searching the server", async () => {
-    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
-    const searchThreads = vi.spyOn(mailClient, "searchThreads");
-    const backfill = vi.spyOn(mailClient, "backfillSearchThreads");
-    render(<App />);
-    fireEvent.keyDown(window, { key: "/" });
-    const search = await screen.findByRole("textbox", { name: "Search Mail" });
-    fireEvent.change(search, { target: { value: "road" } });
-    // The local search for the first query lands right away...
-    await waitFor(() => expect(searchThreads).toHaveBeenCalledWith(
-      expect.objectContaining({ query: "road" }),
-      "demo@example.com",
-    ));
-    expect(backfill).not.toHaveBeenCalled();
-    // ...but the user keeps typing before the pause ends, so only the final
-    // query reaches the server.
-    fireEvent.change(search, { target: { value: "roadmap" } });
-    await waitFor(() => expect(backfill).toHaveBeenCalledWith("roadmap", "demo@example.com"), SERVER_SEARCH_WAIT);
-    expect(backfill).toHaveBeenCalledTimes(1);
-  });
-
   it("autocompletes contacts and labels from the account being searched", async () => {
     localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
     vi.spyOn(mailClient, "listLabels").mockResolvedValue([

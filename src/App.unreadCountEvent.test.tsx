@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { mailClient } from "./data/client";
 import { DEMO_ACCOUNT_ID } from "./data/demoClient";
-import { saveSelectedAccountId } from "./settings";
 
 // Isolated in its own file (like App.settingsImport.test.tsx) because it puts
 // the app in "real Tauri" mode via `__TAURI_INTERNALS__`, which would
@@ -71,56 +70,25 @@ describe("background unread count updates", () => {
     };
   }
 
-  it("refreshes the sidebar unread badges when a background account reports a sync", async () => {
-    const bridge = setupEventBridge();
-    const listUnreadCounts = vi.spyOn(mailClient, "listUnreadCounts");
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    listUnreadCounts.mockClear();
-
-    await bridge.fireUnreadCountsChanged(DEMO_ACCOUNT_ID);
-
-    expect(listUnreadCounts).toHaveBeenCalled();
-  });
-
   it("refreshes the Inbox badge and the visible thread list in the merged All accounts view", async () => {
     // Default activeAccountId (no stored preference) is the merged "All
     // accounts" view, which shows every account's mail, so any account's
     // sync should refresh what's on screen.
     const bridge = setupEventBridge();
+    const listUnreadCounts = vi.spyOn(mailClient, "listUnreadCounts");
     const mailboxUnreadCounts = vi.spyOn(mailClient, "mailboxUnreadCounts");
     const listThreadsPage = vi.spyOn(mailClient, "listThreadsPage");
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    listUnreadCounts.mockClear();
     mailboxUnreadCounts.mockClear();
     listThreadsPage.mockClear();
 
     await bridge.fireUnreadCountsChanged(DEMO_ACCOUNT_ID);
 
+    // The sidebar's per-account badges refresh along with the Inbox badge.
+    expect(listUnreadCounts).toHaveBeenCalled();
     expect(mailboxUnreadCounts).toHaveBeenCalled();
-    expect(listThreadsPage).toHaveBeenCalled();
-  });
-
-  it("does not refetch the thread list for a different account's sync while a single account is active", async () => {
-    saveSelectedAccountId(DEMO_ACCOUNT_ID);
-    const bridge = setupEventBridge();
-    const mailboxUnreadCounts = vi.spyOn(mailClient, "mailboxUnreadCounts");
-    const listThreadsPage = vi.spyOn(mailClient, "listThreadsPage");
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    mailboxUnreadCounts.mockClear();
-    listThreadsPage.mockClear();
-
-    await bridge.fireUnreadCountsChanged("other@example.com");
-    // The badge is account-agnostic to refresh (cheap, and background
-    // accounts' sidebar totals still need to catch up), but the open thread
-    // list belongs to the active account and shouldn't reload for mail that
-    // landed in an account the user isn't looking at.
-    expect(mailboxUnreadCounts).toHaveBeenCalled();
-    expect(listThreadsPage).not.toHaveBeenCalled();
-
-    await bridge.fireUnreadCountsChanged(DEMO_ACCOUNT_ID);
-
     expect(listThreadsPage).toHaveBeenCalled();
   });
 

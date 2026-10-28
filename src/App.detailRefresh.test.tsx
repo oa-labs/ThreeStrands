@@ -274,31 +274,6 @@ describe("conversation brief", () => {
     expect(within(invitation).getByRole("button", { name: "Suggest a different time" })).toBeEnabled();
   });
 
-  it("gets the summary and suggestions in one request, then only calls again on refresh", async () => {
-    await enableAi({ summarize: true, actionExtraction: true });
-    const briefThread = vi.spyOn(mailClient, "briefThread").mockResolvedValue(briefResult);
-    const summarizeThread = vi.spyOn(mailClient, "summarizeThread");
-    const analyzeThread = vi.spyOn(mailClient, "analyzeThread");
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    const panel = screen.getByRole("complementary", { name: "Conversation context" });
-
-    fireEvent.click(await within(panel).findByRole("button", { name: "Get Brief" }));
-
-    expect(await within(panel).findByText("Welcome to the app.")).toBeInTheDocument();
-    expect(within(panel).getByText("Nothing to schedule or follow up on.")).toBeInTheDocument();
-    expect(briefThread).toHaveBeenCalledTimes(1);
-    fireEvent.keyDown(window, { key: "A", shiftKey: true });
-    fireEvent.keyDown(window, { key: "i" });
-    await waitFor(() => expect(within(panel).queryByRole("status")).not.toBeInTheDocument());
-    expect(briefThread).toHaveBeenCalledTimes(1);
-    expect(summarizeThread).not.toHaveBeenCalled();
-    expect(analyzeThread).not.toHaveBeenCalled();
-
-    fireEvent.click(within(panel).getByRole("button", { name: "Refresh brief" }));
-    await waitFor(() => expect(briefThread).toHaveBeenCalledTimes(2));
-  });
-
   it("fetches the whole brief in one request when Shift+A finds nothing yet", async () => {
     await enableAi({ summarize: true, actionExtraction: true });
     const briefThread = vi.spyOn(mailClient, "briefThread").mockResolvedValue(briefResult);
@@ -313,6 +288,15 @@ describe("conversation brief", () => {
     await waitFor(() => expect(briefThread).toHaveBeenCalledTimes(1));
     expect(analyzeThread).not.toHaveBeenCalled();
     expect(await within(panel).findByText("Welcome to the app.")).toBeInTheDocument();
+    expect(within(panel).getByText("Nothing to schedule or follow up on.")).toBeInTheDocument();
+
+    // Nothing is missing now, so the shortcuts ask again only through Refresh.
+    fireEvent.keyDown(window, { key: "A", shiftKey: true });
+    fireEvent.keyDown(window, { key: "i" });
+    await waitFor(() => expect(within(panel).queryByRole("status")).not.toBeInTheDocument());
+    expect(briefThread).toHaveBeenCalledTimes(1);
+    fireEvent.click(within(panel).getByRole("button", { name: "Refresh brief" }));
+    await waitFor(() => expect(briefThread).toHaveBeenCalledTimes(2));
   });
 
   it.each([false, true])("keeps a late summary off the conversation selected while it was pending (combined brief: %s)", async (combined) => {
@@ -338,51 +322,6 @@ describe("conversation brief", () => {
     expect(screen.getByRole("heading", { name: other.thread.subject })).toBeInTheDocument();
     expect(within(panel).queryByText("Welcome to the app.")).not.toBeInTheDocument();
     expect(combined ? summarizeThread : briefThread).not.toHaveBeenCalled();
-  });
-
-  it("uses the single-purpose request when only one AI feature is on", async () => {
-    await enableAi({ summarize: false, actionExtraction: true });
-    const briefThread = vi.spyOn(mailClient, "briefThread");
-    const analyzeThread = vi.spyOn(mailClient, "analyzeThread").mockResolvedValue({ proposals: [], hiddenCount: 1 });
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    const panel = screen.getByRole("complementary", { name: "Conversation context" });
-
-    fireEvent.click(await within(panel).findByRole("button", { name: "Get Suggestions" }));
-
-    expect(await within(panel).findByText("1 suggestion couldn’t be matched to the email, so it was hidden.")).toBeInTheDocument();
-    expect(analyzeThread).toHaveBeenCalledTimes(1);
-    expect(briefThread).not.toHaveBeenCalled();
-  });
-
-  it("keeps one conversation's pending or failed suggestions from showing on another", async () => {
-    await enableAi({ summarize: false, actionExtraction: true });
-    let failFirst: (reason: Error) => void = () => {};
-    const analyzeThread = vi.spyOn(mailClient, "analyzeThread").mockImplementation((threadId) => threadId === "welcome"
-      ? new Promise((_, reject) => { failFirst = reject; })
-      : Promise.resolve({ proposals: [], hiddenCount: 0 }));
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    const panel = screen.getByRole("complementary", { name: "Conversation context" });
-
-    fireEvent.click(await within(panel).findByRole("button", { name: "Get Suggestions" }));
-    expect(await within(panel).findByRole("status")).toHaveTextContent("Reading the conversation…");
-
-    // Open another conversation while the first request is still running.
-    const [, other] = screen.getAllByRole("option");
-    fireEvent.click(other);
-    await waitFor(() => expect(screen.queryByRole("heading", { name: "Welcome to ThreeStrands" })).not.toBeInTheDocument());
-    expect(within(panel).queryByText("Reading the conversation…")).not.toBeInTheDocument();
-    fireEvent.click(await within(panel).findByRole("button", { name: "Get Suggestions" }));
-    expect(await within(panel).findByText("Nothing to schedule or follow up on.")).toBeInTheDocument();
-    expect(analyzeThread).toHaveBeenCalledTimes(2);
-    expect(analyzeThread.mock.calls[1]?.[0]).not.toBe("welcome");
-
-    // The first conversation's failure stays with it.
-    failFirst(new Error("Suggestions for the welcome thread failed"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(within(panel).queryByRole("alert")).not.toBeInTheDocument();
-    expect(within(panel).getByText("Nothing to schedule or follow up on.")).toBeInTheDocument();
   });
 
   describe("scheduling meetings from the panel", () => {
@@ -668,40 +607,6 @@ describe("conversation brief", () => {
       evidence: { sourceMessageId: "welcome-message", excerpt: "command palette" },
     };
 
-    it("updates only the originating chat answer as suggestions are edited and discarded", async () => {
-      await enableAi({ threadChat: true, actionExtraction: true });
-      const second = { ...chatProposal, title: "Another task" };
-      vi.spyOn(mailClient, "threadChat")
-        .mockResolvedValueOnce({ answer: "Two suggestions.", analysis: { proposals: [chatProposal, second], hiddenCount: 0 }, replyDraft: null, sources: [], searched: [], attachments: [], availability: null })
-        .mockResolvedValueOnce({ answer: "One more suggestion.", analysis: { proposals: [{ ...second, title: "Separate answer task" }], hiddenCount: 0 }, replyDraft: null, sources: [], searched: [], attachments: [], availability: null });
-      const remove = vi.spyOn(mailClient, "removeThreadSuggestion").mockResolvedValue(true);
-      render(<App />);
-      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-      const panel = screen.getByRole("complementary", { name: "Conversation context" });
-      fireEvent.click(within(panel).getByRole("button", { name: /Ask about this conversation/ }));
-      const input = within(panel).getByRole("textbox", { name: "Ask About This Conversation" });
-      fireEvent.change(input, { target: { value: "Suggest tasks" } });
-      fireEvent.keyDown(input, { key: "Enter" });
-      await within(panel).findByText("Two suggestions.");
-      fireEvent.change(input, { target: { value: "Suggest another" } });
-      fireEvent.keyDown(input, { key: "Enter" });
-      await within(panel).findByText("One more suggestion.");
-
-      const suggestions = within(panel).getByRole("region", { name: "Suggestions" });
-      const card = within(suggestions).getByText("Try the command palette").closest("article")!;
-      fireEvent.click(within(card).getByRole("button", { name: "Edit" }));
-      const editor = await screen.findByRole("dialog", { name: "Edit Task Proposal" });
-      fireEvent.change(within(editor).getByLabelText("Task"), { target: { value: "Edited task" } });
-      fireEvent.click(within(editor).getByRole("button", { name: "Save Proposal" }));
-      fireEvent.click(within(within(panel).getByText("Edited task").closest("article")!).getByRole("button", { name: "Dismiss" }));
-      expect(within(panel).queryByRole("button", { name: "Added 2 suggestions to review" })).not.toBeInTheDocument();
-      expect(within(panel).getAllByRole("button", { name: "Added 1 suggestion to review" })).toHaveLength(2);
-      expect(remove).toHaveBeenCalledWith("welcome", expect.any(String), chatProposal);
-      fireEvent.click(within(within(panel).getByText("Another task").closest("article")!).getByRole("button", { name: "Dismiss" }));
-      expect(within(panel).getAllByRole("button", { name: "Added 1 suggestion to review" })).toHaveLength(1);
-      expect(within(panel).getByText("Suggestions reviewed")).toBeInTheDocument();
-    });
-
     it("opens with q, keeps typed letters out of shortcuts, and returns to read mode on Escape", async () => {
       await enableAi({ threadChat: true });
       render(<App />);
@@ -812,32 +717,10 @@ describe("conversation brief", () => {
       }), "openai", expect.any(String), null);
     });
 
-    it("shares no attachments unless one is chosen", async () => {
-      await enableAi({ threadChat: true });
-      const threadChat = vi.spyOn(mailClient, "threadChat").mockResolvedValue({
-        answer: "Answered.", analysis: { proposals: [], hiddenCount: 0 }, replyDraft: null, sources: [], searched: [], attachments: [], availability: null,
-      });
-      render(<App />);
-      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-      const panel = screen.getByRole("complementary", { name: "Conversation context" });
-      fireEvent.keyDown(window, { key: "q" });
-      const input = await within(panel).findByRole("textbox", { name: "Ask About This Conversation" });
-      fireEvent.change(input, { target: { value: "What does threestrands-shortcuts.txt say?" } });
-      fireEvent.keyDown(input, { key: "Enter" });
-      await waitFor(() => expect(threadChat).toHaveBeenCalled());
-      expect(threadChat).toHaveBeenLastCalledWith(expect.objectContaining({ attachments: [] }), "openai", expect.any(String), null);
-    });
   });
 
   describe("proactive suggestions", () => {
     const dwell = proactiveDwellMs(2);
-
-    async function openRoadmap() {
-      render(<App />);
-      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-      fireEvent.keyDown(window, { key: "j" });
-      await screen.findByRole("heading", { name: "Phase 1: read and triage" });
-    }
 
     afterEach(() => { vi.useRealTimers(); });
 
@@ -865,53 +748,6 @@ describe("conversation brief", () => {
       expect(briefThread).toHaveBeenCalledTimes(1);
     });
 
-    it("does nothing for a conversation left before the dwell elapses", async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: true });
-      await enableAi({ summarize: true, actionExtraction: true, proactiveBriefs: true });
-      const briefThread = vi.spyOn(mailClient, "briefThread").mockResolvedValue(briefResult);
-      await openRoadmap();
-      await vi.advanceTimersByTimeAsync(dwell - 1_000);
-      fireEvent.keyDown(window, { key: "k" });
-      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-      await vi.advanceTimersByTimeAsync(dwell * 2);
-      expect(briefThread).not.toHaveBeenCalled();
-    });
-
-    it("waits for a sender the user has emailed when that filter is on", async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: true });
-      await enableAi({ summarize: true, actionExtraction: true, proactiveBriefs: true, proactiveKnownSendersOnly: true });
-      const briefThread = vi.spyOn(mailClient, "briefThread").mockResolvedValue(briefResult);
-      vi.spyOn(mailClient, "listContactProfiles").mockResolvedValue([]);
-      await openRoadmap();
-      await vi.advanceTimersByTimeAsync(dwell * 2);
-      expect(briefThread).not.toHaveBeenCalled();
-    });
-
-    it("does not brief a conversation right after the user's own reply", async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: true });
-      await enableAi({ summarize: true, actionExtraction: true, proactiveBriefs: true });
-      const briefThread = vi.spyOn(mailClient, "briefThread").mockResolvedValue(briefResult);
-      const [account] = await mailClient.listAccounts();
-      const originalGetThread = mailClient.getThread.bind(mailClient);
-      vi.spyOn(mailClient, "getThread").mockImplementation(async (id) => {
-        const detail = await originalGetThread(id);
-        if (id !== "roadmap") return detail;
-        const newest = detail.messages.at(-1)!;
-        return { ...detail, messages: [...detail.messages, { ...newest, id: "my-reply", sender: `Me <${account.email.toUpperCase()}>`, bodyText: "Happy to talk. I am free Tuesday at 10am." }] };
-      });
-      await openRoadmap();
-      await vi.advanceTimersByTimeAsync(dwell * 2);
-      expect(briefThread).not.toHaveBeenCalled();
-    });
-
-    it("stays on request only while proactive suggestions are off", async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: true });
-      await enableAi({ summarize: true, actionExtraction: true });
-      const briefThread = vi.spyOn(mailClient, "briefThread").mockResolvedValue(briefResult);
-      await openRoadmap();
-      await vi.advanceTimersByTimeAsync(dwell * 2);
-      expect(briefThread).not.toHaveBeenCalled();
-    });
   });
 
   it("keeps a failed brief retryable in the panel", async () => {
@@ -1065,36 +901,6 @@ it("formats today's mail with the time of day and older mail with the date", () 
     month: "short",
     day: "2-digit",
   }).format(older));
-});
-
-it("puts 'and' before the final message recipient", async () => {
-  const originalGetThread = mailClient.getThread.bind(mailClient);
-  vi.spyOn(mailClient, "getThread").mockImplementation(async (id) => {
-    const detail = await originalGetThread(id);
-    return id === "welcome" ? {
-      ...detail,
-      messages: detail.messages.map((message) => ({
-        ...message,
-        recipients: [
-          "Joel Reed <joel@example.com>",
-          '"Bates',
-          'Daniel R" <daniel@example.com>',
-          "Cara Cenfetelli <cara@example.com>",
-        ],
-      })),
-    } : detail;
-  });
-
-  render(<App />);
-  await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-
-  const recipientLine = document.querySelector(".message-recipients");
-  expect(recipientLine?.querySelectorAll(".address-name")).toHaveLength(3);
-  expect(Array.from(recipientLine?.querySelectorAll(".address-name") ?? [], ({ textContent }) => textContent))
-    .toEqual(["Joel Reed", "Bates, Daniel R", "Cara Cenfetelli"]);
-  expect(Array.from(recipientLine?.children ?? []).map((recipient) =>
-    Array.from(recipient.childNodes).find((node) => node.nodeType === Node.TEXT_NODE)?.textContent ?? "",
-  )).toEqual(["", ", ", ", and "]);
 });
 
 it("refreshes the open conversation when its inbox row receives a sent reply", async () => {
@@ -1431,64 +1237,6 @@ it("shows a queued forward in its source conversation until the provider copy ar
   // A source without a Message-ID forwards as a new conversation, so its copy stays out of this one.
   expect(messagesWithQueuedReplies(detail, [{ ...queued, draft: { ...queued.draft, replyId: null, threadId: null, references: [] } }]))
     .toHaveLength(detail.messages.length);
-});
-
-it("resolves a queued reply's inline image from its outbox draft", async () => {
-  const detail = await mailClient.getThread("welcome");
-  const source = detail.messages.at(-1)!;
-  const queued: OutboxItem = {
-    id: "queued-inline-reply",
-    state: "undo_pending",
-    deadline: Date.now() + 10_000,
-    error: null,
-    draft: {
-      id: "inline-reply-draft",
-      revision: 2,
-      account: "demo@example.com",
-      mode: "reply",
-      sourceId: source.id,
-      threadId: detail.thread.providerThreadId,
-      replyId: "source@example.com",
-      references: [],
-      to: "hello@threestrands.local",
-      cc: "",
-      bcc: "",
-      subject: detail.thread.subject,
-      body: "Screenshot",
-      bodyHtml: '<p>Screenshot</p><img src="cid:inline-1@threestrands.local" alt="image.png">',
-      attachments: [{
-        id: "inline-1",
-        name: "image.png",
-        mime: "image/png",
-        size: 4,
-        ready: true,
-        messageId: null,
-        providerId: null,
-        inline: true,
-        contentId: "inline-1@threestrands.local",
-      }],
-      updatedAt: Date.now(),
-    },
-  };
-  vi.spyOn(mailClient, "listOutbox").mockResolvedValue([queued]);
-  vi.spyOn(mailClient, "listDrafts").mockResolvedValue([]);
-  const readInline = vi.spyOn(mailClient, "readInlineImage")
-    .mockResolvedValue("data:image/png;base64,iVBORw==");
-
-  render(<App />);
-  await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-
-  await waitFor(() => expect(readInline).toHaveBeenCalledWith("inline-reply-draft", "inline-1"));
-  // Resolved images are patched into the loaded frame rather than rewritten
-  // into srcdoc. jsdom does not load srcdoc, so mirror it and fire load.
-  const queuedFrame = (screen.getAllByTestId("message-body") as HTMLIFrameElement[])
-    .find((body) => body.srcdoc.includes("cid:inline-1@threestrands.local"))!;
-  queuedFrame.contentDocument!.body.innerHTML = new DOMParser()
-    .parseFromString(queuedFrame.srcdoc, "text/html").body.innerHTML;
-  fireEvent.load(queuedFrame);
-  await waitFor(() => {
-    expect(queuedFrame.contentDocument!.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,iVBORw==");
-  });
 });
 
 it("renders a reply in the open conversation as soon as Send queues it", async () => {

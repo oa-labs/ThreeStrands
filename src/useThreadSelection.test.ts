@@ -32,6 +32,29 @@ describe("useThreadSelection", () => {
     expect(result.current.checkedIds).toEqual(new Set([threads[0]!.id, threads[2]!.id]));
   });
 
+  it("checks every conversation between two checkboxes when the second is Shift-clicked", () => {
+    const { result } = setup();
+    act(() => result.current.toggleChecked(threads[0]!.id));
+    act(() => result.current.applyThreadSelectionGesture(threads[2]!.id, "range-add"));
+    expect(result.current.checkedIds).toEqual(new Set(threads.map((thread) => thread.id)));
+  });
+
+  it("multi-selects with Command-click and Shift-click from the open conversation, and a plain click resets", () => {
+    const { result } = setup();
+    act(() => result.current.applyThreadSelectionGesture(threads[2]!.id, "toggle"));
+    expect(result.current.checkedIds).toEqual(new Set([threads[0]!.id, threads[2]!.id]));
+    act(() => result.current.applyThreadSelectionGesture(threads[2]!.id, "toggle"));
+    expect(result.current.checkedIds).toEqual(new Set([threads[0]!.id]));
+
+    act(() => result.current.selectThread(threads[0]!.id));
+    expect(result.current.checkedIds.size).toBe(0);
+    act(() => result.current.applyThreadSelectionGesture(threads[2]!.id, "range"));
+    expect(result.current.checkedIds).toEqual(new Set(threads.map((thread) => thread.id)));
+
+    act(() => result.current.selectThread(threads[1]!.id));
+    expect(result.current.checkedIds.size).toBe(0);
+  });
+
   it("prunes removed rows and resets checked rows when the search changes", () => {
     const { result, rerender } = setup();
     act(() => result.current.setCheckedIds(new Set(threads.map((thread) => thread.id))));

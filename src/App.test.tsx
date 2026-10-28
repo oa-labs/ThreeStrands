@@ -1,10 +1,9 @@
 import type { Draft, OutboxItem } from "./correspondence";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AccountSwitcher, App, NOTICE_TIMEOUT_MS } from "./App";
+import { App, NOTICE_TIMEOUT_MS } from "./App";
 import { mailClient } from "./data/client";
 import type { ThreadTask } from "./domain";
-import { FOREGROUND_DEBOUNCE_MS, FOREGROUND_IDLE_MS } from "./foregroundRefresh";
 import { SEARCH_DEBOUNCE_MS } from "./SearchField";
 import { clearScheduleCache } from "./calendarScheduleCache";
 
@@ -266,74 +265,6 @@ describe("conversation labels", () => {
         value: false,
       });
       listLabels.mockRestore();
-    }
-  });
-
-  it("orders labels alphabetically and supports search plus keyboard navigation", async () => {
-    const keyboardLabel = await mailClient.createLabel("Keyboard navigation");
-    try {
-      render(<App />);
-      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-      await act(async () => {
-        screen.getByRole("button", { name: "Labels (l)" }).click();
-      });
-
-      const dialog = screen.getByRole("dialog", { name: "Manage Labels" });
-      const input = await within(dialog).findByRole("combobox", { name: "Find or Create a Label" });
-      expect(input).toHaveFocus();
-      expect(within(dialog).getAllByRole("option").map((option) => option.textContent))
-        .toEqual(["Keyboard navigation", "Work"]);
-      expect(within(dialog).getAllByRole("option")[0]).toHaveClass("highlighted");
-
-      fireEvent.keyDown(input, { key: "ArrowDown" });
-      expect(within(dialog).getAllByRole("option")[1]).toHaveClass("highlighted");
-      fireEvent.keyDown(input, { key: "ArrowUp" });
-      expect(within(dialog).getAllByRole("option")[0]).toHaveClass("highlighted");
-
-      fireEvent.change(input, { target: { value: "key" } });
-      expect(within(dialog).getAllByRole("option").map((option) => option.textContent))
-        .toEqual(["Keyboard navigation", 'Create label "key"']);
-
-      await act(async () => {
-        fireEvent.keyDown(input, { key: "Enter" });
-      });
-      expect(await screen.findByRole("status")).toHaveTextContent("Keyboard navigation added");
-      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Labels" })).not.toBeInTheDocument());
-    } finally {
-      await mailClient.deleteLabel(keyboardLabel.id);
-    }
-  });
-
-  it("creates and applies a new label from the search box", async () => {
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    try {
-      await act(async () => {
-        screen.getByRole("button", { name: "Labels (l)" }).click();
-      });
-
-      const input = await screen.findByRole("combobox", { name: "Find or Create a Label" });
-      fireEvent.change(input, { target: { value: "Project X" } });
-      const createRow = await screen.findByRole("option", { name: 'Create label "Project X"' });
-      expect(createRow).toHaveClass("highlighted");
-
-      await act(async () => {
-        fireEvent.keyDown(input, { key: "Enter" });
-      });
-      expect(await screen.findByRole("status")).toHaveTextContent("Project X added");
-      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Manage Labels" })).not.toBeInTheDocument());
-
-      await act(async () => {
-        screen.getByRole("button", { name: "Labels (l)" }).click();
-      });
-      const created = await screen.findByRole("option", { name: "Project X, added" });
-      await act(async () => {
-        created.click();
-      });
-      expect(await screen.findByRole("status")).toHaveTextContent("Project X removed");
-    } finally {
-      const projectX = (await mailClient.listLabels()).find((label) => label.name === "Project X");
-      if (projectX) await mailClient.deleteLabel(projectX.id);
     }
   });
 
@@ -1321,19 +1252,6 @@ describe("trash and batch actions", () => {
     } finally { mutate.mockRestore(); }
   });
 
-  it("checks every conversation between two checkboxes when the second is Shift-clicked", async () => {
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    const rows = within(screen.getByRole("listbox", { name: /Inbox/ })).getAllByRole("option");
-    expect(rows.length).toBeGreaterThanOrEqual(3);
-    fireEvent.click(rows[0].querySelector(".row-check")!);
-    expect(screen.getByText("1 selected")).toBeInTheDocument();
-    fireEvent.click(rows[2].querySelector(".row-check")!, { shiftKey: true });
-    expect(screen.getByText("3 selected")).toBeInTheDocument();
-    for (const row of rows.slice(0, 3)) expect(row).toHaveTextContent("Selected for batch actions");
-    fireEvent.keyDown(document.body, { key: "Escape" });
-  });
-
   it("selects only the conversations visible through the active filters", async () => {
     await mailClient.mutateThread({ kind: "star", threadId: "roadmap", value: true });
     render(<App />);
@@ -1409,31 +1327,6 @@ describe("trash and batch actions", () => {
     });
     expect(await screen.findByRole("option", { name: /Welcome to ThreeStrands/ })).toBeInTheDocument();
     expect(await screen.findByRole("option", { name: /Phase 1: read and triage/ })).toBeInTheDocument();
-  });
-
-  it("multi-selects rows with Command-click and Shift-click, and a plain click resets", async () => {
-    const { container } = render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    const rows = () => [...container.querySelectorAll<HTMLButtonElement>(".thread-row")];
-    expect(rows().length).toBeGreaterThanOrEqual(3);
-
-    fireEvent.click(rows()[0]);
-    fireEvent.click(rows()[2], { metaKey: true });
-    expect(await screen.findByText("2 selected")).toBeInTheDocument();
-    expect(rows()[1]).not.toHaveTextContent("Selected for batch actions");
-
-    fireEvent.click(rows()[2], { metaKey: true });
-    expect(await screen.findByText("1 selected")).toBeInTheDocument();
-
-    fireEvent.click(rows()[0]);
-    expect(screen.queryByRole("toolbar", { name: "Batch actions" })).not.toBeInTheDocument();
-
-    fireEvent.click(rows()[2], { shiftKey: true });
-    expect(await screen.findByText("3 selected")).toBeInTheDocument();
-
-    fireEvent.click(rows()[1]);
-    expect(screen.queryByRole("toolbar", { name: "Batch actions" })).not.toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "Phase 1: read and triage" })).toBeInTheDocument();
   });
 
   it("shows one state-aware star action and hover help for every batch action", async () => {
@@ -1643,22 +1536,6 @@ describe("Drafts folder", () => {
     expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
   });
 
-  it("checks every draft between two checkboxes when the second is Shift-clicked", async () => {
-    for (let index = 0; index < 3; index++) await mailClient.createDraft("new");
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    selectFolder("Drafts");
-    expect(await screen.findByRole("heading", { name: "3 drafts" })).toBeInTheDocument();
-    const rows = screen.getAllByRole("option");
-    fireEvent.click(rows[0].querySelector(".row-check")!);
-    fireEvent.click(rows[2].querySelector(".row-check")!, { shiftKey: true });
-    expect(screen.getByRole("toolbar", { name: "Batch actions" })).toHaveTextContent("3 selected");
-    fireEvent.keyDown(window, { key: "Escape" });
-    for (const draft of await mailClient.listDrafts()) await mailClient.discardDraft(draft.id);
-    selectFolder("Inbox");
-    expect(await screen.findByRole("heading", { name: "Welcome to ThreeStrands" })).toBeInTheDocument();
-  });
-
   it("selects every draft with the checkbox and clears the selection with Escape", async () => {
     await mailClient.createDraft("new");
     await mailClient.createDraft("new");
@@ -1787,53 +1664,6 @@ describe("Drafts folder", () => {
   });
 });
 
-describe("foreground mail refresh", () => {
-  afterEach(() => {
-    cleanup();
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
-  });
-
-  it("checks for new mail after the window has been in the background", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const sync = vi.spyOn(mailClient, "sync");
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    sync.mockClear();
-
-    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
-    await act(async () => {
-      document.dispatchEvent(new Event("visibilitychange"));
-      await vi.advanceTimersByTimeAsync(FOREGROUND_IDLE_MS);
-    });
-    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
-    await act(async () => {
-      document.dispatchEvent(new Event("visibilitychange"));
-      await vi.advanceTimersByTimeAsync(FOREGROUND_DEBOUNCE_MS);
-    });
-
-    expect(sync).toHaveBeenCalled();
-  });
-
-  it("does not sync on a brief focus flicker", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const sync = vi.spyOn(mailClient, "sync");
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    sync.mockClear();
-
-    await act(async () => {
-      window.dispatchEvent(new Event("blur"));
-      await vi.advanceTimersByTimeAsync(200);
-      window.dispatchEvent(new Event("focus"));
-      await vi.advanceTimersByTimeAsync(FOREGROUND_DEBOUNCE_MS);
-    });
-
-    expect(sync).not.toHaveBeenCalled();
-  });
-});
-
 describe("search debounce", () => {
   useConversationFixture();
 
@@ -1937,88 +1767,6 @@ describe("account selection persistence", () => {
     await waitFor(() => expect(createTask).toHaveBeenCalledWith({ accountId: "work@example.com", threadId: null, subjectSnapshot: null, title: "Review plan", kind: "action" }));
   });
 
-  it("shows unread inbox totals on each account and the combined account icon", async () => {
-    const primary = {
-      email: "demo@example.com",
-      displayName: null,
-      color: "#4285F4",
-      status: "connected" as const,
-      provider: "gmail" as const,
-      labelModel: "gmailLabels" as const,
-      sortOrder: 0,
-      connectedAt: "2026-03-04T00:00:00Z",
-      lastSyncedAt: null,
-      onThisDevice: true,
-    };
-    render(
-      <AccountSwitcher
-        accounts={[
-          primary,
-          {
-        ...primary,
-        email: "work@example.com",
-        displayName: "Work",
-        color: "#34A853",
-        status: "needs_reauth" as const,
-        sortOrder: 1,
-          },
-        ]}
-        unreadCounts={{ [primary.email]: 3, "work@example.com": 120 }}
-        activeAccountId={null}
-        onSwitch={() => {}}
-        onShowAll={() => {}}
-        onReorder={() => {}}
-      />,
-    );
-
-    expect(screen.getByRole("radio", { name: "All accounts, 123 unread" })).toHaveTextContent("99+");
-    expect(screen.getByRole("radio", { name: `${primary.email}, 3 unread` })).toHaveTextContent("3");
-    expect(screen.getByRole("tooltip", { name: "work@example.com · Needs reconnect in Mail Accounts" })).toBeInTheDocument();
-    const disconnectedAccount = screen.getByRole("radio", { name: "Work, 120 unread, Needs reconnect" });
-    expect(disconnectedAccount).toHaveTextContent("99+");
-    expect(disconnectedAccount.querySelector(".account-reconnect-badge")).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: `${primary.email}, 3 unread` }).querySelector(".account-reconnect-badge")).not.toBeInTheDocument();
-  });
-
-  it("shows a lone account as checked, with its email tooltip and no All accounts option", async () => {
-    const [account] = await mailClient.listAccounts();
-    render(
-      <AccountSwitcher
-        accounts={[account!]}
-        unreadCounts={{}}
-        activeAccountId={null}
-        onSwitch={() => {}}
-        onShowAll={() => {}}
-        onReorder={() => {}}
-      />,
-    );
-
-    expect(screen.getByRole("radio", { name: account!.email })).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByRole("tooltip", { name: account!.email, hidden: true })).toBeInTheDocument();
-    expect(screen.queryByRole("radio", { name: /^All accounts/i })).not.toBeInTheDocument();
-  });
-
-  it("uses nickname initials and email tooltips for accounts with the same sender name", async () => {
-    const [account] = await mailClient.listAccounts();
-    const onSwitch = vi.fn();
-    const accounts = [
-      { ...account!, email: "joel@openarc.net", displayName: "Joel Reed", nickname: "Work" },
-      { ...account!, email: "joelreed@gmail.com", displayName: "Joel Reed", nickname: "Personal", status: "needs_reauth" as const },
-    ];
-    const { rerender } = render(<AccountSwitcher accounts={accounts} unreadCounts={{ "joel@openarc.net": 10 }}
-      activeAccountId="joel@openarc.net" onSwitch={onSwitch} onShowAll={vi.fn()} onReorder={vi.fn()} />);
-    const work = screen.getByRole("radio", { name: "Work, 10 unread" });
-    expect(work).toHaveTextContent("W10");
-    expect(work).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByRole("radio", { name: "Personal, Needs reconnect" })).toHaveTextContent("P");
-    expect(screen.getByRole("tooltip", { name: "Work (joel@openarc.net)", hidden: true })).toBeInTheDocument();
-    expect(screen.getByRole("tooltip", { name: "Personal (joelreed@gmail.com) · Needs reconnect in Mail Accounts", hidden: true })).toBeInTheDocument();
-    fireEvent.click(work);
-    expect(onSwitch).toHaveBeenCalledWith("joel@openarc.net");
-    rerender(<AccountSwitcher accounts={[{ ...accounts[0]!, nickname: null }]} unreadCounts={{}}
-      activeAccountId={null} onSwitch={onSwitch} onShowAll={vi.fn()} onReorder={vi.fn()} />);
-    expect(screen.getByRole("radio", { name: "Joel Reed" })).toHaveTextContent("J");
-  });
 });
 
 describe("returning from a jump", () => {

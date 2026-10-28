@@ -11,6 +11,7 @@ import { mailClient } from "./data/client";
 import type { Account, ContactProfile, Message, MessageTrust, SenderDeliveryPattern, SenderFamiliarity } from "./domain";
 import * as inlineAttachments from "./inlineAttachments";
 import { placeHoverCard } from "./AddressWithCard";
+import { queuedMessage } from "./queuedReplies";
 import { MessageCard } from "./MessageCard";
 import { TrustSection } from "./SenderSections";
 import { threadTextIndex } from "./threadTextIndex";
@@ -136,6 +137,22 @@ describe("MessageCard", () => {
       expect(container.querySelector(".message-recipients")).not.toBeInTheDocument();
       expect(screen.getByText("Ada Lovelace")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Reply" })).toBeInTheDocument();
+    });
+
+    it("puts 'and' before the final recipient and rejoins a display name split at its comma", () => {
+      const { container } = render(<MessageCard
+        message={{ ...message, recipients: [
+          "Joel Reed <joel@example.com>",
+          '"Bates',
+          'Daniel R" <daniel@example.com>',
+          "Cara Cenfetelli <cara@example.com>",
+        ] }}
+        isExpanded {...stableProps}
+      />);
+      expect(names(container)).toEqual(["Joel Reed", "Bates, Daniel R", "Cara Cenfetelli"]);
+      expect(Array.from(line(container).children).map((recipient) =>
+        Array.from(recipient.childNodes).find((node) => node.nodeType === Node.TEXT_NODE)?.textContent ?? "",
+      )).toEqual(["", ", ", ", and "]);
     });
 
     it("counts To and Cc together toward the preview limit", () => {
@@ -308,6 +325,42 @@ describe("MessageCard", () => {
         expect(button.querySelector("img")).toBeNull();
         expect(button.querySelector("[data-attachment-kind]")).toHaveAttribute("data-attachment-kind", "image");
       }
+    });
+
+    it("resolves a queued reply's inline image from its outbox draft", async () => {
+      vi.spyOn(mailClient, "fileStars").mockResolvedValue([]);
+      const queued = {
+        id: "queued-inline-reply",
+        state: "undo_pending",
+        deadline: Date.now() + 10_000,
+        error: null,
+        draft: {
+          id: "inline-reply-draft", revision: 2, account: "demo@example.com", mode: "reply", sourceId: "m1",
+          threadId: "t1", replyId: "source@example.com", references: [], to: "hello@threestrands.local", cc: "", bcc: "",
+          subject: "Hello", body: "Screenshot",
+          bodyHtml: '<p>Screenshot</p><img src="cid:inline-1@threestrands.local" alt="image.png">',
+          attachments: [{
+            id: "inline-1", name: "image.png", mime: "image/png", size: 4, ready: true, messageId: null,
+            providerId: null, inline: true, contentId: "inline-1@threestrands.local",
+          }],
+          updatedAt: Date.now(),
+        },
+      } as OutboxItem;
+      const readInline = vi.spyOn(mailClient, "readInlineImage").mockResolvedValue("data:image/png;base64,iVBORw==");
+      const fetchImage = vi.spyOn(mailClient, "fetchAttachmentImage");
+      render(<MessageCard message={queuedMessage(queued, "t1")} isExpanded {...stableProps} queuedItem={queued} />);
+
+      // Resolved images are patched into the loaded frame rather than rewritten
+      // into srcdoc. jsdom does not load srcdoc, so mirror it and fire load.
+      const frame = screen.getByTestId("message-body") as HTMLIFrameElement;
+      expect(frame.srcdoc).toContain("cid:inline-1@threestrands.local");
+      frame.contentDocument!.body.innerHTML = new DOMParser().parseFromString(frame.srcdoc, "text/html").body.innerHTML;
+      fireEvent.load(frame);
+      await waitFor(() => expect(readInline).toHaveBeenCalledWith("inline-reply-draft", "inline-1"));
+      await waitFor(() => {
+        expect(frame.contentDocument!.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,iVBORw==");
+      });
+      expect(fetchImage).not.toHaveBeenCalled();
     });
 
     it("requests no thumbnails for a reply still in the outbox", () => {
