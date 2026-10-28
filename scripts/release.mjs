@@ -119,6 +119,10 @@ const updatePlatforms = [
   ["windows-x86_64", "windows-x86_64", ".exe"],
 ];
 
+// macOS is the primary target and always ships. A release may go out without
+// these when their build fails; the workflow names each one it leaves out.
+export const OPTIONAL_PLATFORMS = ["linux-amd64", "windows-x86_64"];
+
 export const UPDATE_MANIFEST = "latest.json";
 const RELEASE_DOWNLOADS = "https://github.com/oa-labs/ThreeStrands/releases/download";
 
@@ -131,17 +135,20 @@ async function onlyFile(directory, platform, extension) {
   return resolve(directory, matches[0].name);
 }
 
-export async function prepareReleaseAssets(inputDir, outputDir, version, { updaterKey, now = new Date() }) {
+export async function prepareReleaseAssets(inputDir, outputDir, version, { updaterKey, now = new Date(), skip = [] }) {
   if (!releaseVersion.test(version)) throw new Error("Invalid release asset version");
+  for (const platform of skip) {
+    if (!OPTIONAL_PLATFORMS.includes(platform)) throw new Error(`A release cannot skip ${platform}`);
+  }
   const selected = [];
-  for (const [platform, extension] of installers) {
+  for (const [platform, extension] of installers.filter(([platform]) => !skip.includes(platform))) {
     const source = await onlyFile(resolve(inputDir, `threestrands-release-${platform}`), platform, extension);
     if ((await stat(source)).size === 0) throw new Error(`Empty installer: ${basename(source)}`);
     selected.push({ platform, extension, source, name: `ThreeStrands_${version}_${platform.replaceAll("-", "_")}${extension}` });
   }
 
   const platforms = {};
-  for (const [target, platform, extension] of updatePlatforms) {
+  for (const [target, platform, extension] of updatePlatforms.filter(([, platform]) => !skip.includes(platform))) {
     const asset = selected.find((item) => item.platform === platform && item.extension === extension);
     const signaturePath = await onlyFile(resolve(inputDir, `threestrands-release-${platform}`), platform, `${extension}.sig`);
     const signature = (await readFile(signaturePath, "utf8")).trim();
@@ -229,7 +236,9 @@ async function main() {
     console.log(JSON.stringify(metadata));
   } else if (command === "prepare-assets" && argument && outputDir && version) {
     const updaterKey = updaterPublicKey((await readReleaseSources(root)).tauriConfig);
-    console.log((await prepareReleaseAssets(argument, outputDir, version, { updaterKey })).join("\n"));
+    // Space- or comma-separated platforms whose build failed, set by the workflow.
+    const skip = (process.env.RELEASE_SKIPPED_PLATFORMS ?? "").split(/[\s,]+/).filter(Boolean);
+    console.log((await prepareReleaseAssets(argument, outputDir, version, { updaterKey, skip })).join("\n"));
   } else if (command === "notes" && argument && outputDir) {
     const publishedTagsFile = outputDir; // Published (non-draft) release tags, one per line.
     const published = (await readFile(publishedTagsFile, "utf8")).split("\n").filter(Boolean);

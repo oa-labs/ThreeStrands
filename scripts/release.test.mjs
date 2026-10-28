@@ -346,13 +346,25 @@ describe("Windows release build", () => {
   });
 });
 
+describe("optional release platforms", () => {
+  it("creates the draft once macOS builds, leaving out whichever optional platform failed", async () => {
+    const workflow = await readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+    const jobBlock = workflow.split("\n  release:\n")[1]?.split(/\n  [\w-]+:\n/)[0];
+    assert.ok(jobBlock, "Missing release job");
+    assert.match(jobBlock, /^ {4}if: \$\{\{ !cancelled\(\) && needs\.validate\.result == 'success' && needs\.macos\.result == 'success' \}\}$/m);
+    assert.match(jobBlock, /needs\.linux\.result != 'success' && 'linux-amd64'/);
+    assert.match(jobBlock, /needs\.windows\.result != 'success' && 'windows-x86_64'/);
+    assert.match(jobBlock, /Not in this release/);
+  });
+});
+
 describe("marketing site refresh", () => {
   it("redeploys the site from master only after a stable release is built", async () => {
     const workflow = await readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
     const jobBlock = workflow.split("\n  site:\n")[1]?.split(/\n  [\w-]+:\n/)[0];
     assert.ok(jobBlock, "Missing site job");
     assert.match(jobBlock, /^ {4}needs: \[validate, release\]$/m);
-    assert.match(jobBlock, /^ {4}if: needs\.validate\.outputs\.prerelease == 'false'$/m);
+    assert.match(jobBlock, /^ {4}if: \$\{\{ !cancelled\(\) && needs\.release\.result == 'success' && needs\.validate\.outputs\.prerelease == 'false' \}\}$/m);
     assert.match(jobBlock, /^ {6}actions: write$/m);
     assert.doesNotMatch(jobBlock, /contents: write|secrets\./, "Site trigger needs no write or signing access");
     assert.match(jobBlock, /run: gh workflow run site\.yml --ref master$/m);
@@ -476,8 +488,8 @@ async function artifacts(t, { signFile = releaseKey.signFile } = {}) {
   return { directory, output: join(directory, "output") };
 }
 
-const prepare = (directory, output, version, key = releaseKey.pubkey) => prepareReleaseAssets(directory, output, version, {
-  updaterKey: updaterPublicKey(tauriConfig(version, key)), now: new Date("2026-10-06T12:00:00Z"),
+const prepare = (directory, output, version, key = releaseKey.pubkey, skip = []) => prepareReleaseAssets(directory, output, version, {
+  updaterKey: updaterPublicKey(tauriConfig(version, key)), now: new Date("2026-10-06T12:00:00Z"), skip,
 });
 
 describe("release installer collection", () => {
@@ -580,6 +592,29 @@ describe("release installer collection", () => {
     await assert.rejects(prepare(directory, output, "0.56.0"), /exactly one macos-aarch64/);
     await rm(join(directory, "threestrands-release-macos-aarch64"), { recursive: true });
     await assert.rejects(prepare(directory, output, "0.56.0"), { code: "ENOENT" });
+  });
+
+  it("leaves a skipped optional platform out of the assets, checksums, and update manifest", async (t) => {
+    const { directory, output } = await artifacts(t);
+    await rm(join(directory, "threestrands-release-linux-amd64"), { recursive: true });
+    await rm(join(directory, "threestrands-release-windows-x86_64"), { recursive: true });
+    const names = await prepare(directory, output, "0.56.0", undefined, ["linux-amd64", "windows-x86_64"]);
+    assert.deepEqual(names, [
+      "ThreeStrands_0.56.0_macos_aarch64.dmg", "ThreeStrands_0.56.0_macos_x86_64.dmg",
+      "ThreeStrands_0.56.0_macos_aarch64.app.tar.gz", "ThreeStrands_0.56.0_macos_x86_64.app.tar.gz",
+      "latest.json",
+    ]);
+    const manifest = JSON.parse(await readFile(join(output, "latest.json"), "utf8"));
+    assert.deepEqual(Object.keys(manifest.platforms), ["darwin-aarch64", "darwin-x86_64"]);
+    assert.doesNotMatch(await readFile(join(output, "SHA256SUMS"), "utf8"), /linux|windows/);
+  });
+
+  it("still requires a platform that was not skipped, and never skips macOS", async (t) => {
+    const { directory, output } = await artifacts(t);
+    await rm(join(directory, "threestrands-release-windows-x86_64"), { recursive: true });
+    await assert.rejects(prepare(directory, output, "0.56.0", undefined, ["linux-amd64"]), { code: "ENOENT" });
+    await assert.rejects(prepare(directory, output, "0.56.0", undefined, ["macos-aarch64", "windows-x86_64"]), /cannot skip macos-aarch64/);
+    await assert.rejects(readdir(output), { code: "ENOENT" });
   });
 
   it("rejects invalid versions and existing output directories", async (t) => {

@@ -304,6 +304,9 @@ jobs:
   release:
     name: Create draft GitHub Release
     needs: [validate, macos, linux, windows]
+    # macOS must build. Linux and Windows are optional: when either fails, the
+    # draft ships without it and the run summary says so.
+    if: ${{ !cancelled() && needs.validate.result == 'success' && needs.macos.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Only this job can write repository contents. It has no signing secrets.
@@ -324,6 +327,9 @@ jobs:
       - name: Collect all installers and generate checksums
         env:
           RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_SKIPPED_PLATFORMS: >-
+            ${{ needs.linux.result != 'success' && 'linux-amd64' || '' }}
+            ${{ needs.windows.result != 'success' && 'windows-x86_64' || '' }}
         run: node scripts/release.mjs prepare-assets artifacts/release-input artifacts/release-assets "$RELEASE_VERSION"
       # Notes cover every CHANGELOG.md section since the last published
       # release. Drafts never shipped, so they do not end the range.
@@ -346,6 +352,8 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
           RELEASE_CHANNEL: ${{ needs.validate.outputs.channel }}
           RELEASE_PRERELEASE: ${{ needs.validate.outputs.prerelease }}
+          LINUX_RESULT: ${{ needs.linux.result }}
+          WINDOWS_RESULT: ${{ needs.windows.result }}
         shell: bash
         run: |
           set -euo pipefail
@@ -367,7 +375,17 @@ jobs:
           {
             echo "### ThreeStrands $RELEASE_TAG ($RELEASE_CHANNEL)"
             echo
-            echo "All installers, update packages, latest.json, and SHA256SUMS are attached to a draft release."
+            missing=()
+            [[ "$LINUX_RESULT" == success ]] || missing+=("Linux ($LINUX_RESULT)")
+            [[ "$WINDOWS_RESULT" == success ]] || missing+=("Windows ($WINDOWS_RESULT)")
+            if (( ${#missing[@]} )); then
+              echo "> [!WARNING]"
+              echo "> Not in this release: ${missing[*]}. Those users are not offered this update."
+              echo
+              echo "The macOS installers and update packages, plus any other platform that built, are attached to a draft release."
+            else
+              echo "All installers, update packages, latest.json, and SHA256SUMS are attached to a draft release."
+            fi
             echo "Verify installation, then publish the draft in GitHub Releases."
             echo "Publishing a stable release offers it to installed copies through latest.json."
             gh release view "$RELEASE_TAG" --json url --jq '.url'
@@ -377,7 +395,8 @@ jobs:
     name: Redeploy marketing site
     needs: [validate, release]
     # Betas stay off the marketing site; it shows the latest stable version.
-    if: needs.validate.outputs.prerelease == 'false'
+    # !cancelled() keeps an optional platform's failure from skipping this job.
+    if: ${{ !cancelled() && needs.release.result == 'success' && needs.validate.outputs.prerelease == 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     # Unlike pushes, a workflow_dispatch sent with GITHUB_TOKEN starts a run.

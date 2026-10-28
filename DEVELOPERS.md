@@ -59,6 +59,12 @@ The release workflow builds installers and attaches them to a draft GitHub
 Release for installation checks before publishing. If the final tag push fails,
 retry `git push origin v<version>`; the signed tag already exists locally.
 
+Only the macOS builds are required. If the Linux or Windows build fails, the
+draft is still created without that platform's installers and without its entry
+in `latest.json`, and the run summary names what is missing. Copies on that
+platform keep their current version until a later release includes it. To fill
+the gap before publishing, re-run the failed job and then the release job.
+
 ### Release notes and the changelog
 
 `CHANGELOG.md` is the only source of release notes. The draft release's notes
