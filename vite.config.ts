@@ -49,5 +49,7 @@ export default defineConfig(({ command }) => ({
     // machine; half the cores leaves room so concurrent runs don't starve and
     // time out. CI runners are small and dedicated, so they keep the default.
     maxWorkers: process.env.CI ? undefined : "50%",
+    // Leaves room for several 5 s Testing Library waits in one App test.
+    testTimeout: 20_000,
   },
 }));
