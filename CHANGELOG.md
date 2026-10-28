@@ -4,6 +4,8 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+## 0.178.10 — 2026-10-28
+
 ### Fixed
 - Inbox previews no longer show stray `<br>` tags from emails whose plain-text version contains HTML line breaks.
 
