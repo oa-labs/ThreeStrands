@@ -573,6 +573,34 @@ fn mark_unverifiable_only_touches_an_uncertain_row() {
     }
 }
 
+// A forward's server draft can outlive delivery until draft cleanup runs.
+fn forwarded_thread_with_server_draft() -> Vec<RawMessage> {
+    [("original", vec![], "sender@example.com", "Original email"),
+     ("forward-draft", vec!["DRAFT"], "you@example.com", "Forwarded email"),
+     ("fake-sent", vec!["SENT"], "you@example.com", "Forwarded email")]
+        .into_iter()
+        .map(|(id, labels, sender, body)| serde_json::from_value(serde_json::json!({
+            "id": id, "threadId": "forward-thread", "labelIds": labels,
+            "internalDate": "1793200000000",
+            "payload": {"mimeType": "text/plain", "headers": [
+                {"name": "From", "value": sender},
+                {"name": "To", "value": "recipient@example.com"},
+                {"name": "Subject", "value": "Forward topic"}
+            ], "body": {"data": URL_SAFE_NO_PAD.encode(body)}}
+        })).unwrap())
+        .collect()
+}
+
+fn assert_forward_has_only_original_and_sent(database: &Database) {
+    let threads = database.list_all_mail(Some("you@example.com")).unwrap();
+    let thread = threads.iter().find(|t| t.provider_thread_id == "forward-thread").unwrap();
+    assert!(thread.archived);
+    let detail = database.get_thread(&thread.id).unwrap();
+    let mut ids: Vec<_> = detail.messages.iter().map(|m| m.id.as_str()).collect();
+    ids.sort();
+    assert_eq!(ids, ["fake-sent", "original"]);
+}
+
 mod reconciliation {
     use super::*;
     use crate::{
@@ -637,8 +665,9 @@ mod reconciliation {
         async fn list_inbox(&self, _: Option<&str>) -> ProviderResult<ThreadPage> {
             panic!("Reconciliation must not list the inbox");
         }
-        async fn fetch_thread(&self, _: &str) -> ProviderResult<Vec<RawMessage>> {
-            panic!("These receipts do not identify a provider thread");
+        async fn fetch_thread(&self, id: &str) -> ProviderResult<Vec<RawMessage>> {
+            assert_eq!(id, "forward-thread");
+            Ok(forwarded_thread_with_server_draft())
         }
     }
 
@@ -677,6 +706,28 @@ mod reconciliation {
         async fn delete_label(&self, _: &str) -> ProviderResult<()> {
             panic!("Reconciliation must not delete labels");
         }
+    }
+
+    #[tokio::test]
+    async fn reconciled_forward_excludes_server_draft_from_conversation() {
+        let service = service();
+        let original = crate::mime::normalize(&forwarded_thread_with_server_draft()[0]).unwrap();
+        service.database.upsert_thread("you@example.com", &[original]).unwrap();
+        let draft = saved(&service.database);
+        let item = service.database.queue(&draft.id, draft.revision, false, &[], None, &service.root).unwrap();
+        service.database.test_connection().unwrap().execute(
+            "UPDATE outbox_messages SET state='uncertain' WHERE id=?1", [&item.id],
+        ).unwrap();
+        let item = service.database.outbox().unwrap().remove(0);
+        let provider = ReconcileProvider {
+            operation: item.id.clone(), verifiable_delivery: true,
+            sent_copy: Some(DeliveryReceipt {
+                provider_message_id: "fake-sent".into(), thread_id: Some("forward-thread".into()),
+            }),
+            lookups: AtomicUsize::new(0),
+        };
+        service.reconcile_with_provider(&item, &provider).await.unwrap();
+        assert_forward_has_only_original_and_sent(&service.database);
     }
 
     #[tokio::test]
@@ -841,9 +892,8 @@ mod prepare_failures {
         }
     }
 
-    // The non-send traits are never exercised by `send_due_item` on these
-    // paths (a successful send with thread_id=None does no modify/fetch);
-    // panic so a future change that starts calling them is caught.
+    // Only a threaded send fetches the conversation. Other non-send
+    // operations stay forbidden in these send-path tests.
     #[async_trait::async_trait]
     impl MailSync for FakeSender {
         async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
@@ -855,8 +905,9 @@ mod prepare_failures {
         async fn list_inbox(&self, _: Option<&str>) -> ProviderResult<ThreadPage> {
             panic!("send path must not list");
         }
-        async fn fetch_thread(&self, _: &str) -> ProviderResult<Vec<RawMessage>> {
-            panic!("new-message send has no thread to fetch");
+        async fn fetch_thread(&self, id: &str) -> ProviderResult<Vec<RawMessage>> {
+            assert_eq!(id, "forward-thread");
+            Ok(forwarded_thread_with_server_draft())
         }
     }
     #[async_trait::async_trait]
@@ -938,6 +989,20 @@ mod prepare_failures {
                 |r| r.get(0),
             )
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn sent_forward_excludes_server_draft_from_conversation() {
+        let service = service();
+        let original = crate::mime::normalize(&forwarded_thread_with_server_draft()[0]).unwrap();
+        service.database.upsert_thread("you@example.com", &[original]).unwrap();
+        let mut item = ready_item(&service);
+        item.draft.mode = "forward".into();
+        item.draft.thread_id = Some("forward-thread".into());
+        let provider = FakeSender { behaviour: PrepareBehaviour::Succeed(SendResult::Accepted) };
+        service.send_due_item(&item, &provider, "you@example.com", "", unix_millis()).await.unwrap();
+        assert_eq!(state_of(&service, &item.id), "sent");
+        assert_forward_has_only_original_and_sent(&service.database);
     }
 
     #[tokio::test]

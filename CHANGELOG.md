@@ -7,6 +7,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ### New
 - Find **Help and Documentation** in the command palette, or open the relevant guide from Settings. Help now includes search, troubleshooting, and dedicated guides for Today, Files, privacy, and moving between computers.
 
+### Fixed
+- Forwarding an email no longer shows its saved draft as an extra message in the conversation.
+
 ## 0.178.10 — 2026-10-28
 
 ### Fixed

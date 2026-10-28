@@ -1042,7 +1042,7 @@ async fn ingest_threads(
 }
 
 /// A message the provider still holds as an unsent draft.
-fn is_draft_message(message: &crate::mime::RawMessage) -> bool {
+pub(crate) fn is_draft_message(message: &crate::mime::RawMessage) -> bool {
     message.label_ids.iter().any(|label| label == "DRAFT")
 }
 

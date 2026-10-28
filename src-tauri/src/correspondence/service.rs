@@ -730,6 +730,7 @@ impl Correspondence {
                 let messages = provider.fetch_thread(thread_id).await.map_err(error)?;
                 let normalized = messages
                     .iter()
+                    .filter(|message| !crate::sync::is_draft_message(message))
                     .map(crate::mime::normalize)
                     .collect::<Result<Vec<_>, _>>()?;
                 self.database
@@ -913,8 +914,11 @@ impl Correspondence {
                         .await;
                 }
                 if let Ok(messages) = provider.fetch_thread(thread_id).await {
+                    // Server-draft cleanup is asynchronous; a saved draft may
+                    // still accompany the sent copy in this provider response.
                     if let Ok(normalized) = messages
                         .iter()
+                        .filter(|message| !crate::sync::is_draft_message(message))
                         .map(crate::mime::normalize)
                         .collect::<Result<Vec<_>, _>>()
                     {
