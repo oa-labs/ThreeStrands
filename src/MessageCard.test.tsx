@@ -247,6 +247,22 @@ describe("MessageCard", () => {
       expect(save).toHaveBeenCalledWith("m1", "a-report");
     });
 
+    it("renders badge names with the extension outside the truncating span", () => {
+      vi.spyOn(mailClient, "fileStars").mockResolvedValue([]);
+      render(<MessageCard message={withAttachments([report])} isExpanded {...stableProps} />);
+      const badge = screen.getByRole("button", { name: "Open report.pdf" });
+      expect(within(badge).getByText("report")).toHaveClass("attachment-name-base");
+      expect(within(badge).getByText(".pdf")).toHaveClass("attachment-name-ext");
+    });
+
+    it("shows each attachment's kind instead of a generic paperclip", () => {
+      vi.spyOn(mailClient, "fileStars").mockResolvedValue([]);
+      const notes = { id: "a-notes", filename: "notes.txt", mimeType: "text/plain", size: 94 };
+      render(<MessageCard message={withAttachments([notes])} isExpanded {...stableProps} />);
+      const badge = screen.getByRole("button", { name: "Open notes.txt" });
+      expect(badge.querySelector("[data-attachment-kind]")).toHaveAttribute("data-attachment-kind", "document");
+    });
+
     it("marks a risky file type on its chip and leaves confirmation to the native open", async () => {
       vi.spyOn(mailClient, "fileStars").mockResolvedValue([]);
       const open = vi.spyOn(mailClient, "openAttachment").mockResolvedValue();

@@ -142,6 +142,25 @@ describe("ThreadList", () => {
     expect(screen.queryByText("Inbox", { selector: ".thread-location-tag" })).not.toBeInTheDocument();
   });
 
+  it("shows a list paperclip only when a thread has attachments", () => {
+    const row = (hasAttachments: boolean) => render(
+      <ThreadRow
+        thread={{ ...thread, hasAttachments }}
+        selected={false}
+        checked={false}
+        showAccount={false}
+        onSelect={vi.fn()}
+        onToggleCheck={vi.fn()}
+      />,
+    );
+    const withAttachments = row(true);
+    expect(screen.getByLabelText("Has attachments")).toBeVisible();
+    withAttachments.unmount();
+
+    row(false);
+    expect(screen.queryByLabelText("Has attachments")).toBeNull();
+  });
+
   it("routes modifier clicks to multi-select gestures instead of opening the row", () => {
     const onSelect = vi.fn();
     const onSelectionGesture = vi.fn();
