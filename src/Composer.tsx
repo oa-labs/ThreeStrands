@@ -1,7 +1,7 @@
 import { useAiAvailability } from "./useAiAvailability";
 import { draftSignatureSnapshot, type SignatureState } from "./signatures";
 import { SignaturesSettings } from "./SignaturesSettings";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import { Paperclip, Sparkles, Trash, X } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { Draft, OutboxItem, SendingIdentity } from "./correspondence";
@@ -187,6 +187,33 @@ export const Composer = forwardRef<ComposerHandle, {
     if (!busyRef.current) bodyEditor.current?.insertText(text);
   }
   function focusBody() { bodyEditor.current?.focusBody(); }
+  useLayoutEffect(() => {
+    const composer = panel.current;
+    const stack = composer?.closest<HTMLElement>(".message-stack");
+    if (!composer || !stack) return;
+    const resize = () => {
+      const style = getComputedStyle(stack);
+      const height = stack.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+      composer.style.setProperty("--compose-available-height", `${height}px`);
+    };
+    resize();
+    // Apply pane resizes in the next frame, outside ResizeObserver's delivery cycle.
+    let frame = 0;
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(resize);
+    });
+    observer?.observe(stack);
+    return () => { observer?.disconnect(); cancelAnimationFrame(frame); };
+  }, []);
+  const revealReviewedDraft = useCallback(() => {
+    const subject = panel.current?.querySelector<HTMLInputElement>('[aria-label="Subject"]');
+    const body = panel.current?.querySelector<HTMLElement>('[aria-label="Message Body"]');
+    if (body) body.scrollTop = 0;
+    subject?.focus({ preventScroll: true });
+    subject?.closest("label")?.scrollIntoView?.({ block: "start" });
+  }, []);
+
   function replaceRecipient(from: string, to: string) {
     for (const field of ["to", "cc", "bcc"] as const) {
       const next = replaceAddress(latest.current[field], from, to);
@@ -481,7 +508,7 @@ export const Composer = forwardRef<ComposerHandle, {
         ) : null}
         {error && !remote && <div className="notice compose-error" role="alert">{error} <button className="btn btn-sm" onClick={() => void run(async () => { await flush(); })}>Retry Save</button></div>}
         {reviewEnabled && reviewOpen ? (
-          <DraftReviewSection actions={draftReview} account={draft.account} goal={reviewGoal} onGoalChange={setReviewGoal} enabled available={Boolean(review?.available)} onOpenSettings={review?.onOpenSettings} onOpenWritingProfile={review?.onOpenWritingProfile} onClose={() => setReviewOpen(false)} />
+          <DraftReviewSection actions={draftReview} account={draft.account} goal={reviewGoal} onGoalChange={setReviewGoal} enabled available={Boolean(review?.available)} onOpenSettings={review?.onOpenSettings} onOpenWritingProfile={review?.onOpenWritingProfile} onClose={() => setReviewOpen(false)} onApplied={revealReviewedDraft} />
         ) : null}
       </div>
       {!isReply ? writingTools : null}

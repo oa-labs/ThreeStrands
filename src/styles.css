@@ -2415,6 +2415,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .compose-check-warning { border-left-color:var(--warning); color:var(--text); }
 .compose-check > .btn { justify-self:start; }
 .composer-content > .draft-review { margin-top:var(--space-3); padding:var(--space-3) 0; border-top:1px solid var(--border); }
+.draft-review-applied { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-2); margin-bottom:var(--space-2); font-size:var(--text-meta); }
 .draft-review-content { display:grid; gap:var(--space-2); min-width:0; font-size:var(--text-meta); line-height:var(--leading-normal); }
 .draft-review-content > .btn { justify-self:start; }
 .draft-review-content p { margin:0; }
@@ -3208,7 +3209,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 
 .composer { display: flex; flex-direction: column; width: min(var(--dialog-w-xl), 100%); max-height: calc(100vh - 48px); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--raised); box-shadow: var(--shadow-dialog); overflow: hidden; }
 .composer { position: relative; max-width: 840px; margin: 0 auto; }
-.composer-inline { width: 100%; max-height: none; flex-shrink: 0; box-shadow: var(--shadow-raised); }
+.composer-inline { width: 100%; max-height: var(--compose-available-height, calc(100dvh - 48px)); flex-shrink: 0; box-shadow: var(--shadow-raised); }
 .draft-message-stack { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
 .draft-message-stack > .composer { flex: 1; min-height: 0; max-height: 100%; }
 .message-stack > .composer:not(:first-child) { margin-top: var(--space-6); }

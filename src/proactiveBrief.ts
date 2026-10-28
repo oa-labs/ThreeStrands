@@ -28,6 +28,15 @@ export function proactiveBriefSender(detail: ThreadDetail, ownAddresses: Readonl
   return null;
 }
 
+/**
+ * Whether the conversation's newest message is the user's own, as right
+ * after replying: nothing new has arrived for a proactive brief to cover.
+ */
+export function endsWithOwnMessage(detail: ThreadDetail, ownAddresses: ReadonlySet<string>): boolean {
+  const newest = detail.messages.at(-1);
+  return Boolean(newest && ownAddresses.has(parseAddress(newest.sender).email.toLocaleLowerCase()));
+}
+
 /** Whether the user has sent mail to this address before. */
 export async function hasEmailedBefore(email: string): Promise<boolean> {
   const address = email.toLocaleLowerCase();

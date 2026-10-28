@@ -9,6 +9,7 @@
 //! anything, because that quote may be the only copy of a message that is not
 //! stored locally or not being sent.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 
 pub const SHINGLE_WORDS: usize = 4;
@@ -148,37 +149,31 @@ pub struct ThreadSearchText {
     /// repeated at `MIN_SEEN_LINE_COVERAGE`, not 100%) are kept, so every
     /// word stays searchable.
     pub body: String,
-    /// The latest message before any quoted history, HTML entity references
-    /// decoded, Markdown and URLs removed (see [`crate::preview_text`]),
-    /// whitespace and invisible padding collapsed, and capped at
-    /// `SEARCH_PREVIEW_CHARS`; empty when that message has no text.
-    /// Everything here is also in `body`, so cutting at an unconfirmed quote
-    /// loses no matches.
+    /// The latest message before any quoted history (or, for a forward with
+    /// no comment, the forwarded message), cleaned for one line by
+    /// [`crate::preview_text::message_preview`]; empty when that message has
+    /// no text. Everything here is also in `body`, so cutting at an
+    /// unconfirmed quote loses no matches.
     pub latest_preview: String,
 }
 
 /// Search text for a thread's message bodies, oldest first.
 pub fn searchable_thread_text<'a>(bodies: impl IntoIterator<Item = &'a str>) -> ThreadSearchText {
+    searchable_thread_text_with(bodies, &crate::preview_text::PreviewContext::default())
+}
+
+/// [`searchable_thread_text`], with what the caller knows about the latest
+/// message beyond its plain text to shape its preview.
+pub fn searchable_thread_text_with<'a>(
+    bodies: impl IntoIterator<Item = &'a str>,
+    context: &crate::preview_text::PreviewContext,
+) -> ThreadSearchText {
     let mut history = ThreadHistory::default();
     let mut used: HashSet<String> = HashSet::new();
     let mut out = String::new();
-    let mut latest_preview = String::new();
+    let mut latest = Cow::Borrowed("");
     for body in bodies {
-        // Decoded before collapsing and capping, so entity padding collapses
-        // like the characters it stands for and the cap never splits a
-        // reference.
-        let preview = crate::preview_text::decode_entity_references(&body[..history.preview_text_len(body)]);
-        // Markdown and raw URLs are noise in a one-line preview; a body that
-        // is nothing but a link still previews as that link.
-        let readable = crate::preview_text::readable_preview(&preview);
-        let collapse = crate::preview_text::collapse_preview;
-        latest_preview = match collapse(&readable) {
-            cleaned if cleaned.is_empty() => collapse(&preview),
-            cleaned => cleaned,
-        }
-        .chars()
-        .take(SEARCH_PREVIEW_CHARS)
-        .collect();
+        latest = preview_source(&history, body);
         let new_len = history.new_text_len(body);
         let (new_text, removed) = body.split_at(new_len);
         out.push_str(new_text);
@@ -193,7 +188,81 @@ pub fn searchable_thread_text<'a>(bodies: impl IntoIterator<Item = &'a str>) -> 
         history.remember(body);
         used.extend(body.lines().flat_map(line_words));
     }
-    ThreadSearchText { body: out, latest_preview }
+    ThreadSearchText { body: out, latest_preview: crate::preview_text::message_preview(&latest, context) }
+}
+
+/// Most lines, and most words on each, the text above a forwarded message
+/// may have to count as a signature rather than a comment.
+pub const MAX_SIGNATURE_LINES: usize = 8;
+pub const MAX_SIGNATURE_LINE_WORDS: usize = 6;
+
+/// The part of `body` a preview shows: its text before any quoted history,
+/// or the forwarded message when nothing but a signature precedes it.
+fn preview_source<'a>(history: &ThreadHistory, body: &'a str) -> Cow<'a, str> {
+    let cut = history.preview_text_len(body);
+    forwarded_text(body, cut).map_or(Cow::Borrowed(&body[..cut]), Cow::Owned)
+}
+
+/// The forwarded message's own text, before any history it quotes, when a
+/// forwarded-message separator at or before `cut` has only a signature (or
+/// nothing) above it. A forwarded message quoted with `>` loses one level.
+fn forwarded_text(body: &str, cut: usize) -> Option<String> {
+    let lines = split_lines(body);
+    let separator = lines.iter().position(|(_, text)| {
+        is_separator_marker(text) && text.to_lowercase().contains("forward")
+    })?;
+    if lines[separator].0 > cut {
+        return None;
+    }
+    let above: Vec<&str> = lines[..separator].iter().map(|(_, text)| *text).filter(|text| !text.trim().is_empty()).collect();
+    if !is_signature(&above) {
+        return None;
+    }
+    // Past the forwarded header block: its fields up to the first blank line.
+    let mut index = separator + 1;
+    while lines.get(index).is_some_and(|(_, text)| text.trim().is_empty()) {
+        index += 1;
+    }
+    if lines.get(index).is_some_and(|(_, text)| header_field(text).is_some()) {
+        while lines.get(index).is_some_and(|(_, text)| !text.trim().is_empty()) {
+            index += 1;
+        }
+    }
+    let rest = &body[lines.get(index).map_or(body.len(), |(start, _)| *start)..];
+    let quoted = rest
+        .lines()
+        .find(|line| !line_words(line).is_empty())
+        .is_some_and(|line| line.trim_start().starts_with('>'));
+    let rest = if quoted {
+        rest.lines()
+            .map(|line| {
+                let line = line.trim_start();
+                line.strip_prefix('>').map_or(line, |unquoted| unquoted.strip_prefix(' ').unwrap_or(unquoted))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        rest.to_string()
+    };
+    let forwarded = &rest[..ThreadHistory::default().preview_text_len(&rest)];
+    forwarded.lines().any(|line| !line_words(line).is_empty()).then(|| forwarded.to_string())
+}
+
+/// Whether `lines` read as a sign-off rather than a comment: few short lines,
+/// no question or exclamation, and a contact detail (an address, a phone
+/// number, or a `|` between title parts). No lines at all also qualifies.
+fn is_signature(lines: &[&str]) -> bool {
+    if lines.is_empty() {
+        return true;
+    }
+    let contact = |line: &str| {
+        line.contains('@') || line.contains('|') || line.chars().filter(char::is_ascii_digit).count() >= 7
+    };
+    lines.len() <= MAX_SIGNATURE_LINES
+        && lines.iter().all(|line| {
+            line_words(line).len() <= MAX_SIGNATURE_LINE_WORDS && !line.trim_end().ends_with(['?', '!'])
+        })
+        && lines.iter().any(|line| contact(line))
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -290,8 +359,10 @@ fn attribution_end(lines: &[&str], index: usize) -> Option<usize> {
         joined += 1 + next.len();
         let continuation = next.to_lowercase();
         let rest = continuation.strip_suffix("wrote:").map(str::trim_end);
+        // The address may be bracketed however a converter wrote it:
+        // `<a@b>`, or `[a@b]>` where a link label landed inside the brackets.
         let is_continuation = rest.is_some_and(|rest| {
-            rest.is_empty() || (rest.starts_with('<') && rest.ends_with('>') && rest.contains('@') && !rest.contains(char::is_whitespace))
+            rest.is_empty() || (rest.contains('@') && !rest.contains(char::is_whitespace))
         });
         if is_continuation {
             return (joined <= MAX_ATTRIBUTION_LENGTH).then_some(index + offset + 2);
@@ -318,6 +389,8 @@ fn has_address_or_time(text: &str) -> bool {
 
 /// First line of quoted history by structure alone, with the line after its
 /// attribution or header block (the cut itself for a `>` run), or None.
+/// The earliest of an attribution or separator, a `>` run, and a header
+/// block wins.
 fn structural_cut(lines: &[&str]) -> Option<(usize, usize)> {
     let marker = (0..lines.len()).find_map(|index| attribution_end(lines, index).map(|end| (index, end)));
     let mut run = 0;
@@ -333,13 +406,15 @@ fn structural_cut(lines: &[&str]) -> Option<(usize, usize)> {
             run = 0;
         }
     }
-    match (marker, quote_run) {
-        (Some(a), Some(b)) => return Some(if a.0 <= b.0 { a } else { b }),
-        (Some(a), None) | (None, Some(a)) => return Some(a),
-        (None, None) => {}
-    }
-    // A From/Sent/To/Subject block, starting at a header line, after a
-    // separator line; the cut starts at the separator.
+    [marker, quote_run, header_block(lines)].into_iter().flatten().min_by_key(|(cut, _)| *cut)
+}
+
+/// A From/Sent/To/Subject block starting at a header line after other text.
+/// After a separator line the cut starts at the separator; without one the
+/// block also needs a Sent or Date and a To or Subject, and the cut starts
+/// at the block. Either way it needs three fields including From, and an
+/// address or a time.
+fn header_block(lines: &[&str]) -> Option<(usize, usize)> {
     (1..lines.len()).find_map(|index| {
         header_field(lines[index])?;
         let block: Vec<&str> = lines[index..]
@@ -349,12 +424,18 @@ fn structural_cut(lines: &[&str]) -> Option<(usize, usize)> {
             .copied()
             .collect();
         let fields: HashSet<&str> = block.iter().filter_map(|line| header_field(line)).collect();
-        let separator = (0..index).rev().find(|&line| !lines[line].trim().is_empty()).filter(|&line| {
-            let line = lines[line].trim();
-            line.chars().count() >= 2 && line.chars().all(|c| matches!(c, '-' | '—' | '_'))
-        })?;
-        (fields.len() >= 3 && fields.contains("from") && has_address_or_time(&block.join(" ")))
-            .then_some((separator, index + block.len()))
+        if !(fields.len() >= 3 && fields.contains("from") && has_address_or_time(&block.join(" "))) {
+            return None;
+        }
+        let end = index + block.len();
+        let previous = (0..index).rev().find(|&line| !lines[line].trim().is_empty())?;
+        let line = lines[previous].trim();
+        if line.chars().count() >= 2 && line.chars().all(|c| matches!(c, '-' | '—' | '_')) {
+            return Some((previous, end));
+        }
+        let dated = fields.contains("sent") || fields.contains("date");
+        let addressed = fields.contains("to") || fields.contains("subject");
+        (dated && addressed && header_field(lines[previous]).is_none()).then_some((index, end))
     })
 }
 
@@ -438,6 +519,10 @@ mod tests {
             format!("Reply.\n\nOn Mon, Sep 21, 2026 at 2:33 PM A. Sender\n<a@example.com> wrote:\n\n> {recorded}"),
             format!("Reply.\n\n-----Original Message-----\n{recorded}"),
             format!("Reply.\n\n________________\nFrom: A <a@example.com>\nSent: Monday 9:00 AM\nSubject: Feed\n\n{recorded}"),
+            // A link label wrapped onto the line with "wrote:".
+            format!("Reply.\n\nOn Tue, September 15, 2026 1:00 PM, A. Sender <a@example.com>\n[a@example.com]> wrote:\n\n> {recorded}"),
+            // A header block with no separator line above it.
+            format!("Reply.\nFrom: A <a@example.com>\nSent: Monday, September 14, 2026 at 10:40 AM\nTo: b@example.com\nSubject: Feed\n{recorded}"),
         ];
         for body in bodies {
             assert_eq!(new_text(&history(&[&recorded]), &body).trim_end(), "Reply.", "{body}");
@@ -562,5 +647,75 @@ mod tests {
             let kept = history(&[&repeated]).new_text_len(&body) == body.len();
             assert_eq!(!kept, removed, "{extra} new words");
         }
+    }
+
+    fn preview(bodies: &[&str]) -> String {
+        searchable_thread_text(bodies.iter().copied()).latest_preview
+    }
+
+    #[test]
+    fn the_earliest_quote_structure_ends_the_preview() {
+        // A header block above an older "On … wrote:" further down.
+        let body = "See you then!\nLisa\n________________________________\nFrom: Joel Reed <joel@example.com>\nSent: Thursday, 17 September 2026 13:25:16\nTo: Lisa <lisa@example.com>\nSubject: Re: See you soon\n\nThank you Lisa.\n\nOn 2026-09-17T17:20:42+00:00, Lisa <lisa@example.com> wrote:\n> Thanks for the treat!";
+        assert_eq!(preview(&[body]), "See you then! Lisa");
+        // A `>` run above a later separator.
+        let body = "Agreed.\n> one\n> two\n> three\n> four\n> five\n\n-----Original Message-----\nolder";
+        assert_eq!(preview(&[body]), "Agreed.");
+        // An attribution wrapped with a bracketed address.
+        let body = "Half an hour, I promise.\n\nOn Tue, September 15, 2026 1:00 PM, Colin <c@example.com>\n[c@example.com]> wrote:\n\n> Joel,\n> Interested in coming on as a guest?";
+        assert_eq!(preview(&[body]), "Half an hour, I promise.");
+    }
+
+    #[test]
+    fn a_header_block_without_a_separator_needs_a_date_and_an_addressee() {
+        let block = |fields: &str| format!("Following up on the below.\n{fields}\n\nJoel, in light of your success I am writing to you.");
+        for (fields, cut) in [
+            ("From: A <a@example.com>\nSent: Monday, September 14, 2026 at 10:40 AM\nTo: joel@example.com", true),
+            ("From: A <a@example.com>\nDate: Mon, Sep 14, 2026 at 10:40 AM\nSubject: Intro", true),
+            // Three fields, but no date or no addressee.
+            ("From: A <a@example.com>\nTo: joel@example.com\nCc: b@example.com", false),
+            ("From: A <a@example.com>\nSent: Monday 10:40 AM\nCc: b@example.com", false),
+            // A date and an addressee, but only two fields.
+            ("From: A <a@example.com>\nSent: Monday 10:40 AM", false),
+        ] {
+            assert_eq!(preview(&[&block(fields)]) == "Following up on the below.", cut, "{fields}");
+        }
+    }
+
+    #[test]
+    fn a_forward_with_only_a_signature_previews_the_forwarded_message() {
+        assert_eq!((MAX_SIGNATURE_LINES, MAX_SIGNATURE_LINE_WORDS), (8, 6));
+        let forwarded = "---------- Forwarded message ---------\nFrom: Andrew <andrew@example.com>\nDate: Thu, Aug 27, 2026, 1:27 PM\nSubject: Hiring report\nTo: Cara <cara@example.com>, Everyone <\neveryone@example.com>\n\n\nTeam, here's a competitors report.\n\nOn Wed, Cara <cara@example.com> wrote:\n> Can someone pull the report?";
+        for above in [
+            "Joel Reed\nCEO | OpenArc\n412.212.8417\n\nHelping clients build great software\nand hire great people.\n\n",
+            "Ann Lee\nann@example.com\n",
+            "",
+        ] {
+            assert_eq!(preview(&[&format!("{above}{forwarded}")]), "Team, here's a competitors report.", "{above}");
+        }
+        for above in [
+            // A comment: a question, a long line, or no contact detail.
+            "Can you handle this?\nAnn | 555-010-0000\n\n",
+            "Here is the report our clients were so impressed by last week.\nAnn | 555-010-0000\n\n",
+            "Please review.\nAnn\n\n",
+        ] {
+            let text = preview(&[&format!("{above}{forwarded}")]);
+            assert!(text.starts_with(&above.split('\n').next().unwrap()[..6]), "{above} → {text}");
+        }
+        // Signature lines at, and past, their limits.
+        let lines = |count: usize, words: usize| (0..count).map(|_| vec!["w"; words].join(" ")).collect::<Vec<_>>().join("\n") + "\n555-010-0000\n\n";
+        for (above, forwarded_shown) in [
+            (lines(MAX_SIGNATURE_LINES - 1, MAX_SIGNATURE_LINE_WORDS), true),
+            (lines(MAX_SIGNATURE_LINES, MAX_SIGNATURE_LINE_WORDS), false),
+            (lines(1, MAX_SIGNATURE_LINE_WORDS + 1), false),
+        ] {
+            assert_eq!(preview(&[&format!("{above}{forwarded}")]).starts_with("Team"), forwarded_shown, "{above}");
+        }
+        // A forwarded message quoted with `>` loses one level, and history it quotes is cut.
+        let quoted = "---------- Forwarded message ----------\nFrom: Shop <hello@example.com>\nDate: Mar 11, 2026 at 6:00 PM\n\n>\n> SHOP\n> Pack your bags.\n>\n> On Mon, A <a@example.com> wrote:\n> > older";
+        assert_eq!(preview(&[quoted]), "SHOP Pack your bags.");
+        // A forward under an earlier quote cut is not reached.
+        let body = format!("Thanks!\n\nOn Mon, A <a@example.com> wrote:\n> Joel Reed\n> 412.212.8417\n{forwarded}");
+        assert_eq!(preview(&[&body]), "Thanks!");
     }
 }

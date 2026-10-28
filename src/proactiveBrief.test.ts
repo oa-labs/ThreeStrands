@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { hasEmailedBefore, MIN_PROACTIVE_DWELL_SECONDS, proactiveBriefSender, proactiveDwellMs } from "./proactiveBrief";
+import { endsWithOwnMessage, hasEmailedBefore, MIN_PROACTIVE_DWELL_SECONDS, proactiveBriefSender, proactiveDwellMs } from "./proactiveBrief";
 import { mailClient } from "./data/client";
 import type { ContactProfile, Message, ThreadDetail } from "./domain";
 
@@ -48,6 +48,14 @@ describe("proactive brief rules", () => {
     expect(proactiveBriefSender(thread(message("1", "Jane <jane@example.com>"), message("2", "news@list.example.com", { unsubscribe })), own)).toBeNull();
     expect(proactiveBriefSender(thread(message("1", "you@example.com"), message("2", "Work <work@example.com>")), own)).toBeNull();
     expect(proactiveBriefSender(thread(message("1", "Jane <jane@example.com>", { unsubscribe: { methods: [] } as unknown as Message["unsubscribe"] })), own)).toBe("jane@example.com");
+  });
+
+  it("has nothing to brief right after the user's own reply", () => {
+    const asked = message("1", "Cecelia <cecelia@example.com>");
+    expect(endsWithOwnMessage(thread(asked, message("2", "Me <You@Example.com>")), own)).toBe(true);
+    expect(endsWithOwnMessage(thread(asked, message("2", "work@example.com")), own)).toBe(true);
+    expect(endsWithOwnMessage(thread(message("1", "you@example.com"), asked), own)).toBe(false);
+    expect(endsWithOwnMessage(thread(), own)).toBe(false);
   });
 
   it("recognizes senders the user has emailed, matching the address exactly", async () => {

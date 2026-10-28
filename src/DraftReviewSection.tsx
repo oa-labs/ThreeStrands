@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Sparkles, X } from "lucide-react";
 import { ContextSectionHeader } from "./ContextSections";
 import { mailClient } from "./data/client";
@@ -30,7 +30,7 @@ type SentReview = { snapshot: DraftReviewSnapshot; profile: WritingProfile; goal
  * sending account's writing profile, and a goal can be added afterwards to
  * review again. Hidden unless Draft Assist is on with a provider chosen.
  */
-export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalChange, enabled, available, onOpenSettings, onOpenWritingProfile, onClose }: {
+export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalChange, enabled, available, onOpenSettings, onOpenWritingProfile, onClose, onApplied }: {
   actions: DraftReviewActions;
   /** The goal, kept by the composer so closing the panel does not clear it. */
   goal?: string;
@@ -46,6 +46,8 @@ export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalCha
   /** Opens Settings at Writing Profile; without it, the profile is described but not linked. */
   onOpenWritingProfile?(): void;
   onClose?(): void;
+  /** Reveal the final draft after the review has collapsed. */
+  onApplied?(): void;
 }) {
   const [localGoal, setLocalGoal] = useState("");
   const goal = keptGoal ?? localGoal;
@@ -56,6 +58,8 @@ export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalCha
   const [original, setOriginal] = useState<DraftReviewSnapshot | null>(null);
   const [review, setReview] = useState<DraftReviewResult | null>(null);
   const [applied, setApplied] = useState<DraftReviewSnapshot | null>(null);
+  const [expanded, setExpanded] = useState(true);
+  const contentId = useId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const inFlight = useRef(false);
@@ -67,9 +71,12 @@ export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalCha
   useEffect(() => {
     mounted.current = true;
     // Opened below a long draft, it scrolls into view.
-    section.current?.scrollIntoView?.({ block: "nearest" });
+    section.current?.scrollIntoView?.({ block: "start" });
     return () => { mounted.current = false; };
   }, []);
+  useLayoutEffect(() => {
+    if (applied) onApplied?.();
+  }, [applied, onApplied]);
   // Opening the panel asks for the review, once the API key check confirms
   // one can be sent.
   useEffect(() => {
@@ -88,6 +95,7 @@ export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalCha
       if (!snapshot.body.trim()) throw new Error("Write some email text before requesting a review.");
       const profile = writingProfileFor(profiles, snapshot.account);
       const request = { snapshot, profile, goal: goal.trim() };
+      setExpanded(true);
       setReview(null);
       setApplied(null);
       setSent(request);
@@ -113,6 +121,7 @@ export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalCha
     if (!original || !review) return;
     try {
       setApplied(actions.replaceDraft(original, { subject: review.revisedSubject, body: review.revisedBody }));
+      setExpanded(false);
       setError("");
     } catch (reason) { setError(errorMessage(reason)); }
   }
@@ -122,6 +131,7 @@ export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalCha
     try {
       const restored = actions.replaceDraft(applied, { subject: original.subject, bodyHtml: original.bodyHtml });
       setOriginal(restored);
+      setExpanded(true);
       setApplied(null);
       setError("");
     } catch (reason) { setError(errorMessage(reason)); }
@@ -135,6 +145,13 @@ export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalCha
     <ContextSectionHeader title="Draft Review" titleId="draft-review-title" icon={<Sparkles size={ICON_SIZE.sm} />} actions={onClose ? (
       <button type="button" className="btn-icon btn-icon-sm" aria-label="Close Draft Review" onClick={onClose}><X size={ICON_SIZE.sm} /></button>
     ) : undefined} />
+    {applied ? <div className="draft-review-applied">
+      <span role="status">Revision applied.</span>
+      <button type="button" className="btn btn-sm" onClick={undo}>Undo Revision</button>
+      <button type="button" className="btn btn-sm" aria-expanded={expanded} aria-controls={contentId} onClick={() => setExpanded((value) => !value)}>{expanded ? "Hide Review" : "Show Review"}</button>
+    </div> : null}
+    {error ? <p className="context-status" role="alert">{error}</p> : null}
+    <div id={contentId} hidden={Boolean(applied) && !expanded}>
     {available ? <div className="draft-review-content">
       {busy ? <p className="context-section-note" role="status">Reviewing…</p> : null}
       {review && original && !busy ? <>
@@ -152,19 +169,15 @@ export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalCha
           <h4>Revised email</h4>
           <p><strong>Subject:</strong> {review.revisedSubject || "(no subject)"}</p>
           <pre>{review.revisedBody}</pre>
-          {applied ? <>
-            <p role="status">Revision applied.</p>
-            <button type="button" className="btn btn-sm" onClick={undo}>Undo Revision</button>
-          </> : <>
+          {!applied ? <>
             <p className="context-section-note">{replacesBody && protectedBody
               ? "Apply body suggestions manually to keep inline images and quoted text in place."
               : replacesBody ? "Applying replaces your written text and its formatting. Undo restores the original. Quoted history and attachments stay in place."
                 : "Only the subject changes. Your written text and formatting stay in place."}</p>
             <button type="button" className="btn btn-sm btn-primary" disabled={replacesBody && protectedBody} onClick={apply}>Apply Revision</button>
-          </>}
+          </> : null}
         </div> : null}
       </> : null}
-      {error ? <p className="context-status" role="alert">{error}</p> : null}
       {!busy && (review || error) ? <div className="draft-review-again">
         <label className="draft-review-goal">
           <span>{review ? "Not quite right? Add a goal for this email" : "Goal for This Email"} <small>(optional)</small></span>
@@ -195,5 +208,6 @@ export function DraftReviewSection({ actions, account, goal: keptGoal, onGoalCha
       <p className="context-section-note">Set up an AI provider and API key in AI settings to get writing feedback.</p>
       {onOpenSettings ? <button type="button" className="btn btn-sm" onClick={onOpenSettings}>AI Settings</button> : null}
     </div>}
+    </div>
   </section>;
 }

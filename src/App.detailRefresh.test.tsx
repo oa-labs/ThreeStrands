@@ -887,6 +887,23 @@ describe("conversation brief", () => {
       expect(briefThread).not.toHaveBeenCalled();
     });
 
+    it("does not brief a conversation right after the user's own reply", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      await enableAi({ summarize: true, actionExtraction: true, proactiveBriefs: true });
+      const briefThread = vi.spyOn(mailClient, "briefThread").mockResolvedValue(briefResult);
+      const [account] = await mailClient.listAccounts();
+      const originalGetThread = mailClient.getThread.bind(mailClient);
+      vi.spyOn(mailClient, "getThread").mockImplementation(async (id) => {
+        const detail = await originalGetThread(id);
+        if (id !== "roadmap") return detail;
+        const newest = detail.messages.at(-1)!;
+        return { ...detail, messages: [...detail.messages, { ...newest, id: "my-reply", sender: `Me <${account.email.toUpperCase()}>`, bodyText: "Happy to talk. I am free Tuesday at 10am." }] };
+      });
+      await openRoadmap();
+      await vi.advanceTimersByTimeAsync(dwell * 2);
+      expect(briefThread).not.toHaveBeenCalled();
+    });
+
     it("stays on request only while proactive suggestions are off", async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       await enableAi({ summarize: true, actionExtraction: true });
