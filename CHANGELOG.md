@@ -5,6 +5,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ## Unreleased
 
 ### Improved
+- Inbox previews now show more of what each email says. They stop before quoted replies, including Outlook-style headers; skip lines like **View this post on the web**, divider lines, image labels, and a first line that only repeats the subject; and for a forward with no comment, show the forwarded message instead of your signature.
 - Sender warnings stay in the email rather than repeating in the side panel, with familiar-name warnings showing the sending and previously seen addresses on separate labeled lines. Choose **Trust this address for this account** after reviewing its scope, or undo it with **Forget confirmation** in the side panel’s **Sender checks** section.
 
 ### Fixed

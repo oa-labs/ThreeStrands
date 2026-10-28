@@ -8,6 +8,7 @@ use html5ever::tokenizer::{
 };
 use html5ever::LocalName;
 use std::cell::RefCell;
+use std::collections::HashSet;
 
 #[derive(Default)]
 struct TextSink {
@@ -19,6 +20,9 @@ struct TextState {
     text: String,
     pending_space: bool,
     ignored: Vec<LocalName>,
+    /// Alt and title text of images, which a reader sees only when an image
+    /// fails to load.
+    image_text: String,
 }
 
 impl TextState {
@@ -62,6 +66,14 @@ impl TokenSink for TextSink {
                     }
                     if let Some(raw) = raw_kind(name) {
                         return TokenSinkResult::RawData(raw);
+                    }
+                    if state.ignored.is_empty() && matches!(name, "img" | "area" | "input") {
+                        for attribute in &tag.attrs {
+                            if matches!(attribute.name.local.as_ref(), "alt" | "title") {
+                                state.image_text.push(' ');
+                                state.image_text.push_str(&attribute.value);
+                            }
+                        }
                     }
                 }
                 if state.ignored.is_empty()
@@ -126,12 +138,31 @@ fn raw_kind(name: &str) -> Option<RawKind> {
 }
 
 pub fn html_to_text(html: &str) -> String {
+    text_state(html).text.trim().to_string()
+}
+
+fn text_state(html: &str) -> TextState {
     let tokenizer = Tokenizer::new(TextSink::default(), Default::default());
     let input = BufferQueue::default();
     input.push_back(html.into());
     let _ = tokenizer.feed(&input);
     tokenizer.end();
-    tokenizer.sink.state.into_inner().text.trim().to_string()
+    tokenizer.sink.state.into_inner()
+}
+
+/// Words the HTML shows only as image alt or title text, never as visible
+/// text: lowercased runs of letters and digits. Plain-text alternatives
+/// often spell this text out (`Brand logo`), where it reads as message text.
+pub fn image_only_words(html: &str) -> HashSet<String> {
+    let state = text_state(html);
+    let words = |text: &str| -> HashSet<String> {
+        text.split(|c: char| !c.is_alphanumeric())
+            .filter(|word| !word.is_empty())
+            .map(str::to_lowercase)
+            .collect()
+    };
+    let visible = words(&state.text);
+    words(&state.image_text).into_iter().filter(|word| !visible.contains(word)).collect()
 }
 
 /// Longest preheader kept, in characters once whitespace and invisible
@@ -341,7 +372,7 @@ fn is_declaration(entry: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{after_leading_stylesheet, preheader, MAX_PREHEADER_CHARS, MIN_PREHEADER_WORDS};
+    use super::{after_leading_stylesheet, image_only_words, preheader, MAX_PREHEADER_CHARS, MIN_PREHEADER_WORDS};
 
     #[test]
     fn finds_text_hidden_ahead_of_the_visible_message() {
@@ -384,6 +415,26 @@ mod tests {
         ] {
             assert_eq!(preheader(html), None, "{html}");
         }
+    }
+
+    #[test]
+    fn image_only_words_are_alt_text_the_message_never_shows() {
+        let words = |html: &str| {
+            let mut words: Vec<String> = image_only_words(html).into_iter().collect();
+            words.sort();
+            words
+        };
+        // A logo in a table cell, and an icon row in a signature.
+        assert_eq!(
+            words("<table><tr><td><img src=\"cid:a\" alt=\"Brand logo\"></td><td>Your brand weekly digest</td></tr></table>"),
+            ["logo"]
+        );
+        assert_eq!(
+            words("<p>Ann Lee<br>Director</p><a href=\"https://example.com\"><img src=\"x.png\" title=\"Icon\" alt=\"facebook\"></a>"),
+            ["facebook", "icon"]
+        );
+        // Alt text inside ignored blocks, and other attributes, do not count.
+        assert!(words("<head><title>t</title></head><noscript><img alt=\"Tracking pixel\"></noscript><div title=\"Note\">Hi</div><img src=\"x\">").is_empty());
     }
 
     #[test]
