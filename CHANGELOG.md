@@ -8,6 +8,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Find **Help and Documentation** in the command palette, or open the relevant guide from Settings. Help now includes search, troubleshooting, and dedicated guides for Today, Files, privacy, and moving between computers.
 
 ### Fixed
+- The previous-day and next-day tooltips in the Today sidebar now stay inside the app window.
 - Forwarding an email no longer shows its saved draft as an extra message in the conversation.
 
 ## 0.178.10 — 2026-10-28

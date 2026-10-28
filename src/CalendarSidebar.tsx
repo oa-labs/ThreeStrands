@@ -326,10 +326,10 @@ export function CalendarSidebar({
           }).format(date)}</h2>
         </div>
         <div className="calendar-sidebar-actions">
-          <HoverTooltip title="Previous day (-)"><button type="button" className="btn-icon" aria-label="Previous day (-)" onClick={() => moveDay(-1)}>
+          <HoverTooltip title="Previous day (-)" placement="bottom"><button type="button" className="btn-icon" aria-label="Previous day (-)" onClick={() => moveDay(-1)}>
             <ChevronLeft size={ICON_SIZE.lg} />
           </button></HoverTooltip>
-          <HoverTooltip title="Next day (=)"><button type="button" className="btn-icon" aria-label="Next day (=)" onClick={() => moveDay(1)}>
+          <HoverTooltip title="Next day (=)" placement="bottom"><button type="button" className="btn-icon" aria-label="Next day (=)" onClick={() => moveDay(1)}>
             <ChevronRight size={ICON_SIZE.lg} />
           </button></HoverTooltip>
           {!embedded ? (

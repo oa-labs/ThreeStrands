@@ -297,6 +297,24 @@ describe("calendar sidebar", () => {
     expect(screen.getByRole("complementary", { name: "Conversation context" })).toBeInTheDocument();
   });
 
+  it.each([false, true])("keeps day navigation tooltips inside the right edge (embedded: %s)", async (embedded) => {
+    vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+    render(<CalendarSidebar onClose={vi.fn()} onOpenSettings={vi.fn()} embedded={embedded} />);
+    await screen.findByText("No events scheduled.");
+
+    for (const name of ["Previous day (-)", "Next day (=)"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button.closest(".tooltip-anchor")).toHaveClass("tooltip-bottom");
+      expect(within(button.closest(".tooltip-anchor") as HTMLElement).getByRole("tooltip")).toBeInTheDocument();
+    }
+    // Below the trigger, with the tooltip's right edge aligned to the button:
+    // its width extends inward rather than beyond the window's right edge.
+    expect(declarations(".tooltip-bottom .hover-tooltip")).toMatchObject({
+      top: "calc(100% + 8px)",
+      right: "0",
+    });
+  });
+
   it("moves the schedule day with - and = shortcuts", async () => {
     const listEvents = vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
     render(<CalendarSidebar onClose={vi.fn()} onOpenSettings={vi.fn()} />);
