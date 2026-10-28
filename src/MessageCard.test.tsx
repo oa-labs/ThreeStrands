@@ -96,6 +96,19 @@ describe("MessageCard", () => {
     expect(stableProps.onToggle).not.toHaveBeenCalled();
   });
 
+  it("places message actions to the left of the received time", () => {
+    const { container } = render(<MessageCard message={message} isExpanded {...stableProps} />);
+    const senderRow = container.querySelector<HTMLElement>(".message-sender-row")!;
+    const actions = senderRow.querySelector<HTMLElement>(".message-header-actions")!;
+    const receivedTime = senderRow.querySelector("time")!;
+
+    expect(Array.from(senderRow.children).indexOf(actions)).toBeLessThan(
+      Array.from(senderRow.children).indexOf(receivedTime),
+    );
+    expect(within(actions).getAllByRole("button").map((button) => button.getAttribute("aria-label")))
+      .toEqual(["Reply", "Reply All", "Forward"]);
+  });
+
   describe("recipient line", () => {
     const own = [{ email: "me@example.com" } as Account];
     const names = (container: HTMLElement) =>
