@@ -1,3 +1,4 @@
+import { openDocs } from "./helpDocs";
 import { runWorkspaceCommand, type WorkspaceCommandId } from "./workspaceCommands";
 import type { MessageFilterKind } from "./messageFilters";
 import type { SplitInbox, TaskStatus } from "./domain";
@@ -569,6 +570,15 @@ export const commands: Command[] = [
     group: "Application",
     enabled: () => true,
     run: (context) => complete(context.openShortcutHelp),
+  },
+  {
+    id: "help.open",
+    title: "Help and Documentation",
+    keywords: ["help", "docs", "support", "troubleshooting", "guide"],
+    keys: [],
+    group: "Application",
+    enabled: () => true,
+    run: () => complete(() => { void openDocs(); }),
   },
   {
     id: "gettingStarted.open",

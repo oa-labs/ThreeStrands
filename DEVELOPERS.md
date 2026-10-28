@@ -183,3 +183,31 @@ operating-system keychain. Never commit the credential value.
 Sign-in opens the system browser and listens on a random loopback port, so
 both must be available. Token storage needs a logged-in desktop keychain
 service.
+
+## Live-account release checks
+
+Automated coverage includes native SQLite restart and migration tests, provider
+contract suites, fault injection, MIME round trips, controlled send clocks and
+transports, and Playwright keyboard, compose, and layout workflows. Checks
+against real accounts are left to the developer and remain release gates until
+recorded as done:
+
+1. Connect a Google test account and confirm OAuth, initial import, and
+   incremental sync.
+2. Compose and send only to a designated test recipient; inspect received
+   To/Cc/Bcc behavior and message text.
+3. Reply and reply-all; confirm Gmail threading, including edited subjects.
+4. Forward and compare attachment bytes and Unicode filenames at receipt.
+5. Save offline, quit and relaunch, reconnect, send, and undo.
+6. Exercise file-picker cancel, window close and app quit, token expiry, and
+   account disconnect/reconnect while mail is queued.
+7. Verify a scheduled send, sleep/wake and restart recovery, and read-only
+   visibility on a second enrolled computer.
+
+If a delivery outcome is unresolved, check the provider's Sent folder before
+composing another message.
+
+
+## Maintaining user help
+
+User instructions live in `site/docs/`. When shipping a user-visible change, check the affected guide, update its `reviewed` version only after reviewing the content, and run `pnpm test:site`. Preserve explicit heading IDs when renaming sections; keep old section links when moving content. The shortcut reference and transferred-settings list are generated from app catalogs. Do not recreate a second feature inventory in repository docs.

@@ -2,7 +2,11 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { publishedSections, renderChangelogPage, sectionId } from "../../site/changelog";
-import { DOC_SLUGS, headingId, parseFrontMatter, renderDoc } from "../../site/docs";
+import { DOC_SLUGS, headingId, parseFrontMatter, renderDoc, searchEntries } from "../../site/docs";
+import { searchDocs } from "../../site/src/docsSearch";
+import { GETTING_STARTED_STEPS } from "../../src/gettingStartedSteps";
+import { SETTINGS_HELP } from "../../src/helpDocs";
+import { TRANSFERRED_DATA } from "../../src/settingsTransferCatalog";
 import { shortcutGroups } from "../../src/shortcutCatalog";
 
 const RELEASES = "https://github.com/oa-labs/ThreeStrands/releases/latest";
@@ -617,6 +621,118 @@ test.describe("legal pages", () => {
 });
 
 test.describe("docs", () => {
+  test("all help sections, app links, and old anchors resolve", () => {
+    const docs = new Map(DOC_SLUGS.map((slug) => [slug, renderDoc(slug)]));
+    const validate = (slug: string, section?: string) => {
+      const doc = docs.get(slug as typeof DOC_SLUGS[number]);
+      expect(doc, slug).toBeDefined();
+      if (section) expect(doc!.html, `${slug}#${section}`).toContain(`id="${section}"`);
+    };
+    for (const help of [...GETTING_STARTED_STEPS.map((step) => ({ slug: step.docSlug, section: step.docSection })), ...Object.values(SETTINGS_HELP)]) validate(help.slug, help.section);
+    for (const doc of docs.values()) {
+      for (const match of doc.html.matchAll(/href="([\w-]+)\.html#([^"]+)"/g)) validate(match[1]!, match[2]);
+    }
+    for (const id of ["today", "search", "files", "trust-and-attachment-warnings"]) validate("triage", id);
+    validate("getting-started", "proton-mail-bridge");
+    validate("settings-and-sync", "replicated-sync");
+    const transfer = docs.get("settings-and-sync")!.html;
+    for (const item of TRANSFERRED_DATA) expect(transfer).toContain(item.label);
+    expect(transfer).toContain("It is not a backup of mail, drafts, tasks, goals, or queued sends.");
+    expect(transfer).toContain("import replaces");
+  });
+
+  test("stable explicit IDs survive title changes and duplicates fail at every level", () => {
+    const source = "---\ntitle: T\nnav: T\nsummary: S\nreviewed: 0.178.10\n---\n";
+    expect(renderDoc("triage", source + "## Renamed section {#original-link}").headings).toEqual([{ id: "original-link", text: "Renamed section" }]);
+    expect(() => renderDoc("triage", source + "## A {#same}\n### B {#same}")).toThrow(/two sections/);
+    expect(() => renderDoc("triage", source + "## A\n### B\n### B")).toThrow(/two sections/);
+  });
+
+  test("search indexes article bodies and headings with useful synonym matches", () => {
+    const entries = searchEntries();
+    for (const [query, target] of [["backup", "settings-and-sync.html"], ["attachment", "files.html"], ["delayed send", "compose.html"], ["availability unknown", "calendar.html"], ["recovery phrase", "sync.html"]]) {
+      expect(searchDocs(entries, query).some((match) => match.href.startsWith(target!)), query).toBe(true);
+    }
+    expect(searchDocs(entries, "")).toEqual([]);
+    expect(searchDocs(entries, "zzqnomatch")).toEqual([]);
+    expect(searchDocs(entries, "mail").length).toBeLessThanOrEqual(12);
+    for (const entry of entries) {
+      const [file, id] = entry.href.split("#");
+      const doc = renderDoc(file!.replace(".html", "") as typeof DOC_SLUGS[number]);
+      if (id) expect(doc.html).toContain(`id="${id}"`);
+      expect(entry.text).not.toContain("<ts-");
+    }
+  });
+
+  test("search works from the keyboard, highlights safely, and recovers from no results", async ({ page }) => {
+    await page.goto("./docs/index.html");
+    const search = page.getByRole("searchbox", { name: "Search help" });
+    await search.fill("backup");
+    await expect(page.locator("#docs-results mark").first()).toBeVisible();
+    await search.press("ArrowDown");
+    await expect(page.locator("#docs-results a").first()).toBeFocused();
+    await page.keyboard.press("ArrowUp");
+    await expect(search).toBeFocused();
+    await search.fill("zzqnomatch");
+    await expect(page.locator("#docs-search-status")).toContainText("No results");
+    await expect(page.locator("#docs-results").getByRole("link", { name: "Browse Troubleshooting" })).toBeVisible();
+    await search.fill('<img src=x onerror="alert(1)">');
+    await expect(page.locator("#docs-results img")).toHaveCount(0);
+    await search.press("Escape");
+    await expect(search).toHaveValue("");
+    await expect(page.locator("#docs-results")).toBeHidden();
+    await search.fill("delayed send");
+    await search.press("Enter");
+    await expect(page).toHaveURL(/docs\/compose\.html#/);
+  });
+
+  test("narrow screens retain browse and section navigation", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("./docs/calendar.html");
+    await expect(page.locator(".docs-browse")).not.toHaveAttribute("open");
+    await page.locator(".docs-browse > summary").click();
+    await expect(page.getByRole("navigation", { name: "Documentation", exact: true }).getByRole("link", { name: "Files", exact: true })).toBeVisible();
+    await page.locator(".docs-on-page > summary").click();
+    await page.getByRole("navigation", { name: "On this page", exact: true }).getByRole("link", { name: "Book Time for Tasks" }).click();
+    await expect(page).toHaveURL(/#book-time-for-tasks$/);
+  });
+
+  test("static content and browse links remain usable without JavaScript", async ({ browser, baseURL }) => {
+    const context = await browser.newContext({ javaScriptEnabled: false });
+    const page = await context.newPage();
+    await page.goto(`${baseURL}docs/index.html`);
+    await expect(page.getByRole("heading", { name: "What Are You Trying to Do?" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Documentation", exact: true }).getByRole("link", { name: "Files", exact: true })).toBeVisible();
+    await context.close();
+  });
+
+  test("screenshots enlarge and restore focus, and section links can be copied", async ({ page, context }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.goto("./docs/compose.html");
+    const trigger = page.getByRole("button", { name: /^Enlarge screenshot:/ }).first();
+    await trigger.click();
+    await expect(page.getByRole("dialog", { name: "Enlarged screenshot" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(trigger).toBeFocused();
+    await page.getByRole("button", { name: "Copy link to Outbox", exact: true }).click();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toMatch(/docs\/compose.html#outbox$/);
+  });
+
+  test("publishes discovery and fallback pages with article support links", async ({ page, request }) => {
+    await page.goto("./docs/files.html");
+    const canonical = (await page.locator('link[rel="canonical"]').getAttribute("href"))!;
+    expect(new URL(canonical).pathname).toMatch(/docs\/files.html$/);
+    const report = page.getByRole("link", { name: "Report a docs issue" });
+    const url = new URL((await report.getAttribute("href"))!);
+    expect(url.searchParams.get("body")).toContain("docs/files.html");
+    expect((await request.get("./sitemap.xml")).status()).toBe(200);
+    const sitemap = await (await request.get("./sitemap.xml")).text();
+    for (const slug of DOC_SLUGS) expect(sitemap).toContain(`docs/${slug}.html`);
+    expect(await (await request.get("./robots.txt")).text()).toContain("Sitemap:");
+    await page.goto("./404.html");
+    await expect(page.getByRole("link", { name: "Browse help docs" })).toHaveAttribute("href", /docs\/index.html$/);
+  });
+
   test("every Markdown page is published, in sidebar order", () => {
     const sources = readdirSync(path.resolve("site/docs")).filter((file) => file.endsWith(".md")).map((file) => file.slice(0, -3));
     expect([...sources].sort()).toEqual([...DOC_SLUGS].sort());
@@ -627,8 +743,8 @@ test.describe("docs", () => {
     expect(() => parseFrontMatter("## No front matter")).toThrow(/front matter/);
     expect(parseFrontMatter("---\ntitle: A: B\nnav: A\n---\nBody")).toEqual({ meta: { title: "A: B", nav: "A" }, body: "Body" });
     expect(() => renderDoc("triage", "---\ntitle: T\nnav: T\n---\nBody")).toThrow(/summary/);
-    expect(() => renderDoc("triage", "---\ntitle: T\nnav: T\nsummary: S\n---\n# Title")).toThrow(/start headings at ##/);
-    expect(() => renderDoc("triage", "---\ntitle: T\nnav: T\nsummary: S\n---\n## Same\n\n## Same")).toThrow(/two sections/);
+    expect(() => renderDoc("triage", "---\ntitle: T\nnav: T\nsummary: S\nreviewed: 0.178.10\n---\n# Title")).toThrow(/start headings at ##/);
+    expect(() => renderDoc("triage", "---\ntitle: T\nnav: T\nsummary: S\nreviewed: 0.178.10\n---\n## Same\n\n## Same")).toThrow(/two sections/);
     expect(headingId("Send, Undo, and <em>Send Later</em>")).toBe("send-undo-and-send-later");
   });
 
@@ -660,13 +776,17 @@ test.describe("docs", () => {
       const internal = await page.locator("a[href]").evaluateAll((links) =>
         links.map((link) => (link as HTMLAnchorElement).href).filter((href) => href.startsWith(location.origin)),
       );
+      const responses = new Map<string, string>();
       for (const href of new Set(internal.map((href) => href.split("#")[0]!))) {
-        expect((await request.get(href)).status(), href).toBe(200);
+        const response = await request.get(href);
+        expect(response.status(), href).toBe(200);
+        responses.set(href, await response.text());
       }
-      for (const href of internal.filter((href) => href.includes("#") && href.startsWith(page.url().split("#")[0]!))) {
-        const id = decodeURIComponent(href.split("#")[1]!);
-        if (id === "main") continue;
-        expect(await page.locator(`[id="${id}"]`).count(), href).toBe(1);
+      for (const href of internal.filter((href) => href.includes("#"))) {
+        const [file, fragment] = href.split("#");
+        if (!fragment) continue;
+        const id = decodeURIComponent(fragment);
+        expect(responses.get(file!), href).toContain(`id="${id}"`);
       }
       const unsafe = await page.locator('a[href^="http"]').evaluateAll((links) =>
         links.filter((link) => !(link.getAttribute("rel") ?? "").split(/\s+/).includes("noopener")).map((link) => link.outerHTML),
@@ -702,7 +822,7 @@ test.describe("docs", () => {
     await expect(writing).not.toContainText("Send & Mark Done");
     await page.goto("./docs/calendar.html");
     const calendar = page.locator(".docs-body");
-    for (const claim of ["Drive Time Buffer", "Draft Reply With These Times", "also work without AI", "All day"]) {
+    for (const claim of ["Drive Time Buffer", "Draft Reply With These Times", "works without AI", "All day"]) {
       await expect(calendar).toContainText(claim);
     }
     await page.goto("./docs/triage.html");

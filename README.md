@@ -44,8 +44,9 @@ Around those three, ThreeStrands also includes:
   It's off until you turn it on, and then it uses your own provider and API key
   with no ThreeStrands server in between.
 
-See [features, keyboard shortcuts, and known limitations](docs/features.md) for
-the full list.
+See the [help guides](https://www.threestrands.app/docs/index.html) and
+[compatibility and limitations](https://www.threestrands.app/docs/compatibility.html)
+for current behavior and setup instructions.
 
 ## Install
 

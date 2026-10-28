@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import { CHANGELOG_PAGE, changelogPage } from "./changelog";
-import { docInputs, docsPages } from "./docs";
+import { DOC_SLUGS, docInputs, docsPages, escapeHtml } from "./docs";
 
 const siteRoot = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(siteRoot, "..");
@@ -72,13 +72,21 @@ function icon(name: string) {
  * path, e.g. https://www.threestrands.app/) is used when it is known.
  */
 function socialUrl(file: string) {
-  const siteUrl = process.env.SITE_URL;
-  return siteUrl ? new URL(file, siteUrl.endsWith("/") ? siteUrl : `${siteUrl}/`).href : `${siteBase}${file}`;
+  const siteUrl = process.env.SITE_URL || "https://www.threestrands.app/";
+  return new URL(file, siteUrl.endsWith("/") ? siteUrl : `${siteUrl}/`).href;
 }
 
 function siteMarkup(): Plugin {
   return {
     name: "threestrands-site-markup",
+    generateBundle() {
+      const origin = process.env.SITE_URL || "https://www.threestrands.app/";
+      const root = origin.endsWith("/") ? origin : `${origin}/`;
+      const urls = ["", "privacy.html", "terms.html", "changelog.html", ...DOC_SLUGS.map((slug) => `docs/${slug}.html`)];
+      this.emitFile({ type: "asset", fileName: "sitemap.xml", source: `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.map((file) => `<url><loc>${escapeHtml(new URL(file, root).href)}</loc></url>`).join("")}</urlset>` });
+      this.emitFile({ type: "asset", fileName: "robots.txt", source: `User-agent: *\nAllow: /\nSitemap: ${new URL("sitemap.xml", root).href}\n` });
+      this.emitFile({ type: "asset", fileName: "404.html", source: `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Page not found — ThreeStrands</title><style>body{font:1.15rem/1.6 system-ui,sans-serif;max-width:40rem;margin:10vh auto;padding:1.5rem;color:#1d1a3d;background:#f3eae9}a{color:#5240ae}a:focus-visible{outline:3px solid;outline-offset:4px}</style></head><body><main><h1>Page not found</h1><p>This guide may have moved. Browse or search the help docs to find it.</p><p><a href="${escapeHtml(new URL("docs/index.html", root).href)}">Browse help docs</a></p><p><a href="${escapeHtml(new URL("docs/troubleshooting.html", root).href)}">Troubleshooting</a> · <a href="${escapeHtml(new URL("docs/get-help.html", root).href)}">Get help</a></p></main></body></html>` });
+    },
     transformIndexHtml: {
       order: "pre",
       handler: (html) =>

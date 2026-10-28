@@ -1,3 +1,4 @@
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Draft, OutboxItem } from "./correspondence";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +7,8 @@ import { mailClient } from "./data/client";
 import type { ThreadTask } from "./domain";
 import { SEARCH_DEBOUNCE_MS } from "./SearchField";
 import { clearScheduleCache } from "./calendarScheduleCache";
+
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resolve()) }));
 
 const demoThreadIds = ["welcome", "roadmap", "privacy"];
 
@@ -1886,6 +1889,14 @@ describe("getting started checklist", () => {
   useConversationFixture();
   beforeEach(() => localStorage.removeItem("threestrands.gettingStarted"));
   afterEach(() => localStorage.removeItem("threestrands.gettingStarted"));
+
+  it("opens help directly from the command palette", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Command Palette (⌘K)" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "Filter Commands" }), { target: { value: "Help and Documentation" } });
+    fireEvent.click(screen.getByRole("button", { name: /Help and Documentation/ }));
+    expect(openUrl).toHaveBeenLastCalledWith("https://www.threestrands.app/docs/index.html");
+  });
 
   it("checks off the connected account, the palette, and an archive as they happen", async () => {
     render(<App />);

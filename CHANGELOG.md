@@ -4,6 +4,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### New
+- Find **Help and Documentation** in the command palette, or open the relevant guide from Settings. Help now includes search, troubleshooting, and dedicated guides for Today, Files, privacy, and moving between computers.
+
 ## 0.178.10 — 2026-10-28
 
 ### Fixed

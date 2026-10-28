@@ -1,6 +1,9 @@
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SettingsHarness } from "./test/settingsHarness";
+
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resolve()) }));
 
 async function openSettings() {
   render(<SettingsHarness />);
@@ -28,6 +31,15 @@ describe("settings section navigation", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+  });
+
+  it("opens contextual help for appearance, accounts, privacy, transfer, and delivery diagnostics", async () => {
+    const dialog = await openSettings();
+    for (const [section, slug] of [["Appearance", "appearance"], ["Mail Accounts", "mail-accounts"], ["Privacy", "privacy"], ["Data Transfer", "settings-and-sync"], ["Diagnostics", "troubleshooting"]]) {
+      fireEvent.click(within(dialog).getByRole("button", { name: section }));
+      fireEvent.click(within(dialog).getByRole("button", { name: `Help with ${section}` }));
+      expect(openUrl).toHaveBeenLastCalledWith(`https://www.threestrands.app/docs/${slug}.html`);
+    }
   });
 
   it("searches for IMAP setup in Mail Accounts", async () => {

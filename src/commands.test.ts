@@ -1,3 +1,4 @@
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { describe, expect, it, vi } from "vitest";
 import {
   accountCommand,
@@ -10,6 +11,8 @@ import {
   type CommandContext,
 } from "./commands";
 import { formattingShortcuts } from "./richText";
+
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resolve()) }));
 
 function noopContext(): CommandContext {
   return {
@@ -586,6 +589,14 @@ describe("command registry", () => {
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "!", shiftKey: true, code: "Digit1" }), "!")).toBe(true);
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "1", shiftKey: true, code: "Digit1" }), "!")).toBe(true);
     expect(matchesShortcut(new KeyboardEvent("keydown", { key: "1", code: "Digit1" }), "!")).toBe(false);
+  });
+
+  it("opens documentation directly from the command catalog", async () => {
+    const command = commands.find((candidate) => candidate.id === "help.open")!;
+    expect(command.enabled(noopContext())).toBe(true);
+    expect(commandMatchesFilter(command, "troubleshooting")).toBe(true);
+    await command.run(noopContext());
+    expect(openUrl).toHaveBeenCalledWith("https://www.threestrands.app/docs/index.html");
   });
 
   it("registers the common shortcut-help key", () => {

@@ -2333,3 +2333,41 @@ button.keycap:active {
     stroke-dashoffset: 0 !important;
   }
 }
+
+/* Help navigation and tools share the site's locally hosted assets. */
+.docs-browse > summary { cursor: pointer; font-weight: 650; margin-bottom: 16px; }
+.docs-nav .legal-toc-title { margin-top: 20px; }
+.docs-search { display: block; border: 1px solid var(--paper-line); border-radius: 8px; padding: 16px; margin-bottom: 24px; }
+.docs-search label { display: block; font-weight: 650; color: var(--ink); }
+.docs-search input { width: 100%; min-height: 44px; margin-top: 8px; padding: 10px; border: 1px solid var(--paper-line); border-radius: 4px; background: var(--paper); color: var(--ink); font: inherit; }
+.docs-search ul { list-style: none; padding: 0; }
+.docs-search li { padding-block: 12px; border-top: 1px solid var(--paper-line); }
+.docs-search li p, #docs-search-status { font-size: .9rem; }
+.docs-search mark { background: #ffe39b; color: #28202b; }
+.docs-on-page { display: none; }
+.docs-reviewed { font-size: .85rem; }
+.docs-permalink { font-size: .8em; text-decoration: none; }
+.docs-copy-link, .docs-enlarge { font: inherit; font-size: .8rem; cursor: pointer; color: var(--accent); border: 1px solid var(--paper-line); border-radius: 4px; background: transparent; padding: 5px 8px; }
+.docs-related, .docs-support { margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--paper-line); }
+.docs-image-dialog { max-width: 96vw; max-height: 94vh; padding: 16px; background: var(--paper); color: var(--ink); border: 1px solid var(--paper-line); border-radius: 8px; }
+.docs-image-dialog::backdrop { background: rgb(0 0 0 / .75); }
+.docs-image-dialog img { display: block; max-width: 100%; height: auto; margin-top: 12px; }
+.docs-image-dialog button { font: inherit; cursor: pointer; }
+@media (max-width: 900px) {
+  .docs-on-page { display: block; }
+  .docs-on-page summary { cursor: pointer; font-weight: 650; }
+}
+/* Keep table headers and relationships available at narrow widths. */
+@media (max-width: 560px) {
+  .docs-body table { display: block; overflow-x: auto; max-width: 100%; }
+  .docs-body thead { display: table-header-group; }
+  .docs-body tbody th, .docs-body tbody td { display: table-cell; padding: 10px; }
+}
+@media print {
+  .nav, .footer, .docs-nav, .docs-search, .docs-on-page, .docs-permalink, .docs-copy-link, .docs-enlarge, .docs-support, .docs-image-dialog { display: none !important; }
+  .legal-grid { display: block; }
+  .docs-hero, .paper { background: white; color: black; padding-block: 16px; }
+  .docs-body, .docs-body strong, .docs-body a { color: black; }
+  .docs-body picture img { max-width: 100%; break-inside: avoid; }
+  .docs-body h2, .docs-body h3 { break-after: avoid; }
+}

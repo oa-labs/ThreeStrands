@@ -2,9 +2,10 @@
 title: Tasks and Goals
 nav: Tasks and Goals
 summary: Turn conversations into actions, follow-ups, and waiting-fors, then link them to the quarterly or yearly goals they move forward.
+reviewed: 0.179.0
 ---
 
-## Create a Task
+## Create a Task {#create-a-task}
 
 - **From a conversation** — press <kbd>d</kbd>, or click **+ Add task** in the conversation's Tasks section. The task stays linked to the conversation.
 - **On its own** — press <kbd>3</kbd> for Tasks and click **Add Task**.
@@ -20,7 +21,7 @@ A follow-up or waiting-for that's linked to a conversation completes on its own 
 
 <ts-shot scene="tasks" alt="The Tasks board with To Do, In Progress, and Done columns."></ts-shot>
 
-## Work Through Tasks
+## Work Through Tasks {#work-through-tasks}
 
 Press <kbd>v</kbd> to switch between **List** and **Board**. The board has To Do, In Progress, and Done columns. Press <kbd>Tab</kbd> to cycle through views: All, Overdue, Today, Upcoming, Anytime, Waiting, and Completed.
 
@@ -36,7 +37,7 @@ Task details save automatically as you edit them.
 
 To set aside time for a task, drag it from **Open tasks** in **Calendar** onto the week. See [Book Time for Tasks](calendar.html#book-time-for-tasks).
 
-## Goals
+## Goals {#goals}
 
 <ts-shot scene="goals" alt="Goals for the quarter, each with open and done task counts."></ts-shot>
 
@@ -48,6 +49,6 @@ Goals give your tasks a reason. Open them with **Goals** or <kbd>g</kbd> then <k
 
 Press <kbd>Shift + g</kbd> on a task to link it to a goal. Select a goal to see only its work, with open and done counts. A goal is marked **Stale** when none of its tasks have moved in three weeks.
 
-## Review a Period
+## Review a Period {#review-a-period}
 
 When a period ends, ThreeStrands asks you to review its goals. Mark each one **Achieved** or **Dropped**, or **carry it** into the next period. Choose **Later** to put the review off for the rest of the quarter.

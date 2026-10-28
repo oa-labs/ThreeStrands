@@ -4,6 +4,11 @@ on:
   pull_request:
     paths:
       - "site/**"
+      - "src/helpDocs.ts"
+      - "src/gettingStartedSteps.ts"
+      - "src/settingsTransferCatalog.ts"
+      - "src/shortcutCatalog.ts"
+      - "src/commands.ts"
       - "CHANGELOG.md"
       - "scripts/changelog.mjs"
       - "tests/site/**"
@@ -14,6 +19,11 @@ on:
       - master
     paths:
       - "site/**"
+      - "src/helpDocs.ts"
+      - "src/gettingStartedSteps.ts"
+      - "src/settingsTransferCatalog.ts"
+      - "src/shortcutCatalog.ts"
+      - "src/commands.ts"
       - "tests/site/**"
       - "playwright.site.config.ts"
       - ".github/workflows/site.yml"

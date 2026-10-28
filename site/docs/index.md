@@ -1,33 +1,34 @@
 ---
 title: ThreeStrands Docs
 nav: Overview
-summary: How to set up ThreeStrands and get the most from mail, tasks, and your calendar — one page per part of the app.
+summary: Guides for setup, daily work, privacy, data transfer, and troubleshooting in ThreeStrands.
+reviewed: 0.179.0
 ---
 
 ThreeStrands is a keyboard-first desktop email client that keeps your follow-ups and your schedule beside your mail. Everything runs on your computer: there is no ThreeStrands account or server.
 
 <ts-shot scene="inbox" alt="The ThreeStrands inbox with a conversation open beside the message list."></ts-shot>
 
-## Start Here
+## What Are You Trying to Do? {#what-are-you-trying-to-do}
 
-1. [Install the app and connect an account](getting-started.html) — Gmail, or any IMAP server, including Proton Mail through Proton Mail Bridge.
-2. [Learn the triage loop](triage.html) — read, archive with <kbd>e</kbd>, and keep your inbox short.
-3. Press <kbd>⌘/Ctrl + k</kbd> in the app whenever you're unsure. The command palette finds every action by name.
+- [Connect Gmail or IMAP](getting-started.html), or [connect Proton Mail Bridge](proton-bridge.html).
+- [Learn the basics in ten minutes](first-steps.html).
+- [Find a missing message](troubleshooting.html#a-message-is-missing) or [attachment](files.html).
+- [Schedule an email](compose.html#send-undo-and-send-later).
+- [Share free meeting times](calendar.html#find-times-beside-a-conversation).
+- [Move to another computer](settings-and-sync.html#replace-a-computer).
+- [Fix mail that is not syncing or sending](troubleshooting.html).
 
-The app also has a **Getting Started** checklist in the sidebar that checks itself off as you go. You can reopen it at any time from the command palette.
+The app's **Getting Started** checklist checks itself off as you go. Reopen it from the command palette with <kbd>⌘/Ctrl + k</kbd>. Calendar and AI setup are optional.
 
-## Guides
+## Guides {#guides}
 
-- [Getting Started](getting-started.html) — installing, connecting mail, and the Settings you'll want first.
-- [Reading and Triage](triage.html) — archive, Split Inboxes, newsletter controls, Trust checks, Today, and Inbox zero.
-- [Writing Mail](compose.html) — rich text, signatures, snippets, Send Later, Sent, and checks before you send.
-- [Tasks and Goals](tasks-and-goals.html) — turn conversations into follow-ups and roll them up to goals.
-- [Calendar](calendar.html) — connect Google Calendar, plan your week, and share free times.
-- [Contacts](contacts.html) — profiles, groups, Keep in Touch reminders, import and export.
-- [AI Assistance](ai.html) — optional summaries, thread chat, and reply drafts with your own provider key.
-- [Settings Transfer and Sync](settings-and-sync.html) — move settings between computers and keep them in sync.
-- [Keyboard Shortcuts](keyboard-shortcuts.html) — every shortcut, generated from the app itself.
+Use the grouped navigation to browse daily work, setup and data, or reference pages. [Today](today.html), [Search](search.html), and [Files](files.html) each have their own guide. [Your first ten minutes](first-steps.html) walks through reading, replying, and keeping a follow-up.
 
-## Getting Help
+## Compatibility at a Glance {#compatibility-at-a-glance}
 
-Found a bug or have a question? [Open an issue on GitHub](https://github.com/oa-labs/ThreeStrands/issues). For how the app handles your data, read the [Privacy Policy](../privacy.html).
+Mail connects through Gmail or IMAP/SMTP; Proton Mail needs Bridge. Calendar uses a separate Google Calendar connection. Contacts support CSV/vCard transfer, with no ongoing Google Contacts or CardDAV connection. macOS is regularly tested; Windows and Linux builds are experimental. See [Compatibility and Limitations](compatibility.html).
+
+## Getting Help {#getting-help}
+
+[Something not working? Start with Troubleshooting](troubleshooting.html). For questions or bugs, [Get Help](get-help.html) explains how to report a problem. Read [Privacy and Local Storage](privacy.html) for data behavior and the [Privacy Policy](../privacy.html) for the full policy.

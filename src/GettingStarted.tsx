@@ -1,10 +1,9 @@
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openDocs } from "./helpDocs";
 import { Circle, CircleCheck } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Modal } from "./AppChrome";
 import {
   completeSteps,
-  docsUrl,
   GETTING_STARTED_STEPS,
   readGettingStarted,
   remainingSteps,
@@ -32,11 +31,6 @@ export function useGettingStarted({ mailConnected, calendarConnected, aiReady }:
   const complete = useCallback((id: GettingStartedStepId) => update((current) => completeSteps(current, [id])), [update]);
   const dismiss = useCallback(() => update((current) => (current.dismissed ? current : { ...current, dismissed: true })), [update]);
   return { state, visible: showGettingStarted(state), remaining: remainingSteps(state).length, complete, dismiss };
-}
-
-/** Opens a docs page in the system browser; the webview never navigates away from the app. */
-export function openDocs(slug: string, section?: string) {
-  void openUrl(docsUrl(slug, section)).catch(() => {});
 }
 
 export function GettingStartedDialog({

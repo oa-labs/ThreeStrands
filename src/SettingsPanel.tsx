@@ -1,3 +1,4 @@
+import { openDocs, SETTINGS_HELP } from "./helpDocs";
 import { SignaturesSettings, SignatureDefaultsDialog } from "./SignaturesSettings";
 import type { SignatureState } from "./signatures";
 import {
@@ -227,6 +228,7 @@ export function Settings({
             {visibleSections.length > 0 && selectedSection.autosaves ? (
               <span className="settings-save-note"><Check size={ICON_SIZE.xs} aria-hidden="true" /> Changes save automatically</span>
             ) : null}
+            {visibleSections.length > 0 ? <button type="button" className="btn-link" onClick={() => { const help = SETTINGS_HELP[section]; void openDocs(help.slug, help.section); }} aria-label={`Help with ${selectedSection.label}`}>Help</button> : null}
           </header>
           {visibleSections.length === 0 ? (
             <div className="settings-search-empty">
