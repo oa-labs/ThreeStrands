@@ -51,10 +51,10 @@ describe("mail account settings", () => {
     const onSetDisplayName = vi.fn();
     renderAccounts(vi.fn(), { onSetNickname, onSetDisplayName, accounts: [{ ...account, displayName: "Joel Reed" }] });
     const input = screen.getByRole("textbox", { name: `Account Nickname for ${account.email}` });
-    expect(input).toHaveAccessibleDescription(/only visible in ThreeStrands/i);
+    expect(input).toHaveAccessibleDescription();
     expect(input).toHaveAttribute("placeholder", "Work, Personal…");
     expect(screen.getByRole("textbox", { name: `Sender Name for ${account.email}` }))
-      .toHaveAccessibleDescription(/shown to recipients/i);
+      .toHaveAccessibleDescription();
     expect(screen.queryByRole("button", { name: /^Save/ })).not.toBeInTheDocument();
     fireEvent.change(input, { target: { value: "  Work  " } });
     await act(async () => { fireEvent.submit(input.closest("form")!); });

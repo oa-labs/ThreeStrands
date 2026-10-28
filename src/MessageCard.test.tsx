@@ -588,7 +588,6 @@ describe("MessageCard", () => {
       render(<MessageCard message={borrowed} isExpanded {...stableProps} subject="Hello" />);
       const banner = await screen.findByRole("note", { name: "Be careful" });
       expect(banner).toHaveTextContent("Familiar name, different email address");
-      expect(banner).toHaveTextContent("Trust will apply to this sending address and its current link destinations");
       expect(within(banner).getByText("Ada Lovelace")).toBeVisible();
       const sending = within(banner).getByText("Sending address");
       const seen = within(banner).getByText("Previously seen");

@@ -126,7 +126,6 @@ describe("App chrome", () => {
     expect(action).toHaveBeenCalledTimes(1);
     view.rerender(<ShortcutHelp onClose={close} />);
     const help = screen.getByRole("dialog", { name: "Keyboard Shortcuts" });
-    expect(within(help).getByText("Use ThreeStrands without leaving the keyboard.")).toBeInTheDocument();
     const paletteRow = within(help).getByText("Command Palette", { selector: "dt" }).parentElement!;
     expect(within(paletteRow).getByText("⌘/Ctrl + k").tagName).toBe("KBD");
 

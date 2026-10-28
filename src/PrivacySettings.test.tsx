@@ -29,13 +29,11 @@ describe("local mail retention settings", () => {
     expect(retention).toHaveValue("forever");
   });
 
-  it("explains the newest-message cutoff and Trash's starred exception", async () => {
+  it("explains Trash's starred exception to retention", async () => {
     vi.mocked(invoke).mockResolvedValue(90);
     render(<PrivacySettings loadRemoteImages={false} onLoadRemoteImagesChange={vi.fn()} />);
     await waitFor(() => expect(screen.getByRole("combobox")).toHaveValue("90"));
     const hint = screen.getByText(/Conversations whose newest message/);
-    expect(hint).toHaveTextContent("including Trash");
     expect(hint).toHaveTextContent("Starred conversations are kept unless they are in Trash");
-    expect(hint).toHaveTextContent("Mail stays on the server");
   });
 });

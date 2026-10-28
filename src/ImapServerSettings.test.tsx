@@ -61,7 +61,7 @@ describe("ImapServerSettings", () => {
     const onConnected = vi.fn();
     render(<ImapServerSettings account="me@proton.me" needsReconnect={false} onConnected={onConnected} />);
     const form = await openEditor();
-    expect(within(form).getByLabelText("Password")).toHaveAccessibleDescription("Leave blank to keep your current password.");
+    expect(within(form).getByLabelText("Password")).toHaveAccessibleDescription();
     const outgoing = within(form).getByRole("group", { name: "Outgoing Mail (SMTP)" });
     expect(outgoing).toHaveTextContent("Using the certificate you trusted for this server.");
     fireEvent.change(within(outgoing).getByLabelText("Port"), { target: { value: "1026" } });

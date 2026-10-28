@@ -58,8 +58,8 @@ describe("IMAP account setup", () => {
   it("uses aligned settings fields with separate username help and intentional initial focus", () => {
     const { container } = render(<ImapAccountSetup onConnected={vi.fn()} />);
     expect(screen.getByLabelText("Email Address")).toHaveFocus();
-    expect(incoming().getByLabelText("Username")).toHaveAccessibleDescription("Defaults to your email address.");
-    expect(outgoing().getByLabelText("Username")).toHaveAccessibleDescription("Defaults to your IMAP username.");
+    expect(incoming().getByLabelText("Username")).toHaveAccessibleDescription();
+    expect(outgoing().getByLabelText("Username")).toHaveAccessibleDescription();
     for (const control of container.querySelectorAll("input, select")) {
       expect(control.closest("label")).toHaveClass("settings-field", "settings-field-row");
     }

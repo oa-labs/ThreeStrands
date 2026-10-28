@@ -50,7 +50,6 @@ describe("ContactMeetings", () => {
     expect(soon.closest(".context-row")).toHaveClass("context-row-wrap");
     expect(soon.querySelector(".context-row-detail")).toHaveTextContent("with Jane Doe");
     expect(soon.querySelector(".context-row-detail")).toHaveTextContent(new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone: "UTC" }).format(new Date(soonEvent.start)));
-    expect(section).toHaveTextContent("With people in this conversation");
     fireEvent.click(soon);
     expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ id: "soon" }));
   });

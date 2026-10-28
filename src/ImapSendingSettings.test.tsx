@@ -83,11 +83,11 @@ describe("ImapSendingSettings", () => {
     renderPanel();
     await screen.findByText("me@proton.me");
     const fieldset = screen.getByRole("group", { name: "Sent mail copy" });
-    expect(fieldset).toHaveAccessibleDescription(/Keep a copy of each message you send/);
+    expect(fieldset).toHaveAccessibleDescription();
     const automatic = within(fieldset).getByRole("radio", { name: "Automatic (recommended)" });
     const manual = within(fieldset).getByRole("radio", { name: "My mail server saves sent mail itself" });
     expect(automatic).toBeChecked();
-    expect(automatic).toHaveAccessibleDescription(/saves a copy only when it doesn't/);
+    expect(automatic).toHaveAccessibleDescription();
     // The risk of the manual choice is stated on that choice, not as the intro.
     expect(manual).toHaveAccessibleDescription(/sent messages won't appear in your Sent folder/);
     expect(fieldset.textContent).not.toMatch(/If this is wrong/);

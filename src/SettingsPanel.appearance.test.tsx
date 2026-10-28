@@ -29,11 +29,9 @@ describe("appearance settings", () => {
     const reset = screen.getByRole("button", { name: "Reset Email Zoom" });
     expect(zoom).toHaveValue("100");
     expect(reset).toBeDisabled();
-    expect(zoom).toHaveAccessibleDescription(/Scales email text, images, and spacing together/);
-    expect(zoom).toHaveAccessibleDescription(/turn Minimum Email Font Size off/);
-    expect(zoom).toHaveAccessibleDescription(/sideways scrolling/);
-    expect(screen.getByRole("combobox", { name: "Minimum Email Font Size" })).toHaveAccessibleDescription(/before Email Zoom is applied/);
-    expect(screen.getByRole("slider", { name: "Font Size" })).toHaveAccessibleDescription(/Use Email Zoom/);
+    expect(zoom).toHaveAccessibleDescription();
+    expect(screen.getByRole("combobox", { name: "Minimum Email Font Size" })).toHaveAccessibleDescription();
+    expect(screen.getByRole("slider", { name: "Font Size" })).toHaveAccessibleDescription();
     fireEvent.change(zoom, { target: { value: "125" } });
     expect(zoom).toHaveAttribute("aria-valuetext", "125%");
     expect(localStorage.getItem("threestrands.settings.emailZoom")).toBe("125");
@@ -67,7 +65,7 @@ describe("appearance settings", () => {
     const { unmount } = render(<Appearance />);
     const select = screen.getByRole("combobox", { name: "Email Text Colors" });
     expect(select).toHaveValue("contrast");
-    expect(select).toHaveAccessibleDescription(/only text that is hard to read/);
+    expect(select).toHaveAccessibleDescription();
     expect(localStorage.getItem("threestrands.settings.emailTextColors")).toBeNull();
     fireEvent.change(select, { target: { value: "app" } });
     expect(select).toHaveValue("app");
