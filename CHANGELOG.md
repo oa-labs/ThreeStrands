@@ -4,6 +4,8 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+## 0.178.8 — 2026-10-27
+
 ### Improved
 - **Draft Review** keeps Send within reach while you read feedback. Applying a revision returns you to the updated message and collapses the review into a card you can expand or undo.
 - Inbox previews now show more of what each email says. They stop before quoted replies, including Outlook-style headers; skip lines like **View this post on the web**, divider lines, image labels, and a first line that only repeats the subject; and for a forward with no comment, show the forwarded message instead of your signature.
