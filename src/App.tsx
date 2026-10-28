@@ -55,6 +55,7 @@ import { FILES_CHANGED } from "./FileStarButton";
 import { draftRecipients } from "./composeChecks";
 import { ComposeContext, ReplyChecks } from "./ComposeContext";
 import { ContactCardContext } from "./ContactCard";
+import { ConversationBatchToolbar } from "./ConversationBatchToolbar";
 import { ContactMeetings } from "./ContactMeetings";
 import { ContextPanel } from "./ContextPanel";
 import { focusContextPanel, handleContextPanelKeyDown } from "./contextPanelFocus";
@@ -627,7 +628,6 @@ export function App() {
   const selectedThreads = threads.filter((thread) => checkedIds.has(thread.id));
   const allSelectedThreadsStarred = selectedThreads.length > 0
     && selectedThreads.every((thread) => thread.starred);
-  const batchStarLabel = allSelectedThreadsStarred ? "Unstar" : "Star";
 
   return (
     <main className={`app-shell${rightWorkspace === "today" ? " today-open" : rightWorkspace === "files" ? " files-open" : rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
@@ -807,80 +807,17 @@ export function App() {
               </div>
             </div>
           ) : isThreadMailbox && checkedIds.size > 0 ? (
-            <div className="batch-toolbar" role="toolbar" aria-label="Batch actions">
-              <label className="select-all">
-                <input
-                  ref={selectAllRef}
-                  type="checkbox"
-                  checked={visibleThreads.length > 0 && visibleThreads.every((thread) => checkedIds.has(thread.id))}
-                  aria-label="Select All Conversations" title="Select all visible conversations (⌘/Ctrl+A)" aria-keyshortcuts="Meta+A Control+A"
-                  onChange={(event) =>
-                    event.target.checked ? context.selectAllConversations?.() : setCheckedIds(new Set())
-                  }
-                />
-              </label>
-              <span className="batch-count">{checkedIds.size} selected</span>
-              {/* Trash swaps Archive/Trash/Spam for Restore: 6 actions -> 3 columns, otherwise 8 -> 4. */}
-              <div className="batch-actions" style={{ "--batch-columns": mailbox === "trash" ? 3 : 4 } as CSSProperties}>
-                {mailbox === "trash" ? (
-                  <HoverTooltip label="Restore" placement="bottom">
-                    <ActionButton label="Restore" onClick={() => runOnSelection("Restore", { kind: "trash", value: false })}>
-                      <RotateCcw size={ICON_SIZE.md} />
-                    </ActionButton>
-                  </HoverTooltip>
-                ) : (
-                  <>
-                    <HoverTooltip label="Archive" placement="bottom">
-                      <ActionButton label="Archive" onClick={() => runOnSelection("Archive", { kind: "archive", value: true })}>
-                        <Archive size={ICON_SIZE.md} />
-                      </ActionButton>
-                    </HoverTooltip>
-                    <HoverTooltip label="Trash" placement="bottom">
-                      <ActionButton label="Trash" onClick={() => runOnSelection("Trash", { kind: "trash", value: true })}>
-                        <Trash size={ICON_SIZE.md} />
-                      </ActionButton>
-                    </HoverTooltip>
-                    <HoverTooltip label="Mark spam" placement="bottom">
-                      <ActionButton label="Mark Spam" onClick={() => runOnSelection("Mark Spam", { kind: "spam", value: true })}>
-                        <ShieldAlert size={ICON_SIZE.md} />
-                      </ActionButton>
-                    </HoverTooltip>
-                  </>
-                )}
-                <HoverTooltip label="Mark read" placement="bottom">
-                  <ActionButton label="Mark Read" onClick={() => runOnSelection("Mark Read", { kind: "read", value: true })}>
-                    <MailOpen size={ICON_SIZE.md} />
-                  </ActionButton>
-                </HoverTooltip>
-                <HoverTooltip label="Mark unread" placement="bottom">
-                  <ActionButton label="Mark Unread" onClick={() => runOnSelection("Mark Unread", { kind: "read", value: false })}>
-                    <Mail size={ICON_SIZE.md} />
-                  </ActionButton>
-                </HoverTooltip>
-                <HoverTooltip label={batchStarLabel} placement="bottom">
-                  <ActionButton
-                    label={batchStarLabel}
-                    onClick={() => runOnSelection(batchStarLabel, { kind: "star", value: !allSelectedThreadsStarred })}
-                  >
-                    <Star size={ICON_SIZE.md} fill={allSelectedThreadsStarred ? "currentColor" : "none"} />
-                  </ActionButton>
-                </HoverTooltip>
-                <HoverTooltip label="Labels" placement="bottom">
-                  <ActionButton label="Labels" onClick={() => setLabelTargetIds([...checkedIds])}>
-                    <Tag size={ICON_SIZE.md} />
-                  </ActionButton>
-                </HoverTooltip>
-                <HoverTooltip label="Clear selection" placement="bottom">
-                  <button
-                    className="btn-icon"
-                    aria-label="Clear Selection" title="Clear selection (Esc)" aria-keyshortcuts="Escape"
-                    onClick={() => setCheckedIds(new Set())}
-                  >
-                    <X size={ICON_SIZE.lg} />
-                  </button>
-                </HoverTooltip>
-              </div>
-            </div>
+            <ConversationBatchToolbar
+              inTrash={mailbox === "trash"}
+              selectedCount={checkedIds.size}
+              allVisibleChecked={visibleThreads.length > 0 && visibleThreads.every((thread) => checkedIds.has(thread.id))}
+              allStarred={allSelectedThreadsStarred}
+              selectAllRef={selectAllRef}
+              onSelectAll={() => context.selectAllConversations?.()}
+              onClearSelection={() => setCheckedIds(new Set())}
+              onRun={runOnSelection}
+              onLabels={() => setLabelTargetIds([...checkedIds])}
+            />
           ) : (
             <>
               <div className="thread-header-title">
