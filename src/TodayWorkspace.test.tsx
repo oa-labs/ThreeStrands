@@ -309,6 +309,10 @@ describe("TodayWorkspace", () => {
   });
 
   describe("agenda", () => {
+    // Events are placed minutes from now; near midnight they would spill into tomorrow.
+    beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date(2026, 9, 28, 10, 0)); });
+    afterEach(() => { vi.useRealTimers(); });
+
     it("points to Settings instead of loading a schedule when no calendar is connected", async () => {
       renderToday({ calendarConnected: false });
       expect(within(screen.getByRole("region", { name: "Today's agenda" })).getByText(/Connect a calendar in Settings/)).toBeInTheDocument();
