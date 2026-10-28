@@ -38,6 +38,21 @@ When a test fails:
 4. Add tests for new behavior; prefer extending an existing describe over a
    one-off assertion in an unrelated file.
 
+Test behavior at the lowest level that owns it: a hook with `renderHook`, or a
+component rendered directly (see `src/test/settingsHarness.tsx`). Render
+`<App />` only to check wiring between panes, shortcuts, workspaces, or
+overlays; it is slow and the main source of CI timeouts. Do not fix a slow
+test by raising one call's timeout.
+
+Moving a test to a lower level is not deleting it, provided every assertion
+lands somewhere. If the App test was the only check that a button, shortcut,
+or setting reaches its code, keep a slim App test for that wiring.
+
+Assert on-screen text only when it depends on state, or when it states a
+promise (security, data retention, settings transfer). For help text, check
+that it is attached with `toHaveAccessibleDescription()` rather than repeating
+its wording. Finding elements by role and accessible name is still preferred.
+
 Run `pnpm test` for frontend changes. Run `cargo test` in `src-tauri` for Rust
 changes, and `cargo test --workspace` at the repository root when a change
 touches `crates/` (mail parsing lives in `crates/mail-mime`). Run `pnpm test:e2e` when the change touches compose, triage, or email
