@@ -77,7 +77,7 @@ export function CalendarTasks({ tasks, loading, error, reload, events, now, mult
     id="calendar-open-tasks"
     title="Open tasks"
     count={tasks.length}
-    note={tasks.length ? `Drag a task onto the calendar to book ${TASK_BLOCK_MINUTES} minutes for it.` : undefined}
+    note={tasks.length ? `Drag any task onto the calendar to block ${TASK_BLOCK_MINUTES} minutes to work on it.` : undefined}
     rows={rows}
     limit={OPEN_TASK_ROWS}
     footer={<>

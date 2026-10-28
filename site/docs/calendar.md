@@ -51,7 +51,7 @@ Open an event you manage to edit or delete it. Moving the start moves the end wi
 
 ## Book Time for Tasks
 
-Beside the week, under **Today's agenda**, **Open tasks** lists the tasks in your **To Do** and **In Progress** columns, overdue and soonest due first. Drag a task onto the calendar to book 30 minutes for it at that time on its account's calendar. Click **Undo** in the message that follows to remove it. Open the event and edit it to change its length. A task with time booked in the week you're viewing says when, such as "Booked Wed 10:00 am". Click a task instead to open **New Event** with its title, ready to pick a time yourself.
+Beside the week, under **Today's agenda**, **Open tasks** lists the tasks in your **To Do** and **In Progress** columns, overdue and soonest due first. Drag a task onto the calendar to block 30 minutes to work on it at that time on its account's calendar. Click **Undo** in the message that follows to remove it. Open the event and edit it to change its length. A task with time booked in the week you're viewing says when, such as "Booked Wed 10:00 am". Click a task instead to open **New Event** with its title, ready to pick a time yourself.
 
 Open the booked event to see its task under **Task**, and tick it off there when you're done. Removing the event leaves the task alone, and finishing the task leaves the event on your calendar.
 
