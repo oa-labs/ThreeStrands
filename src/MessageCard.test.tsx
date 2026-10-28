@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import postcss from "postcss";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { listen } from "@tauri-apps/api/event";
 import { useState } from "react";
@@ -383,6 +386,23 @@ describe("MessageCard", () => {
   });
 
   describe("trust beside the sender", () => {
+    it("wraps full warning titles and descriptions within the sender hover card", () => {
+      const css = postcss.parse(readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8"));
+      for (const part of ["title", "detail"]) {
+        const styles: Record<string, string> = {};
+        const selectors = [`.context-row-${part}`, `.message-trust-card .context-row-${part}`];
+        // Apply the more specific card rules after the shared row rules.
+        for (const selector of selectors) {
+          css.walkRules((rule) => {
+            if (rule.selectors.includes(selector)) {
+              rule.walkDecls((declaration) => { styles[declaration.prop] = declaration.value; });
+            }
+          });
+        }
+        expect(styles).toMatchObject({ "white-space": "normal", "overflow-wrap": "anywhere" });
+      }
+    });
+
     const verified: MessageTrust = { fromDomain: "example.com", authentication: { spf: "pass", dkim: "pass", dmarc: "pass", dkimDomains: ["example.com"], spfDomains: ["example.com"] }, replyTo: null };
     const stranger: SenderFamiliarity = { sentCount: 0, firstSentAt: null, receivedBefore: true, contactName: null, nameMatches: [], knownDomains: ["partner.example"] };
     const reads = (familiarity: SenderFamiliarity, trust: MessageTrust | null = verified) => ({

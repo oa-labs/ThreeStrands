@@ -1113,6 +1113,7 @@ kbd {
 .message-trust-careful svg { flex: 0 0 auto; }
 .message-trust-headline { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .message-trust-card { padding: var(--space-2) 0; }
+.message-trust-card .context-row-title, .message-trust-card .context-row-detail { white-space: normal; overflow-wrap: anywhere; }
 .message-trust-card > .context-trust-summary { display: flex; padding: var(--space-1) var(--context-row-inset); }
 .message-trust-card > .context-sender-feedback { margin-top: var(--space-1); }
 /* The strongest warnings sit above the body in the shared warning notice. */

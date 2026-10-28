@@ -10,6 +10,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Sender warnings stay in the email rather than repeating in the side panel, with familiar-name warnings showing the sending and previously seen addresses on separate labeled lines. Choose **Trust this address for this account** after reviewing its scope, or undo it with **Forget confirmation** in the side panel’s **Sender checks** section.
 
 ### Fixed
+- Long warning text in the **Be careful** hover card now wraps so you can read the full explanation.
 - Sent replies now offer **Reply**, **Reply All**, and **Forward** even when the mail server’s Sent copy has not arrived, and the open conversation keeps checking for delayed Sent copies.
 - Drag address badges between **To**, **Cc**, and **Bcc** when composing a message, including dropping onto the field label or input.
 - Emails with gradient backgrounds now keep their background colors and patterns, so light text stays readable.
