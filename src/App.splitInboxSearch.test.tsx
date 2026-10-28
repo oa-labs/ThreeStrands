@@ -345,17 +345,6 @@ describe("split inbox search shortcuts", () => {
     await waitFor(() => expect(screen.queryByText("Searching mail on the server…")).not.toBeInTheDocument());
   });
 
-  it("reports when server search cannot be reached", async () => {
-    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
-    vi.spyOn(mailClient, "backfillSearchThreads").mockRejectedValue(new Error("offline"));
-
-    render(<App />);
-    fireEvent.keyDown(window, { key: "/" });
-    const search = await screen.findByRole("textbox", { name: "Search Mail" });
-    fireEvent.change(search, { target: { value: "126" } });
-
-    expect(await screen.findByText("Server search unavailable. Showing mail on this device.", undefined, SERVER_SEARCH_WAIT)).toBeVisible();
-  });
 });
 
 describe("server-search status toast (Phase 5 run 5)", () => {
@@ -365,10 +354,10 @@ describe("server-search status toast (Phase 5 run 5)", () => {
     vi.restoreAllMocks();
   });
 
-  const complete: SearchReport = { status: { kind: "complete" }, unsyncedMailboxes: 0, skippedOverCap: 0, serverSearchedAccounts: 1 };
-  const skipped: SearchReport = { status: { kind: "skipped", reasons: [{ code: "unsupported" }] }, unsyncedMailboxes: 0, skippedOverCap: 0, serverSearchedAccounts: 0 };
   const partialDeadline: SearchReport = { status: { kind: "partial", reasons: [{ code: "deadline" }] }, unsyncedMailboxes: 0, skippedOverCap: 0, serverSearchedAccounts: 1 };
 
+  // The toast's wording and states are covered by SearchStatusToast and
+  // useMailboxThreads; this checks that the App shows and dismisses it.
   async function searchWithReport(report: SearchReport, query = "roadmap") {
     localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
     const backfill = vi.spyOn(mailClient, "backfillSearchThreads").mockResolvedValue(report);
@@ -376,94 +365,13 @@ describe("server-search status toast (Phase 5 run 5)", () => {
     fireEvent.keyDown(window, { key: "/" });
     const search = await screen.findByRole("textbox", { name: "Search Mail" });
     fireEvent.change(search, { target: { value: query } });
-    const toggle = await screen.findByRole("button", { name: "Search only the Inbox" });
     await waitFor(() => expect(backfill).toHaveBeenCalledWith(query, "demo@example.com"), SERVER_SEARCH_WAIT);
-    return { search, toggle };
   }
-
-  it("shows the skipped copy with a screen-reader status role", async () => {
-    await searchWithReport(skipped);
-    const toast = await screen.findByText(/only mail already on this device is shown/);
-    expect(toast).toBeVisible();
-    const region = toast.closest("[role=status]");
-    expect(region).not.toBeNull();
-    expect(region).toHaveAttribute("aria-live", "polite");
-  });
-
-  it("shows the deadline partial copy", async () => {
-    await searchWithReport(partialDeadline);
-    expect(await screen.findByText("Some folders took too long to search. Showing what was found.")).toBeVisible();
-  });
-
-  it("shows nothing new for a complete search", async () => {
-    await searchWithReport(complete);
-    // The two existing toasts are gone (idle), and no status line appears.
-    await waitFor(() => expect(screen.queryByText("Searching mail on the server…")).not.toBeInTheDocument());
-    expect(screen.queryByText(/only mail already on this device/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/took too long to search/)).not.toBeInTheDocument();
-  });
-
-  it("clears the status line when the query changes", async () => {
-    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
-    // First query comes back skipped; a different query comes back complete,
-    // so the skipped line must clear and not reappear.
-    const backfill = vi.spyOn(mailClient, "backfillSearchThreads")
-      .mockResolvedValueOnce(skipped)
-      .mockResolvedValue(complete);
-    render(<App />);
-    fireEvent.keyDown(window, { key: "/" });
-    const search = await screen.findByRole("textbox", { name: "Search Mail" });
-    fireEvent.change(search, { target: { value: "roadmap" } });
-    await waitFor(() => expect(backfill).toHaveBeenCalledWith("roadmap", "demo@example.com"), SERVER_SEARCH_WAIT);
-    expect(await screen.findByText(/only mail already on this device is shown/)).toBeVisible();
-
-    fireEvent.change(search, { target: { value: "something else" } });
-    await waitFor(() => expect(screen.queryByText(/only mail already on this device is shown/)).not.toBeInTheDocument());
-  });
-
-  it("clears the status line when the search is narrowed to the inbox", async () => {
-    const { toggle } = await searchWithReport(skipped);
-    expect(await screen.findByText(/only mail already on this device is shown/)).toBeVisible();
-    // The toggle keeps its accessible name; aria-pressed flips. Narrowing to
-    // the inbox clears the status and runs no further server search.
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-pressed", "true");
-    await waitFor(() => expect(screen.queryByText(/only mail already on this device is shown/)).not.toBeInTheDocument());
-  });
 
   it("is dismissible", async () => {
     await searchWithReport(partialDeadline);
     const toast = await screen.findByText("Some folders took too long to search. Showing what was found.");
     fireEvent.click(within(toast.closest("[role=status]") as HTMLElement).getByRole("button", { name: "Dismiss" }));
     await waitFor(() => expect(screen.queryByText("Some folders took too long to search. Showing what was found.")).not.toBeInTheDocument());
-  });
-
-  it("never shows a stale earlier query's report for the current one", async () => {
-    localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
-    let resolveFirst!: (report: SearchReport) => void;
-    const backfill = vi.spyOn(mailClient, "backfillSearchThreads")
-      // First query's backfill hangs, then we switch query; its late report
-      // (skipped) must not paint for the second query.
-      .mockImplementationOnce(() => new Promise<SearchReport>((resolve) => { resolveFirst = resolve; }))
-      .mockResolvedValueOnce(partialDeadline);
-
-    render(<App />);
-    fireEvent.keyDown(window, { key: "/" });
-    const search = await screen.findByRole("textbox", { name: "Search Mail" });
-    fireEvent.change(search, { target: { value: "first" } });
-    await waitFor(() => expect(backfill).toHaveBeenCalledWith("first", "demo@example.com"), SERVER_SEARCH_WAIT);
-
-    // Switch to a second query; its backfill resolves with a partial.
-    fireEvent.change(search, { target: { value: "second" } });
-    await waitFor(() => expect(backfill).toHaveBeenCalledWith("second", "demo@example.com"), SERVER_SEARCH_WAIT);
-    expect(await screen.findByText("Some folders took too long to search. Showing what was found.")).toBeVisible();
-
-    // Now the FIRST query's backfill finally resolves with a skipped report.
-    // Its request id is stale, so the skipped copy must never appear.
-    resolveFirst(skipped);
-    await waitFor(() => expect(backfill).toHaveBeenCalledTimes(2));
-    expect(screen.queryByText(/only mail already on this device is shown/)).not.toBeInTheDocument();
-    // The current query's partial line is still what's shown.
-    expect(screen.getByText("Some folders took too long to search. Showing what was found.")).toBeVisible();
   });
 });

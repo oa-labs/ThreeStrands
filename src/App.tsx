@@ -5,7 +5,6 @@ import {
   Archive,
   ArrowLeft,
   CalendarDays,
-  CircleAlert,
   Command as CommandIcon,
   ContactRound,
   Files,
@@ -46,7 +45,7 @@ import { ActionButton, CommandPalette, FiltersButton, HoverTooltip, ShortcutHelp
 import { GettingStartedDialog, useGettingStarted } from "./GettingStarted";
 import { inboxCheckedLabel } from "./inboxZero";
 import { InboxZeroSections } from "./InboxZeroSections";
-import { SERVER_SEARCH_FAILED_COPY, SERVER_SEARCHING_COPY } from "./searchStatusCopy";
+import { SearchStatusToast } from "./SearchStatusToast";
 import type { GettingStartedStepId } from "./gettingStartedSteps";
 import { CalendarSidebar } from "./CalendarSidebar";
 import { eventDate, startOfLocalDay } from "./calendarTime";
@@ -1723,23 +1722,8 @@ export function App() {
           <button className="btn-icon btn-icon-sm" aria-label="Dismiss" onClick={() => setNotice(null)}><X size={ICON_SIZE.sm} /></button>
         </div>
       ) : null}
-      {isTabbedMailbox && searchOpen && query.trim() && includeArchived && remoteSearchState === "searching" ? (
-        <div className="toast search-status-toast" role="status" aria-live="polite">
-          <RefreshCw size={ICON_SIZE.sm} className="spin" />
-          {SERVER_SEARCHING_COPY}
-        </div>
-      ) : null}
-      {isTabbedMailbox && searchOpen && query.trim() && includeArchived && remoteSearchState === "error" ? (
-        <div className="toast search-status-toast error" role="status" aria-live="polite">
-          <CircleAlert size={ICON_SIZE.sm} />
-          {SERVER_SEARCH_FAILED_COPY}
-        </div>
-      ) : null}
-      {isTabbedMailbox && searchOpen && query.trim() && includeArchived && remoteSearchState !== "searching" && searchStatus ? (
-        <div className="toast search-status-toast" role="status" aria-live="polite">
-          {searchStatus}
-          <button className="btn-icon btn-icon-sm" aria-label="Dismiss" onClick={() => setSearchStatus(null)}><X size={ICON_SIZE.sm} /></button>
-        </div>
+      {isTabbedMailbox && searchOpen && query.trim() && includeArchived ? (
+        <SearchStatusToast remoteSearchState={remoteSearchState} status={searchStatus} onDismiss={() => setSearchStatus(null)} />
       ) : null}
       {lightboxImageSrc ? (
         <ImageLightbox src={lightboxImageSrc} onClose={() => setLightboxImageSrc(null)} />

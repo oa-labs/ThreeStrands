@@ -144,6 +144,107 @@ describe("useMailboxThreads", () => {
     expect(backfill).toHaveBeenCalledWith("roadmap", "first@example.com");
   });
 
+  describe("server search status", () => {
+    const skipped: SearchReport = { status: { kind: "skipped", reasons: [{ code: "unsupported" }] }, unsyncedMailboxes: 0, skippedOverCap: 0, serverSearchedAccounts: 0 };
+    const partialDeadline: SearchReport = { status: { kind: "partial", reasons: [{ code: "deadline" }] }, unsyncedMailboxes: 0, skippedOverCap: 0, serverSearchedAccounts: 1 };
+    const DEADLINE_COPY = "Some folders took too long to search. Showing what was found.";
+
+    async function search(result: { current: { setQuery(query: string): void } }, query: string) {
+      act(() => result.current.setQuery(query));
+      await flushReload();
+      await act(async () => { await vi.advanceTimersByTimeAsync(REMOTE_SEARCH_DELAY_MS); });
+    }
+
+    beforeEach(() => {
+      vi.spyOn(mailClient, "searchThreads").mockResolvedValue([]);
+    });
+
+    it("searches while the server request runs, then words the outcome", async () => {
+      const report = deferred<SearchReport>();
+      vi.spyOn(mailClient, "backfillSearchThreads").mockReturnValue(report.promise);
+      const { result } = setup();
+      await flushReload();
+
+      await search(result, "roadmap");
+      expect(result.current.remoteSearchState).toBe("searching");
+      await act(async () => { report.resolve(skipped); });
+      await flushReload();
+      expect(result.current.remoteSearchState).toBe("idle");
+      expect(result.current.searchStatus).toMatch(/only mail already on this device is shown/);
+    });
+
+    it("shows the deadline partial copy and nothing for a complete search", async () => {
+      vi.spyOn(mailClient, "backfillSearchThreads")
+        .mockResolvedValueOnce(partialDeadline)
+        .mockResolvedValueOnce(completeReport);
+      const { result } = setup();
+      await flushReload();
+
+      await search(result, "roadmap");
+      expect(result.current.searchStatus).toBe(DEADLINE_COPY);
+      await search(result, "budget");
+      expect(result.current.remoteSearchState).toBe("idle");
+      expect(result.current.searchStatus).toBeNull();
+    });
+
+    it("reports when server search cannot be reached", async () => {
+      vi.spyOn(mailClient, "backfillSearchThreads").mockRejectedValue(new Error("offline"));
+      const { result } = setup();
+      await flushReload();
+
+      await search(result, "126");
+      expect(result.current.remoteSearchState).toBe("error");
+      expect(result.current.searchStatus).toBeNull();
+    });
+
+    it("clears the status line when the query changes", async () => {
+      // The first query comes back skipped and a different query comes back
+      // complete, so the skipped line must clear and not reappear.
+      vi.spyOn(mailClient, "backfillSearchThreads")
+        .mockResolvedValueOnce(skipped)
+        .mockResolvedValue(completeReport);
+      const { result } = setup();
+      await flushReload();
+
+      await search(result, "roadmap");
+      expect(result.current.searchStatus).not.toBeNull();
+      await search(result, "something else");
+      expect(result.current.searchStatus).toBeNull();
+    });
+
+    it("clears the status line when the search is narrowed to the inbox", async () => {
+      const backfill = vi.spyOn(mailClient, "backfillSearchThreads").mockResolvedValue(skipped);
+      const { result } = setup();
+      await flushReload();
+
+      await search(result, "roadmap");
+      expect(result.current.searchStatus).not.toBeNull();
+      act(() => result.current.setInboxOnly(true));
+      await flushReload();
+      expect(result.current.searchStatus).toBeNull();
+      await act(async () => { await vi.advanceTimersByTimeAsync(REMOTE_SEARCH_DELAY_MS + 100); });
+      expect(backfill).toHaveBeenCalledTimes(1);
+    });
+
+    it("never shows a stale earlier query's report for the current one", async () => {
+      const first = deferred<SearchReport>();
+      const backfill = vi.spyOn(mailClient, "backfillSearchThreads")
+        .mockReturnValueOnce(first.promise)
+        .mockResolvedValueOnce(partialDeadline);
+      const { result } = setup();
+      await flushReload();
+
+      await search(result, "first");
+      await search(result, "second");
+      expect(backfill).toHaveBeenCalledWith("second", "first@example.com");
+      expect(result.current.searchStatus).toBe(DEADLINE_COPY);
+
+      await act(async () => { first.resolve(skipped); });
+      await flushReload();
+      expect(result.current.searchStatus).toBe(DEADLINE_COPY);
+    });
+  });
+
   it("keeps a conversation opened by a context jump selected outside the current page", async () => {
     vi.spyOn(mailClient, "listThreadsPage").mockResolvedValue({ threads: [threads[0]!], hasMore: false });
     const { result } = setup("context-thread");
