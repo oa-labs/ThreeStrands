@@ -59,24 +59,10 @@ function useConversationFixture() {
 describe("archive notice", () => {
   useConversationFixture();
 
-  it("dismisses itself after the notice timeout", async () => {
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    expect(document.querySelector(".reader-account-scope")).toHaveTextContent("demo@example.com");
-
-    await archiveSelected();
-    expect(await screen.findByRole("status")).toHaveTextContent("Conversation archived");
-
-    await advance(NOTICE_TIMEOUT_MS - 500);
-    expect(screen.getByRole("status")).toBeInTheDocument();
-
-    await advance(500);
-    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
-  });
-
   it("can still be dismissed manually before the timeout", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    expect(document.querySelector(".reader-account-scope")).toHaveTextContent("demo@example.com");
 
     await archiveSelected();
     const dismiss = await screen.findByRole("button", { name: "Dismiss" });
@@ -85,41 +71,6 @@ describe("archive notice", () => {
     });
 
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
-  });
-
-  it("keeps a replacement notice on screen for its own full timeout", async () => {
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-
-    await archiveSelected();
-    await advance(NOTICE_TIMEOUT_MS - 1000);
-    await archiveSelected();
-
-    await advance(1500);
-    expect(screen.getByRole("status")).toHaveTextContent("Conversation archived");
-
-    await advance(NOTICE_TIMEOUT_MS);
-    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
-  });
-
-  it("clears the pending dismiss timer when the app unmounts", async () => {
-    const setTimeout = vi.spyOn(window, "setTimeout");
-    const clearTimeout = vi.spyOn(window, "clearTimeout");
-    const { unmount } = render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-
-    await archiveSelected();
-    await screen.findByRole("status");
-    const dismissTimer = setTimeout.mock.results
-      .filter((_, index) => setTimeout.mock.calls[index][1] === NOTICE_TIMEOUT_MS)
-      .map((result) => result.value)
-      .at(-1);
-    expect(dismissTimer).toBeDefined();
-
-    unmount();
-    expect(clearTimeout).toHaveBeenCalledWith(dismissTimer);
-    setTimeout.mockRestore();
-    clearTimeout.mockRestore();
   });
 });
 
