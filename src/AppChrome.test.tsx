@@ -134,6 +134,13 @@ describe("App chrome", () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 
+  it("includes the t shortcut in keyboard help", () => {
+    render(<ShortcutHelp onClose={vi.fn()} />);
+    const dialog = screen.getByRole("dialog", { name: "Keyboard Shortcuts" });
+    const title = within(dialog).getByText("Today in Calendar / Toggle Schedule", { selector: "dt" });
+    expect(title.nextElementSibling?.querySelector("kbd")?.textContent).toBe("t");
+  });
+
   it("traps modal focus, makes the background inert, and restores the trigger", () => {
     function Harness() {
       const [open, setOpen] = useState(false);

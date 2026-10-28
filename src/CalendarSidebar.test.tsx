@@ -298,18 +298,8 @@ describe("calendar sidebar", () => {
   });
 
   it("moves the schedule day with - and = shortcuts", async () => {
-    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
-      {
-        email: "calendar@example.com",
-        connectedAt: "2026-09-18T00:00:00Z",
-        status: "connected",
-      },
-    ]);
     const listEvents = vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-
-    fireEvent.keyDown(window, { key: "T" });
+    render(<CalendarSidebar onClose={vi.fn()} onOpenSettings={vi.fn()} />);
     await screen.findByRole("complementary", { name: "Schedule" });
     await waitFor(() => expect(dayRequests(listEvents)).toHaveLength(1));
     const initialTimeMin = dayRequests(listEvents)[0][0];
@@ -399,13 +389,6 @@ describe("calendar sidebar", () => {
   });
 
   it("renders short meetings compactly with title and time on one line", async () => {
-    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
-      {
-        email: "calendar@example.com",
-        connectedAt: "2026-09-18T00:00:00Z",
-        status: "connected",
-      },
-    ]);
     vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
       events: [
         {
@@ -435,10 +418,7 @@ describe("calendar sidebar", () => {
       ],
       errors: [],
     });
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-
-    fireEvent.keyDown(window, { key: "T" });
+    render(<CalendarSidebar onClose={vi.fn()} onOpenSettings={vi.fn()} />);
     await screen.findByRole("complementary", { name: "Schedule" });
     await waitFor(() => expect(screen.getByText("Standup")).toBeInTheDocument());
 
@@ -456,13 +436,8 @@ describe("calendar sidebar", () => {
   });
 
   it("shows event details and dismisses the viewer before the sidebar", async () => {
-    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
-      {
-        email: "calendar@example.com",
-        connectedAt: "2026-09-18T00:00:00Z",
-        status: "connected",
-      },
-    ]);
+    const onClose = vi.fn();
+    const onOpenSettings = vi.fn();
     vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
       events: [
         {
@@ -480,9 +455,7 @@ describe("calendar sidebar", () => {
       ],
       errors: [],
     });
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    fireEvent.keyDown(window, { key: "T" });
+    render(<CalendarSidebar onClose={onClose} onOpenSettings={onOpenSettings} />);
 
     fireEvent.click(await screen.findByRole("button", { name: /Product planning/ }));
     const viewer = await screen.findByRole("dialog", { name: "Product planning details" });
@@ -499,6 +472,7 @@ describe("calendar sidebar", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Product planning details" })).not.toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: "Schedule" })).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: /Product planning/ }));
     expect(screen.getByRole("dialog", { name: "Product planning details" })).toBeInTheDocument();
@@ -507,18 +481,9 @@ describe("calendar sidebar", () => {
   });
 
   it("restores the saved calendar scroll position after a remount", async () => {
-    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
-      {
-        email: "calendar@example.com",
-        connectedAt: "2026-09-18T00:00:00Z",
-        status: "connected",
-      },
-    ]);
     vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
 
-    const firstRender = render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    fireEvent.keyDown(window, { key: "T" });
+    const firstRender = render(<CalendarSidebar onClose={vi.fn()} onOpenSettings={vi.fn()} />);
     const firstSidebar = await screen.findByRole("complementary", { name: "Schedule" });
     const firstGrid = firstSidebar.querySelector<HTMLElement>(".calendar-grid-scroll");
     expect(firstGrid).not.toBeNull();
@@ -531,33 +496,23 @@ describe("calendar sidebar", () => {
     expect(localStorage.getItem(CALENDAR_SCROLL_TOP_KEY)).toBe(String(9 * 64));
     firstRender.unmount();
 
-    // The schedule column itself is remembered, so it is back without pressing T.
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    render(<CalendarSidebar onClose={vi.fn()} onOpenSettings={vi.fn()} />);
     const restoredSidebar = await screen.findByRole("complementary", { name: "Schedule" });
     const restoredGrid = restoredSidebar.querySelector<HTMLElement>(".calendar-grid-scroll");
     await waitFor(() => expect(restoredGrid?.scrollTop).toBe(9 * 64));
   });
 
   it("shows a short Calendar API error without rendering the provider response", async () => {
+    const onClose = vi.fn();
+    const onOpenSettings = vi.fn();
     const diagnostics = vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
-      {
-        email: "calendar@example.com",
-        connectedAt: "2026-09-18T00:00:00Z",
-        status: "connected",
-      },
-    ]);
     vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({
       events: [],
       errors: [
         "calendar@example.com: Google Calendar returned 404 Not Found: <html><body>Provider error</body></html>",
       ],
     });
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-
-    fireEvent.keyDown(window, { key: "T" });
+    render(<CalendarSidebar onClose={onClose} onOpenSettings={onOpenSettings} />);
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(
@@ -571,77 +526,7 @@ describe("calendar sidebar", () => {
     );
     expect(alert.closest(".calendar-grid")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Calendar Accounts" }));
-    expect(await screen.findByRole("region", { name: "Calendar Accounts" })).toBeInTheDocument();
-  });
-
-  it("persists an explicit calendar selection, including empty", async () => {
-    vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
-      {
-        email: "calendar@example.com",
-        connectedAt: "2026-09-18T00:00:00Z",
-        status: "connected",
-      },
-    ]);
-    vi.spyOn(mailClient, "listCalendarOptions").mockResolvedValue([
-      {
-        id: "primary",
-        accountId: "calendar@example.com",
-        name: "Personal",
-        primary: true,
-        selected: true,
-        writable: true,
-      },
-      {
-        id: "team",
-        accountId: "calendar@example.com",
-        name: "Team",
-        primary: false,
-        selected: false,
-        writable: true,
-      },
-    ]);
-    const setSelection = vi.spyOn(mailClient, "setCalendarSelection").mockResolvedValue([
-      {
-        id: "primary",
-        accountId: "calendar@example.com",
-        name: "Personal",
-        primary: true,
-        selected: false,
-        writable: true,
-      },
-      {
-        id: "team",
-        accountId: "calendar@example.com",
-        name: "Team",
-        primary: false,
-        selected: false,
-        writable: true,
-      },
-    ]);
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    fireEvent.click(screen.getByRole("button", { name: "Settings (⌘,)" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Calendar Accounts" }));
-
-    const shown = await screen.findByRole("group", { name: "Calendars shown in the sidebar" });
-    const primary = within(shown).getByRole("checkbox", { name: "Personal (Primary)" });
-    expect(primary).toBeChecked();
-    fireEvent.click(primary);
-
-    await waitFor(() =>
-      expect(setSelection).toHaveBeenCalledWith("calendar@example.com", []),
-    );
-  });
-
-  it("includes the t shortcut in keyboard help", async () => {
-    render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
-    expect(screen.queryByRole("button", { name: /Keyboard Shortcuts/ })).not.toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "?" });
-
-    const dialog = await screen.findByRole("dialog", { name: "Keyboard Shortcuts" });
-    const title = within(dialog).getByText("Today in Calendar / Toggle Schedule", { selector: "dt" });
-    expect(title.nextElementSibling?.querySelector("kbd")?.textContent).toBe("t");
+    expect(onOpenSettings).toHaveBeenCalled();
   });
 
   it("hides the close control and ignores Escape when embedded", async () => {

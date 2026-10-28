@@ -84,6 +84,22 @@ describe("calendar account picker", () => {
     expect(visible).not.toHaveBeenCalled();
   });
 
+  it("saves an explicit sidebar selection, including an empty one", async () => {
+    const visible = vi.fn().mockResolvedValue(undefined);
+    const calendars: CalendarOption[] = [
+      { id: "primary", accountId: account.email, name: "Personal", primary: true, selected: true, writable: true },
+      { id: "team", accountId: account.email, name: "Team", primary: false, selected: false, writable: true },
+    ];
+    render(<CalendarAccountsSettings authStatus={null} accounts={[account]} calendars={calendars} calendarsLoaded calendarsError={null}
+      onAdd={vi.fn()} onReconnect={vi.fn()} onRemove={vi.fn()} onRemoveEverywhere={vi.fn()} onReorder={vi.fn()}
+      onSetSelection={visible} onSetAvailabilitySelection={vi.fn()} />);
+    const shown = screen.getByRole("group", { name: "Calendars shown in the sidebar" });
+    const primary = within(shown).getByRole("checkbox", { name: "Personal (Primary)" });
+    expect(primary).toBeChecked();
+    fireEvent.click(primary);
+    await waitFor(() => expect(visible).toHaveBeenCalledWith(account.email, []));
+  });
+
   it("always includes an available holiday subscription without requiring it to be visible", () => {
     renderPicker({ calendarsLoaded: true, calendars: [{ id: "fr.fr#holiday@group.v.calendar.google.com", accountId: account.email, name: "Jours fériés", primary: false, selected: false, writable: false, availabilitySelected: false }] });
     const availability = screen.getByRole("group", { name: "Calendars used for availability" });

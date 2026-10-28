@@ -935,6 +935,14 @@ describe("keyboard-first task and action workspaces", () => {
 
   afterEach(cleanup);
 
+  it("opens keyboard help with ? rather than a toolbar button", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    expect(screen.queryByRole("button", { name: /Keyboard Shortcuts/ })).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "?" });
+    expect(await screen.findByRole("dialog", { name: "Keyboard Shortcuts" })).toBeInTheDocument();
+  });
+
   it("opens task entry as a modal without changing the right workspace", async () => {
     render(<App />);
     await screen.findByRole("button", { name: "Archive (e)" });
