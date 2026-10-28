@@ -10,6 +10,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ### Fixed
 - Drag address badges between **To**, **Cc**, and **Bcc** when composing a message, including dropping onto the field label or input.
 - Emails with gradient backgrounds now keep their background colors and patterns, so light text stays readable.
+- After you reply to someone, the Brief no longer suggests replying to them or offers to find a meeting time you already sent, and it waits for their next message instead of briefing your own reply.
 
 ## 0.177.0 — 2026-10-27
 
