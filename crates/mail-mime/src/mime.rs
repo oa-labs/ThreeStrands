@@ -160,7 +160,8 @@ pub fn normalize(message: &RawMessage) -> Result<NormalizedMessage, String> {
     // The text/plain alternative is only trusted while it says what the HTML
     // the reader shows says. One that opens with a stylesheet was produced by
     // a converter that leaked the HTML's <style> contents (often with other
-    // residue mixed in), one missing most of the HTML's words is a stub, an
+    // residue mixed in), one carrying <br> tags was pasted from markup rather
+    // than converted, one missing most of the HTML's words is a stub, an
     // unfilled template, or a stale copy, and one holding merge fields the
     // HTML filled in was never rendered, so in those cases the HTML
     // alternative is the better text source.
@@ -169,6 +170,7 @@ pub fn normalize(message: &RawMessage) -> Result<NormalizedMessage, String> {
         Some(text) if has_html => {
             let derived = html_to_text(&body_html);
             let unfaithful = after_leading_stylesheet(&text).is_some()
+                || (!is_html_markup(&text) && replace_line_break_tags(&text).is_some())
                 || plain_coverage(&text, &derived) < MIN_PLAIN_COVERAGE
                 || !template_fields(&text).is_subset(&template_fields(&derived));
             if unfaithful && !derived.is_empty() {
@@ -507,15 +509,50 @@ fn is_html_markup(text: &str) -> bool {
         && after.contains('>')
 }
 
+/// Byte length of the HTML line break (`<br>`, `<BR/>`, `<br />`) at the
+/// start of `text`, including one newline that directly follows it.
+fn line_break_tag_len(text: &str) -> Option<usize> {
+    if !text.get(..3)?.eq_ignore_ascii_case("<br") {
+        return None;
+    }
+    let rest = text[3..].trim_start_matches([' ', '\t']);
+    let rest = rest.strip_prefix('/').unwrap_or(rest).strip_prefix('>')?;
+    let rest = rest.strip_prefix("\r\n").or_else(|| rest.strip_prefix('\n')).unwrap_or(rest);
+    Some(text.len() - rest.len())
+}
+
+/// `text` with each HTML line break replaced by a newline, or `None` when it
+/// has none. Some mailers paste `<br>` tags into an otherwise plain body.
+fn replace_line_break_tags(text: &str) -> Option<String> {
+    let mut replaced = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut found = false;
+    while let Some(start) = rest.find('<') {
+        replaced.push_str(&rest[..start]);
+        rest = &rest[start..];
+        if let Some(len) = line_break_tag_len(rest) {
+            replaced.push('\n');
+            rest = &rest[len..];
+            found = true;
+        } else {
+            replaced.push('<');
+            rest = &rest[1..];
+        }
+    }
+    replaced.push_str(rest);
+    found.then_some(replaced)
+}
+
 /// A message's plain-text body as text. Some senders put an HTML document in
 /// the text/plain part; that body is flattened like an HTML-only message so
-/// previews, search, quoting, and AI context never show raw markup. A
-/// stylesheet leaked ahead of the message text is dropped; text that is
-/// nothing but CSS stays as written.
+/// previews, search, quoting, and AI context never show raw markup. Stray
+/// `<br>` tags become line breaks. A stylesheet leaked ahead of the message
+/// text is dropped; text that is nothing but CSS stays as written.
 pub fn readable_body_text(text: String) -> String {
     if is_html_markup(&text) {
         return html_to_text(&text);
     }
+    let text = replace_line_break_tags(&text).unwrap_or(text);
     match after_leading_stylesheet(&text) {
         Some(rest) if !rest.is_empty() => rest.to_string(),
         _ => text,
@@ -1131,6 +1168,39 @@ mod tests {
     }
 
     #[test]
+    fn reads_the_html_when_the_plain_part_carries_line_break_tags() {
+        for (plain, html, expected) in [
+            // A short confirmation whose plain part repeats the HTML's markup.
+            (
+                "Hi Sam,<br><br>Your table for four is confirmed.<br><br>The Grill",
+                "<div> Hi Sam,<br><br>Your table for four is confirmed.<br><br>The Grill</div><img src=\"https://example.com/o.gif\" alt=\"\">",
+                "Hi Sam,",
+            ),
+            // Self-closing tags on their own lines beside a paragraph layout.
+            (
+                "Order shipped<BR />\r\nTracking: 1Z999<br/>\nThanks",
+                "<p>Order shipped</p><p>Tracking: 1Z999</p><p>Thanks</p>",
+                "Order shipped",
+            ),
+        ] {
+            let text = body_text_of(alternative(plain, html));
+            assert!(text.starts_with(expected), "{text}");
+            assert!(!text.to_lowercase().contains("<br"), "{text}");
+        }
+    }
+
+    #[test]
+    fn turns_line_break_tags_in_a_plain_only_body_into_newlines() {
+        for (plain, expected) in [
+            ("Hi Sam,<br><br>See you at 6.", "Hi Sam,\n\nSee you at 6."),
+            ("One<BR/>\nTwo<br />\r\nThree<br\t>Four", "One\nTwo\nThree\nFour"),
+        ] {
+            assert_eq!(body_text_of(part("text/plain", plain)), expected);
+            assert_eq!(readable_body_text(plain.to_string()), expected);
+        }
+    }
+
+    #[test]
     fn plain_coverage_switches_below_half_of_the_html_words() {
         let words: Vec<String> = (0..MIN_COMPARED_WORDS).map(|n| format!("w{n}")).collect();
         let html = format!("<p>{}</p>", words.join(" "));
@@ -1163,6 +1233,7 @@ mod tests {
             "Use <div> for blocks.",
             "@media screen and (max-width: 767px) { table { display: block; } }",
             "<pre-approved> list attached",
+            "<brand> and <br-tag> and <br x> are not breaks",
             "",
         ] {
             assert_eq!(readable_body_text(text.to_string()), text);

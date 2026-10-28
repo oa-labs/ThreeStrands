@@ -14,7 +14,7 @@ pub(crate) const BASELINE_VERSION: i64 = 74;
 
 /// The current schema version. A new schema change adds an
 /// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 89;
+pub(crate) const LATEST_VERSION: i64 = 90;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -987,6 +987,16 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         // lead-ins, divider rules, spelled-out images, HTML comments, and an
         // opening line that repeats the subject, and show the forwarded
         // message under a signature-only forward. Queue every thread so the
+        // bounded search-reindex batch rebuilds its preview.
+        tx.execute_batch(
+            "INSERT OR IGNORE INTO pending_search_reindex(thread_id)
+                 SELECT id FROM threads;",
+        )
+        .map_err(error)?;
+    }
+    if version < 90 {
+        // Plain-text parts carrying <br> tags now yield to the HTML part, or
+        // have the tags turned into line breaks. Queue every thread so the
         // bounded search-reindex batch rebuilds its preview.
         tx.execute_batch(
             "INSERT OR IGNORE INTO pending_search_reindex(thread_id)
