@@ -218,9 +218,9 @@ export async function tagRelease(directory = root) {
     git(["add", "CHANGELOG.md"]);
     git(["commit", "-m", `Release notes for ${tag}`]);
   }
-  git(["push", "origin", "master"]);
+  git(["push", "primary", "master"]);
   git(["tag", "-s", tag, "-m", `ThreeStrands ${tag}`]);
-  git(["push", "origin", tag]);
+  git(["push", "primary", tag]);
   return tag;
 }
 
