@@ -552,24 +552,28 @@ test("Sent is a folder in the folder menu and on g then s", async ({ page }) => 
   await expect(page.getByRole("listbox", { name: "Sent" })).toBeVisible();
 });
 
-test("a recipient badge can be dragged from To into Cc", async ({ page }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "New Message (c)" }).click();
-  const composer = page.getByRole("dialog", { name: "New Message" });
-  const to = composer.getByRole("textbox", { name: "To", exact: true });
-  await to.fill("friend@example.com");
-  await to.press("Enter");
-  await composer.getByRole("button", { name: "To", exact: true }).click();
-
-  const toRow = composer.getByRole("textbox", { name: "To", exact: true }).locator("xpath=..");
-  const ccRow = composer.getByRole("textbox", { name: "Cc", exact: true }).locator("xpath=..");
-  await expect(toRow.locator(".recipient-chip")).toHaveCount(1);
-
-  await toRow.locator(".recipient-chip", { hasText: "friend@example.com" }).dragTo(ccRow);
-
-  await expect(toRow.locator(".recipient-chip")).toHaveCount(0);
-  await expect(ccRow.locator(".recipient-chip", { hasText: "friend@example.com" })).toHaveCount(1);
-});
+for (const [from, to] of [["To", "Cc"], ["To", "Bcc"], ["Cc", "To"], ["Cc", "Bcc"], ["Bcc", "To"], ["Bcc", "Cc"]]) {
+  test(`a recipient badge moves from ${from} into ${to}`, async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "New Message (c)" }).click();
+    const composer = page.getByRole("dialog", { name: "New Message" });
+    await composer.getByRole("button", { name: "To", exact: true }).click();
+    const sourceInput = composer.getByRole("textbox", { name: from, exact: true });
+    const targetInput = composer.getByRole("textbox", { name: to, exact: true });
+    await sourceInput.fill('"Doe, Jane" <friend@example.com>');
+    await sourceInput.press("Enter");
+    const source = sourceInput.locator("xpath=../..");
+    const target = targetInput.locator("xpath=../..");
+    await source.locator(".recipient-chip").dragTo(targetInput);
+    await expect(source.locator(".recipient-chip")).toHaveCount(0);
+    await expect(target.locator(".recipient-chip", { hasText: "Doe, Jane" })).toHaveCount(1);
+    await expect(targetInput).toHaveValue("");
+    // A label is also a drop target, including the To toggle button.
+    await target.locator(".recipient-chip").dragTo(source.locator(":scope > label, :scope > button"));
+    await expect(source.locator(".recipient-chip", { hasText: "Doe, Jane" })).toHaveCount(1);
+    await expect(target.locator(".recipient-chip")).toHaveCount(0);
+  });
+}
 
 for (const theme of ["light", "dark"] as const) {
   test(`composer fits a small window in ${theme} mode`, async ({ page }, testInfo) => {

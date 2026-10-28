@@ -1908,33 +1908,81 @@ describe("Composer recipient autocomplete", () => {
     expect(screen.getByRole("dialog", { name: "Send later" })).toBeInTheDocument();
   });
 
-  it("drags a recipient badge from To into Cc, moving it rather than copying it", () => {
-    const prefilled = { ...draft, to: "hello@threestrands.local", cc: "" };
+  it("allows frontend badge drops in the desktop webview", () => {
+    const config = JSON.parse(readFileSync(resolve("src-tauri/tauri.conf.json"), "utf8"));
+    expect(config.app.windows.every((window: { dragDropEnabled?: boolean }) => window.dragDropEnabled === false)).toBe(true);
+  });
+
+  it.each([
+    ["to", "cc"], ["to", "bcc"], ["cc", "to"],
+    ["cc", "bcc"], ["bcc", "to"], ["bcc", "cc"],
+  ] as const)("moves a badge from %s to %s through the label or input without losing other recipients", (from, to) => {
+    const labels = { to: "To", cc: "Cc", bcc: "Bcc" };
+    const prefilled = { ...draft, to: "", cc: "", bcc: "", [from]: '"Doe, Jane" <jane@example.com>, keep@example.com', [to]: "existing@example.com" };
     render(<Composer draft={prefilled} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "To" }));
-
-    const chip = screen.getByRole("button", { name: "Remove hello@threestrands.local" }).closest(".recipient-chip");
-    const ccRow = screen.getByRole("textbox", { name: "Cc" }).closest(".recipient-chip-row");
-    expect(chip).toBeTruthy();
-    expect(ccRow).toBeTruthy();
-
+    const source = screen.getByRole("textbox", { name: labels[from] }).closest(".compose-field") as HTMLElement;
+    const destination = screen.getByRole("textbox", { name: labels[to] }).closest(".compose-field") as HTMLElement;
     const store = new Map<string, string>();
     const dataTransfer = {
       setData: (type: string, val: string) => store.set(type, val),
       getData: (type: string) => store.get(type) ?? "",
-      dropEffect: "move",
-      effectAllowed: "move",
+      dropEffect: "move", effectAllowed: "move",
     };
+    for (const target of [destination.firstElementChild!, within(destination).getByRole("textbox")]) {
+      const chip = within(source).getByRole("button", { name: "Remove Doe, Jane" }).closest(".recipient-chip")!;
+      fireEvent.change(within(destination).getByRole("textbox"), { target: { value: "unfinished" } });
+      fireEvent.dragStart(chip, { dataTransfer });
+      fireEvent.dragOver(target, { dataTransfer });
+      expect(destination).not.toHaveClass("drag-over");
+      fireEvent.dragEnter(target, { dataTransfer });
+      expect(destination).toHaveClass("drag-over");
+      fireEvent.drop(target, { dataTransfer });
+      fireEvent.dragEnd(chip, { dataTransfer });
+      expect(destination).not.toHaveClass("drag-over");
+      expect(within(source).queryByRole("button", { name: "Remove Doe, Jane" })).not.toBeInTheDocument();
+      expect(within(source).getByRole("button", { name: "Remove keep@example.com" })).toBeInTheDocument();
+      expect(within(destination).getByRole("button", { name: "Remove Doe, Jane" })).toBeInTheDocument();
+      expect(within(destination).getByRole("button", { name: "Remove existing@example.com" })).toBeInTheDocument();
+      expect(within(destination).getByRole("textbox")).toHaveValue("unfinished");
+      // Move back to exercise the second target with the same badge.
+      const moved = within(destination).getByRole("button", { name: "Remove Doe, Jane" }).closest(".recipient-chip")!;
+      fireEvent.dragStart(moved, { dataTransfer });
+      fireEvent.drop(source, { dataTransfer });
+      fireEvent.dragEnd(moved, { dataTransfer });
+    }
+  });
 
-    fireEvent.dragStart(chip!, { dataTransfer });
-    fireEvent.dragOver(ccRow!, { dataTransfer });
-    fireEvent.drop(ccRow!, { dataTransfer });
-    fireEvent.dragEnd(chip!, { dataTransfer });
-
-    const toField = screen.getByRole("textbox", { name: "To" }).closest(".compose-field") as HTMLElement;
-    const ccField = screen.getByRole("textbox", { name: "Cc" }).closest(".compose-field") as HTMLElement;
-    expect(within(toField).queryByRole("button", { name: "Remove hello@threestrands.local" })).not.toBeInTheDocument();
-    expect(within(ccField).getByRole("button", { name: "Remove hello@threestrands.local" })).toBeInTheDocument();
+  it("leaves a cancelled or same-field drag in place and deduplicates a destination address", () => {
+    render(<Composer draft={{ ...draft, to: "Jane <jane@example.com>", cc: "JANE@example.com" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const source = screen.getByRole("textbox", { name: "To" }).closest(".compose-field") as HTMLElement;
+    const destination = screen.getByRole("textbox", { name: "Cc" }).closest(".compose-field") as HTMLElement;
+    const chip = within(source).getByRole("button", { name: "Remove Jane" }).closest(".recipient-chip")!;
+    const store = new Map<string, string>();
+    const dataTransfer = {
+      setData: (type: string, val: string) => store.set(type, val),
+      getData: (type: string) => store.get(type) ?? "",
+    };
+    fireEvent.dragStart(chip, { dataTransfer });
+    fireEvent.drop(source, { dataTransfer });
+    fireEvent.dragEnd(chip, { dataTransfer });
+    expect(within(source).getByRole("button", { name: "Remove Jane" })).toBeInTheDocument();
+    fireEvent.dragStart(chip, { dataTransfer });
+    fireEvent.dragEnd(chip, { dataTransfer });
+    fireEvent.drop(destination, { dataTransfer });
+    expect(within(source).getByRole("button", { name: "Remove Jane" })).toBeInTheDocument();
+    for (const malformed of ["not json", "null", '{"email":42}', '{"email":"jane@example.com","displayName":42}']) {
+      fireEvent.dragStart(chip, { dataTransfer });
+      store.set("application/x-threestrands-recipient", malformed);
+      fireEvent.drop(destination, { dataTransfer });
+      fireEvent.dragEnd(chip, { dataTransfer });
+      expect(within(source).getByRole("button", { name: "Remove Jane" })).toBeInTheDocument();
+    }
+    fireEvent.dragStart(chip, { dataTransfer });
+    fireEvent.drop(destination, { dataTransfer });
+    fireEvent.dragEnd(chip, { dataTransfer });
+    expect(within(source).queryByRole("button", { name: "Remove Jane" })).not.toBeInTheDocument();
+    expect(destination.querySelectorAll(".recipient-chip")).toHaveLength(1);
   });
 });
 
