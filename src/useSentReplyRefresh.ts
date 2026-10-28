@@ -14,7 +14,7 @@ export const SENT_REPLY_REFRESH_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000,
 
 /**
  * Re-reads the open conversation until each sent reply's provider copy
- * replaces its outbox copy, which cannot be answered or forwarded.
+ * replaces its local outbox copy.
  */
 export function useSentReplyRefresh(
   detail: ThreadDetail | null,
@@ -34,8 +34,9 @@ export function useSentReplyRefresh(
     let attempt = 0;
     let timer: number | undefined;
     const schedule = () => {
-      const delay = SENT_REPLY_REFRESH_DELAYS_MS[attempt++];
-      if (delay === undefined) return;
+      // Sent-folder sync can finish after the initial backoff window. Keep
+      // checking the local cache at the capped interval while this copy is visible.
+      const delay = SENT_REPLY_REFRESH_DELAYS_MS[Math.min(attempt++, SENT_REPLY_REFRESH_DELAYS_MS.length - 1)]!;
       timer = window.setTimeout(() => {
         void mailClient.getThread(threadId)
           .then((next) => {

@@ -4,7 +4,8 @@ import { previewScheduleChoices } from "../scheduleTimes";
 import type { CorrespondenceClient, Draft, OutboxItem, ScheduledSendReport, ScheduleSelection } from "../correspondence";
 import { plainTextToHtml } from "../richText";
 import type { ThreadDetail } from "../domain";
-import { parseAddress } from "../emailAddress";
+import { queuedMessage } from "../queuedReplies";
+import { parseAddress, splitAddressList } from "../emailAddress";
 
 const key = "threestrands.demoCorrespondence";
 const inlineImages = new Map<string, string>();
@@ -62,6 +63,17 @@ export function demoCorrespondence(getSourceThread: (messageId: string) => Promi
   const recovered = read();
   recovered.outbox.forEach((item) => { if (item.state === "scheduled" && item.deadline < Date.now()) item.state = "overdue"; });
   write(recovered);
+  async function sourceThread(sourceId: string): Promise<ThreadDetail> {
+    if (!sourceId.startsWith("outbox-")) return getSourceThread(sourceId);
+    const item = read().outbox.find((o) => `outbox-${o.id}` === sourceId && o.state === "sent");
+    if (!item?.draft.sourceId) throw new Error("Sent message not found");
+    const detail = await sourceThread(item.draft.sourceId);
+    return { ...detail, messages: [...detail.messages, {
+      ...queuedMessage(item, detail.thread.id),
+      sender: item.draft.from ?? item.draft.account,
+      recipients: splitAddressList(item.draft.to), cc: splitAddressList(item.draft.cc),
+    }] };
+  }
   return {
     async schedulingInfo() { return { deviceName: "This computer", sharing: false }; },
     async scheduleChoices(localTime,timeZone) { return previewScheduleChoices(localTime,timeZone); },
@@ -96,7 +108,7 @@ export function demoCorrespondence(getSourceThread: (messageId: string) => Promi
       if (existing) return existing;
       const d: Draft = { id: crypto.randomUUID(), revision: 0, account: account ?? defaultAccount(), mode, sourceId: sourceId ?? null, threadId: null, replyId: null, references: [], to: "", cc: "", bcc: "", subject: "", body: "", followUpTaskId: null, attachments: [], updatedAt: Date.now() };
       if (sourceId) {
-        const detail = await getSourceThread(sourceId);
+        const detail = await sourceThread(sourceId);
         // Reply/replyAll/forward always send from the thread's owning account, never the "new message" default.
         if (mode !== "new") d.account = account ?? detail.thread.accountId;
         const message = detail.messages.find((m) => m.id === sourceId)!;
@@ -112,7 +124,12 @@ export function demoCorrespondence(getSourceThread: (messageId: string) => Promi
             d.body = `\n\n${attribution}${message.bodyText}`;
           }
         } else {
-          d.to = message.sender;
+          const own = parseAddress(message.sender).email.toLowerCase() === d.account.toLowerCase();
+          d.to = own ? message.recipients.join(", ") : message.sender;
+          if (mode === "replyAll") {
+            if (!own) d.to = [d.to, ...message.recipients.filter((address) => parseAddress(address).email.toLowerCase() !== d.account.toLowerCase())].join(", ");
+            d.cc = (message.cc ?? []).filter((address) => parseAddress(address).email.toLowerCase() !== d.account.toLowerCase()).join(", ");
+          }
         }
         // Replies and forwards both join the source conversation; a forward just addresses nobody.
         d.threadId = detail.thread.providerThreadId;
@@ -123,7 +140,7 @@ export function demoCorrespondence(getSourceThread: (messageId: string) => Promi
       store.drafts.push(d); write(store); return d;
     },
     async createDraftFromSent(sourceId, account) {
-      const detail = await getSourceThread(sourceId);
+      const detail = await sourceThread(sourceId);
       const message = detail.messages.find((m) => m.id === sourceId);
       if (!message || parseAddress(message.sender).email.toLowerCase() !== account.toLowerCase()) {
         throw new Error("Edit as New works only on messages you sent");

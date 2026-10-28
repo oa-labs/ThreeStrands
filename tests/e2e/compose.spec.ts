@@ -769,3 +769,40 @@ test("availability calendars are independent of visibility and update an open Fi
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();
   await expect(availability.getByRole("checkbox")).toBeChecked();
 });
+
+for (const action of ["Reply All", "Forward"] as const) {
+  test(`a sent local reply offers ${action} before its server copy arrives`, async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("threestrands.demoCorrespondence", JSON.stringify({ drafts: [], outbox: [{
+        id: "local-sent-reply", state: "sent", deadline: Date.now(), error: null,
+        draft: {
+          id: "local-sent-draft", revision: 1, account: "demo@example.com", mode: "replyAll",
+          sourceId: "welcome-message", threadId: "welcome", replyId: "welcome@example.com", references: [],
+          to: "Jane <jane@example.com>, Brian <brian@example.com>", cc: "team@example.com", bcc: "",
+          subject: "Welcome to ThreeStrands", body: "Thanks, everyone", bodyHtml: "<p>Thanks, everyone</p>",
+          attachments: [], updatedAt: Date.now(),
+        },
+      }] }));
+    });
+    await page.goto("/");
+    const card = page.locator('[data-message-id="outbox-local-sent-reply"]');
+    await expect(card.getByRole("button", { name: "Reply All", exact: true })).toBeVisible();
+    await expect(card.getByRole("button", { name: "Forward", exact: true })).toBeVisible();
+    await card.getByRole("button", { name: action, exact: true }).click();
+    const composer = page.getByRole("dialog", { name: action === "Forward" ? "Forward Message" : "Reply Message", exact: true });
+    await expect(composer).toBeVisible();
+    if (action === "Reply All") {
+      await expect(composer.getByRole("button", { name: "Remove Jane", exact: true })).toBeVisible();
+      await expect(composer.getByRole("button", { name: "Remove Brian", exact: true })).toBeVisible();
+      await expect(composer.getByRole("button", { name: "Remove team@example.com", exact: true })).toBeVisible();
+    } else {
+      await expect(composer.getByRole("textbox", { name: "To", exact: true })).toHaveValue("");
+    }
+    if (action === "Forward") {
+      await expect(composer.getByRole("region", { name: "Forwarded message" }).getByLabel("Message content", { exact: true }).contentFrame().locator("body")).toContainText("Thanks, everyone");
+    } else {
+      await composer.getByRole("button", { name: "Show Quoted Text" }).click();
+      await expect(composer.locator('[aria-label="Quoted Text"]')).toContainText("Thanks, everyone");
+    }
+  });
+}

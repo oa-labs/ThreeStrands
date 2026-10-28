@@ -1346,6 +1346,14 @@ it("shows a queued reply immediately and replaces it with the provider copy", as
     }],
   });
 
+  const followUp: OutboxItem = {
+    ...queued, id: "follow-up", draft: { ...queued.draft, id: "follow-up-draft", sourceId: "outbox-queued-reply" },
+  };
+  expect(messagesWithQueuedReplies(detail, [{ ...queued, state: "sent" }, followUp]).map((m) => m.id))
+    .toContain("outbox-follow-up");
+  expect(messagesWithQueuedReplies(detail, [{ ...followUp, draft: { ...followUp.draft, account: "other@example.com" } }]))
+    .toEqual(detail.messages);
+
   const providerDetail = {
     ...detail,
     messages: [...detail.messages, {

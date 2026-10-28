@@ -158,6 +158,28 @@ describe("MessageCard", () => {
     expect(stableProps.onToggle).toHaveBeenCalledWith("m1", true);
   });
 
+  it.each(["undo_pending", "ready", "sending", "uncertain", "unverifiable", "failed", "canceled", "scheduled", "overdue"] as const)("hides response actions for a %s local message", (state) => {
+    render(<MessageCard message={message} isExpanded {...stableProps} queuedItem={{ state } as OutboxItem} />);
+    expect(screen.queryByRole("button", { name: /^(Reply|Reply All|Forward)$/ })).toBeNull();
+  });
+
+  it("omits response actions in an outgoing preview without a response handler", () => {
+    render(<MessageCard message={message} isExpanded {...stableProps} queuedItem={{ state: "sent" } as OutboxItem} onRespond={undefined} />);
+    expect(screen.queryByRole("button", { name: /^(Reply|Reply All|Forward)$/ })).toBeNull();
+  });
+
+  it.each(["reply", "replyAll", "forward"] as const)("offers %s once a local reply is confirmed sent", (kind) => {
+    const queuedItem = { id: "sent-reply", state: "sending", draft: { id: "d1" } } as OutboxItem;
+    const local = { ...message, id: "outbox-sent-reply" };
+    const { rerender } = render(<MessageCard message={local} isExpanded {...stableProps} queuedItem={queuedItem} />);
+    expect(screen.queryByRole("button", { name: /^(Reply|Reply All|Forward)$/ })).toBeNull();
+
+    rerender(<MessageCard message={local} isExpanded {...stableProps} queuedItem={{ ...queuedItem, state: "sent" }} />);
+    for (const label of ["Reply", "Reply All", "Forward"]) expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: { reply: "Reply", replyAll: "Reply All", forward: "Forward" }[kind] }));
+    expect(stableProps.onRespond).toHaveBeenCalledWith(kind, local.id);
+  });
+
   it("offers Edit as New only on a message one of the accounts sent", () => {
     const onEditAsNew = vi.fn();
     const accounts = [{ email: "me@example.com" }] as Account[];

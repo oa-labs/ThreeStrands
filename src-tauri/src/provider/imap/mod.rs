@@ -33,7 +33,7 @@ mod mailboxes;
 pub(crate) mod plan;
 pub(crate) mod policy;
 mod provider;
-mod rfc822;
+pub(crate) mod rfc822;
 mod search;
 mod send;
 mod sending_identity;

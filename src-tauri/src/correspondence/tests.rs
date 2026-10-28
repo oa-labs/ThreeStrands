@@ -2550,6 +2550,77 @@ fn service() -> Correspondence {
     }
 }
 #[tokio::test]
+async fn confirmed_local_sent_messages_support_responses_without_a_provider_copy() {
+    let service = service();
+    let mut d = saved(&service.database);
+    d.thread_id = Some("original-thread".into());
+    d.cc = "team@example.com".into();
+    // Routing is native-owned, so persist this fixture through the native path.
+    let d = service.database.save_attachment_draft(d).unwrap();
+    let item = service.database.queue(&d.id, d.revision, false, &[], None, &service.root).unwrap();
+    service.database.test_connection().unwrap().execute(
+        "UPDATE outbox_messages SET state='sent' WHERE id=?1", [&item.id]
+    ).unwrap();
+    let source_id = format!("outbox-{}", item.id);
+    let raw = service.database.outbox_raw(&item.id).unwrap();
+    let parsed = MessageParser::default().parse(&raw).unwrap();
+    for mode in ["reply", "replyAll", "forward"] {
+        let value = service.request(Request::Create {
+            mode: mode.into(), source_id: Some(source_id.clone()), account: Some(d.account.clone())
+        }).await.expect("sent MIME is available even with no connected provider");
+        let draft: Draft = serde_json::from_value(value).unwrap();
+        assert_eq!(draft.thread_id.as_deref(), Some("original-thread"));
+        assert_eq!(draft.reply_id.as_deref(), parsed.message_id());
+        assert!(draft.references.contains(&draft.reply_id.clone().unwrap()));
+        assert!(draft.body.contains("Saved work") || draft.forwarded_content.as_ref().is_some_and(|c| c.text.contains("Saved work")));
+        if mode == "forward" {
+            assert!(draft.to.is_empty());
+        } else {
+            assert_eq!(draft.to, "jane@example.com");
+            assert_eq!(draft.cc, if mode == "replyAll" { "team@example.com" } else { "" });
+        }
+    }
+    // Cached metadata cannot bypass the account or confirmed-send checks.
+    assert!(service.request(Request::Create {
+        mode: "replyAll".into(), source_id: Some(source_id.clone()), account: Some("other@example.com".into())
+    }).await.is_err());
+    for state in ["undo_pending", "sending", "failed", "uncertain", "canceled"] {
+        service.database.test_connection().unwrap().execute(
+            "UPDATE outbox_messages SET state=?1 WHERE id=?2", params![state, item.id]
+        ).unwrap();
+        assert!(service.request(Request::Create {
+            mode: "replyAll".into(), source_id: Some(source_id.clone()), account: Some(d.account.clone())
+        }).await.is_err(), "{state} must not be treated as sent");
+    }
+}
+
+#[tokio::test]
+async fn forwarding_a_local_sent_copy_reads_attachments_from_its_mime_offline() {
+    let mut service = service();
+    let root = std::env::temp_dir().join(Uuid::new_v4().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    service.root = root.clone();
+    let d = saved(&service.database);
+    let item = service.database.queue(&d.id, d.revision, false, &[], None, &service.root).unwrap();
+    let raw = b"From: you@example.com\r\nTo: jane@example.com\r\nMessage-ID: <local@example.com>\r\nSubject: Files\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=test\r\n\r\n--test\r\nContent-Type: text/plain\r\n\r\nHello\r\n--test\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=report.pdf\r\nContent-Transfer-Encoding: base64\r\n\r\nYWJj\r\n--test--\r\n";
+    service.database.test_connection().unwrap().execute(
+        "UPDATE outbox_messages SET state='sent',raw=?1 WHERE id=?2", params![raw.as_slice(), item.id]
+    ).unwrap();
+    let value = service.request(Request::Create {
+        mode: "forward".into(), source_id: Some(format!("outbox-{}", item.id)), account: Some(d.account)
+    }).await.unwrap();
+    let draft: Draft = serde_json::from_value(value).unwrap();
+    assert_eq!(draft.attachments.len(), 1);
+    let value = service.request(Request::FetchAttachment {
+        id: draft.id, attachment_id: draft.attachments[0].id.clone()
+    }).await.unwrap();
+    let fetched: Draft = serde_json::from_value(value).unwrap();
+    assert!(fetched.attachments[0].ready);
+    assert_eq!(std::fs::read(root.join(&fetched.attachments[0].id)).unwrap(), b"abc");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn reply_to_a_cached_message_opens_while_its_account_is_not_connected() {
     // `service()` has an empty account registry, so `provider_for` fails.
     // Resolving sending identities must not turn that into a refusal to

@@ -91,14 +91,31 @@ describe("useSentReplyRefresh", () => {
     expect(getThread).toHaveBeenCalledTimes(2);
   });
 
-  it("stops after the last delay when the provider copy never arrives", async () => {
+  it("keeps checking at the capped interval when the provider copy arrives after the initial retries", async () => {
     const getThread = vi.spyOn(mailClient, "getThread").mockResolvedValue(stale);
-    const { result } = setup([sentReply(stale)]);
-
+    const { result, unmount } = setup([sentReply(stale)]);
     const total = SENT_REPLY_REFRESH_DELAYS_MS.reduce((sum, delay) => sum + delay, 0);
     await act(async () => { await vi.advanceTimersByTimeAsync(total + 60_000); });
-    expect(getThread).toHaveBeenCalledTimes(SENT_REPLY_REFRESH_DELAYS_MS.length);
+    expect(getThread).toHaveBeenCalledTimes(SENT_REPLY_REFRESH_DELAYS_MS.length + 2);
     expect(result.current.at(-1)!.id).toBe("outbox-reply-all");
+
+    getThread.mockResolvedValue(withProviderCopy(stale));
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(result.current.at(-1)!.id).toBe("provider-sent-reply");
+    const calls = getThread.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(getThread).toHaveBeenCalledTimes(calls);
+    unmount();
+  });
+
+  it("stops checking when the conversation closes", async () => {
+    const getThread = vi.spyOn(mailClient, "getThread").mockResolvedValue(stale);
+    const { unmount } = setup([sentReply(stale)]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(SENT_REPLY_REFRESH_DELAYS_MS[0]!); });
+    expect(getThread).toHaveBeenCalledTimes(1);
+    unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+    expect(getThread).toHaveBeenCalledTimes(1);
   });
 
   it("leaves a reply still waiting to send to the outbox refresh", async () => {

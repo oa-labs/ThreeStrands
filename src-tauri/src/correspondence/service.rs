@@ -159,6 +159,16 @@ impl Correspondence {
     }
     /// Caches a draft's source message so drafting from it works offline later.
     async fn ensure_source_metadata(&self, id: &str, account: &str) -> Result<(), String> {
+        if let Some(outbox_id) = id.strip_prefix("outbox-") {
+            let item = self.database.outbox()?.into_iter()
+                .find(|item| item.id == outbox_id && item.draft.account == account && item.state == "sent")
+                .ok_or("Only a confirmed sent message from this account can be used")?;
+            let bytes = self.database.outbox_raw(outbox_id)?;
+            let mut source = crate::provider::imap::rfc822::to_raw_message(&bytes, id, vec!["SENT".into()]).map_err(error)?;
+            source.thread_id = item.draft.thread_id.unwrap_or_else(|| id.to_string());
+            self.database.put_message_metadata(id, &json(&source)?)?;
+            return Ok(());
+        }
         let missing = !self.database.has_message_metadata(id)?;
         if missing {
             let source = self
@@ -596,23 +606,37 @@ impl Correspondence {
             }
             FetchAttachment { id, attachment_id } => {
                 let mut d = self.database.draft(&id)?;
-                let provider = self.provider_for(&d.account).await?;
-                if provider.sender_identity().await.map_err(error)? != d.account {
-                    return Err("Reconnect the draft's account".into());
-                }
                 let a = d
                     .attachments
                     .iter_mut()
                     .find(|a| a.id == attachment_id)
                     .ok_or("Attachment not found")?;
                 let message = a.message_id.as_ref().ok_or("No attachment source")?;
-                let data = if let Some(provider_id) = &a.provider_id {
+                // A sent local copy has all attachment bytes in its prepared MIME.
+                // It must never be fetched using its synthetic ID at the provider.
+                let local_source = if message.starts_with("outbox-") {
+                    self.ensure_source_metadata(message, &d.account).await?;
+                    Some(serde_json::from_str::<crate::mime::RawMessage>(
+                        &self.database.message_metadata(message)?.ok_or("Attachment source unavailable")?
+                    ).map_err(error)?)
+                } else { None };
+                let provider = if local_source.is_none() {
+                    let provider = self.provider_for(&d.account).await?;
+                    if provider.sender_identity().await.map_err(error)? != d.account {
+                        return Err("Reconnect the draft's account".into());
+                    }
+                    Some(provider)
+                } else { None };
+                let data = if let (Some(provider), Some(provider_id)) = (&provider, &a.provider_id) {
                     provider
                         .attachment_bytes(message, provider_id)
                         .await
                         .map_err(error)?
                 } else {
-                    let source = provider.fetch_message(message).await.map_err(error)?;
+                    let source = match local_source {
+                        Some(source) => source,
+                        None => provider.as_ref().ok_or("Attachment source unavailable")?.fetch_message(message).await.map_err(error)?,
+                    };
                     fn find(part: &MimePart, attachment: &Attachment) -> Option<String> {
                         let matches = if let Some(content_id) = &attachment.content_id {
                             header(part, "Content-ID").trim().trim_matches(['<', '>']).eq_ignore_ascii_case(content_id)

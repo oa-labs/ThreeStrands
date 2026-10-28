@@ -1254,7 +1254,6 @@ export function App() {
                     emailTextColors={emailTextColors}
                     onActivate={ignoreOutboxMessageEvent}
                     onToggle={ignoreOutboxMessageEvent}
-                    onRespond={ignoreOutboxMessageEvent}
                     onRegisterNode={ignoreOutboxMessageEvent}
                     onImageClick={setLightboxImageSrc}
                     onNotice={showNoticeMessage}

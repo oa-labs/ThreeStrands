@@ -52,7 +52,7 @@ type MessageCardProps = {
   threadText?: ThreadTextIndex;
   onActivate: (messageId: string) => void;
   onToggle: (messageId: string, isExpanded: boolean) => void;
-  onRespond: (kind: MessageResponseKind, messageId: string) => void;
+  onRespond?: (kind: MessageResponseKind, messageId: string) => void;
   /** Starts an unaddressed new message from this one; offered only on messages an account sent. */
   onEditAsNew?: (messageId: string) => void;
   onRegisterNode: (messageId: string, isLatest: boolean, node: HTMLElement | null) => void;
@@ -195,7 +195,7 @@ export const MessageCard = memo(function MessageCard({
       <div className="message-sender-row">
         <strong><MessageAddress address={message.sender} displayName={senderDisplayName} own={ownEmails} /></strong>
         {trust ? <TrustBadge messageId={message.id} report={trust} onShowLink={showTrustLink} /> : null}
-        {queuedItem ? null : (
+        {!onRespond || (queuedItem && queuedItem.state !== "sent") ? null : (
           <div className="message-header-actions">
             <HoverTooltip label="Reply" placement="bottom">
               <button

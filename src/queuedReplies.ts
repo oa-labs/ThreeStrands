@@ -83,7 +83,10 @@ export function messagesWithQueuedReplies(detail: ThreadDetail, outbox: OutboxIt
       joinsSourceConversation(item.draft)
       && !["canceled", "failed", "scheduled", "overdue"].includes(item.state)
       && Boolean(item.draft.sourceId)
-      && detail.messages.some((message) => message.id === item.draft.sourceId)
+      && (detail.messages.some((message) => message.id === item.draft.sourceId)
+        || (item.draft.sourceId?.startsWith("outbox-")
+          && item.draft.account === detail.thread.accountId
+          && item.draft.threadId === detail.thread.providerThreadId))
       && !detail.messages.some((message) =>
         (item.providerId && message.id === item.providerId)
         || providerMessageMatchesDraft(message, item.draft))
