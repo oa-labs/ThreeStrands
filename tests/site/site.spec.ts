@@ -115,7 +115,7 @@ test.describe("feature claims", () => {
     for (const selector of ['meta[name="description"]', 'meta[property="og:description"]']) {
       await expect(page.locator(selector)).toHaveAttribute("content", /Gmail and IMAP/);
     }
-    await expect(page.locator(".hero .fine-print")).toContainText("Gmail + IMAP · macOS, Windows + Linux");
+    await expect(page.locator(".hero .fine-print")).toContainText("Gmail + IMAP · macOS · Windows + Linux experimental builds");
     const tour = page.locator("#features");
     await expect(tour).toContainText("Proton Mail through Proton Mail Bridge");
     await expect(tour).toContainText("Google Calendar connects separately and works alongside either mail provider");
