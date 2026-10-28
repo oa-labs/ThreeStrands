@@ -131,6 +131,13 @@ describe("Draft review", () => {
     expect(screen.getByText(result.suggestions[0].reason)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Apply Revision" }));
     expect(body).toHaveTextContent(result.revisedBody);
+    expect(screen.getByText(result.suggestions[0].reason)).not.toBeVisible();
+    expect(screen.getByRole("button", { name: "Show Review" })).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Show Review" }));
+    expect(screen.getByText(result.suggestions[0].reason)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Hide Review" })).toHaveAttribute("aria-expanded", "true");
+    expect(mailClient.reviewDraft).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "Hide Review" }));
     expect(screen.getByRole("textbox", { name: "Subject" })).toHaveValue(result.revisedSubject);
     await act(async () => { await ref.current!.flush(); });
     expect(mailClient.saveDraft).toHaveBeenLastCalledWith(expect.objectContaining({ subject: result.revisedSubject, body: result.revisedBody }));
@@ -342,6 +349,30 @@ describe("Draft review in the composer", () => {
     fireEvent.click(within(reopened).getByRole("button", { name: "Close Draft Review" }));
     expect(screen.queryByRole("region", { name: "Draft Review" })).not.toBeInTheDocument();
     expect(trigger).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("reveals the revised draft after collapsing and restores the review on undo", async () => {
+    const scroll = vi.fn();
+    renderComposer();
+    const subject = screen.getByRole("textbox", { name: "Subject" });
+    subject.closest("label")!.scrollIntoView = scroll;
+    fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+    await reviewed();
+    const body = screen.getByRole("textbox", { name: "Message Body" });
+    body.scrollTop = 180;
+    fireEvent.click(screen.getByRole("button", { name: "Apply Revision" }));
+    expect(subject).toHaveFocus();
+    expect(body.scrollTop).toBe(0);
+    expect(scroll).toHaveBeenCalledWith({ block: "start" });
+    expect(screen.getByText(result.assessment)).not.toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Show Review" }));
+    expect(screen.getByText(result.assessment)).toBeVisible();
+    expect(scroll).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Hide Review" }));
+    fireEvent.click(screen.getByRole("button", { name: "Undo Revision" }));
+    expect(screen.getByText(result.assessment)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Apply Revision" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Show Review" })).not.toBeInTheDocument();
   });
 
   it("is not offered for a forward, and follows Draft Assist being turned on or off while the draft is open", () => {

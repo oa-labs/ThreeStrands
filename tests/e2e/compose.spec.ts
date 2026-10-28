@@ -83,6 +83,13 @@ test("reviews a new email in the composer, applies and undoes without sending, a
   await expect(panel.getByText("Goal: Get an introductory call")).toBeAttached();
   await panel.getByRole("button", { name: "Apply Revision" }).click();
   await expect(body).toContainText("Would you be open to a brief conversation?");
+  await expect(composer.getByRole("textbox", { name: "Subject" })).toBeFocused();
+  await expect(body).toBeInViewport();
+  await expect(composer.getByRole("button", { name: "Send", exact: true })).toBeInViewport();
+  await expect(panel.getByRole("button", { name: "Review Again" })).toBeHidden();
+  await panel.getByRole("button", { name: "Show Review" }).click();
+  await expect(panel.getByRole("button", { name: "Review Again" })).toBeVisible();
+  await panel.getByRole("button", { name: "Hide Review" }).click();
   await expect(composer.locator(".save-status")).toHaveText("Draft saved");
   await panel.getByRole("button", { name: "Undo Revision" }).click();
   await expect(body).toHaveText("I help teams improve their workflow.");
@@ -95,6 +102,35 @@ test("reviews a new email in the composer, applies and undoes without sending, a
   await composer.getByRole("button", { name: "Review", exact: true }).click();
   await expect(panel.getByRole("textbox", { name: /Add a goal for this email/ })).toHaveValue("");
 });
+
+for (const height of [600, 900]) {
+  test(`inline reply keeps Send visible throughout draft review (${height}px)`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height });
+    await page.goto("/");
+    await enableDraftReview(page);
+    await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
+    await page.keyboard.press("r");
+    const reply = page.getByRole("dialog", { name: "Reply Message" });
+    const body = reply.getByRole("textbox", { name: "Message Body" });
+    await body.fill("Please let me know what you think.\n".repeat(60));
+    await reply.getByRole("button", { name: "Review", exact: true }).click();
+    const panel = reply.getByRole("region", { name: "Draft Review" });
+    await expect(panel.getByRole("button", { name: "Apply Revision" })).toBeVisible();
+    const send = reply.getByRole("button", { name: "Send", exact: true });
+    await expect(send).toBeInViewport({ ratio: 1 });
+    await panel.getByRole("button", { name: "Apply Revision" }).click();
+    await expect(reply.getByRole("textbox", { name: "Subject" })).toBeFocused();
+    await expect(body).toBeInViewport();
+    expect(await body.evaluate((element) => element.scrollTop)).toBe(0);
+    await expect(panel.getByRole("button", { name: "Review Again" })).toBeHidden();
+    await expect(send).toBeInViewport({ ratio: 1 });
+    await panel.getByRole("button", { name: "Show Review" }).click();
+    await expect(panel.getByRole("button", { name: "Review Again" })).toBeVisible();
+    await expect(send).toBeInViewport({ ratio: 1 });
+    await page.setViewportSize({ width: 1000, height: height - 100 });
+    await expect(send).toBeInViewport({ ratio: 1 });
+  });
+}
 
 test("draft review protects changes made after requesting feedback", async ({ page }) => {
   await page.goto("/");
