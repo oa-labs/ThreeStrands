@@ -4,6 +4,8 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+## 0.183.1 — 2026-10-29
+
 ### New
 - Keep separate hours for different parts of your life, such as work and personal, in **Settings → Availability**, and choose which profile each mail account uses. **Find Times** and checks of offered times then use the hours for the account the email came to; every calendar still counts as busy. To use other hours for one conversation or message, choose them under **Usual Hours** in Find Times.
 - When someone offers several meeting times, **Find Times** checks each exact option against your calendars and keeps conflicts, evenings, and weekends visible. Select the free times to draft a reply, change an assumed timezone, or choose **Find Other Times** to search your usual hours.
