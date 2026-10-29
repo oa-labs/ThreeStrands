@@ -135,6 +135,16 @@ describe("component typography", () => {
     expect(overrides).toEqual([]);
   });
 
+  it("uses context-panel type roles for proposed times instead of the inherited shell size", () => {
+    expect(sizeOf(".proposed-times")).toBe("--text-secondary");
+    expect(sizeOf(".context-row-title")).toBe("--text-secondary");
+    expect(sizeOf(".context-row-detail")).toBe("--text-meta");
+    expect(sizeOf(".context-status")).toBe("--text-meta");
+    expect(sizeOf(".context-section-note")).toBe("--text-meta");
+    expect(sizeOf(".proposed-times-zone select")).toBe("--text-control");
+    expect(sizeOf(".proposed-times-list details")).toBe("--text-meta");
+  });
+
   it("sets every pane empty-state message in default UI text rather than the inherited shell size", () => {
     for (const selector of [".reader-empty p", ".contacts-empty-state p"]) expect(sizeOf(selector), selector).toBe("--text-body");
   });

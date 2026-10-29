@@ -108,7 +108,7 @@ function revealIfTruncated(line: HTMLElement | null) {
  * off shows its full text on hover. A small icon `action` sits at the end of
  * the detail line, under the date, so dates keep the panel's right edge.
  */
-export function ContextRow({ as: Element = "div", icon, control, title, date, dateClassName, detail, onActivate, onPointerDown, actions, trailing, wrapTitle, className }: {
+export function ContextRow({ as: Element = "div", icon, control, title, date, dateClassName, detail, onActivate, pressed, disabled, onPointerDown, actions, trailing, wrapTitle, className }: {
   as?: "div" | "article";
   /** A decorative glyph, drawn inside the row's button. */
   icon?: ReactNode;
@@ -123,6 +123,9 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
   detail?: ReactNode;
   /** Makes the glyph and text one button. */
   onActivate?(): void;
+  /** A selectable candidate row uses the main button as a toggle. */
+  pressed?: boolean;
+  disabled?: boolean;
   /** Starts a drag from the row, such as a task dragged onto the calendar. */
   onPointerDown?(event: ReactPointerEvent<HTMLElement>): void;
   /** Up to two small icon buttons (.btn-icon-sm) in a row under the date, outside the row's own button. */
@@ -151,7 +154,7 @@ export function ContextRow({ as: Element = "div", icon, control, title, date, da
     <Element className={classes} style={actions?.length ? { "--context-row-action-count": actions.length } as CSSProperties : undefined} onMouseEnter={revealTruncated} onPointerDown={onPointerDown}>
       {control ? <span className="context-row-glyph context-row-control">{control}</span> : null}
       {onActivate
-        ? <button type="button" className="context-row-main" onClick={onActivate}>{body}</button>
+        ? <button type="button" className="context-row-main" aria-pressed={pressed} disabled={disabled} onClick={onActivate}>{body}</button>
         : <div className="context-row-main">{body}</div>}
       {actions?.length ? <span className="context-row-action">{actions}</span> : null}
       {trailing ? <span className="context-row-trailing">{trailing}</span> : null}

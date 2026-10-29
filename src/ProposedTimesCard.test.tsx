@@ -21,6 +21,23 @@ beforeEach(() => { vi.useFakeTimers({toFake:["Date"]}); vi.setSystemTime(new Dat
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe("proposed times", () => {
+  it("renders one number per pending option in shared context rows without overlapping checkbox controls", () => {
+    vi.spyOn(mailClient,"checkProposedTimes").mockReturnValue(new Promise(() => {}));
+    const sourceTexts = ["1) Saturday, Oct. 31st. - 2 PM", "(2) Saturday, Oct. 31st. - 7 PM", "3. Sunday, Nov. 1st - 4 PM", "Sunday, Nov. 1st - 7 PM", "10.31 at 7 PM"];
+    const {container} = render(<ProposedTimesCard {...props()} times={sourceTexts.map((sourceText) => ({sourceText,localStart:null,durationMinutes:60,timeZone:null}))} />);
+    const titles = [...container.querySelectorAll(".proposed-time-row .context-row-title")].map((title) => title.textContent);
+    expect(titles).toEqual(["1. Saturday, Oct. 31st. - 2 PM", "2. Saturday, Oct. 31st. - 7 PM", "3. Sunday, Nov. 1st - 4 PM", "4. Sunday, Nov. 1st - 7 PM", "5. 10.31 at 7 PM"]);
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveClass("context-status");
+    const candidates = screen.getAllByRole("button",{name:/^\d+\./});
+    expect(candidates).toHaveLength(5);
+    for (const candidate of candidates) {
+      expect(candidate).toBeDisabled();
+      expect(candidate).toHaveAttribute("aria-pressed","false");
+      expect(candidate).toHaveClass("context-row-main");
+    }
+  });
+
   it("keeps an actionable warning for invalid offered-time metadata and reads the enabled Brief again", async () => {
     const retry = vi.fn().mockResolvedValue(undefined);
     const check = vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue(times.map((_,index) => row(index)));
@@ -61,7 +78,7 @@ describe("proposed times", () => {
     vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue([{start:null,end:null,issue:"Date or time needs clarification",check:null,outsideWorkingHours:false}]);
     const {container} = render(<ProposedTimesCard {...props()} times={[{sourceText,localStart:null,durationMinutes:60,timeZone:null}]} />);
     await screen.findByText("Date or time needs clarification");
-    expect(screen.getByText(sourceText)).toBeInTheDocument();
+    expect(screen.getByText(`1. ${sourceText}`)).toBeInTheDocument();
     expect(container.querySelector("img")).toBeNull();
   });
 
@@ -72,12 +89,12 @@ describe("proposed times", () => {
     render(<ProposedTimesCard {...current} />);
     await screen.findAllByText("Free · Outside your usual hours");
     expect(check).toHaveBeenCalledWith({times, assumedTimeZone:"America/New_York", preferences});
-    expect(screen.getAllByRole("checkbox")).toHaveLength(7);
+    expect(screen.getAllByRole("button", {name:/^\d+\./})).toHaveLength(7);
     expect(screen.getByText("Conflict · Outside your usual hours")).toBeInTheDocument();
-    expect(screen.getAllByRole("checkbox")[0]).toBeDisabled();
-    for (const input of screen.getAllByRole("checkbox")) expect(input).not.toBeChecked();
-    fireEvent.click(screen.getAllByRole("checkbox")[2]);
-    fireEvent.click(screen.getAllByRole("checkbox")[6]);
+    expect(screen.getAllByRole("button", {name:/^\d+\./})[0]).toBeDisabled();
+    for (const input of screen.getAllByRole("button", {name:/^\d+\./})) expect(input).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(screen.getAllByRole("button", {name:/^\d+\./})[2]);
+    fireEvent.click(screen.getAllByRole("button", {name:/^\d+\./})[6]);
     fireEvent.click(screen.getByRole("button",{name:"Draft Reply With Selected Times"}));
     await waitFor(() => expect(current.onReplyWithTimes).toHaveBeenCalledWith([2,6].map((index) => ({start:rows[index].start,end:rows[index].end,status:"verified"}))));
     expect(check).toHaveBeenCalledTimes(2);
@@ -93,18 +110,18 @@ describe("proposed times", () => {
     expect(screen.getByText(/Unable to check/)).toBeInTheDocument();
     expect(screen.getByText("Meeting length needs clarification")).toBeInTheDocument();
     expect(screen.getByText(/Couldn’t check: Personal/)).toBeInTheDocument();
-    for (const input of screen.getAllByRole("checkbox")) expect(input).toBeDisabled();
+    for (const input of screen.getAllByRole("button", {name:/^\d+\./})) expect(input).toBeDisabled();
   });
 
   it("rechecks on timezone, calendar preference, and calendar availability changes", async () => {
     const check = vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue(times.map((_,index) => row(index)));
     const current = props(); const view = render(<ProposedTimesCard {...current} />);
     await screen.findAllByText("Free · Outside your usual hours");
-    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    fireEvent.click(screen.getAllByRole("button", {name:/^\d+\./})[1]);
     fireEvent.change(screen.getByRole("combobox",{name:"Assuming timezone"}),{target:{value:"Europe/London"}});
     await waitFor(() => expect(check).toHaveBeenCalledTimes(2));
     expect(check.mock.lastCall?.[0].assumedTimeZone).toBe("Europe/London");
-    expect(screen.getAllByRole("checkbox")[1]).not.toBeChecked();
+    expect(screen.getAllByRole("button", {name:/^\d+\./})[1]).toHaveAttribute("aria-pressed", "false");
     view.rerender(<ProposedTimesCard {...current} preferences={{...preferences, driveTimeBufferMinutes:30}} />);
     await waitFor(() => expect(check).toHaveBeenCalledTimes(3));
     act(() => window.dispatchEvent(new Event(CALENDAR_AVAILABILITY_CHANGED)));
@@ -115,19 +132,19 @@ describe("proposed times", () => {
     const check = vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue(times.map((_,index) => row(index)));
     const current = props(); render(<ProposedTimesCard {...current} />);
     await screen.findAllByText("Free · Outside your usual hours");
-    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    fireEvent.click(screen.getAllByRole("button", {name:/^\d+\./})[1]);
     check.mockResolvedValue(times.map((_,index) => row(index,index === 1 ? "partiallyChecked" : "free")));
     fireEvent.click(screen.getByRole("button",{name:"Draft Reply With Selected Times"}));
     await screen.findByRole("alert");
     expect(current.onReplyWithTimes).not.toHaveBeenCalled();
-    expect(screen.getAllByRole("checkbox")[1]).not.toBeChecked();
+    expect(screen.getAllByRole("button", {name:/^\d+\./})[1]).toHaveAttribute("aria-pressed", "false");
   });
 
   it("shows retryable calendar failures without discarding the sender's list", async () => {
     const check = vi.spyOn(mailClient,"checkProposedTimes").mockRejectedValueOnce(new Error("Calendar offline")).mockResolvedValue(times.map((_,index) => row(index)));
     render(<ProposedTimesCard {...props()} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Calendar offline");
-    expect(screen.getAllByRole("checkbox")).toHaveLength(7);
+    expect(screen.getAllByRole("button", {name:/^\d+\./})).toHaveLength(7);
     fireEvent.click(screen.getByRole("button",{name:"Check Again"}));
     await screen.findAllByText("Free · Outside your usual hours");
     expect(check).toHaveBeenCalledTimes(2);
@@ -152,7 +169,7 @@ describe("proposed times", () => {
     render(<AvailabilitySection compact offered={false} preferences={preferences} ai draft={{sourceId:"m1",subject:"CRT",body:""}} offeredTimes={{sourceMessageId:"m1",times}} onInsertTimes={vi.fn()} onOpenCalendarSettings={vi.fn()} />);
     expect(await screen.findByRole("region",{name:"Proposed times"})).toBeInTheDocument();
     expect(find).not.toHaveBeenCalled();
-    expect(within(screen.getByRole("region",{name:"Proposed times"})).getAllByRole("checkbox")).toHaveLength(7);
+    expect(within(screen.getByRole("region",{name:"Proposed times"})).getAllByRole("button", {name:/^\d+\./})).toHaveLength(7);
     fireEvent.click(screen.getByRole("button",{name:"Find Other Times"}));
     await waitFor(() => expect(other).toHaveBeenCalledWith(expect.objectContaining({preferences:expect.objectContaining({defaultDurationMinutes:60})})));
   });
@@ -165,7 +182,7 @@ describe("proposed times", () => {
     render(<AvailabilitySection compact preferences={preferences} ai draft={{sourceId:"m1",subject:"CRT",body:""}} onInsertTimes={vi.fn()} onOpenCalendarSettings={vi.fn()} />);
     fireEvent.click(screen.getByRole("button",{name:"Find Times"}));
     await screen.findByRole("region",{name:"Proposed times"});
-    expect(screen.getAllByRole("checkbox")).toHaveLength(7);
+    expect(screen.getAllByRole("button", {name:/^\d+\./})).toHaveLength(7);
     saveAiProvider("none");
   });
 });

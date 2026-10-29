@@ -988,10 +988,13 @@ test("a Brief's offered slots reach calendar checks and a reply without a meetin
     saveAiProvider("openai");
     saveAiFeatures({...DEFAULT_AI_FEATURES,summarize:true,actionExtraction:true,proactiveBriefs:false});
     await setAiApiKey("test-key");
+    const check = mailClient.checkProposedTimes.bind(mailClient);
+    const ready = new Promise<void>((resolve) => { mailClient.releaseProposedCheck = resolve; });
+    mailClient.checkProposedTimes = async (...args: unknown[]) => { await ready; return check(...args); };
     const original = mailClient.briefThread.bind(mailClient);
     mailClient.briefThread = async (...args: unknown[]) => ({...await original(...args),analysis:{proposals:[],hiddenCount:0},offeredTimes:{sourceMessageId:"welcome-message",times:[
-      {sourceText:"Tuesday, November 3, 2099 at 7 PM for one hour",localStart:"2099-11-03T19:00",durationMinutes:60,timeZone:"America/New_York"},
-      {sourceText:"Wednesday, November 4, 2099 at 7 PM for one hour",localStart:"2099-11-04T19:00",durationMinutes:60,timeZone:"America/New_York"},
+      {sourceText:"1) Tuesday, November 3, 2099 at 7 PM for one hour",localStart:"2099-11-03T19:00",durationMinutes:60,timeZone:"America/New_York"},
+      {sourceText:"2) Wednesday, November 4, 2099 at 7 PM for one hour",localStart:"2099-11-04T19:00",durationMinutes:60,timeZone:"America/New_York"},
     ]}});
   });
   await page.getByRole("button",{name:"Settings (⌘,)"}).click();
@@ -1004,9 +1007,53 @@ test("a Brief's offered slots reach calendar checks and a reply without a meetin
   const get = context.getByRole("button",{name:/^(Get Brief|Refresh brief)$/});
   await get.click();
   const proposed = context.getByRole("region",{name:"Proposed times"});
-  await expect(proposed.getByRole("checkbox")).toHaveCount(2);
-  await expect(proposed.getByRole("checkbox").first()).toBeEnabled();
-  await proposed.getByRole("checkbox").first().check();
+  await expect(proposed.getByRole("status")).toHaveText("Checking proposed times…");
+  await expect(proposed.getByRole("checkbox")).toHaveCount(0);
+  const candidates = proposed.getByRole("button",{name:/^\d+\./});
+  await expect(candidates).toHaveCount(2);
+  await expect(candidates.first()).toBeDisabled();
+  await expect(proposed.locator(".context-row-title")).toHaveText([
+    "1. Tuesday, November 3, 2099 at 7 PM for one hour",
+    "2. Wednesday, November 4, 2099 at 7 PM for one hour",
+  ]);
+  for (const scale of [1,1.4]) {
+    await page.evaluate((value) => document.documentElement.style.setProperty("--font-scale",String(value)),scale);
+    const layout = await proposed.evaluate((section) => {
+      const probe = document.createElement("span"); section.append(probe);
+      const size = (role: string) => { probe.style.fontSize = `var(${role})`; return getComputedStyle(probe).fontSize; };
+      const secondary = size("--text-secondary"); const meta = size("--text-meta"); probe.remove();
+      const list = section.querySelector(".proposed-times-list")!;
+      const rows = [...list.querySelectorAll(".context-row")].map((row) => {
+        const title = row.querySelector(".context-row-title")!;
+        const glyph = row.querySelector(".context-row-icon")!;
+        return {titleSize:getComputedStyle(title).fontSize,detailSize:getComputedStyle(row.querySelector(".context-row-detail")!).fontSize,
+          glyphRight:glyph.getBoundingClientRect().right,titleLeft:title.getBoundingClientRect().left};
+      });
+      return {secondary,meta,rows,marker:getComputedStyle(list).listStyleType,
+        loadingSize:getComputedStyle(section.querySelector('[role="status"]')!).fontSize,
+        summarySize:getComputedStyle(section.querySelector(".proposed-times-summary")!).fontSize};
+    });
+    expect(layout.marker).toBe("none");
+    expect(layout.loadingSize).toBe(layout.meta);
+    expect(layout.summarySize).toBe(layout.meta);
+    for (const row of layout.rows) {
+      expect(row.titleSize).toBe(layout.secondary);
+      expect(row.detailSize).toBe(layout.meta);
+      expect(row.glyphRight).toBeLessThanOrEqual(row.titleLeft + 1);
+    }
+  }
+  await page.evaluate(async () => {
+    document.documentElement.style.setProperty("--font-scale","1");
+    const clientPath = "/src/data/client.ts"; const {mailClient} = await import(clientPath);
+    mailClient.releaseProposedCheck();
+  });
+  await expect(candidates.first()).toBeEnabled();
+  await candidates.first().focus();
+  await candidates.first().press("Space");
+  await expect(candidates.first()).toHaveAttribute("aria-pressed","true");
+  await candidates.first().press("Enter");
+  await expect(candidates.first()).toHaveAttribute("aria-pressed","false");
+  await candidates.first().press("Space");
   await proposed.getByRole("button",{name:"Draft Reply With Selected Times"}).click();
   const reply = page.getByRole("dialog",{name:"Reply Message"});
   await expect(reply.getByRole("textbox",{name:"Message Body"})).toContainText("Here are some times that work for me:");

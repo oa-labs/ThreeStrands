@@ -15,6 +15,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - **Recent emails** names the person it's about and marks invitation answers with a calendar icon. Automatic replies are dimmed and listed after the person's own emails.
 
 ### Fixed
+- Proposed meeting times now use the context panel’s text sizes and aligned selection buttons, with each option numbered once.
 - Briefs still load when proposed meeting times cannot be verified, with a **Find Times** retry beside the warning. Harmless spacing and punctuation differences in quoted options no longer reject them.
 - The previous-day and next-day tooltips in the Today sidebar now stay inside the app window.
 - Forwarding an email no longer shows its saved draft as an extra message in the conversation.

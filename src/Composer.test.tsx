@@ -1333,11 +1333,15 @@ describe("Composer Reply Assist", () => {
     });
     vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
 
-    render(<Composer draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    // Settle the initial asynchronous API-key check before activating the tool.
+    await act(async () => {
+      render(<Composer draft={replyDraft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    });
     fireEvent.click(await screen.findByRole("button", { name: /Draft Reply/ }));
 
-    expect(await screen.findByText("Can we meet Friday?")).toBeInTheDocument();
-    expect(screen.getByText("Project timing")).toBeInTheDocument();
+    const assist = await screen.findByRole("dialog", { name: "Reply Assist" });
+    expect(await within(assist).findByText("Project timing")).toBeInTheDocument();
+    expect(within(assist).getByText("Can we meet Friday?")).toBeInTheDocument();
     fireEvent.change(screen.getByRole("textbox", { name: "Optional Short Instruction" }), {
       target: { value: "Accept and ask what time." },
     });

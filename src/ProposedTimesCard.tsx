@@ -1,3 +1,6 @@
+import { Check } from "lucide-react";
+import { ContextRow } from "./ContextSections";
+import { ICON_SIZE } from "./iconSizes";
 import { useEffect, useRef, useState } from "react";
 import type { AvailabilityCandidate, AvailabilityPreferences, CheckedProposedTime, ProposedTime } from "./domain";
 import { mailClient } from "./data/client";
@@ -68,23 +71,35 @@ export function ProposedTimesCard({ times, preferences, intoDraft, onReplyWithTi
     return `${day} · ${clock.formatRange(new Date(row.start), new Date(row.end))}`;
   };
   return <section aria-label="Proposed times" className="proposed-times">
-    <p>{times.length} proposed {times.length === 1 ? "time" : "times"}{durations.length === 1 && durations[0] ? ` · ${durations[0]} minutes each` : ""}</p>
+    <p className="context-section-note proposed-times-summary">{times.length} proposed {times.length === 1 ? "time" : "times"}{durations.length === 1 && durations[0] ? ` · ${durations[0]} minutes each` : ""}</p>
     {times.some((time) => !time.timeZone) ? <label className="proposed-times-zone">Assuming timezone
       <select value={zone} disabled={checking} onChange={(event) => setZone(event.target.value)}>
         {[...new Set([zone, ...listSupportedTimeZones()])].map((value) => <option key={value}>{value}</option>)}
       </select>
     </label> : null}
     <p className="context-status">Shown in {preferences.timeZone}. Select the times you want to offer.</p>
-    {!calendarConnected ? <button type="button" className="btn btn-sm" onClick={onOpenCalendarSettings}>Connect Calendar</button> : !rows && !error ? <p role="status">Checking proposed times…</p> : null}
+    {!calendarConnected ? <button type="button" className="btn btn-sm" onClick={onOpenCalendarSettings}>Connect Calendar</button> : !rows && !error ? <p className="context-status" role="status">Checking proposed times…</p> : null}
     <ol className="proposed-times-list">
       {times.map((time, index) => {
         const row = rows?.[index];
         const status = row?.issue ?? (row?.check?.status === "free" ? "Free" : row?.check?.status === "conflicting" ? "Conflict" : row?.check?.status === "partiallyChecked" ? "Partially checked — no conflict found on checked calendars" : row?.check?.status === "unverified" ? "Unable to check — no calendar could be checked" : "Not checked");
+        // Keep one sender option number. Dates such as "10.31" are not list markers.
+        const marker = /^\s*(?:\((\d+)\)|(\d+)[.)])\s+/.exec(time.sourceText);
+        const number = marker?.[1] ?? marker?.[2] ?? String(index + 1);
+        const title = `${number}. ${row && format(row) || time.sourceText.slice(marker?.[0].length ?? 0)}`;
         return <li key={index}>
-          <label><input type="checkbox" checked={selected.has(index)} disabled={checking || !row || !selectable(row)} onChange={(event) => setSelected((previous) => {
-            const next = new Set(previous); if (event.target.checked) next.add(index); else next.delete(index); return next;
-          })} /><span>{row && format(row) || time.sourceText}</span></label>
-          <p className="context-status">{status}{row?.outsideWorkingHours ? " · Outside your usual hours" : ""}</p>
+          <ContextRow
+            className="proposed-time-row"
+            icon={selected.has(index) ? <Check size={ICON_SIZE.sm} /> : null}
+            title={title}
+            detail={`${status}${row?.outsideWorkingHours ? " · Outside your usual hours" : ""}`}
+            wrapTitle
+            pressed={selected.has(index)}
+            disabled={checking || !row || !selectable(row)}
+            onActivate={() => setSelected((previous) => {
+              const next = new Set(previous); if (next.has(index)) next.delete(index); else next.add(index); return next;
+            })}
+          />
           {row?.start ? <details><summary>From the email</summary><p>{time.sourceText}</p></details> : null}
         </li>;
       })}
