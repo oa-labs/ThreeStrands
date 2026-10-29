@@ -28,8 +28,9 @@ Formatting uses keyboard shortcuts:
 | Fixed-width | <kbd>⌘/Ctrl + Shift + m</kbd> |
 | Numbered or bulleted list | <kbd>⌘/Ctrl + Shift + 7</kbd>, <kbd>⌘/Ctrl + Shift + 8</kbd> |
 | Quote | <kbd>⌘/Ctrl + Shift + 9</kbd> |
+| Code Block | <kbd>⌘/Ctrl + Shift + 0</kbd> |
 
-Typing `* ` starts a bulleted list and `1. ` starts a numbered one. Paste an image to place it inline.
+Typing `* ` starts a bulleted list and `1. ` starts a numbered one. Typing ```` ``` ```` on its own line and pressing <kbd>Enter</kbd> starts a code block, which keeps its spacing and line breaks and arrives in a fixed-width font. Press <kbd>Enter</kbd> on an empty last line to continue writing normally. Paste an image to place it inline.
 
 ## Snippets {#snippets}
 

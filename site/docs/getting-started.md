@@ -50,7 +50,7 @@ In **Settings → Mail Accounts**, each account has:
 ## Settings Worth a Look {#settings-worth-a-look}
 
 - **Appearance** — theme, accent color, font size, and when conversations are marked read. **Email Zoom** enlarges email text, images, and spacing together, and **Email Text Colors** lightens or darkens hard-to-read sender text just enough to read, or replaces it with your theme's colors. Press <kbd>⌘/Ctrl + d</kbd> to switch between light and dark mode from anywhere. Appearance settings stay on each computer.
-- **Availability** — your timezone, working-hour blocks with gaps for breaks, and **Drive Time Buffer** around events with a location.
+- **Availability** — your timezone, working-hour blocks with gaps for breaks, and **Drive Time Buffer** around events with a location. Add profiles to keep different hours for each mail account.
 - **Signatures** — formatted sign-offs with logos, Gmail import, and separate defaults for new messages and replies.
 - **Muted Senders** — review senders whose new mail is marked read and archived automatically.
 - **Privacy** — remote images are blocked by default; turn on **Load Remote Images Automatically** here, or click **Load images** on a single message. You can also choose how long to keep mail on this device.

@@ -29,7 +29,7 @@ Press <kbd>t</kbd> to switch the column on the right of your mail between the co
 Find Times works without AI, using your calendar and working hours. Connect a calendar first and set your timezone and working-hour blocks in **Settings → Availability**.
 
 1. Open a conversation or a reply draft.
-2. Click **Find Times** at the top of its side panel, beside **Get Brief**.
+2. Click **Find Times** at the top of its side panel, beside **Get Brief**. It appears when the conversation has a meeting to arrange, offered times, or a task to schedule, and whenever you're writing a reply.
 3. Choose times from the offered slots.
 4. While reading, click **Draft Reply With These Times** to start a reply. While composing, use **Insert These Times**.
 5. Review the wording and recipients before sending.
@@ -39,6 +39,15 @@ Find Times works without AI, using your calendar and working hours. Connect a ca
 Choose **Mornings** or **Afternoons** to narrow the slots, **Later** for the following week, or **Show More** for more times on the same days. With an AI provider and **Writing** enabled under **Show AI In**, Find Times reads the conversation and draft to understand requests such as “next week.” Type “Thursday or Friday afternoon” and click **Adjust** to change the search.
 
 If a brief already suggested a meeting, Find Times starts with those dates. **Search Again** reads the conversation afresh. Meeting suggestions and **Ask About This Conversation** answers offer the same calendar choices. Your calendar is not sent to the AI provider.
+
+### Check Times Someone Offered {#check-offered-times}
+
+With an AI provider, when an email offers several meeting times, such as "1. Tuesday at 10 or 2. Wednesday at 3", its brief picks them up and Find Times lists each option with its number from the email. Every exact option is checked against your calendars, and each is marked **Free** or **Conflict**, or **Outside your usual hours**. Conflicts, evenings, and weekends stay in the list so you can see why a time doesn't work.
+
+1. Select the free times you want to accept.
+2. Click **Draft Reply With Selected Times**, or **Insert Selected Times** while composing. The times are checked again first; if your calendar changed, the list updates for you to review.
+
+If the email doesn't name a timezone, change **Assuming timezone** to the sender's. Open **From the email** under an option to see its original wording. **Check Again** repeats the check, and **Find Other Times** searches your usual hours instead. If the offered times couldn't be verified, the brief still appears with a warning, and **Find Times** retries.
 
 ### Include Coworkers {#include-coworkers}
 
