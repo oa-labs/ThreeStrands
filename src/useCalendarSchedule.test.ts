@@ -34,6 +34,7 @@ describe("calendar schedule caching", () => {
   afterEach(() => {
     cleanup();
     clearScheduleCache();
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -145,6 +146,93 @@ describe("calendar schedule caching", () => {
     renderHook(() => useCalendarSchedule(week, true));
     await waitFor(() => expect(vi.mocked(mailClient.listScheduleEvents).mock.calls.map((call) => call[0]))
       .toEqual([week.timeMin, "2026-09-13T00:00:00.000Z", next.timeMin]));
+  });
+
+  it("polls visible schedules without blanking events and retains the latest events on failure", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    const fresh = deferred();
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValueOnce(result()).mockReturnValueOnce(fresh.promise)
+      .mockRejectedValueOnce(new Error("offline")).mockResolvedValue(result("Recovered"));
+    const hook = renderHook(() => useCalendarSchedule(week));
+    await act(async () => {});
+    await act(async () => { await vi.advanceTimersByTimeAsync(29_999); });
+    expect(mailClient.listScheduleEvents).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(mailClient.listScheduleEvents).toHaveBeenCalledTimes(2);
+    expect(hook.result.current.events).toEqual(result().events);
+    expect(hook.result.current.loading).toBe(false);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(mailClient.listScheduleEvents).toHaveBeenCalledTimes(2);
+    await act(async () => { fresh.resolve(result("Updated")); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(hook.result.current.events).toEqual(result("Updated").events);
+    expect(hook.result.current.error).not.toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(hook.result.current.events).toEqual(result("Recovered").events);
+    expect(hook.result.current.error).toBeNull();
+    hook.unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(mailClient.listScheduleEvents).toHaveBeenCalledTimes(4);
+  });
+
+  it("pauses while unfocused or hidden, catches up on return, and cools down duplicate focus signals", async () => {
+    vi.useFakeTimers();
+    const focus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    const hook = renderHook(() => useCalendarSchedule(week));
+    await act(async () => {});
+    focus.mockReturnValue(false);
+    act(() => { window.dispatchEvent(new Event("blur")); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(mailClient.listScheduleEvents).toHaveBeenCalledTimes(1);
+    focus.mockReturnValue(true);
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    expect(mailClient.listScheduleEvents).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      window.dispatchEvent(new Event("blur"));
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(mailClient.listScheduleEvents).toHaveBeenCalledTimes(2);
+    visibility.mockReturnValue("hidden");
+    act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(mailClient.listScheduleEvents).toHaveBeenCalledTimes(2);
+    visibility.mockReturnValue("visible");
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    expect(mailClient.listScheduleEvents).toHaveBeenCalledTimes(3);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(mailClient.listScheduleEvents).toHaveBeenCalledTimes(4);
+    hook.unmount();
+  });
+
+  it("does not poll a background mount and enforces the five-second focus cooldown", async () => {
+    vi.useFakeTimers();
+    const focus = vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    renderHook(() => useCalendarSchedule(week));
+    await act(async () => {});
+    await act(async () => { await vi.advanceTimersByTimeAsync(4_999); });
+    focus.mockReturnValue(true);
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    expect(mailClient.listScheduleEvents).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    await act(async () => {
+      window.dispatchEvent(new Event("blur"));
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(mailClient.listScheduleEvents).toHaveBeenCalledTimes(2);
+  });
+
+  it("shares polling requests between mounted views of the same range", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    renderHook(() => useCalendarSchedule(week));
+    renderHook(() => useCalendarSchedule(week));
+    await act(async () => {});
+    expect(mailClient.listScheduleEvents).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(mailClient.listScheduleEvents).toHaveBeenCalledTimes(2);
   });
 
   it("caches empty ranges and whole busy weeks, and evicts the least recently used range", async () => {

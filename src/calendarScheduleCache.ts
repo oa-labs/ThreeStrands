@@ -4,6 +4,7 @@ export type ScheduleRequest = { timeMin: string; timeMax: string; timeZone: stri
 // Retain complete ranges, including empty weeks, rather than truncating busy weeks.
 export const MAX_CACHED_SCHEDULE_RANGES = 12;
 const ranges = new Map<string, ScheduleResult>();
+const lastAttempt = new Map<string, number>();
 const pending = new Map<string, Promise<ScheduleResult>>();
 // Ranges kept on screen after a local change but not yet confirmed by a refetch.
 const stale = new Set<string>();
@@ -20,6 +21,7 @@ export function clearScheduleCache() {
   generation += 1;
   ranges.clear();
   pending.clear();
+  lastAttempt.clear();
   stale.clear();
   listeners.forEach((listener) => listener());
 }
@@ -50,6 +52,7 @@ const sameScheduleEvent = (left: ScheduleEvent, right: ScheduleEvent) =>
 function revalidate(change: (events: ScheduleEvent[]) => ScheduleEvent[]) {
   generation += 1;
   pending.clear();
+  lastAttempt.clear();
   for (const [key, result] of ranges) {
     stale.add(key);
     const events = change(result.events);
@@ -76,21 +79,29 @@ export const isScheduleRangeFresh = (request: ScheduleRequest) =>
 export function refreshScheduleCache(
   request: ScheduleRequest,
   load: () => Promise<ScheduleResult>,
+  cooldownMs = 0,
 ): Promise<ScheduleResult> {
   const key = keyFor(request);
   const existing = pending.get(key);
   if (existing) return existing;
+  const cached = ranges.get(key);
+  // Automatic checks share recent requests across views; explicit reloads bypass the cooldown.
+  if (cached && Date.now() - (lastAttempt.get(key) ?? -Infinity) < cooldownMs) return Promise.resolve(cached);
+  const startedAt = Date.now();
+  if (cached) lastAttempt.set(key, startedAt);
   const startedGeneration = generation;
   const promise = load().then((result) => {
     // Partial failures must not replace a complete cached schedule.
     if (generation === startedGeneration && result.errors.length === 0) {
       ranges.delete(key);
       ranges.set(key, result);
+      lastAttempt.set(key, startedAt);
       stale.delete(key);
       while (ranges.size > MAX_CACHED_SCHEDULE_RANGES) {
         const oldest = ranges.keys().next().value!;
         ranges.delete(oldest);
         stale.delete(oldest);
+        lastAttempt.delete(oldest);
       }
     }
     return result;

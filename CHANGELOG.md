@@ -4,6 +4,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### Improved
+- Open calendars and agendas now refresh every 30 seconds and when you return to the app, so changes made in Google Calendar appear automatically. Your events stay visible while refreshing, and automatic checks pause while the app is in the background.
+
 ## 0.183.1 — 2026-10-29
 
 ### New
