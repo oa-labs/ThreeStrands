@@ -385,6 +385,9 @@ describe("Composer formatting hints", () => {
     expect(hints).toHaveTextContent("Bold Ctrl B");
     expect(hints).toHaveTextContent("Italics Ctrl I");
     expect(hints).toHaveTextContent("Strikethrough Ctrl Shift X");
+    expect(hints).toHaveTextContent("Code Block Ctrl Shift 0");
+    expect(hints).toHaveTextContent("Bulleted List Ctrl Shift 8");
+    expect(hints).not.toHaveTextContent("Underline");
     expect(screen.queryByText(/Send has a 10-second undo window/)).not.toBeInTheDocument();
 
     select(editor.firstChild!, 2, 2);

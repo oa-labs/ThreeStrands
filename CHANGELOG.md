@@ -5,9 +5,11 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ## Unreleased
 
 ### New
+- Mark code in a message as a **Code Block**: select it and press ⌘⇧0, or type ``` on its own line and press Enter. Code blocks keep their spacing and line breaks and arrive in a fixed-width font. Press Enter on an empty last line to continue writing normally.
 - Find **Help and Documentation** in the command palette, or open the relevant guide from Settings. Help now includes search, troubleshooting, and dedicated guides for Today, Files, privacy, and moving between computers.
 
 ### Improved
+- While text is selected, the composer's shortcut hints now show **Code Block** instead of Underline, plus **Bulleted List** and **Numbered List** when the window is wide enough. Underline is still ⌘U.
 - The side panel's **Brief** is easier to scan. **Find Times** appears only when a conversation has a meeting to arrange (or while you reply), an empty **Suggested** section no longer repeats the brief, and where the brief came from and what was shared now sit on one line beneath it.
 - **Recent emails** names the person it's about and marks invitation answers with a calendar icon. Automatic replies are dimmed and listed after the person's own emails.
 

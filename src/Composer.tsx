@@ -22,7 +22,7 @@ import { useEscapeDismiss } from "./useEscapeDismiss";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import type { DraftReviewActions } from "./draftReview";
-import { composeKeyLabel, plainTextToHtml, selectionFormattingHints } from "./richText";
+import { composeKeyLabel, optionalFormattingHints, plainTextToHtml, selectionFormattingHints } from "./richText";
 import { ScheduleSendPicker } from "./ScheduleSendPicker";
 import { ComposeSendActions } from "./ComposeSendActions";
 
@@ -524,7 +524,7 @@ export const Composer = forwardRef<ComposerHandle, {
       </footer>
       <p className="compose-note">
         {textSelected
-          ? <span className="compose-format-hints" aria-label="Formatting shortcuts">{selectionFormattingHints.map((shortcut) => <span key={shortcut.id}>{shortcut.title} <kbd>{composeKeyLabel(shortcut.key)}</kbd></span>)}</span>
+          ? <span className="compose-format-hints" aria-label="Formatting shortcuts">{selectionFormattingHints.map((shortcut) => <span key={shortcut.id} className={optionalFormattingHints[shortcut.id] ? `compose-format-hint-optional-${optionalFormattingHints[shortcut.id]}` : undefined}>{shortcut.title} <kbd>{composeKeyLabel(shortcut.key)}</kbd></span>)}</span>
           : "Send has a 10-second undo window."}
         {!("__TAURI_INTERNALS__" in window) && " Browser preview: delivery and attachments are simulated."}
       </p>

@@ -3273,6 +3273,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .composer-new .compose-body:not(.compose-quoted):not(.compose-signature) { height: min(45vh + 90px, 600px, 100vh - 400px); }
 .compose-body:empty::before { content: attr(data-placeholder); color: var(--muted); pointer-events: none; }
 .compose-body blockquote { margin: .5em 0 .5em 1.25em; padding-left: 1em; border-left: 3px solid var(--border-strong); }
+.compose-body pre { margin: .5em 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-family: var(--font-mono); white-space: pre-wrap; }
 .compose-body ol, .compose-body ul { margin: .5em 0; padding-left: 2em; }
 .compose-quote-toggle { flex-shrink: 0; letter-spacing: var(--tracking-wide); }
 .compose-body.compose-quoted { min-height: 0; height: auto; padding-top: 0; overflow: visible; }
@@ -3325,8 +3326,12 @@ input::placeholder { color: var(--muted); opacity: 1; }
 /* Offset the icon button’s trailing inset to align its glyph with the writing tools, while keeping its full hit area. */
 .compose-draft-status { display: flex; align-items: center; gap: var(--space-2-5); min-width: 0; margin-left: auto; margin-right: calc(var(--space-2) * -1); }
 .save-status { font-size: var(--text-meta); color: var(--muted); }
-.compose-note { flex-shrink: 0; margin: 0; padding: 0 var(--pane-inset) var(--space-4); color: var(--muted); font-size: var(--text-meta); }
+.compose-note { flex-shrink: 0; margin: 0; padding: 0 var(--pane-inset) var(--space-4); color: var(--muted); font-size: var(--text-meta); container-type: inline-size; }
 .compose-format-hints { display: inline-flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); }
+/* With macOS key labels, all seven hints need about 734px on one line and six
+   about 599px; the optional list hints drop out before the row would wrap. */
+@container (max-width: 760px) { .compose-format-hint-optional-2 { display: none; } }
+@container (max-width: 620px) { .compose-format-hint-optional-1 { display: none; } }
 .compose-error { margin: var(--space-2) 0 var(--space-3); }
 .compose-error .btn { flex-shrink: 0; }
 .attachment-list { margin: 0; padding: var(--space-1) var(--pane-inset) var(--space-3); list-style: none; flex-shrink: 0; max-height: 180px; overflow-y: auto; }

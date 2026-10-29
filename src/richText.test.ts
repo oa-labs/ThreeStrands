@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { sanitizeMessageHtml } from "./SafeMessage";
 import { collapseQuotedHistoryHtml } from "./quotedHistory";
 import {
+  applyCodeBlockEnter,
   applyListShortcut,
   composeHtmlToText,
   draftTextToComposeHtml,
@@ -30,8 +31,9 @@ afterEach(() => {
 
 describe("Superhuman formatting shortcuts", () => {
   it("registers every formatting combo from the Superhuman shortcut sheet", () => {
-    // Fixed-Width is an addition beyond the Superhuman sheet: Superhuman has
-    // no fixed-width face at all, so the key is ours to choose.
+    // Fixed-Width and Code Block are additions beyond the Superhuman sheet:
+    // Superhuman has neither, so the keys are ours to choose. Code Block
+    // follows the 7/8/9 block formats.
     expect(formattingShortcuts.map(({ title, key }) => [title, key])).toEqual([
       ["Bold", "Mod+b"],
       ["Italics", "Mod+i"],
@@ -43,6 +45,7 @@ describe("Superhuman formatting shortcuts", () => {
       ["Numbered List", "Mod+Shift+7"],
       ["Bulleted List", "Mod+Shift+8"],
       ["Quote", "Mod+Shift+9"],
+      ["Code Block", "Mod+Shift+0"],
       ["Indent List", "Tab"],
       ["Outdent List", "Shift+Tab"],
       ["Increase Indent", "Mod+]"],
@@ -105,9 +108,11 @@ describe("selection formatting hints", () => {
     expect(selectionFormattingHints.map(({ title, key }) => [title, composeKeyLabel(key, "MacIntel")])).toEqual([
       ["Bold", "⌘ B"],
       ["Italics", "⌘ I"],
-      ["Underline", "⌘ U"],
-      ["Strikethrough", "⌘ ⇧ X"],
       ["Hyperlink", "⌘ K"],
+      ["Strikethrough", "⌘ ⇧ X"],
+      ["Code Block", "⌘ ⇧ 0"],
+      ["Bulleted List", "⌘ ⇧ 8"],
+      ["Numbered List", "⌘ ⇧ 7"],
     ]);
   });
 });
@@ -168,6 +173,164 @@ describe("list marker shortcuts", () => {
       expect(editor.innerHTML).toBe(html);
     },
   );
+});
+
+describe("code blocks", () => {
+  const codeBlock = formattingShortcuts.find(({ id }) => id === "format.codeBlock")!;
+  const editorWith = (html: string) => {
+    const editor = document.createElement("div");
+    editor.innerHTML = html;
+    document.body.append(editor);
+    return editor;
+  };
+  const placeCaret = (node: Node, offset: number) => {
+    const range = document.createRange();
+    range.setStart(node, offset);
+    range.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return selection;
+  };
+  const stubExecCommand = () => {
+    const execute = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", { configurable: true, value: execute });
+    return execute;
+  };
+
+  it("matches ⌘⇧0 by its digit key, whatever the shifted character", () => {
+    expect(formattingShortcutFor(event(")", { code: "Digit0", metaKey: true, shiftKey: true }))?.title).toBe("Code Block");
+    expect(formattingShortcutFor(event("0", { code: "Digit0", metaKey: true }))?.title).not.toBe("Code Block");
+  });
+
+  it("formats the selection as a code block", () => {
+    const execute = stubExecCommand();
+    const editor = editorWith("<p>plain</p>");
+    placeCaret(editor.querySelector("p")!.firstChild!, 2);
+
+    expect(applyFormattingShortcut(editor, codeBlock)).toBe(true);
+    expect(execute).toHaveBeenCalledWith("formatBlock", false, "pre");
+  });
+
+  it("turns the code block under the caret back into text and selects it", () => {
+    const execute = stubExecCommand();
+    const editor = editorWith("<p>plain</p><pre>one\ntwo</pre>");
+    placeCaret(editor.querySelector("pre")!.firstChild!, 2);
+
+    expect(applyFormattingShortcut(editor, codeBlock)).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+    expect(editor.innerHTML).toBe("<p>plain</p><div>one\ntwo</div>");
+    expect(window.getSelection()!.toString()).toBe("one\ntwo");
+  });
+
+  it("turns every selected code block back into text, even around nested blocks", () => {
+    stubExecCommand();
+    const editor = editorWith("<pre>a</pre><p>b</p><blockquote><pre><ol><li>c</li></ol></pre></blockquote>");
+    const all = document.createRange();
+    all.selectNodeContents(editor);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(all);
+
+    expect(applyFormattingShortcut(editor, codeBlock)).toBe(true);
+    expect(editor.innerHTML).toBe("<div>a</div><p>b</p><blockquote><div><ol><li>c</li></ol></div></blockquote>");
+  });
+
+  it.each([
+    ["```", "<pre><br></pre>"],
+    ["<div>Intro</div><div>```</div>", "<div>Intro</div><pre><br></pre>"],
+  ])("starts an empty code block when %s is followed by Enter", (html, expected) => {
+    const editor = editorWith(html);
+    const fence = editor.lastChild!;
+    const selection = placeCaret(fence.firstChild ?? fence, 3);
+
+    expect(applyCodeBlockEnter(editor)).toBe(true);
+    expect(editor.innerHTML).toBe(expected);
+    expect(selection.anchorNode).toBe(editor.querySelector("pre"));
+  });
+
+  it.each(["<div>see ```</div>", "<div>```js</div>", "<ul><li>```</li></ul>", "<div>plain</div>"])("leaves Enter alone after %s", (html) => {
+    const editor = editorWith(html);
+    const text = editor.querySelector("div, li")!.firstChild as Text;
+    placeCaret(text, text.length);
+
+    expect(applyCodeBlockEnter(editor)).toBe(false);
+    expect(editor.innerHTML).toBe(html);
+  });
+
+  it("adds a line inside a code block instead of a new paragraph", () => {
+    const execute = stubExecCommand();
+    const editor = editorWith("<pre>if (ready) {</pre>");
+    placeCaret(editor.querySelector("pre")!.firstChild!, 12);
+
+    expect(applyCodeBlockEnter(editor)).toBe(true);
+    expect(execute).toHaveBeenCalledWith("insertLineBreak");
+  });
+
+  it("adds a line from the middle of a code block's empty line", () => {
+    const execute = stubExecCommand();
+    const editor = editorWith("<pre>one\n\ntwo</pre>");
+    placeCaret(editor.querySelector("pre")!.firstChild!, 4);
+
+    expect(applyCodeBlockEnter(editor)).toBe(true);
+    expect(execute).toHaveBeenCalledWith("insertLineBreak");
+    expect(editor.innerHTML).toBe("<pre>one\n\ntwo</pre>");
+  });
+
+  it.each([
+    ["newline text", "<pre>go();\n\n</pre>", (pre: Element) => [pre.firstChild!, 6] as const],
+    ["line-break elements", "<pre>go();<br><br></pre>", (pre: Element) => [pre, 2] as const],
+  ])("leaves the code block on Enter from an empty last line written as %s", (_name, html, caretAt) => {
+    const execute = stubExecCommand();
+    const editor = editorWith(`${html}<div>later</div>`);
+    const [node, offset] = caretAt(editor.querySelector("pre")!);
+    const selection = placeCaret(node, offset);
+
+    expect(applyCodeBlockEnter(editor)).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+    expect(editor.innerHTML).toBe("<pre>go();</pre><div><br></div><div>later</div>");
+    expect(selection.anchorNode).toBe(editor.querySelector("pre + div"));
+  });
+
+  it("turns an empty code block back into an empty line on Enter", () => {
+    const editor = editorWith("<pre><br></pre>");
+    placeCaret(editor.querySelector("pre")!, 0);
+
+    expect(applyCodeBlockEnter(editor)).toBe(true);
+    expect(editor.innerHTML).toBe("<div><br></div>");
+  });
+
+  it("keeps a list marker typed in a code block as code", () => {
+    const editor = editorWith("<pre>*</pre>");
+    placeCaret(editor.querySelector("pre")!.firstChild!, 1);
+
+    expect(applyListShortcut(editor)).toBe(false);
+    expect(editor.innerHTML).toBe("<pre>*</pre>");
+  });
+
+  it("sends code blocks with a fixed frame the reader keeps and replaces the block's own style", () => {
+    const html = sanitizeComposeHtml('<pre style="background-image:url(https://tracker.invalid);position:fixed" onclick="alert(1)">a  b\n  c</pre>');
+    const container = document.createElement("div");
+    container.innerHTML = html;
+    const pre = container.querySelector("pre")!;
+    expect(pre.textContent).toBe("a  b\n  c");
+    expect(pre.hasAttribute("onclick")).toBe(false);
+    expect(pre.style.backgroundImage).toBe("");
+    expect(pre.style.position).toBe("");
+    expect(pre.style.whiteSpace).toBe("pre-wrap");
+    expect(pre.style.fontFamily).toBe("monospace");
+
+    const read = document.createElement("div");
+    read.innerHTML = sanitizeMessageHtml(html);
+    const readPre = read.querySelector("pre")!;
+    expect(readPre.style.whiteSpace).toBe("pre-wrap");
+    expect(readPre.style.fontFamily).toBe("monospace");
+    expect(readPre.style.borderTopStyle || readPre.style.borderStyle).toBe("solid");
+  });
+
+  it("keeps a code block's spacing and lines in the plain-text alternative", () => {
+    const editor = editorWith("<div>Try:</div><pre>if (x) {<br>  run();\n}</pre><div>Thanks</div>");
+    expect(composeHtmlToText(editor)).toBe("Try:\nif (x) {\n  run();\n}\nThanks");
+  });
 });
 
 describe("pasted link destinations", () => {

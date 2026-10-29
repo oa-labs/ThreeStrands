@@ -24,6 +24,7 @@ export const formattingShortcuts: FormattingShortcut[] = [
   { id: "format.numbers", title: "Numbered List", key: "Mod+Shift+7", command: "insertOrderedList" },
   { id: "format.bullets", title: "Bulleted List", key: "Mod+Shift+8", command: "insertUnorderedList" },
   { id: "format.quote", title: "Quote", key: "Mod+Shift+9", command: "formatBlock", value: "blockquote" },
+  { id: "format.codeBlock", title: "Code Block", key: "Mod+Shift+0", command: "formatBlock", value: "pre" },
   { id: "format.indentList", title: "Indent List", key: "Tab", command: "indent", listOnly: true },
   { id: "format.outdentList", title: "Outdent List", key: "Shift+Tab", command: "outdent", listOnly: true },
   { id: "format.indent", title: "Increase Indent", key: "Mod+]", command: "indent" },
@@ -31,8 +32,14 @@ export const formattingShortcuts: FormattingShortcut[] = [
 ];
 
 /** The everyday formats offered as hints while body text is selected. */
-export const selectionFormattingHints = ["format.bold", "format.italic", "format.underline", "format.strike", "format.link"]
+export const selectionFormattingHints = ["format.bold", "format.italic", "format.link", "format.strike", "format.codeBlock", "format.bullets", "format.numbers"]
   .map((id) => formattingShortcuts.find((shortcut) => shortcut.id === id)!);
+
+/**
+ * Hints shown only while the composer has room for them on one line, keyed to
+ * the order they drop out: 2 goes first, then 1.
+ */
+export const optionalFormattingHints: Record<string, 1 | 2> = { "format.bullets": 1, "format.numbers": 2 };
 
 /** Render compact compose hints using the current platform's modifier. */
 export function composeKeyLabel(key: string, platform = navigator.platform): string {
@@ -55,30 +62,34 @@ export function selectionIsInList(editor: HTMLElement): boolean {
 // a space: `*` for bullets, `1.` for numbers.
 const listShortcutMarkers: Record<string, "ul" | "ol"> = { "*": "ul", "1.": "ol" };
 
+// A Markdown code fence typed alone and followed by Enter starts a code block.
+const codeFenceMarker = "```";
+
 /**
- * Converts a standalone list marker (`*` or `1.`) followed by a space into an
- * empty bulleted or numbered list. The caller invokes this while handling the
- * space key, before the browser inserts the space itself.
+ * The block holding a collapsed caret when that block's only text is a typed
+ * marker ending at the caret, together with the marker. The editor itself
+ * counts as the block while it holds nothing but the marker. Lists and code
+ * blocks never start another block this way.
  */
-export function applyListShortcut(editor: HTMLElement): boolean {
+function caretMarkerBlock(editor: HTMLElement, isMarker: (text: string) => boolean): { container: Element; marker: string; selection: Selection } | null {
   const selection = window.getSelection();
-  if (!selection?.rangeCount || !selection.isCollapsed) return false;
+  if (!selection?.rangeCount || !selection.isCollapsed) return null;
 
   const range = selection.getRangeAt(0);
-  if (!editor.contains(range.endContainer)) return false;
+  if (!editor.contains(range.endContainer)) return null;
 
   const anchorElement = range.endContainer instanceof Element
     ? range.endContainer
     : range.endContainer.parentElement;
-  if (anchorElement?.closest("li")) return false;
+  if (anchorElement?.closest("li, pre")) return null;
 
-  const block = anchorElement?.closest("p, div, blockquote, pre");
+  const block = anchorElement?.closest("p, div, blockquote");
   const container = block && block !== editor && editor.contains(block)
     ? block
-    : Object.hasOwn(listShortcutMarkers, editor.textContent ?? "") && !editor.querySelector("p, div, blockquote, pre, br")
+    : isMarker(editor.textContent ?? "") && !editor.querySelector("p, div, blockquote, pre, br")
       ? editor
       : null;
-  if (!container) return false;
+  if (!container) return null;
 
   const contents = document.createRange();
   contents.selectNodeContents(container);
@@ -87,20 +98,146 @@ export function applyListShortcut(editor: HTMLElement): boolean {
   const afterCaret = contents.cloneRange();
   afterCaret.setStart(range.endContainer, range.endOffset);
   const marker = beforeCaret.toString();
-  if (!Object.hasOwn(listShortcutMarkers, marker) || afterCaret.toString() !== "") return false;
+  if (!isMarker(marker) || afterCaret.toString() !== "") return null;
+  return { container, marker, selection };
+}
 
-  const list = document.createElement(listShortcutMarkers[marker]);
-  const item = document.createElement("li");
-  item.append(document.createElement("br"));
-  list.append(item);
-  if (container === editor) editor.replaceChildren(list);
-  else container.replaceWith(list);
+/** Replaces a marker block with `replacement` and puts the caret at the start of `caretIn`. */
+function replaceMarkerBlock(editor: HTMLElement, container: Element, replacement: Element, caretIn: Node, selection: Selection) {
+  if (container === editor) editor.replaceChildren(replacement);
+  else container.replaceWith(replacement);
+  placeCaretAtStart(caretIn, selection);
+}
 
+function placeCaretAtStart(node: Node, selection: Selection) {
   const caret = document.createRange();
-  caret.setStart(item, 0);
+  caret.setStart(node, 0);
   caret.collapse(true);
   selection.removeAllRanges();
   selection.addRange(caret);
+}
+
+/**
+ * Converts a standalone list marker (`*` or `1.`) followed by a space into an
+ * empty bulleted or numbered list. The caller invokes this while handling the
+ * space key, before the browser inserts the space itself.
+ */
+export function applyListShortcut(editor: HTMLElement): boolean {
+  const found = caretMarkerBlock(editor, (text) => Object.hasOwn(listShortcutMarkers, text));
+  if (!found) return false;
+
+  const list = document.createElement(listShortcutMarkers[found.marker]);
+  const item = document.createElement("li");
+  item.append(document.createElement("br"));
+  list.append(item);
+  replaceMarkerBlock(editor, found.container, list, item, found.selection);
+  return true;
+}
+
+function selectionCodeBlock(editor: HTMLElement): HTMLPreElement | null {
+  const node = window.getSelection()?.anchorNode;
+  const element = node instanceof Element ? node : node?.parentElement;
+  const pre = element?.closest("pre");
+  return pre && editor.contains(pre) ? pre : null;
+}
+
+/** The code blocks the selection reaches into, including through a select-all anchored on the editor. */
+function selectedCodeBlocks(editor: HTMLElement): HTMLPreElement[] {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount) return [];
+  const range = selection.getRangeAt(0);
+  const blocks = Array.from(editor.querySelectorAll("pre")).filter((pre) => range.intersectsNode(pre));
+  const enclosing = selectionCodeBlock(editor);
+  return enclosing && !blocks.includes(enclosing) ? [enclosing, ...blocks] : blocks;
+}
+
+/**
+ * Turns code blocks back into ordinary lines and selects what they held.
+ * `formatBlock` cannot do this reliably: around nested blocks such as a list
+ * it wraps the contents in a new block and leaves the `<pre>` in place.
+ */
+function unwrapCodeBlocks(blocks: HTMLPreElement[]) {
+  const lines = blocks.map((pre) => {
+    const line = document.createElement("div");
+    line.append(...Array.from(pre.childNodes));
+    pre.replaceWith(line);
+    return line;
+  });
+  const selection = window.getSelection();
+  if (!selection || !lines.length) return;
+  const range = document.createRange();
+  range.setStart(lines[0], 0);
+  range.setEnd(lines[lines.length - 1], lines[lines.length - 1].childNodes.length);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+/** The deepest last descendant of `node`, or `node` itself when it has no children. */
+function lastLeaf(node: Node): Node {
+  while (node.lastChild) node = node.lastChild;
+  return node;
+}
+
+/** Removes the code block's final line break, whether written as `\n` text or `<br>`. */
+function removeTrailingLineBreak(pre: HTMLPreElement) {
+  for (let leaf = lastLeaf(pre); leaf !== pre; leaf = lastLeaf(pre)) {
+    if (leaf instanceof Text && !leaf.data) {
+      leaf.remove();
+      continue;
+    }
+    if (leaf instanceof HTMLBRElement) leaf.remove();
+    else if (leaf instanceof Text && leaf.data.endsWith("\n")) {
+      leaf.data = leaf.data.slice(0, -1);
+      if (!leaf.data) leaf.remove();
+    }
+    return;
+  }
+}
+
+/**
+ * Handles Enter for code blocks. A code fence (```) typed alone starts an
+ * empty code block. Inside a code block, Enter adds a line to the block,
+ * except on an empty last line, where it leaves the block and starts a normal
+ * line after it. Returns false when Enter should keep its usual behavior.
+ */
+export function applyCodeBlockEnter(editor: HTMLElement): boolean {
+  const fence = caretMarkerBlock(editor, (text) => text === codeFenceMarker);
+  if (fence) {
+    const pre = document.createElement("pre");
+    pre.append(document.createElement("br"));
+    replaceMarkerBlock(editor, fence.container, pre, pre, fence.selection);
+    return true;
+  }
+
+  const selection = window.getSelection();
+  const pre = selectionCodeBlock(editor);
+  if (!pre || !selection?.rangeCount || !selection.isCollapsed) return false;
+
+  const range = selection.getRangeAt(0);
+  const beforeCaret = document.createRange();
+  beforeCaret.selectNodeContents(pre);
+  beforeCaret.setEnd(range.endContainer, range.endOffset);
+  const afterCaret = document.createRange();
+  afterCaret.selectNodeContents(pre);
+  afterCaret.setStart(range.endContainer, range.endOffset);
+  const before = composeHtmlToText(beforeCaret.cloneContents());
+  // Engines keep a trailing line break so an empty last line can render.
+  const atEnd = composeHtmlToText(afterCaret.cloneContents()).replace(/\n$/, "") === "";
+  if (!atEnd || (before && !before.endsWith("\n"))) {
+    document.execCommand("insertLineBreak");
+    return true;
+  }
+
+  afterCaret.deleteContents();
+  const line = document.createElement("div");
+  line.append(document.createElement("br"));
+  if (before) {
+    removeTrailingLineBreak(pre);
+    pre.after(line);
+  } else {
+    pre.replaceWith(line);
+  }
+  placeCaretAtStart(line, selection);
   return true;
 }
 
@@ -180,6 +317,13 @@ export function applyFormattingShortcut(
     stripFixedWidth(editor);
     return true;
   }
+  // Like `fontName`, `formatBlock` never toggles off; the same shortcut turns
+  // a code block back into ordinary text.
+  const codeBlocks = shortcut.command === "formatBlock" && shortcut.value === "pre" ? selectedCodeBlocks(editor) : [];
+  if (codeBlocks.length) {
+    unwrapCodeBlocks(codeBlocks);
+    return true;
+  }
   document.execCommand(shortcut.command, false, value);
   return true;
 }
@@ -201,6 +345,9 @@ const replyAttributionLine = /^On .+ wrote:$/;
  * a fixed value set by the compose sanitizer, never copied from content.
  */
 const CITATION_STYLE = "margin: 0px 0px 0px 0.8ex; border-left: 1px solid rgb(204, 204, 204); padding-left: 1ex;";
+
+/** Inline style for a code block (`<pre>`) in compose HTML; see sanitizeComposeHtml. */
+const CODE_BLOCK_STYLE = "margin: 8px 0px; padding: 8px 12px; border: 1px solid rgb(204, 204, 204); border-radius: 4px; font-family: monospace; white-space: pre-wrap;";
 
 function appendCitation(parent: Element, lines: string[]) {
   const quote = document.createElement("blockquote");
@@ -239,7 +386,7 @@ export function draftTextToComposeHtml(text: string): string {
   return container.innerHTML;
 }
 
-const TEXT_BLOCK_ELEMENTS = new Set(["BLOCKQUOTE", "DIV", "LI", "OL", "P", "UL"]);
+const TEXT_BLOCK_ELEMENTS = new Set(["BLOCKQUOTE", "DIV", "LI", "OL", "P", "PRE", "UL"]);
 
 function isBlankTrailingNode(node: Node): boolean {
   return (node.nodeType === Node.TEXT_NODE && !(node as Text).data.trim())
@@ -368,7 +515,7 @@ export function linkifyPlainText(text: string): string {
 
 export function sanitizeComposeHtml(html: string): string {
   const clean = DOMPurify.sanitize(html, {
-    ALLOWED_TAGS: ["a", "b", "blockquote", "br", "div", "em", "font", "i", "img", "li", "ol", "p", "span", "strike", "strong", "u", "ul"],
+    ALLOWED_TAGS: ["a", "b", "blockquote", "br", "div", "em", "font", "i", "img", "li", "ol", "p", "pre", "span", "strike", "strong", "u", "ul"],
     ALLOWED_ATTR: ["alt", "color", "face", "href", "src", "style", "type", "width"],
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
@@ -412,6 +559,9 @@ export function sanitizeComposeHtml(html: string): string {
     element.setAttribute("type", "cite");
     element.setAttribute("style", CITATION_STYLE);
   });
+  // A code block gets ThreeStrands' fixed style so recipients see monospace,
+  // kept spacing, and a frame, without colors that fight their theme.
+  container.querySelectorAll<HTMLElement>("pre").forEach((pre) => pre.setAttribute("style", CODE_BLOCK_STYLE));
   container.querySelectorAll<HTMLAnchorElement>("a").forEach((link) => {
     if (!/^(https?:\/\/|mailto:|tel:)/i.test(link.getAttribute("href") ?? "")) {
       link.removeAttribute("href");

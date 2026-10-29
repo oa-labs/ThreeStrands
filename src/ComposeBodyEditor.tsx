@@ -4,7 +4,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import type { Attachment, Draft } from "./correspondence";
 import type { Snippet } from "./domain";
 import {
-  applyListShortcut, applyFormattingShortcut, formattingShortcutFor, forwardedComposeHtml,
+  applyCodeBlockEnter, applyListShortcut, applyFormattingShortcut, formattingShortcutFor, forwardedComposeHtml,
   insertHtmlAtRange, linkifyPlainText, pastedLinkHref, draftTextToComposeHtml,
   plainTextToHtml, sanitizeComposeHtml, serializeComposeBody, splitReplyQuote,
   type FormattingShortcut,
@@ -387,6 +387,13 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
         editBody();
         event.preventDefault();
         event.stopPropagation();
+        return;
+      }
+      if (!event.nativeEvent.isComposing && event.key === "Enter" && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey
+        && applyCodeBlockEnter(event.currentTarget)) {
+        event.preventDefault();
+        event.stopPropagation();
+        editBody();
         return;
       }
       if (!event.nativeEvent.isComposing && event.key === " " && applyListShortcut(event.currentTarget)) {

@@ -514,12 +514,64 @@ test("Superhuman formatting shortcuts edit rich compose content and appear in he
   await body.press("ControlOrMeta+Shift+9");
   await expect(body.locator("blockquote")).toHaveText("Quoted");
 
+  await body.fill("const answer = 42;");
+  await body.press("ControlOrMeta+a");
+  await body.press("ControlOrMeta+Shift+0");
+  await expect(body.locator("pre")).toHaveText("const answer = 42;");
+  await body.press("ControlOrMeta+Shift+0");
+  await expect(body.locator("pre")).toHaveCount(0);
+
+
   await composer.getByRole("button", { name: "Save and Close Draft" }).click();
   await page.keyboard.press("Shift+/");
   const help = page.getByRole("dialog", { name: "Keyboard Shortcuts" });
   await expect(help.getByText("Bold", { exact: true })).toBeVisible();
   await expect(help.getByText("Hyperlink", { exact: true })).toBeVisible();
   await expect(help.getByText("Decrease Indent", { exact: true })).toBeVisible();
+  await expect(help.getByText("Code Block", { exact: true })).toBeVisible();
+});
+
+for (const { width, lists } of [
+  { width: 1920, lists: ["Bulleted List", "Numbered List"] },
+  { width: 1600, lists: ["Bulleted List"] },
+  { width: 1500, lists: [] },
+]) {
+  test(`selection hints show ${lists.join(" and ") || "no list formats"} to stay on one line at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto("/");
+    await page.getByRole("button", { name: "New Message (c)" }).click();
+    const body = page.getByRole("dialog", { name: "New Message" }).getByRole("textbox", { name: "Message Body" });
+    await body.fill("Some text");
+    await body.press("ControlOrMeta+a");
+    const hints = page.getByLabel("Formatting shortcuts");
+    for (const title of ["Bold", "Italics", "Hyperlink", "Strikethrough", "Code Block"]) await expect(hints.getByText(title)).toBeVisible();
+    for (const title of ["Bulleted List", "Numbered List"]) await expect(hints.getByText(title)).toBeVisible({ visible: lists.includes(title) });
+    const rows = await hints.evaluate((element) => new Set(Array.from(element.children)
+      .filter((hint) => getComputedStyle(hint).display !== "none")
+      .map((hint) => Math.round(hint.getBoundingClientRect().top))).size);
+    expect(rows).toBe(1);
+  });
+}
+
+test("typing a code fence starts a code block and Enter on its empty last line leaves it", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "New Message (c)" }).click();
+  const body = page.getByRole("dialog", { name: "New Message" }).getByRole("textbox", { name: "Message Body" });
+
+  await body.fill("Before");
+  await body.press("End");
+  await body.press("Enter");
+  await body.pressSequentially("```");
+  await body.press("Enter");
+  await body.pressSequentially("if (ready) {");
+  await body.press("Enter");
+  await body.pressSequentially("  go();");
+  await body.press("Enter");
+  await body.press("Enter");
+  await body.pressSequentially("After");
+  await expect(body.locator("pre")).toHaveCount(1);
+  expect(await body.locator("pre").evaluate((pre) => pre.innerText.replace(/\n$/, ""))).toBe("if (ready) {\n  go();");
+  expect(await body.evaluate((editor) => editor.innerText.trim())).toBe("Before\nif (ready) {\n  go();\nAfter");
 });
 
 test("attachment selection and removal survive autosave; invalid recipients keep the draft", async ({ page }) => {
