@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import { COLLAPSED_CALENDAR_ACCOUNTS_KEY, CalendarWeekView, monthGridDays } from "./CalendarWeekView";
+import { DONE_TASK_LINGER_MS } from "./CalendarTasks";
 import { startOfLocalDay } from "./calendarTime";
 import { mailClient } from "./data/client";
 import { clearScheduleCache } from "./calendarScheduleCache";
@@ -932,6 +933,93 @@ describe("CalendarWeekView", () => {
       fireEvent.pointerUp(document.body, { pointerId: 7, clientX: 50, clientY: 9 * 64 });
       await waitFor(() => expect(onNotice).toHaveBeenCalledWith({ message: "Connect a Google Calendar account with event access to book time for tasks." }));
       expect(create).not.toHaveBeenCalled();
+    });
+
+    it("keeps a checked-off task a moment, struck through, then drops it", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const budget = task("budget", { title: "Draft budget" });
+      vi.mocked(mailClient.listTasks).mockResolvedValue([proposal, budget]);
+      const setStatus = vi.spyOn(mailClient, "setTaskStatus").mockResolvedValue({ ...proposal, status: "completed" });
+      const onTasksChanged = vi.fn();
+      const onNotice = vi.fn();
+      renderWeek({ mailAccountIds: ["joel@example.com"], onTasksChanged, onNotice });
+      const box = await within(openTasks()).findByRole("checkbox", { name: "Mark Write proposal done" });
+
+      // The reload after completing no longer lists it; the row stays in place regardless.
+      vi.mocked(mailClient.listTasks).mockResolvedValue([budget]);
+      fireEvent.click(box);
+      await waitFor(() => expect(setStatus).toHaveBeenCalledWith("proposal", "completed"));
+      await waitFor(() => expect(onNotice).toHaveBeenCalledWith({ message: "Completed: Write proposal", undo: expect.any(Function) }));
+      expect(onTasksChanged).toHaveBeenCalledOnce();
+      await waitFor(() => expect(mailClient.listTasks).toHaveBeenCalledTimes(2));
+      const done = within(openTasks()).getByRole("checkbox", { name: "Mark Write proposal not done" });
+      expect(done).toBeChecked();
+      expect(done.closest(".context-row")).toHaveClass("context-task-done");
+      expect([...openTasks().querySelectorAll(".context-row-title")].map((row) => row.textContent)).toEqual(["Write proposal", "Draft budget"]);
+      // A finished task can no longer be booked by clicking it.
+      expect(within(openTasks()).queryByRole("button", { name: /Write proposal/ })).not.toBeInTheDocument();
+
+      act(() => { vi.advanceTimersByTime(DONE_TASK_LINGER_MS); });
+      expect(within(openTasks()).queryByText("Write proposal")).not.toBeInTheDocument();
+      expect(within(openTasks()).getByRole("checkbox", { name: "Mark Draft budget done" })).toBeInTheDocument();
+    });
+
+    it("unchecking a just-finished task puts back the status it had", async () => {
+      const doing = task("doing", { title: "Draft budget", status: "in_progress" });
+      vi.mocked(mailClient.listTasks).mockResolvedValue([doing]);
+      const setStatus = vi.spyOn(mailClient, "setTaskStatus").mockImplementation(async (id, status) => ({ ...doing, status }));
+      const onTasksChanged = vi.fn();
+      renderWeek({ mailAccountIds: ["joel@example.com"], onTasksChanged, onNotice: vi.fn() });
+
+      vi.mocked(mailClient.listTasks).mockResolvedValue([]);
+      fireEvent.click(await within(openTasks()).findByRole("checkbox", { name: "Mark Draft budget done" }));
+      vi.mocked(mailClient.listTasks).mockResolvedValue([doing]);
+      fireEvent.click(await within(openTasks()).findByRole("checkbox", { name: "Mark Draft budget not done" }));
+      await waitFor(() => expect(setStatus).toHaveBeenLastCalledWith("doing", "in_progress"));
+      await waitFor(() => expect(onTasksChanged).toHaveBeenCalledTimes(2));
+      const row = await within(openTasks()).findByRole("button", { name: /Draft budget/ });
+      expect(row).toHaveTextContent("In progress");
+      expect(row.closest(".context-row")).not.toHaveClass("context-task-done");
+    });
+
+    it("Undo in the notice brings back a task that has already left the list", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      vi.mocked(mailClient.listTasks).mockResolvedValue([proposal]);
+      const setStatus = vi.spyOn(mailClient, "setTaskStatus").mockImplementation(async (id, status) => ({ ...proposal, status }));
+      const onNotice = vi.fn();
+      renderWeek({ mailAccountIds: ["joel@example.com"], onNotice });
+
+      vi.mocked(mailClient.listTasks).mockResolvedValue([]);
+      fireEvent.click(await within(openTasks()).findByRole("checkbox", { name: "Mark Write proposal done" }));
+      await waitFor(() => expect(onNotice).toHaveBeenCalledWith(expect.objectContaining({ message: "Completed: Write proposal" })));
+      act(() => { vi.advanceTimersByTime(DONE_TASK_LINGER_MS); });
+      expect(await within(openTasks()).findByText("No open tasks.")).toBeInTheDocument();
+
+      vi.mocked(mailClient.listTasks).mockResolvedValue([proposal]);
+      act(() => onNotice.mock.calls[0]![0].undo());
+      expect(await within(openTasks()).findByRole("checkbox", { name: "Mark Write proposal done" })).not.toBeChecked();
+      await waitFor(() => expect(setStatus).toHaveBeenLastCalledWith("proposal", "open"));
+    });
+
+    it("says why a task couldn't be completed and leaves it open", async () => {
+      vi.mocked(mailClient.listTasks).mockResolvedValue([proposal]);
+      vi.spyOn(mailClient, "setTaskStatus").mockRejectedValue(new Error("offline"));
+      const onNotice = vi.fn();
+      renderWeek({ mailAccountIds: ["joel@example.com"], onNotice });
+      fireEvent.click(await within(openTasks()).findByRole("checkbox", { name: "Mark Write proposal done" }));
+      await waitFor(() => expect(onNotice).toHaveBeenCalledWith({ message: "offline" }));
+      expect(within(openTasks()).getByRole("checkbox", { name: "Mark Write proposal done" })).not.toBeChecked();
+    });
+
+    it("a press on the checkbox never starts a drag", async () => {
+      vi.mocked(mailClient.listTasks).mockResolvedValue([proposal]);
+      const { container } = renderWeek({ mailAccountIds: ["joel@example.com"], onNotice: vi.fn() });
+      const column = tuesdayColumn(container);
+      const box = await within(openTasks()).findByRole("checkbox", { name: "Mark Write proposal done" });
+      dragTask(box, column, 9 * 64);
+      expect(box.closest(".context-row")).not.toHaveClass("calendar-task-dragging");
+      expect(container.querySelector(".calendar-create-selection")).not.toBeInTheDocument();
+      fireEvent.pointerUp(document.body, { pointerId: 7, clientX: 50, clientY: 9 * 64 });
     });
 
     it("names the booked task in event details, where it can be marked done", async () => {

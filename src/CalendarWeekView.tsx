@@ -731,6 +731,8 @@ export function CalendarWeekView({
             draggingTaskId={draggingTaskId}
             onSchedule={scheduleTask}
             onDragStart={startTaskDrag}
+            onChanged={tasksChanged}
+            onNotice={onNotice}
           />
         </>}
       </WorkspaceContextRail>

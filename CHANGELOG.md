@@ -4,6 +4,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### New
+- Check off a task in **Open tasks** beside the calendar week to mark it done. It stays a moment, struck through, so you can uncheck it, and **Undo** in the message that follows brings it back. Dragging a task onto the week still books time for it.
+
 ## 0.184.0 — 2026-10-29
 
 ### New
