@@ -47,6 +47,8 @@ mod write;
 
 // Connection layer and certificate pinning, used by account setup.
 pub use connection::{CertificateProbe, ConnectionConfig, ImapConnectionManager};
+#[cfg(test)]
+pub(crate) use connection::ConnectionRole;
 pub use session::ImapSession;
 pub use tls::{parse_sha256_fingerprint, Sha256Fingerprint};
 #[cfg(test)]

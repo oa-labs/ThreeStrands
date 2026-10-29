@@ -452,6 +452,21 @@ mailboxes, `STATUS` (or `LIST-STATUS`) on the existing polling schedule. A
 mailbox is only re-selected when its `UIDNEXT`, `MESSAGES` or `HIGHESTMODSEQ`
 changed.
 
+The current implementation watches INBOX on a dedicated, read-only EXAMINE
+connection when the post-login capabilities advertise IDLE. Notifications wake
+the ordinary serialized sync path after a one-second debounce; they never write
+mail directly. The listener sends DONE and renews IDLE at an absolute 25-minute
+deadline, even when keepalives arrive. Setup and DONE handshakes have 30-second
+timeouts. Disconnects retry with exponential backoff from 15 seconds up to five
+minutes; polling continues throughout. Removing an account cancels the listener
+and releases its connection slot. Without IDLE, the watch connection is closed
+and the account uses polling alone.
+
+Mail polls every 30 seconds while the main app window is focused. In the
+background, successful polls back off up to five minutes. Pending outgoing
+changes keep the existing 15-second floor, and failures retain their retry
+backoff. Focus and resume continue to trigger catch-up syncs.
+
 **Connections:** at most two per account, one idling and one for commands,
 with commands run one at a time. ISP servers often cap connections per user
 across all of that user's devices. Dovecot's default is 10.

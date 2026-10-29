@@ -561,7 +561,7 @@ pub enum RelocationStrategy {
 /// bare `MOVE` word (what the pure unit tests, and any future bare-word
 /// caller, pass), case-insensitively — so `WriteCaps` is correct whichever
 /// shape it is handed.
-fn capability_matches(cap: &str, word: &str) -> bool {
+pub(super) fn capability_matches(cap: &str, word: &str) -> bool {
     if cap.eq_ignore_ascii_case(word) {
         return true;
     }

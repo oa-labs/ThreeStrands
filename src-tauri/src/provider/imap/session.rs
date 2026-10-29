@@ -8,11 +8,8 @@
 //!
 //! The surface is deliberately minimal — only the operations the later read
 //! slices actually need: SELECT/EXAMINE a mailbox, UID FETCH, UID SEARCH, a
-//! raw `run_command` (to recover `COPYUID`/`APPENDUID` codes `async-imap`
-//! discards, as the Slice 0 spike proved), NOOP, and LOGOUT. IDLE is a Slice 5
-//! concern (incremental sync); the trait reserves it with an
-//! `InvalidOperation` stub and a `// Slice 5` note rather than widening the
-//! surface before there is a caller.
+//! raw `run_command`, LOGOUT, and an owned IDLE watch. An IDLE watch has its
+//! own connection; it never shares a stream with command operations.
 //!
 //! Nothing here fetches, syncs, or discovers mailboxes — those are later
 //! slices. This is the authenticated-session abstraction they build on.
@@ -153,6 +150,12 @@ pub trait ImapSession: Send {
     /// LOGOUT and close the session.
     async fn logout(&mut self) -> Result<(), ProviderError>;
 
+    /// Own the connection while watching INBOX, renewing IDLE on a fixed deadline.
+    /// The default keeps read-only test sources compatible without claiming IDLE support.
+    async fn watch_inbox(self: Box<Self>, _changed: std::sync::Arc<dyn Fn() + Send + Sync>) -> Result<(), ProviderError> {
+        Err(ProviderError::InvalidOperation("IDLE is not supported by this session".into()))
+    }
+
     /// Re-borrow this session as the Phase 3 WRITE surface
     /// ([`ImapWriteSession`](super::write::ImapWriteSession)), when it
     /// implements it. The session source hands callers a `Box<dyn
@@ -190,6 +193,36 @@ impl<T> ImapSession for AsyncImapSession<T>
 where
     T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug + Send,
 {
+    async fn watch_inbox(self: Box<Self>, changed: std::sync::Arc<dyn Fn() + Send + Sync>) -> Result<(), ProviderError> {
+        use async_imap::extensions::idle::IdleResponse;
+        use super::policy::{IDLE_RENEW_INTERVAL, IDLE_COMMAND_TIMEOUT};
+        let mut session = self.session;
+        loop {
+            let mut idle = session.idle();
+            tokio::time::timeout(IDLE_COMMAND_TIMEOUT, idle.init()).await
+                .map_err(|_| ProviderError::TransientTransport("IMAP IDLE startup timed out".into()))?
+                .map_err(|error| map_imap_error(&error))?;
+            // Catch up after connecting or renewing: changes between the last sync
+            // and EXAMINE/IDLE may already be reflected in the selected mailbox.
+            changed();
+            let outcome = {
+                let (wait, _interrupt) = idle.wait_with_timeout(IDLE_RENEW_INTERVAL);
+                // The outer deadline is absolute: server keepalives must not postpone renewal.
+                tokio::time::timeout(IDLE_RENEW_INTERVAL, wait).await
+            };
+            let notified = match outcome {
+                Err(_) | Ok(Ok(IdleResponse::Timeout)) => false,
+                Ok(Ok(IdleResponse::NewData(_))) => true,
+                Ok(Ok(IdleResponse::ManualInterrupt)) => return Err(ProviderError::TransientTransport("IMAP IDLE connection closed".into())),
+                Ok(Err(error)) => return Err(map_imap_error(&error)),
+            };
+            if notified { changed(); }
+            session = tokio::time::timeout(IDLE_COMMAND_TIMEOUT, idle.done()).await
+                .map_err(|_| ProviderError::TransientTransport("IMAP IDLE completion timed out".into()))?
+                .map_err(|error| map_imap_error(&error))?;
+        }
+    }
+
     async fn select(&mut self, mailbox: &str) -> Result<MailboxStatus, ProviderError> {
         let mb = self
             .session
@@ -796,6 +829,4 @@ mod tests {
         assert!(with.permanent_keywords);
     }
 
-    // The reserved IDLE method refuses until Slice 5 wires it, rather than
-    // silently doing nothing.
 }

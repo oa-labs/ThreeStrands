@@ -582,6 +582,7 @@ impl OAuthCredential {
         }
         .keyed_for("test@example.com", MAIL_SERVICE, endpoints);
         *auth.token_cache.lock().unwrap() = Some(tokens);
+        *auth.available_cache.lock().unwrap() = Some(true);
         auth
     }
 
@@ -1606,7 +1607,7 @@ impl AccountAuth {
                 crate::provider::gmail::GmailClient::new(credential.clone()),
             )),
             Self::Imap(credential) => {
-                Ok(std::sync::Arc::new(build_imap_provider(database, &credential.key())?))
+                Ok(std::sync::Arc::new(build_imap_provider(database, credential)?))
             }
         }
     }
@@ -1622,13 +1623,15 @@ impl AccountAuth {
 /// construction; it never flows through `AccountAuth` or any logged value.
 fn build_imap_provider(
     database: &std::sync::Arc<crate::db::Database>,
-    account_id: &str,
+    credential: &ImapCredential,
 ) -> Result<crate::provider::imap::ImapProvider, crate::provider::ProviderError> {
     use crate::provider::imap::{
         self, host_port_key, BodyCache, ImapProvider, ImapProviderConfig, ImapStateStore,
     };
     use crate::provider::ProviderError;
 
+    let account_key = credential.key();
+    let account_id = account_key.as_str();
     let settings = database
         .imap_account_settings(account_id)
         .map_err(|error| ProviderError::Other(error.to_string()))?
@@ -1661,7 +1664,7 @@ fn build_imap_provider(
         tls_mode: settings.imap_security.tls_mode(),
         pinned_fingerprint: pinned,
     };
-    let manager = imap::ImapConnectionManager::new(config);
+    let manager = credential.connection_manager(config);
     let store = ImapStateStore::new(database.clone(), account_id);
     let cache = BodyCache::new(store.clone());
     let label_model = imap::label_model_for(settings.label_storage);
@@ -1691,6 +1694,8 @@ fn build_imap_provider(
 pub struct ImapCredential {
     service: String,
     key: Arc<Mutex<String>>,
+    // All provider instances for this account share the command and IDLE slots.
+    manager: Arc<Mutex<Option<crate::provider::imap::ImapConnectionManager>>>,
 }
 
 impl ImapCredential {
@@ -1699,7 +1704,13 @@ impl ImapCredential {
         Self {
             service: MAIL_SERVICE.to_string(),
             key: Arc::new(Mutex::new(key.to_string())),
+            manager: Arc::new(Mutex::new(None)),
         }
+    }
+
+    fn connection_manager(&self, config: crate::provider::imap::ConnectionConfig) -> crate::provider::imap::ImapConnectionManager {
+        let mut manager = self.manager.lock().unwrap();
+        manager.get_or_insert_with(|| crate::provider::imap::ImapConnectionManager::new(config.clone())).with_config(config)
     }
 
     /// The address this account is stored under.
@@ -1750,5 +1761,29 @@ impl ImapCredential {
 
     fn entry(&self) -> Result<Entry, String> {
         Entry::new(&self.service, &self.key()).map_err(display)
+    }
+}
+
+#[cfg(test)]
+mod imap_connection_pool_tests {
+    use super::*;
+    use crate::provider::imap::{ConnectionConfig, ImapConnectionManager, ConnectionRole, SecurityMode};
+
+    #[tokio::test]
+    async fn credential_clones_share_connection_slots_across_provider_instances_and_settings_changes() {
+        let auth = ImapCredential::for_account("pool@example.com");
+        let cloned = auth.clone();
+        let config = ConnectionConfig { host: "mail.example.com".into(), port: 993, tls_mode: SecurityMode::ImplicitTls.tls_mode(), pinned_fingerprint: None };
+        let idle_manager = auth.connection_manager(config.clone());
+        let command_manager = cloned.connection_manager(ConnectionConfig { host: "updated.example.com".into(), ..config });
+        let idle = idle_manager.reserve(ConnectionRole::Idle).await;
+        let command = command_manager.reserve(ConnectionRole::Command).await;
+        assert_eq!(idle_manager.available_slots(), 0);
+        assert_eq!(command_manager.available_slots(), 0);
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(10), command_manager.reserve(ConnectionRole::Idle)).await.is_err());
+        drop(idle);
+        assert_eq!(command_manager.available_slots(), 1);
+        drop(command);
+        assert_eq!(command_manager.available_slots(), ImapConnectionManager::MAX_CONNECTIONS);
     }
 }

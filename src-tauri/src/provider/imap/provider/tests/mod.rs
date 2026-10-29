@@ -3906,3 +3906,5 @@ mod search_pins;
 // guard. No network, no openssl / /dev/tcp.
 // =======================================================================
 mod search_exec;
+
+mod idle;

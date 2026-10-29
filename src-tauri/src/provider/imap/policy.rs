@@ -2353,3 +2353,8 @@ mod tests {
         assert_eq!(search_pin_cutoff(i64::MIN), i64::MIN);
     }
 }
+
+/// Renew IDLE before servers' inactivity limits, even when keepalives arrive.
+pub const IDLE_RENEW_INTERVAL: std::time::Duration = std::time::Duration::from_secs(25 * 60);
+/// Bound the IDLE continuation and DONE handshakes; stalled streams are discarded.
+pub const IDLE_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);

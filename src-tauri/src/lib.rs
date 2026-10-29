@@ -815,6 +815,7 @@ fn spawn_synced_account(
 ) -> ConnectedAccount {
     let activity = app.state::<sync::SyncActivity>().inner().clone();
     let service = SyncService::new(database, auth.clone()).with_activity(activity);
+    service.set_foreground(app.get_webview_window("main").is_some_and(|window| window.is_focused().unwrap_or(false)));
     let polling_service = service.clone();
     let poll_task = tauri::async_runtime::spawn(async move {
         polling_service
@@ -862,6 +863,18 @@ fn spawn_pending_flush(handle: &tauri::AppHandle) {
         };
         tokio::time::sleep(PENDING_FLUSH_SETTLE_DELAY).await;
         log_failure("flushing pending mutations", service.flush_pending().await);
+    });
+}
+
+fn update_mail_foreground(handle: &tauri::AppHandle) {
+    let foreground = handle.get_webview_window("main").is_some_and(|window| window.is_focused().unwrap_or(false));
+    let handle = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Some(state) = handle.try_state::<AppState>() {
+            for service in sync_services(&state, None).await {
+                service.set_foreground(foreground);
+            }
+        }
     });
 }
 
@@ -1583,6 +1596,7 @@ fn handle_run_event(handle: &tauri::AppHandle, event: tauri::RunEvent) {
             event: tauri::WindowEvent::Focused(focused),
             ..
         } => {
+            update_mail_foreground(handle);
             if *focused {
                 if let Some(state) = handle.try_state::<AppState>() {
                     state.correspondence.request_draft_pull();
@@ -1601,6 +1615,7 @@ fn handle_run_event(handle: &tauri::AppHandle, event: tauri::RunEvent) {
             }
         }
         tauri::RunEvent::Resumed => {
+            update_mail_foreground(handle);
             if let Some(state) = handle.try_state::<AppState>() {
                 log_failure("recovering scheduled sends after wake", state.correspondence.resume_schedules());
             }

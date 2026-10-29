@@ -247,6 +247,7 @@ pub async fn connect(
 /// One manager per account. It mints connections through [`connect`] but does
 /// not itself hold them open — the later sync slices own connection lifecycle;
 /// Slice 1 provides the enforced cap and the typed guards.
+#[derive(Clone)]
 pub struct ImapConnectionManager {
     config: ConnectionConfig,
     /// Two permits = the two-connection cap.
@@ -261,7 +262,6 @@ pub struct ImapConnectionManager {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConnectionRole {
     /// The single long-lived connection that idles on INBOX.
-    #[cfg_attr(not(test), expect(dead_code, reason = "IDLE is not implemented yet; the pool already reserves its slot"))]
     Idle,
     /// The connection that runs commands (one at a time).
     Command,
@@ -295,6 +295,11 @@ impl ImapConnectionManager {
             command_lock: Arc::new(Mutex::new(())),
             idle_lock: Arc::new(Mutex::new(())),
         }
+    }
+
+    /// Use current server settings while retaining this account's shared connection limits.
+    pub fn with_config(&self, config: ConnectionConfig) -> Self {
+        Self { config, ..self.clone() }
     }
 
     /// Reserve the single slot for `role`. Await the role lock before taking

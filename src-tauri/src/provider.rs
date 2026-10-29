@@ -495,6 +495,13 @@ pub trait MailSync: Send + Sync {
     /// which the caller answers with a full resynchronization.
     async fn poll(&self, cursor: &SyncCursor) -> ProviderResult<SyncBatch>;
 
+    /// Watch INBOX for server notifications. Notifications are hints: the sync engine
+    /// still fetches and commits changes through its ordinary serialized sync path.
+    /// Dropping this future must close the watch connection and release its lease.
+    async fn watch_inbox(&self, _changed: std::sync::Arc<dyn Fn() + Send + Sync>) -> ProviderResult<()> {
+        std::future::pending().await
+    }
+
     /// The inbox's current thread ids, one page at a time.
     async fn list_inbox(&self, page: Option<&str>) -> ProviderResult<ThreadPage>;
 

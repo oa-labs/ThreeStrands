@@ -4,7 +4,11 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### New
+- IMAP accounts now receive inbox updates as the server announces them, with automatic reconnection and regular checks when live updates are unavailable.
+
 ### Improved
+- Mail now checks for updates every 30 seconds while the app is active, and gradually checks less often in the background.
 - Open calendars and agendas now refresh every 30 seconds and when you return to the app, so changes made in Google Calendar appear automatically. Your events stay visible while refreshing, and automatic checks pause while the app is in the background.
 
 ## 0.183.1 — 2026-10-29

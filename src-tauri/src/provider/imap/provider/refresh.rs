@@ -1431,6 +1431,24 @@ impl ImapProvider {
 
 #[async_trait]
 impl MailSync for ImapProvider {
+    async fn watch_inbox(&self, changed: std::sync::Arc<dyn Fn() + Send + Sync>) -> ProviderResult<()> {
+        let Some(mut session) = tokio::time::timeout(policy::IDLE_COMMAND_TIMEOUT, self.source.open_idle()).await
+            .map_err(|_| ProviderError::TransientTransport("IMAP notification connection timed out".into()))?? else {
+            return std::future::pending().await;
+        };
+        let supports_idle = tokio::time::timeout(policy::IDLE_COMMAND_TIMEOUT, session.capabilities()).await
+            .map_err(|_| ProviderError::TransientTransport("IMAP capability check timed out".into()))??
+            .iter().any(|capability| super::super::write::capability_matches(capability, "IDLE"));
+        if !supports_idle {
+            let _ = tokio::time::timeout(policy::IDLE_COMMAND_TIMEOUT, session.logout()).await;
+            drop(session);
+            return std::future::pending().await;
+        }
+        tokio::time::timeout(policy::IDLE_COMMAND_TIMEOUT, session.examine(INBOX)).await
+            .map_err(|_| ProviderError::TransientTransport("IMAP IDLE mailbox selection timed out".into()))??;
+        session.watch_inbox(changed).await
+    }
+
     fn thread_aliases(&self) -> ProviderResult<Vec<(String, String)>> {
         self.store.thread_aliases().map_err(db_err)
     }

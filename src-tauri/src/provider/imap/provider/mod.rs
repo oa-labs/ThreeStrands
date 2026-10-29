@@ -4,9 +4,8 @@
 //! It implements the whole provider seam
 //! ([`MailProvider`](crate::provider::MailProvider) =
 //! `MailSync + MailFetch + MailMutate + MailSend`) for one IMAP account, INBOX
-//! only, read-only, in the "neither" capability tier (no CONDSTORE/QRESYNC, no
-//! IDLE). The engine polls it exactly as it polls Gmail; nothing above the
-//! seam branches on the provider.
+//! with polling plus an optional dedicated INBOX IDLE connection. Notifications
+//! wake the same sync engine used by Gmail; polling remains a fallback.
 //!
 //! ## Cursor semantics are AT-LEAST-ONCE
 //!
@@ -75,6 +74,8 @@ const INBOX: &str = "INBOX";
 #[async_trait]
 pub(super) trait ImapSessionSource: Send + Sync {
     async fn open(&self) -> ProviderResult<Box<dyn ImapSession>>;
+    async fn open_idle(&self) -> ProviderResult<Option<Box<dyn ImapSession>>> { Ok(None) }
+
 }
 
 /// The production session source: dial through the connection manager on the
@@ -87,6 +88,11 @@ struct ManagerSessionSource {
 
 #[async_trait]
 impl ImapSessionSource for ManagerSessionSource {
+    async fn open_idle(&self) -> ProviderResult<Option<Box<dyn ImapSession>>> {
+        let (session, lease) = self.manager.connect_leased(ConnectionRole::Idle, &self.username, &self.password).await?;
+        Ok(Some(Box::new(LeasedSession { session, _lease: lease })))
+    }
+
     async fn open(&self) -> ProviderResult<Box<dyn ImapSession>> {
         // The lease must outlive the session so the account's connection slot
         // stays accounted for; the connected session owns its stream, and the
@@ -119,6 +125,13 @@ struct LeasedSession {
 
 #[async_trait]
 impl ImapSession for LeasedSession {
+    async fn watch_inbox(self: Box<Self>, changed: std::sync::Arc<dyn Fn() + Send + Sync>) -> ProviderResult<()> {
+        let Self { session, _lease } = *self;
+        let result = Box::new(session).watch_inbox(changed).await;
+        drop(_lease);
+        result
+    }
+
     async fn select(&mut self, mailbox: &str) -> ProviderResult<super::session::MailboxStatus> {
         self.session.select(mailbox).await
     }
