@@ -13,7 +13,7 @@ Click **Files** in the sidebar or press <kbd>5</kbd>. Files lists attachments fr
 
 ## Find a File {#find-a-file}
 
-1. Search by filename.
+1. Search by filename or sender.
 2. Narrow the list by sender, file type, direction, account, or date.
 3. Select a result to see its details and source conversation.
 4. Open or save the file, or follow the source conversation to read its context.

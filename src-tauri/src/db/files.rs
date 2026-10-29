@@ -70,10 +70,10 @@ impl Database {
             values.extend(ids.iter().cloned().map(Value::Text));
         }
         // Invitations are listed by meeting title, so search matches that title too.
+        // People often remember who sent a file rather than its name, so the sender matches as well.
         if let Some(search) = query.search.as_ref().filter(|value| !value.is_empty()) {
-            filters.push(format!("(fold_case(a.filename) LIKE ? ESCAPE '\\' OR ({CALENDAR} AND fold_case(t.subject) LIKE ? ESCAPE '\\'))"));
-            values.push(Value::Text(folded_pattern(search)));
-            values.push(Value::Text(folded_pattern(search)));
+            filters.push(format!("(fold_case(a.filename) LIKE ? ESCAPE '\\' OR fold_case(m.sender) LIKE ? ESCAPE '\\' OR ({CALENDAR} AND fold_case(t.subject) LIKE ? ESCAPE '\\'))"));
+            values.extend(std::iter::repeat_n(Value::Text(folded_pattern(search)), 3));
         }
         for (column, value, like) in [
             ("t.id", &query.thread_id, false),
@@ -599,6 +599,11 @@ mod tests {
         }
         q.search = Some("prüfung_".into());
         assert_eq!(db.list_files(&q).unwrap().total, 0);
+        // Search also finds the file by who sent it, by name or address.
+        for search in ["ØDEGÅRD", "agot@example"] {
+            q.search = Some(search.into());
+            assert_eq!(db.list_files(&q).unwrap().total, 1, "{search}");
+        }
         q.search = None;
         q.sender = Some("øDEGÅRD".into());
         assert_eq!(db.list_files(&q).unwrap().total, 1);
