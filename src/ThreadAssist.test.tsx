@@ -185,6 +185,9 @@ describe("ThreadAssist", () => {
     expect(items.map((item) => item.textContent)).toEqual(["They now want it Monday instead.", "Earlier: The client asked for the website by Friday."]);
     expect(items[1]).toHaveClass("thread-assist-summary-earlier");
     expect(screen.getByText(/Shared 3 messages with Anthropic\./)).toBeInTheDocument();
+    // Where the brief came from and what was shared read as one line under it.
+    expect(screen.getByText("From the latest message").parentElement).toBe(screen.getByText(/Shared 3 messages/).parentElement);
+    expect(screen.getByRole("list").compareDocumentPosition(screen.getByText("From the latest message")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     rerender(<ThreadAssist {...props({ detail: { ...thread, thread: { ...thread.thread, summaryFocusFrom: "2026-09-20T10:00:00Z" } }, suggestions: { requested: true } })} />);
     expect(screen.getByText("From the 2 latest messages")).toBeInTheDocument();
@@ -431,6 +434,13 @@ describe("ThreadAssist", () => {
 
     rerender(<ThreadAssist {...props({ suggestions: { requested: true } })} />);
     expect(screen.getByText("Nothing to schedule or follow up on.")).toBeInTheDocument();
+  });
+
+  it("lets a brief stand alone when nothing was suggested", () => {
+    render(<ThreadAssist {...props({ detail: summarized, suggestions: { requested: true } })} />);
+    expect(screen.getByText("The client needs the website.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Suggested" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Nothing to schedule or follow up on.")).not.toBeInTheDocument();
   });
 
   it("reports suggestions past the limit separately from withheld ones", () => {

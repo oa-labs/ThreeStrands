@@ -10,6 +10,7 @@ import { logBackgroundFailure } from "./errors";
 import { SenderDecisions, TrustSection, useSenderHistory, type SenderActions, type SenderTarget } from "./SenderSections";
 import { bulkMessage, latestInbound, type TrustLink } from "./senderSignals";
 import { threadTextIndex } from "./threadTextIndex";
+import { participantName } from "./ThreadAssist";
 
 /** A reply in the open conversation, as the context panel shows it. */
 export type ReplyContext = {
@@ -43,7 +44,7 @@ export type ContextPerson = {
  * The AI actions, Find Times and the brief, share one row at the top: each is
  * a button until it has something to show, then opens to full width below
  * the buttons. Find Times is left out while reading bulk mail, but offered
- * when replying to it.
+ * when replying to it; the caller decides whether it is offered otherwise.
  *
  * While the user replies in this conversation, the checks before sending
  * come first, and the person group is about who the reply
@@ -240,6 +241,8 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, readingMe
     }
     return [...merged.values()].sort((left, right) => right.sentAt.localeCompare(left.sentAt));
   }, [timeline, senderHistory.history, detail?.thread.id]);
+  // Recent emails names the person by first name, when they have one.
+  const personName = displayName && !displayName.includes("@") ? participantName(displayName).split(/\s+/)[0] : undefined;
   const showMessage = onShowMessage ?? ((threadId: string) => onOpenThread(threadId));
   return (
     <aside className="context-panel" aria-label="Conversation context" tabIndex={-1} onKeyDown={onKeyDown}>
@@ -267,7 +270,7 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, readingMe
             closing={<SenderDecisions key={detail?.thread.id} target={senderTarget} history={senderHistory.history} actions={sender} />}
           />
         ) : null
-      ) : person && recentEmails.length > 0 ? <RecentEmailsSection items={recentEmails} onOpenThread={onOpenThread} /> : null}
+      ) : person && recentEmails.length > 0 ? <RecentEmailsSection items={recentEmails} person={personName} onOpenThread={onOpenThread} /> : null}
       {error ? <p className="contacts-error" role="alert">{error}</p> : null}
       {detail && chat ? <div className="context-chat-dock">{chat(person)}</div> : null}
     </aside>

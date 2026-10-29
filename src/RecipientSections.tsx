@@ -30,7 +30,7 @@ type FindTimesState = {
  * it, the coming week is searched. Search Again always reads afresh. The
  * provider never sees the calendar.
  */
-export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], suggest, intoDraft = true, compact = false, onInsertTimes, onOpenCalendarSettings }: {
+export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], suggest, intoDraft = true, compact = false, offered = true, onInsertTimes, onOpenCalendarSettings }: {
   preferences: AvailabilityPreferences;
   /** Draft Assist is on and an AI provider is ready. */
   ai: boolean;
@@ -46,6 +46,11 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
    * actions; the section opens to full width once there are times.
    */
   compact?: boolean;
+  /**
+   * Whether the compact button is offered. Once a search has started it
+   * stays, so the times never vanish while the user reads them.
+   */
+  offered?: boolean;
   onInsertTimes(candidates: AvailabilityCandidate[]): void;
   onOpenCalendarSettings(): void;
 }) {
@@ -106,6 +111,7 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
     </button>
   );
   if (compact && !search && !reading) {
+    if (!offered) return null;
     return <section className="context-ai-launcher compose-availability" aria-label="Availability">{button}</section>;
   }
 

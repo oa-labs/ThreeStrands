@@ -77,7 +77,7 @@ import { OpenedCalendarDialog } from "./OpenedCalendarDialog";
 import { PanelResizeHandle, useInboxWidth } from "./PanelResizeHandle";
 import { messagesWithQueuedReplies, queuedMessage } from "./queuedReplies";
 import { AvailabilitySection } from "./RecipientSections";
-import { planChatAvailability, suggestedSearch } from "./scheduling";
+import { offersFindTimes, planChatAvailability, suggestedSearch } from "./scheduling";
 import { SearchField } from "./SearchField";
 import { readSelectedAccountId, readSelectedMailboxForAccount } from "./settings";
 import type { SettingsSection } from "./settingsPanelTypes";
@@ -1347,6 +1347,13 @@ export function App() {
                 ? correspondence.liveDraft
                 : { sourceId: visibleDetail.messages.at(-1)?.id ?? null, subject: visibleDetail.thread.subject, body: "" }}
               intoDraft={Boolean(composerBelongsToVisibleThread && correspondence.liveDraft)}
+              offered={offersFindTimes({
+                replying: Boolean(composerBelongsToVisibleThread && correspondence.liveDraft),
+                suggestionsAvailable: aiActionAvailable,
+                requested: actionAnalysisRequested,
+                loading: actionAnalysisLoading,
+                proposals: actionProposals,
+              })}
               suggest={() => suggestedSearch(actionProposals, new Date(), availabilityPreferences.defaultDurationMinutes)}
               onInsertTimes={draftAvailabilityReply}
               onOpenCalendarSettings={() => openSettingsAt("calendarAccounts")}

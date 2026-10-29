@@ -128,6 +128,26 @@ export function suggestedSearch(proposals: ActionProposal[], now: Date, defaultD
   return null;
 }
 
+/**
+ * Whether reading a conversation should offer Find Times. Suggestions are the
+ * evidence: before they have run, or when they can't run, it is offered; once
+ * they ran, only a meeting still to be arranged keeps it. A reply always
+ * offers it, since the user may be the one proposing times.
+ */
+export function offersFindTimes({ replying, suggestionsAvailable, requested, loading, proposals }: {
+  replying: boolean;
+  suggestionsAvailable: boolean;
+  requested: boolean;
+  loading: boolean;
+  proposals: ActionProposal[];
+}): boolean {
+  if (replying || !suggestionsAvailable) return true;
+  // Held back while suggestions are read, so it doesn't show and then vanish.
+  if (loading) return false;
+  if (!requested) return true;
+  return proposals.some((proposal) => proposal.type === "meeting" && proposal.intent === "schedule");
+}
+
 /** Plans the calendar search a chat answer asked for, with any weekdays and hours it named. */
 export function planChatAvailability(request: ChatAvailability, now: Date, defaultDurationMinutes: number): SchedulePlan {
   return {

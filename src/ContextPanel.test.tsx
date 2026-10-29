@@ -6,6 +6,7 @@ import { formatHistoryDate } from "./contactContext";
 import type { Account, ContactActivity, ContactProfile, ContactTimelineItem, MessageTrust, SenderDeliveryPattern, SenderFamiliarity, SenderHistory, ThreadDetail } from "./domain";
 import type { SenderActions } from "./SenderSections";
 import { expectContextRows } from "./test/contextRows";
+import { recentEmailKind } from "./ContextSections";
 
 vi.mock("./data/client",()=>({mailClient:{getContactProfile:vi.fn(),resolveContactIds:vi.fn(),contactTimeline:vi.fn(),saveContactProfile:vi.fn(),contactActivity:vi.fn(),contactFiles:vi.fn(),senderHistory:vi.fn(),messageTrust:vi.fn(),senderFamiliarity:vi.fn(),confirmSenderDelivery:vi.fn(),forgetSenderDelivery:vi.fn(),fileStars:vi.fn().mockResolvedValue([]),setFileStar:vi.fn().mockResolvedValue(undefined),openAttachment:vi.fn()}}));
 vi.mock("@tauri-apps/plugin-opener",()=>({openUrl:vi.fn()}));
@@ -237,10 +238,41 @@ describe("ContextPanel",()=>{
     renderPanel();
     const history=await screen.findByRole("region",{name:"Recent emails"});
     const header=history.querySelector<HTMLElement>(".context-section-header")!;
-    expect(within(header).getByRole("button",{name:"Recent emails"})).toHaveAttribute("aria-expanded","true");
+    // The heading names whom the emails are with; the region keeps its plain name.
+    expect(within(header).getByRole("button",{name:"Recent emails with Bob"})).toHaveAttribute("aria-expanded","true");
     expect(header.querySelector("h3 .context-count")).toBeNull();
     expect(header.querySelector("h3 svg:not(.lucide-chevron-down):not(.lucide-chevron-right)")).toBeNull();
     expect(header.querySelector(".context-section-header-actions .context-count")).toHaveTextContent("2");
+  });
+
+  it("marks invitation answers and automatic replies, and lists automatic replies after what the person wrote",async()=>{
+    vi.mocked(mailClient.getContactProfile).mockResolvedValue(bob);
+    vi.mocked(mailClient.contactTimeline).mockResolvedValue([
+      {...timelineItem("thread-2","Automatic reply: Budget review"),sentAt:"2026-09-22T00:00:00Z"},
+      {...timelineItem("thread-3","Accepted: Offsite planning"),sentAt:"2026-09-21T00:00:00Z"},
+      timelineItem("thread-4","Re: Budget review"),
+    ]);
+    renderPanel();
+    const history=await screen.findByRole("region",{name:"Recent emails"});
+    expectContextRows(history);
+    const rows=[...history.querySelectorAll(".context-row")];
+    expect(rows.map((row)=>row.querySelector(".context-row-title")?.textContent)).toEqual(["Accepted: Offsite planning","Re: Budget review","Automatic reply: Budget review"]);
+    expect(rows[0].querySelector(".lucide-calendar-check")).not.toBeNull();
+    expect(rows[1].querySelector(".lucide-mail")).not.toBeNull();
+    expect(rows[2]).toHaveClass("context-row-automatic");
+    expect(rows[2].querySelector(".lucide-bot")).not.toBeNull();
+  });
+
+  it("reads an email's kind only from a subject prefix mail clients write",()=>{
+    expect(recentEmailKind("Declined: Standup")).toBe("response");
+    expect(recentEmailKind("Tentatively Accepted: Standup")).toBe("response");
+    expect(recentEmailKind("Accepted (Tentative): Standup")).toBe("response");
+    expect(recentEmailKind("Out of Office: back Monday")).toBe("automatic");
+    expect(recentEmailKind("Auto-Reply: Re: Plans")).toBe("automatic");
+    // Uncertain subjects stay plain email.
+    expect(recentEmailKind("Accepted offer details")).toBe("email");
+    expect(recentEmailKind("Re: Accepted: Standup")).toBe("email");
+    expect(recentEmailKind("Automatic replies are annoying")).toBe("email");
   });
 
   it("decodes HTML entities in recent email snippets",async()=>{
@@ -391,7 +423,7 @@ describe("ContextPanel",()=>{
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([timelineItem("thread-2","Budget review")]);
     renderPanel();
     const history=await screen.findByRole("region",{name:"Recent emails"});
-    const toggle=within(history).getByRole("button",{name:"Recent emails"});
+    const toggle=within(history).getByRole("button",{name:/^Recent emails/});
     expect(toggle).toHaveAttribute("aria-expanded","true");
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded","false");
@@ -400,8 +432,8 @@ describe("ContextPanel",()=>{
 
     renderPanel();
     const remembered=await screen.findByRole("region",{name:"Recent emails"});
-    expect(within(remembered).getByRole("button",{name:"Recent emails"})).toHaveAttribute("aria-expanded","false");
-    fireEvent.click(within(remembered).getByRole("button",{name:"Recent emails"}));
+    expect(within(remembered).getByRole("button",{name:/^Recent emails/})).toHaveAttribute("aria-expanded","false");
+    fireEvent.click(within(remembered).getByRole("button",{name:/^Recent emails/}));
     expect(within(remembered).getByRole("button",{name:/Budget review/})).toBeVisible();
     expect(localStorage.getItem("threestrands.contextPanel.collapsedSections")).toBe("[]");
   });

@@ -288,7 +288,9 @@ describe("conversation brief", () => {
     await waitFor(() => expect(briefThread).toHaveBeenCalledTimes(1));
     expect(analyzeThread).not.toHaveBeenCalled();
     expect(await within(panel).findByText("Welcome to the app.")).toBeInTheDocument();
-    expect(within(panel).getByText("Nothing to schedule or follow up on.")).toBeInTheDocument();
+    // With nothing suggested, the brief stands alone rather than under an empty Suggested heading.
+    expect(within(panel).queryByRole("heading", { name: "Suggested" })).not.toBeInTheDocument();
+    expect(within(panel).queryByText("Nothing to schedule or follow up on.")).not.toBeInTheDocument();
 
     // Nothing is missing now, so the shortcuts ask again only through Refresh.
     fireEvent.keyDown(window, { key: "A", shiftKey: true });

@@ -280,6 +280,17 @@ describe("Find Times with AI", () => {
     expect(screen.getByRole("checkbox", { name: /Alex, Smith/ })).not.toBeChecked();
   });
 
+  it("leaves out the compact button when not offered, but keeps a search it started", async () => {
+    const props = { preferences, ai: false, compact: true, draft: reply, onInsertTimes: vi.fn(), onOpenCalendarSettings: vi.fn() };
+    const view = render(<AvailabilitySection {...props} offered={false} />);
+    expect(screen.queryByRole("button", { name: "Find Times" })).not.toBeInTheDocument();
+    view.rerender(<AvailabilitySection {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Find Times" }));
+    await screen.findByRole("button", { name: "Search Again" });
+    view.rerender(<AvailabilitySection {...props} offered={false} />);
+    expect(screen.getByRole("region", { name: "Availability" })).toBeInTheDocument();
+  });
+
   it("includes multiple coworkers independently", async () => {
     render(<AvailabilitySection preferences={preferences} ai={false} draft={{ ...reply, to: "alex@acme.com", cc: "sam@acme.com" }} onInsertTimes={vi.fn()} onOpenCalendarSettings={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Find Times" }));

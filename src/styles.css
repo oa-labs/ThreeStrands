@@ -1584,7 +1584,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
   font-size: var(--text-meta);
   text-align: right;
 }
-.thread-assist-shared { margin: var(--space-2) 0 0; padding-left:calc(var(--context-row-inset) + var(--context-glyph-column)); color: var(--muted); font-size: var(--text-meta); }
+.thread-assist-shared { margin: 0; padding-left:calc(var(--context-row-inset) + var(--context-glyph-column)); color: var(--muted); font-size: var(--text-meta); line-height: var(--leading-normal); }
 .thread-assist-shared .context-link-button { margin-top:0; font-size:inherit; }
 .action-analysis-error { margin-top: var(--space-2); padding: var(--space-2) var(--space-2-5); border: 1px solid var(--warning); border-radius: var(--radius-sm); background: var(--input); font-size: var(--text-secondary); }
 .action-analysis-error p { margin: 0; color: var(--text); }
@@ -2299,8 +2299,15 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-invitation-response > .btn { justify-self:start; }
 .thread-assist-run { white-space: nowrap; }
 .context-section-header-actions .thread-assist-run { margin-right:var(--space-1); }
-.thread-assist-suggestions { display:grid; grid-template-columns:minmax(0,1fr); min-width:0; gap:var(--space-2); margin-top:var(--space-2-5); }
-.thread-assist-suggestions h4 { margin:0; color:var(--muted); }
+/* Suggested belongs to the Brief: its label and notes start at the brief's text edge, its cards at the chevrons'. */
+.thread-assist-suggestions { display:grid; grid-template-columns:minmax(0,1fr); min-width:0; gap:var(--space-2); margin-top:var(--space-3); padding-inline:var(--context-row-inset); }
+.thread-assist-suggestions h4,
+.thread-assist-suggestions > .context-status { margin:0; padding-left:var(--context-glyph-column); color:var(--muted); }
+/* Copy is a secondary action: it shows on hover or focus, and stays while it confirms a copy. */
+.thread-assist-copy { opacity:0; }
+.thread-assist:hover .thread-assist-copy,
+.thread-assist:focus-within .thread-assist-copy,
+.thread-assist-copy[aria-label^="Copied"] { opacity:1; }
 .context-meeting-details { min-width:0; overflow:hidden; text-overflow:ellipsis; }
 .context-chat-dock { position:sticky; bottom:0; display:flex; flex-direction:column; margin:auto calc(var(--space-4) * -1) 0; padding:0 var(--space-4) var(--space-1); border-top:1px solid var(--border); background:var(--surface); }
 /* Once there is a conversation, it takes whatever height the collapsed sections leave free. */
@@ -2386,6 +2393,8 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .context-meeting-response { flex:0 0 auto; color:var(--accent); font-weight:var(--weight-semibold); white-space:pre; }
 .context-meeting-response[data-response-status="declined"] { color:var(--muted); }
 .context-file .context-row-title { display:flex; }
+.context-row-automatic .context-row-title,
+.context-row-automatic .context-row-icon { color:var(--muted); }
 /* Notes and links under a heading start at the row text edge. */
 .context-collapsible > div > .context-section-note,
 .context-collapsible > div > .context-status,

@@ -3,7 +3,7 @@ import type { MeetingProposal } from "./domain";
 import {
   boundedRange, clampMeetingMinutes, MAX_MEETING_MINUTES, MAX_SCHEDULE_RANGE_DAYS, MIN_MEETING_MINUTES,
   AFTERNOONS, ANY_TIME, MIDDAY, MORNINGS, planChatAvailability, planMeeting, planTimeSearch, SCHEDULE_LOOKAHEAD_DAYS, shiftedRange,
-  spreadAcrossDays, suggestedSearch, windowsWithin,
+  offersFindTimes, spreadAcrossDays, suggestedSearch, windowsWithin,
 } from "./scheduling";
 
 const now = new Date("2026-09-29T12:00:00Z");
@@ -199,5 +199,31 @@ describe("adjusting open-time searches", () => {
     expect(spreadAcrossDays(candidates, "UTC").map((candidate) => candidate.start)).toEqual([
       "2026-10-19T13:00:00Z", "2026-10-20T03:00:00Z", "2026-10-19T14:00:00Z", "2026-10-20T13:00:00Z",
     ]);
+  });
+});
+
+describe("offering Find Times while reading", () => {
+  const task = {
+    type: "task" as const, kind: "action" as const, title: "Send deck", notes: null, dueKind: "none" as const, dueValue: null,
+    timeZone: null, repeatIntervalDays: null, confidence: 0.9, evidence: { sourceMessageId: "m1", excerpt: "deck" },
+  };
+  const read = { replying: false, suggestionsAvailable: true, requested: true, loading: false };
+
+  it("offers it until suggestions have run, and whenever they can't", () => {
+    expect(offersFindTimes({ ...read, requested: false, proposals: [] })).toBe(true);
+    expect(offersFindTimes({ ...read, suggestionsAvailable: false, proposals: [] })).toBe(true);
+  });
+
+  it("keeps it only for a meeting still to be arranged once suggestions ran", () => {
+    expect(offersFindTimes({ ...read, proposals: [] })).toBe(false);
+    expect(offersFindTimes({ ...read, proposals: [task] })).toBe(false);
+    expect(offersFindTimes({ ...read, proposals: [meeting({ intent: "attend" })] })).toBe(false);
+    expect(offersFindTimes({ ...read, proposals: [task, meeting()] })).toBe(true);
+  });
+
+  it("holds it back while suggestions are read, and always offers it in a reply", () => {
+    expect(offersFindTimes({ ...read, requested: false, loading: true, proposals: [] })).toBe(false);
+    expect(offersFindTimes({ ...read, replying: true, proposals: [] })).toBe(true);
+    expect(offersFindTimes({ ...read, replying: true, loading: true, proposals: [] })).toBe(true);
   });
 });

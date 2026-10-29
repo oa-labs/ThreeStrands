@@ -259,8 +259,12 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
   const busy = loading || summary.pending;
   const generated = Boolean(summaryText) || suggestions.requested;
   const visibleProposals = withoutInvitationMeetings(suggestions.proposals, detail);
+  const noSuggestions = suggestions.requested && suggestions.proposals.length === 0 && suggestions.hiddenCount === 0 && !suggestions.extraCount;
+  // With nothing suggested, a brief already says whether anything is needed,
+  // so an empty Suggested section would only repeat it.
   const showSuggestions = suggestions.available && (suggestions.requested || visibleProposals.length > 0)
-    && (visibleProposals.length > 0 || !latestInvitationMessage(detail) || suggestions.hiddenCount > 0 || Boolean(suggestions.extraCount));
+    && (visibleProposals.length > 0 || !latestInvitationMessage(detail) || suggestions.hiddenCount > 0 || Boolean(suggestions.extraCount))
+    && !(noSuggestions && !busy && summaryText);
   const missingSummary = summary.available && !summaryText;
   const missingSuggestions = suggestions.available && !suggestions.requested;
   const failure = error ? describeAnalysisError(error) : null;
@@ -296,14 +300,19 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
 
   const scope = briefScope(detail);
   const lines = summaryText ? summaryLines(summaryText) : [];
+  const scopeNote = summaryText && scope.newCount < scope.coveredCount
+    ? (scope.newCount === 1 ? "From the latest message" : `From the ${scope.newCount} latest messages`)
+    : null;
+  const shared = generated && !busy && Boolean(providerName);
   // The recap of earlier messages, if the brief gave one, always reads last.
   const orderedLines = [...lines.filter((line) => !EARLIER_PREFIX.test(line)), ...lines.filter((line) => EARLIER_PREFIX.test(line))];
   const headerActions = busy ? <span className="context-status" role="status">Reading the conversation…</span> : (
     <>
       {runButton}
+      {/* Copy is revealed on hover or focus, so Refresh is the action that reads first. */}
       {summaryText ? (
         <HoverTooltip title={copied ? "Copied brief" : "Copy brief"} placement="bottom">
-          <button type="button" className="btn-icon btn-icon-sm" aria-label={copied ? "Copied brief" : "Copy brief"} onClick={() => void copyBrief()}>{copied ? <Check size={ICON_SIZE.sm} /> : <Copy size={ICON_SIZE.sm} />}</button>
+          <button type="button" className="btn-icon btn-icon-sm thread-assist-copy" aria-label={copied ? "Copied brief" : "Copy brief"} onClick={() => void copyBrief()}>{copied ? <Check size={ICON_SIZE.sm} /> : <Copy size={ICON_SIZE.sm} />}</button>
         </HoverTooltip>
       ) : null}
       {generated ? (
@@ -318,15 +327,21 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
     <ContextSectionHeader title={title} titleId="thread-assist-heading" actions={headerActions} toggle={{ collapsed, controls: bodyId, onToggle: toggleCollapsed }} />
     <div id={bodyId} hidden={collapsed}>
       {copyFailed ? <p className="context-status" role="status">Could not copy brief</p> : null}
-      {summaryText && scope.newCount < scope.coveredCount ? <p className="context-section-note">
-        {scope.newCount === 1 ? "From the latest message" : `From the ${scope.newCount} latest messages`}
-      </p> : null}
       {orderedLines.length === 1 ? <p className="thread-assist-summary thread-assist-summary-paragraph">{orderedLines[0]}</p> : summaryText ? <ul className="thread-assist-summary" role="list">
         {orderedLines.map((line, index) => <li key={index} className={EARLIER_PREFIX.test(line) ? "thread-assist-summary-earlier" : undefined}>
           <span className="context-row-glyph thread-assist-summary-marker" aria-hidden="true"><svg width={ICON_SIZE.xs} height={ICON_SIZE.xs} viewBox="0 0 12 12"><circle cx="6" cy="6" r="2" fill="currentColor" /></svg></span><span>{line}</span>
         </li>)}
       </ul> : null}
       {stale ? <p className="context-status">New messages since this brief.</p> : null}
+      {/* Where the brief came from and what was sent for it, as one line under it. */}
+      {scopeNote || shared ? <p className="thread-assist-shared">
+        {scopeNote ? <span>{scopeNote}</span> : null}
+        {scopeNote && shared ? <span aria-hidden="true"> · </span> : null}
+        {shared ? <>
+          <span>Shared {plural(scope.sentCount, "message")} with {providerName}.</span>{" "}
+          <button type="button" className="btn-link context-link-button" onClick={onOpenSettings}>AI Activity</button>
+        </> : null}
+      </p> : null}
       {failure ? <div className="action-analysis-error" role="alert">
         <p>{failure.summary}</p>
         <div className="action-analysis-error-actions">
@@ -350,10 +365,6 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
           />)}
         </div>
       </div> : null}
-      {generated && !busy && providerName ? <p className="thread-assist-shared">
-        Shared {plural(scope.sentCount, "message")} with {providerName}.{" "}
-        <button type="button" className="btn-link context-link-button" onClick={onOpenSettings}>AI Activity</button>
-      </p> : null}
     </div>
   </section>;
 }

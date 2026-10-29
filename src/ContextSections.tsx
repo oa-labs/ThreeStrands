@@ -1,7 +1,7 @@
 import { readLocalStorage, writeLocalStorage } from "./useLocalStorageState";
 import { FileStarButton } from "./FileStarButton";
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, Mail, MessageSquareText } from "lucide-react";
+import { Bot, CalendarCheck, ChevronDown, ChevronRight, Mail, MessageSquareText } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { Account, ContactFiles, ContactTimelineItem, Message, ThreadDetail } from "./domain";
 import { parseAddress } from "./emailAddress";
@@ -311,12 +311,36 @@ export function ThreadOutlineSection({ detail, accounts, onShowMessage }: {
 /** A conversation Recent emails lists. */
 export type RecentEmailItem = Pick<ContactTimelineItem, "threadId" | "subject" | "snippet" | "sentAt">;
 
+// The subject prefixes mail clients write on an invitation answer or an
+// out-of-office reply. Matched conservatively: anything else is plain email.
+const INVITATION_RESPONSE_SUBJECT = /^(accepted|declined|tentative|tentatively accepted)(\s*\([^)]*\))?\s*:/i;
+const AUTOMATIC_REPLY_SUBJECT = /^(automatic reply|auto-?reply|autoreply|out of office( reply)?)\s*:/i;
+
+/** What kind of email a Recent emails row is, read from its subject. */
+export function recentEmailKind(subject: string): "email" | "response" | "automatic" {
+  const text = subject.trim();
+  if (INVITATION_RESPONSE_SUBJECT.test(text)) return "response";
+  if (AUTOMATIC_REPLY_SUBJECT.test(text)) return "automatic";
+  return "email";
+}
+
+const recentEmailIcons = {
+  email: emailIcon,
+  response: <CalendarCheck size={ICON_SIZE.sm} />,
+  automatic: <Bot size={ICON_SIZE.sm} />,
+};
+
 /**
- * Other conversations with the selected person, newest first. For a bulk
- * sender, the panel adds the sender's mail and their decisions as `closing`.
+ * Other conversations with the selected person, newest first, except that
+ * automatic replies follow what the person wrote and read muted. Invitation
+ * answers and automatic replies get their own glyphs. `person` names whom the
+ * emails are with in the heading. For a bulk sender, the panel adds the
+ * sender's mail and their decisions as `closing`.
  */
-export function RecentEmailsSection({ items, onOpenThread, limit, onLoadOlder, closing }: {
+export function RecentEmailsSection({ items, person, onOpenThread, limit, onLoadOlder, closing }: {
   items: RecentEmailItem[];
+  /** A short name for whom the emails are with, such as a first name. */
+  person?: string;
   onOpenThread(id: string): void;
   limit?: number;
   /** Fetches the next page; offered once every loaded row is showing. */
@@ -324,22 +348,26 @@ export function RecentEmailsSection({ items, onOpenThread, limit, onLoadOlder, c
   /** Shown under the rows, such as a bulk sender's decisions. */
   closing?: ReactNode;
 }) {
+  const kinds = items.map((item) => ({ item, kind: recentEmailKind(item.subject) }));
+  const ranked = [...kinds.filter(({ kind }) => kind !== "automatic"), ...kinds.filter(({ kind }) => kind === "automatic")];
   return (
     <ContextSection
       id="recent"
       className="context-history"
-      title="Recent emails"
+      title={person ? `Recent emails with ${person}` : "Recent emails"}
+      label="Recent emails"
       count={items.length}
       limit={limit}
       footer={onLoadOlder ? <button type="button" className="btn-link context-link-button" onClick={onLoadOlder}>Load older emails</button> : undefined}
       closing={closing}
-      rows={items.map((item) => {
+      rows={ranked.map(({ item, kind }) => {
         // The section is about one person, so the row shows what was said rather than their address.
         const snippet = decodeHtmlEntities(item.snippet).replace(/\s+/g, " ").trim();
         return (
           <ContextRow
             key={item.threadId}
-            icon={emailIcon}
+            icon={recentEmailIcons[kind]}
+            className={kind === "automatic" ? "context-row-automatic" : undefined}
             title={item.subject || "(no subject)"}
             date={formatHistoryDate(item.sentAt)}
             detail={snippet || undefined}
