@@ -4,6 +4,8 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+## 0.186.0 — 2026-10-29
+
 ### Improved
 - The search box in **Files** now also matches who sent a file, by name or email address, so you can find an attachment when you remember the sender but not the filename.
 
