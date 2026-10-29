@@ -4,6 +4,8 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+## 0.184.0 — 2026-10-29
+
 ### New
 - IMAP accounts now receive inbox updates as the server announces them, with automatic reconnection and regular checks when live updates are unavailable.
 
