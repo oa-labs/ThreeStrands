@@ -4,7 +4,7 @@ import { ComposeContext, ReplyChecks } from "./ComposeContext";
 import { AvailabilitySection, RecipientSummary } from "./RecipientSections";
 import { mailClient } from "./data/client";
 import { ICON_SIZE } from "./iconSizes";
-import { SLOTS_PER_DAY } from "./scheduling";
+import { offersFindTimes, SLOTS_PER_DAY } from "./scheduling";
 import { saveAiProvider } from "./aiSettings";
 import type { Draft } from "./correspondence";
 import type { Account, AvailabilityPreferences, ContactActivity, ContactProfile, ContactSuggestion } from "./domain";
@@ -451,8 +451,13 @@ describe("Find Times with AI", () => {
   it("starts as one Find Times button in a compact row, and while reading offers to start a reply with the times", async () => {
     vi.mocked(mailClient.findTimes).mockResolvedValue(search);
     const onInsertTimes = vi.fn();
-    const reading = { sourceId: "message-9", subject: "Planning", body: "" };
-    render(<AvailabilitySection compact intoDraft={false} preferences={preferences} ai draft={reading} onInsertTimes={onInsertTimes} onOpenCalendarSettings={vi.fn()} />);
+    const reading = { sourceId: "message-9", subject: "Zoom meeting to Review Interview Process for Elder Nominees", body: "" };
+    const offered = offersFindTimes({ replying: false, suggestionsAvailable: true, requested: true, loading: false, proposals: [{
+      type: "task", kind: "action", title: "Reply to Dennis Reilly with your availability for the CRT Zoom meeting",
+      notes: null, dueKind: "none", dueValue: null, timeZone: null, repeatIntervalDays: null, confidence: 0.9,
+      evidence: { sourceMessageId: reading.sourceId, excerpt: "Please send your availability." },
+    }] });
+    render(<AvailabilitySection compact offered={offered} intoDraft={false} preferences={preferences} ai draft={reading} onInsertTimes={onInsertTimes} onOpenCalendarSettings={vi.fn()} />);
     expect(section()).toHaveClass("context-ai-launcher");
     expect(within(section()).queryByRole("heading")).not.toBeInTheDocument();
     const findTimes = within(section()).getByRole("button", { name: "Find Times" });

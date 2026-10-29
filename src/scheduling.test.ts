@@ -214,11 +214,22 @@ describe("offering Find Times while reading", () => {
     expect(offersFindTimes({ ...read, suggestionsAvailable: false, proposals: [] })).toBe(true);
   });
 
-  it("keeps it only for a meeting still to be arranged once suggestions ran", () => {
+  it("keeps it for tasks or a meeting still to be arranged once suggestions ran", () => {
     expect(offersFindTimes({ ...read, proposals: [] })).toBe(false);
-    expect(offersFindTimes({ ...read, proposals: [task] })).toBe(false);
+    expect(offersFindTimes({ ...read, proposals: [task] })).toBe(true);
     expect(offersFindTimes({ ...read, proposals: [meeting({ intent: "attend" })] })).toBe(false);
     expect(offersFindTimes({ ...read, proposals: [task, meeting()] })).toBe(true);
+  });
+
+  it("offers it when an availability request is classified only as a reply task", () => {
+    const availabilityTask = {
+      ...task,
+      title: "Reply to Dennis Reilly with your availability for the CRT Zoom meeting",
+      evidence: { sourceMessageId: "m1", excerpt: "Please let me know when you are available." },
+    };
+    expect(offersFindTimes({ ...read, proposals: [availabilityTask] })).toBe(true);
+    // The title may be localized or phrased differently; no keyword matching is needed.
+    expect(offersFindTimes({ ...read, proposals: [{ ...availabilityTask, title: "Respond with times that work" }] })).toBe(true);
   });
 
   it("holds it back while suggestions are read, and always offers it in a reply", () => {
