@@ -4,7 +4,7 @@ import { createReadStream } from "node:fs";
 import { appendFile, copyFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseChangelog, releaseNotes, stampRelease } from "./changelog.mjs";
+import { parseChangelog, releaseNotes, stampRelease, undocumentedTerms } from "./changelog.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const number = "(?:0|[1-9][0-9]*)";
@@ -178,6 +178,23 @@ async function readReleaseSources(directory) {
   return { packageJson, tauriConfig, cargoToml, cargoLock };
 }
 
+// Bold changelog names the site words differently, so the docs check skips them.
+export const DOCS_CHECK_IGNORED = [];
+
+/** Unreleased UI names missing from the help pages and home page; see undocumentedTerms. */
+export async function docsCoverage(directory = root) {
+  const docs = resolve(directory, "site/docs");
+  const pages = (await readdir(docs)).filter((name) => name.endsWith(".md")).map((name) => resolve(docs, name));
+  const site = await Promise.all([...pages, resolve(directory, "site/index.html")].map((path) => readFile(path, "utf8")));
+  return undocumentedTerms(await readFile(resolve(directory, "CHANGELOG.md"), "utf8"), site.join("\n"), DOCS_CHECK_IGNORED);
+}
+
+function warnUndocumented(terms) {
+  if (!terms.length) return;
+  console.warn(`Not mentioned in site/docs or site/index.html: ${terms.join(", ")}`);
+  console.warn("Update the docs if these are new, or add them to DOCS_CHECK_IGNORED in scripts/release.mjs.");
+}
+
 /** Today's date where the release is cut, as YYYY-MM-DD. */
 function localDate(now = new Date()) {
   return [now.getFullYear(), now.getMonth() + 1, now.getDate()].map((part) => String(part).padStart(2, "0")).join("-");
@@ -211,6 +228,7 @@ export async function tagRelease(directory = root) {
   const changelogPath = resolve(directory, "CHANGELOG.md");
   const changelog = await readFile(changelogPath, "utf8");
   const stamped = stampRelease(changelog, tag.slice(1), localDate());
+  warnUndocumented(await docsCoverage(directory));
 
   console.log(`Releasing ThreeStrands ${tag}`);
   if (stamped !== changelog) {
@@ -245,10 +263,12 @@ async function main() {
     process.stdout.write(releaseNotes(await readFile(resolve(root, "CHANGELOG.md"), "utf8"), argument, published, {
       repository: process.env.GITHUB_REPOSITORY, siteUrl: process.env.RELEASE_SITE_URL || undefined,
     }));
+  } else if (command === "docs") {
+    warnUndocumented(await docsCoverage());
   } else if (command === "tag") {
     await tagRelease();
   } else {
-    throw new Error("Usage: node scripts/release.mjs validate TAG | prepare-assets INPUT_DIR OUTPUT_DIR VERSION | notes TAG PUBLISHED_TAGS_FILE | tag");
+    throw new Error("Usage: node scripts/release.mjs validate TAG | prepare-assets INPUT_DIR OUTPUT_DIR VERSION | notes TAG PUBLISHED_TAGS_FILE | docs | tag");
   }
 }
 

@@ -188,3 +188,19 @@ export function releaseNotes(source, tag, publishedTags, { repository, siteUrl }
   if (links.length) blocks.push(links.join(" · "));
   return `${blocks.join("\n\n")}\n`;
 }
+
+/**
+ * Bold UI names (`**Find Other Times**`) in the Unreleased New and Improved
+ * entries that appear nowhere in `siteText`, the website and help pages. A
+ * hint that the docs may lag the release, not proof: wording can differ.
+ */
+export function undocumentedTerms(source, siteText, ignored = []) {
+  const normalize = (text) => text.replace(/[‘’]/g, "'").replace(/\s+/g, " ").toLowerCase();
+  const site = normalize(siteText);
+  const skip = new Set(ignored.map(normalize));
+  const [unreleased] = parseChangelog(source).sections;
+  const terms = unreleased.groups
+    .filter((group) => group.name !== "Fixed")
+    .flatMap((group) => group.items.flatMap((item) => [...item.text.matchAll(/\*\*([^*]+)\*\*/g)].map((match) => match[1].trim())));
+  return [...new Set(terms)].filter((term) => !skip.has(normalize(term)) && !site.includes(normalize(term)));
+}

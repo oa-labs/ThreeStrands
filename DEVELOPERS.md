@@ -55,6 +55,12 @@ It requires a clean working tree and your configured Git signing key, and stops
 if any Git command fails. For example, version `0.56.0` produces tag `v0.56.0`;
 version `0.57.0-beta.1` produces a beta prerelease tag.
 
+Before stamping, it warns about bold UI names in the unreleased **New** and
+**Improved** entries that appear nowhere in `site/docs` or `site/index.html`,
+then releases anyway. Run `pnpm release:docs` to see that list before
+releasing. Update the docs, or add names the site words differently to
+`DOCS_CHECK_IGNORED` in `scripts/release.mjs`.
+
 The release workflow builds installers and attaches them to a draft GitHub
 Release for installation checks before publishing. If the final tag push fails,
 retry `git push origin v<version>`; the signed tag already exists locally.

@@ -257,12 +257,12 @@ const EMPTY_CHANGELOG = "# Changelog\n\n## Unreleased\n\n## 0.55.0 — 2026-10-0
 async function releaseCommand(t, { version = "0.56.0", branch = "master", dirty = "", failAt = "", changelog = EMPTY_CHANGELOG } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "threestrands release test "));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  for (const folder of ["scripts", "src-tauri", "bin"]) await mkdir(join(directory, folder));
+  for (const folder of ["scripts", "src-tauri", "bin", "site", "site/docs"]) await mkdir(join(directory, folder));
   const fixture = sources(version);
   for (const [path, content] of [
     ["package.json", fixture.packageJson], ["src-tauri/tauri.conf.json", fixture.tauriConfig],
     ["src-tauri/Cargo.toml", fixture.cargoToml], ["src-tauri/Cargo.lock", fixture.cargoLock],
-    ["CHANGELOG.md", changelog],
+    ["CHANGELOG.md", changelog], ["site/docs/compose.md", "Choose **Documented Name**."], ["site/index.html", "<p>Home Page Name</p>"],
   ]) await writeFile(join(directory, path), content);
   for (const script of ["release.mjs", "changelog.mjs"]) {
     await writeFile(join(directory, "scripts", script), await readFile(new URL(`./${script}`, import.meta.url)));
@@ -391,9 +391,9 @@ describe("release notes", () => {
 describe("pnpm release command", () => {
   const commands = (version) => [
     ["branch", "--show-current"], ["status", "--porcelain"],
-    ["push", "origin", "master"],
+    ["push", "primary", "master"],
     ["tag", "-s", `v${version}`, "-m", `ThreeStrands v${version}`],
-    ["push", "origin", `v${version}`],
+    ["push", "primary", `v${version}`],
   ];
 
   for (const version of ["0.56.0", "0.57.0-beta.1"]) {
@@ -438,6 +438,16 @@ describe("pnpm release command", () => {
     assert.deepEqual(await fixture.commands(), stampedCommands);
     const stamped = await readFile(join(fixture.directory, "CHANGELOG.md"), "utf8");
     assert.match(stamped, /^## Unreleased\n\n## 0\.56\.0 — \d{4}-\d{2}-\d{2}\n\n### Fixed\n- A clearer fix\.\n\n## 0\.55\.0/m);
+  });
+
+  it("warns about bold changelog names missing from the site, then releases anyway", async (t) => {
+    const fixture = await releaseCommand(t, {
+      changelog: pendingChangelog.replace("- A clearer fix.", "- A clearer fix.\n\n### New\n- **Missing Name**, **Documented Name**, and **Home Page Name**."),
+    });
+    const result = fixture.run();
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /Not mentioned in site\/docs or site\/index\.html: Missing Name\n/);
+    assert.deepEqual(await fixture.commands(), stampedCommands);
   });
 
   it("does not push when the release-notes commit fails", async (t) => {

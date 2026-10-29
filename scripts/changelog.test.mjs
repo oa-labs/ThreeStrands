@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
-import { compareVersions, formatChangelog, parseChangelog, releaseNotes, stampRelease } from "./changelog.mjs";
+import { compareVersions, formatChangelog, parseChangelog, releaseNotes, stampRelease, undocumentedTerms } from "./changelog.mjs";
 
 const changelog = (...sections) => `# Changelog\n\nWhat changed.\n\n${["## Unreleased", ...sections].join("\n\n")}\n`;
 
@@ -126,5 +126,20 @@ describe("release notes", () => {
 
   it("rejects a malformed tag", () => {
     assert.throws(() => releaseNotes(history, "latest", [], options), /Invalid release tag/);
+  });
+});
+
+describe("undocumentedTerms", () => {
+  const source = changelog(
+    "### New\n- Choose **Find Other Times** or **Usual Hours** in **Find Times**.\n\n### Improved\n- **Recent emails**  names the\n  person’s **Find Times** card.\n\n### Fixed\n- **Check Again** retries.",
+    "## 0.1.0 — 2026-10-01\n\n### New\n- **Released Term** shipped.",
+  );
+
+  it("lists bold names from unreleased New and Improved entries missing from the site, once each", () => {
+    assert.deepEqual(undocumentedTerms(source, "Use find times."), ["Find Other Times", "Usual Hours", "Recent emails"]);
+  });
+
+  it("ignores case, spacing, curly quotes, and listed exceptions", () => {
+    assert.deepEqual(undocumentedTerms(source, "FIND   OTHER\ntimes, recent EMAILS, Find Times", ["usual hours"]), []);
   });
 });
