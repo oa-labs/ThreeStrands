@@ -87,12 +87,30 @@ describe("meeting scheduling plans", () => {
   it("plans a chat availability request from the calendar rather than the model's words", () => {
     const plan = planChatAvailability({ rangeStart: "2026-10-05T13:00:00Z", rangeEnd: "2026-10-09T21:00:00Z", durationMinutes: null, weekdays: [], dayStart: null, dayEnd: null }, now, 30);
     expect(plan).toEqual({
-      query: { kind: "range", start: "2026-10-05T13:00:00.000Z", end: "2026-10-09T21:00:00.000Z" }, durationMinutes: 30, timeZoneAssumed: false,
+      query: { kind: "range", start: "2026-10-05T13:00:00.000Z", end: "2026-10-09T21:00:00.000Z" }, durationMinutes: 30, durationIsDefault: true, timeZoneAssumed: false,
       bounds: { weekdays: [], dayStart: null, dayEnd: null },
     });
     // "Thursday afternoon" arrives already narrowed, the same way Find Times narrows a search.
     expect(planChatAvailability({ rangeStart: "2026-10-05T13:00:00Z", rangeEnd: "2026-10-09T21:00:00Z", durationMinutes: 45, weekdays: [4], dayStart: "12:00", dayEnd: null }, now, 30).bounds)
       .toEqual({ weekdays: [4], dayStart: "12:00", dayEnd: null });
+  });
+});
+
+describe("meeting length from the availability profile", () => {
+  const search = { rangeStart: "2026-10-05T13:00:00Z", rangeEnd: "2026-10-09T21:00:00Z", weekdays: [], dayStart: null, dayEnd: null, reason: "" };
+
+  it("marks a length only when nothing stated one, so a change of profile can replace it", () => {
+    expect(planTimeSearch({ ...search, durationMinutes: null }, now, 30)).toMatchObject({ durationMinutes: 30, durationIsDefault: true });
+    expect(planTimeSearch({ ...search, durationMinutes: 45 }, now, 30)).not.toHaveProperty("durationIsDefault");
+    expect(planChatAvailability({ ...search, durationMinutes: 45 }, now, 30)).not.toHaveProperty("durationIsDefault");
+    expect(planMeeting(meeting({ searchRangeStart: search.rangeStart, searchRangeEnd: search.rangeEnd }), now, 30))
+      .toMatchObject({ durationMinutes: 30, durationIsDefault: true });
+    expect(planMeeting(meeting({ searchRangeStart: search.rangeStart, searchRangeEnd: search.rangeEnd, durationMinutes: 45 }), now, 30))
+      .not.toHaveProperty("durationIsDefault");
+  });
+
+  it("keeps the length a specific time was checked with", () => {
+    expect(planMeeting(meeting({ normalizedStart: "2026-10-06T15:00:00Z" }), now, 30)).not.toHaveProperty("durationIsDefault");
   });
 });
 

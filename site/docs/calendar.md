@@ -52,7 +52,7 @@ If you meet at different times for different parts of your life, such as work ho
 2. Name it, then set its working hours, **Default Duration**, and **Drive Time Buffer**.
 3. Under **Account Defaults**, choose the profile each mail account uses.
 
-Find Times, checks of times someone offered, and **Find a time** in the event editor then use the profile of the account the email or event belongs to. Accounts without a profile of their own use the default one; **Make Default** changes which one that is. Timezone and **Slot Increment** are shared by every profile, and every calendar used for availability still counts as busy, whichever profile is in use.
+Find Times, checks of times someone offered, and **Find a time** in the event editor then use the profile of the account the email or event belongs to. To use other hours for one conversation or message, choose a profile under **Usual Hours** in Find Times; the choice lasts until you quit ThreeStrands. Accounts without a profile of their own use the default one; **Make Default** changes which one that is. Timezone and **Slot Increment** are shared by every profile, and every calendar used for availability still counts as busy, whichever profile is in use.
 
 <ts-shot scene="find-times" alt="Find Times shows open calendar slots beside the conversation, with selected times ready for a reply."></ts-shot>
 

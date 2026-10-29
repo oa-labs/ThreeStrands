@@ -5,7 +5,7 @@ import { mailClient } from "./data/client";
 import type { AvailabilityCandidate, AvailabilityPreferences, CalendarEventPreview, ScheduleEvent } from "./domain";
 import { errorMessage } from "./errors";
 import { FindTimesCard } from "./FindTimesCard";
-import { clampMeetingMinutes, lookaheadRange, type SchedulePlan } from "./scheduling";
+import { clampMeetingMinutes, defaultLength, lookaheadRange, type SchedulePlan } from "./scheduling";
 import { refreshScheduleCache, scheduleCacheGeneration, subscribeScheduleCache } from "./calendarScheduleCache";
 
 /** Actions offered beside a parsed invitation, independent of AI brief settings. */
@@ -42,7 +42,7 @@ export function InvitationResponse({ invitation, sourceMessageId, ...props }: In
     const event = lookup.kind === "found" ? lookup.event : null;
     const duration = event && !event.allDay ? (Date.parse(event.end) - Date.parse(event.start)) / 60_000
       : range && !invitation.allDay ? (range.end.getTime() - range.start.getTime()) / 60_000 : null;
-    setPlan({ query: lookaheadRange(new Date()), durationMinutes: clampMeetingMinutes(duration, preferences.defaultDurationMinutes), timeZoneAssumed: false });
+    setPlan({ query: lookaheadRange(new Date()), durationMinutes: clampMeetingMinutes(duration, preferences.defaultDurationMinutes), ...defaultLength(duration), timeZoneAssumed: false });
   };
   const response = () => {
     if (cancelled) return <p className="context-status">This event was cancelled.</p>;

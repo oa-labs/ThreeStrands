@@ -173,10 +173,14 @@ export function useAppPreferences() {
       profile.id, availabilityWithProfile(availabilityPreferences, availabilityProfiles, profile.id),
     ] as const),
   ]), [availabilityPreferences, availabilityProfiles]);
-  /** The preferences for an account's default profile; no account uses the default profile. */
-  const availabilityFor = useCallback((accountId?: string | null): AvailabilityPreferences =>
-    preferencesByProfile.get(availabilityProfileId(availabilityProfiles, accountId)) ?? availabilityPreferences,
-  [availabilityPreferences, availabilityProfiles, preferencesByProfile]);
+  /** The profile in use: one chosen for a conversation while it exists, else the account's default profile. */
+  const availabilityProfileFor = useCallback((accountId?: string | null, chosenId?: string | null): string =>
+    chosenId && preferencesByProfile.has(chosenId) ? chosenId : availabilityProfileId(availabilityProfiles, accountId),
+  [availabilityProfiles, preferencesByProfile]);
+  /** The preferences for that profile; no account uses the default profile. */
+  const availabilityFor = useCallback((accountId?: string | null, chosenId?: string | null): AvailabilityPreferences =>
+    preferencesByProfile.get(availabilityProfileFor(accountId, chosenId)) ?? availabilityPreferences,
+  [availabilityPreferences, availabilityProfileFor, preferencesByProfile]);
 
   return {
     theme,
@@ -204,6 +208,7 @@ export function useAppPreferences() {
     setAvailabilityPreferences,
     availabilityProfiles,
     setAvailabilityProfiles,
+    availabilityProfileFor,
     availabilityFor,
   };
 }

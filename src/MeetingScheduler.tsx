@@ -6,6 +6,7 @@ import { findCalendarMatch, findDayMatch, SAME_EVENT_START_TOLERANCE_MINUTES, ty
 import { mailClient } from "./data/client";
 import { refreshScheduleCache } from "./calendarScheduleCache";
 import { scheduleRequestFor } from "./CalendarSidebar";
+import { AvailabilityProfileSelect } from "./AvailabilityProfileChoice";
 import { errorMessage } from "./errors";
 import {
   AFTERNOONS, ANY_TIME, lookaheadRange, MORNINGS, shiftedRange, slotKey, SLOTS_PER_DAY, spreadAcrossDays, SUGGESTED_SLOT_COUNT,
@@ -179,6 +180,8 @@ export function MeetingScheduler({
   if (preferences !== latestPreferences && JSON.stringify(preferences) !== JSON.stringify(latestPreferences)) {
     setPreferences(latestPreferences);
   }
+  // A length nothing stated follows the availability profile in use.
+  const durationMinutes = plan.durationIsDefault ? preferences.defaultDurationMinutes : plan.durationMinutes;
   // "Find Other Times" replaces a conflicting exact time with a search.
   const [override, setOverride] = useState<ScheduleQuery | null>(null);
   const baseQuery = override ?? plan.query;
@@ -226,7 +229,7 @@ export function MeetingScheduler({
           preferences: {
             ...preferences,
             workingWindows: windowsWithin(preferences.workingWindows, bounds),
-            defaultDurationMinutes: plan.durationMinutes,
+            defaultDurationMinutes: durationMinutes,
           },
           maxPerDay: SLOTS_PER_DAY,
           ...(coworkers ? { coworkers } : {}),
@@ -246,7 +249,7 @@ export function MeetingScheduler({
     } catch (reason) {
       if (isCurrent()) setState({ phase: "error", message: errorMessage(reason) });
     }
-  }, [bounds, coworkers, identity, plan.durationMinutes, preferences, timeZone]);
+  }, [bounds, coworkers, identity, durationMinutes, preferences, timeZone]);
 
   const boundsKey = `${bounds.weekdays.join(",")}|${bounds.dayStart ?? ""}|${bounds.dayEnd ?? ""}`;
   const queryKey = query ? `${query.kind}:${query.start}:${query.end}:${query.kind === "range" ? boundsKey : ""}` : "none";
@@ -284,7 +287,7 @@ export function MeetingScheduler({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchedKey]);
   useEffect(() => {
-    if (query?.kind === "range") onSearchChange?.({ query, durationMinutes: plan.durationMinutes, bounds });
+    if (query?.kind === "range") onSearchChange?.({ query, durationMinutes, bounds });
     // Reported once per distinct search, identified by `queryKey`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryKey]);
@@ -306,6 +309,7 @@ export function MeetingScheduler({
       <button type="button" className="segment" aria-pressed={mornings} onClick={() => toggleHours(MORNINGS, mornings)}>Mornings</button>
       <button type="button" className="segment" aria-pressed={afternoons} onClick={() => toggleHours(AFTERNOONS, afternoons)}>Afternoons</button>
     </div>
+    <AvailabilityProfileSelect />
     {adjustInput}
   </div>;
   const coverageNote = (text: string) => <p className="meeting-scheduler-note" role="note">
@@ -388,7 +392,7 @@ export function MeetingScheduler({
     {state.phase === "range" && query.kind === "range" ? <>
       <div className="meeting-scheduler-range">
         <button type="button" className="btn-icon btn-icon-sm" aria-label="Earlier" title="Earlier days" disabled={shift === 0} onClick={() => setShift((current) => current - 1)}><ChevronLeft size={ICON_SIZE.sm} /></button>
-        <p><span>{[formatRange(query, timeZone), formatBounds(bounds)].filter(Boolean).join(" · ")}</span> · {formatLength(plan.durationMinutes)}</p>
+        <p><span>{[formatRange(query, timeZone), formatBounds(bounds)].filter(Boolean).join(" · ")}</span> · {formatLength(durationMinutes)}</p>
         <button type="button" className="btn-icon btn-icon-sm" aria-label="Later" title="Later days" onClick={() => setShift((current) => current + 1)}><ChevronRight size={ICON_SIZE.sm} /></button>
       </div>
       {/* What the times mean comes before the times, and so do the ways to change them. */}

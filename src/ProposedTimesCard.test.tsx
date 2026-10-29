@@ -4,6 +4,7 @@ import { FindTimesCard } from "./FindTimesCard";
 import { ProposedTimesCard } from "./ProposedTimesCard";
 import { AvailabilitySection } from "./RecipientSections";
 import { CALENDAR_AVAILABILITY_CHANGED } from "./calendarAvailability";
+import { AvailabilityProfileChoiceContext } from "./AvailabilityProfileChoice";
 import { mailClient } from "./data/client";
 import type { AvailabilityPreferences, CheckedProposedTime, ProposedTime } from "./domain";
 
@@ -21,6 +22,23 @@ beforeEach(() => { vi.useFakeTimers({toFake:["Date"]}); vi.setSystemTime(new Dat
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe("proposed times", () => {
+  it("checks the offered times again against another profile's usual hours", async () => {
+    const check = vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue(times.map((_,index) => row(index)));
+    const onSelect = vi.fn();
+    const choice = (selectedId: string) => ({ profiles:[{id:"work",name:"Work"},{id:"church",name:"Church"}], selectedId, scope:"conversation" as const, onSelect });
+    const evenings = { ...preferences, workingWindows:[{weekday:6,start:"18:00",end:"22:00"}] };
+    const view = render(<AvailabilityProfileChoiceContext.Provider value={choice("work")}><ProposedTimesCard {...props()} /></AvailabilityProfileChoiceContext.Provider>);
+    await waitFor(() => expect(check).toHaveBeenCalledOnce());
+    const profile = await screen.findByRole("combobox",{name:"Usual Hours"});
+    expect(profile).toHaveAccessibleDescription();
+    fireEvent.change(profile,{target:{value:"church"}});
+    expect(onSelect).toHaveBeenCalledWith("church");
+
+    view.rerender(<AvailabilityProfileChoiceContext.Provider value={choice("church")}><ProposedTimesCard {...props()} preferences={evenings} /></AvailabilityProfileChoiceContext.Provider>);
+    await waitFor(() => expect(check).toHaveBeenLastCalledWith(expect.objectContaining({ preferences: evenings })));
+    expect(screen.getByRole("combobox",{name:"Usual Hours"})).toHaveValue("church");
+  });
+
   it("keeps an actionable warning for invalid offered-time metadata and reads the enabled Brief again", async () => {
     const retry = vi.fn().mockResolvedValue(undefined);
     const check = vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue(times.map((_,index) => row(index)));

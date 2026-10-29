@@ -171,6 +171,45 @@ it("finds times in a conversation's context panel with its account's availabilit
   }
 });
 
+it("searches a conversation with the profile chosen in its context panel", async () => {
+  clearScheduleCache();
+  const churchHours = [{ weekday: 2, start: "18:30", end: "21:00" }];
+  saveAvailabilityProfiles({
+    defaultProfile: { id: "default", name: "Work" },
+    otherProfiles: [{ id: "church", name: "Church", workingWindows: churchHours, defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 }],
+    accountDefaults: {},
+  });
+  vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
+    { email: "calendar@example.com", connectedAt: "2026-09-18T00:00:00Z", status: "connected" },
+  ]);
+  vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+  const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({
+    candidates: [{ start: "2030-01-08T23:30:00Z", end: "2030-01-09T00:30:00Z", status: "verified" }],
+    checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [],
+  });
+  try {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const panel = screen.getByRole("complementary", { name: "Conversation context" });
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    await screen.findByRole("dialog", { name: "Reply Message" });
+    const availability = await within(panel).findByRole("region", { name: "Availability" });
+    fireEvent.click(within(availability).getByRole("button", { name: "Find Times" }));
+
+    const profile = await within(availability).findByRole("combobox", { name: "Usual Hours" });
+    expect(profile).toHaveValue("default");
+    fireEvent.change(profile, { target: { value: "church" } });
+
+    await waitFor(() => expect(find).toHaveBeenLastCalledWith(expect.objectContaining({
+      preferences: expect.objectContaining({ workingWindows: churchHours, defaultDurationMinutes: 60 }),
+    })));
+    expect(await within(availability).findByRole("combobox", { name: "Usual Hours" })).toHaveValue("church");
+  } finally {
+    localStorage.removeItem("threestrands.demoCorrespondence");
+    localStorage.removeItem("threestrands.settings.availabilityProfiles");
+  }
+});
+
 it("moves between a new draft and its context panel with F6 or Mod+Shift+P, and Escape in the panel returns to the draft", async () => {
   render(<App />);
   await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });

@@ -98,6 +98,20 @@ describe("useAppPreferences", () => {
     expect(result.current.availabilityFor("home@example.com").timeZone).toBe("Asia/Tokyo");
   });
 
+  it("uses a profile chosen for one conversation until that profile is deleted", () => {
+    const { result } = renderHook(() => useAppPreferences());
+    const church = { id: "church", name: "Church", workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }], defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 };
+    act(() => result.current.setAvailabilityProfiles({ ...result.current.availabilityProfiles, otherProfiles: [church] }));
+
+    expect(result.current.availabilityProfileFor("work@example.com", "church")).toBe("church");
+    expect(result.current.availabilityFor("work@example.com", "church").workingWindows).toEqual(church.workingWindows);
+    // A missing choice, or one naming a deleted profile, falls back to the account's profile.
+    expect(result.current.availabilityFor("work@example.com", null)).toBe(result.current.availabilityPreferences);
+    act(() => result.current.setAvailabilityProfiles({ ...result.current.availabilityProfiles, otherProfiles: [] }));
+    expect(result.current.availabilityProfileFor("work@example.com", "church")).toBe("default");
+    expect(result.current.availabilityFor("work@example.com", "church")).toBe(result.current.availabilityPreferences);
+  });
+
   it("adjusts font scale through the shared bounds", () => {
     const { result } = renderHook(() => useAppPreferences());
 

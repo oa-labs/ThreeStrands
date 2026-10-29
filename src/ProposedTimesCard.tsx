@@ -3,6 +3,7 @@ import type { AvailabilityCandidate, AvailabilityPreferences, CheckedProposedTim
 import { mailClient } from "./data/client";
 import { CALENDAR_AVAILABILITY_CHANGED } from "./calendarAvailability";
 import { listSupportedTimeZones } from "./calendarTime";
+import { AvailabilityProfileSelect } from "./AvailabilityProfileChoice";
 import { errorMessage } from "./errors";
 
 export function ProposedTimesCard({ times, preferences, intoDraft, onReplyWithTimes, onFindOtherTimes, calendarConnected, onOpenCalendarSettings }: {
@@ -74,6 +75,7 @@ export function ProposedTimesCard({ times, preferences, intoDraft, onReplyWithTi
         {[...new Set([zone, ...listSupportedTimeZones()])].map((value) => <option key={value}>{value}</option>)}
       </select>
     </label> : null}
+    <AvailabilityProfileSelect disabled={checking} />
     <p className="context-status">Shown in {preferences.timeZone}. Select the times you want to offer.</p>
     {!calendarConnected ? <button type="button" className="btn btn-sm" onClick={onOpenCalendarSettings}>Connect Calendar</button> : !rows && !error ? <p role="status">Checking proposed times…</p> : null}
     <ol className="proposed-times-list">

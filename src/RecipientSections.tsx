@@ -9,7 +9,7 @@ import type { AvailabilityCandidate, AvailabilityPreferences, ContactProfile, Of
 import { ContextSectionHeader } from "./ContextSections";
 import { errorMessage } from "./errors";
 import { askFindTimes, FindTimesCard, type FindTimesContext } from "./FindTimesCard";
-import { lookaheadRange, planTimeSearch, type SchedulePlan, type SuggestedSearch } from "./scheduling";
+import { defaultLength, lookaheadRange, planTimeSearch, type SchedulePlan, type SuggestedSearch } from "./scheduling";
 import { ICON_SIZE } from "./iconSizes";
 
 type FindTimesState = {
@@ -91,15 +91,16 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
     }
     if (!offeredTimes || !offeredTimes.times.length || offeredTimes === seenOffer) return;
     const duration = offeredTimes.times[0].durationMinutes;
-    const durationMinutes = duration && offeredTimes.times.every((time) => time.durationMinutes === duration) ? duration : preferences.defaultDurationMinutes;
+    const stated = duration && offeredTimes.times.every((time) => time.durationMinutes === duration) ? duration : null;
+    const durationMinutes = stated ?? preferences.defaultDurationMinutes;
     setSeenOffer(offeredTimes);
     ++latest.current;
     setReading(false);
     setSearch((previous) => ({ key: (previous?.key ?? 0) + 1,
-      plan: { query: null, proposedTimes: offeredTimes.times, durationMinutes, timeZoneAssumed: false },
+      plan: { query: null, proposedTimes: offeredTimes.times, durationMinutes, ...defaultLength(stated), timeZoneAssumed: false },
       reason: "Times offered in this conversation.", fallback: null }));
   }, [offeredTimes, seenOffer, preferences.defaultDurationMinutes]);
-  const comingWeek = (): SchedulePlan => ({ query: lookaheadRange(new Date()), durationMinutes: preferences.defaultDurationMinutes, timeZoneAssumed: false });
+  const comingWeek = (): SchedulePlan => ({ query: lookaheadRange(new Date()), durationMinutes: preferences.defaultDurationMinutes, durationIsDefault: true, timeZoneAssumed: false });
 
   const findTimes = async () => {
     setReadError(null);

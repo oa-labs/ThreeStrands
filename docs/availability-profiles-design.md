@@ -1,7 +1,7 @@
 # Availability profiles design
 
 Status: phase 1 (profiles and account defaults) built in 0.182.0. Phase 2
-(using a different profile for one conversation) is not built.
+(using a different profile for one conversation) built in 0.183.0.
 
 Today ThreeStrands has one set of availability preferences: a timezone,
 working windows, a default meeting length, a slot increment, and a drive-time
@@ -102,12 +102,16 @@ name is never sent to an AI provider.
 
 ## Using a different profile for one conversation
 
-When there are two or more profiles, the Find Times card's summary line gains
-a profile control, for example
-`Next week · Mornings · 30 min · Work hours ▾`. Choosing another profile:
+When there are two or more profiles, Find Times shows a **Usual Hours**
+select beside the Any Time / Mornings / Afternoons chips, and the Proposed
+Times card shows it beside the assumed timezone. Its description says the
+choice lasts until ThreeStrands quits. Choosing another profile:
 
-- re-runs the search with that profile's windows, length, and buffer, keeping
-  the current range and the Mornings/Afternoons and weekday chips;
+- re-runs the search with that profile's windows and buffer, keeping the
+  current range and the Mornings/Afternoons and weekday chips. The length
+  follows the profile only when nothing stated one: plans built from the
+  profile's default carry `durationIsDefault`, and a length from the email,
+  a suggestion, or an invitation stays;
 - applies to every availability card in that conversation (Find Times,
   Proposed Times, Thread Assist), so the offered-time warnings and the slots
   agree;
@@ -116,7 +120,15 @@ a profile control, for example
   account default.
 
 In compose, the same control sits on the compose sidebar's Find Times card and
-applies to that draft.
+applies to that draft. Changing From switches profile unless one was chosen
+for the draft. Choosing the account's own profile again clears the choice, so
+it follows the account from then on.
+
+App keeps the choices in session state keyed by `thread:<id>` or
+`draft:<id>`, and provides them through `AvailabilityProfileChoiceContext`
+(`src/AvailabilityProfileChoice.tsx`): one provider for the open conversation
+and a nested one around the compose sidebar. A choice that names a deleted
+profile falls back to the account's profile.
 
 The control is a plain select. It isn't an AI affordance and sends nothing
 anywhere.

@@ -5,7 +5,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ## Unreleased
 
 ### New
-- Keep separate hours for different parts of your life, such as work and personal, in **Settings → Availability**, and choose which profile each mail account uses. **Find Times** and checks of offered times then use the hours for the account the email came to; every calendar still counts as busy.
+- Keep separate hours for different parts of your life, such as work and personal, in **Settings → Availability**, and choose which profile each mail account uses. **Find Times** and checks of offered times then use the hours for the account the email came to; every calendar still counts as busy. To use other hours for one conversation or message, choose them under **Usual Hours** in Find Times.
 - When someone offers several meeting times, **Find Times** checks each exact option against your calendars and keeps conflicts, evenings, and weekends visible. Select the free times to draft a reply, change an assumed timezone, or choose **Find Other Times** to search your usual hours.
 - Mark code in a message as a **Code Block**: select it and press ⌘⇧0, or type ``` on its own line and press Enter. Code blocks keep their spacing and line breaks and arrive in a fixed-width font. Press Enter on an empty last line to continue writing normally.
 - Find **Help and Documentation** in the command palette, or open the relevant guide from Settings. Help now includes search, troubleshooting, and dedicated guides for Today, Files, privacy, and moving between computers.
