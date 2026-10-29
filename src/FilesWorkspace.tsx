@@ -168,7 +168,7 @@ export function FilesWorkspace({ accountId, accountIds, onOpenThread, onOpenCont
     <div className="files-workspace-body">
       <div ref={main} className="files-main">
         <div className="files-toolbar">
-          <label className="files-search"><span className="sr-only">Search Files</span><input ref={searchInput} type="search" {...SEARCH_INPUT_ATTRIBUTES} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search filenames" /></label><kbd aria-hidden="true">/</kbd>
+          <label className="files-search"><span className="sr-only">Search Files</span><input ref={searchInput} type="search" {...SEARCH_INPUT_ATTRIBUTES} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search filenames and senders" /></label><kbd aria-hidden="true">/</kbd>
           <button ref={filtersButton} type="button" className="btn" aria-expanded={filtersOpen} aria-controls="file-filter-controls" onClick={() => setFiltersOpen((value) => !value)}><SlidersHorizontal size={ICON_SIZE.sm} />Filters{filterChips.length ? <span className="context-count">{filterChips.length}</span> : null}</button>
           <details className="files-help" onKeyDown={(event) => {
             if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); }

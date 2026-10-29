@@ -42,4 +42,4 @@ You can narrow a search with `from:`, `to:`, `subject:`, `before:` and `after:` 
 
 Local results are available offline for cached mail. Server results need a connection and valid account sign-in; a local search is not proof that older mail is absent from the server. [Retention](privacy.html#keep-mail-on-this-device) limits the cache, not the mail kept by your provider.
 
-Search follows the current workspace: in **Files** it searches filenames, and in **Contacts** it searches contacts. Return to **Mail** to use mail operators. If you still cannot find something, use [missing-message troubleshooting](troubleshooting.html#a-message-is-missing).
+Search follows the current workspace: in **Files** it searches filenames and senders, and in **Contacts** it searches contacts. Return to **Mail** to use mail operators. If you still cannot find something, use [missing-message troubleshooting](troubleshooting.html#a-message-is-missing).
