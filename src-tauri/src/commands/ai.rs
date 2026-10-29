@@ -703,7 +703,7 @@ pub(crate) async fn ai_brief_thread(
     );
     let summary = save_thread_summary(&state, &thread_id, brief.summary, &revision, focus_from.as_deref())?;
     let analysis = cache_thread_analysis(&state, &thread_id, &revision, brief.analysis, true, focus_from.as_deref())?;
-    Ok(ThreadBriefResult { summary, analysis })
+    Ok(ThreadBriefResult { summary, analysis, offered_times: brief.offered_times })
 }
 
 #[tauri::command]
@@ -835,10 +835,11 @@ pub(crate) async fn ai_find_times(
     if instruction.is_some() != request.current.is_some() {
         return Err("An adjustment needs the search it changes".into());
     }
-    let (subject, messages) = match request.source_message_id {
+    let (subject, messages, user_addresses) = match request.source_message_id {
         Some(source_id) => {
             let database = state.database.clone();
             let detail = run_database_task(move || database.get_thread_for_message(&source_id)).await?;
+            let user_addresses = account_addresses(&state, &detail.thread.account_id)?;
             let messages = detail
                 .messages
                 .into_iter()
@@ -850,9 +851,9 @@ pub(crate) async fn ai_find_times(
                     body_text: message.body_text,
                 })
                 .collect();
-            (detail.thread.subject, messages)
+            (detail.thread.subject, messages, user_addresses)
         }
-        None => (request.draft_subject, Vec::new()),
+        None => (request.draft_subject, Vec::new(), Vec::new()),
     };
     let api_key = ai::get_key()?.ok_or_else(|| "No AI API key configured".to_string())?;
     log::info!(target: "ai_find_times", "finding times with provider {provider:?} model {model}, {} message(s)", messages.len());
@@ -869,6 +870,7 @@ pub(crate) async fn ai_find_times(
             current: request.current,
             current_time: Utc::now().with_timezone(&zone).to_rfc3339(),
             user_time_zone: request.user_time_zone,
+            user_addresses,
         },
         &api_key,
     ))

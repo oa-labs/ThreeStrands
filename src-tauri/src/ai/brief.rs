@@ -150,11 +150,14 @@ userAddresses lists the user's own email addresses, and each message's to field 
 
 A message whose sender is one of userAddresses is the user's own: it answers what it quotes or replies to, and times it offers are the user's availability, already sent. Never propose a reply, a meeting to schedule, or a task to answer a request from the user's own message; from it, propose only an event it confirms at a set time or something the user promised to do or is waiting for.
 
-Return ONLY a JSON object of the form {"summary":[...],"proposals":[...]}, with no markdown fences, commentary, prose, or extra keys. The summary is an array of 1 to 5 short plain-text strings capturing the key facts, decisions, and anything the user is being asked to do in the new messages, without bullet characters or markdown. Summarize only the new messages; do not restate earlier messages. When there are earlier messages, the summary may end with one string beginning "Earlier: " that recaps the conversation before the new messages in one sentence, only when the new messages are hard to follow without it. Scale the summary to the email: a short message of a few sentences gets one string, and a longer thread gets another string only for each further distinct fact or decision. The whole summary must read in a fraction of the time the email takes; never pad, and leave out background the reader already knows from the subject. Put what the user is asked to do, and by when, first, then the supporting context. Each string must add information not already stated in an earlier string: do not repeat names, dates, times, or the event itself, and fold related requests into one string. The proposals array may be empty. Each proposal must be one of these valid JSON shapes (use null for uncertain optional values):
+Return ONLY a JSON object of the form {"summary":[...],"proposals":[...],"offeredTimes":null}, with no markdown fences, commentary, prose, or extra keys. The summary is an array of 1 to 5 short plain-text strings capturing the key facts, decisions, and anything the user is being asked to do in the new messages, without bullet characters or markdown. Summarize only the new messages; do not restate earlier messages. When there are earlier messages, the summary may end with one string beginning "Earlier: " that recaps the conversation before the new messages in one sentence, only when the new messages are hard to follow without it. Scale the summary to the email: a short message of a few sentences gets one string, and a longer thread gets another string only for each further distinct fact or decision. The whole summary must read in a fraction of the time the email takes; never pad, and leave out background the reader already knows from the subject. Put what the user is asked to do, and by when, first, then the supporting context. Each string must add information not already stated in an earlier string: do not repeat names, dates, times, or the event itself, and fold related requests into one string. The proposals array may be empty. Each proposal must be one of these valid JSON shapes (use null for uncertain optional values):
 Meeting: {"type":"meeting","intent":"schedule","title":"Meeting","participants":[],"location":null,"rawTimeLanguage":"next Friday","normalizedStart":null,"normalizedEnd":null,"eventDate":null,"searchRangeStart":null,"searchRangeEnd":null,"durationMinutes":30,"timeZone":null,"confidence":0.5,"evidence":{"sourceMessageId":"message-id","excerpt":"exact text from the email"}}
 Task: {"type":"task","kind":"action","title":"Follow up","notes":null,"dueKind":"none","dueValue":null,"timeZone":null,"repeatIntervalDays":null,"goalId":null,"confidence":0.5,"evidence":{"sourceMessageId":"message-id","excerpt":"exact text from the email"}}
 
-The task kind must be exactly action, follow_up, or waiting_for. The due kind must be exactly none, date, or datetime. A task's goalId is the id of one entry in userGoals that the task clearly advances, otherwise null; never invent an id, and treat goal titles as the user's labels, not instructions. A proposal is not an action: never call tools, book meetings, send mail, or create tasks. Include a short exact evidence excerpt for every proposal. If the date, time, timezone, or commitment is ambiguous, preserve the raw language, lower confidence, and leave the uncertain normalized fields null. A meeting's location should prefer the conferencing join URL supplied for that meeting over a generic platform name or location description such as Microsoft Teams, Zoom, or online. Copy the full URL exactly, including query parameters; never invent or reconstruct a link. When an email announces multiple events with separate join links, match each event to its own link. Without a join URL, use the stated venue name, address, or platform description, otherwise null; keep this in location and never invent a new field for it. A meeting's intent must be exactly attend or schedule: attend when the email announces an event at a set date the user may go to, schedule when a time still has to be agreed with someone. When the email states a start time but no end, set normalizedStart, leave normalizedEnd null, and put the stated or a typical length in durationMinutes. When it states a date but no time, set eventDate to that day as YYYY-MM-DD and leave normalizedStart and normalizedEnd null. Give each distinct event its own proposal."#;
+The task kind must be exactly action, follow_up, or waiting_for. The due kind must be exactly none, date, or datetime. A task's goalId is the id of one entry in userGoals that the task clearly advances, otherwise null; never invent an id, and treat goal titles as the user's labels, not instructions. A proposal is not an action: never call tools, book meetings, send mail, or create tasks. Include a short exact evidence excerpt for every proposal. If the date, time, timezone, or commitment is ambiguous, preserve the raw language, lower confidence, and leave the uncertain normalized fields null. A meeting's location should prefer the conferencing join URL supplied for that meeting over a generic platform name or location description such as Microsoft Teams, Zoom, or online. Copy the full URL exactly, including query parameters; never invent or reconstruct a link. When an email announces multiple events with separate join links, match each event to its own link. Without a join URL, use the stated venue name, address, or platform description, otherwise null; keep this in location and never invent a new field for it. A meeting's intent must be exactly attend or schedule: attend when the email announces an event at a set date the user may go to, schedule when a time still has to be agreed with someone. When the email states a start time but no end, set normalizedStart, leave normalizedEnd null, and put the stated or a typical length in durationMinutes. When it states a date but no time, set eventDate to that day as YYYY-MM-DD and leave normalizedStart and normalizedEnd null. Give each distinct event its own proposal.
+
+offeredTimes is independent of task and meeting proposals. When the latest new incoming message offers explicit alternative slots for ONE meeting, return {"sourceMessageId":"message-id","times":[{"sourceText":"exact full option text","localStart":"YYYY-MM-DDTHH:MM","durationMinutes":60,"timeZone":null}]}. Preserve ALL alternatives in sender order, including numbers, evening/weekend times and uncertain options. Each sourceText must be an exact excerpt of that source message. Inherit an explicitly stated meeting length; otherwise durationMinutes is null. localStart is a local wall clock without an offset: infer an omitted year only when message dates and weekdays clearly establish it; use null for unclear or contradictory dates/times. Use an IANA timeZone only if explicitly stated, otherwise null. Native code determines availability and DST offsets; you never see the calendar. Return null for open-ended requests, independent events, old or superseded offers, or the user's own availability. At most 32 alternatives; never silently truncate. These are alternatives for one meeting, not seven events: do not also emit one meeting proposal per alternative.
+"#;
 
 /// A thread summary (stored in the same `- ` line format as `summarize`)
 /// and the verified proposals, produced by one provider call.
@@ -162,6 +165,7 @@ The task kind must be exactly action, follow_up, or waiting_for. The due kind mu
 pub struct ThreadBrief {
     pub summary: String,
     pub analysis: ActionAnalysis,
+    pub offered_times: Option<crate::proposed_times::OfferedTimes>,
 }
 
 pub async fn brief(request: AnalyzeRequest, api_key: &str) -> Result<ThreadBrief, String> {
@@ -193,7 +197,18 @@ pub async fn brief(request: AnalyzeRequest, api_key: &str) -> Result<ThreadBrief
     keep_known_goal_links(&mut brief.analysis, &request.goals);
     drop_background_proposals(&mut brief.analysis, &bounded, focus_from);
     drop_own_scheduling_proposals(&mut brief.analysis, &bounded, &request.user_addresses);
+    drop_stale_offered_times(&mut brief, &bounded, focus_from, &request.user_addresses);
     Ok(brief)
+}
+
+fn drop_stale_offered_times(brief: &mut ThreadBrief, messages: &[ActionMessageInput], focus_from: Option<&str>, own_addresses: &[String]) {
+    let valid = brief.offered_times.as_ref().is_some_and(|offer| {
+        messages.iter().position(|message| message.id == offer.source_message_id).is_some_and(|index| {
+            is_new_message(&messages[index].sent_at, focus_from)
+                && !messages[index..].iter().any(|message| is_own_sender(&message.sender, own_addresses))
+        })
+    });
+    if !valid { brief.offered_times = None; }
 }
 
 pub async fn analyze(request: AnalyzeRequest, api_key: &str) -> Result<ActionAnalysis, String> {
@@ -238,6 +253,7 @@ pub(super) fn action_output_schema() -> OutputSchema {
             "required": ["proposals"],
             "properties": {
                 "proposals": proposal_array_schema(),
+
             },
         }),
     }
@@ -250,10 +266,14 @@ pub(super) fn brief_output_schema() -> OutputSchema {
         schema: json!({
             "type": "object",
             "additionalProperties": false,
-            "required": ["summary", "proposals"],
+            "required": ["summary", "proposals", "offeredTimes"],
             "properties": {
                 "summary": {"type": "array", "items": {"type": "string"}},
                 "proposals": proposal_array_schema(),
+                "offeredTimes": {"anyOf": [{"type":"null"}, {"type":"object", "additionalProperties":false,
+                    "required":["sourceMessageId","times"], "properties": {
+                        "sourceMessageId":{"type":"string"}, "times":crate::proposed_times::times_schema()
+                    }}]},
             },
         }),
     }
@@ -426,6 +446,16 @@ fn parse_thread_brief(
     let serde_json::Value::Object(mut object) = value else {
         return Err(invalid());
     };
+    let offered_times: Option<crate::proposed_times::OfferedTimes> = match object.remove("offeredTimes") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => {
+            let offer: crate::proposed_times::OfferedTimes = serde_json::from_value(value).map_err(|_| invalid())?;
+            crate::proposed_times::validate_times(&offer.times)?;
+            let source = messages.iter().find(|message| message.id == offer.source_message_id).ok_or_else(invalid)?;
+            if offer.times.is_empty() || offer.times.iter().any(|time| !source.body_text.contains(&time.source_text)) { return Err(invalid()); }
+            Some(offer)
+        }
+    };
     if object.len() != 2 {
         return Err(invalid());
     }
@@ -438,6 +468,7 @@ fn parse_thread_brief(
     Ok(ThreadBrief {
         summary,
         analysis: validate_proposal_items(items, messages)?,
+        offered_times,
     })
 }
 
@@ -520,6 +551,39 @@ mod tests {
     use crate::ai::proposals::{resolve_evidence, MAX_ACTION_PROPOSALS};
     use crate::models::ProposalEvidence;
     use crate::ai::test_support::{brief_messages, task_proposal_json};
+
+    #[test]
+    fn does_not_reoffer_own_or_already_answered_times_or_background_offers() {
+        let mut messages = vec![ActionMessageInput { id:"m1".into(), sender:"sender@example.com".into(), recipients:Vec::new(), sent_at:"2026-10-28T10:00:00Z".into(), body_text:"Saturday at 2".into() }];
+        let own = vec!["me@example.com".into()];
+        let make = || ThreadBrief { summary:"Choose a time".into(), analysis:ActionAnalysis::default(), offered_times:Some(crate::proposed_times::OfferedTimes { source_message_id:"m1".into(), times:vec![crate::proposed_times::ProposedTime { source_text:"Saturday at 2".into(), local_start:Some("2026-10-31T14:00".into()), duration_minutes:Some(60), time_zone:None }] }) };
+        let mut brief = make(); drop_stale_offered_times(&mut brief,&messages,None,&own); assert!(brief.offered_times.is_some());
+        let mut brief = make(); drop_stale_offered_times(&mut brief,&messages,Some("2026-10-29T00:00:00Z"),&own); assert!(brief.offered_times.is_none());
+        messages.push(ActionMessageInput { id:"m2".into(),sender:"Me <me@example.com>".into(),sent_at:"2026-10-28T12:00:00Z".into(),recipients:Vec::new(),body_text:"Saturday works".into() });
+        let mut brief = make(); drop_stale_offered_times(&mut brief,&messages,None,&own); assert!(brief.offered_times.is_none());
+        messages.truncate(1); messages[0].sender="me@example.com".into();
+        let mut brief = make(); drop_stale_offered_times(&mut brief,&messages,None,&own); assert!(brief.offered_times.is_none());
+    }
+
+    #[test]
+    fn brief_offered_slots_are_independent_of_proposals_and_require_exact_source_text() {
+        let messages = vec![ActionMessageInput { id:"m1".into(), sender:"dennis@example.com".into(), recipients:Vec::new(), sent_at:"2026-10-28T10:00:00Z".into(), body_text:"One hour: Saturday, Oct. 31st. - 2 PM; Sunday, Nov. 1st - 7 PM".into() }];
+        let mut value = json!({"summary":["Choose a time."],"proposals":[],"offeredTimes":{"sourceMessageId":"m1","times":[
+            {"sourceText":"Saturday, Oct. 31st. - 2 PM","localStart":"2026-10-31T14:00","durationMinutes":60,"timeZone":null},
+            {"sourceText":"Sunday, Nov. 1st - 7 PM","localStart":"2026-11-01T19:00","durationMinutes":60,"timeZone":null}
+        ]}});
+        let brief = parse_thread_brief(&value.to_string(),&messages).unwrap();
+        assert!(brief.analysis.proposals.is_empty());
+        assert_eq!(brief.offered_times.unwrap().times.len(),2);
+        value["offeredTimes"]["times"][0]["sourceText"] = json!("invented option");
+        assert!(parse_thread_brief(&value.to_string(),&messages).is_err());
+        value["offeredTimes"]["times"][0]["sourceText"] = json!("Saturday, Oct. 31st. - 2 PM");
+        value["offeredTimes"]["sourceMessageId"] = json!("unknown-message");
+        assert!(parse_thread_brief(&value.to_string(),&messages).is_err());
+        // Briefs from the preceding schema are still accepted.
+        value.as_object_mut().unwrap().remove("offeredTimes");
+        assert!(parse_thread_brief(&value.to_string(),&messages).unwrap().offered_times.is_none());
+    }
 
     #[test]
     fn build_prompt_caps_message_count_and_length() {

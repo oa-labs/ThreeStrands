@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { readAiRequestConfig } from "./aiSettings";
 import { attachmentKey, type ChatAttachmentOption } from "./chatAttachments";
 import { mailClient } from "./data/client";
-import type { Account, ActionProposal, ScheduleEvent, SummaryResult, Thread, ThreadDetail } from "./domain";
+import type { Account, ActionProposal, OfferedTimes, ScheduleEvent, SummaryResult, Thread, ThreadDetail } from "./domain";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { endsWithOwnMessage, hasEmailedBefore, proactiveBriefSender, proactiveDwellMs } from "./proactiveBrief";
 import { describeAnalysisError } from "./ThreadAssist";
@@ -84,6 +84,7 @@ export function useThreadIntelligence({
     }
   }, [applyThreadSummary, beginSummary, endSummary, selected]);
 
+  const [offeredTimeSets, setOfferedTimeSets] = useState<Record<string, OfferedTimes | null>>({});
   const [actionProposalSets, setActionProposalSets] = useState<Record<string, ActionProposal[]>>({});
   const [actionHiddenCounts, setActionHiddenCounts] = useState<Record<string, number>>({});
   // Valid suggestions past the per-analysis limit, which weren't shown.
@@ -179,8 +180,9 @@ export function useThreadIntelligence({
     beginActionAnalysis(proposalKey);
     try {
       const { provider, model, endpoint } = readAiRequestConfig("getting a brief", "brief");
-      const { summary, analysis } = await mailClient.briefThread(threadId, availabilityPreferences.timeZone, provider, model, endpoint);
+      const { summary, analysis, offeredTimes } = await mailClient.briefThread(threadId, availabilityPreferences.timeZone, provider, model, endpoint);
       applyThreadSummary(threadId, summary);
+      setOfferedTimeSets((current) => ({ ...current, [proposalKey]: offeredTimes ?? null }));
       setActionProposalSets((current) => ({ ...current, [proposalKey]: withoutInvitationMeetings(analysis.proposals, visibleDetail) }));
       markSuggestionsFetched(proposalKey);
       setActionHiddenCounts((current) => ({ ...current, [proposalKey]: analysis.hiddenCount }));
@@ -370,6 +372,7 @@ export function useThreadIntelligence({
   const focusThreadChat = useCallback(() => setChatFocusRequest((current) => current + 1), []);
   return {
     summaryPending, summaryError, runBrief, actionProposals,
+    offeredTimes: actionProposalKey ? offeredTimeSets[actionProposalKey] ?? null : null,
     actionProposalSource, actionAnalysisLoading, actionAnalysisError, actionAnalysisRequested,
     actionHiddenCount, actionExtraCount, chatByThread, chatPendingThreads, chatFailures,
     chatFocusRequest, askThread, focusThreadChat, updateActionProposal, removeActionProposal,

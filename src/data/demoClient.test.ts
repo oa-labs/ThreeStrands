@@ -592,6 +592,28 @@ describe("demoClient availability", () => {
     expect((await check(15)).status).toBe("conflicting");
   });
 
+  it("checks offered alternatives exactly across DST, independently of working hours, with buffers", async () => {
+    vi.useFakeTimers({toFake:["Date"]}); vi.setSystemTime(new Date("2026-10-28T12:00:00Z"));
+    const dataset = defaultDemoDataset();
+    dataset.calendarOptions = [{id:DEMO_ACCOUNT_ID,accountId:DEMO_ACCOUNT_ID,name:"Primary",primary:true,selected:false,writable:true}];
+    dataset.calendarAccounts = [{email:DEMO_ACCOUNT_ID,connectedAt:"2026-10-28T12:00:00Z",status:"connected"}];
+    dataset.scheduleEvents = [{location:"Office",id:"conflict",accountId:DEMO_ACCOUNT_ID,calendarId:DEMO_ACCOUNT_ID,title:"Later appointment",allDay:false,start:"2026-11-01T17:10:00-05:00",end:"2026-11-01T18:00:00-05:00"}];
+    const locals = ["2026-10-31T14:00","2026-10-31T19:00","2026-11-01T16:00","2026-11-01T19:00","2026-11-02T19:00","2026-11-03T19:00","2026-11-04T19:00"];
+    const request = {times:locals.map((localStart) => ({sourceText:localStart,localStart,durationMinutes:60,timeZone:null})), assumedTimeZone:"America/New_York", preferences:{...DEFAULT_AVAILABILITY_PREFERENCES,timeZone:"America/New_York",driveTimeBufferMinutes:15}};
+    const client = createDemoClient(dataset);
+    const rows = await client.checkProposedTimes(request);
+    expect(rows).toHaveLength(7);
+    expect(rows[0].start).toBe("2026-10-31T18:00:00.000Z");
+    expect(rows[2].start).toBe("2026-11-01T21:00:00.000Z");
+    expect(rows[2].check?.status).toBe("conflicting");
+    expect(rows.every((row) => row.outsideWorkingHours)).toBe(true);
+    expect((await client.checkProposedTimes({...request,preferences:{...request.preferences,driveTimeBufferMinutes:0}}))[2].check?.status).toBe("free");
+    const explicit = await client.checkProposedTimes({...request,times:[{...request.times[0],timeZone:"Europe/London"}, {...request.times[0],localStart:"2026-11-01T01:30"}, {...request.times[0],durationMinutes:null}]});
+    expect(explicit[0].start).toBe("2026-10-31T14:00:00.000Z");
+    expect(explicit[1].issue).toMatch(/clarification/);
+    expect(explicit[2].issue).toMatch(/length/);
+  });
+
   it("always avoids available holiday dates and has no warning when there is no holiday subscription", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2099-09-20T12:00:00-04:00"));

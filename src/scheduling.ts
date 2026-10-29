@@ -1,4 +1,4 @@
-import type { ActionProposal, AvailabilityCandidate, AvailabilityWindow, ChatAvailability, MeetingProposal, TimeSearch } from "./domain";
+import type { ActionProposal, AvailabilityCandidate, AvailabilityWindow, ChatAvailability, MeetingProposal, ProposedTime, TimeSearch } from "./domain";
 import { dateInputValue } from "./calendarTime";
 
 /** Days searched when a meeting names no usable time or range. */
@@ -29,6 +29,7 @@ export type ScheduleQuery =
 
 export type SchedulePlan = {
   query: ScheduleQuery | null;
+  proposedTimes?: ProposedTime[];
   durationMinutes: number;
   /** The meeting gave no timezone, so the user's own is assumed. */
   timeZoneAssumed: boolean;
@@ -192,6 +193,7 @@ export function windowsWithin(windows: AvailabilityWindow[], bounds: DayBounds):
 /** Plans the calendar search Find Times read from a conversation. */
 export function planTimeSearch(search: TimeSearch, now: Date, defaultDurationMinutes: number): SchedulePlan {
   return {
+    ...(search.proposedTimes?.length ? { proposedTimes: search.proposedTimes } : {}),
     // The provider only returns ranges that end in the future; one that has
     // since passed falls back to the coming week.
     query: boundedRange(new Date(search.rangeStart), new Date(search.rangeEnd), now) ?? lookaheadRange(now),

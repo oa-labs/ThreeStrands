@@ -978,3 +978,37 @@ test("calendar and contacts creation shortcuts stay in their current workspace",
   await page.keyboard.press("Shift+g");
   await expect(page.getByRole("textbox", { name: "New Group Name" })).toBeFocused();
 });
+
+test("a Brief's offered slots reach calendar checks and a reply without a meeting suggestion", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(async () => {
+    const clientPath = "/src/data/client.ts";
+    const aiPath = "/src/aiSettings.ts";
+    const [{ mailClient }, { saveAiProvider, saveAiFeatures, DEFAULT_AI_FEATURES, setAiApiKey }] = await Promise.all([import(clientPath),import(aiPath)]);
+    saveAiProvider("openai");
+    saveAiFeatures({...DEFAULT_AI_FEATURES,summarize:true,actionExtraction:true,proactiveBriefs:false});
+    await setAiApiKey("test-key");
+    const original = mailClient.briefThread.bind(mailClient);
+    mailClient.briefThread = async (...args: unknown[]) => ({...await original(...args),analysis:{proposals:[],hiddenCount:0},offeredTimes:{sourceMessageId:"welcome-message",times:[
+      {sourceText:"Tuesday, November 3, 2099 at 7 PM for one hour",localStart:"2099-11-03T19:00",durationMinutes:60,timeZone:"America/New_York"},
+      {sourceText:"Wednesday, November 4, 2099 at 7 PM for one hour",localStart:"2099-11-04T19:00",durationMinutes:60,timeZone:"America/New_York"},
+    ]}});
+  });
+  await page.getByRole("button",{name:"Settings (⌘,)"}).click();
+  const settings = page.getByRole("dialog",{name:"Settings"});
+  await settings.getByRole("button",{name:"Calendar Accounts",exact:true}).click();
+  await settings.getByRole("button",{name:"Connect Calendar",exact:true}).click();
+  await expect(settings.getByRole("button",{name:"Connect Calendar",exact:true})).toBeEnabled();
+  await settings.getByRole("button",{name:"Close",exact:true}).click();
+  const context = page.getByRole("complementary",{name:"Conversation context"});
+  const get = context.getByRole("button",{name:/^(Get Brief|Refresh brief)$/});
+  await get.click();
+  const proposed = context.getByRole("region",{name:"Proposed times"});
+  await expect(proposed.getByRole("checkbox")).toHaveCount(2);
+  await expect(proposed.getByRole("checkbox").first()).toBeEnabled();
+  await proposed.getByRole("checkbox").first().check();
+  await proposed.getByRole("button",{name:"Draft Reply With Selected Times"}).click();
+  const reply = page.getByRole("dialog",{name:"Reply Message"});
+  await expect(reply.getByRole("textbox",{name:"Message Body"})).toContainText("Here are some times that work for me:");
+  await expect(reply.getByRole("textbox",{name:"Message Body"})).toContainText("2099");
+});

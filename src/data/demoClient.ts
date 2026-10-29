@@ -1,3 +1,4 @@
+import { previewScheduleChoices } from "../scheduleTimes";
 import { isHolidayCalendar } from "../calendarAvailability";
 import type { FindAvailabilityRequest } from "../domain";
 import { demoSignatureClient } from "./demoSignatures";
@@ -1540,6 +1541,30 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
         .map((email) => ({ email, busy: [], checked: false }));
       return { own: { email: request.accountId, busy: ownBusy, checked: result.totalCalendarCount > 0 }, guests,
         candidates: result.candidates.map((candidate) => ({ ...candidate, status: guests.length ? "partiallyChecked" as const : candidate.status })) };
+    },
+    async checkProposedTimes(request) {
+      return Promise.all(request.times.map(async (time) => {
+        try {
+          if (!time.localStart) throw new Error("Date or time needs clarification");
+          if (!time.durationMinutes) throw new Error("Meeting length needs clarification");
+          const choices = previewScheduleChoices(time.localStart, time.timeZone ?? request.assumedTimeZone);
+          if (choices.length !== 1) throw new Error("This clock time needs clarification because the clocks change");
+          const at = choices[0].scheduledAt;
+          if (at <= Date.now()) throw new Error("This proposed time has passed");
+          const start = new Date(at).toISOString();
+          const end = new Date(at + time.durationMinutes * 60_000).toISOString();
+          const clock = new Intl.DateTimeFormat("en-GB", { timeZone: request.preferences.timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+          const weekday = (instant: number) => ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].indexOf(new Intl.DateTimeFormat("en-US", { timeZone: request.preferences.timeZone, weekday: "short" }).format(instant));
+          let outsideWorkingHours = false;
+          for (let instant = at; instant < Date.parse(end); instant += 60_000) {
+            const minute = clock.format(instant);
+            if (!request.preferences.workingWindows.some((window) => window.weekday === weekday(instant) && window.start <= minute && minute < window.end)) { outsideWorkingHours = true; break; }
+          }
+          return { start, end, outsideWorkingHours, issue: null, check: await this.checkProposedTime({ start, end, timeZone: request.preferences.timeZone, driveTimeBufferMinutes: request.preferences.driveTimeBufferMinutes }) };
+        } catch (reason) {
+          return { start: null, end: null, outsideWorkingHours: false, check: null, issue: reason instanceof Error ? reason.message : String(reason) };
+        }
+      }));
     },
     async checkProposedTime(request: { start: string; end: string; timeZone: string; driveTimeBufferMinutes?: number }): Promise<ProposedTimeCheck> {
       const total = calendarOptions.filter((option) => !isHolidayCalendar(option.id) && (option.availabilitySelected ?? option.primary)).length;

@@ -1,6 +1,7 @@
 // The one card for offering open times: compose's Find Times, meeting
 // suggestions, and Thread Chat's availability answers all show it.
 
+import { ProposedTimesCard } from "./ProposedTimesCard";
 import { type ReactNode, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 import type { AvailabilityCandidate, AvailabilityPreferences, CoworkerCalendars, ScheduleEvent, TimeSearch } from "./domain";
@@ -11,7 +12,7 @@ import { errorMessage } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import type { MoreAction } from "./MoreActionsMenu";
 import { MeetingScheduler, type CalendarAddition, type EffectiveSearch, type ScheduleSlot } from "./MeetingScheduler";
-import { FIND_TIMES_INSTRUCTION_MAX_CHARS, planTimeSearch, type SchedulePlan } from "./scheduling";
+import { FIND_TIMES_INSTRUCTION_MAX_CHARS, lookaheadRange, planTimeSearch, type SchedulePlan } from "./scheduling";
 
 /** What Find Times shares with the AI provider: a conversation, a draft, or both. Never the calendar. */
 export type FindTimesContext = {
@@ -116,6 +117,16 @@ export function FindTimesCard({
     {reading ? <p className="context-status" role="status">Reading the conversation…</p> : null}
     {error ? <p className="context-status" role="alert">{error}</p> : null}
   </> : null;
+
+  const effectivePlan = adjusted?.plan ?? plan;
+  if (effectivePlan.proposedTimes?.length) return <>
+    {shownReason ? <p className="find-times-reason">{shownReason}</p> : null}
+    <ProposedTimesCard times={effectivePlan.proposedTimes} preferences={preferences} calendarConnected={calendarConnected}
+      intoDraft={intoDraft} onReplyWithTimes={onReplyWithTimes} onOpenCalendarSettings={onOpenCalendarSettings}
+      onFindOtherTimes={() => setAdjusted((previous) => ({ key: (previous?.key ?? 0) + 1,
+        plan: { query: lookaheadRange(new Date()), durationMinutes: effectivePlan.durationMinutes, timeZoneAssumed: false },
+        reason: "Finding other times in your usual hours." }))} />
+  </>;
 
   return <>
     {shownReason ? <p className="find-times-reason">{shownReason}</p> : null}

@@ -735,6 +735,7 @@ export type ThreadChatReply = {
 
 /** One combined request: the persisted summary and the verified suggestions. */
 export type ThreadBriefResult = {
+  offeredTimes?: OfferedTimes | null;
   summary: SummaryResult;
   analysis: ActionAnalysis;
 };
@@ -810,7 +811,26 @@ export type ReplyAssistResult = {
  * The days and hours Find Times searches, read from a conversation by AI.
  * The times themselves always come from the user's calendar.
  */
+export type ProposedTime = {
+  sourceText: string;
+  /** Local wall clock; null when the email needs clarification. */
+  localStart: string | null;
+  durationMinutes: number | null;
+  /** Explicit sender timezone; null means use the visibly assumed timezone. */
+  timeZone: string | null;
+};
+export type OfferedTimes = { sourceMessageId: string; times: ProposedTime[] };
+export type CheckProposedTimesRequest = { times: ProposedTime[]; assumedTimeZone: string; preferences: AvailabilityPreferences };
+export type CheckedProposedTime = {
+  start: string | null;
+  end: string | null;
+  issue: string | null;
+  outsideWorkingHours: boolean;
+  check: ProposedTimeCheck | null;
+};
+
 export type TimeSearch = {
+  proposedTimes?: ProposedTime[];
   rangeStart: string;
   rangeEnd: string;
   durationMinutes: number | null;

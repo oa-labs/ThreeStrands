@@ -946,6 +946,27 @@ pub(crate) async fn find_availability(
 }
 
 #[tauri::command]
+pub(crate) async fn check_proposed_times(
+    request: crate::proposed_times::CheckProposedTimesRequest,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::proposed_times::CheckedProposedTime>> {
+    use crate::proposed_times::*;
+    validate_times(&request.times)?;
+    availability::validate_preferences(&request.preferences)?;
+    request.assumed_time_zone.parse::<chrono_tz::Tz>().map_err(|_| "Unknown assumed timezone")?;
+    let now = chrono::Utc::now();
+    let mut rows: Vec<_> = request.times.iter().map(|time| match resolve(time, &request.assumed_time_zone, now) {
+        Ok((start, end)) => CheckedProposedTime { outside_working_hours: outside_hours(&start, &end, &request.preferences), start: Some(start), end: Some(end), issue: None, check: None },
+        Err(issue) => CheckedProposedTime { start: None, end: None, issue: Some(issue), outside_working_hours: false, check: None },
+    }).collect();
+    if let Some((start, end)) = coverage_range(&rows)? {
+        let coverage = freebusy_coverage(&start, &end, &request.preferences.time_zone, request.preferences.drive_time_buffer_minutes, &state).await?;
+        check_resolved(&mut rows, &coverage.busy, coverage.checked, coverage.total, &coverage.unchecked, &coverage.errors)?;
+    }
+    Ok(rows)
+}
+
+#[tauri::command]
 pub(crate) async fn check_proposed_time(
     request: CheckProposedTimeRequest,
     state: State<'_, AppState>,

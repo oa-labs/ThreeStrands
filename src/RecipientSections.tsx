@@ -1,11 +1,11 @@
 // Sections about the people a draft is going to, shared by a new message's panel and a reply's.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { draftRecipients } from "./composeChecks";
 import { isPersonalMailDomain } from "./contactContext";
 import { CalendarDays, Sparkles, UserRound } from "lucide-react";
 import type { Draft } from "./correspondence";
-import type { AvailabilityCandidate, AvailabilityPreferences, ContactProfile } from "./domain";
+import type { AvailabilityCandidate, AvailabilityPreferences, ContactProfile, OfferedTimes } from "./domain";
 import { ContextSectionHeader } from "./ContextSections";
 import { errorMessage } from "./errors";
 import { askFindTimes, FindTimesCard, type FindTimesContext } from "./FindTimesCard";
@@ -30,7 +30,7 @@ type FindTimesState = {
  * it, the coming week is searched. Search Again always reads afresh. The
  * provider never sees the calendar.
  */
-export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], suggest, intoDraft = true, compact = false, offered = true, onInsertTimes, onOpenCalendarSettings }: {
+export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], suggest, intoDraft = true, compact = false, offered = true, offeredTimes = null, onInsertTimes, onOpenCalendarSettings }: {
   preferences: AvailabilityPreferences;
   /** Draft Assist is on and an AI provider is ready. */
   ai: boolean;
@@ -51,6 +51,7 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
    * stays, so the times never vanish while the user reads them.
    */
   offered?: boolean;
+  offeredTimes?: OfferedTimes | null;
   onInsertTimes(candidates: AvailabilityCandidate[]): void;
   onOpenCalendarSettings(): void;
 }) {
@@ -77,6 +78,18 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
 
   const show = (plan: SchedulePlan, reason: string | null, fallback: string | null) =>
     setSearch((previous) => ({ key: (previous?.key ?? 0) + 1, plan, reason, fallback }));
+  const [seenOffer, setSeenOffer] = useState<OfferedTimes | null>(null);
+  useEffect(() => {
+    if (!offeredTimes || !offeredTimes.times.length || offeredTimes === seenOffer) return;
+    const duration = offeredTimes.times[0].durationMinutes;
+    const durationMinutes = duration && offeredTimes.times.every((time) => time.durationMinutes === duration) ? duration : preferences.defaultDurationMinutes;
+    setSeenOffer(offeredTimes);
+    ++latest.current;
+    setReading(false);
+    setSearch((previous) => ({ key: (previous?.key ?? 0) + 1,
+      plan: { query: null, proposedTimes: offeredTimes.times, durationMinutes, timeZoneAssumed: false },
+      reason: "Times offered in this conversation.", fallback: null }));
+  }, [offeredTimes, seenOffer, preferences.defaultDurationMinutes]);
   const comingWeek = (): SchedulePlan => ({ query: lookaheadRange(new Date()), durationMinutes: preferences.defaultDurationMinutes, timeZoneAssumed: false });
 
   const findTimes = async () => {
@@ -125,7 +138,7 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
       {reading ? <p className="context-status" role="status">Reading the conversation…</p> : null}
       {search && !reading ? <>
         {search.fallback ? <p className="context-status" role="alert">{search.fallback}</p> : null}
-        {coworkers.length > 0 ? <fieldset className="find-times-coworkers">
+        {!search.plan.proposedTimes?.length && coworkers.length > 0 ? <fieldset className="find-times-coworkers">
           <legend>Include coworkers</legend>
           {coworkers.map((person) => <label key={person.email}>
             <input type="checkbox" checked={emails.includes(person.email)} onChange={(event) => {

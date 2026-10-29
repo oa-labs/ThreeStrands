@@ -56,7 +56,7 @@ export type ContextPerson = {
  * sender's history and one-click decisions first in the person group. Other
  * conversations show Trust only when something needs a look.
  */
-export function ContextPanel({ detail, accounts, selectedEmail = null, readingMessageId = null, reply = null, onOpenThread, onShowMessage, onShowLink, availability, assist, related, chat, sender, idle = null, onKeyDown }: {
+export function ContextPanel({ detail, accounts, selectedEmail = null, readingMessageId = null, reply = null, onOpenThread, onShowMessage, onShowLink, availability, hasProposedTimes = false, assist, related, chat, sender, idle = null, onKeyDown }: {
   detail: ThreadDetail | null;
   accounts: Account[];
   /** A participant the reader picked from a message header; ignored if not on the conversation. */
@@ -75,6 +75,8 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, readingMe
   onShowLink?(threadId: string, messageId: string, link: TrustLink): void;
   /** Open times from the calendar to offer in a reply. */
   availability?: ReactNode;
+  /** An explicit offer remains actionable even when the message has bulk-mail signals. */
+  hasProposedTimes?: boolean;
   assist?: ReactNode;
   /** Sections about the conversation and the selected person. */
   related?(person: ContextPerson | null, meetingPeople: { email: string; name: string }[]): ReactNode;
@@ -248,7 +250,7 @@ export function ContextPanel({ detail, accounts, selectedEmail = null, readingMe
     <aside className="context-panel" aria-label="Conversation context" tabIndex={-1} onKeyDown={onKeyDown}>
       {detail && reply ? reply.checks : null}
       {detail ? null : idle}
-      {detail ? <div className="context-ai-row">{bulk && !reply ? null : availability}{assist}</div> : null}
+      {detail ? <div className="context-ai-row">{bulk && !reply && !hasProposedTimes ? null : availability}{assist}</div> : null}
       {detail && related ? related(person, [...meetingPeople.values()]) : null}
       {inbound ? <TrustSection key={inbound.id} message={inbound} subject={detail?.thread.subject ?? ""} bulk={Boolean(bulk)} prior={inboundPrior}
         onShowLink={onShowLink && detail ? (link) => onShowLink(detail.thread.id, inbound.id, link) : undefined} /> : null}

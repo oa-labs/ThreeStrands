@@ -1,4 +1,4 @@
-import type { FindAvailabilityRequest } from "../domain";
+import type { CheckedProposedTime, CheckProposedTimesRequest, FindAvailabilityRequest } from "../domain";
 import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
 import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
 import {
@@ -327,6 +327,7 @@ export interface MailClient extends CorrespondenceClient {
   /** `maxPerDay` spreads the candidates across days instead of the earliest slots of one day. */
   findAvailability(request: FindAvailabilityRequest): Promise<AvailabilityResult>;
   meetingAvailability(request: MeetingAvailabilityRequest): Promise<MeetingAvailabilityResult>;
+  checkProposedTimes(request: CheckProposedTimesRequest): Promise<CheckedProposedTime[]>;
   checkProposedTime(request: { start: string; end: string; timeZone: string; driveTimeBufferMinutes?: number }): Promise<ProposedTimeCheck>;
   /** Lists labels for the primary account, or for the specified account when provided. */
   listLabels(accountId?: string): Promise<Label[]>;
@@ -516,6 +517,7 @@ const tauriClient: MailClient = {
     complete("delete_calendar_event", { accountId: event.accountId, calendarId: event.calendarId, eventId: event.id }),
   findAvailability: (request) => complete("find_availability", { request }),
   meetingAvailability: (request) => complete("meeting_availability", { request }),
+  checkProposedTimes: (request) => complete("check_proposed_times", { request }),
   checkProposedTime: (request) => complete("check_proposed_time", { request }),
   listLabels: (accountId) => read("list_labels", { accountId }),
   createLabel: (name, accountId) => complete("create_label", { request: { name, accountId } }),

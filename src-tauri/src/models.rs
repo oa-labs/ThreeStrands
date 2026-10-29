@@ -1063,6 +1063,7 @@ pub struct ThreadChatReply {
 pub struct ThreadBriefResult {
     pub summary: SummaryResult,
     pub analysis: ActionAnalysis,
+    pub offered_times: Option<crate::proposed_times::OfferedTimes>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

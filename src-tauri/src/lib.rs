@@ -3,6 +3,7 @@ mod transport_validation;
 mod ai;
 mod app_update;
 mod availability;
+mod proposed_times;
 mod attachment_reader;
 mod file_preview;
 mod attachment_text;
@@ -1487,6 +1488,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::calendar::find_availability,
         commands::calendar::meeting_availability,
         commands::calendar::check_proposed_time,
+        commands::calendar::check_proposed_times,
         // Settings transfer and retention
         commands::settings::export_settings,
         commands::settings::preview_settings_import,

@@ -388,7 +388,7 @@ export function App() {
   });
   const {
     summaryPending, summaryError, runBrief, actionProposals, actionProposalSource,
-    actionAnalysisLoading, actionAnalysisError, actionAnalysisRequested,
+    actionAnalysisLoading, actionAnalysisError, actionAnalysisRequested, offeredTimes,
     actionHiddenCount, actionExtraCount, chatByThread, chatPendingThreads, chatFailures, chatFocusRequest, askThread,
     focusThreadChat, updateActionProposal, removeActionProposal, discardActionProposal,
     ownAddresses,
@@ -1310,6 +1310,7 @@ export function App() {
       {mailInView && !scheduleShown && !composingApart ? (
         <ErrorBoundary area="the context panel" variant="side" resetKey={selectedId}>
         <ContextPanel
+          hasProposedTimes={Boolean(offeredTimes?.times.length)}
           detail={visibleDetail}
           idle={inboxZero ? (
             <InboxZeroSections onOpenToday={() => executeById("view.today")} />
@@ -1338,8 +1339,9 @@ export function App() {
           availability={calendarConnected && visibleDetail && !invitationMessage ? (
             // While reading, Find Times reads the conversation, and choosing times starts a reply.
             <AvailabilitySection
-              key={visibleDetail.thread.id}
+              key={`${visibleDetail.thread.id}:${visibleDetail.thread.lastMessageAt}`}
               compact
+              offeredTimes={offeredTimes}
               ownEmails={accounts.map((account) => account.email)}
               preferences={availabilityPreferences}
               ai={aiDraftAvailable}
@@ -1355,7 +1357,7 @@ export function App() {
                 proposals: actionProposals,
               })}
               suggest={() => suggestedSearch(actionProposals, new Date(), availabilityPreferences.defaultDurationMinutes)}
-              onInsertTimes={draftAvailabilityReply}
+              onInsertTimes={(candidates) => draftAvailabilityReply(candidates, offeredTimes?.sourceMessageId)}
               onOpenCalendarSettings={() => openSettingsAt("calendarAccounts")}
             />
           ) : null}

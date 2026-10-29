@@ -551,6 +551,8 @@ describe("ContextPanel",()=>{
       expect(row).toHaveClass("context-ai-row");
       expect(within(row).queryByRole("region",{name:"Availability"})).not.toBeInTheDocument();
       await personLoaded(`derived:${news}`);
+      rerender(<ContextPanel accounts={[account]} onOpenThread={vi.fn()} {...props} hasProposedTimes />);
+      expect(within(row).getByRole("region",{name:"Availability"})).toBeInTheDocument();
       rerender(<ContextPanel accounts={[account]} onOpenThread={vi.fn()} {...props} reply={{recipients:[{email:news,name:null}]}}/>);
       expect(within(row).getByRole("region",{name:"Availability"})).toBeInTheDocument();
     });

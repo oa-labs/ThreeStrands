@@ -67,6 +67,19 @@ describe("useThreadIntelligence", () => {
   });
 
   describe("briefs", () => {
+    it("keeps offered scheduling options independently of task proposals and scopes them to the thread revision", async () => {
+      const offeredTimes = { sourceMessageId: "welcome-message", times: [{ sourceText: "Tuesday at 7 PM", localStart: "2099-01-06T19:00", durationMinutes: 60, timeZone: null }] };
+      vi.spyOn(mailClient, "briefThread").mockResolvedValue({ ...briefResult, offeredTimes, analysis: { proposals: [taskProposal], hiddenCount: 0 } });
+      const { result, rerender } = renderIntelligence({ detail: welcome });
+      await act(() => result.current.runBrief());
+      expect(result.current.offeredTimes).toEqual(offeredTimes);
+      expect(result.current.actionProposals).toEqual([taskProposal]);
+      rerender({ detail: roadmap });
+      expect(result.current.offeredTimes).toBeNull();
+      rerender({ detail: { ...welcome, thread: { ...welcome.thread, lastMessageAt: "2099-02-01T00:00:00Z" } } });
+      expect(result.current.offeredTimes).toBeNull();
+    });
+
     it("gets the summary and suggestions in one request, then only calls again on refresh", async () => {
       const briefThread = vi.spyOn(mailClient, "briefThread").mockResolvedValue(briefResult);
       const summarizeThread = vi.spyOn(mailClient, "summarizeThread");
