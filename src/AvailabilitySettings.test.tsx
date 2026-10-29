@@ -1,9 +1,10 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
-import { AvailabilitySettings, nextWorkingWindow, windowsOverlap } from "./AvailabilitySettings";
-import type { AvailabilityPreferences, AvailabilityWindow } from "./domain";
-import { MAX_WORKING_WINDOWS_PER_DAY } from "./settings";
+import { AvailabilitySettings, makeDefaultAvailabilityProfile, nextWorkingWindow, windowsOverlap } from "./AvailabilitySettings";
+import type { Account, AvailabilityPreferences, AvailabilityProfiles, AvailabilityWindow } from "./domain";
+import { DEFAULT_AVAILABILITY_PROFILES, MAX_AVAILABILITY_PROFILES, MAX_WORKING_WINDOWS_PER_DAY } from "./settings";
+import { settingsAccount } from "./test/settingsHarness";
 
 const basePreferences: AvailabilityPreferences = {
   timeZone: "America/New_York",
@@ -32,6 +33,44 @@ function renderSettings(initial: AvailabilityPreferences = basePreferences) {
 }
 
 const window = (weekday: number, start: string, end: string): AvailabilityWindow => ({ weekday, start, end });
+
+const workAccount: Account = { ...settingsAccount, email: "work@example.com", nickname: "Work" };
+const homeAccount: Account = { ...settingsAccount, email: "home@example.com", nickname: null };
+const churchHours = [window(2, "18:30", "21:00"), window(6, "08:00", "12:00")];
+const withChurch: AvailabilityProfiles = {
+  defaultProfile: { id: "default", name: "Work" },
+  otherProfiles: [{ id: "church", name: "Church", workingWindows: churchHours, defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 }],
+  accountDefaults: { "home@example.com": "church" },
+};
+
+function renderWithProfiles(initialProfiles: AvailabilityProfiles = withChurch, accounts: Account[] = [workAccount, homeAccount]) {
+  const latest = { preferences: basePreferences, profiles: initialProfiles };
+  function Harness() {
+    const [preferences, setPreferences] = useState(basePreferences);
+    const [profiles, setProfiles] = useState(initialProfiles);
+    return (
+      <AvailabilitySettings
+        preferences={preferences}
+        onChange={(value) => {
+          latest.preferences = value;
+          setPreferences(value);
+        }}
+        profiles={profiles}
+        onProfilesChange={(value, nextPreferences) => {
+          latest.profiles = value;
+          setProfiles(value);
+          if (nextPreferences) {
+            latest.preferences = nextPreferences;
+            setPreferences(nextPreferences);
+          }
+        }}
+        accounts={accounts}
+      />
+    );
+  }
+  render(<Harness />);
+  return latest;
+}
 
 describe("AvailabilitySettings working hours", () => {
   it("sets and disables the drive time buffer at the bottom of the panel", () => {
@@ -101,6 +140,122 @@ describe("AvailabilitySettings working hours", () => {
   it("notes overlapping slots", () => {
     renderSettings({ ...basePreferences, workingWindows: [window(1, "09:00", "12:00"), window(1, "11:00", "13:00")] });
     expect(within(screen.getByRole("group", { name: "Monday Hours" })).getByText("Overlapping slots count as one.")).toBeInTheDocument();
+  });
+});
+
+describe("AvailabilitySettings profiles", () => {
+  it("shows one set of hours until a second profile exists", () => {
+    renderWithProfiles(DEFAULT_AVAILABILITY_PROFILES);
+    expect(screen.queryByRole("group", { name: "Profiles" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: /work@example.com/ })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Availability Timezone")).not.toHaveAccessibleDescription();
+  });
+
+  it("adds a profile from the default hours and edits it without changing the default", () => {
+    const latest = renderWithProfiles(DEFAULT_AVAILABILITY_PROFILES);
+    fireEvent.click(screen.getByRole("button", { name: "Add Profile" }));
+
+    const [added] = latest.profiles.otherProfiles;
+    expect(added).toMatchObject({ name: "New Profile", workingWindows: basePreferences.workingWindows, defaultDurationMinutes: 30 });
+    expect(within(screen.getByRole("group", { name: "Profiles" })).getByRole("button", { name: "New Profile" })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.change(screen.getByLabelText("Monday End"), { target: { value: "12:00" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Default Duration" }), { target: { value: "60" } });
+    expect(latest.profiles.otherProfiles[0]).toMatchObject({ workingWindows: [window(1, "09:00", "12:00")], defaultDurationMinutes: 60 });
+    expect(latest.preferences).toEqual(basePreferences);
+  });
+
+  it("edits the shared timezone and slot increment for every profile and says so", () => {
+    const latest = renderWithProfiles();
+    fireEvent.click(screen.getByRole("button", { name: "Church" }));
+    const timeZone = screen.getByLabelText("Availability Timezone");
+    expect(timeZone).toHaveAccessibleDescription();
+    expect(screen.getByRole("combobox", { name: "Slot Increment" })).toHaveAccessibleDescription();
+    expect(screen.getByRole("group", { name: "Profiles" })).toHaveAccessibleDescription();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Slot Increment" }), { target: { value: "30" } });
+    expect(latest.preferences.slotIncrementMinutes).toBe(30);
+    expect(latest.profiles).toEqual(withChurch);
+  });
+
+  it("renames a profile, refusing a name another profile has", () => {
+    const latest = renderWithProfiles();
+    fireEvent.click(screen.getByRole("button", { name: "Church" }));
+    const name = screen.getByRole("textbox", { name: "Profile Name" });
+
+    fireEvent.change(name, { target: { value: "work " } });
+    fireEvent.blur(name);
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(latest.profiles).toEqual(withChurch);
+
+    fireEvent.change(name, { target: { value: " Elders " } });
+    fireEvent.keyDown(name, { key: "Enter" });
+    expect(latest.profiles.otherProfiles[0].name).toBe("Elders");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("chooses each account's profile, and the default profile stores nothing", () => {
+    const latest = renderWithProfiles();
+    const work = screen.getByRole("combobox", { name: "Work (work@example.com)" });
+    const home = screen.getByRole("combobox", { name: "home@example.com" });
+    expect(work).toHaveValue("default");
+    expect(home).toHaveValue("church");
+
+    fireEvent.change(work, { target: { value: "church" } });
+    expect(latest.profiles.accountDefaults).toEqual({ "home@example.com": "church", "work@example.com": "church" });
+    fireEvent.change(home, { target: { value: "default" } });
+    expect(latest.profiles.accountDefaults).toEqual({ "work@example.com": "church" });
+  });
+
+  it("deletes a profile after naming the accounts that move to the default profile", () => {
+    const latest = renderWithProfiles();
+    fireEvent.click(screen.getByRole("button", { name: "Church" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete Profile" }));
+    const confirm = screen.getByRole("group", { name: "Delete Church confirmation" });
+    expect(confirm).toHaveTextContent("home@example.com will use Work.");
+
+    fireEvent.click(within(confirm).getByRole("button", { name: "Delete Profile" }));
+    expect(latest.profiles).toEqual({ ...withChurch, otherProfiles: [], accountDefaults: {} });
+    expect(screen.queryByRole("group", { name: "Profiles" })).not.toBeInTheDocument();
+  });
+
+  it("makes another profile the default, which every account without its own profile then uses", () => {
+    const latest = renderWithProfiles();
+    fireEvent.click(screen.getByRole("button", { name: "Church" }));
+    fireEvent.click(screen.getByRole("button", { name: "Make Default" }));
+
+    expect(latest.preferences).toEqual({ ...basePreferences, workingWindows: churchHours, defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 });
+    expect(latest.profiles.defaultProfile).toEqual({ id: "church", name: "Church" });
+    expect(latest.profiles.otherProfiles).toEqual([{
+      id: "default", name: "Work",
+      workingWindows: basePreferences.workingWindows, defaultDurationMinutes: 30, driveTimeBufferMinutes: 0,
+    }]);
+    // Church is now the default, so neither account needs an entry of its own.
+    expect(latest.profiles.accountDefaults).toEqual({});
+    expect(screen.getByRole("combobox", { name: "home@example.com" })).toHaveValue("church");
+    expect(screen.getByRole("combobox", { name: "Work (work@example.com)" })).toHaveValue("church");
+  });
+
+  it("stops adding profiles at the limit", () => {
+    const template = withChurch.otherProfiles[0];
+    renderWithProfiles({
+      ...withChurch,
+      otherProfiles: Array.from({ length: MAX_AVAILABILITY_PROFILES - 2 }, (_, index) => ({ ...template, id: `p${index}`, name: `Profile ${index}` })),
+      accountDefaults: {},
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add Profile" }));
+    expect(within(screen.getByRole("group", { name: "Profiles" })).getAllByRole("button")).toHaveLength(MAX_AVAILABILITY_PROFILES);
+    expect(screen.getByRole("button", { name: "Add Profile" })).toBeDisabled();
+  });
+});
+
+describe("makeDefaultAvailabilityProfile", () => {
+  it("keeps an account that chose the old default on its hours", () => {
+    const profiles = { ...withChurch, otherProfiles: [...withChurch.otherProfiles, { ...withChurch.otherProfiles[0], id: "board", name: "Board" }] };
+    const next = makeDefaultAvailabilityProfile(basePreferences, profiles, "board");
+    // home@example.com chose Church, which keeps its id and hours.
+    expect(next.profiles.accountDefaults).toEqual({ "home@example.com": "church" });
+    expect(next.profiles.otherProfiles.map((profile) => profile.id)).toEqual(["church", "default"]);
   });
 });
 

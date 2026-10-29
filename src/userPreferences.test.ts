@@ -14,6 +14,7 @@ import {
   type SettingsImportResult,
 } from "./userPreferences";
 import { CALENDAR_COLORS_KEY, resetCalendarColorsForTests } from "./calendarColors";
+import { DEFAULT_AVAILABILITY_PROFILES } from "./settings";
 import { WRITING_PROFILE_LIMITS, WRITING_PROFILES_KEY, resetWritingProfilesForTests } from "./writingProfiles";
 // Shared with the native `transfer::tests::webview_preferences_fixture_matches_the_native_transfer_preferences`
 // test, which deserializes it into `TransferPreferences` (deny_unknown_fields).
@@ -76,6 +77,11 @@ describe("exportable preferences", () => {
         slotIncrementMinutes: 15,
         driveTimeBufferMinutes: 30,
       },
+      availabilityProfiles: {
+        defaultProfile: { id: "default", name: "Work" },
+        otherProfiles: [{ id: "church", name: "Church", workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }], defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 }],
+        accountDefaults: { "person@example.com": "church" },
+      },
       calendarColors: { "person@example.com": { primary: "teal", "team@example.com": "gray" } },
       writingProfiles: { "person@example.com": { aboutYou: "CEO of a consulting firm.\nI sell to CFOs.", reviewInstructions: "" } },
     };
@@ -90,6 +96,15 @@ describe("exportable preferences", () => {
     applyExportablePreferences(nativeContractFixture);
     applyExportablePreferences({ ...nativeContractFixture, availabilityPreferences: previous } as ExportablePreferences);
     expect(readExportablePreferences().availabilityPreferences).toEqual({ ...previous, driveTimeBufferMinutes: 0 });
+  });
+
+  it("imports the preceding preference schema with only the Default profile and keeps its hours", () => {
+    const { availabilityProfiles: _profiles, ...previous } = nativeContractFixture;
+    applyExportablePreferences(nativeContractFixture);
+    applyExportablePreferences(previous as ExportablePreferences);
+    expect(readExportablePreferences().availabilityProfiles).toEqual(DEFAULT_AVAILABILITY_PROFILES);
+    expect(localStorage.getItem("threestrands.settings.availabilityProfiles")).toBeNull();
+    expect(readExportablePreferences().availabilityPreferences).toEqual(previous.availabilityPreferences);
   });
 
   it("imports the preceding preference schema at 100% email zoom", () => {
@@ -191,10 +206,13 @@ describe("exportable preferences", () => {
   });
 
   it("emits exactly the key set the native transfer contract accepts", () => {
-    // Defaults, as on a fresh install. Calendar color and writing profile
-    // keys are account and calendar ids, so only the field itself belongs to
-    // the contract.
-    const schemaPaths = (value: unknown) => keyPaths(value).filter((path) => !path.startsWith("calendarColors.") && !path.startsWith("writingProfiles.")).sort();
+    // Defaults, as on a fresh install. Calendar color, writing profile, and
+    // account default keys are account and calendar ids, so only the field
+    // itself belongs to the contract. A fresh install has no extra profiles.
+    const schemaPaths = (value: unknown) => keyPaths(value).filter((path) => !path.startsWith("calendarColors.")
+      && !path.startsWith("writingProfiles.")
+      && !path.startsWith("availabilityProfiles.accountDefaults.")
+      && !path.startsWith("availabilityProfiles.otherProfiles[]")).sort();
     expect(schemaPaths(readExportablePreferences())).toEqual(schemaPaths(nativeContractFixture));
 
     applyExportablePreferences(nativeContractFixture);

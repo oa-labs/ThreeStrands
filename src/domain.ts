@@ -176,6 +176,27 @@ export type AvailabilityPreferences = {
   driveTimeBufferMinutes: number;
 };
 
+/** A named set of hours, such as Work or Church, that shares the timezone and slot increment. */
+export type AvailabilityProfile = {
+  id: string;
+  name: string;
+  workingWindows: AvailabilityWindow[];
+  defaultDurationMinutes: number;
+  driveTimeBufferMinutes: number;
+};
+
+/**
+ * Profiles beyond the default one. The default profile's hours, length, and
+ * buffer are `AvailabilityPreferences` itself, so devices and exports that
+ * predate profiles keep reading and writing the user's default hours.
+ */
+export type AvailabilityProfiles = {
+  defaultProfile: { id: string; name: string };
+  otherProfiles: AvailabilityProfile[];
+  /** Profile id by lowercased mail account email; absent means the default profile. */
+  accountDefaults: Record<string, string>;
+};
+
 export type MeetingAvailabilityRequest = {
   eventId: string;
   accountId: string;

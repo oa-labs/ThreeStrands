@@ -3678,10 +3678,13 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .proposed-times { display: grid; gap: var(--space-2); font-size: var(--text-secondary); line-height: var(--leading-normal); }
 .proposed-times-summary,
 .proposed-times > .context-status,
-.proposed-times-zone { padding-inline-start: calc(var(--context-row-inset) + var(--context-glyph-column)); }
+.proposed-times-zone,
+.proposed-times .availability-profile-select { padding-inline-start: calc(var(--context-row-inset) + var(--context-glyph-column)); }
 .proposed-times-summary { margin: 0; }
-.proposed-times-zone { display: grid; gap: var(--space-1); color: var(--muted); font-size: var(--text-meta); }
-.proposed-times-zone select { box-sizing: border-box; min-width: 0; max-width: 100%; height: var(--control-h-sm); padding-inline: var(--space-2); font: inherit; font-size: var(--text-control); }
+.proposed-times-zone,
+.proposed-times .availability-profile-select { display: grid; gap: var(--space-1); color: var(--muted); font-size: var(--text-meta); }
+.proposed-times-zone select,
+.proposed-times .availability-profile-select select { box-sizing: border-box; min-width: 0; max-width: 100%; height: var(--control-h-sm); padding-inline: var(--space-2); font: inherit; font-size: var(--text-control); }
 .proposed-times-list { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
 .proposed-time-row .context-row-icon { color: var(--accent); }
 .proposed-time-row .context-row-main { border-radius: var(--radius-sm); }
@@ -3690,3 +3693,6 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .proposed-time-row .context-row-detail { white-space: normal; line-height: var(--leading-normal); }
 .proposed-times-list details { padding-inline-start: calc(var(--context-row-inset) + var(--context-glyph-column)); color: var(--muted); font-size: var(--text-meta); overflow-wrap: anywhere; }
 .proposed-times-list details p { margin-block: var(--space-1); }
+
+.availability-profile-select { display: grid; gap: var(--space-1); }
+.availability-profile-select select { min-width: 0; max-width: 100%; }

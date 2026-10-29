@@ -72,6 +72,46 @@ describe("useAppPreferences", () => {
     expect(result.current.availabilityPreferences.defaultDurationMinutes).toBe(before.defaultDurationMinutes + 15);
   });
 
+  it("gives each account its profile's preferences, the same object until settings change", () => {
+    const { result } = renderHook(() => useAppPreferences());
+    const church = { id: "church", name: "Church", workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }], defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 };
+    act(() => result.current.setAvailabilityProfiles({ ...result.current.availabilityProfiles, otherProfiles: [church], accountDefaults: { "home@example.com": "church" } }));
+
+    const home = result.current.availabilityFor("Home@example.com");
+    const shared = result.current.availabilityPreferences;
+    expect(home).toEqual({
+      timeZone: shared.timeZone,
+      slotIncrementMinutes: shared.slotIncrementMinutes,
+      workingWindows: church.workingWindows,
+      defaultDurationMinutes: 60,
+      driveTimeBufferMinutes: 15,
+    });
+    expect(result.current.availabilityFor("work@example.com")).toBe(result.current.availabilityPreferences);
+    expect(result.current.availabilityFor(null)).toBe(result.current.availabilityPreferences);
+
+    // An unrelated preference change keeps the object, so meeting cards don't re-check the calendar.
+    act(() => result.current.setAutoReadDelaySeconds(5));
+    expect(result.current.availabilityFor("home@example.com")).toBe(home);
+
+    // The shared timezone reaches every profile.
+    act(() => result.current.setAvailabilityPreferences({ ...result.current.availabilityPreferences, timeZone: "Asia/Tokyo" }));
+    expect(result.current.availabilityFor("home@example.com").timeZone).toBe("Asia/Tokyo");
+  });
+
+  it("uses a profile chosen for one conversation until that profile is deleted", () => {
+    const { result } = renderHook(() => useAppPreferences());
+    const church = { id: "church", name: "Church", workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }], defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 };
+    act(() => result.current.setAvailabilityProfiles({ ...result.current.availabilityProfiles, otherProfiles: [church] }));
+
+    expect(result.current.availabilityProfileFor("work@example.com", "church")).toBe("church");
+    expect(result.current.availabilityFor("work@example.com", "church").workingWindows).toEqual(church.workingWindows);
+    // A missing choice, or one naming a deleted profile, falls back to the account's profile.
+    expect(result.current.availabilityFor("work@example.com", null)).toBe(result.current.availabilityPreferences);
+    act(() => result.current.setAvailabilityProfiles({ ...result.current.availabilityProfiles, otherProfiles: [] }));
+    expect(result.current.availabilityProfileFor("work@example.com", "church")).toBe("default");
+    expect(result.current.availabilityFor("work@example.com", "church")).toBe(result.current.availabilityPreferences);
+  });
+
   it("adjusts font scale through the shared bounds", () => {
     const { result } = renderHook(() => useAppPreferences());
 

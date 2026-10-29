@@ -12,6 +12,9 @@ Current exports contain:
 - appearance, reading, remote-image, selected-account, and non-secret AI
   preferences from the typed allowlist in `src/userPreferences.ts`;
 - availability preferences and calendar colors;
+- availability profiles and each account's default profile (omitted when
+  only the Default profile exists, so such an export still imports into
+  builds before 0.182.0);
 - account email addresses, provider identifiers, sender names, nicknames, colors, and order;
 - local Split Inbox definitions and reusable snippets;
 - saved contact profiles, ordered linked addresses, photos, favorites, birthdays,

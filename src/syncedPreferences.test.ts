@@ -7,6 +7,14 @@ import { pullSyncedPreferences, queuePortablePreferences, queuePortablePreferenc
 import { DEFAULT_AI_FEATURES, readAiFeatures, saveAiFeatures } from "./aiSettings";
 import { readCalendarColors, resetCalendarColorsForTests, setCalendarColor } from "./calendarColors";
 import { readWritingProfiles, resetWritingProfilesForTests, setWritingProfile } from "./writingProfiles";
+import { readAvailabilityPreferences, readAvailabilityPreferencesFor, readAvailabilityProfiles, saveAvailabilityProfiles } from "./settings";
+import type { AvailabilityProfiles } from "./domain";
+
+const churchProfiles: AvailabilityProfiles = {
+  defaultProfile: { id: "default", name: "Work" },
+  otherProfiles: [{ id: "church", name: "Church", workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }], defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 }],
+  accountDefaults: { "home@example.com": "church" },
+};
 
 function queuedPreferences(): Record<string, unknown> {
   const call = vi.mocked(invoke).mock.calls.find(([command]) => command === "update_synced_preferences");
@@ -70,6 +78,7 @@ describe("synced preferences data boundary", () => {
       "aiProvider",
       "autoReadDelaySeconds",
       "availabilityPreferences",
+      "availabilityProfiles",
       "calendarColors",
       "loadRemoteImages",
       "writingProfiles",
@@ -181,6 +190,36 @@ describe("synced preferences data boundary", () => {
     vi.mocked(invoke).mockResolvedValue({ autoReadDelaySeconds: 4 });
     await pullSyncedPreferences();
     expect(readWritingProfiles()).toEqual({ "me@example.com": { aboutYou: "Founder", reviewInstructions: "Push for a call." } });
+  });
+
+  it("queues availability profiles with the default profile's hours for devices without profiles", () => {
+    saveAvailabilityProfiles(churchProfiles);
+    queuePortablePreferences();
+    expect(queuedPreferences().availabilityProfiles).toEqual(churchProfiles);
+    expect(queuedPreferences().availabilityPreferences).toEqual(readAvailabilityPreferences());
+  });
+
+  it("applies profiles from another device and keeps them when an older replica omits them", async () => {
+    vi.mocked(invoke).mockResolvedValue({ availabilityProfiles: churchProfiles });
+    await pullSyncedPreferences();
+    expect(readAvailabilityProfiles()).toEqual(churchProfiles);
+
+    vi.mocked(invoke).mockResolvedValue({ autoReadDelaySeconds: 4 });
+    await pullSyncedPreferences();
+    expect(readAvailabilityProfiles()).toEqual(churchProfiles);
+  });
+
+  it("applies hours an older device changed to the default profile and leaves the other profiles alone", async () => {
+    saveAvailabilityProfiles(churchProfiles);
+    const older = { ...readAvailabilityPreferences(), workingWindows: [{ weekday: 1, start: "07:00", end: "15:00" }] };
+    // An older device knows only one set of hours and sends no profiles.
+    vi.mocked(invoke).mockResolvedValue({ availabilityPreferences: older });
+
+    await pullSyncedPreferences();
+
+    expect(readAvailabilityPreferencesFor("work@example.com")).toEqual(older);
+    expect(readAvailabilityProfiles()).toEqual(churchProfiles);
+    expect(readAvailabilityPreferencesFor("home@example.com").workingWindows).toEqual(churchProfiles.otherProfiles[0].workingWindows);
   });
 
   it("preserves the device appearance when a new replica omits it", async () => {

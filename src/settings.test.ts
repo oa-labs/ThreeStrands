@@ -2,7 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyFontFamily,
   DEFAULT_AVAILABILITY_PREFERENCES,
+  DEFAULT_AVAILABILITY_PROFILES,
+  MAX_AVAILABILITY_PROFILE_NAME_CHARS,
+  MAX_AVAILABILITY_PROFILES,
   MAX_WORKING_WINDOWS,
+  availabilityProfileId,
+  readAvailabilityPreferencesFor,
+  readAvailabilityProfiles,
+  saveAvailabilityProfiles,
   MAX_DRIVE_TIME_BUFFER_MINUTES,
   DEFAULT_AUTO_READ_DELAY_SECONDS,
   DEFAULT_FONT_FAMILY,
@@ -81,6 +88,77 @@ describe("availability preferences", () => {
   it("rejects malformed stored preferences", () => {
     localStorage.setItem("threestrands.settings.availabilityPreferences", JSON.stringify({ timeZone: "", workingWindows: [] }));
     expect(readAvailabilityPreferences()).toEqual(DEFAULT_AVAILABILITY_PREFERENCES);
+  });
+});
+
+describe("availability profiles", () => {
+  afterEach(() => localStorage.clear());
+
+  const work = { ...DEFAULT_AVAILABILITY_PREFERENCES, timeZone: "America/Chicago", slotIncrementMinutes: 30 };
+  const church = { id: "church", name: "Church", workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }], defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 };
+  const withChurch = { ...DEFAULT_AVAILABILITY_PROFILES, otherProfiles: [church], accountDefaults: { "home@example.com": "church" } };
+  const named = (count: number, name = (index: number) => `Profile ${index}`) => ({
+    ...DEFAULT_AVAILABILITY_PROFILES,
+    otherProfiles: Array.from({ length: count }, (_, index) => ({ ...church, id: `p${index}`, name: name(index) })),
+  });
+
+  it("migrates existing hours into the Default profile without touching them", () => {
+    saveAvailabilityPreferences(work);
+    expect(readAvailabilityProfiles()).toEqual(DEFAULT_AVAILABILITY_PROFILES);
+    expect(readAvailabilityProfiles().defaultProfile.name).toBe("Default");
+    expect(readAvailabilityPreferencesFor("home@example.com")).toEqual(work);
+    expect(localStorage.getItem("threestrands.settings.availabilityProfiles")).toBeNull();
+  });
+
+  it("gives an account its profile's hours with the shared timezone and slot increment", () => {
+    saveAvailabilityPreferences(work);
+    saveAvailabilityProfiles(withChurch);
+    expect(readAvailabilityPreferencesFor("Home@Example.com")).toEqual({
+      timeZone: "America/Chicago",
+      slotIncrementMinutes: 30,
+      workingWindows: church.workingWindows,
+      defaultDurationMinutes: 60,
+      driveTimeBufferMinutes: 15,
+    });
+    expect(readAvailabilityPreferencesFor("work@example.com")).toEqual(work);
+    expect(readAvailabilityPreferencesFor(null)).toEqual(work);
+  });
+
+  it("keeps account defaults only for profiles other than the default, under lowercased accounts", () => {
+    const saved = saveAvailabilityProfiles({
+      ...withChurch,
+      accountDefaults: { "Home@Example.com": "church", "work@example.com": "default", "old@example.com": "deleted" },
+    });
+    expect(saved.accountDefaults).toEqual({ "home@example.com": "church" });
+    expect(availabilityProfileId(saved, "old@example.com")).toBe("default");
+  });
+
+  it("stores up to the profile limit, counting the default profile", () => {
+    const full = named(MAX_AVAILABILITY_PROFILES - 1);
+    expect(saveAvailabilityProfiles(named(MAX_AVAILABILITY_PROFILES - 2))).toEqual(named(MAX_AVAILABILITY_PROFILES - 2));
+    expect(saveAvailabilityProfiles(full)).toEqual(full);
+    expect(saveAvailabilityProfiles(named(MAX_AVAILABILITY_PROFILES))).toEqual(full);
+  });
+
+  it("stores names up to the length limit and rejects unusable names", () => {
+    const longest = named(1, () => "é".repeat(MAX_AVAILABILITY_PROFILE_NAME_CHARS));
+    expect(saveAvailabilityProfiles(named(1, () => "é".repeat(MAX_AVAILABILITY_PROFILE_NAME_CHARS - 1)))).toEqual(named(1, () => "é".repeat(MAX_AVAILABILITY_PROFILE_NAME_CHARS - 1)));
+    expect(saveAvailabilityProfiles(longest)).toEqual(longest);
+    for (const name of ["é".repeat(MAX_AVAILABILITY_PROFILE_NAME_CHARS + 1), "", " Church", "default"]) {
+      expect(saveAvailabilityProfiles(named(1, () => name))).toEqual(longest);
+    }
+  });
+
+  it("rejects a profile whose hours break the availability rules", () => {
+    saveAvailabilityProfiles(withChurch);
+    const brokenHours = { ...church, workingWindows: [{ weekday: 2, start: "21:00", end: "18:30" }] };
+    expect(saveAvailabilityProfiles({ ...withChurch, otherProfiles: [brokenHours] })).toEqual(withChurch);
+    expect(saveAvailabilityProfiles({ ...withChurch, otherProfiles: [{ ...church, driveTimeBufferMinutes: MAX_DRIVE_TIME_BUFFER_MINUTES + 1 }] })).toEqual(withChurch);
+  });
+
+  it("falls back to the Default profile when the stored value is malformed", () => {
+    localStorage.setItem("threestrands.settings.availabilityProfiles", JSON.stringify({ defaultProfile: { id: "" }, otherProfiles: [] }));
+    expect(readAvailabilityProfiles()).toEqual(DEFAULT_AVAILABILITY_PROFILES);
   });
 });
 

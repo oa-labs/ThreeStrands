@@ -3,6 +3,7 @@ import type {
   Account,
   AuthStatus,
   AvailabilityPreferences,
+  AvailabilityProfiles,
   CalendarAccount,
   CalendarOption,
   SenderRule,
@@ -49,6 +50,8 @@ export type SettingsPreferences = {
   setLoadRemoteImages(value: boolean): void;
   availabilityPreferences: AvailabilityPreferences;
   setAvailabilityPreferences(value: AvailabilityPreferences): void;
+  availabilityProfiles: AvailabilityProfiles;
+  setAvailabilityProfiles(value: AvailabilityProfiles, preferences?: AvailabilityPreferences): void;
 };
 
 export type MailAccountSettings = {

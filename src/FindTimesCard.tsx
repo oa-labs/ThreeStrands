@@ -124,7 +124,7 @@ export function FindTimesCard({
     <ProposedTimesCard times={effectivePlan.proposedTimes} preferences={preferences} calendarConnected={calendarConnected}
       intoDraft={intoDraft} onReplyWithTimes={onReplyWithTimes} onOpenCalendarSettings={onOpenCalendarSettings}
       onFindOtherTimes={() => setAdjusted((previous) => ({ key: (previous?.key ?? 0) + 1,
-        plan: { query: lookaheadRange(new Date()), durationMinutes: effectivePlan.durationMinutes, timeZoneAssumed: false },
+        plan: { query: lookaheadRange(new Date()), durationMinutes: effectivePlan.durationMinutes, durationIsDefault: effectivePlan.durationIsDefault, timeZoneAssumed: false },
         reason: "Finding other times in your usual hours." }))} />
   </>;
 

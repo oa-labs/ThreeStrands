@@ -1,7 +1,9 @@
 import { act } from "@testing-library/react";
 import { CALENDAR_AVAILABILITY_CHANGED } from "./calendarAvailability";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AvailabilityProfileChoiceContext } from "./AvailabilityProfileChoice";
 import { MeetingScheduler, uncheckedNote, zoneName } from "./MeetingScheduler";
 import { clearScheduleCache } from "./calendarScheduleCache";
 import { mailClient } from "./data/client";
@@ -263,6 +265,54 @@ describe("MeetingScheduler", () => {
     expect(screen.getByText("This event has already happened.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Find New Times" })).not.toBeInTheDocument();
     expect(search).not.toHaveBeenCalled();
+  });
+
+  describe("choosing another availability profile", () => {
+    const church: AvailabilityPreferences = {
+      ...preferences,
+      workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }, { weekday: 6, start: "08:00", end: "12:00" }],
+      defaultDurationMinutes: 60,
+    };
+    function ProfileHarness({ plan, profiles = [{ id: "work", name: "Work" }, { id: "church", name: "Church" }] }: { plan: SchedulePlan; profiles?: { id: string; name: string }[] }) {
+      const [selectedId, setSelectedId] = useState("work");
+      return <AvailabilityProfileChoiceContext.Provider value={{ profiles, selectedId, scope: "conversation", onSelect: setSelectedId }}>
+        <MeetingScheduler plan={plan} preferences={selectedId === "church" ? church : preferences} calendarConnected
+          onAddToCalendar={vi.fn()} onReplyWithTimes={vi.fn()} onConfirmTime={vi.fn()} onOpenCalendarSettings={vi.fn()} />
+      </AvailabilityProfileChoiceContext.Provider>;
+    }
+    const findOpenTimes = () => vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [candidate(50)], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
+
+    it("searches again with the profile's hours and length, keeping the part of the day", async () => {
+      const find = findOpenTimes();
+      render(<ProfileHarness plan={{ ...range, durationMinutes: 30, durationIsDefault: true }} />);
+      fireEvent.click(await screen.findByRole("button", { name: "Afternoons" }));
+      const profile = await screen.findByRole("combobox", { name: "Usual Hours" });
+      expect(profile).toHaveAccessibleDescription();
+
+      fireEvent.change(profile, { target: { value: "church" } });
+
+      await waitFor(() => expect(find).toHaveBeenLastCalledWith(expect.objectContaining({
+        preferences: expect.objectContaining({ workingWindows: [{ weekday: 2, start: "18:30", end: "21:00" }], defaultDurationMinutes: 60 }),
+      })));
+      expect(await screen.findByRole("button", { name: "Afternoons" })).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByText(/· 1 hr$/)).toBeInTheDocument();
+    });
+
+    it("keeps a length the email stated", async () => {
+      const find = findOpenTimes();
+      render(<ProfileHarness plan={range} />);
+      fireEvent.change(await screen.findByRole("combobox", { name: "Usual Hours" }), { target: { value: "church" } });
+      await waitFor(() => expect(find).toHaveBeenLastCalledWith(expect.objectContaining({
+        preferences: expect.objectContaining({ workingWindows: church.workingWindows, defaultDurationMinutes: 45 }),
+      })));
+    });
+
+    it("offers no choice with only one profile", async () => {
+      findOpenTimes();
+      render(<ProfileHarness plan={range} profiles={[{ id: "work", name: "Work" }]} />);
+      expect(await screen.findByRole("button", { name: "Afternoons" })).toBeInTheDocument();
+      expect(screen.queryByRole("combobox", { name: "Usual Hours" })).not.toBeInTheDocument();
+    });
   });
 
   it("keeps its result when re-rendered with equal preferences", async () => {

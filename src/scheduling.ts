@@ -31,6 +31,11 @@ export type SchedulePlan = {
   query: ScheduleQuery | null;
   proposedTimes?: ProposedTime[];
   durationMinutes: number;
+  /**
+   * Nothing stated a length, so `durationMinutes` is the profile's default
+   * meeting length and follows a change of availability profile.
+   */
+  durationIsDefault?: boolean;
   /** The meeting gave no timezone, so the user's own is assumed. */
   timeZoneAssumed: boolean;
   /**
@@ -47,6 +52,11 @@ export type SchedulePlan = {
 };
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Marks a plan whose length came from the profile rather than the email. */
+export function defaultLength(value: number | null | undefined): { durationIsDefault?: true } {
+  return value == null || !Number.isFinite(value) ? { durationIsDefault: true } : {};
+}
 
 export function clampMeetingMinutes(value: number | null | undefined, fallback: number): number {
   const minutes = value ?? fallback;
@@ -84,6 +94,7 @@ export function planMeeting(proposal: MeetingProposal, now: Date, defaultDuratio
       ? clampMeetingMinutes(Math.round((statedEnd.getTime() - start.getTime()) / 60_000), defaultDurationMinutes)
       : clampMeetingMinutes(proposal.durationMinutes, defaultDurationMinutes);
     const end = hasEnd ? statedEnd : new Date(start.getTime() + durationMinutes * 60_000);
+    // A specific time keeps the length it was checked with.
     return {
       query: start > now ? { kind: "specific", start: start.toISOString(), end: end.toISOString() } : null,
       durationMinutes,
@@ -92,6 +103,7 @@ export function planMeeting(proposal: MeetingProposal, now: Date, defaultDuratio
     };
   }
   const durationMinutes = clampMeetingMinutes(proposal.durationMinutes, defaultDurationMinutes);
+  const length = { durationMinutes, ...defaultLength(proposal.durationMinutes) };
   if (proposal.eventDate && DATE_PATTERN.test(proposal.eventDate)) {
     return {
       query: null,
@@ -102,10 +114,10 @@ export function planMeeting(proposal: MeetingProposal, now: Date, defaultDuratio
     };
   }
   if (proposal.searchRangeStart && proposal.searchRangeEnd) {
-    return { query: boundedRange(new Date(proposal.searchRangeStart), new Date(proposal.searchRangeEnd), now), durationMinutes, timeZoneAssumed, ...kind };
+    return { query: boundedRange(new Date(proposal.searchRangeStart), new Date(proposal.searchRangeEnd), now), ...length, timeZoneAssumed, ...kind };
   }
   if (announced) return { query: null, undated: true, durationMinutes, timeZoneAssumed, announced };
-  return { query: lookaheadRange(now), durationMinutes, timeZoneAssumed };
+  return { query: lookaheadRange(now), ...length, timeZoneAssumed };
 }
 
 /** A search already found for a conversation, with why it was chosen. */
@@ -155,6 +167,7 @@ export function planChatAvailability(request: ChatAvailability, now: Date, defau
   return {
     query: boundedRange(new Date(request.rangeStart), new Date(request.rangeEnd), now),
     durationMinutes: clampMeetingMinutes(request.durationMinutes, defaultDurationMinutes),
+    ...defaultLength(request.durationMinutes),
     timeZoneAssumed: false,
     bounds: { weekdays: request.weekdays, dayStart: request.dayStart, dayEnd: request.dayEnd },
   };
@@ -198,6 +211,7 @@ export function planTimeSearch(search: TimeSearch, now: Date, defaultDurationMin
     // since passed falls back to the coming week.
     query: boundedRange(new Date(search.rangeStart), new Date(search.rangeEnd), now) ?? lookaheadRange(now),
     durationMinutes: clampMeetingMinutes(search.durationMinutes, defaultDurationMinutes),
+    ...defaultLength(search.durationMinutes),
     timeZoneAssumed: false,
     bounds: { weekdays: search.weekdays, dayStart: search.dayStart, dayEnd: search.dayEnd },
   };

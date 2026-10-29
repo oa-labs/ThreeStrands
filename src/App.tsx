@@ -55,6 +55,7 @@ import { FILES_CHANGED } from "./FileStarButton";
 import { draftRecipients } from "./composeChecks";
 import { ComposeContext, ReplyChecks } from "./ComposeContext";
 import { ContactCardContext } from "./ContactCard";
+import { AvailabilityProfileChoiceContext, type AvailabilityProfileChoice } from "./AvailabilityProfileChoice";
 import { ConversationBatchToolbar } from "./ConversationBatchToolbar";
 import { ContactMeetings } from "./ContactMeetings";
 import { ContextPanel } from "./ContextPanel";
@@ -164,6 +165,9 @@ export function App() {
     autoReadDelaySeconds,
     loadRemoteImages,
     availabilityPreferences,
+    availabilityProfiles,
+    availabilityProfileFor,
+    availabilityFor,
   } = preferences;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -381,6 +385,25 @@ export function App() {
   const invitationMessage = visibleDetail ? latestInvitationMessage(visibleDetail) : null;
   const canUnsubscribe = Boolean(latestMessage?.unsubscribe?.methods.length);
   const unsubscribeMessage = visibleDetail?.messages.find((message) => message.id === unsubscribeMessageId) ?? null;
+  // Profiles chosen for one conversation or draft, kept until the app quits.
+  const [chosenProfiles, setChosenProfiles] = useState<Record<string, string>>({});
+  const profileOptions = useMemo(
+    () => [availabilityProfiles.defaultProfile, ...availabilityProfiles.otherProfiles].map(({ id, name }) => ({ id, name })),
+    [availabilityProfiles],
+  );
+  const profileChoice = (key: string, scope: AvailabilityProfileChoice["scope"], accountId: string | null | undefined): AvailabilityProfileChoice => ({
+    profiles: profileOptions,
+    selectedId: availabilityProfileFor(accountId, chosenProfiles[key]),
+    scope,
+    onSelect: (id) => setChosenProfiles((current) => {
+      const { [key]: _previous, ...others } = current;
+      // Choosing the account's own profile again lets the choice follow the account.
+      return id === availabilityProfileFor(accountId) ? others : { ...others, [key]: id };
+    }),
+  });
+  // The open conversation's account chooses which availability profile its cards use, unless one was chosen for it.
+  const threadProfileKey = `thread:${visibleDetail?.thread.id ?? ""}`;
+  const threadAvailability = availabilityFor(visibleDetail?.thread.accountId, chosenProfiles[threadProfileKey]);
   const intelligence = useThreadIntelligence({
     accounts, selected, visibleDetail, isThreadMailbox, autoReadDelaySeconds,
     availabilityPreferences, applyThreadSummary, aiProactive, aiSummaryAvailable,
@@ -407,7 +430,7 @@ export function App() {
     meetingEditor, setMeetingEditor, meetingEventDraft, setMeetingEventDraft, openedCalendarFiles,
     dismissOpenedCalendarFile, addOpenedInvitationToCalendar, addMeetingToCalendar,
     meetingCreated, meetingScheduling, draftAvailabilityReply,
-  } = useMeetingActions({ workspaces, correspondence, visibleDetail, availabilityPreferences, openSettingsAt, setNotice, ownAddresses, removeActionProposal });
+  } = useMeetingActions({ workspaces, correspondence, visibleDetail, availabilityPreferences: threadAvailability, openSettingsAt, setNotice, ownAddresses, removeActionProposal });
   const { systemLabelNames: conversationSystemLabels, userLabels: conversationUserLabels } = visibleDetail
     ? conversationLabelGroups(visibleDetail.thread.labels, labelsByAccount[visibleDetail.thread.accountId])
     : { systemLabelNames: [], userLabels: [] };
@@ -630,6 +653,7 @@ export function App() {
     && selectedThreads.every((thread) => thread.starred);
 
   return (
+    <AvailabilityProfileChoiceContext.Provider value={profileChoice(threadProfileKey, "conversation", visibleDetail?.thread.accountId)}>
     <main className={`app-shell${rightWorkspace === "today" ? " today-open" : rightWorkspace === "files" ? " files-open" : rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <AccountSwitcher
@@ -1113,7 +1137,7 @@ export function App() {
                     message={message}
                     invitationActions={message.id === invitationMessage?.id ? {
                       calendarConnected,
-                      preferences: availabilityPreferences,
+                      preferences: threadAvailability,
                       ai: aiDraftAvailable,
                       intoDraft: Boolean(composerBelongsToVisibleThread && correspondence.liveDraft),
                       onReplyWithTimes: draftAvailabilityReply,
@@ -1283,6 +1307,7 @@ export function App() {
       ) : null}
       {mailInView && !scheduleShown && composingApart && correspondence.liveDraft ? (
         <ErrorBoundary area="this draft's context" variant="side" resetKey={correspondence.liveDraft.id}>
+        <AvailabilityProfileChoiceContext.Provider value={profileChoice(`draft:${correspondence.liveDraft.id}`, "message", correspondence.liveDraft.account)}>
         <ComposeContext
           key={correspondence.liveDraft.id}
           draft={correspondence.liveDraft}
@@ -1290,7 +1315,7 @@ export function App() {
           onKeyDown={contextPanelKeyDown}
           calendarConnected={calendarConnected}
           findTimesAi={aiDraftAvailable}
-          preferences={availabilityPreferences}
+          preferences={availabilityFor(correspondence.liveDraft.account, chosenProfiles[`draft:${correspondence.liveDraft.id}`])}
           taskRefreshKey={taskRevision}
           onAttach={correspondence.context.attachFiles}
           onReplaceRecipient={correspondence.replaceDraftRecipient}
@@ -1305,6 +1330,7 @@ export function App() {
           onDraftFollowUp={(task) => void draftFollowUp(task)}
           onTasksChanged={() => { setTaskRevision((current) => current + 1); void refreshTaskIndicators(); }}
         />
+        </AvailabilityProfileChoiceContext.Provider>
         </ErrorBoundary>
       ) : null}
       {mailInView && !scheduleShown && !composingApart ? (
@@ -1345,7 +1371,7 @@ export function App() {
               offeredTimesError={offeredTimesError}
               onRetryOfferedTimes={aiSummaryAvailable && aiActionAvailable ? () => runBrief({ force: true }) : undefined}
               ownEmails={accounts.map((account) => account.email)}
-              preferences={availabilityPreferences}
+              preferences={threadAvailability}
               ai={aiDraftAvailable}
               draft={composerBelongsToVisibleThread && correspondence.liveDraft
                 ? correspondence.liveDraft
@@ -1358,7 +1384,7 @@ export function App() {
                 loading: actionAnalysisLoading,
                 proposals: actionProposals,
               })}
-              suggest={() => suggestedSearch(actionProposals, new Date(), availabilityPreferences.defaultDurationMinutes)}
+              suggest={() => suggestedSearch(actionProposals, new Date(), threadAvailability.defaultDurationMinutes)}
               onInsertTimes={(candidates) => draftAvailabilityReply(candidates, offeredTimes?.sourceMessageId)}
               onOpenCalendarSettings={() => openSettingsAt("calendarAccounts")}
             />
@@ -1424,7 +1450,7 @@ export function App() {
               renderAvailability={(availability) => (
                 <FindTimesCard
                   key={[availability.rangeStart, availability.rangeEnd, availability.durationMinutes, availability.weekdays.join(","), availability.dayStart, availability.dayEnd].join("|")}
-                  plan={planChatAvailability(availability, new Date(), availabilityPreferences.defaultDurationMinutes)}
+                  plan={planChatAvailability(availability, new Date(), threadAvailability.defaultDurationMinutes)}
                   {...meetingScheduling}
                   // A follow-up question adjusts these times; the chat box is already the place to type.
                   ai={null}
@@ -1677,5 +1703,6 @@ export function App() {
         <ImageLightbox src={lightboxImageSrc} onClose={() => setLightboxImageSrc(null)} />
       ) : null}
     </main>
+    </AvailabilityProfileChoiceContext.Provider>
   );
 }

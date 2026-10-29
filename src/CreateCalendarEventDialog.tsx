@@ -1,5 +1,5 @@
 import { MeetingAvailabilityPicker } from "./MeetingAvailabilityPicker";
-import { readAvailabilityPreferences } from "./settings";
+import { readAvailabilityPreferencesFor } from "./settings";
 import { schedulingConflicts, schedulingCoverage } from "./meetingAvailability";
 import { useMemo, useState, type FormEvent } from "react";
 import { Modal } from "./AppChrome";
@@ -327,7 +327,7 @@ export function EditCalendarEventDialog({
         const result = await mailClient.meetingAvailability({
           eventId: event.id, accountId: event.accountId, calendarId: event.calendarId,
           attendees: request.attendees, rangeStart: start, rangeEnd: end,
-          preferences: { ...readAvailabilityPreferences(), defaultDurationMinutes: (range.endTime - range.startTime) / 60_000 },
+          preferences: { ...readAvailabilityPreferencesFor(event.accountId), defaultDurationMinutes: (range.endTime - range.startTime) / 60_000 },
         });
         const conflicts = schedulingConflicts(result, range.startTime, range.endTime);
         const unknown = [result.own, ...result.guests].filter((person) => !person.checked);

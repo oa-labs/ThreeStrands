@@ -302,6 +302,9 @@ export function Settings({
             <AvailabilitySettings
               preferences={preferences.availabilityPreferences}
               onChange={preferences.setAvailabilityPreferences}
+              profiles={preferences.availabilityProfiles}
+              onProfilesChange={preferences.setAvailabilityProfiles}
+              accounts={mailAccounts.accounts}
             />
           ) : null}
           {section === "splitInboxes" ? (

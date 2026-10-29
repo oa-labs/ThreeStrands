@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { mailClient } from "./data/client";
 import type { MeetingAvailabilityRequest, MeetingAvailabilityResult } from "./domain";
 import { errorMessage } from "./errors";
-import { readAvailabilityPreferences } from "./settings";
+import { readAvailabilityPreferencesFor } from "./settings";
 import { schedulingConflicts, schedulingCoverage, schedulingDay, schedulingDayStart, schedulingWeek, shiftSchedulingDay, SCHEDULING_STEP_MINUTES } from "./meetingAvailability";
 import { ICON_SIZE } from "./iconSizes";
 
@@ -21,7 +21,7 @@ type Props = {
 };
 
 export function MeetingAvailabilityPicker({ eventId, accountId, calendarId, attendees, originalStart, originalEnd, start, end, disabled, onSelect }: Props) {
-  const [preferences] = useState(readAvailabilityPreferences);
+  const [preferences] = useState(() => readAvailabilityPreferencesFor(accountId));
   const timeZone = preferences.timeZone;
   const [day, setDay] = useState(() => schedulingDay(Math.max(start, Date.now()), timeZone));
   const [attempt, setAttempt] = useState(0);
