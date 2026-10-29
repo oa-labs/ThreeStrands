@@ -862,10 +862,13 @@ describe("conversation brief", () => {
         fireEvent.click(within(panel).getByRole("button",{name:"Find Times"}));
       }
       const offered = await within(panel).findByRole("region", {name:"Proposed times"});
-      fireEvent.click(await within(offered).findByRole("button",{name:/^1\./}));
+      // Slots stay disabled until the calendar check returns.
+      await waitFor(() => expect(within(offered).getByRole("button",{name:/^1\./})).toBeEnabled());
+      fireEvent.click(within(offered).getByRole("button",{name:/^1\./}));
+      await waitFor(() => expect(within(offered).getByRole("button", {name:"Draft Reply With Selected Times"})).toBeEnabled());
       fireEvent.click(within(offered).getByRole("button", {name:"Draft Reply With Selected Times"}));
       const composer = await screen.findByRole("dialog", {name:"Reply Message"});
-      expect(within(composer).getByRole("textbox", {name:"Message Body"})).toHaveTextContent("Here are some times that work for me:");
+      await waitFor(() => expect(within(composer).getByRole("textbox", {name:"Message Body"})).toHaveTextContent("Here are some times that work for me:"));
       expect(check).toHaveBeenCalledTimes(2);
       expect(findTimes).not.toHaveBeenCalled();
     } finally { localStorage.removeItem("threestrands.demoCorrespondence"); }
