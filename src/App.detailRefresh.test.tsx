@@ -6,6 +6,8 @@ import { proactiveDwellMs } from "./proactiveBrief";
 import { SLOTS_PER_DAY } from "./scheduling";
 import { App, formatMailTimestamp, messagesWithQueuedReplies } from "./App";
 import { mailClient } from "./data/client";
+import { DEMO_ACCOUNT_ID } from "./data/demoDataset";
+import { saveAvailabilityProfiles } from "./settings";
 import type { OutboxItem } from "./correspondence";
 import type { ContactProfile, ContactTimelineItem, MeetingProposal } from "./domain";
 
@@ -135,6 +137,37 @@ it("inserts open times from the reply's context panel into that reply instead of
     expect(screen.getByRole("dialog", { name: "Reply Message" })).toBe(composer);
   } finally {
     localStorage.removeItem("threestrands.demoCorrespondence");
+  }
+});
+
+it("finds times in a conversation's context panel with its account's availability profile", async () => {
+  clearScheduleCache();
+  const churchHours = [{ weekday: 2, start: "18:30", end: "21:00" }];
+  saveAvailabilityProfiles({
+    defaultProfile: { id: "default", name: "Work" },
+    otherProfiles: [{ id: "church", name: "Church", workingWindows: churchHours, defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 }],
+    accountDefaults: { [DEMO_ACCOUNT_ID]: "church" },
+  });
+  vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([
+    { email: "calendar@example.com", connectedAt: "2026-09-18T00:00:00Z", status: "connected" },
+  ]);
+  vi.spyOn(mailClient, "listScheduleEvents").mockResolvedValue({ events: [], errors: [] });
+  const find = vi.spyOn(mailClient, "findAvailability").mockResolvedValue({ candidates: [], checkedCalendarCount: 1, totalCalendarCount: 1, uncheckedCalendars: [], errors: [] });
+  try {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+    const panel = screen.getByRole("complementary", { name: "Conversation context" });
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    await screen.findByRole("dialog", { name: "Reply Message" });
+    const availability = await within(panel).findByRole("region", { name: "Availability" });
+    fireEvent.click(within(availability).getByRole("button", { name: "Find Times" }));
+
+    await waitFor(() => expect(find).toHaveBeenCalledWith(expect.objectContaining({
+      preferences: expect.objectContaining({ workingWindows: churchHours, defaultDurationMinutes: 60, driveTimeBufferMinutes: 15 }),
+    })));
+  } finally {
+    localStorage.removeItem("threestrands.demoCorrespondence");
+    localStorage.removeItem("threestrands.settings.availabilityProfiles");
   }
 });
 

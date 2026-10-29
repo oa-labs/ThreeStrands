@@ -67,6 +67,54 @@ pub struct WritingProfile {
 /// Writing profile by lowercased mail account email.
 pub type WritingProfiles = BTreeMap<String, WritingProfile>;
 
+/// The default availability profile's identity. Its hours are
+/// `TransferPreferences::availability_preferences`, so builds without
+/// profiles keep importing the user's default hours.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AvailabilityProfileName {
+    pub id: String,
+    pub name: String,
+}
+
+/// A named set of hours that shares the default profile's timezone and slot increment.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AvailabilityProfile {
+    pub id: String,
+    pub name: String,
+    pub working_windows: Vec<crate::models::AvailabilityWindow>,
+    pub default_duration_minutes: u32,
+    pub drive_time_buffer_minutes: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AvailabilityProfiles {
+    pub default_profile: AvailabilityProfileName,
+    #[serde(default)]
+    pub other_profiles: Vec<AvailabilityProfile>,
+    /// Profile id by lowercased mail account email; absent means the default profile.
+    #[serde(default)]
+    pub account_defaults: BTreeMap<String, String>,
+}
+
+impl Default for AvailabilityProfiles {
+    fn default() -> Self {
+        Self {
+            default_profile: AvailabilityProfileName { id: "default".to_string(), name: "Default".to_string() },
+            other_profiles: Vec::new(),
+            account_defaults: BTreeMap::new(),
+        }
+    }
+}
+
+impl AvailabilityProfiles {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AiFeaturePreferences {
@@ -135,6 +183,11 @@ pub struct TransferPreferences {
     // still imports into earlier builds.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub writing_profiles: WritingProfiles,
+    // Added in 0.182 under format version 5; earlier exports import with only
+    // the Default profile. Omitted when that is all there is, so such an
+    // export still imports into earlier builds.
+    #[serde(default, skip_serializing_if = "AvailabilityProfiles::is_default")]
+    pub availability_profiles: AvailabilityProfiles,
 }
 
 fn default_email_zoom() -> i64 {
@@ -212,8 +265,53 @@ impl TransferPreferences {
         crate::availability::validate_preferences(&self.availability_preferences)
             .map_err(|_| "The transfer contains invalid availability preferences".to_string())?;
         validate_calendar_colors(&self.calendar_colors)?;
-        validate_writing_profiles(&self.writing_profiles)
+        validate_writing_profiles(&self.writing_profiles)?;
+        validate_availability_profiles(&self.availability_profiles, &self.availability_preferences)
     }
+}
+
+fn validate_availability_profiles(profiles: &AvailabilityProfiles, shared: &AvailabilityPreferences) -> Result<(), String> {
+    use crate::availability::{
+        MAX_AVAILABILITY_ACCOUNT_DEFAULTS, MAX_AVAILABILITY_PROFILES, MAX_AVAILABILITY_PROFILE_ID_CHARS,
+        MAX_AVAILABILITY_PROFILE_NAME_CHARS,
+    };
+    let invalid = || "The transfer contains an invalid availability profile".to_string();
+    if profiles.other_profiles.len() >= MAX_AVAILABILITY_PROFILES
+        || profiles.account_defaults.len() > MAX_AVAILABILITY_ACCOUNT_DEFAULTS
+    {
+        return Err(invalid());
+    }
+    let names = std::iter::once((&profiles.default_profile.id, &profiles.default_profile.name))
+        .chain(profiles.other_profiles.iter().map(|profile| (&profile.id, &profile.name)));
+    let mut ids = HashSet::new();
+    let mut lowercase_names = HashSet::new();
+    for (id, name) in names {
+        // Names are shown as typed, so they arrive trimmed, and two profiles
+        // can't share a name in any letter case.
+        validate_required_text("availability profile id", id, MAX_AVAILABILITY_PROFILE_ID_CHARS).map_err(|_| invalid())?;
+        // The limit counts characters, as the name field does; a character is at most four bytes.
+        validate_required_text("availability profile name", name, MAX_AVAILABILITY_PROFILE_NAME_CHARS * 4).map_err(|_| invalid())?;
+        if name.chars().count() > MAX_AVAILABILITY_PROFILE_NAME_CHARS || name.trim() != name || !ids.insert(id.as_str()) || !lowercase_names.insert(name.to_lowercase()) {
+            return Err(invalid());
+        }
+    }
+    for profile in &profiles.other_profiles {
+        crate::availability::validate_preferences(&AvailabilityPreferences {
+            time_zone: shared.time_zone.clone(),
+            working_windows: profile.working_windows.clone(),
+            default_duration_minutes: profile.default_duration_minutes,
+            slot_increment_minutes: shared.slot_increment_minutes,
+            drive_time_buffer_minutes: profile.drive_time_buffer_minutes,
+        })
+        .map_err(|_| invalid())?;
+    }
+    for (account, id) in &profiles.account_defaults {
+        validate_required_text("availability profile account", account, MAX_WRITING_PROFILE_ACCOUNT_LENGTH).map_err(|_| invalid())?;
+        if *account != account.to_lowercase() || !profiles.other_profiles.iter().any(|profile| profile.id == *id) {
+            return Err(invalid());
+        }
+    }
+    Ok(())
 }
 
 fn validate_writing_profiles(profiles: &WritingProfiles) -> Result<(), String> {
@@ -1017,6 +1115,7 @@ mod tests {
                 availability_preferences: default_availability_preferences(),
                 calendar_colors: CalendarColors::new(),
                 writing_profiles: WritingProfiles::new(),
+                availability_profiles: AvailabilityProfiles::default(),
             },
             accounts: vec![TransferAccount {
                 email: "person@example.com".to_string(),
@@ -1486,6 +1585,7 @@ mod tests {
     ///   version-4 import path stays exercised with its original bytes).
     /// - `v5-0.121`: last export before muted senders (0.121.0).
     /// - `v5-0.170`: last export before writing profiles (0.171.0).
+    /// - `v5-0.181`: last export before availability profiles (0.182.0).
     /// - `v5-current`: what this build exports. The only fixture with a
     ///   regenerate helper (`regenerate_current_settings_transfer_fixture`).
     ///
@@ -1525,6 +1625,7 @@ mod tests {
         /// end. The only fixture with a regenerate helper
         /// (`regenerate_current_settings_transfer_fixture`).
         pub(super) const V5_0_170: &[u8] = include_bytes!("../tests/fixtures/settings-transfer/v5-0.170.dispatch-settings");
+        pub(super) const V5_0_181: &[u8] = include_bytes!("../tests/fixtures/settings-transfer/v5-0.181.dispatch-settings");
         pub(super) const V5_0_132: &[u8] = include_bytes!("../tests/fixtures/settings-transfer/v5-0.132.dispatch-settings");
         pub(super) const V5_CURRENT: &[u8] =
             include_bytes!("../tests/fixtures/settings-transfer/v5-current.dispatch-settings");
@@ -1886,6 +1987,20 @@ mod tests {
                         review_instructions: "Push for one specific next step.".to_string(),
                     },
                 )]),
+                availability_profiles: AvailabilityProfiles {
+                    default_profile: AvailabilityProfileName { id: "default".to_string(), name: "Work".to_string() },
+                    other_profiles: vec![AvailabilityProfile {
+                        id: "church".to_string(),
+                        name: "Church".to_string(),
+                        working_windows: vec![
+                            crate::models::AvailabilityWindow { weekday: 2, start: "18:30".to_string(), end: "21:00".to_string() },
+                            crate::models::AvailabilityWindow { weekday: 6, start: "08:00".to_string(), end: "12:00".to_string() },
+                        ],
+                        default_duration_minutes: 60,
+                        drive_time_buffer_minutes: 15,
+                    }],
+                    account_defaults: BTreeMap::from([("other@example.net".to_string(), "church".to_string())]),
+                },
             },
             accounts: vec![
                 TransferAccount {
@@ -2043,6 +2158,8 @@ mod tests {
         assert_eq!(preferences.calendar_colors, current_fixture_payload().preferences.calendar_colors);
         assert_eq!(preferences.calendar_colors["current@example.com"]["team@group.calendar.google.com"], "coral");
         assert_eq!(preferences.writing_profiles, current_fixture_payload().preferences.writing_profiles);
+        assert_eq!(preferences.availability_profiles, current_fixture_payload().preferences.availability_profiles);
+        assert_eq!(preferences.availability_profiles.account_defaults["other@example.net"], "church");
 
         // Version 5 adds a third account (IMAP) carrying its settings.
         assert_eq!((result.account_count, result.split_inbox_count, result.snippet_count, result.contact_count), (3, 1, 1, 1));
@@ -2393,6 +2510,76 @@ mod tests {
         result.preferences.validate().unwrap();
         assert!(result.preferences.writing_profiles.is_empty());
         assert_eq!(result.preferences.calendar_colors, current_fixture_payload().preferences.calendar_colors);
+    }
+
+    #[test]
+    fn frozen_v5_0_181_export_imports_with_only_the_default_availability_profile() {
+        assert_eq!(envelope_version(fixtures::V5_0_181), VERSION);
+        let (_, result) = import_fixture(fixtures::V5_0_181);
+        result.preferences.validate().unwrap();
+        assert!(result.preferences.availability_profiles.is_default());
+        // The default profile keeps the hours the export carried.
+        let availability = &result.preferences.availability_preferences;
+        assert_eq!(availability.time_zone, "Asia/Tokyo");
+        assert_eq!(availability.working_windows[0].start, "07:00");
+        assert_eq!(result.preferences.writing_profiles, current_fixture_payload().preferences.writing_profiles);
+    }
+
+    #[test]
+    fn transfer_omits_availability_profiles_when_only_the_default_exists() {
+        let mut payload = current_fixture_payload();
+        payload.preferences.availability_profiles = AvailabilityProfiles::default();
+        let serialized = serde_json::to_value(&payload.preferences).unwrap();
+        assert!(serialized.get("availabilityProfiles").is_none());
+        assert!(serialized.get("availabilityPreferences").is_some());
+
+        // Renaming the default profile alone is worth carrying.
+        payload.preferences.availability_profiles.default_profile.name = "Work".to_string();
+        let serialized = serde_json::to_value(&payload.preferences).unwrap();
+        assert_eq!(serialized["availabilityProfiles"]["defaultProfile"]["name"], "Work");
+    }
+
+    #[test]
+    fn transfer_rejects_invalid_availability_profiles() {
+        let invalid: [fn(&mut AvailabilityProfiles); 9] = [
+            |profiles| profiles.other_profiles[0].name = "work".to_string(),
+            |profiles| profiles.other_profiles[0].name = " Church".to_string(),
+            |profiles| profiles.other_profiles[0].name = String::new(),
+            |profiles| profiles.other_profiles[0].name = "C".repeat(crate::availability::MAX_AVAILABILITY_PROFILE_NAME_CHARS + 1),
+            |profiles| profiles.other_profiles[0].id = "default".to_string(),
+            |profiles| profiles.other_profiles[0].drive_time_buffer_minutes = crate::availability::MAX_DRIVE_TIME_BUFFER_MINUTES + 1,
+            |profiles| { profiles.account_defaults.insert("other@example.net".to_string(), "deleted".to_string()); },
+            |profiles| { profiles.account_defaults.insert("Upper@Example.net".to_string(), "church".to_string()); },
+            |profiles| {
+                let template = profiles.other_profiles[0].clone();
+                profiles.other_profiles = (0..crate::availability::MAX_AVAILABILITY_PROFILES)
+                    .map(|index| AvailabilityProfile { id: format!("p{index}"), name: format!("Profile {index}"), ..template.clone() })
+                    .collect();
+                profiles.account_defaults.clear();
+            },
+        ];
+        for change in invalid {
+            let mut payload = current_fixture_payload();
+            change(&mut payload.preferences.availability_profiles);
+            assert!(payload.validate().is_err(), "{:?}", payload.preferences.availability_profiles);
+        }
+    }
+
+    #[test]
+    fn transfer_accepts_the_most_availability_profiles_with_names_at_the_limit() {
+        let mut payload = current_fixture_payload();
+        let profiles = &mut payload.preferences.availability_profiles;
+        let template = profiles.other_profiles[0].clone();
+        profiles.other_profiles = (1..crate::availability::MAX_AVAILABILITY_PROFILES)
+            .map(|index| AvailabilityProfile {
+                id: format!("p{index}"),
+                // Multi-byte characters count once, as they do in the name field.
+                name: format!("{index}{}", "é".repeat(crate::availability::MAX_AVAILABILITY_PROFILE_NAME_CHARS - 1)),
+                ..template.clone()
+            })
+            .collect();
+        profiles.account_defaults = BTreeMap::from([("other@example.net".to_string(), "p1".to_string())]);
+        payload.validate().unwrap();
     }
 
     #[test]

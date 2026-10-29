@@ -259,7 +259,7 @@ pub struct ActionAnalysis {
     pub extra_count: usize,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AvailabilityWindow {
     pub weekday: u8,

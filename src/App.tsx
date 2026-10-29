@@ -164,6 +164,7 @@ export function App() {
     autoReadDelaySeconds,
     loadRemoteImages,
     availabilityPreferences,
+    availabilityFor,
   } = preferences;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -381,6 +382,8 @@ export function App() {
   const invitationMessage = visibleDetail ? latestInvitationMessage(visibleDetail) : null;
   const canUnsubscribe = Boolean(latestMessage?.unsubscribe?.methods.length);
   const unsubscribeMessage = visibleDetail?.messages.find((message) => message.id === unsubscribeMessageId) ?? null;
+  // The open conversation's account chooses which availability profile its cards use.
+  const threadAvailability = availabilityFor(visibleDetail?.thread.accountId);
   const intelligence = useThreadIntelligence({
     accounts, selected, visibleDetail, isThreadMailbox, autoReadDelaySeconds,
     availabilityPreferences, applyThreadSummary, aiProactive, aiSummaryAvailable,
@@ -407,7 +410,7 @@ export function App() {
     meetingEditor, setMeetingEditor, meetingEventDraft, setMeetingEventDraft, openedCalendarFiles,
     dismissOpenedCalendarFile, addOpenedInvitationToCalendar, addMeetingToCalendar,
     meetingCreated, meetingScheduling, draftAvailabilityReply,
-  } = useMeetingActions({ workspaces, correspondence, visibleDetail, availabilityPreferences, openSettingsAt, setNotice, ownAddresses, removeActionProposal });
+  } = useMeetingActions({ workspaces, correspondence, visibleDetail, availabilityPreferences: threadAvailability, openSettingsAt, setNotice, ownAddresses, removeActionProposal });
   const { systemLabelNames: conversationSystemLabels, userLabels: conversationUserLabels } = visibleDetail
     ? conversationLabelGroups(visibleDetail.thread.labels, labelsByAccount[visibleDetail.thread.accountId])
     : { systemLabelNames: [], userLabels: [] };
@@ -1113,7 +1116,7 @@ export function App() {
                     message={message}
                     invitationActions={message.id === invitationMessage?.id ? {
                       calendarConnected,
-                      preferences: availabilityPreferences,
+                      preferences: threadAvailability,
                       ai: aiDraftAvailable,
                       intoDraft: Boolean(composerBelongsToVisibleThread && correspondence.liveDraft),
                       onReplyWithTimes: draftAvailabilityReply,
@@ -1290,7 +1293,7 @@ export function App() {
           onKeyDown={contextPanelKeyDown}
           calendarConnected={calendarConnected}
           findTimesAi={aiDraftAvailable}
-          preferences={availabilityPreferences}
+          preferences={availabilityFor(correspondence.liveDraft.account)}
           taskRefreshKey={taskRevision}
           onAttach={correspondence.context.attachFiles}
           onReplaceRecipient={correspondence.replaceDraftRecipient}
@@ -1345,7 +1348,7 @@ export function App() {
               offeredTimesError={offeredTimesError}
               onRetryOfferedTimes={aiSummaryAvailable && aiActionAvailable ? () => runBrief({ force: true }) : undefined}
               ownEmails={accounts.map((account) => account.email)}
-              preferences={availabilityPreferences}
+              preferences={threadAvailability}
               ai={aiDraftAvailable}
               draft={composerBelongsToVisibleThread && correspondence.liveDraft
                 ? correspondence.liveDraft
@@ -1358,7 +1361,7 @@ export function App() {
                 loading: actionAnalysisLoading,
                 proposals: actionProposals,
               })}
-              suggest={() => suggestedSearch(actionProposals, new Date(), availabilityPreferences.defaultDurationMinutes)}
+              suggest={() => suggestedSearch(actionProposals, new Date(), threadAvailability.defaultDurationMinutes)}
               onInsertTimes={(candidates) => draftAvailabilityReply(candidates, offeredTimes?.sourceMessageId)}
               onOpenCalendarSettings={() => openSettingsAt("calendarAccounts")}
             />
@@ -1424,7 +1427,7 @@ export function App() {
               renderAvailability={(availability) => (
                 <FindTimesCard
                   key={[availability.rangeStart, availability.rangeEnd, availability.durationMinutes, availability.weekdays.join(","), availability.dayStart, availability.dayEnd].join("|")}
-                  plan={planChatAvailability(availability, new Date(), availabilityPreferences.defaultDurationMinutes)}
+                  plan={planChatAvailability(availability, new Date(), threadAvailability.defaultDurationMinutes)}
                   {...meetingScheduling}
                   // A follow-up question adjusts these times; the chat box is already the place to type.
                   ai={null}

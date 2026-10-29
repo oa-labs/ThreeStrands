@@ -1,4 +1,5 @@
 import { EMAIL_ZOOM, parseEmailZoom, parseEmailMinimumFontSize, parseEmailTextColors, type EmailTextColors } from "./emailRenderingPolicy";
+import type { AvailabilityProfile, AvailabilityProfiles } from "./domain";
 
 export type FontFamily = string;
 
@@ -126,6 +127,142 @@ export function saveAvailabilityPreferences(value: AvailabilityPreferencesSettin
   const next = validAvailabilityPreferences(normalized) ? normalized : readAvailabilityPreferences();
   try { localStorage.setItem(AVAILABILITY_PREFERENCES_KEY, JSON.stringify(next)); } catch { /* session value still applies */ }
   return next;
+}
+
+/** Matches `MAX_AVAILABILITY_PROFILES` in src-tauri/src/availability.rs; counts the default profile. */
+export const MAX_AVAILABILITY_PROFILES = 8;
+/** Matches `MAX_AVAILABILITY_PROFILE_NAME_CHARS` in src-tauri/src/availability.rs. */
+export const MAX_AVAILABILITY_PROFILE_NAME_CHARS = 40;
+/** Matches `MAX_AVAILABILITY_PROFILE_ID_CHARS` in src-tauri/src/availability.rs. */
+const MAX_AVAILABILITY_PROFILE_ID_CHARS = 64;
+/** Matches `MAX_AVAILABILITY_ACCOUNT_DEFAULTS` in src-tauri/src/availability.rs. */
+const MAX_AVAILABILITY_ACCOUNT_DEFAULTS = 200;
+const AVAILABILITY_PROFILES_KEY = "threestrands.settings.availabilityProfiles";
+
+export const DEFAULT_AVAILABILITY_PROFILES: AvailabilityProfiles = {
+  defaultProfile: { id: "default", name: "Default" },
+  otherProfiles: [],
+  accountDefaults: {},
+};
+
+/** How account defaults are keyed, so one account never holds two entries. */
+export function availabilityAccountKey(accountId: string): string {
+  return accountId.trim().toLowerCase();
+}
+
+function validProfileText(value: unknown, limit: number): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= limit
+    && value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function validAvailabilityProfiles(value: unknown): value is AvailabilityProfiles {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  const defaultProfile = candidate.defaultProfile as Record<string, unknown> | null;
+  if (typeof defaultProfile !== "object" || defaultProfile === null) return false;
+  const others = candidate.otherProfiles;
+  if (!Array.isArray(others) || others.length >= MAX_AVAILABILITY_PROFILES) return false;
+  const named = [defaultProfile, ...others as Record<string, unknown>[]];
+  if (!named.every((profile) => typeof profile === "object" && profile !== null
+    && validProfileText(profile.id, MAX_AVAILABILITY_PROFILE_ID_CHARS)
+    && validProfileText(profile.name, MAX_AVAILABILITY_PROFILE_NAME_CHARS))) return false;
+  if (new Set(named.map((profile) => profile.id)).size !== named.length) return false;
+  if (new Set(named.map((profile) => (profile.name as string).toLowerCase())).size !== named.length) return false;
+  // Each profile's hours obey the same rules as the default hours.
+  if (!(others as AvailabilityProfile[]).every((profile) => validAvailabilityPreferences({
+    timeZone: "UTC",
+    slotIncrementMinutes: DEFAULT_AVAILABILITY_PREFERENCES.slotIncrementMinutes,
+    workingWindows: profile.workingWindows,
+    defaultDurationMinutes: profile.defaultDurationMinutes,
+    driveTimeBufferMinutes: profile.driveTimeBufferMinutes,
+  }))) return false;
+  const accountDefaults = candidate.accountDefaults;
+  if (typeof accountDefaults !== "object" || accountDefaults === null || Array.isArray(accountDefaults)) return false;
+  const entries = Object.entries(accountDefaults);
+  return entries.length <= MAX_AVAILABILITY_ACCOUNT_DEFAULTS && entries.every(([account, id]) =>
+    account.length > 0 && account.length <= MAX_ACCOUNT_ID_LENGTH && typeof id === "string");
+}
+
+/** Keeps only the stored fields, with account defaults that name a profile other than the default. */
+function normalizeAvailabilityProfiles(value: AvailabilityProfiles): AvailabilityProfiles {
+  const ids = new Set(value.otherProfiles.map((profile) => profile.id));
+  return {
+    defaultProfile: { id: value.defaultProfile.id, name: value.defaultProfile.name },
+    otherProfiles: value.otherProfiles.map((profile) => ({
+      id: profile.id,
+      name: profile.name,
+      workingWindows: profile.workingWindows.map(({ weekday, start, end }) => ({ weekday, start, end })),
+      defaultDurationMinutes: profile.defaultDurationMinutes,
+      driveTimeBufferMinutes: profile.driveTimeBufferMinutes,
+    })),
+    accountDefaults: Object.fromEntries(Object.entries(value.accountDefaults)
+      .map(([account, id]) => [availabilityAccountKey(account), id] as const)
+      .filter(([, id]) => ids.has(id))),
+  };
+}
+
+function defaultAvailabilityProfiles(): AvailabilityProfiles {
+  return normalizeAvailabilityProfiles(DEFAULT_AVAILABILITY_PROFILES);
+}
+
+export function readAvailabilityProfiles(): AvailabilityProfiles {
+  try {
+    const saved = localStorage.getItem(AVAILABILITY_PROFILES_KEY);
+    if (saved) {
+      const parsed: unknown = JSON.parse(saved);
+      if (validAvailabilityProfiles(parsed)) return normalizeAvailabilityProfiles(parsed);
+    }
+  } catch {
+    // A blocked or corrupted storage backend falls back to the default profile alone.
+  }
+  return defaultAvailabilityProfiles();
+}
+
+export function saveAvailabilityProfiles(value: AvailabilityProfiles): AvailabilityProfiles {
+  const next = validAvailabilityProfiles(value) ? normalizeAvailabilityProfiles(value) : readAvailabilityProfiles();
+  try {
+    if (next.otherProfiles.length || JSON.stringify(next) !== JSON.stringify(defaultAvailabilityProfiles())) {
+      localStorage.setItem(AVAILABILITY_PROFILES_KEY, JSON.stringify(next));
+    } else {
+      localStorage.removeItem(AVAILABILITY_PROFILES_KEY);
+    }
+  } catch {
+    // The profiles still apply for this session when storage is unavailable.
+  }
+  return next;
+}
+
+/** The profile an account uses: its chosen default, or the default profile. */
+export function availabilityProfileId(profiles: AvailabilityProfiles, accountId?: string | null): string {
+  const id = accountId ? profiles.accountDefaults[availabilityAccountKey(accountId)] : undefined;
+  return id && profiles.otherProfiles.some((profile) => profile.id === id) ? id : profiles.defaultProfile.id;
+}
+
+/**
+ * The preferences a search uses with one profile: its hours, length, and
+ * buffer with the shared timezone and slot increment. The default profile,
+ * or an unknown id, returns `preferences` itself.
+ */
+export function availabilityWithProfile(
+  preferences: AvailabilityPreferencesSetting,
+  profiles: AvailabilityProfiles,
+  profileId: string,
+): AvailabilityPreferencesSetting {
+  const profile = profiles.otherProfiles.find((candidate) => candidate.id === profileId);
+  if (!profile) return preferences;
+  return {
+    timeZone: preferences.timeZone,
+    workingWindows: profile.workingWindows,
+    defaultDurationMinutes: profile.defaultDurationMinutes,
+    slotIncrementMinutes: preferences.slotIncrementMinutes,
+    driveTimeBufferMinutes: profile.driveTimeBufferMinutes,
+  };
+}
+
+/** The stored preferences for one account's default profile, for surfaces outside React state. */
+export function readAvailabilityPreferencesFor(accountId?: string | null): AvailabilityPreferencesSetting {
+  const profiles = readAvailabilityProfiles();
+  return availabilityWithProfile(readAvailabilityPreferences(), profiles, availabilityProfileId(profiles, accountId));
 }
 
 export const DEFAULT_AUTO_READ_DELAY_SECONDS = 2;

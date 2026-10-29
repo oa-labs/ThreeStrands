@@ -1,5 +1,8 @@
 # Availability profiles design
 
+Status: phase 1 (profiles and account defaults) built in 0.182.0. Phase 2
+(using a different profile for one conversation) is not built.
+
 Today ThreeStrands has one set of availability preferences: a timezone,
 working windows, a default meeting length, a slot increment, and a drive-time
 buffer (Settings → Availability). Every surface that finds or checks times
@@ -41,30 +44,35 @@ use a different profile for one conversation.
 | Slot increment | Shared | This is a display preference, not a matter of role. |
 | Calendars counted as busy | Shared (per calendar account, as today) | See the first principle above. |
 
-A profile has a stable `id`, a `name` (required, unique, trimmed, at most
-`MAX_AVAILABILITY_PROFILE_NAME_CHARS`), and the three per-profile settings.
-Exactly one profile is the **default**: it's used when no account default
-applies, and its values are the ones mirrored into the legacy field for
-older devices (see Compatibility).
+A profile has a stable `id`, a `name` (required, unique in any letter case,
+trimmed, at most `MAX_AVAILABILITY_PROFILE_NAME_CHARS`), and the three
+per-profile settings. Exactly one profile is the **default**: it's used when
+an account has no profile of its own, and its hours are the existing
+availability preferences, which is what older devices and exports read (see
+Compatibility).
 
 ## Settings → Availability
 
 With one profile, the tab looks as it does today. Below the meeting defaults,
 an **Add Profile** button turns the tab into the multi-profile layout:
 
-- **Profiles.** A segmented control or list at the top selects the profile
-  being edited, then that profile's name, working windows, length, and buffer.
-  A profile's ⋯ menu has Rename, Make Default, and Delete. The default profile
-  can't be deleted, and the last remaining profile can't be either.
-- **Shared.** Timezone and slot increment move into a section labeled as
-  applying to every profile.
-- **Account defaults.** One row per mail account (nickname and address, as
-  in Settings → Mail Accounts) with a select of profiles. A new account starts
-  on the default profile. This section appears only when there are two or
-  more profiles and two or more accounts.
+- **Profiles.** A segmented control at the top selects the profile being
+  edited, with **Add Profile** beside it (disabled at the limit). Below it are
+  the profile's **Profile Name** field and, for a profile other than the
+  default, **Make Default** and **Delete Profile** buttons. The default
+  profile can't be deleted. The working hours, **Default Duration**, and
+  **Drive Time Buffer** below edit the selected profile.
+- **Shared.** Timezone and **Slot Increment** stay where they were, each
+  described as shared by every profile.
+- **Account Defaults.** At the bottom, one select per mail account (nickname
+  and address) listing the profiles. A new account starts on the default
+  profile. This section appears when there are two or more profiles and at
+  least one account.
 
 Deleting a profile moves every account that used it to the default profile,
-and the confirmation says which accounts will move.
+and the inline confirmation says which accounts will move. **Make Default**
+changes the fallback, so accounts without a profile of their own switch to
+the new default's hours; accounts that chose a profile keep it.
 
 The help text for this tab should say plainly that profiles change only
 which hours are offered, and that every selected calendar still counts as
@@ -85,7 +93,8 @@ account.
 | Compose context sidebar (ComposeContext) | The From account. Changing From switches profile unless the user has overridden it. |
 | Meeting availability picker for an existing event | The event's calendar account, when it matches a mail account; otherwise the default profile |
 | New calendar event dialog | The selected calendar's account, as above |
-| Thread chat availability plans and other places with no conversation | The default profile |
+| Thread chat availability plans | The conversation's account |
+| Places with no conversation or event | The default profile |
 
 Because the timezone stays shared, AI requests that send only the timezone
 (Brief, Find Times adjust in words, action analysis) don't change. A profile's
@@ -129,34 +138,39 @@ type AvailabilityProfile = {
   driveTimeBufferMinutes: number;
 };
 
+// Stored beside AvailabilityPreferences, which keeps the shared timezone and
+// slot increment and the default profile's hours.
 type AvailabilityProfiles = {
-  timeZone: string;
-  slotIncrementMinutes: number;
-  profiles: AvailabilityProfile[];      // 1..MAX_AVAILABILITY_PROFILES
-  defaultProfileId: string;
-  accountDefaults: Record<string, string>; // normalized account email → profile id
+  defaultProfile: { id: string; name: string };
+  otherProfiles: AvailabilityProfile[];      // up to MAX_AVAILABILITY_PROFILES - 1
+  accountDefaults: Record<string, string>;   // lowercased account email → profile id
 };
 ```
 
+- The default profile has no hours of its own in `AvailabilityProfiles`.
+  Its hours, length, and buffer are `AvailabilityPreferences`, so there is
+  never a second copy to drift. **Make Default** swaps the two profiles'
+  hours and names; ids move with their hours, so accounts that chose a
+  profile keep it.
 - `AvailabilityPreferences`, the shape the native commands take, doesn't
-  change. A single resolver, `availabilityFor(profiles, accountEmail,
-  overrideId?)`, flattens the shared fields and one profile into
-  `AvailabilityPreferences`. Surfaces call the resolver instead of reading
-  settings directly. That includes `MeetingAvailabilityPicker` and
-  `CreateCalendarEventDialog`, which call `readAvailabilityPreferences()`
-  today.
-- Account defaults are keyed by normalized email address, the same key as
-  writing profiles (`writingProfileKey`), because account IDs differ between
-  devices and transfer merges accounts by email. An entry for an account that
-  no longer exists, or that points to a deleted profile, is ignored and
-  pruned on save.
-- New limits `MAX_AVAILABILITY_PROFILES` (proposed: 8) and
-  `MAX_AVAILABILITY_PROFILE_NAME_CHARS` (proposed: 40) go next to
-  `MAX_WORKING_WINDOWS_PER_DAY` in `src/settings.ts` and are mirrored in the
-  native transfer validation, the way `MAX_WORKING_WINDOWS` is.
-- The resolver's output is memoized per (profile, shared fields), so the
-  object identity stays stable across renders. Meeting cards re-check the
-  calendar whenever the preferences object is replaced (see the comment in
+  change. `availabilityWithProfile` combines the shared fields with one
+  profile's hours, and `useAppPreferences().availabilityFor(accountId)` returns
+  the result for an account's profile. Surfaces call it instead of reading
+  settings directly. `MeetingAvailabilityPicker` and
+  `CreateCalendarEventDialog`, which read storage directly, use
+  `readAvailabilityPreferencesFor(accountId)`.
+- Account defaults are keyed by lowercased email address, because account
+  ids are email addresses and transfer merges accounts by email. An entry
+  that names the default profile or a deleted profile is dropped on save. An
+  entry for an account that isn't set up is kept and ignored.
+- The limits `MAX_AVAILABILITY_PROFILES` (8, counting the default) and
+  `MAX_AVAILABILITY_PROFILE_NAME_CHARS` (40) live next to
+  `MAX_WORKING_WINDOWS_PER_DAY` in `src/settings.ts` and are mirrored in
+  `src-tauri/src/availability.rs` for transfer validation.
+- `availabilityFor` returns one object per profile, replaced only when
+  availability settings change. The default profile's object is
+  `availabilityPreferences` itself. Meeting cards re-check the calendar
+  whenever the preferences object is replaced (see the comment in
   `useAppPreferences.ts`).
 
 Native code: `availability.rs`, `proposed_times.rs`, and the calendar commands
@@ -167,25 +181,29 @@ logic changes. Only transfer and sync gain the new fields.
 
 ### Local storage
 
-On first read, an existing `threestrands.settings.availabilityPreferences`
-value becomes a single profile named "Default" with the same windows, length,
-and buffer, and with the shared timezone and increment. The new value is
-stored under a new key. The legacy key keeps being written (below), so a
-downgrade keeps the user's default hours.
+No migration step is needed. `threestrands.settings.availabilityPreferences`
+keeps holding the shared fields and the default profile's hours. With nothing
+stored under `threestrands.settings.availabilityProfiles`, the user has one
+profile named "Default" with those hours. The new key is written only once
+there is something beyond that, so a downgrade keeps the user's default
+hours.
 
 ### Replicated sync
 
 Availability syncs as part of the portable preferences record. Older devices
 know only `availabilityPreferences`.
 
-- New devices keep writing `availabilityPreferences` as the flattened
-  **default profile**. They write `availabilityProfiles` as a new field.
-- When a new device receives an `availabilityPreferences` change without a
-  matching `availabilityProfiles` change (an older device edited its hours),
-  it applies those values to the default profile and the shared fields. Other
-  profiles and the account defaults are left alone.
-- Older devices ignore the new field. Their single set of hours is the user's
-  default profile, which matches what they did before.
+- New devices keep writing `availabilityPreferences`, which is the default
+  profile's hours, and write `availabilityProfiles` as a new field.
+- When an older device edits its hours, only `availabilityPreferences`
+  changes, so new devices see the default profile's hours change. Other
+  profiles and the account defaults are left alone. No reconciliation code
+  is needed.
+- A record that omits `availabilityProfiles` (from an older device) keeps
+  this device's profiles.
+- Older devices keep the new field in the record without reading it. Their
+  single set of hours is the user's default profile, which matches what they
+  did before.
 
 ### Settings transfer
 
@@ -203,34 +221,37 @@ optional field under format version 5, with `#[serde(default)]` and
   need a version bump.
 - Importing an export that has no `availability_profiles` (every earlier
   export) produces one "Default" profile from `availability_preferences`.
-- Account defaults in an import are kept only for accounts present after the
-  account merge.
-- Update `docs/settings-transfer.md` ("availability preferences" becomes
-  "availability profiles and account defaults").
+- Validation mirrors the frontend's: names and ids unique, names trimmed and
+  within the character limit, each profile's hours valid under the shared
+  timezone and increment, and account defaults lowercased and naming a profile
+  other than the default.
+- `v5-0.181.dispatch-settings` freezes the last export before profiles.
 
 ## Tests
 
-- **Resolver** (unit): account default chosen, override wins, unknown account
-  falls back to the default profile, deleted profile falls back, and
-  shared fields are always taken from the shared settings.
-- **Settings storage** (unit): migration of the legacy value; limits tested
-  below, at, and above `MAX_AVAILABILITY_PROFILES` and the name limit; legacy
-  key mirrors the default profile.
+- **Resolver** (unit and `useAppPreferences`): account default chosen
+  regardless of letter case, unknown account falls back to the default
+  profile, deleted profile falls back, shared fields always come from the
+  shared settings, and the object stays the same until settings change.
+- **Settings storage** (unit): existing hours become the Default profile;
+  limits tested below, at, and above `MAX_AVAILABILITY_PROFILES` and the name
+  limit; invalid hours and names rejected.
 - **AvailabilitySettings** (component, `settingsHarness`): with one profile it
   shows no profile or account-default controls; add, rename, make default,
   and delete; the default profile can't be deleted; deleting a profile moves
   its accounts; the shared section's help is attached with
   `toHaveAccessibleDescription()`.
-- **Find Times card / MeetingScheduler** (component): the profile control
-  appears only with two or more profiles; switching re-runs with the other
-  windows and keeps the range and chips; the conversation override reaches
-  Proposed Times.
-- **Compose sidebar** (component): changing From switches profile, and an
-  override survives a From change.
+- **Phase 2, Find Times card / MeetingScheduler** (component): the profile
+  control appears only with two or more profiles; switching re-runs with the
+  other windows and keeps the range and chips; the conversation override
+  reaches Proposed Times.
+- **Phase 2, compose sidebar** (component): changing From switches profile,
+  and an override survives a From change.
 - **Transfer** (`cargo test` in `src-tauri`): a version 5 export without
   `availabilityProfiles` (produced by the preceding schema) imports as one
   Default profile; round trip with several profiles; validation rejects too
-  many profiles, duplicate or empty names, and an unknown `defaultProfileId`.
+  many profiles, duplicate, untrimmed, empty, or overlong names, invalid
+  hours, and account defaults that are uppercase or name an unknown profile.
 - **Sync** (Rust and `useAppPreferences`): an `availabilityPreferences`-only
   update from an older device lands on the default profile without touching
   the others.

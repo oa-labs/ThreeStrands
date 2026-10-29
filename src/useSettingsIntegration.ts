@@ -6,6 +6,7 @@ import type { useMailboxThreads } from "./useMailboxThreads";
 import type { MailAccountSettings, SettingsSection } from "./settingsPanelTypes";
 import type { SettingsImportResult } from "./userPreferences";
 import { mailClient } from "./data/client";
+import { DEFAULT_AVAILABILITY_PROFILES } from "./settings";
 
 type Options = {
   mailAccounts: ReturnType<typeof useAccounts>;
@@ -28,7 +29,7 @@ export function useSettingsIntegration({
   } = mailAccounts;
   const {
     setTheme, setAccent, setFontScale, setFontFamily, setEmailMinimumFontSize, setEmailZoom, setEmailTextColors,
-    setAutoReadDelaySeconds, setLoadRemoteImages, setAvailabilityPreferences,
+    setAutoReadDelaySeconds, setLoadRemoteImages, setAvailabilityProfiles,
   } = preferences;
   const { loadThreads, query } = mailboxThreads;
   // Removing or reconnecting an account changes which threads are visible,
@@ -72,7 +73,7 @@ export function useSettingsIntegration({
     setEmailTextColors(imported.emailTextColors ?? EMAIL_TEXT_COLORS.defaultMode);
     setAutoReadDelaySeconds(imported.autoReadDelaySeconds);
     setLoadRemoteImages(imported.loadRemoteImages);
-    setAvailabilityPreferences(imported.availabilityPreferences);
+    setAvailabilityProfiles(imported.availabilityProfiles ?? DEFAULT_AVAILABILITY_PROFILES, imported.availabilityPreferences);
     setActiveAccountId(imported.selectedAccountId);
     await Promise.all([
       refreshAccounts(),
@@ -83,7 +84,7 @@ export function useSettingsIntegration({
     setSettingsSection("accounts");
   }, [
     setTheme, setAccent, setFontScale, setFontFamily, setEmailMinimumFontSize, setEmailZoom, setEmailTextColors,
-    setAutoReadDelaySeconds, setLoadRemoteImages, setAvailabilityPreferences, setActiveAccountId,
+    setAutoReadDelaySeconds, setLoadRemoteImages, setAvailabilityProfiles, setActiveAccountId,
     refreshAccounts, refreshSplitInboxes, setAuthStatus, refreshAiAvailability, setSettingsSection,
   ]);
 

@@ -44,6 +44,16 @@ If a brief already suggested a meeting, Find Times starts with those dates. **Se
 
 When writing to people at your work domain, **Include coworkers** lists them. Check who should be free too; the app checks their primary calendars alongside yours. A failure names the calendar and account; **Calendar check details** explains why. Unknown availability is not a promise that someone is free.
 
+### Use Different Hours for Each Account {#availability-profiles}
+
+If you meet at different times for different parts of your life, such as work hours on your work account and evenings for a personal one, keep a profile for each:
+
+1. In **Settings → Availability**, click **Add Profile**. The new profile starts with your current hours.
+2. Name it, then set its working hours, **Default Duration**, and **Drive Time Buffer**.
+3. Under **Account Defaults**, choose the profile each mail account uses.
+
+Find Times, checks of times someone offered, and **Find a time** in the event editor then use the profile of the account the email or event belongs to. Accounts without a profile of their own use the default one; **Make Default** changes which one that is. Timezone and **Slot Increment** are shared by every profile, and every calendar used for availability still counts as busy, whichever profile is in use.
+
 <ts-shot scene="find-times" alt="Find Times shows open calendar slots beside the conversation, with selected times ready for a reply."></ts-shot>
 
 ## Plan the Week {#plan-the-week}

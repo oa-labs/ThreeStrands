@@ -17,6 +17,14 @@ fn parse_clock(value: &str) -> Result<NaiveTime, String> {
 /// Most working-hour windows across the week: four per day.
 pub(crate) const MAX_WORKING_WINDOWS: usize = 28;
 pub(crate) const MAX_DRIVE_TIME_BUFFER_MINUTES: u32 = 120;
+/// Matches `MAX_AVAILABILITY_PROFILES` in src/settings.ts; counts the default profile.
+pub(crate) const MAX_AVAILABILITY_PROFILES: usize = 8;
+/// Matches `MAX_AVAILABILITY_PROFILE_NAME_CHARS` in src/settings.ts.
+pub(crate) const MAX_AVAILABILITY_PROFILE_NAME_CHARS: usize = 40;
+/// Matches `MAX_AVAILABILITY_PROFILE_ID_CHARS` in src/settings.ts.
+pub(crate) const MAX_AVAILABILITY_PROFILE_ID_CHARS: usize = 64;
+/// Matches `MAX_AVAILABILITY_ACCOUNT_DEFAULTS` in src/settings.ts.
+pub(crate) const MAX_AVAILABILITY_ACCOUNT_DEFAULTS: usize = 200;
 
 pub(crate) fn validate_drive_time_buffer(minutes: u32) -> Result<(), String> {
     if minutes > MAX_DRIVE_TIME_BUFFER_MINUTES {

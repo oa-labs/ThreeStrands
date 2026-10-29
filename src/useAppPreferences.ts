@@ -1,5 +1,5 @@
 import type { EmailTextColors } from "./emailRenderingPolicy";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   applyFontScale,
@@ -15,8 +15,12 @@ import {
   readEmailTextColors,
   readEmailZoom,
   readLoadRemoteImages,
+  availabilityProfileId,
+  availabilityWithProfile,
   readAvailabilityPreferences,
+  readAvailabilityProfiles,
   saveAvailabilityPreferences,
+  saveAvailabilityProfiles,
   saveAutoReadDelaySeconds,
   saveFontFamily,
   saveEmailMinimumFontSize,
@@ -39,6 +43,7 @@ import {
   type Theme,
 } from "./theme";
 import { pullSyncedPreferences, queuePortablePreferences } from "./syncedPreferences";
+import type { AvailabilityPreferences, AvailabilityProfiles } from "./domain";
 
 /**
  * Owns the persisted preferences that affect the whole application.
@@ -58,6 +63,7 @@ export function useAppPreferences() {
   const [autoReadDelaySeconds, setAutoReadDelayState] = useState(readAutoReadDelaySeconds);
   const [loadRemoteImages, setLoadRemoteImagesState] = useState(readLoadRemoteImages);
   const [availabilityPreferences, setAvailabilityPreferencesState] = useState(readAvailabilityPreferences);
+  const [availabilityProfiles, setAvailabilityProfilesState] = useState(readAvailabilityProfiles);
 
   useEffect(() => {
     if (!("__TAURI_INTERNALS__" in window)) return;
@@ -74,6 +80,8 @@ export function useAppPreferences() {
           // cards re-check the calendar whenever it is replaced.
           const synced = readAvailabilityPreferences();
           setAvailabilityPreferencesState((current) => JSON.stringify(current) === JSON.stringify(synced) ? current : synced);
+          const syncedProfiles = readAvailabilityProfiles();
+          setAvailabilityProfilesState((current) => JSON.stringify(current) === JSON.stringify(syncedProfiles) ? current : syncedProfiles);
         }
         // Publish the complete portable preference record before adding
         // per-device names to it, so older clients still materialize a
@@ -151,6 +159,24 @@ export function useAppPreferences() {
     setAvailabilityPreferencesState(saveAvailabilityPreferences(value));
     queuePortablePreferences();
   }, []);
+  /** Saves profiles, and the default profile's hours when they change together (Make Default). */
+  const setAvailabilityProfiles = useCallback((value: AvailabilityProfiles, preferences?: AvailabilityPreferences) => {
+    if (preferences) setAvailabilityPreferencesState(saveAvailabilityPreferences(preferences));
+    setAvailabilityProfilesState(saveAvailabilityProfiles(value));
+    queuePortablePreferences();
+  }, []);
+  // One object per profile, replaced only when settings change: meeting
+  // cards re-check the calendar whenever their preferences are replaced.
+  const preferencesByProfile = useMemo(() => new Map([
+    [availabilityProfiles.defaultProfile.id, availabilityPreferences],
+    ...availabilityProfiles.otherProfiles.map((profile) => [
+      profile.id, availabilityWithProfile(availabilityPreferences, availabilityProfiles, profile.id),
+    ] as const),
+  ]), [availabilityPreferences, availabilityProfiles]);
+  /** The preferences for an account's default profile; no account uses the default profile. */
+  const availabilityFor = useCallback((accountId?: string | null): AvailabilityPreferences =>
+    preferencesByProfile.get(availabilityProfileId(availabilityProfiles, accountId)) ?? availabilityPreferences,
+  [availabilityPreferences, availabilityProfiles, preferencesByProfile]);
 
   return {
     theme,
@@ -176,5 +202,8 @@ export function useAppPreferences() {
     setLoadRemoteImages,
     availabilityPreferences,
     setAvailabilityPreferences,
+    availabilityProfiles,
+    setAvailabilityProfiles,
+    availabilityFor,
   };
 }

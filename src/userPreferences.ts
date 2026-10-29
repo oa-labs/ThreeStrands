@@ -20,6 +20,7 @@ import { readFontScale, saveFontScale } from "./fontScale";
 import {
   readAutoReadDelaySeconds,
   readAvailabilityPreferences,
+  readAvailabilityProfiles,
   readFontFamily,
   readEmailMinimumFontSize,
   readEmailTextColors,
@@ -28,6 +29,8 @@ import {
   readSelectedAccountId,
   saveAutoReadDelaySeconds,
   saveAvailabilityPreferences,
+  saveAvailabilityProfiles,
+  DEFAULT_AVAILABILITY_PROFILES,
   saveFontFamily,
   saveEmailMinimumFontSize,
   saveEmailTextColors,
@@ -37,7 +40,7 @@ import {
 } from "./settings";
 import { readTheme, saveTheme, type Theme } from "./theme";
 import { readWritingProfiles, saveWritingProfiles, type WritingProfileMap } from "./writingProfiles";
-import type { AvailabilityPreferences, MailProvider } from "./domain";
+import type { AvailabilityPreferences, AvailabilityProfiles, MailProvider } from "./domain";
 
 /**
  * The complete allowlist of webview-owned preferences that may cross devices.
@@ -64,7 +67,10 @@ export type ExportablePreferences = {
   aiFastModel: string;
   aiEndpoint: string;
   aiFeatures: AiFeatureFlags;
+  /** The shared timezone and slot increment, with the default profile's hours. */
   availabilityPreferences: AvailabilityPreferences;
+  /** Optional on the wire: exports with only the default profile omit it. */
+  availabilityProfiles?: AvailabilityProfiles;
   /** Optional on the wire: exports without colors omit it. */
   calendarColors?: CalendarColorMap;
   /** Optional on the wire: exports without writing profiles omit it. */
@@ -98,6 +104,7 @@ export function readExportablePreferences(): ExportablePreferences {
     aiEndpoint: readAiEndpoint(),
     aiFeatures: readAiFeatures(),
     availabilityPreferences: readAvailabilityPreferences(),
+    availabilityProfiles: readAvailabilityProfiles(),
     calendarColors: readCalendarColors(),
     writingProfiles: readWritingProfiles(),
   };
@@ -120,6 +127,8 @@ export function applyExportablePreferences(preferences: ExportablePreferences): 
   saveAiEndpoint(preferences.aiEndpoint);
   saveAiFeatures(preferences.aiFeatures);
   saveAvailabilityPreferences(preferences.availabilityPreferences);
+  // Absent from exports made before profiles, or with only the default profile.
+  saveAvailabilityProfiles(preferences.availabilityProfiles ?? DEFAULT_AVAILABILITY_PROFILES);
   // Absent from exports made before calendar colors, or with none set.
   saveCalendarColors(preferences.calendarColors ?? {});
   // Absent from exports made before writing profiles, or with none written.
