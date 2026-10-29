@@ -30,7 +30,7 @@ type FindTimesState = {
  * it, the coming week is searched. Search Again always reads afresh. The
  * provider never sees the calendar.
  */
-export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], suggest, intoDraft = true, compact = false, offered = true, offeredTimes = null, onInsertTimes, onOpenCalendarSettings }: {
+export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], suggest, intoDraft = true, compact = false, offered = true, offeredTimes = null, offeredTimesError = null, onRetryOfferedTimes, onInsertTimes, onOpenCalendarSettings }: {
   preferences: AvailabilityPreferences;
   /** Draft Assist is on and an AI provider is ready. */
   ai: boolean;
@@ -52,10 +52,14 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
    */
   offered?: boolean;
   offeredTimes?: OfferedTimes | null;
+  offeredTimesError?: string | null;
+  /** Re-read the Brief using its own enabled feature and model. */
+  onRetryOfferedTimes?(): Promise<void>;
   onInsertTimes(candidates: AvailabilityCandidate[]): void;
   onOpenCalendarSettings(): void;
 }) {
   const [search, setSearch] = useState<FindTimesState | null>(null);
+  const [readError, setReadError] = useState<string | null>(null);
   const sender = (draft.from || draft.account || "").toLowerCase();
   const domain = sender.split("@")[1];
   const coworkers = domain && !isPersonalMailDomain(domain) ? draftRecipients({ to: draft.to ?? "", cc: draft.cc ?? "", bcc: "" }, [...ownEmails, sender, draft.account ?? ""])
@@ -80,6 +84,11 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
     setSearch((previous) => ({ key: (previous?.key ?? 0) + 1, plan, reason, fallback }));
   const [seenOffer, setSeenOffer] = useState<OfferedTimes | null>(null);
   useEffect(() => {
+    if (!offeredTimes && seenOffer) {
+      setSeenOffer(null);
+      setSearch((previous) => previous?.plan.proposedTimes === seenOffer.times ? null : previous);
+      return;
+    }
     if (!offeredTimes || !offeredTimes.times.length || offeredTimes === seenOffer) return;
     const duration = offeredTimes.times[0].durationMinutes;
     const durationMinutes = duration && offeredTimes.times.every((time) => time.durationMinutes === duration) ? duration : preferences.defaultDurationMinutes;
@@ -93,7 +102,15 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
   const comingWeek = (): SchedulePlan => ({ query: lookaheadRange(new Date()), durationMinutes: preferences.defaultDurationMinutes, timeZoneAssumed: false });
 
   const findTimes = async () => {
+    setReadError(null);
     const request = ++latest.current;
+    if (offeredTimesError && onRetryOfferedTimes) {
+      setReading(true);
+      try { await onRetryOfferedTimes(); }
+      catch (reason) { if (request === latest.current) setReadError(errorMessage(reason)); }
+      finally { if (request === latest.current) setReading(false); }
+      return;
+    }
     const suggested = search ? null : suggest?.() ?? null;
     if (suggested) {
       show(suggested.plan, suggested.reason, null);
@@ -108,22 +125,26 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
       const result = await askFindTimes(context(), preferences.timeZone, null);
       if (request === latest.current) show(planTimeSearch(result, new Date(), preferences.defaultDurationMinutes), result.reason, null);
     } catch (reason) {
-      if (request === latest.current) show(comingWeek(), null, `${errorMessage(reason)} Showing the coming week instead.`);
+      if (request === latest.current) {
+        if (offeredTimesError) setReadError(`${errorMessage(reason)} No proposed times were checked.`);
+        else show(comingWeek(), null, `${errorMessage(reason)} Showing the coming week instead.`);
+      }
     } finally {
       if (request === latest.current) setReading(false);
     }
   };
 
-  const explanation = ai
+  const readsConversation = ai || Boolean(offeredTimesError && onRetryOfferedTimes);
+  const explanation = readsConversation
     ? "Suggest open times from your calendar, based on what this conversation asks for."
     : "Suggest open times from your calendar for this message.";
   const button = (
-    <button type="button" className="btn btn-sm" disabled={reading} title={compact && !search ? explanation : undefined} onClick={() => void findTimes()}>
+    <button type="button" className="btn btn-sm" disabled={reading || Boolean(offeredTimesError && !readsConversation)} title={compact && !search ? explanation : undefined} onClick={() => void findTimes()}>
       {/* Marked only when the press reads the conversation with AI, not when it reuses a suggestion. */}
-      {ai && (search !== null || !suggest?.()) ? <Sparkles size={ICON_SIZE.sm} /> : null}{search ? "Search Again" : "Find Times"}
+      {readsConversation && (search !== null || !suggest?.()) ? <Sparkles size={ICON_SIZE.sm} /> : null}{search ? "Search Again" : "Find Times"}
     </button>
   );
-  if (compact && !search && !reading) {
+  if (compact && !search && !reading && !offeredTimesError && !readError) {
     if (!offered) return null;
     return <section className="context-ai-launcher compose-availability" aria-label="Availability">{button}</section>;
   }
@@ -135,6 +156,7 @@ export function AvailabilitySection({ preferences, ai, draft, ownEmails = [], su
         icon={<CalendarDays size={ICON_SIZE.xs} />}
         actions={button}
       />
+      {!search && !reading && (readError ?? offeredTimesError) ? <p className="context-status" role="alert">{readError ?? offeredTimesError}</p> : null}
       {reading ? <p className="context-status" role="status">Reading the conversation…</p> : null}
       {search && !reading ? <>
         {search.fallback ? <p className="context-status" role="alert">{search.fallback}</p> : null}

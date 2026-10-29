@@ -67,6 +67,21 @@ describe("useThreadIntelligence", () => {
   });
 
   describe("briefs", () => {
+    it("keeps optional offer errors separate from a valid brief and clears them on a successful retry", async () => {
+      vi.spyOn(mailClient,"briefThread").mockResolvedValueOnce({...briefResult,offeredTimes:null,offeredTimesError:"Could not verify proposed times.",analysis:{proposals:[taskProposal],hiddenCount:0}}).mockResolvedValueOnce(briefResult);
+      const { result, rerender, applyThreadSummary } = renderIntelligence({detail:welcome});
+      await act(() => result.current.runBrief());
+      expect(applyThreadSummary).toHaveBeenCalledWith("welcome",briefResult.summary);
+      expect(result.current.summaryError).toBeNull();
+      expect(result.current.actionProposals).toEqual([taskProposal]);
+      expect(result.current.offeredTimes).toBeNull();
+      expect(result.current.offeredTimesError).toBe("Could not verify proposed times.");
+      rerender({detail:roadmap}); expect(result.current.offeredTimesError).toBeNull();
+      rerender({detail:welcome});
+      await act(() => result.current.runBrief({force:true}));
+      expect(result.current.offeredTimesError).toBeNull();
+    });
+
     it("keeps offered scheduling options independently of task proposals and scopes them to the thread revision", async () => {
       const offeredTimes = { sourceMessageId: "welcome-message", times: [{ sourceText: "Tuesday at 7 PM", localStart: "2099-01-06T19:00", durationMinutes: 60, timeZone: null }] };
       vi.spyOn(mailClient, "briefThread").mockResolvedValue({ ...briefResult, offeredTimes, analysis: { proposals: [taskProposal], hiddenCount: 0 } });

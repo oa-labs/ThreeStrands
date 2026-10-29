@@ -164,13 +164,22 @@ pub async fn find_times(request: FindTimesRequest, api_key: &str) -> Result<Time
         api_key,
     )
     .await?;
-    let search = parse_time_search(&content, &request.current_time)?;
-    if search.proposed_times.iter().any(|time| !bounded.iter().enumerate().any(|(index, message)| {
-        message.body_text.contains(&time.source_text) && !bounded[index..].iter().any(|later| crate::correspondence::stored_addresses(&later.sender).iter().any(|(_, address)| request.user_addresses.iter().any(|mine| mine.eq_ignore_ascii_case(address))))
-    })) {
-        return Err("The AI provider returned a proposed time without matching email text".into());
-    }
+    let mut search = parse_time_search(&content, &request.current_time)?;
+    verify_search_sources(&mut search, &bounded, &request.user_addresses)?;
     Ok(search)
+}
+
+fn verify_search_sources(search: &mut TimeSearch, messages: &[ActionMessageInput], user_addresses: &[String]) -> Result<(), String> {
+    for time in &mut search.proposed_times {
+        let matched = messages.iter().enumerate().find_map(|(index, message)| {
+            let answered_or_own = messages[index..].iter().any(|later| crate::correspondence::stored_addresses(&later.sender).iter().any(|(_, address)| user_addresses.iter().any(|mine| mine.eq_ignore_ascii_case(address))));
+            if answered_or_own { return None; }
+            let evidence = crate::models::ProposalEvidence { source_message_id: message.id.clone(), excerpt: time.source_text.clone() };
+            super::proposals::resolve_evidence(&evidence, std::slice::from_ref(message)).ok().map(|(_, excerpt)| excerpt)
+        }).ok_or("The AI provider returned a proposed time without matching email text")?;
+        time.source_text = matched;
+    }
+    crate::proposed_times::validate_times(&search.proposed_times)
 }
 
 fn parse_clock(value: Option<serde_json::Value>) -> Result<Option<String>, ()> {
@@ -465,6 +474,21 @@ mod tests {
         assert!(parsed.proposed_times[1].local_start.is_none());
         assert!(parse_time_search(&search(json!({"proposedTimes":[{"sourceText":"bad","localStart":"2026-02-30T19:00","durationMinutes":60,"timeZone":null}]})),NOW).is_err());
         assert!(parse_time_search(&search(json!({"proposedTimes":[{"sourceText":"bad","localStart":null,"durationMinutes":null,"timeZone":null,"book":true}]})),NOW).is_err());
+    }
+
+    #[test]
+    fn on_demand_offers_use_the_same_normalized_proof_and_never_accept_own_or_invented_slots() {
+        let mut input = message("Saturday – 2\u{a0}PM");
+        let make = || parse_time_search(&search(json!({"proposedTimes":[{"sourceText":"Saturday - 2 PM","localStart":"2026-10-31T14:00","durationMinutes":60,"timeZone":null}]})),NOW).unwrap();
+        let mut parsed = make();
+        verify_search_sources(&mut parsed,std::slice::from_ref(&input),&["me@example.com".into()]).unwrap();
+        assert_eq!(parsed.proposed_times[0].source_text,"Saturday – 2\u{a0}PM");
+        let mut parsed = make(); parsed.proposed_times[0].source_text="Saturday - 3 PM".into();
+        assert!(verify_search_sources(&mut parsed,std::slice::from_ref(&input),&[]).is_err());
+        input.sender="Me <me@example.com>".into();
+        assert!(verify_search_sources(&mut make(),std::slice::from_ref(&input),&["me@example.com".into()]).is_err());
+        let original = message("Saturday – 2\u{a0}PM");
+        assert!(verify_search_sources(&mut make(),&[original,input],&["me@example.com".into()]).is_err());
     }
 
     #[test]

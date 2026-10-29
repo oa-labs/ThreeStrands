@@ -1064,6 +1064,7 @@ pub struct ThreadBriefResult {
     pub summary: SummaryResult,
     pub analysis: ActionAnalysis,
     pub offered_times: Option<crate::proposed_times::OfferedTimes>,
+    pub offered_times_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

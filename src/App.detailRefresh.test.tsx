@@ -769,12 +769,13 @@ describe("conversation brief", () => {
     expect(briefThread).toHaveBeenCalledTimes(2);
   });
 
-  it("wires a brief's offered alternatives to calendar checks and a reply without a meeting proposal", async () => {
+  it.each([false,true])("wires a brief's offered alternatives to calendar checks and a reply without a meeting proposal (retry: %s)", async (retry) => {
     localStorage.removeItem("threestrands.demoCorrespondence");
     await enableAi({ summarize: true, actionExtraction: true });
     vi.spyOn(mailClient, "listCalendarAccounts").mockResolvedValue([{ email: "calendar@example.com", connectedAt: "2026-09-18T00:00:00Z", status: "connected" }]);
     const times = [{sourceText:"Tuesday at 7 PM for one hour",localStart:"2099-11-03T19:00",durationMinutes:60,timeZone:null}];
-    vi.spyOn(mailClient, "briefThread").mockResolvedValue({ ...briefResult, offeredTimes: {sourceMessageId:"welcome-message",times} });
+    const brief = vi.spyOn(mailClient, "briefThread").mockResolvedValue({ ...briefResult, offeredTimes: {sourceMessageId:"welcome-message",times} });
+    if (retry) brief.mockResolvedValueOnce({...briefResult,offeredTimes:null,offeredTimesError:"Could not verify proposed meeting times."});
     const check = vi.spyOn(mailClient, "checkProposedTimes").mockResolvedValue([{start:"2099-11-04T00:00:00Z",end:"2099-11-04T01:00:00Z",issue:null,outsideWorkingHours:true,check:{status:"free",conflicts:[],checkedCalendarCount:1,totalCalendarCount:1,uncheckedCalendars:[],errors:[]}}]);
     const findTimes = vi.spyOn(mailClient,"findTimes");
     try {
@@ -782,6 +783,12 @@ describe("conversation brief", () => {
       await screen.findByRole("heading", {name:"Welcome to ThreeStrands"});
       const panel = screen.getByRole("complementary", {name:"Conversation context"});
       fireEvent.click(await within(panel).findByRole("button", {name:"Get Brief"}));
+      if (retry) {
+        expect(await within(panel).findByRole("alert")).toHaveTextContent("Could not verify proposed meeting times.");
+        expect(within(panel).getByText("Welcome to the app.")).toBeInTheDocument();
+        expect(check).not.toHaveBeenCalled();
+        fireEvent.click(within(panel).getByRole("button",{name:"Find Times"}));
+      }
       const offered = await within(panel).findByRole("region", {name:"Proposed times"});
       fireEvent.click(await within(offered).findByRole("checkbox"));
       fireEvent.click(within(offered).getByRole("button", {name:"Draft Reply With Selected Times"}));

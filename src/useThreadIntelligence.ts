@@ -84,7 +84,7 @@ export function useThreadIntelligence({
     }
   }, [applyThreadSummary, beginSummary, endSummary, selected]);
 
-  const [offeredTimeSets, setOfferedTimeSets] = useState<Record<string, OfferedTimes | null>>({});
+  const [offeredTimeSets, setOfferedTimeSets] = useState<Record<string, { offer: OfferedTimes | null; error: string | null }>>({});
   const [actionProposalSets, setActionProposalSets] = useState<Record<string, ActionProposal[]>>({});
   const [actionHiddenCounts, setActionHiddenCounts] = useState<Record<string, number>>({});
   // Valid suggestions past the per-analysis limit, which weren't shown.
@@ -180,9 +180,9 @@ export function useThreadIntelligence({
     beginActionAnalysis(proposalKey);
     try {
       const { provider, model, endpoint } = readAiRequestConfig("getting a brief", "brief");
-      const { summary, analysis, offeredTimes } = await mailClient.briefThread(threadId, availabilityPreferences.timeZone, provider, model, endpoint);
+      const { summary, analysis, offeredTimes, offeredTimesError } = await mailClient.briefThread(threadId, availabilityPreferences.timeZone, provider, model, endpoint);
       applyThreadSummary(threadId, summary);
-      setOfferedTimeSets((current) => ({ ...current, [proposalKey]: offeredTimes ?? null }));
+      setOfferedTimeSets((current) => ({ ...current, [proposalKey]: { offer: offeredTimes ?? null, error: offeredTimesError ?? null } }));
       setActionProposalSets((current) => ({ ...current, [proposalKey]: withoutInvitationMeetings(analysis.proposals, visibleDetail) }));
       markSuggestionsFetched(proposalKey);
       setActionHiddenCounts((current) => ({ ...current, [proposalKey]: analysis.hiddenCount }));
@@ -372,7 +372,8 @@ export function useThreadIntelligence({
   const focusThreadChat = useCallback(() => setChatFocusRequest((current) => current + 1), []);
   return {
     summaryPending, summaryError, runBrief, actionProposals,
-    offeredTimes: actionProposalKey ? offeredTimeSets[actionProposalKey] ?? null : null,
+    offeredTimesError: actionProposalKey ? offeredTimeSets[actionProposalKey]?.error ?? null : null,
+    offeredTimes: actionProposalKey ? offeredTimeSets[actionProposalKey]?.offer ?? null : null,
     actionProposalSource, actionAnalysisLoading, actionAnalysisError, actionAnalysisRequested,
     actionHiddenCount, actionExtraCount, chatByThread, chatPendingThreads, chatFailures,
     chatFocusRequest, askThread, focusThreadChat, updateActionProposal, removeActionProposal,

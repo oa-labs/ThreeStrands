@@ -736,6 +736,7 @@ export type ThreadChatReply = {
 /** One combined request: the persisted summary and the verified suggestions. */
 export type ThreadBriefResult = {
   offeredTimes?: OfferedTimes | null;
+  offeredTimesError?: string | null;
   summary: SummaryResult;
   analysis: ActionAnalysis;
 };

@@ -703,7 +703,7 @@ pub(crate) async fn ai_brief_thread(
     );
     let summary = save_thread_summary(&state, &thread_id, brief.summary, &revision, focus_from.as_deref())?;
     let analysis = cache_thread_analysis(&state, &thread_id, &revision, brief.analysis, true, focus_from.as_deref())?;
-    Ok(ThreadBriefResult { summary, analysis, offered_times: brief.offered_times })
+    Ok(ThreadBriefResult { summary, analysis, offered_times: brief.offered_times, offered_times_error: brief.offered_times_error })
 }
 
 #[tauri::command]

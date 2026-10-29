@@ -21,6 +21,41 @@ beforeEach(() => { vi.useFakeTimers({toFake:["Date"]}); vi.setSystemTime(new Dat
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe("proposed times", () => {
+  it("keeps an actionable warning for invalid offered-time metadata and reads the enabled Brief again", async () => {
+    const retry = vi.fn().mockResolvedValue(undefined);
+    const check = vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue(times.map((_,index) => row(index)));
+    const search = vi.spyOn(mailClient,"findAvailability");
+    const current = { compact:true, offered:false, preferences, ai:false, draft:{sourceId:"m1",subject:"CRT",body:""},onInsertTimes:vi.fn(),onOpenCalendarSettings:vi.fn() };
+    const view = render(<AvailabilitySection {...current} offeredTimesError="Proposed times could not be verified." onRetryOfferedTimes={retry} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Proposed times could not be verified.");
+    fireEvent.click(screen.getByRole("button",{name:"Find Times"}));
+    await waitFor(() => expect(retry).toHaveBeenCalledOnce());
+    expect(check).not.toHaveBeenCalled();
+    expect(search).not.toHaveBeenCalled();
+    view.rerender(<AvailabilitySection {...current} offeredTimes={{sourceMessageId:"m1",times}} />);
+    await screen.findAllByText("Free · Outside your usual hours");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    // A subsequent Brief can invalidate its optional offer; never leave its old card active.
+    view.rerender(<AvailabilitySection {...current} offeredTimesError="Proposed times could not be verified." onRetryOfferedTimes={retry} />);
+    await waitFor(() => expect(screen.queryByRole("region",{name:"Proposed times"})).not.toBeInTheDocument());
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    view.rerender(<AvailabilitySection {...current} offeredTimesError="Proposed times could not be verified." />);
+    expect(screen.getByRole("button",{name:"Find Times"})).toBeDisabled();
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it("keeps retry failures visible without replacing an unreadable offered list with general free times", async () => {
+    const { saveAiProvider } = await import("./aiSettings"); saveAiProvider("openai");
+    const search = vi.spyOn(mailClient,"findAvailability");
+    vi.spyOn(mailClient,"findTimes").mockRejectedValue(new Error("Unverifiable offered times"));
+    render(<AvailabilitySection compact offered={false} preferences={preferences} ai draft={{sourceId:"m1",subject:"CRT",body:""}} offeredTimesError="Could not verify proposed times." onInsertTimes={vi.fn()} onOpenCalendarSettings={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button",{name:"Find Times"}));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("No proposed times were checked."));
+    expect(search).not.toHaveBeenCalled();
+    expect(screen.getByRole("button",{name:"Find Times"})).toBeEnabled();
+    saveAiProvider("none");
+  });
+
   it("keeps unresolved sender text inert and visible", async () => {
     const sourceText = '<img src="https://sender.example/track" onerror="alert(1)"> Saturday, time unclear';
     vi.spyOn(mailClient,"checkProposedTimes").mockResolvedValue([{start:null,end:null,issue:"Date or time needs clarification",check:null,outsideWorkingHours:false}]);

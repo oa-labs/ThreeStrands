@@ -11,7 +11,7 @@ use super::context::{
     MAX_BACKGROUND_BODY_CHARS, MAX_BODY_CHARS, MAX_MESSAGES, ThreadMessageInput,
 };
 use super::output::{decode_json_output, OutputDecodeError};
-use super::proposals::{proposal_array_schema, proposal_evidence, validate_proposal_items};
+use super::proposals::{proposal_array_schema, proposal_evidence, resolve_evidence, validate_proposal_items};
 use super::provider::{
     call_provider, call_provider_reply, AiProvider, OutputSchema, Reasoning,
     STRUCTURED_OUTPUT_TOKENS, TEXT_OUTPUT_TOKENS,
@@ -166,6 +166,7 @@ pub struct ThreadBrief {
     pub summary: String,
     pub analysis: ActionAnalysis,
     pub offered_times: Option<crate::proposed_times::OfferedTimes>,
+    pub offered_times_error: Option<String>,
 }
 
 pub async fn brief(request: AnalyzeRequest, api_key: &str) -> Result<ThreadBrief, String> {
@@ -446,15 +447,17 @@ fn parse_thread_brief(
     let serde_json::Value::Object(mut object) = value else {
         return Err(invalid());
     };
-    let offered_times: Option<crate::proposed_times::OfferedTimes> = match object.remove("offeredTimes") {
-        None | Some(serde_json::Value::Null) => None,
-        Some(value) => {
-            let offer: crate::proposed_times::OfferedTimes = serde_json::from_value(value).map_err(|_| invalid())?;
-            crate::proposed_times::validate_times(&offer.times)?;
-            let source = messages.iter().find(|message| message.id == offer.source_message_id).ok_or_else(invalid)?;
-            if offer.times.is_empty() || offer.times.iter().any(|time| !source.body_text.contains(&time.source_text)) { return Err(invalid()); }
-            Some(offer)
-        }
+    // Optional scheduling context must not discard a valid summary and tasks.
+    // An unverifiable offer is withheld as a whole, with a visible retry path.
+    let (offered_times, offered_times_error) = match object.remove("offeredTimes") {
+        None | Some(serde_json::Value::Null) => (None, None),
+        Some(value) => match parse_offered_times(value, messages) {
+            Ok(offer) => (offer, None),
+            Err(error) => {
+                log::warn!(target: "ai_analyze_thread", "withheld offered meeting times: {error}");
+                (None, Some("The proposed meeting times couldn’t be verified. Use Find Times to try reading them again.".into()))
+            }
+        },
     };
     if object.len() != 2 {
         return Err(invalid());
@@ -469,7 +472,24 @@ fn parse_thread_brief(
         summary,
         analysis: validate_proposal_items(items, messages)?,
         offered_times,
+        offered_times_error,
     })
+}
+
+fn parse_offered_times(value: serde_json::Value, messages: &[ActionMessageInput]) -> Result<Option<crate::proposed_times::OfferedTimes>, String> {
+    let mut offer: crate::proposed_times::OfferedTimes = serde_json::from_value(value).map_err(|_| "Invalid offered-time structure")?;
+    crate::proposed_times::validate_times(&offer.times)?;
+    if offer.times.is_empty() { return Ok(None); }
+    let source = messages.iter().find(|message| message.id == offer.source_message_id).ok_or("Unknown offered-time source message")?;
+    for time in &mut offer.times {
+        let evidence = crate::models::ProposalEvidence { source_message_id: source.id.clone(), excerpt: time.source_text.clone() };
+        // Reuse proposal evidence normalization for mail wrapping, typographic
+        // dashes and whitespace, while requiring this exact cited message.
+        let (_, excerpt) = resolve_evidence(&evidence, std::slice::from_ref(source))?;
+        time.source_text = excerpt;
+    }
+    crate::proposed_times::validate_times(&offer.times)?;
+    Ok(Some(offer))
 }
 
 /// Normalizes brief summary lines to the stored `- ` line format, rejecting
@@ -556,13 +576,62 @@ mod tests {
     fn does_not_reoffer_own_or_already_answered_times_or_background_offers() {
         let mut messages = vec![ActionMessageInput { id:"m1".into(), sender:"sender@example.com".into(), recipients:Vec::new(), sent_at:"2026-10-28T10:00:00Z".into(), body_text:"Saturday at 2".into() }];
         let own = vec!["me@example.com".into()];
-        let make = || ThreadBrief { summary:"Choose a time".into(), analysis:ActionAnalysis::default(), offered_times:Some(crate::proposed_times::OfferedTimes { source_message_id:"m1".into(), times:vec![crate::proposed_times::ProposedTime { source_text:"Saturday at 2".into(), local_start:Some("2026-10-31T14:00".into()), duration_minutes:Some(60), time_zone:None }] }) };
+        let make = || ThreadBrief { summary:"Choose a time".into(), analysis:ActionAnalysis::default(), offered_times_error:None, offered_times:Some(crate::proposed_times::OfferedTimes { source_message_id:"m1".into(), times:vec![crate::proposed_times::ProposedTime { source_text:"Saturday at 2".into(), local_start:Some("2026-10-31T14:00".into()), duration_minutes:Some(60), time_zone:None }] }) };
         let mut brief = make(); drop_stale_offered_times(&mut brief,&messages,None,&own); assert!(brief.offered_times.is_some());
         let mut brief = make(); drop_stale_offered_times(&mut brief,&messages,Some("2026-10-29T00:00:00Z"),&own); assert!(brief.offered_times.is_none());
         messages.push(ActionMessageInput { id:"m2".into(),sender:"Me <me@example.com>".into(),sent_at:"2026-10-28T12:00:00Z".into(),recipients:Vec::new(),body_text:"Saturday works".into() });
         let mut brief = make(); drop_stale_offered_times(&mut brief,&messages,None,&own); assert!(brief.offered_times.is_none());
         messages.truncate(1); messages[0].sender="me@example.com".into();
         let mut brief = make(); drop_stale_offered_times(&mut brief,&messages,None,&own); assert!(brief.offered_times.is_none());
+    }
+
+    #[test]
+    fn offered_time_sources_normalize_mail_formatting_and_restore_original_excerpts() {
+        let messages = vec![ActionMessageInput { id:"m1".into(), sender:"sender@example.com".into(), recipients:Vec::new(), sent_at:"2026-10-28T10:00:00Z".into(), body_text:"1) Saturday, Oct. 31st. – 2\u{a0}PM\n2) Sunday, Nov. 1st — 7 PM".into() }];
+        let value = json!({"summary":["Choose a time."],"proposals":[],"offeredTimes":{"sourceMessageId":"m1","times":[
+            {"sourceText":"1) Saturday, Oct. 31st. - 2 PM","localStart":"2026-10-31T14:00","durationMinutes":60,"timeZone":null},
+            {"sourceText":"2) Sunday, Nov. 1st - 7 PM","localStart":"2026-11-01T19:00","durationMinutes":60,"timeZone":null}
+        ]}});
+        let brief = parse_thread_brief(&value.to_string(),&messages).unwrap();
+        assert!(brief.offered_times_error.is_none());
+        let offer = brief.offered_times.unwrap();
+        assert_eq!(offer.times.len(),2);
+        assert_eq!(offer.times[0].source_text,"1) Saturday, Oct. 31st. – 2\u{a0}PM");
+        assert_eq!(offer.times[1].source_text,"2) Sunday, Nov. 1st — 7 PM");
+        // A structurally different prose offer, wrapped and quoted in the email.
+        let messages = vec![ActionMessageInput { id:"m1".into(),sender:"sender@example.com".into(),recipients:Vec::new(),sent_at:"2026-10-28T10:00:00Z".into(),body_text:"> We can meet Thursday at noon\n> for 45 minutes in London.".into() }];
+        let mut value = value;
+        value["offeredTimes"]["times"] = json!([{"sourceText":"We can meet Thursday at noon for 45 minutes in London.","localStart":"2026-11-05T12:00","durationMinutes":45,"timeZone":"Europe/London"}]);
+        let brief = parse_thread_brief(&value.to_string(),&messages).unwrap();
+        assert!(brief.offered_times_error.is_none());
+        assert_eq!(brief.offered_times.unwrap().times[0].source_text,"We can meet Thursday at noon\n> for 45 minutes in London.");
+    }
+
+    #[test]
+    fn invalid_optional_offers_keep_valid_summary_and_tasks_without_a_partial_calendar_list() {
+        let messages = vec![ActionMessageInput { id:"m1".into(),sender:"sender@example.com".into(),recipients:Vec::new(),sent_at:"2026-10-28T10:00:00Z".into(),body_text:"Please reply. Saturday at 2 PM; Sunday at 7 PM".into() }];
+        let task = json!({"type":"task","kind":"action","title":"Reply","notes":null,"dueKind":"none","dueValue":null,"timeZone":null,"repeatIntervalDays":null,"confidence":0.9,"evidence":{"sourceMessageId":"m1","excerpt":"Please reply."}});
+        let valid = json!({"sourceText":"Saturday at 2 PM","localStart":"2026-10-31T14:00","durationMinutes":60,"timeZone":null});
+        let invalid_offers = vec![
+            json!([]), json!("not an offer"), json!({"times":[]}),
+            json!({"sourceMessageId":"m1","times":[valid.clone(),{"sourceText":"Monday at 7 PM","localStart":"2026-11-02T19:00","durationMinutes":60,"timeZone":null}]}),
+            json!({"sourceMessageId":"m1","times":[{"sourceText":"Saturday at 2 PM","localStart":"2026-02-30T14:00","durationMinutes":60,"timeZone":null}]}),
+            json!({"sourceMessageId":"m1","times":[{"sourceText":"Saturday at 2 PM","localStart":"2026-10-31T14:00","durationMinutes":60,"timeZone":"unknown"}]}),
+            json!({"sourceMessageId":"m1","times":vec![valid;crate::proposed_times::MAX_PROPOSED_TIMES+1]}),
+        ];
+        for offer in invalid_offers {
+            let value = json!({"summary":["Reply with a time."],"proposals":[task.clone()],"offeredTimes":offer});
+            let brief = parse_thread_brief(&value.to_string(),&messages).unwrap();
+            assert_eq!(brief.summary,"- Reply with a time.");
+            assert_eq!(brief.analysis.proposals.len(),1);
+            assert_eq!(brief.analysis.hidden_count,0);
+            assert!(brief.offered_times.is_none());
+            assert!(brief.offered_times_error.is_some());
+        }
+        // Some models encode "no offer" as an empty array inside the optional object.
+        let empty = json!({"summary":["No meeting requested."],"proposals":[],"offeredTimes":{"sourceMessageId":"","times":[]}});
+        let brief = parse_thread_brief(&empty.to_string(),&messages).unwrap();
+        assert!(brief.offered_times.is_none()); assert!(brief.offered_times_error.is_none());
     }
 
     #[test]
@@ -576,10 +645,15 @@ mod tests {
         assert!(brief.analysis.proposals.is_empty());
         assert_eq!(brief.offered_times.unwrap().times.len(),2);
         value["offeredTimes"]["times"][0]["sourceText"] = json!("invented option");
-        assert!(parse_thread_brief(&value.to_string(),&messages).is_err());
+        let brief = parse_thread_brief(&value.to_string(),&messages).unwrap();
+        assert!(brief.offered_times.is_none());
+        assert!(brief.offered_times_error.is_some());
+        assert_eq!(brief.summary, "- Choose a time.");
         value["offeredTimes"]["times"][0]["sourceText"] = json!("Saturday, Oct. 31st. - 2 PM");
         value["offeredTimes"]["sourceMessageId"] = json!("unknown-message");
-        assert!(parse_thread_brief(&value.to_string(),&messages).is_err());
+        let brief = parse_thread_brief(&value.to_string(),&messages).unwrap();
+        assert!(brief.offered_times.is_none());
+        assert!(brief.offered_times_error.is_some());
         // Briefs from the preceding schema are still accepted.
         value.as_object_mut().unwrap().remove("offeredTimes");
         assert!(parse_thread_brief(&value.to_string(),&messages).unwrap().offered_times.is_none());

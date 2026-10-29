@@ -388,7 +388,7 @@ export function App() {
   });
   const {
     summaryPending, summaryError, runBrief, actionProposals, actionProposalSource,
-    actionAnalysisLoading, actionAnalysisError, actionAnalysisRequested, offeredTimes,
+    actionAnalysisLoading, actionAnalysisError, actionAnalysisRequested, offeredTimes, offeredTimesError,
     actionHiddenCount, actionExtraCount, chatByThread, chatPendingThreads, chatFailures, chatFocusRequest, askThread,
     focusThreadChat, updateActionProposal, removeActionProposal, discardActionProposal,
     ownAddresses,
@@ -1310,7 +1310,7 @@ export function App() {
       {mailInView && !scheduleShown && !composingApart ? (
         <ErrorBoundary area="the context panel" variant="side" resetKey={selectedId}>
         <ContextPanel
-          hasProposedTimes={Boolean(offeredTimes?.times.length)}
+          hasProposedTimes={Boolean(offeredTimes?.times.length || offeredTimesError)}
           detail={visibleDetail}
           idle={inboxZero ? (
             <InboxZeroSections onOpenToday={() => executeById("view.today")} />
@@ -1342,6 +1342,8 @@ export function App() {
               key={`${visibleDetail.thread.id}:${visibleDetail.thread.lastMessageAt}`}
               compact
               offeredTimes={offeredTimes}
+              offeredTimesError={offeredTimesError}
+              onRetryOfferedTimes={aiSummaryAvailable && aiActionAvailable ? () => runBrief({ force: true }) : undefined}
               ownEmails={accounts.map((account) => account.email)}
               preferences={availabilityPreferences}
               ai={aiDraftAvailable}
