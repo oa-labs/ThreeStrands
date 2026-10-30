@@ -4,6 +4,10 @@ import { buildThreadTextIndex } from "./quotedHistory";
 import { analyzeLinks, bulkMessage, latestInbound, matchingRule, matchingSplit, siteOf, trustHeadline, trustReport, TRUST_ATTACHMENT_LIMIT, TRUST_MISMATCH_LIMIT, TRUST_SUBJECT_WORD_LIMIT, type LinkAnalysis, type TrustInput } from "./senderSignals";
 
 const own = new Set(["you@example.com"]);
+const redirectWrappers = [
+  { name: "Google", wrap: (target: string) => `https://www.google.com/url?q=${encodeURIComponent(target)}&sa=D&source=calendar` },
+  { name: "Safe Links", wrap: (target: string) => `https://nam01.safelinks.protection.outlook.com/?url=${encodeURIComponent(target)}&data=example&sdata=signature&reserved=0` },
+];
 
 function message(id: string, sender: string, extra: Partial<Message> = {}): Message {
   return { id, threadId: "t", sender, recipients: [], sentAt: "2026-10-01T00:00:00Z", bodyHtml: "", bodyText: "", unread: false, attachments: [], ...extra };
@@ -98,6 +102,71 @@ describe("link analysis", () => {
       { shown: "bank.example", opens: "bank-example.test" },
     ]);
     expect(links.trackingImages).toBe(0);
+  });
+
+  it.each(redirectWrappers)("compares $name destinations without changing the actual link", ({ wrap }) => {
+    // Both paragraph invites and table layouts must follow the same rule.
+    for (const target of [
+      "https://us02web.zoom.us/j/123456789?pwd=example.1",
+      "https://meet.google.com/abc-defg-hij",
+      "https://teams.microsoft.com/l/meetup-join/example?context=%7B%22Tid%22%3A%22example%22%7D",
+      "https://partner.example/doc?one=1&two=two%20words",
+    ]) {
+      const href = wrap(target);
+      const escapedHref = href.replaceAll("&", "&amp;");
+      const escapedText = target.replaceAll("&", "&amp;");
+      for (const html of [
+        `<p><a href="${escapedHref}">${escapedText}</a></p>`,
+        `<table><tr><td><a href="${escapedHref}">${escapedText}</a></td></tr></table>`,
+      ]) {
+        const analysis = analyzeLinks(html);
+        expect(analysis.mismatches).toEqual([]);
+        expect(analysis.sites).toEqual([siteOf(new URL(target).hostname)]);
+        expect(analysis.links).toMatchObject([{ link: { href, text: target }, host: new URL(target).hostname }]);
+      }
+      expect(analyzeLinks(`<a href="${escapedHref}">${escapedHref}</a>`).mismatches).toEqual([]);
+    }
+  });
+
+  it.each(redirectWrappers)("still warns when $name wraps a different site", ({ wrap }) => {
+    const href = wrap("https://unrelated.example/login");
+    const analysis = analyzeLinks(`<a href="${href}">https://us02web.zoom.us/j/123456789</a>`);
+    expect(analysis.mismatches).toEqual([{
+      shown: "zoom.us", opens: "unrelated.example", link: { href, text: "https://us02web.zoom.us/j/123456789" },
+    }]);
+  });
+
+  it("keeps warnings for look-alike endpoints, malformed destinations, and ambiguous parameters", () => {
+    const target = encodeURIComponent("https://us02web.zoom.us/j/123456789");
+    const wrappers = [
+      `https://www.google.com.evil.example/url?q=${target}`,
+      `https://evil.example/url?q=${target}`,
+      `https://calendar.google.com/url?q=${target}`,
+      `https://www.google.com/other?q=${target}`,
+      `http://www.google.com/url?q=${target}`,
+      `https://user@www.google.com/url?q=${target}`,
+      `https://www.google.com:8443/url?q=${target}`,
+      `https://www.google.com/url?q=${target}&q=https://evil.example`,
+      `https://www.google.com/url?q=${target}&url=https://evil.example`,
+      "https://www.google.com/url?q=%FF",
+      "https://www.google.com/url?q=%zz",
+      "https://www.google.com/url?q=javascript%3Aalert(1)",
+      "https://www.google.com/url?q=%2F%2Fus02web.zoom.us",
+      `https://www.google.com/url?q=${encodeURIComponent(target)}`,
+      "https://www.google.com/url?source=calendar",
+      `https://nam01.safelinks.protection.outlook.com.evil.example/?url=${target}`,
+      `https://evilsafelinks.protection.outlook.com/?url=${target}`,
+      `https://nam01.safelinks.protection.outlook.com/other?url=${target}`,
+      `https://nam01.safelinks.protection.outlook.com/?url=${target}&url=https://evil.example`,
+      "https://nam01.safelinks.protection.outlook.com/?url=data%3Atext%2Fhtml%2Cexample",
+      "https://nam01.safelinks.protection.outlook.com/?url=",
+      "https://nam01.safelinks.protection.outlook.com/",
+      // Nested redirects are deliberately not recursively trusted.
+      redirectWrappers[0].wrap(redirectWrappers[1].wrap("https://us02web.zoom.us/j/123456789")),
+    ];
+    for (const href of wrappers) {
+      expect(analyzeLinks(`<a href="${href}">us02web.zoom.us</a>`).mismatches, href).toHaveLength(1);
+    }
   });
 
   it("reads links only from the part shown before folded quoted history", () => {
@@ -480,6 +549,19 @@ describe("trust signals from the user's own history", () => {
     expect(rows[0].link).toEqual({ href: "https://partner.example@login.other.example/x", text: "Sign in" });
     expect(warnings(input({ links: analyzeLinks('<a href="http://198.51.100.7/">Download</a>') }))[0]).toMatchObject({ title: "Link opens a numeric address", detail: "Opens 198.51.100.7" });
     expect(warnings(input({ links: analyzeLinks('<a href="https://xn--shp-ted.example/">Shop</a>'), familiarity: null }))[0]).toMatchObject({ title: "Link uses look-alike letters" });
+  });
+
+  it.each(redirectWrappers)("checks $name destinations for hidden addresses and look-alikes", ({ wrap }) => {
+    for (const [target, title] of [
+      ["https://partner.example@login.other.example/", "Link hides where it goes"],
+      ["https://partnr.example/pay", "Link looks like partner.example"],
+      ["http://198.51.100.7/", "Link opens a numeric address"],
+      ["https://xn--shp-ted.example/", "Link uses look-alike letters"],
+    ]) {
+      const href = wrap(target);
+      const rows = warnings(input({ links: analyzeLinks(`<a href="${href}">Join meeting</a>`) }));
+      expect(rows, target).toMatchObject([{ title, link: { href, text: "Join meeting" } }]);
+    }
   });
 
   it("does not add a second warning to a link whose text already mismatches", () => {

@@ -4,6 +4,9 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### Fixed
+- Links wrapped by Google or Microsoft Safe Links no longer trigger a link-text mismatch warning when the embedded destination matches the displayed site. Checks for misleading or suspicious destinations still apply, and clicking keeps the original wrapped link.
+
 ## 0.188.3 — 2026-10-30
 
 ### New

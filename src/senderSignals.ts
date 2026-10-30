@@ -85,7 +85,7 @@ export type LinkMismatch = { shown: string; opens: string; link: TrustLink };
 /** A web link read from the shown part of a message. */
 export type LinkFact = {
   link: TrustLink;
-  /** The host the link opens, as the URL parser gives it (Punycode for international names). */
+  /** Destination host after a recognized wrapper, in the URL parser's Punycode form. */
   host: string;
   site: string;
   /** Text before an `@` in the address, which browsers skip: `https://bank.example@other.example`. */
@@ -114,6 +114,31 @@ function webUrl(value: string | null): URL | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Read one recognized redirect envelope locally; this is not a safety verdict.
+ * Exact HTTPS endpoints and a single destination parameter prevent look-alike
+ * hosts or ambiguous queries from suppressing warnings. Decode only once and
+ * leave nested/unknown redirects visible to the ordinary mismatch check.
+ * The original href remains the click target, including Safe Links protection.
+ */
+function wrappedDestination(url: URL): URL | null {
+  if (url.protocol !== "https:" || url.port || url.username || url.password) return null;
+  let parameter: string;
+  if ((url.hostname === "www.google.com" || url.hostname === "google.com") && url.pathname === "/url") {
+    if (url.searchParams.has("url")) return null;
+    parameter = "q";
+  } else if (/^[a-z0-9-]+\.safelinks\.protection\.outlook\.com$/.test(url.hostname) && url.pathname === "/") {
+    parameter = "url";
+  } else {
+    return null;
+  }
+  const values = url.searchParams.getAll(parameter);
+  if (values.length !== 1 || /%(?![a-f0-9]{2})/i.test(url.search)) return null;
+  const value = values[0];
+  if (!/^https?:\/\//i.test(value) || value.includes("\uFFFD")) return null;
+  return webUrl(value);
 }
 
 function decodedUserinfo(value: string): string {
@@ -164,7 +189,8 @@ export function analyzeLinks(html: string, prior?: PriorThreadText): LinkAnalysi
     const href = anchor.getAttribute("href") ?? "";
     const url = webUrl(href);
     if (!url) continue;
-    const host = url.hostname.replace(/^\[|\]$/g, "");
+    const destination = wrappedDestination(url) ?? url;
+    const host = destination.hostname.replace(/^\[|\]$/g, "");
     const site = siteOf(host);
     counts.set(site, (counts.get(site) ?? 0) + 1);
     const text = (anchor.textContent ?? "").trim();
@@ -172,10 +198,13 @@ export function analyzeLinks(html: string, prior?: PriorThreadText): LinkAnalysi
     const key = `${href}\n${text}`;
     if (!seen.has(key) && links.length < TRUST_LINK_LIMIT) {
       seen.add(key);
-      links.push({ link, host, site, userinfo: url.username ? decodedUserinfo(url.username) : null });
+      links.push({ link, host, site, userinfo: destination.username ? decodedUserinfo(destination.username) : null });
     }
     const shownHost = text.includes("@") ? null : SHOWN_ADDRESS.exec(text)?.[1];
-    if (shownHost && siteOf(shownHost) !== site && !mismatches.some((item) => item.shown === siteOf(shownHost) && item.opens === site)) {
+    // A visible wrapper URL accurately names the first hop, too. Destination
+    // look-alike, numeric-host, and userinfo checks still inspect the inner URL.
+    if (shownHost && siteOf(shownHost) !== site && siteOf(shownHost) !== siteOf(url.hostname)
+      && !mismatches.some((item) => item.shown === siteOf(shownHost) && item.opens === site)) {
       mismatches.push({ shown: siteOf(shownHost), opens: site, link });
     }
   }
