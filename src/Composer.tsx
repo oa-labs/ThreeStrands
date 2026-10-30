@@ -125,7 +125,16 @@ export const Composer = forwardRef<ComposerHandle, {
         && !saved.bodyHtml?.trim()
         && saved.attachments.length === 0
         && (!saved.signature?.html.trim() || saved.signature.automatic);
-      if (isEmpty) await mailClient.discardDraft(saved.id);
+      // A newly created reply/forward already has headers, history, and
+      // possibly inherited attachments. Those alone are not authored work.
+      // Keep reopened saved drafts: their headers may be intentional edits.
+      const untouchedResponse = initial.mode !== "new" && initial.revision === 0
+        && bodyEditor.current?.isUntouchedEmpty()
+        && (["account", "from", "to", "cc", "bcc", "subject"] as const).every((field) => saved[field] === initial[field])
+        && saved.attachments.length === initial.attachments.length
+        && saved.attachments.every((attachment, index) => attachment.id === initial.attachments[index].id)
+        && (!saved.signature?.html.trim() || saved.signature.automatic);
+      if (isEmpty || untouchedResponse) await mailClient.discardDraft(saved.id);
       else void mailClient.pushDraft(saved.id).catch(logBackgroundFailure("Draft push on close"));
       onClose();
     });

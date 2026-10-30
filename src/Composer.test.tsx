@@ -265,10 +265,10 @@ describe("Composer signatures", () => {
     expect(screen.getByRole("textbox", { name: "Message Body" })).toHaveTextContent("My message");
   });
 
-  it.each([true, false])("closing a signature-only draft discards it only when automatic=%s", async (automatic) => {
+  it.each((["new", "reply", "replyAll", "forward"] as const).flatMap((mode) => [true, false].map((automatic) => ({ mode, automatic }))))("closing a signature-only $mode discards it only when automatic=$automatic", async ({ mode, automatic }) => {
     const discard = vi.spyOn(mailClient, "discardDraft").mockResolvedValue(undefined);
     const onClose = vi.fn();
-    render(<Composer draft={{ ...draft, signature: draftSignatureSnapshot(full, automatic) }} accounts={accounts} signatures={signatures} {...snippetProps} onClose={onClose} onQueued={vi.fn()} />);
+    render(<Composer draft={{ ...draft, mode, to: mode === "new" || mode === "forward" ? "" : "sender@example.com", subject: mode === "new" ? "" : "Original subject", signature: draftSignatureSnapshot(full, automatic) }} accounts={accounts} signatures={signatures} {...snippetProps} onClose={onClose} onQueued={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Save and Close Draft" }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(discard).toHaveBeenCalledTimes(automatic ? 1 : 0);
@@ -780,6 +780,49 @@ describe("Composer body input responsiveness", () => {
     expect(discardDraft).toHaveBeenCalledWith("draft-1");
     expect(saveDraft).not.toHaveBeenCalled();
     expect(pushDraft).not.toHaveBeenCalled();
+  });
+
+  const responseDrafts: Draft[] = [
+    { ...draft, mode: "reply", to: "sender@example.com", subject: "Hello", body: "\n\nOn Monday, Sender wrote:\n> Original message" },
+    { ...draft, mode: "replyAll", to: "sender@example.com, other@example.com", cc: "copy@example.com", subject: "Hello", body: "\n\nOn Monday, Sender wrote:\n> Original message" },
+    { ...draft, mode: "forward", subject: "Fwd: Hello", body: "\n\n---------- Forwarded message ----------\nFrom: sender@example.com\n\nOriginal message" },
+    { ...draft, mode: "forward", subject: "Fwd: HTML", forwardedContent: { html: "<table><tbody><tr><td>Original message</td></tr></tbody></table>", text: "Original message" },
+      attachments: [{ id: "inherited", name: "original.pdf", mime: "application/pdf", size: 12, ready: true, messageId: "source", providerId: "original" }] },
+  ];
+
+  it.each(responseDrafts)("discards an untouched $mode draft with generated history ($subject)", async (initial) => {
+    const discard = vi.spyOn(mailClient, "discardDraft").mockResolvedValue();
+    const push = vi.spyOn(mailClient, "pushDraft").mockResolvedValue();
+    const onClose = vi.fn();
+    render(<Composer draft={initial} accounts={accounts} {...snippetProps} onClose={onClose} onQueued={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Save and Close Draft" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(discard).toHaveBeenCalledWith(initial.id);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it.each(["body", "image", "quote", "recipient", "subject", "attachment", "saved"])("keeps a reply with intentional %s content", async (change) => {
+    const discard = vi.spyOn(mailClient, "discardDraft").mockResolvedValue();
+    const push = vi.spyOn(mailClient, "pushDraft").mockResolvedValue();
+    const initial = { ...responseDrafts[0], revision: change === "saved" ? 1 : 0 };
+    vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
+    vi.spyOn(mailClient, "attachFiles").mockResolvedValue({ ...initial, attachments: [{ id: "added", name: "notes.txt", mime: "text/plain", size: 12, ready: true, messageId: null, providerId: null }] });
+    const ref = createRef<ComposerHandle>();
+    const onClose = vi.fn();
+    render(<Composer ref={ref} draft={initial} accounts={accounts} {...snippetProps} onClose={onClose} onQueued={vi.fn()} />);
+    if (["body", "image", "quote"].includes(change)) {
+      if (change === "quote") fireEvent.click(screen.getByRole("button", { name: "Show Quoted Text" }));
+      const editor = change === "quote" ? screen.getByRole("textbox", { name: "Quoted Text" }) : screen.getByRole("textbox", { name: "Message Body" });
+      editor.innerHTML = change === "image" ? '<img src="cid:authored">' : "My changes";
+      fireEvent.input(editor);
+    }
+    if (change === "recipient") act(() => ref.current!.replaceRecipient("sender@example.com", "chosen@example.com"));
+    if (change === "subject") fireEvent.change(screen.getByRole("textbox", { name: "Subject" }), { target: { value: "My subject" } });
+    if (change === "attachment") await act(async () => ref.current!.attach());
+    fireEvent.click(screen.getByRole("button", { name: "Save and Close Draft" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(discard).not.toHaveBeenCalled();
+    expect(push).toHaveBeenCalledWith(initial.id);
   });
 
   it("keeps a draft with authored content when the composer closes", async () => {

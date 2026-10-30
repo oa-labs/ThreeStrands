@@ -29,6 +29,8 @@ const IMAGE_KEY_LARGE_STEP = 50;
 export type ComposeBodyEditorHandle = {
   /** Serialize only if the browser-owned DOM has changed. */
   captureChanges(): Pick<Draft, "body" | "bodyHtml" | "signature" | "forwardedEdit"> | null;
+  /** Whether only the original generated history remains. */
+  isUntouchedEmpty(): boolean;
   replaceSignature(signature: DraftSignature | null | undefined): void;
   insertText(text: string): void;
   prependText(text: string): void;
@@ -244,6 +246,15 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
   }
   useImperativeHandle(ref, () => ({
     captureChanges, insertText, prependText, focusBody,
+    isUntouchedEmpty: () => {
+      if (!bodyEditor.current || initial.forwardedEdit || forwardedEditHtml.current !== null) return false;
+      const original = document.createElement("div");
+      original.innerHTML = initialBody.authoredHtml;
+      const empty = (element: HTMLElement) => !element.textContent?.trim() && !element.querySelector("img");
+      if (!empty(original) || !empty(bodyEditor.current)) return false;
+      original.innerHTML = initialBody.quotedHtml ?? "";
+      return serializeComposeBody(original).html === (quotedEditor.current ? serializeComposeBody(quotedEditor.current).html : "");
+    },
     replaceSignature: (signature) => { signatureSnapshot.current = signature; setSignatureState(signature); editBody(); },
     reviewBody: () => {
       if (!bodyEditor.current) throw new Error("The draft editor is unavailable");
