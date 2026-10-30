@@ -1240,3 +1240,17 @@ export interface ContactImportPreview {
   skipped: number;
 }
 export interface ContactImportResult { imported: number; skipped: number }
+
+/** Device-local validation failures; scheduling details require temporary consent. */
+export type AiDiagnosticSnapshot = {
+  captureUntil: string | null;
+  entries: {
+    at: string;
+    requestId: string;
+    feature: string;
+    provider: string;
+    model: string;
+    reason: string;
+    details: Record<string, string | number | boolean | null> | null;
+  }[];
+};

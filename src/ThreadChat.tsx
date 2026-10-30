@@ -1,3 +1,4 @@
+import { HiddenSuggestionsNotice } from "./HiddenSuggestionsNotice";
 import { MessageSquareText, RotateCcw, Sparkles, X } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
@@ -287,7 +288,7 @@ export function ThreadChat({
               View {event.title} in schedule
             </button>
           )) : null}
-          {entry.hiddenSuggestions > 0 ? <small>{entry.hiddenSuggestions === 1 ? "1 suggestion" : `${entry.hiddenSuggestions} suggestions`} couldn&rsquo;t be matched to the email, so {entry.hiddenSuggestions === 1 ? "it was" : "they were"} hidden.</small> : null}
+          {entry.hiddenSuggestions > 0 ? <HiddenSuggestionsNotice count={entry.hiddenSuggestions} /> : null}
           {entry.extraSuggestions ? <small>{extraSuggestionsText(entry.extraSuggestions)}</small> : null}
           {entry.sources.length > 0 ? <nav className="thread-chat-sources" aria-label="Sources">
             {entry.sources.map((source) => <button type="button" className="btn-link" key={source.threadId} onClick={() => onOpenThread(source.threadId)}>{source.subject || "(no subject)"}</button>)}

@@ -84,7 +84,7 @@ const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   { id: "ai", label: "AI Provider", group: "Integrations", description: "Connect an AI provider and choose which features may use it.", keywords: "api key model endpoint draft summary actions", icon: Sparkles },
   { id: "replicatedSync", label: "Replicated Sync", group: "Integrations", description: "Configure end-to-end encrypted replication transports.", keywords: "folder ipfs rpc encrypted", icon: Network },
   { id: "privacy", label: "Privacy", group: "System", description: "Control local retention and remote message content.", keywords: "storage retention remote images cache", icon: ShieldCheck, autosaves: true },
-  { id: "diagnostics", label: "Diagnostics", group: "System", description: "Inspect synchronization health and crash-reporting controls.", keywords: "sync status errors crash reports troubleshooting", icon: Activity, autosaves: true },
+  { id: "diagnostics", label: "Diagnostics", group: "System", description: "Inspect sync health, AI failures, application logs, and crash-reporting controls.", keywords: "sync status errors crash reports troubleshooting AI suggestions logs capture", icon: Activity, autosaves: true },
   { id: "data", label: "Data Transfer", group: "System", description: "Move encrypted settings and account metadata between devices.", keywords: "import export backup password", icon: ArrowLeftRight },
 ];
 

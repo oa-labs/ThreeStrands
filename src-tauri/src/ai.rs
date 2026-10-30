@@ -6,6 +6,7 @@ mod chat;
 mod compose;
 mod contact;
 mod context;
+pub(crate) mod diagnostics;
 pub mod find_times;
 mod output;
 mod proposals;

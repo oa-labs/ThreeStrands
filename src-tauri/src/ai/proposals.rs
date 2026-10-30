@@ -97,10 +97,11 @@ pub(super) fn validate_proposal_items(
             analysis.extra_count += 1;
             continue;
         }
-        let mut proposal: ActionProposal = match serde_json::from_value(item) {
+        let mut proposal: ActionProposal = match serde_json::from_value(item.clone()) {
             Ok(proposal) => proposal,
             Err(error) => {
                 log::warn!(target: "ai_analyze_thread", "withheld action proposal with an invalid schema: {error}");
+                super::diagnostics::rejected("The AI provider returned a suggestion with an invalid schema", Some(&item));
                 analysis.hidden_count += 1;
                 continue;
             }
@@ -109,6 +110,7 @@ pub(super) fn validate_proposal_items(
             Ok(()) => analysis.proposals.push(proposal),
             Err(error) => {
                 log::warn!(target: "ai_analyze_thread", "withheld action proposal: {error}");
+                super::diagnostics::rejected(&error, Some(&item));
                 analysis.hidden_count += 1;
             }
         }

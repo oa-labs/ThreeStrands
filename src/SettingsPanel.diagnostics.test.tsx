@@ -77,6 +77,8 @@ describe("DiagnosticsSettings", () => {
   it("keeps crash-report controls in the diagnostics section", () => {
     render(<DiagnosticsSettings status={null} accountCount={1} />);
 
+    expect(screen.getByRole("heading", { name: "AI Diagnostics" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Logs Folder" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Crash Reports" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Share Sanitized Crash Reports" })).toBeInTheDocument();
     // The policy is described in plain language, not as a repository path.

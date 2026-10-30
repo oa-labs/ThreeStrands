@@ -1003,6 +1003,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|error| format!("Unable to find app data directory: {error}"))?;
     std::fs::create_dir_all(&data_dir)?;
     restrict_dir_to_owner(&data_dir);
+    ai::diagnostics::initialize(data_dir.join("ai-diagnostics.json"));
     let (opened_database, recovery) =
         db::open_with_recovery(&data_dir.join("threestrands.sqlite"));
     let database = Arc::new(opened_database);
@@ -1537,6 +1538,10 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::ai::ai_brief_thread,
         commands::ai::ai_usage_summary,
         commands::ai::ai_activity,
+        commands::ai::ai_diagnostics,
+        commands::ai::set_ai_diagnostic_capture,
+        commands::ai::clear_ai_diagnostics,
+        commands::ai::open_logs_folder,
         commands::ai::ai_thread_chat,
         commands::ai::ai_enrich_contact,
         commands::ai::ai_reply_assist_context,

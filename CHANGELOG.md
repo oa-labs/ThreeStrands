@@ -4,6 +4,12 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+### New
+- **Settings → Diagnostics** now shows recent AI rejection reasons, provider and model details, and request references, and lets you open the application logs folder. You can temporarily capture rejected scheduling values for troubleshooting on the affected device.
+
+### Improved
+- Hidden AI suggestions now say they couldn’t be verified, with an expandable explanation covering invalid scheduling data as well as unmatched evidence.
+
 ### Fixed
 - Links wrapped by Google or Microsoft Safe Links no longer trigger a link-text mismatch warning when the embedded destination matches the displayed site. Checks for misleading or suspicious destinations still apply, and clicking keeps the original wrapped link.
 

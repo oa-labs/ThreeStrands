@@ -21,6 +21,21 @@ describe("native AI request payloads", () => {
 
   const sent = (command: string) => vi.mocked(invoke).mock.calls.find(([name]) => name === command)?.[1];
 
+  it("routes diagnostic reads and local diagnostic controls to the native commands", async () => {
+    await client.aiDiagnostics();
+    await client.setAiDiagnosticCapture(true);
+    await client.setAiDiagnosticCapture(false);
+    await client.clearAiDiagnostics();
+    await client.openLogsFolder();
+    expect(vi.mocked(invoke).mock.calls).toEqual([
+      ["ai_diagnostics", undefined],
+      ["set_ai_diagnostic_capture", { enabled: true }],
+      ["set_ai_diagnostic_capture", { enabled: false }],
+      ["clear_ai_diagnostics", undefined],
+      ["open_logs_folder", undefined],
+    ]);
+  });
+
   it("forwards the reasoning switch for fast-tier work", async () => {
     await client.summarizeThread("thread-1", "fireworks", "fast", null, "off");
     expect(sent("ai_summarize_thread")).toEqual({ threadId: "thread-1", provider: "fireworks", model: "fast", endpoint: null, reasoning: "off" });

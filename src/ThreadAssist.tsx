@@ -1,3 +1,4 @@
+import { HiddenSuggestionsNotice } from "./HiddenSuggestionsNotice";
 import { useId, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check, ChevronRight, Copy, MapPin, RefreshCw, RotateCcw, Sparkles, Users, Video } from "lucide-react";
@@ -352,7 +353,7 @@ export function ThreadAssist({ detail, providerChosen, summary, suggestions, sch
       {showSuggestions ? <div className="thread-assist-suggestions">
         {summary.available ? <h4>Suggested</h4> : null}
         {!busy && suggestions.requested && suggestions.proposals.length === 0 && suggestions.hiddenCount === 0 ? <p className="context-status">Nothing to schedule or follow up on.</p> : null}
-        {!busy && suggestions.hiddenCount > 0 ? <p className="context-status">{suggestions.hiddenCount === 1 ? "1 suggestion" : `${suggestions.hiddenCount} suggestions`} couldn&rsquo;t be matched to the email, so {suggestions.hiddenCount === 1 ? "it was" : "they were"} hidden.</p> : null}
+        {!busy && suggestions.hiddenCount > 0 ? <HiddenSuggestionsNotice count={suggestions.hiddenCount} /> : null}
         {!busy && suggestions.extraCount ? <p className="context-status">{extraSuggestionsText(suggestions.extraCount)}</p> : null}
         <div className="action-proposals">
           {visibleProposals.map((proposal) => <ProposalCard

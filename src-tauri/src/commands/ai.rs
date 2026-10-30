@@ -273,7 +273,7 @@ pub(crate) async fn ai_analyze_thread(
     );
     let focus_from = request.focus_from.clone();
     let purpose = ai::RequestPurpose::about("suggestions", &request.subject, Some(ai::sent_message_count(request.messages.len())));
-    let analysis = match ai::with_purpose(purpose, ai::analyze(request, &api_key)).await {
+    let analysis = match ai::diagnostics::with_request("suggestions", &thread_id, provider, &model, ai::with_purpose(purpose, ai::analyze(request, &api_key))).await {
         Ok(analysis) => analysis,
         Err(error) => {
             log::error!(target: "ai_analyze_thread", "analysis failed for thread {thread_id}: {error}");
@@ -624,7 +624,7 @@ pub(crate) async fn ai_thread_chat(
         shared_attachments.len()
     );
     let purpose = ai::RequestPurpose::about("chat", &chat_request.subject, Some(ai::sent_message_count(chat_request.messages.len())));
-    let answer = match ai::with_purpose(purpose, ai::chat(chat_request, &api_key)).await {
+    let answer = match ai::diagnostics::with_request("chat", &thread_id, provider, &model, ai::with_purpose(purpose, ai::chat(chat_request, &api_key))).await {
         Ok(answer) => answer,
         Err(error) => {
             log::error!(target: "ai_thread_chat", "chat failed for thread {thread_id}: {error}");
@@ -688,7 +688,7 @@ pub(crate) async fn ai_brief_thread(
     );
     let focus_from = request.focus_from.clone();
     let purpose = ai::RequestPurpose::about("brief", &request.subject, Some(ai::sent_message_count(request.messages.len())));
-    let brief = match ai::with_purpose(purpose, ai::brief(request, &api_key)).await {
+    let brief = match ai::diagnostics::with_request("brief", &thread_id, provider, &model, ai::with_purpose(purpose, ai::brief(request, &api_key))).await {
         Ok(brief) => brief,
         Err(error) => {
             log::error!(target: "ai_analyze_thread", "brief failed for thread {thread_id}: {error}");
@@ -937,4 +937,29 @@ pub(crate) async fn ai_generate_reply(
     ))
     .await?;
     Ok(ReplyAssistResult { body })
+}
+
+#[tauri::command(async)]
+pub(crate) fn ai_diagnostics() -> ai::diagnostics::Snapshot {
+    ai::diagnostics::snapshot()
+}
+
+#[tauri::command(async)]
+pub(crate) fn set_ai_diagnostic_capture(enabled: bool) -> ai::diagnostics::Snapshot {
+    ai::diagnostics::set_capture(enabled)
+}
+
+#[tauri::command(async)]
+pub(crate) fn clear_ai_diagnostics() -> AppResult<ai::diagnostics::Snapshot> {
+    ai::diagnostics::clear().map_err(AppError::from)
+}
+
+#[tauri::command(async)]
+pub(crate) fn open_logs_folder(app: tauri::AppHandle) -> AppResult<()> {
+    use tauri::Manager;
+    use tauri_plugin_opener::OpenerExt;
+    let path = app.path().app_log_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+    app.opener().open_path(path.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())?;
+    Ok(())
 }

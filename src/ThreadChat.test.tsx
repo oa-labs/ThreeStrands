@@ -167,7 +167,7 @@ describe("ThreadChat", () => {
     expect(onUseReply).toHaveBeenCalledWith("Thanks, Friday works.");
     fireEvent.click(within(log).getByRole("button", { name: "Added 2 suggestions to review" }));
     expect(onShowSuggestions).toHaveBeenCalled();
-    expect(within(log).getByText(/1 suggestion couldn’t be matched/)).toBeInTheDocument();
+    expect(within(log).getByText(/1 suggestion couldn’t be verified/)).toBeInTheDocument();
     expect(within(log).getByText("4 more suggestions weren’t shown. Ask about one by name to add it.")).toBeInTheDocument();
     fireEvent.click(within(within(log).getByRole("navigation", { name: "Sources" })).getByRole("button", { name: "Pricing" }));
     expect(onOpenThread).toHaveBeenCalledWith("t2");

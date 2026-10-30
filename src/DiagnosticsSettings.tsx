@@ -1,3 +1,4 @@
+import { AiDiagnosticsSettings } from "./AiDiagnosticsSettings";
 import { CircleAlert, CircleCheck } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { clearLocalCrashReports, crashReportingEnabled, localCrashReports, setCrashReportingEnabled } from "./crashReporting";
@@ -194,6 +195,8 @@ export function DiagnosticsSettings({
         <summary>Technical details</summary>
         <SyncDiagnosticsDetails status={status} accountCount={accountCount} />
       </details>
+
+      <AiDiagnosticsSettings />
 
       <h3>Crash Reports</h3>
       <label className="settings-switch">

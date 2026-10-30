@@ -581,6 +581,10 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       // The demo never calls a provider, so there is no usage to report.
       return [];
     },
+    async aiDiagnostics() { return { entries: [], captureUntil: null }; },
+    async setAiDiagnosticCapture() { throw new Error("Detailed capture is available in the desktop app."); },
+    async clearAiDiagnostics() { return { entries: [], captureUntil: null }; },
+    async openLogsFolder() { throw new Error("Application logs are available in the desktop app."); },
     async aiActivity(): Promise<AiActivity[]> {
       return [];
     },

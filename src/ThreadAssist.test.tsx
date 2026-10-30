@@ -426,11 +426,14 @@ describe("ThreadAssist", () => {
 
   it("reports withheld suggestions instead of claiming there was nothing to do", () => {
     const { rerender } = render(<ThreadAssist {...props({ suggestions: { requested: true, hiddenCount: 2 } })} />);
-    expect(screen.getByText("2 suggestions couldn’t be matched to the email, so they were hidden.")).toBeInTheDocument();
+    expect(screen.getByText("2 suggestions couldn’t be verified, so they were hidden.")).toBeInTheDocument();
     expect(screen.queryByText("Nothing to schedule or follow up on.")).not.toBeInTheDocument();
 
     rerender(<ThreadAssist {...props({ suggestions: { requested: true, hiddenCount: 1 } })} />);
-    expect(screen.getByText("1 suggestion couldn’t be matched to the email, so it was hidden.")).toBeInTheDocument();
+    expect(screen.getByText("1 suggestion couldn’t be verified, so it was hidden.")).toBeInTheDocument();
+    const notice = screen.getByText("1 suggestion couldn’t be verified, so it was hidden.");
+    fireEvent.click(notice);
+    expect(screen.getByText(/Open Settings → Diagnostics on this device/)).toBeVisible();
 
     rerender(<ThreadAssist {...props({ suggestions: { requested: true } })} />);
     expect(screen.getByText("Nothing to schedule or follow up on.")).toBeInTheDocument();
@@ -446,7 +449,7 @@ describe("ThreadAssist", () => {
   it("reports suggestions past the limit separately from withheld ones", () => {
     const { rerender } = render(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [taskProposal], extraCount: 3 } })} />);
     expect(screen.getByText("3 more suggestions weren’t shown. Ask about one by name to add it.")).toBeInTheDocument();
-    expect(screen.queryByText(/couldn’t be matched/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/couldn’t be verified/)).not.toBeInTheDocument();
     rerender(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [taskProposal], extraCount: 1 } })} />);
     expect(screen.getByText("1 more suggestion wasn’t shown. Ask about it by name to add it.")).toBeInTheDocument();
     rerender(<ThreadAssist {...props({ suggestions: { requested: true, proposals: [taskProposal], extraCount: 0 } })} />);

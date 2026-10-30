@@ -11,6 +11,7 @@ import type {
   ActionAnalysis,
   ActionProposal,
   AiActivity,
+  AiDiagnosticSnapshot,
   AiUsageDay,
   AuthStatus,
   AvailabilityResult,
@@ -154,6 +155,10 @@ export interface MailClient extends CorrespondenceClient {
   aiUsageSummary(days: number): Promise<AiUsageDay[]>;
   /** The most recent AI provider requests, newest first; never email text. */
   aiActivity(limit: number): Promise<AiActivity[]>;
+  aiDiagnostics(): Promise<AiDiagnosticSnapshot>;
+  setAiDiagnosticCapture(enabled: boolean): Promise<AiDiagnosticSnapshot>;
+  clearAiDiagnostics(): Promise<AiDiagnosticSnapshot>;
+  openLogsFolder(): Promise<void>;
   briefThread(
     threadId: string,
     userTimeZone: string,
@@ -401,6 +406,10 @@ const tauriClient: MailClient = {
     complete("ai_analyze_thread", { threadId, userTimeZone, provider, model, endpoint }),
   aiUsageSummary: (days) => read("ai_usage_summary", { days }),
   aiActivity: (limit) => read("ai_activity", { limit }),
+  aiDiagnostics: () => read("ai_diagnostics"),
+  setAiDiagnosticCapture: (enabled) => complete("set_ai_diagnostic_capture", { enabled }),
+  clearAiDiagnostics: () => complete("clear_ai_diagnostics"),
+  openLogsFolder: () => complete("open_logs_folder"),
   threadChat: (request, provider, model, endpoint) => complete("ai_thread_chat", { request, provider, model, endpoint }),
   removeThreadSuggestion: (threadId, revision, proposal) => complete("remove_thread_suggestion", { threadId, revision, proposal }),
   briefThread: (threadId, userTimeZone, provider, model, endpoint) =>
