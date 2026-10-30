@@ -588,8 +588,9 @@ export function CalendarWeekView({
                     onClick={(click) => { eventTrigger.current=click.currentTarget; setSelectedEvent((current) => sameEvent(current,event) ? null : event); }}
                     onKeyDown={(key) => { if (key.key==="Enter") { key.preventDefault(); setSelectedEvent(event); window.dispatchEvent(new CustomEvent("threestrands:focus-context", { detail: "Meeting context" })); } }}
                     style={calendarColorStyle(calendarColors, event.accountId, event.calendarId)}
+                    title={event.location?.trim() ? `${event.title}, ${event.location.trim()}` : undefined}
                   >
-                    {event.title}
+                    {event.title}{event.location?.trim() ? `, ${event.location.trim()}` : ""}
                   </button>
                 ))}
               </div>
@@ -648,6 +649,10 @@ export function CalendarWeekView({
                   const endMinutes = end >= dayEnd ? 24 * 60 : end.getHours() * 60 + end.getMinutes();
                   const height = Math.max(20, ((Math.max(startMinutes, endMinutes) - startMinutes) / 60) * HOUR_HEIGHT);
                   const durationMinutes = (end.getTime() - start.getTime()) / 60000;
+                  const location = event.location?.trim();
+                  const compactLocation = durationMinutes <= 30 && location;
+                  const separateLocation = height > HOUR_HEIGHT;
+                  const startTime = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(start);
                   const className = [
                     "calendar-schedule-event",
                     durationMinutes <= 30 && "calendar-schedule-event-compact",
@@ -670,10 +675,11 @@ export function CalendarWeekView({
                         left: `${(lane / lanes) * 100}%`,
                         width: `${(span / lanes) * 100}%`,
                       }}
-                      title={`${event.title}, ${formatEventTime(event)}${responseLabel(event) ? `, ${responseLabel(event)}` : ""}`}
+                      title={`${event.title}, ${formatEventTime(event)}${location ? `, ${location}` : ""}${responseLabel(event) ? `, ${responseLabel(event)}` : ""}`}
                     >
-                      <strong>{event.title}</strong>
-                      {durationMinutes > 30 ? <span>{formatEventTime(event)}</span> : null}
+                      <strong>{event.title}{compactLocation ? <span>, {startTime}, {location}</span> : null}</strong>
+                      {durationMinutes > 30 ? <span>{formatEventTime(event)}{location && !separateLocation ? ` · ${location}` : ""}</span> : null}
+                      {durationMinutes > 30 && location && separateLocation ? <span>{location}</span> : null}
                     </button>
                   );
                 })}

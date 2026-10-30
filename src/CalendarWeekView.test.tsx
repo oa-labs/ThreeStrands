@@ -636,6 +636,37 @@ describe("CalendarWeekView", () => {
     });
   });
 
+  it.each([15, 30, 45, 60, 90, 180])("shows the location in a %i-minute event block", async (minutes) => {
+    const start = new Date(2026, 8, 22, 11);
+    const meeting = { ...event("cafe", start.toISOString(), new Date(start.getTime() + minutes * 60_000).toISOString(), "Cafe visit"), location: "Friendies Play Cafe" };
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [meeting], errors: [] });
+    renderWeek();
+    const block = await calendarGrid().findByRole("button", { name: /Cafe visit/ });
+    expect(block).toHaveTextContent("Friendies Play Cafe");
+    expect(block).toHaveAttribute("title", expect.stringContaining("Friendies Play Cafe"));
+    if (minutes <= 30) {
+      expect(block).toHaveClass("calendar-schedule-event-compact");
+      expect(block.querySelector("strong")).toHaveTextContent(/Cafe visit, .*11:00.*, Friendies Play Cafe/);
+    } else {
+      const lines = [...block.children].map((line) => line.textContent);
+      expect(lines).toHaveLength(minutes > 60 ? 3 : 2);
+      expect(lines.at(-1)).toContain("Friendies Play Cafe");
+      expect(lines[0]).toBe("Cafe visit");
+    }
+  });
+
+  it("omits blank locations and shows all-day locations inline", async () => {
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [
+      { ...event("blank", "2026-09-22T09:00:00", "2026-09-22T09:30:00", "Blank location"), location: "   " },
+      { ...event("all", "2026-09-22", "2026-09-23", "Offsite"), allDay: true, location: "Mountain Lodge" },
+    ], errors: [] });
+    renderWeek();
+    const block = await calendarGrid().findByRole("button", { name: "Blank location" });
+    expect(block.querySelector("strong")).toHaveTextContent(/^Blank location$/);
+    expect(block.querySelector("span")).toBeNull();
+    expect(within(screen.getByLabelText("All-day events")).getByRole("button", { name: "Offsite, Mountain Lodge" })).toBeInTheDocument();
+  });
+
   it("uses free overlap space and keeps short meeting titles visible", async () => {
     vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({
       events: [

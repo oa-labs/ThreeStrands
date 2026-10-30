@@ -213,8 +213,8 @@ export function EventViewer({ event, onDismiss, onUpdated, embedded = false, cal
         <h3>{event.title}</h3>
         <div className="calendar-event-viewer-actions">
           {event.canEdit ? <>
-            <HoverTooltip title="Edit event"><button type="button" className="btn-icon btn-icon-sm" aria-label="Edit Event" disabled={deletePending} onClick={() => { setRescheduling(false); setEditing(true); }}><Pencil size={ICON_SIZE.sm} /></button></HoverTooltip>
-            <HoverTooltip title="Delete event"><button type="button" className="btn-icon btn-icon-sm" aria-label="Delete Event" aria-expanded={confirmingDelete} disabled={deletePending} onClick={() => { setDeleteError(null); setConfirmingDelete(true); }}><Trash size={ICON_SIZE.sm} /></button></HoverTooltip>
+            <HoverTooltip title="Edit event" placement="bottom"><button type="button" className="btn-icon btn-icon-sm" aria-label="Edit Event" disabled={deletePending} onClick={() => { setRescheduling(false); setEditing(true); }}><Pencil size={ICON_SIZE.sm} /></button></HoverTooltip>
+            <HoverTooltip title="Delete event" placement="bottom"><button type="button" className="btn-icon btn-icon-sm" aria-label="Delete Event" aria-expanded={confirmingDelete} disabled={deletePending} onClick={() => { setDeleteError(null); setConfirmingDelete(true); }}><Trash size={ICON_SIZE.sm} /></button></HoverTooltip>
           </> : null}
           <button type="button" className="btn-icon btn-icon-sm" aria-label="Close Event Details" onClick={onDismiss}><X size={ICON_SIZE.sm} /></button>
         </div>
