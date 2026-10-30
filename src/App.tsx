@@ -16,6 +16,8 @@ import {
   MailCheck,
   MailOpen,
   Moon,
+  PanelRightClose,
+  PanelRightOpen,
   Pencil,
   RefreshCw,
   RotateCcw,
@@ -60,6 +62,7 @@ import { ConversationBatchToolbar } from "./ConversationBatchToolbar";
 import { ContactMeetings } from "./ContactMeetings";
 import { ContextPanel } from "./ContextPanel";
 import { focusContextPanel, handleContextPanelKeyDown } from "./contextPanelFocus";
+import { useEscapeDismiss } from "./useEscapeDismiss";
 import { CreateCalendarEventDialog } from "./CreateCalendarEventDialog";
 import { mailClient } from "./data/client";
 import type { ActionProposal, SenderRule } from "./domain";
@@ -292,7 +295,7 @@ export function App() {
     calendarEventToOpen, openCalendarAt, contactAddressBookTarget, contactsView, setContactsView,
     keepInTouchDueCount, refreshKeepInTouchCount, calendar, refreshCalendarOptions,
     calendarConnected, calendarSidebarStart, openContactsView, contactCardActions,
-    scheduleShown, setSideColumn, showMailContext,
+    scheduleShown, setSideColumn, showMailContext, narrowLayout, sideDrawerOpen, setSideDrawerOpen,
     contextPersonEmail, openCalendarView, openTasksView, openKeepInTouchView,
   } = workspaces;
   const { openTaskThreadIds, taskRevision, setTaskRevision, refreshTaskIndicators } = useTaskIndicators(activeAccountId);
@@ -518,15 +521,25 @@ export function App() {
 
   // F6 / Mod+Shift+P: from the draft into the context panel, and back to the caret.
   const { focusDraftBody, activeDraft } = correspondence;
+  // In a narrow window the panel is a drawer: it opens to take focus and closes on the way back.
   const toggleContextPanelFocus = useCallback(() => {
     const panel = document.querySelector<HTMLElement>(".context-panel");
     if (!panel) return;
-    if (panel.contains(document.activeElement)) focusDraftBody();
-    else focusContextPanel(panel);
-  }, [focusDraftBody]);
+    if (panel.contains(document.activeElement)) {
+      setSideDrawerOpen(false);
+      focusDraftBody();
+    } else if (narrowLayout && !sideDrawerOpen) {
+      setSideDrawerOpen(true);
+      window.requestAnimationFrame(() => focusContextPanel(panel));
+    } else {
+      focusContextPanel(panel);
+    }
+  }, [focusDraftBody, narrowLayout, setSideDrawerOpen, sideDrawerOpen]);
   const contextPanelKeyDown = useCallback((event: ReactKeyboardEvent<HTMLElement>) => {
-    if (activeDraft) handleContextPanelKeyDown(event, focusDraftBody);
-  }, [activeDraft, focusDraftBody]);
+    if (!activeDraft) return;
+    handleContextPanelKeyDown(event, focusDraftBody);
+    if (event.key === "Escape" && event.defaultPrevented) setSideDrawerOpen(false);
+  }, [activeDraft, focusDraftBody, setSideDrawerOpen]);
 
   const closeSearch = useCallback(() => {
     setQuery("");
@@ -648,13 +661,41 @@ export function App() {
   const showNoticeMessage = useCallback((message: string) => setNotice({ message }), [setNotice]);
 
   const mailInView = rightWorkspace === null;
+  const sideDrawerShown = mailInView && sideDrawerOpen;
+  useEscapeDismiss(() => setSideDrawerOpen(false), sideDrawerShown);
+  // A click or focus back in the inbox or the reader puts the drawer away.
+  // Popovers the drawer opens render elsewhere in the document, so they leave
+  // it open. A click in a message frame only blurs this window.
+  useEffect(() => {
+    if (!sideDrawerShown) return;
+    const closeFrom = (target: unknown) => {
+      if (target instanceof Element && target.closest(".thread-column, .reader") && !target.closest(".reader-actions [aria-expanded]")) setSideDrawerOpen(false);
+    };
+    const onOutside = (event: Event) => closeFrom(event.target);
+    const onWindowBlur = () => window.setTimeout(() => closeFrom(document.activeElement));
+    document.addEventListener("pointerdown", onOutside);
+    document.addEventListener("focusin", onOutside);
+    window.addEventListener("blur", onWindowBlur);
+    return () => {
+      document.removeEventListener("pointerdown", onOutside);
+      document.removeEventListener("focusin", onOutside);
+      window.removeEventListener("blur", onWindowBlur);
+    };
+  }, [setSideDrawerOpen, sideDrawerShown]);
+  const openSideDrawer = useCallback(() => {
+    setSideDrawerOpen(true);
+    window.requestAnimationFrame(() => {
+      const drawer = document.querySelector<HTMLElement>(".app-shell > :is(.context-panel, .calendar-sidebar)");
+      if (drawer) focusContextPanel(drawer);
+    });
+  }, [setSideDrawerOpen]);
   const selectedThreads = threads.filter((thread) => checkedIds.has(thread.id));
   const allSelectedThreadsStarred = selectedThreads.length > 0
     && selectedThreads.every((thread) => thread.starred);
 
   return (
     <AvailabilityProfileChoiceContext.Provider value={profileChoice(threadProfileKey, "conversation", visibleDetail?.thread.accountId)}>
-    <main className={`app-shell${rightWorkspace === "today" ? " today-open" : rightWorkspace === "files" ? " files-open" : rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
+    <main className={`app-shell${rightWorkspace === "today" ? " today-open" : rightWorkspace === "files" ? " files-open" : rightWorkspace === "tasks" ? " tasks-open" : rightWorkspace === "contacts" ? " contacts-open" : rightWorkspace === "week" ? " week-open" : ""}${sideDrawerShown ? " side-drawer-open" : ""}`} style={{ "--inbox-width": `${inboxSize.width}px` } as CSSProperties}>
       <nav className="sidebar" aria-label="Mailboxes">
         <AccountSwitcher
           accounts={accounts}
@@ -1115,6 +1156,13 @@ export function App() {
                     <ShieldAlert size={ICON_SIZE.lg} />
                   </ActionButton>
                 </HoverTooltip>
+                {narrowLayout ? (
+                  <HoverTooltip label={`Show ${scheduleShown ? "schedule" : "context"}`} placement="bottom">
+                    <ActionButton label={`Show ${scheduleShown ? "Schedule" : "Context"}`} expanded={sideDrawerOpen} onClick={openSideDrawer}>
+                      <PanelRightOpen size={ICON_SIZE.lg} />
+                    </ActionButton>
+                  </HoverTooltip>
+                ) : null}
               </div>
             </header>
           </>
@@ -1290,6 +1338,13 @@ export function App() {
           />
         </Suspense>
         </ErrorBoundary>
+      ) : null}
+      {sideDrawerShown ? (
+        <HoverTooltip label={`Hide ${scheduleShown ? "schedule" : "context"}`} shortcut="Esc" placement="bottom">
+          <button type="button" className="btn-icon side-drawer-close" aria-label={`Hide ${scheduleShown ? "Schedule" : "Context"}`} onClick={() => setSideDrawerOpen(false)}>
+            <PanelRightClose size={ICON_SIZE.lg} />
+          </button>
+        </HoverTooltip>
       ) : null}
       {mailInView && scheduleShown ? (
         <ErrorBoundary area="the calendar" variant="side">

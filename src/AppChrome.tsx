@@ -123,14 +123,17 @@ export function ActionButton({
   onClick,
   shortcut,
   disabled = false,
+  expanded,
 }: {
   children: ReactNode;
   label: string;
   onClick(): void;
   shortcut?: string;
   disabled?: boolean;
+  /** For a button that shows and hides a panel: whether the panel is showing. */
+  expanded?: boolean;
 }) {
-  return <button className="btn-icon action-button" aria-label={shortcut ? `${label} (${shortcut})` : label} disabled={disabled} onClick={onClick}>{children}<span>{label}</span>{shortcut ? <kbd>{shortcut}</kbd> : null}</button>;
+  return <button className="btn-icon action-button" aria-label={shortcut ? `${label} (${shortcut})` : label} aria-expanded={expanded} disabled={disabled} onClick={onClick}>{children}<span>{label}</span>{shortcut ? <kbd>{shortcut}</kbd> : null}</button>;
 }
 
 export function CommandPalette({

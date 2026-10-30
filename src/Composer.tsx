@@ -195,6 +195,11 @@ export const Composer = forwardRef<ComposerHandle, {
       const style = getComputedStyle(stack);
       const height = stack.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
       composer.style.setProperty("--compose-available-height", `${height}px`);
+      // While the user works in the draft, a taller draft or a shorter pane
+      // scrolls the conversation so the draft's foot, with Send, stays in view.
+      if (!composer.contains(document.activeElement)) return;
+      const overflow = composer.getBoundingClientRect().bottom - (stack.getBoundingClientRect().bottom - parseFloat(style.paddingBottom));
+      if (overflow > 0) stack.scrollTop += overflow;
     };
     resize();
     // Apply pane resizes in the next frame, outside ResizeObserver's delivery cycle.
@@ -204,6 +209,7 @@ export const Composer = forwardRef<ComposerHandle, {
       frame = requestAnimationFrame(resize);
     });
     observer?.observe(stack);
+    observer?.observe(composer);
     return () => { observer?.disconnect(); cancelAnimationFrame(frame); };
   }, []);
   const revealReviewedDraft = useCallback(() => {

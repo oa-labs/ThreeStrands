@@ -122,6 +122,7 @@
   --z-local-front: 2;
   --z-local-panel: 4;
   --z-local-popover: 5;
+  --z-drawer: 5;
   --z-modal: 10;
   --z-tooltip: 20;
   --z-toast: 20;
@@ -134,6 +135,7 @@
   --shadow-popover: 0 8px 24px var(--shadow); /* menus, tooltips, suggestion lists */
   --shadow-floating: 0 12px 32px var(--shadow); /* toasts, notices, save bars, drag previews, event cards */
   --shadow-dialog: 0 24px 80px var(--shadow); /* modals, the composer window, the lightbox */
+  --shadow-drawer: -12px 0 36px var(--shadow); /* a panel sliding over from the right */
   --focus-ring: 0 0 0 2px var(--focus-glow);
   /* State opacity. */
   --opacity-disabled: .55;
@@ -2517,10 +2519,38 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .task-complete-toast { gap: var(--space-2-5); }
 .task-status-button { align-self: center; margin-right: var(--space-1); }
 .task-follow-up-button { align-self: center; margin-right: var(--space-1); }
-@media (max-width: 1100px) {
+/* In a narrow window (NARROW_LAYOUT_QUERY in useMediaQuery.ts) the reader keeps
+   the room, and Mail's right column slides over it as a drawer. */
+@media (max-width: 1359px) {
   .app-shell:not(.tasks-open):not(.contacts-open):not(.week-open):not(.files-open):not(.today-open) {
-    grid-template-columns: 58px minmax(220px, 32vw) minmax(0, 1fr) minmax(260px, 280px);
+    grid-template-columns: 58px minmax(240px, var(--inbox-width, 400px)) minmax(0, 1fr);
   }
+  .app-shell > :is(.context-panel, .calendar-sidebar, .pane-error.side) {
+    position: fixed;
+    inset: 0 0 0 auto;
+    z-index: var(--z-drawer);
+    width: min(360px, calc(100vw - 58px));
+    box-shadow: var(--shadow-drawer);
+    transform: translateX(100%);
+    visibility: hidden;
+    /* Visibility flips after the slide out, and before the slide in so focus can land. */
+    transition: transform var(--duration-entrance) ease, visibility var(--duration-entrance) step-end;
+  }
+  .app-shell.side-drawer-open > :is(.context-panel, .calendar-sidebar, .pane-error.side) {
+    transform: none;
+    visibility: visible;
+    transition-timing-function: ease, step-start;
+  }
+}
+/* The drawer covers the reader's Show button, so its own close sits on its left edge. */
+.app-shell > .tooltip-anchor:has(> .side-drawer-close) {
+  position: fixed;
+  top: var(--space-3);
+  right: calc(min(360px, 100vw - 58px) + var(--space-2));
+  z-index: var(--z-drawer);
+}
+.side-drawer-close { border: 1px solid var(--border); background: var(--raised); box-shadow: var(--shadow-raised); }
+@media (max-width: 1100px) {
   .app-shell.contacts-open { grid-template-columns:58px minmax(0,1fr); }
   .calendar-week { grid-template-columns: minmax(0, 1fr); }
   .calendar-week-side { display: none; }

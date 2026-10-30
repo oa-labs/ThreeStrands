@@ -8,6 +8,8 @@ export default defineConfig({
   reporter: "list",
   use: {
     baseURL: "http://127.0.0.1:1420",
+    // Wide enough for Mail's three columns; below 1360px the right column is a drawer.
+    viewport: { width: 1440, height: 720 },
     trace: "on-first-retry",
   },
   webServer: {
