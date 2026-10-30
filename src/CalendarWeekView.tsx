@@ -170,6 +170,22 @@ function MiniMonth({
   );
 }
 
+/**
+ * Which connected accounts the week shows: an account is hidden when it lists calendars but none are selected.
+ * Accounts whose calendars have not loaded count as neither.
+ */
+export function calendarAccountVisibility(accounts: CalendarAccount[], calendars: CalendarOption[]) {
+  const listed = accounts.filter((account) => calendars.some((calendar) => calendar.accountId === account.email));
+  const hidden = listed.filter((account) => !calendars.some((calendar) => calendar.accountId === account.email && calendar.selected));
+  return { total: listed.length, shown: listed.length - hidden.length, hidden };
+}
+
+/** The calendar Show All turns on for a hidden account: its primary, or its first when none is marked primary. */
+export function defaultCalendarFor(accountId: string, calendars: CalendarOption[]): CalendarOption | undefined {
+  const accountCalendars = calendars.filter((calendar) => calendar.accountId === accountId);
+  return accountCalendars.find((calendar) => calendar.primary) ?? accountCalendars[0];
+}
+
 function CalendarList({
   accounts,
   calendars,
@@ -182,6 +198,14 @@ function CalendarList({
   onAdd(): void;
 }) {
   const [collapsed, setCollapsed] = useLocalStorageState<Set<string>>(COLLAPSED_CALENDAR_ACCOUNTS_KEY, readCollapsedCalendarAccounts, serializeAccounts);
+  const { hidden } = calendarAccountVisibility(accounts, calendars);
+  // Only each hidden account's primary calendar, so secondary and subscribed calendars stay as the person left them.
+  const showAll = () => {
+    for (const account of hidden) {
+      const calendar = defaultCalendarFor(account.email, calendars);
+      if (calendar) onToggle(account.email, calendar.id, true);
+    }
+  };
   return (
     <section className="calendar-list" aria-label="Calendars">
       <header>
@@ -190,6 +214,12 @@ function CalendarList({
         <HoverTooltip title="Add calendar account"><button type="button" className="btn-icon btn-icon-sm" aria-label="Add calendar account" onClick={onAdd}><Plus size={ICON_SIZE.sm} /></button></HoverTooltip>
       </header>
       {accounts.length === 0 ? <p className="calendar-list-empty">No calendar accounts connected.</p> : null}
+      {hidden.length > 0 ? (
+        <p className="calendar-list-hidden">
+          {hidden.length === 1 ? "1 account hidden" : `${hidden.length} accounts hidden`}
+          <HoverTooltip title="Turn on each hidden account's primary calendar"><button type="button" className="btn-link" onClick={showAll}>Show All</button></HoverTooltip>
+        </p>
+      ) : null}
       {accounts.map((account) => {
         const accountCalendars = calendars.filter((calendar) => calendar.accountId === account.email);
         const open = !collapsed.has(account.email);
@@ -292,8 +322,12 @@ export function CalendarWeekView({
   const todayVisible = days.some((day) => isSameDay(day, today));
   const selectedAccountEmails = [...new Set(calendars.filter((calendar) => calendar.selected).map((calendar) => calendar.accountId))];
   // The week merges every connected calendar account, so name the scope like the mail "All accounts" view.
-  const showsEveryAccount = accounts.length > 0 && accounts.every((account) => selectedAccountEmails.includes(account.email));
-  const accountScope = selectedAccountEmails.length === 0 ? "None selected" : showsEveryAccount ? "All calendar accounts" : selectedAccountEmails.join(", ");
+  // A partial scope is a count rather than addresses, so it does not read as the account you are "in".
+  const visibility = calendarAccountVisibility(accounts, calendars);
+  const accountScope = selectedAccountEmails.length === 0
+    ? "None selected"
+    : visibility.hidden.length === 0 ? "All calendar accounts" : `${visibility.shown} of ${visibility.total} accounts`;
+  const showsHiddenCount = visibility.total > 1 && visibility.hidden.length > 0;
 
   const { events, loading, error, reload } = useCalendarSchedule({
     timeMin: weekStart.toISOString(),
@@ -534,7 +568,7 @@ export function CalendarWeekView({
           <div className="calendar-week-heading"><span className="eyebrow">Calendar <span className="eyebrow-account" title={selectedAccountEmails.join(", ") || undefined}>· {accountScope}</span></span><h1>{monthTitle(weekStart)}</h1><p className="calendar-visible-range">{weekStart.toLocaleDateString(undefined, { month: "short", day: "numeric" })}{days.length > 1 ? ` – ${days.at(-1)!.toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</p></div>
           <div className="calendar-week-controls">
             <div className="segmented" role="group" aria-label="Calendar Range">{CALENDAR_RANGES.map((item) => <button key={item.value} type="button" className="segment" aria-pressed={mode === item.value} onClick={() => { setMode(item.value); writeLocalStorage(CALENDAR_RANGE_KEY,item.value); }}>{item.label}</button>)}</div>
-            <button type="button" className="btn" aria-expanded={navigationOpen} onClick={() => setNavigationOpen((value) => !value)}><CalendarDays size={ICON_SIZE.sm} />Calendars</button>
+            <button type="button" className="btn" aria-expanded={navigationOpen} aria-label={showsHiddenCount ? `Calendars, ${visibility.shown} of ${visibility.total} accounts shown` : undefined} onClick={() => setNavigationOpen((value) => !value)}><CalendarDays size={ICON_SIZE.sm} />Calendars{showsHiddenCount ? <span className="calendar-shown-count" aria-hidden="true">{visibility.shown}/{visibility.total}</span> : null}</button>
             <button type="button" className="btn" title="Today (t)" aria-keyshortcuts="t" onClick={goToToday}>Today</button>
             <div className="calendar-week-nav">
               <HoverTooltip title={`Previous ${mode === "week" || mode === "workweek" ? "week" : "range"} (-)`}><button type="button" className="btn-icon" aria-label={`Previous ${mode === "week" || mode === "workweek" ? "week" : "range"} (-)`} onClick={() => moveWeek(-1)}><ChevronLeft size={ICON_SIZE.lg} /></button></HoverTooltip>

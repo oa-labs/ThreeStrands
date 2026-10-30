@@ -5,6 +5,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ## Unreleased
 
 ### Improved
+- In **Calendar**, it's easier to tell when some accounts are hidden. The header says how many accounts are showing, such as *1 of 3 accounts*, instead of naming them as if you'd switched to one, and the **Calendars** button shows the same count. **Show All** in the calendar list turns each hidden account's primary calendar back on without turning on every other calendar.
 - In a smaller window, Mail gives the open conversation the room. The panel beside it slides over from the right when you need it: use the panel button at the end of the conversation's toolbar, or anything that shows something there, such as getting a brief or pressing **t** for the schedule. Click back into the conversation or press Escape to put it away. The inbox list also narrows with the window instead of keeping the width you set in a larger one.
 
 ### Fixed
