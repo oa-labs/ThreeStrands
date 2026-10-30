@@ -11,7 +11,7 @@ Use [Getting Started](getting-started.html#connect-gmail) for Gmail sign-in or [
 
 ## Switch and Recognize Accounts {#switch-and-recognize-accounts}
 
-In **Settings → Mail Accounts**, set an **Account Nickname**, **Sender Name**, and avatar color. Move accounts up or down to change their order. The sidebar selects one account; the combined view shows all accounts. <kbd>⌘/Ctrl + 1</kbd> through <kbd>⌘/Ctrl + 9</kbd> follow this order, and <kbd>⌘/Ctrl + 0</kbd> shows all accounts.
+In **Settings → Mail Accounts**, set an **Account Nickname**, **Sender Name**, and avatar color. Move accounts up or down to change their order. Choosing an account in the sidebar opens its mail, from any view; the combined view shows all accounts. <kbd>⌘/Ctrl + 1</kbd> through <kbd>⌘/Ctrl + 9</kbd> follow this order, and <kbd>⌘/Ctrl + 0</kbd> shows all accounts.
 
 ## Reconnect an Account {#reconnect-an-account}
 
