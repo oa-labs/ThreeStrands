@@ -4,6 +4,8 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+## 0.188.3 — 2026-10-30
+
 ### New
 - Events in the weekly calendar now show their location inside the event block. Short meetings keep it inline, while longer meetings show it below the title.
 
