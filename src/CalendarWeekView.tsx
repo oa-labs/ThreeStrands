@@ -1,4 +1,5 @@
 import { readLocalStorage, writeLocalStorage, useLocalStorageState } from "./useLocalStorageState";
+import { calendarAccountVisibility, showHiddenCalendarAccounts } from "./calendarVisibility";
 import { useWorkspaceCommands } from "./workspaceCommands";
 import { WorkspaceContextRail } from "./WorkspaceContextRail";
 import { WorkspaceRelatedContext } from "./WorkspaceRelatedContext";
@@ -170,22 +171,6 @@ function MiniMonth({
   );
 }
 
-/**
- * Which connected accounts the week shows: an account is hidden when it lists calendars but none are selected.
- * Accounts whose calendars have not loaded count as neither.
- */
-export function calendarAccountVisibility(accounts: CalendarAccount[], calendars: CalendarOption[]) {
-  const listed = accounts.filter((account) => calendars.some((calendar) => calendar.accountId === account.email));
-  const hidden = listed.filter((account) => !calendars.some((calendar) => calendar.accountId === account.email && calendar.selected));
-  return { total: listed.length, shown: listed.length - hidden.length, hidden };
-}
-
-/** The calendar Show All turns on for a hidden account: its primary, or its first when none is marked primary. */
-export function defaultCalendarFor(accountId: string, calendars: CalendarOption[]): CalendarOption | undefined {
-  const accountCalendars = calendars.filter((calendar) => calendar.accountId === accountId);
-  return accountCalendars.find((calendar) => calendar.primary) ?? accountCalendars[0];
-}
-
 function CalendarList({
   accounts,
   calendars,
@@ -199,13 +184,6 @@ function CalendarList({
 }) {
   const [collapsed, setCollapsed] = useLocalStorageState<Set<string>>(COLLAPSED_CALENDAR_ACCOUNTS_KEY, readCollapsedCalendarAccounts, serializeAccounts);
   const { hidden } = calendarAccountVisibility(accounts, calendars);
-  // Only each hidden account's primary calendar, so secondary and subscribed calendars stay as the person left them.
-  const showAll = () => {
-    for (const account of hidden) {
-      const calendar = defaultCalendarFor(account.email, calendars);
-      if (calendar) onToggle(account.email, calendar.id, true);
-    }
-  };
   return (
     <section className="calendar-list" aria-label="Calendars">
       <header>
@@ -217,7 +195,7 @@ function CalendarList({
       {hidden.length > 0 ? (
         <p className="calendar-list-hidden">
           {hidden.length === 1 ? "1 account hidden" : `${hidden.length} accounts hidden`}
-          <HoverTooltip title="Turn on each hidden account's primary calendar"><button type="button" className="btn-link" onClick={showAll}>Show All</button></HoverTooltip>
+          <HoverTooltip title="Turn on each hidden account's primary calendar"><button type="button" className="btn-link" onClick={() => showHiddenCalendarAccounts(accounts, calendars, onToggle)}>Show All</button></HoverTooltip>
         </p>
       ) : null}
       {accounts.map((account) => {
@@ -320,13 +298,9 @@ export function CalendarWeekView({
   const days = range.days;
   const today = startOfLocalDay(now);
   const todayVisible = days.some((day) => isSameDay(day, today));
-  const selectedAccountEmails = [...new Set(calendars.filter((calendar) => calendar.selected).map((calendar) => calendar.accountId))];
   // The week merges every connected calendar account, so name the scope like the mail "All accounts" view.
-  // A partial scope is a count rather than addresses, so it does not read as the account you are "in".
   const visibility = calendarAccountVisibility(accounts, calendars);
-  const accountScope = selectedAccountEmails.length === 0
-    ? "None selected"
-    : visibility.hidden.length === 0 ? "All calendar accounts" : `${visibility.shown} of ${visibility.total} accounts`;
+  const { selectedAccountEmails, label: accountScope } = visibility;
   const showsHiddenCount = visibility.total > 1 && visibility.hidden.length > 0;
 
   const { events, loading, error, reload } = useCalendarSchedule({

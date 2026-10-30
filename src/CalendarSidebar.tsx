@@ -20,7 +20,8 @@ import { calendarColorStyle, useCalendarColors } from "./calendarColors";
 import { removeFromScheduleCache, revalidateScheduleCache } from "./calendarScheduleCache";
 import { isEditableTarget } from "./commands";
 import { mailClient } from "./data/client";
-import type { CalendarOption, ScheduleEvent } from "./domain";
+import type { CalendarAccount, CalendarOption, ScheduleEvent } from "./domain";
+import { calendarAccountVisibility, showHiddenCalendarAccounts } from "./calendarVisibility";
 import { useEscapeDismiss } from "./useEscapeDismiss";
 import { errorMessage } from "./errors";
 import { useCalendarSchedule } from "./useCalendarSchedule";
@@ -260,13 +261,14 @@ export function EventViewer({ event, onDismiss, onUpdated, embedded = false, cal
 export function CalendarSidebar({
   onClose,
   onOpenSettings,
-  selectedCalendarAccountIds,
+  calendarScope,
   embedded = false,
   initialDate,
 }: {
   onClose(): void;
   onOpenSettings(): void;
-  selectedCalendarAccountIds?: string[];
+  /** The connected calendars, to say which accounts the day shows and offer Show All when some are hidden. */
+  calendarScope?: { accounts: CalendarAccount[]; calendars: CalendarOption[]; onToggle(accountId: string, calendarId: string, selected: boolean): void };
   embedded?: boolean;
   /** Opens on this day, for example an event's day. */
   initialDate?: Date;
@@ -277,6 +279,7 @@ export function CalendarSidebar({
   const gridRef = useRef<HTMLDivElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
   useEscapeDismiss(onClose, !embedded);
+  const visibility = calendarScope ? calendarAccountVisibility(calendarScope.accounts, calendarScope.calendars) : null;
 
   const { events, loading, error, reload } = useCalendarSchedule(scheduleRequestFor(date));
   useEffect(() => { setSelectedEvent(null); }, [date]);
@@ -318,7 +321,12 @@ export function CalendarSidebar({
     <aside className="calendar-sidebar" aria-label="Schedule" ref={sidebarRef}>
       <header className="calendar-sidebar-header">
         <div className="calendar-sidebar-heading">
-          {selectedCalendarAccountIds ? <span className="eyebrow">Calendar <span className="eyebrow-account">· {selectedCalendarAccountIds.length ? selectedCalendarAccountIds.join(", ") : "None selected"}</span></span> : null}
+          {visibility ? (
+            <span className="eyebrow">
+              Calendar <span className="eyebrow-account" title={visibility.selectedAccountEmails.join(", ") || undefined}>· {visibility.label}</span>
+              {visibility.hidden.length > 0 ? <HoverTooltip title="Turn on each hidden account's primary calendar"><button type="button" className="btn-link calendar-sidebar-show-all" onClick={() => showHiddenCalendarAccounts(calendarScope!.accounts, calendarScope!.calendars, calendarScope!.onToggle)}>Show All</button></HoverTooltip> : null}
+            </span>
+          ) : null}
           <h2>{new Intl.DateTimeFormat(undefined, {
             weekday: "short",
             month: "short",

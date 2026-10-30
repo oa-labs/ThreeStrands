@@ -67,7 +67,7 @@ Find Times, checks of times someone offered, and **Find a time** in the event ed
 
 ## Plan the Week {#plan-the-week}
 
-Press <kbd>2</kbd> for the Calendar view. Choose **Day**, **3-Day**, **Workweek**, or **Week**. ThreeStrands remembers your choice. **Today** jumps back to the current date, and **Calendars** shows or hides individual calendars. When an account has every calendar turned off, the header says how many accounts are showing, such as *1 of 3 accounts*, and **Calendars** shows the same count. **Show All** in that list turns each hidden account's primary calendar back on and leaves its other calendars alone.
+Press <kbd>2</kbd> for the Calendar view. Choose **Day**, **3-Day**, **Workweek**, or **Week**. ThreeStrands remembers your choice. **Today** jumps back to the current date, and **Calendars** shows or hides individual calendars. When an account has every calendar turned off, the header says how many accounts are showing, such as *1 of 3 accounts*, and **Calendars** shows the same count. **Show All** in that list turns each hidden account's primary calendar back on and leaves its other calendars alone. The schedule beside your mail shows the same calendars, says the same count, and has the same **Show All**.
 
 <ts-shot scene="calendar-week" alt="A workweek calendar view across several Google calendars."></ts-shot>
 

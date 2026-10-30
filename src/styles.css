@@ -1544,6 +1544,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .calendar-sidebar-header h2 { margin: 0; font-size: var(--text-pane-title); font-weight: var(--weight-semibold); }
 .calendar-sidebar-heading { min-width: 0; }
 .calendar-sidebar-heading .eyebrow { margin-bottom: var(--space-1); overflow-wrap: anywhere; }
+.calendar-sidebar-show-all { margin-left: var(--space-2); font-size: inherit; letter-spacing: normal; text-transform: none; }
 .calendar-sidebar-header > .calendar-sidebar-actions { display: flex; align-items: center; gap: var(--space-0-5); }
 .calendar-all-day {
   display: grid;

@@ -351,8 +351,25 @@ describe("calendar sidebar", () => {
     // selected calendar list.
     expect(within(sidebar).queryByText(/Calendar/)).not.toBeInTheDocument();
     cleanup();
-    render(<CalendarSidebar onClose={vi.fn()} onOpenSettings={vi.fn()} selectedCalendarAccountIds={["personal@example.com", "work@example.com"]} />);
-    expect(screen.getByRole("complementary", { name: "Schedule" }).querySelector(".calendar-sidebar-header")).toHaveTextContent("Calendar · personal@example.com, work@example.com");
+    const scopeAccounts = ["personal@example.com", "work@example.com", "shared@example.com"].map((email) => ({ email, connectedAt: "2026-01-01T00:00:00Z", status: "connected" as const }));
+    const scopeCalendars = [
+      { id: "personal", accountId: "personal@example.com", name: "Personal", primary: true, selected: true, writable: true },
+      { id: "work", accountId: "work@example.com", name: "Work", primary: true, selected: true, writable: true },
+      { id: "shared-team", accountId: "shared@example.com", name: "Team", primary: false, selected: false, writable: true },
+      { id: "shared", accountId: "shared@example.com", name: "Shared", primary: true, selected: false, writable: true },
+    ];
+    const onToggle = vi.fn();
+    const { rerender } = render(<CalendarSidebar onClose={vi.fn()} onOpenSettings={vi.fn()} calendarScope={{ accounts: scopeAccounts, calendars: scopeCalendars, onToggle }} />);
+    const header = screen.getByRole("complementary", { name: "Schedule" }).querySelector<HTMLElement>(".calendar-sidebar-header")!;
+    expect(header).toHaveTextContent("Calendar · 2 of 3 accounts");
+    expect(header.querySelector(".eyebrow-account")).toHaveAttribute("title", "personal@example.com, work@example.com");
+    // Show All turns on only the hidden account's primary calendar.
+    fireEvent.click(within(header).getByRole("button", { name: "Show All" }));
+    expect(onToggle.mock.calls).toEqual([["shared@example.com", "shared", true]]);
+
+    rerender(<CalendarSidebar onClose={vi.fn()} onOpenSettings={vi.fn()} calendarScope={{ accounts: scopeAccounts, calendars: scopeCalendars.map((calendar) => ({ ...calendar, selected: calendar.primary })), onToggle }} />);
+    expect(header).toHaveTextContent("Calendar · All calendar accounts");
+    expect(within(header).queryByRole("button", { name: "Show All" })).not.toBeInTheDocument();
   });
 
   it("moves one day per horizontal trackpad swipe", async () => {
