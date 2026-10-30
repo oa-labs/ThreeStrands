@@ -43,12 +43,30 @@ describe("calendar sidebar", () => {
     const event = { id: "meeting", accountId: "me@example.com", calendarId: "primary", canEdit: true,
       title: "Planning", start: "2099-09-21T13:00:00Z", end: "2099-09-21T13:30:00Z", allDay: false };
     const view = render(<EventViewer event={event} onDismiss={vi.fn()} onUpdated={vi.fn()} />);
+    const reschedule = screen.getByRole("button", { name: "Reschedule" });
+    expect(reschedule.matches(".calendar-event-viewer-details + .btn")).toBe(true);
+    expect(declarations(".calendar-event-viewer-details + .btn")).toMatchObject({ "margin-top": "var(--space-3)" });
     fireEvent.click(screen.getByRole("button", { name: "Reschedule" }));
     expect(await screen.findByRole("complementary", { name: "Suggested times" })).toBeVisible();
     expect(screen.getByRole("dialog", { name: "Edit event" })).toBeVisible();
     view.unmount();
     render(<EventViewer event={{ ...event, canEdit: false }} onDismiss={vi.fn()} onUpdated={vi.fn()} />);
     expect(screen.queryByRole("button", { name: "Reschedule" })).not.toBeInTheDocument();
+  });
+
+  it.each([false, true])("keeps event action tooltips inside the right edge (embedded: %s)", (embedded) => {
+    const event = { id: "meeting", accountId: "me@example.com", canEdit: true,
+      title: "Planning", start: "2099-09-21T13:00:00Z", end: "2099-09-21T13:30:00Z", allDay: false };
+    render(<EventViewer event={event} embedded={embedded} onDismiss={vi.fn()} onUpdated={vi.fn()} />);
+    for (const name of ["Edit Event", "Delete Event"]) {
+      const anchor = screen.getByRole("button", { name }).closest(".tooltip-anchor");
+      expect(anchor).toHaveClass("tooltip-bottom");
+      expect(within(anchor as HTMLElement).getByRole("tooltip")).toBeInTheDocument();
+    }
+    expect(declarations(".tooltip-bottom .hover-tooltip")).toMatchObject({
+      top: "calc(100% + 8px)",
+      right: "0",
+    });
   });
 
   it("opens http(s) URLs in an event location in the system browser", () => {
