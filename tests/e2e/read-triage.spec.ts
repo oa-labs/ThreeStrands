@@ -768,7 +768,7 @@ test("switches themes and remembers the choice after reload", async ({ page }) =
 });
 
 test("resizes the inbox with pointer and keyboard and restores the preferred width", async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.setViewportSize({ width: 1920, height: 800 });
   await page.goto("/");
   const divider = page.getByRole("separator", { name: "Resize Inbox" });
   await expect(divider).toHaveAttribute("aria-valuenow", "400");
@@ -784,9 +784,10 @@ test("resizes the inbox with pointer and keyboard and restores the preferred wid
   await divider.focus();
   await page.keyboard.press("ArrowLeft");
   await expect(divider).toHaveAttribute("aria-valuenow", "510");
-  await page.setViewportSize({ width: 900, height: 800 });
-  await expect(divider).toHaveAttribute("aria-valuenow", "422");
+  // A smaller window caps the inbox at 30% of it without forgetting the preferred width.
   await page.setViewportSize({ width: 1280, height: 800 });
+  await expect(divider).toHaveAttribute("aria-valuenow", "384");
+  await page.setViewportSize({ width: 1920, height: 800 });
   await expect(divider).toHaveAttribute("aria-valuenow", "510");
   await page.keyboard.press("Home");
   await expect(divider).toHaveAttribute("aria-valuenow", "280");
@@ -1058,4 +1059,33 @@ test("a Brief's offered slots reach calendar checks and a reply without a meetin
   const reply = page.getByRole("dialog",{name:"Reply Message"});
   await expect(reply.getByRole("textbox",{name:"Message Body"})).toContainText("Here are some times that work for me:");
   await expect(reply.getByRole("textbox",{name:"Message Body"})).toContainText("2099");
+});
+
+test("in a narrow window the context panel is a drawer over a full-width reader", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  const context = page.getByRole("complementary", { name: "Conversation context" });
+  const reader = page.getByRole("region", { name: "Conversation" });
+  await expect(context).toBeHidden();
+  expect((await reader.boundingBox())!.x + (await reader.boundingBox())!.width).toBe(1280);
+
+  const show = page.getByRole("button", { name: "Show Context" });
+  await show.click();
+  await expect(context).toBeVisible();
+  await expect(show).toHaveAttribute("aria-expanded", "true");
+  await page.getByRole("button", { name: "Hide Context" }).click();
+  await expect(context).toBeHidden();
+
+  await show.click();
+  await page.keyboard.press("Escape");
+  await expect(context).toBeHidden();
+
+  // Clicking back into the message puts the drawer away.
+  await show.click();
+  await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
+  await expect(context).toBeHidden();
+
+  await page.setViewportSize({ width: 1440, height: 800 });
+  await expect(context).toBeVisible();
+  await expect(show).toHaveCount(0);
 });

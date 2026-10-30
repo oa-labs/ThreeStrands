@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ThreadDetail } from "./domain";
 import { useWorkspaces } from "./useWorkspaces";
 import { mailClient } from "./data/client";
@@ -157,5 +157,75 @@ describe("Mail's right column", () => {
     act(() => hook.result.current.openCalendarAt(day));
     expect(hook.result.current.sideColumn).toBe("schedule");
     expect(hook.result.current.calendarSidebarStart?.date).toBe(day);
+  });
+});
+
+describe("Mail's right column in a narrow window", () => {
+  const connected = [{ email: "cal@example.com", connectedAt: "2026-10-19T00:00:00Z", status: "connected" as const }];
+  const mediaListeners = new Set<() => void>();
+  let narrow = true;
+  const render = () => renderHook(() => useWorkspaces({
+    settingsOpen: false,
+    settingsSection: "general" as never,
+    visibleDetail: thread("t1"),
+    readingMessageId: null,
+    readingMessageIdRef: { current: null },
+    openSettingsAt: vi.fn(),
+    setNotice: vi.fn(),
+  }));
+
+  beforeEach(() => {
+    narrow = true;
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      get matches() { return narrow; },
+      media: query,
+      addEventListener: (_: string, listener: () => void) => mediaListeners.add(listener),
+      removeEventListener: (_: string, listener: () => void) => mediaListeners.delete(listener),
+    }));
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    mediaListeners.clear();
+    localStorage.removeItem("threestrands.workspace.sideColumn");
+  });
+
+  it("starts closed and opens for actions that show something in it", () => {
+    const hook = render();
+    expect(hook.result.current.narrowLayout).toBe(true);
+    expect(hook.result.current.sideDrawerOpen).toBe(false);
+
+    act(() => hook.result.current.contactCardActions.onSelectPerson("ana@partner.org"));
+    expect(hook.result.current.sideDrawerOpen).toBe(true);
+  });
+
+  it("opens on the schedule with t, then swaps as the wide column does", async () => {
+    vi.mocked(mailClient.listCalendarAccounts).mockResolvedValue(connected);
+    const hook = render();
+    await waitFor(() => expect(hook.result.current.calendarConnected).toBe(true));
+    act(() => hook.result.current.setSideColumn("schedule"));
+
+    act(() => hook.result.current.toggleSchedule());
+    await waitFor(() => expect(hook.result.current.sideDrawerOpen).toBe(true));
+    expect(hook.result.current.sideColumn).toBe("schedule");
+
+    act(() => hook.result.current.toggleSchedule());
+    expect(hook.result.current.sideColumn).toBe("context");
+    expect(hook.result.current.sideDrawerOpen).toBe(true);
+    vi.mocked(mailClient.listCalendarAccounts).mockResolvedValue([]);
+  });
+
+  it("is never open in a wide window, and starts closed again when the window narrows", () => {
+    const hook = render();
+    act(() => hook.result.current.showMailContext());
+    expect(hook.result.current.sideDrawerOpen).toBe(true);
+
+    narrow = false;
+    act(() => mediaListeners.forEach((listener) => listener()));
+    expect(hook.result.current.sideDrawerOpen).toBe(false);
+
+    act(() => hook.result.current.showMailContext());
+    narrow = true;
+    act(() => mediaListeners.forEach((listener) => listener()));
+    expect(hook.result.current.sideDrawerOpen).toBe(false);
   });
 });

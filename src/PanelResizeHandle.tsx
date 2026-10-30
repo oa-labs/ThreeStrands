@@ -8,6 +8,8 @@ type ResizableWidthConfig = {
   maximumWidth: number;
   /** Viewport width kept free for the icon rail and the sibling pane when clamping. */
   reservedWidth: number;
+  /** The most of the viewport the pane may take, so a width chosen in a large window shrinks in a small one. */
+  maximumViewportShare?: number;
 };
 
 function readStoredWidth({ storageKey, minimumWidth, defaultWidth, maximumWidth }: ResizableWidthConfig) {
@@ -27,7 +29,11 @@ export function useResizableWidth(config: ResizableWidthConfig) {
   }, []);
   // Keep room for the sibling pane without overwriting the user's preferred width
   // when the app window temporarily becomes smaller.
-  const maxWidth = Math.max(config.minimumWidth, Math.min(config.maximumWidth, viewportWidth - config.reservedWidth));
+  const maxWidth = Math.max(config.minimumWidth, Math.min(
+    config.maximumWidth,
+    viewportWidth - config.reservedWidth,
+    Math.floor(viewportWidth * (config.maximumViewportShare ?? 1)),
+  ));
   const width = Math.min(preferredWidth, maxWidth);
   const resize = (next: number) => {
     const clamped = Math.round(Math.max(config.minimumWidth, Math.min(maxWidth, next)));
@@ -42,6 +48,7 @@ const inboxWidthConfig: ResizableWidthConfig = {
   defaultWidth: 400,
   maximumWidth: 640,
   reservedWidth: 58 + 420,
+  maximumViewportShare: 0.3,
 };
 
 export function useInboxWidth() {

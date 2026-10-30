@@ -10,6 +10,7 @@ import { isKeepInTouchDue } from "./keepInTouch";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import type { SettingsSection } from "./settingsPanelTypes";
 import type { Notice } from "./useNotice";
+import { NARROW_LAYOUT_QUERY, useMediaQuery } from "./useMediaQuery";
 
 export type RightWorkspace = "contacts" | "tasks" | "week" | "files" | "today" | null;
 // Keep-in-touch reminders fall due as time passes and as mail arrives,
@@ -33,6 +34,12 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
   useEffect(() => { writeLastWorkspace(rightWorkspace); }, [rightWorkspace]);
   const [sideColumn, setSideColumn] = useState<SideColumn>(readSideColumn);
   useEffect(() => { writeSideColumn(sideColumn); }, [sideColumn]);
+  // In a narrow window the right column is a drawer over the reader. It starts
+  // closed each time the window becomes narrow.
+  const narrowLayout = useMediaQuery(NARROW_LAYOUT_QUERY);
+  const [drawerRequested, setDrawerRequested] = useState(false);
+  useEffect(() => { setDrawerRequested(false); }, [narrowLayout]);
+  const sideDrawerOpen = narrowLayout && drawerRequested;
   const [calendarWeekAnchor, setCalendarWeekAnchor] = useState<Date | null>(null);
   const [calendarEventToOpen, setCalendarEventToOpen] = useState<ScheduleEvent | null>(null);
   const [calendarOpenedFromToday, setCalendarOpenedFromToday] = useState(false);
@@ -92,7 +99,8 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
   const toggleSchedule = useCallback(() => {
     const inMail = rightWorkspace === null;
     setRightWorkspace(null);
-    if (inMail && scheduleShown) {
+    // A closed drawer opens on the schedule rather than swapping what it hides.
+    if (inMail && scheduleShown && (!narrowLayout || drawerRequested)) {
       setSideColumn("context");
       return;
     }
@@ -103,21 +111,24 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
           return;
         }
         setSideColumn("schedule");
+        setDrawerRequested(true);
       })
       .catch((reason: unknown) => {
         setNotice({ message: errorMessage(reason) });
       });
-  }, [openSettingsAt, refreshCalendarAccounts, rightWorkspace, scheduleShown, setNotice]);
+  }, [drawerRequested, narrowLayout, openSettingsAt, refreshCalendarAccounts, rightWorkspace, scheduleShown, setNotice]);
   /** Brings Mail back with the context column, for actions that show something in it. */
   const showMailContext = useCallback(() => {
     setRightWorkspace(null);
     setSideColumn("context");
+    setDrawerRequested(true);
   }, []);
   const [calendarSidebarStart, setCalendarSidebarStart] = useState<{ key: number; date: Date } | null>(null);
   const openCalendarAt = useCallback((date: Date) => {
     setCalendarSidebarStart((current) => ({ key: (current?.key ?? 0) + 1, date }));
     setRightWorkspace(null);
     setSideColumn("schedule");
+    setDrawerRequested(true);
   }, []);
 
   const openFilesView = useCallback(() => setRightWorkspace("files"), []);
@@ -166,6 +177,7 @@ export function useWorkspaces({ settingsOpen, settingsSection, visibleDetail, re
     refreshKeepInTouchCount, calendar, refreshCalendarOptions,
     calendarConnected, calendarSidebarStart, openCalendarAt, toggleSchedule, openTasks,
     sideColumn, setSideColumn, scheduleShown, showMailContext, openTasksView,
+    narrowLayout, sideDrawerOpen, setSideDrawerOpen: setDrawerRequested,
     openFilesView, openTodayView, openContactsView, openKeepInTouchView, openContactGroupsView, contactCardActions,
     contextPersonEmail, openCalendarView, canReturnToToday, returnToToday,
   };
