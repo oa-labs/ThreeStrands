@@ -345,6 +345,8 @@ pub struct FreeBusyResult {
 #[serde(rename_all = "camelCase")]
 struct GoogleEvent {
     id: String,
+    #[serde(rename = "iCalUID")]
+    uid: Option<String>,
     summary: Option<String>,
     status: Option<String>,
     location: Option<String>,
@@ -1010,6 +1012,7 @@ fn normalize_events(
             let attendee_responses = attendee_responses(&event.attendees, &attendees);
             Some(ScheduleEvent {
                 id: format!("{calendar_id}:{}", event.id),
+                uid: event.uid,
                 account_id: account_id.to_string(),
                 calendar_id: calendar_id.to_string(),
                 title: event
@@ -1344,6 +1347,7 @@ mod tests {
         let events = normalize_events(
             vec![
                 GoogleEvent {
+                    uid: None,
                     id: "timed".into(),
                     summary: Some("Planning".into()),
                     status: Some("confirmed".into()),
@@ -1371,6 +1375,7 @@ mod tests {
                     extended_properties: None,
                 },
                 GoogleEvent {
+                    uid: None,
                     id: "all-day".into(),
                     summary: None,
                     status: None,
@@ -1455,6 +1460,32 @@ mod tests {
         assert!(writable_access_role(&list.access_role));
         let list: GoogleEvents = serde_json::from_value(serde_json::json!({})).unwrap();
         assert!(!writable_access_role(&list.access_role));
+    }
+
+    #[test]
+    fn schedule_preserves_invitation_uids_across_recurring_instances_and_calendar_copies() {
+        let resource = |id: &str, uid: Option<&str>| serde_json::json!({
+            "id": id, "iCalUID": uid, "summary": "Monthly call",
+            "start": { "dateTime": "2030-01-08T18:00:00Z" },
+            "end": { "dateTime": "2030-01-08T20:00:00Z" }
+        });
+        let uid = "monthly-call@example.com";
+        let lookup: GoogleEvents = serde_json::from_value(serde_json::json!({
+            "items": [resource("series", Some(uid))]
+        })).unwrap();
+        let invitation = invitation_from(lookup, "me@example.com").unwrap();
+        let schedule = normalize_events(vec![
+            serde_json::from_value(resource("series_20300108T180000Z", Some(uid))).unwrap(),
+            serde_json::from_value(resource("copy", Some(uid))).unwrap(),
+            serde_json::from_value(resource("unrelated", None)).unwrap(),
+        ], "other@example.com", "shared", false);
+        assert_eq!(invitation.uid.as_deref(), Some(uid));
+        for event in &schedule[..2] {
+            assert_ne!(event.id, invitation.id);
+            assert_eq!(event.uid, invitation.uid);
+            assert_eq!(serde_json::to_value(event).unwrap()["uid"], uid);
+        }
+        assert_eq!(schedule[2].uid, None);
     }
 
     #[test]

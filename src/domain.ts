@@ -134,6 +134,8 @@ export type AttendeeResponseStatus = "accepted" | "declined" | "tentative" | "ne
 
 export type ScheduleEvent = {
   id: string;
+  /** iCalendar identity shared by calendar copies and recurring instances. */
+  uid?: string | null;
   accountId: string;
   calendarId?: string;
   responseStatus?: AttendeeResponseStatus | null;

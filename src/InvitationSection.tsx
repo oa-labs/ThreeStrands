@@ -53,7 +53,7 @@ export function InvitationResponse({ invitation, sourceMessageId, ...props }: In
     if (lookup.kind === "missing") return <p className="context-status">This invitation isn’t on a connected calendar yet.</p>;
     return <>
       <CalendarResponseControls invitation event={lookup.event} onUpdated={(event) => setLookup({ kind: "found", event })} />
-      <InvitationConflicts event={lookup.event} timeZone={preferences.timeZone} />
+      <InvitationConflicts event={lookup.event} invitationUid={uid} timeZone={preferences.timeZone} />
       {!lookup.event.canRespond ? <p className="context-status">Already on your calendar. This calendar doesn’t allow you to respond.</p> : <>
         <button type="button" className="btn-link" onClick={suggestTimes}>Suggest a different time</button>
         {plan ? <FindTimesCard plan={plan} preferences={preferences} calendarConnected intoDraft={intoDraft}
@@ -70,7 +70,7 @@ export function InvitationResponse({ invitation, sourceMessageId, ...props }: In
 }
 
 /** Only other overlapping events are conflicts; the invitation itself never is. */
-function InvitationConflicts({ event, timeZone }: { event: ScheduleEvent; timeZone: string }) {
+function InvitationConflicts({ event, invitationUid, timeZone }: { event: ScheduleEvent; invitationUid: string; timeZone: string }) {
   const [conflicts, setConflicts] = useState<string[]>([]);
   const [error, setError] = useState(false);
   const generation = useSyncExternalStore(subscribeScheduleCache, scheduleCacheGeneration);
@@ -85,13 +85,15 @@ function InvitationConflicts({ event, timeZone }: { event: ScheduleEvent; timeZo
       .then((result) => {
         if (!active) return;
         const other = result.events.filter((candidate) => !(candidate.id === id && candidate.accountId === accountId)
+          // A recurring instance or another calendar copy can have a different event ID.
+          && !(candidate.uid && candidate.uid === invitationUid)
           && !candidate.allDay && Date.parse(candidate.start) < Date.parse(end) && Date.parse(candidate.end) > Date.parse(start));
         setConflicts([...new Set(other.map((candidate) => candidate.title))]);
         setError(result.errors.length > 0);
       })
       .catch(() => { if (active) setError(true); });
     return () => { active = false; };
-  }, [start, end, id, accountId, allDay, timeZone, generation]);
+  }, [start, end, id, accountId, allDay, invitationUid, timeZone, generation]);
   return <>
     {conflicts.length > 0 ? <p className="context-status">Conflicts with {new Intl.ListFormat(undefined, { type: "conjunction" }).format(conflicts.map((title) => `“${title}”`))}</p> : null}
     {error ? <p className="context-status">Some calendars couldn’t be checked for conflicts.</p> : null}

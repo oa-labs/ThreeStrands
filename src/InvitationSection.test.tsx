@@ -137,6 +137,29 @@ describe("invitation card responses", () => {
     expect(screen.queryByText(/Conflicts with “Building Tours”|Conflicts with “Later”/)).not.toBeInTheDocument();
   });
 
+  it.each([
+    { id: "event-1_20300108T180000Z" },
+    { id: "shared:event-copy", calendarId: "shared", accountId: "other@example.com" },
+  ])("excludes the same invitation with a different calendar identity: %j", async (identity) => {
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [
+      { ...event, ...identity, uid: invitation.uid },
+      { ...event, id: "real-conflict", uid: "another-meeting@example.com", title: "Josh / Joel" },
+    ], errors: [] });
+    render(<InvitationCard {...props()} />);
+    expect(await screen.findByText("Conflicts with “Josh / Joel”")).toBeInTheDocument();
+    expect(screen.queryByText(/Conflicts with.*Building Tours/)).not.toBeInTheDocument();
+  });
+
+  it("keeps distinct meetings with the same title and time as conflicts", async () => {
+    vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [
+      { ...event, id: "instance", uid: invitation.uid },
+      { ...event, id: "different-meeting", uid: "different@example.com" },
+      { ...event, id: "without-uid", title: "Another meeting" },
+    ], errors: [] });
+    render(<InvitationCard {...props()} />);
+    expect(await screen.findByText("Conflicts with “Building Tours” and “Another meeting”")).toBeInTheDocument();
+  });
+
   it("quotes each distinct title when multiple meetings conflict", async () => {
     vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [
       event, { ...event, id: "other", title: "Josh / Joel" },

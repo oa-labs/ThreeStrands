@@ -77,6 +77,8 @@ pub struct UpdateCalendarEventRequest {
 #[serde(rename_all = "camelCase")]
 pub struct ScheduleEvent {
     pub id: String,
+    /// iCalendar identity shared by calendar copies and recurring instances.
+    pub uid: Option<String>,
     pub account_id: String,
     pub calendar_id: String,
     pub title: String,
