@@ -1544,6 +1544,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .calendar-sidebar-header h2 { margin: 0; font-size: var(--text-pane-title); font-weight: var(--weight-semibold); }
 .calendar-sidebar-heading { min-width: 0; }
 .calendar-sidebar-heading .eyebrow { margin-bottom: var(--space-1); overflow-wrap: anywhere; }
+.calendar-sidebar-show-all { margin-left: var(--space-2); font-size: inherit; letter-spacing: normal; text-transform: none; }
 .calendar-sidebar-header > .calendar-sidebar-actions { display: flex; align-items: center; gap: var(--space-0-5); }
 .calendar-all-day {
   display: grid;
@@ -1870,10 +1871,12 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .calendar-mini-day-outside { color: var(--muted); }
 .calendar-mini-day-today { font-weight: var(--weight-bold); color: var(--accent); }
 .calendar-mini-day-selected { background: var(--hover); font-weight: var(--weight-semibold); }
+.calendar-shown-count { color: var(--muted); font-variant-numeric: tabular-nums; }
 .calendar-list > header { display: flex; align-items: center; gap: var(--space-2); }
 .calendar-list > header svg { color: var(--muted); }
 .calendar-list h3 { flex: 1; margin: 0; font-size: var(--text-card-title); font-weight: var(--weight-semibold); }
 .calendar-list-empty { margin: var(--space-2-5) 0 0; color: var(--muted); font-size: var(--text-secondary); }
+.calendar-list-hidden { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin: var(--space-2-5) 0 0; color: var(--muted); font-size: var(--text-secondary); }
 .calendar-list-account { margin-top: var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); }
 .calendar-list-account-toggle {
   display: flex;

@@ -37,7 +37,7 @@ function renderWeek(overrides: Partial<WeekViewOptions> = {}) {
     ...overrides,
   };
   const result = render(<StatefulWeekView {...props} />);
-  fireEvent.click(screen.getByRole("button", { name: "Calendars" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Calendars/ }));
   return { ...result, props };
 }
 
@@ -257,13 +257,51 @@ describe("CalendarWeekView", () => {
     expect(container.querySelector(".calendar-week-header")).toHaveTextContent("Calendar · All calendar accounts");
   });
 
-  it("names only the accounts contributing selected calendars when another connected account has none selected", () => {
+  it("counts the accounts shown when another connected account has none selected, on the header and the Calendars button", () => {
     const { container } = renderWeek({
       accounts: [...accounts, { ...accounts[0], email: "work@example.com" }],
       calendars: [...calendars, { id: "work", accountId: "work@example.com", name: "Work", primary: true, selected: false, writable: true }],
     });
-    expect(container.querySelector(".calendar-week-header")).toHaveTextContent("Calendar · joel@example.com");
-    expect(container.querySelector(".calendar-week-header")).not.toHaveTextContent("All calendar accounts");
+    const header = container.querySelector(".calendar-week-header")!;
+    expect(header).toHaveTextContent("Calendar · 1 of 2 accounts");
+    expect(header.querySelector(".eyebrow-account")).toHaveAttribute("title", "joel@example.com");
+    expect(screen.getByRole("button", { name: "Calendars, 1 of 2 accounts shown" })).toHaveTextContent("Calendars1/2");
+  });
+
+  it("keeps the Calendars button plain when every account is shown", () => {
+    renderWeek();
+    expect(screen.getByRole("button", { name: "Calendars" })).toHaveTextContent(/^Calendars$/);
+  });
+
+  it("Show All turns on only each hidden account's primary calendar", () => {
+    const onToggleCalendar = vi.fn();
+    renderWeek({
+      onToggleCalendar,
+      accounts: [
+        ...accounts,
+        { ...accounts[0], email: "work@example.com" },
+        { ...accounts[0], email: "caldav@example.com" },
+      ],
+      calendars: [
+        ...calendars,
+        { id: "work-team", accountId: "work@example.com", name: "Team", primary: false, selected: false, writable: true },
+        { id: "work", accountId: "work@example.com", name: "Work", primary: true, selected: false, writable: true },
+        { id: "home", accountId: "caldav@example.com", name: "Home", primary: false, selected: false, writable: true },
+        { id: "chores", accountId: "caldav@example.com", name: "Chores", primary: false, selected: false, writable: true },
+      ],
+    });
+    const list = screen.getByRole("region", { name: "Calendars" });
+    expect(list).toHaveTextContent("2 accounts hidden");
+    fireEvent.click(within(list).getByRole("button", { name: "Show All" }));
+    expect(onToggleCalendar.mock.calls).toEqual([
+      ["work@example.com", "work", true],
+      ["caldav@example.com", "home", true],
+    ]);
+  });
+
+  it("offers no Show All when every account shows a calendar, even with some calendars off", () => {
+    renderWeek({ calendars: [calendars[0], { ...calendars[1], selected: false }] });
+    expect(within(screen.getByRole("region", { name: "Calendars" })).queryByRole("button", { name: "Show All" })).not.toBeInTheDocument();
   });
 
   it("says none selected when no calendar is selected", () => {

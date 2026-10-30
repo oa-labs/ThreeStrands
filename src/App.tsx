@@ -642,6 +642,16 @@ export function App() {
     contextOpenedThreadRef.current = null;
   }, [contextOpenedThreadRef]);
   const toggleInboxOnly = useCallback(() => setInboxOnly((current) => !current), [setInboxOnly]);
+  // Shared by the Calendar view's list and the Schedule column's Show All.
+  const toggleCalendar = useCallback((accountId: string, calendarId: string, selected: boolean) => {
+    const next = calendar.calendars
+      .filter((option) => option.accountId === accountId && option.selected && option.id !== calendarId)
+      .map((option) => option.id);
+    if (selected) next.push(calendarId);
+    void calendar.setSelection(accountId, next).catch((reason: unknown) => {
+      setNotice({ message: errorMessage(reason) });
+    });
+  }, [calendar, setNotice]);
   // Search suggestions draw on the account(s) being searched: the active one,
   // or every account in the merged view.
   const searchAccountIds = useMemo(
@@ -1314,15 +1324,7 @@ export function App() {
             onAnchorChange={setCalendarWeekAnchor}
             accounts={calendar.accounts}
             calendars={calendar.calendars}
-            onToggleCalendar={(accountId, calendarId, selected) => {
-              const next = calendar.calendars
-                .filter((option) => option.accountId === accountId && option.selected && option.id !== calendarId)
-                .map((option) => option.id);
-              if (selected) next.push(calendarId);
-              void calendar.setSelection(accountId, next).catch((reason: unknown) => {
-                setNotice({ message: errorMessage(reason) });
-              });
-            }}
+            onToggleCalendar={toggleCalendar}
             onAddCalendarAccount={() => {
               setRightWorkspace(null);
               openSettingsAt("calendarAccounts");
@@ -1352,7 +1354,7 @@ export function App() {
           key={calendarSidebarStart?.key ?? 0}
           initialDate={calendarSidebarStart?.date}
           onClose={() => setSideColumn("context")}
-          selectedCalendarAccountIds={[...new Set(calendar.calendars.filter((option) => option.selected).map((option) => option.accountId))]}
+          calendarScope={{ accounts: calendar.accounts, calendars: calendar.calendars, onToggle: toggleCalendar }}
           onOpenSettings={() => {
             setSideColumn("context");
             openSettingsAt("calendarAccounts");

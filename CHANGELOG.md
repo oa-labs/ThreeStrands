@@ -8,9 +8,11 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Events in the weekly calendar now show their location inside the event block. Short meetings keep it inline, while longer meetings show it below the title.
 
 ### Improved
+- In **Calendar**, it's easier to tell when some accounts are hidden. The header says how many accounts are showing, such as *1 of 3 accounts*, instead of naming them as if you'd switched to one, and the **Calendars** button shows the same count. **Show All** in the calendar list turns each hidden account's primary calendar back on without turning on every other calendar. The schedule beside your mail (**t**) uses the same wording and offers the same **Show All**.
 - In a smaller window, Mail gives the open conversation the room. The panel beside it slides over from the right when you need it: use the panel button at the end of the conversation's toolbar, or anything that shows something there, such as getting a brief or pressing **t** for the schedule. Click back into the conversation or press Escape to put it away. The inbox list also narrows with the window instead of keeping the width you set in a larger one.
 
 ### Fixed
+- Picking an account in the sidebar, or with <kbd>⌘/Ctrl + 1</kbd> through <kbd>⌘/Ctrl + 9</kbd> and <kbd>⌘/Ctrl + 0</kbd>, now always takes you to that account's mail, even from Calendar, Today, or another view. Before, it only filtered the view you were in, so in Calendar it seemed to do nothing.
 - **Event Details** now gives the **Reschedule** button more space below the event information. The Edit and Delete button tooltips stay inside the right edge of the window.
 - A long reply written below a conversation no longer pushes **Send** out of view. As the reply grows, or while Draft Review is open, the conversation scrolls to keep the bottom of the reply showing.
 
