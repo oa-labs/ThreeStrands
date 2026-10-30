@@ -8,6 +8,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - In a smaller window, Mail gives the open conversation the room. The panel beside it slides over from the right when you need it: use the panel button at the end of the conversation's toolbar, or anything that shows something there, such as getting a brief or pressing **t** for the schedule. Click back into the conversation or press Escape to put it away. The inbox list also narrows with the window instead of keeping the width you set in a larger one.
 
 ### Fixed
+- **Event Details** now gives the **Reschedule** button more space below the event information. The Edit and Delete button tooltips stay inside the right edge of the window.
 - A long reply written below a conversation no longer pushes **Send** out of view. As the reply grows, or while Draft Review is open, the conversation scrolls to keep the bottom of the reply showing.
 
 ## 0.186.0 — 2026-10-29

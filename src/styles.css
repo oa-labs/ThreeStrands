@@ -2011,6 +2011,7 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .calendar-event-viewer h3 { min-width: 0; margin: 0; font-size: var(--text-pane-title); font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
 .calendar-event-color { width: 12px; height: 12px; border-radius: var(--radius-xs); background: color-mix(in srgb, var(--calendar-color, var(--accent)) 55%, white); }
 .calendar-event-viewer-details { --event-detail-icon-column: 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); margin-top: var(--space-4); }
+.calendar-event-viewer-details + .btn { margin-top: var(--space-3); }
 .calendar-event-viewer-details > p { display: grid; grid-template-columns: var(--event-detail-icon-column) minmax(0, 1fr); align-items: start; gap: var(--space-2); margin: 0; color: var(--secondary); font-size: var(--text-body); line-height: var(--leading-normal); }
 .calendar-event-viewer-details svg { margin-top: var(--space-0-5); color: var(--muted); }
 .calendar-event-viewer-details a { width: fit-content; border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); background: var(--accent); color: var(--accent-contrast); font-weight: var(--weight-semibold); text-decoration: none; }
