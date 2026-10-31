@@ -2,7 +2,7 @@
 title: Settings Transfer and Sync
 nav: Settings Transfer
 summary: Move selected settings safely, compare transfer with sync, and replace a computer.
-reviewed: 0.179.0
+reviewed: 0.190.0
 ---
 
 ## Export and Import Settings {#export-and-import-settings}
@@ -33,6 +33,7 @@ The file includes preferences, account list, Split Inboxes, retention setting, s
 | Tasks and goals | No | Yes | No | Until sync is enabled |
 | Saved contacts and groups | No ongoing address-book sync | Yes | Yes | Until transferred or synced |
 | Snippets, signatures, Writing Profile, muted senders, Split Inboxes | No | Yes | Yes | Until transferred or synced |
+| Conversation snoozes | Inbox archive/restore | Yes; references and return times | No | Until sync is enabled |
 | Sender-trust confirmations | No | Yes, for the same account | No | Until synced |
 | Appearance | No | No | Yes | Ongoing choices stay local |
 | Account details and portable preferences | No | Yes | Yes | Credentials excluded |

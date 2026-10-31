@@ -39,6 +39,9 @@ type Options = {
   outboxSelection: ReturnType<typeof useOutboxSelection>;
   draftSelection: ReturnType<typeof useDraftSelection>;
   selectAllOutbox(): void;
+  createCalendarEvent?: () => void;
+  snoozeSelected?: (ids: string[]) => void;
+  returnSnoozedSelected?: (ids: string[]) => Promise<CommandResult>;
   mutateIds: (ids: string[], template: MutationTemplate, options?: { includeUnloaded?: boolean }) => Promise<CommandResult>;
   view: {
     mailbox: MailboxKind;
@@ -80,7 +83,7 @@ type Options = {
 
 /** Binds global commands to the current domain controllers and interaction scope. */
 export function useAppCommandContext({
-  correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads, runBrief,
+  correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads, runBrief, createCalendarEvent, snoozeSelected, returnSnoozedSelected,
   recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, draftSelection, selectAllOutbox, mutateIds, view, ui,
 }: Options) {
   const outboxEditSource = useMemo(() => outboxEditAsNewSource(outboxSelection.selectedEntry), [outboxSelection.selectedEntry]);
@@ -177,6 +180,10 @@ export function useAppCommandContext({
     calendarWeekActive: rightWorkspace === "week",
     selectedTaskStatus,
     selectedTaskHasThread,
+    createCalendarEvent,
+    snoozeSelected: () => snoozeSelected?.(targetIds),
+    returnSnoozedSelected: () => returnSnoozedSelected?.(targetIds) ?? Promise.resolve({}),
+    openSnoozed: () => openFolder("snoozed"),
     archiveSelected: () => mutateIds(targetIds, { kind: "archive", value: true }),
     markNotDoneSelected: () => mutateIds(selected ? [selected.id] : [], { kind: "archive", value: false }),
     unsubscribeSelected: () => {
@@ -315,7 +322,7 @@ export function useAppCommandContext({
     showAllAccounts: () => switchAccount(null),
     toggleMessageFilter,
   }), [
-    correspondence.context, correspondence.pendingUndoOrder, undo.lastUndoOrder, checkedIds, setCheckedIds, draftSelection.selectAll, selectAllOutbox, targetIds, targetThreads, toggleContextPanelFocus, interactionScope, rightWorkspace, mailbox,
+    createCalendarEvent, snoozeSelected, returnSnoozedSelected, correspondence.context, correspondence.pendingUndoOrder, undo.lastUndoOrder, checkedIds, setCheckedIds, draftSelection.selectAll, selectAllOutbox, targetIds, targetThreads, toggleContextPanelFocus, interactionScope, rightWorkspace, mailbox,
     selectedId, selected, canUnsubscribe, returnStep, goBack, canReturnToToday, returnToToday, displayedMessages,
     composerBelongsToVisibleThread, outboxSelection, outboxEditSource, goToInboxTab, accountSplitInboxes.length, goToNextSplitTab,
     goToPreviousSplitTab, goToSplitTab, taskLayout, selectedTaskStatus, selectedTaskHasThread,

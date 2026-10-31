@@ -7,6 +7,7 @@ import { ICON_SIZE } from "./iconSizes";
 
 const FOLDER_OPTIONS = [
   { id: "inbox", label: "Inbox", shortcut: "G I" },
+  { id: "snoozed", label: "Snoozed", shortcut: "G Z" },
   { id: "allMail", label: "All Mail", shortcut: "G A" },
   { id: "sent", label: "Sent", shortcut: "G S" },
   { id: "drafts", label: "Drafts", shortcut: "G D" },

@@ -1,8 +1,10 @@
+import type { Thread } from "./domain";
 import { useSignatures } from "./useSignatures";
 import type { FilesWorkspaceSnapshot } from "./FilesWorkspace";
 import type { CalendarWorkspaceSnapshot } from "./CalendarWeekView";
 import {
   Archive,
+  AlarmClock,
   ArrowLeft,
   CalendarDays,
   Command as CommandIcon,
@@ -58,6 +60,8 @@ import { draftRecipients } from "./composeChecks";
 import { ComposeContext, ReplyChecks } from "./ComposeContext";
 import { ContactCardContext } from "./ContactCard";
 import { AvailabilityProfileChoiceContext, type AvailabilityProfileChoice } from "./AvailabilityProfileChoice";
+import { SnoozeDialog } from "./SnoozeDialog";
+import { useConversationSnooze } from "./useConversationSnooze";
 import { ConversationBatchToolbar } from "./ConversationBatchToolbar";
 import { ContactMeetings } from "./ContactMeetings";
 import { ContextPanel } from "./ContextPanel";
@@ -302,7 +306,7 @@ export function App() {
   const splitInboxCatalog = useSplitInboxes();
   const senderRuleCatalog = useSenderRules();
   const { refresh: refreshSplitInboxes } = splitInboxCatalog;
-  const isThreadMailbox = mailbox === "inbox" || mailbox === "allMail" || mailbox === "sent" || mailbox === "trash" || mailbox === "split";
+  const isThreadMailbox = mailbox === "snoozed" || mailbox === "inbox" || mailbox === "allMail" || mailbox === "sent" || mailbox === "trash" || mailbox === "split";
   const isTabbedMailbox = mailbox === "inbox" || mailbox === "split";
   const navigation = useMailNavigation({
     mailboxThreads, threadDetail, reader, workspaces, correspondence, splitInboxCatalog, mailbox,
@@ -317,6 +321,8 @@ export function App() {
     ? inboxCheckedLabel(syncStatus, activeAccountId ? accounts.filter((account) => account.email === activeAccountId) : accounts)
     : null;
   const { refreshMail, recoveryStatus, syncDiagnostics } = useMailRefresh({ query, loadThreadsRef, setSyncStatus, refreshTaskIndicators });
+  const [createCalendarEventRequested, setCreateCalendarEventRequested] = useState(false);
+  const [snoozeTargets, setSnoozeTargets] = useState<Thread[] | null>(null);
   const [labelTargetIds, setLabelTargetIds] = useState<string[] | null>(null);
   // Label ids belong to an account. Bulk actions target one account, so the
   // first target thread determines which catalog the label manager shows.
@@ -345,6 +351,15 @@ export function App() {
   useEffect(() => { if (shortcutHelpOpen) completeGettingStartedStep("shortcuts"); }, [shortcutHelpOpen, completeGettingStartedStep]);
   useEffect(() => { if (undo.canUndoArchive) completeGettingStartedStep("archive"); }, [undo.canUndoArchive, completeGettingStartedStep]);
   const { rememberUndo } = undo;
+  const refreshAfterSnooze = useCallback(async () => {
+    setCheckedIds(new Set());
+    await loadThreadsRef.current(queryRef.current);
+  }, [loadThreadsRef, queryRef, setCheckedIds]);
+  const conversationSnooze = useConversationSnooze(refreshAfterSnooze);
+  const openSnooze = useCallback((ids: string[]) => {
+    const targets = threads.filter((thread) => ids.includes(thread.id) && !thread.trashed && !thread.labels.includes("SPAM"));
+    if (targets.length) setSnoozeTargets(targets);
+  }, [threads]);
   /** Discards like the inbox trashes: at once, with Undo in the notice and on z. */
   const discardWithUndo = useCallback(async (discard: () => Promise<string[]>, describe: (count: number) => string) => {
     const discarded = await discard();
@@ -515,7 +530,7 @@ export function App() {
     ? "compose"
     : paletteOpen
       ? "palette"
-      : settingsOpen || shortcutHelpOpen || gettingStartedOpen || Boolean(unsubscribeMessage) || Boolean(splitTarget) || Boolean(muteTarget) || Boolean(labelTargetIds?.length) || Boolean(taskEditor) || Boolean(meetingEditor)
+      : Boolean(snoozeTargets) || settingsOpen || shortcutHelpOpen || gettingStartedOpen || Boolean(unsubscribeMessage) || Boolean(splitTarget) || Boolean(muteTarget) || Boolean(labelTargetIds?.length) || Boolean(taskEditor) || Boolean(meetingEditor)
         ? "modal"
         : "read";
 
@@ -548,6 +563,8 @@ export function App() {
   }, [selectedThreadRowRef, setQuery, setSearchOpen]);
   const context = useAppCommandContext({
     correspondence, reader, workspaces, navigation, selection, tasks, undo, mailboxThreads,
+    createCalendarEvent: () => { openCalendarView(); setCreateCalendarEventRequested(true); },
+    snoozeSelected: openSnooze, returnSnoozedSelected: conversationSnooze.returnToInbox,
     runBrief, recordTriageEvent, displayedMessages, composerBelongsToVisibleThread, outboxSelection, draftSelection, selectAllOutbox: outboxChecks.selectAll, mutateIds,
     view: { mailbox, setMailbox, setActiveSplitInboxId, activeAccountId, selectedId, setSelectedId, isTabbedMailbox },
     ui: { interactionScope, canUnsubscribe, latestMessage, aiSummaryAvailable,
@@ -890,6 +907,8 @@ export function App() {
               selectAllRef={selectAllRef}
               onSelectAll={() => context.selectAllConversations?.()}
               onClearSelection={() => setCheckedIds(new Set())}
+              onSnooze={() => executeById("thread.snooze")}
+              onReturnToInbox={mailbox === "snoozed" ? () => executeById("thread.returnSnoozed") : undefined}
               onRun={runOnSelection}
               onLabels={() => setLabelTargetIds([...checkedIds])}
             />
@@ -1135,7 +1154,11 @@ export function App() {
                     <Tag size={ICON_SIZE.lg} />
                   </ActionButton>
                 </HoverTooltip>
-                {mailbox === "trash" ? null : selected?.archived ? (
+                {mailbox !== "trash" ? <HoverTooltip label={selected?.snoozedUntil ? "Reschedule Snooze" : "Snooze"} shortcut="h" placement="bottom">
+                  <ActionButton label={selected?.snoozedUntil ? "Reschedule Snooze" : "Snooze"} shortcut="h" onClick={() => executeById("thread.snooze")}><AlarmClock size={ICON_SIZE.lg} /></ActionButton>
+                </HoverTooltip> : null}
+                {mailbox === "snoozed" ? <HoverTooltip label="Return to Inbox" placement="bottom"><ActionButton label="Return to Inbox" onClick={() => executeById("thread.returnSnoozed")}><Inbox size={ICON_SIZE.lg} /></ActionButton></HoverTooltip> : null}
+                {mailbox === "trash" || mailbox === "snoozed" ? null : selected?.archived ? (
                   <HoverTooltip label="Mark not done" shortcut="Shift+E" placement="bottom">
                     <ActionButton label="Mark Not Done" shortcut="Shift+E" onClick={() => executeById("thread.unarchive")}>
                       <Inbox size={ICON_SIZE.lg} />
@@ -1316,6 +1339,8 @@ export function App() {
         <ErrorBoundary area="the calendar" variant="side">
         <Suspense fallback={null}>
           <CalendarWeekView
+            createEventRequested={createCalendarEventRequested}
+            onCreateEventRequestHandled={() => setCreateCalendarEventRequested(false)}
             session={calendarSession}
             mailAccountIds={activeAccountId ? [activeAccountId] : accounts.map((account) => account.email)}
             onOpenThread={jumpToThread}
@@ -1753,6 +1778,15 @@ export function App() {
           <button className="btn-icon btn-icon-sm" aria-label="Dismiss" onClick={() => setNotice(null)}><X size={ICON_SIZE.sm} /></button>
         </div>
       ) : null}
+      {snoozeTargets ? <SnoozeDialog
+        count={snoozeTargets.length}
+        initialUntil={snoozeTargets.length === 1 ? snoozeTargets[0].snoozedUntil : undefined}
+        onClose={() => setSnoozeTargets(null)}
+        onSave={async (until) => {
+          const result = await conversationSnooze.snooze(snoozeTargets, until);
+          rememberUndo({ id: "thread.snooze", title: "Snooze", keys: [], group: "Triage", enabled: () => true, run: async () => result, undo: undoResult }, result);
+        }}
+      /> : null}
       {isTabbedMailbox && searchOpen && query.trim() && includeArchived ? (
         <SearchStatusToast remoteSearchState={remoteSearchState} status={searchStatus} onDismiss={() => setSearchStatus(null)} />
       ) : null}

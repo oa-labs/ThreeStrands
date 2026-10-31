@@ -3908,3 +3908,57 @@ mod search_pins;
 mod search_exec;
 
 mod idle;
+
+#[tokio::test]
+async fn snoozed_archive_locations_survive_the_window_and_release_on_cancellation() {
+    let mut mb = FakeMailbox::new(100);
+    mb.add(&[], &message("<snoozed@x>", "Keep this conversation", ""));
+    mb.folder("Archive", 95);
+    let mailbox = Arc::new(Mutex::new(mb));
+    let (mut provider, store) = provider_with(mailbox.clone());
+    provider.folder_window_override = Some(2);
+    let db = store.database();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    let provider_id = provider.list_inbox(None).await.unwrap().thread_ids[0].clone();
+    let local = format!("me@example.com:{provider_id}");
+    db.snooze_threads(&[local.clone()], "2099-01-01T09:00:00Z").unwrap();
+    // Simulate the already-acknowledged provider archive with this read-only
+    // protocol fixture. Native MOVE/COPY delivery has its own contract suite.
+    for mutation in db.claim_mutations("me@example.com", 10).unwrap() { db.complete_mutation(&mutation.id).unwrap(); }
+    {
+        let mut mb = mailbox.lock().unwrap();
+        mb.inbox().messages.clear();
+        mb.add_to("Archive", 95, &[], &message("<snoozed@x>", "Keep this conversation", ""));
+    }
+    sync_n(&provider, db.as_ref(), 2).await;
+    {
+        let mut mb = mailbox.lock().unwrap();
+        for index in 0..4 { mb.add_to("Archive", 95, &[], &message(&format!("<new-{index}@x>"), "Newer mail", "")); }
+    }
+    sync_n(&provider, db.as_ref(), 3).await;
+    assert_eq!(store.snoozed_uids("Archive", 95).unwrap(), vec![1]);
+    assert!(store.locations_in_mailbox("Archive").unwrap().iter().any(|location| location.uid == 1));
+    assert!(db.get_thread(&local).unwrap().thread.snoozed_until.is_some());
+    db.mutate_thread(&crate::models::ThreadMutation::Archive { thread_id: local, value: true }).unwrap();
+    assert!(store.snoozed_uids("Archive", 95).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn snoozed_mail_recovers_by_message_reference_after_locations_are_lost() {
+    let mut mb = FakeMailbox::new(100);
+    mb.add(&[], &message("<recover-snooze@x>", "Recover me", ""));
+    let mailbox = Arc::new(Mutex::new(mb));
+    let (provider, store) = provider_with(mailbox);
+    let db = store.database();
+    crate::sync::sync_with(db.as_ref(), "me@example.com", &provider).await.unwrap();
+    let provider_id = provider.list_inbox(None).await.unwrap().thread_ids[0].clone();
+    let local = format!("me@example.com:{provider_id}");
+    let record = db.snooze_threads(&[local], "2099-01-01T09:00:00Z").unwrap().remove(0);
+    assert!(record.references.contains(&"recover-snooze@x".to_string()));
+    db.test_connection().unwrap().execute("DELETE FROM imap_locations", []).unwrap();
+    assert!(store.locations_in_mailbox("INBOX").unwrap().is_empty());
+    provider.prepare_snoozed_thread(&provider_id, &record.references).await.unwrap();
+    assert!(!store.locations_in_mailbox("INBOX").unwrap().is_empty());
+    assert!(provider.prepare_snoozed_thread("missing", &[]).await.is_err());
+    assert!(db.list_snooze_records(None).unwrap().iter().all(|item| item.state == "active"));
+}

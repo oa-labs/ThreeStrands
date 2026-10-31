@@ -150,6 +150,7 @@ fn test_thread(participants: &[&str], labels: &[&str]) -> Thread {
         summary_revision: None,
         summary_focus_from: None,
         has_attachments: false,
+        snoozed_until: None,
     }
 }
 

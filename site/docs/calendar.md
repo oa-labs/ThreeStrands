@@ -2,7 +2,7 @@
 title: Calendar
 nav: Calendar
 summary: Connect Google Calendar to see your day beside your mail, plan the week, create events, answer invitations, and share free times.
-reviewed: 0.179.0
+reviewed: 0.190.0
 ---
 
 ## Connect Google Calendar {#connect-google-calendar}
@@ -73,7 +73,7 @@ Press <kbd>2</kbd> for the Calendar view. Choose **Day**, **3-Day**, **Workweek*
 
 ## Create and Edit Events {#create-and-edit-events}
 
-Drag across the grid or click **New Event**. Add a title, times, location, the calendar, people to invite, and a description. Choose **All day** for an event without a specific time, then click **Create event** or press <kbd>⌘/Ctrl + Enter</kbd>.
+Press <kbd>b</kbd> in Mail or Calendar to create an event, or press <kbd>Shift + n</kbd> in Calendar. You can also drag across the grid or click **New Event**. Add a title, times, location, the calendar, people to invite, and a description. Choose **All day** for an event without a specific time, then click **Create event** or press <kbd>⌘/Ctrl + Enter</kbd>.
 
 **Invite People** suggests your contacts and contact groups as you type a name or address. Press **Enter** or click a suggestion to add someone, or choose a group to invite everyone in it. Text that isn't an email address stays in the field with a note until you fix it.
 

@@ -2,7 +2,7 @@
 title: Compatibility and Limitations
 nav: Compatibility
 summary: Check mail, calendar, platform, offline, and delivery support before setting up.
-reviewed: 0.179.0
+reviewed: 0.190.0
 ---
 
 ## Platforms {#platforms}
@@ -27,7 +27,7 @@ IMAP support does not mean every provider's login method is supported. Check whe
 
 Cached mail and local search can work offline. Server search, new mail, sending, calendar updates, and AI requests need their respective connections. Local mail actions wait to sync when disconnected. Retention limits how much older mail is cached.
 
-The app catches up when it starts or resumes; it does not keep polling while closed or suspended. Send Later requires the original computer to be awake, online, authorized, and running ThreeStrands. Missed scheduled times require review.
+The app catches up when it starts or resumes; it does not keep polling while closed or suspended. Send Later requires the original computer to be awake, online, authorized, and running ThreeStrands. Missed scheduled times require review. Snoozed mail returns automatically after ThreeStrands reconnects, following a check of its current provider state; any running, connected installation that received the encrypted snooze schedule can handle the return.
 
 ## Transfers and Address Books {#transfers-and-address-books}
 

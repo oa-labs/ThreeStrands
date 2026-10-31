@@ -2,7 +2,7 @@
 title: Sync Across Computers
 nav: Sync Across Computers
 summary: Set up encrypted sync, add another device, and understand what stays local.
-reviewed: 0.179.0
+reviewed: 0.190.0
 ---
 
 ## Before You Start {#before-you-start}
@@ -31,9 +31,11 @@ If tasks or contacts do not arrive, check [sync troubleshooting](troubleshooting
 
 ## What Syncs {#what-syncs}
 
-Tasks, goals, saved contacts and groups, snippets, signatures and their defaults, Writing Profile, muted senders, sender-trust confirmations, Split Inboxes, account details, and portable preferences use encrypted sync. Appearance stays on each computer. Drafts travel through the mail provider's Drafts mailbox instead.
+Tasks, goals, saved contacts and groups, snippets, signatures and their defaults, Writing Profile, muted senders, sender-trust confirmations, conversation snooze schedules, Split Inboxes, account details, and portable preferences use encrypted sync. Appearance stays on each computer. Drafts travel through the mail provider's Drafts mailbox instead.
 
 Scheduled mail stays owned by its original computer. Other devices see a read-only summary, not the body, recipients, or attachments, and never take over delivery. Compare all mechanisms in [Where Your Data Goes](settings-and-sync.html#where-your-data-goes).
+
+Snooze schedules share account, conversation, and message references and the return time; they do not carry email content. A connected installation can return due conversations after receiving the schedule. Update every synced device to 0.190.0 or later before sharing snoozes; older versions cannot read snapshots containing them.
 
 ## Revoke or Leave {#revoke-or-leave}
 

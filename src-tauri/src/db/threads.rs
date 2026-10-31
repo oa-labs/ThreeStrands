@@ -22,12 +22,14 @@ const LATEST_ORDER: &str = "last_message_at DESC";
 pub(super) const THREAD_COLUMNS: &str = "t.id, t.provider_thread_id, t.subject, t.snippet,
     t.participants_json, t.last_message_at, t.unread, t.starred, t.archived,
     t.labels_json, t.trashed, t.account_id, t.summary, t.summary_generated_at,
-    t.has_attachments, t.last_received_at, t.summary_revision, t.summary_focus_from";
+    t.has_attachments, t.last_received_at, t.summary_revision, t.summary_focus_from,
+    (SELECT json_extract(s.record_json, '$.until') FROM conversation_snoozes s
+     WHERE s.id = t.id AND json_extract(s.record_json, '$.state') = 'active')";
 
 impl Database {
     /// `account_id` merges every account when absent, or scopes to one account.
     pub fn list_threads(&self, account_id: Option<&str>) -> DbResult<Vec<Thread>> {
-        self.list_threads_where(account_id, "archived = 0 AND trashed = 0")
+        self.list_threads_where(account_id, "archived = 0 AND trashed = 0 AND NOT EXISTS(SELECT 1 FROM conversation_snoozes s WHERE s.id=t.id AND json_extract(s.record_json, '$.state')='active')")
     }
 
     pub fn list_all_mail(&self, account_id: Option<&str>) -> DbResult<Vec<Thread>> {
@@ -41,7 +43,7 @@ impl Database {
     pub fn count_unread_inbox(&self) -> DbResult<i64> {
         self.with_connection(|connection| {
             Ok(connection.query_row(
-                "SELECT COUNT(*) FROM threads WHERE archived = 0 AND trashed = 0 AND unread = 1",
+                "SELECT COUNT(*) FROM threads WHERE archived = 0 AND trashed = 0 AND unread = 1 AND NOT EXISTS(SELECT 1 FROM conversation_snoozes s WHERE s.id=threads.id AND json_extract(s.record_json, '$.state')='active')",
                 [],
                 |row| row.get(0),
             )?)
@@ -53,7 +55,7 @@ impl Database {
             let mut statement = connection.prepare(
                 "SELECT account_id, COUNT(*)
                  FROM threads
-                 WHERE archived = 0 AND trashed = 0 AND unread = 1
+                 WHERE archived = 0 AND trashed = 0 AND unread = 1 AND NOT EXISTS(SELECT 1 FROM conversation_snoozes s WHERE s.id=threads.id AND json_extract(s.record_json, '$.state')='active')
                  GROUP BY account_id",
             )?;
             let rows = statement.query_map([], |row| {
@@ -79,7 +81,7 @@ impl Database {
         if rules.is_empty() {
             return self.list_threads_page_where(
                 account_id,
-                "archived = 0 AND trashed = 0",
+                "archived = 0 AND trashed = 0 AND NOT EXISTS(SELECT 1 FROM conversation_snoozes s WHERE s.id=t.id AND json_extract(s.record_json, '$.state')='active')",
                 offset,
                 limit,
             );
@@ -160,7 +162,7 @@ impl Database {
         self.list_threads_page_ordered(account_id, filter, RECEIVED_ORDER, offset, limit)
     }
 
-    fn list_threads_page_ordered(
+    pub(super) fn list_threads_page_ordered(
         &self,
         account_id: Option<&str>,
         filter: &str,
@@ -307,6 +309,7 @@ impl Database {
                 )?;
                 transaction.execute("DELETE FROM threads WHERE id = ?1", [&thread_id])?;
             }
+            Self::cancel_deleted_snooze(transaction, &local_thread_id(account_id, provider_thread_id))?;
             transaction.execute(
                 "DELETE FROM quarantined_messages
                      WHERE account_id = ?1 AND provider_thread_id = ?2",
@@ -330,12 +333,12 @@ impl Database {
             transaction
                 .execute(
                     "DELETE FROM thread_search WHERE thread_id IN
-                        (SELECT id FROM threads WHERE last_message_at < ?1 AND (starred = 0 OR trashed = 1))",
+                        (SELECT id FROM threads WHERE last_message_at < ?1 AND (starred = 0 OR trashed = 1) AND NOT EXISTS (SELECT 1 FROM conversation_snoozes s WHERE s.id = threads.id AND json_extract(s.record_json, '$.state') = 'active'))",
                     [&cutoff],
                 )?;
             let removed = transaction
                 .execute(
-                    "DELETE FROM threads WHERE last_message_at < ?1 AND (starred = 0 OR trashed = 1)",
+                    "DELETE FROM threads WHERE last_message_at < ?1 AND (starred = 0 OR trashed = 1) AND NOT EXISTS (SELECT 1 FROM conversation_snoozes s WHERE s.id = threads.id AND json_extract(s.record_json, '$.state') = 'active')",
                     [&cutoff],
                 )?;
             Ok(removed)
@@ -401,6 +404,7 @@ pub(super) fn thread_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Threa
         summary_revision: row.get(16)?,
         summary_focus_from: row.get(17)?,
         match_snippet: None,
+        snoozed_until: row.get(18)?,
     })
 }
 

@@ -70,6 +70,7 @@ export function useMailboxThreads({
     setSearchStatus(null);
   }, []);
   const fetchMailboxPage = useCallback((box: MailboxKind, accountId: string | undefined, offset: number) => {
+    if (box === "snoozed") return mailClient.listSnoozedPage(accountId, offset, SEARCH_PAGE_SIZE);
     if (box === "allMail") return mailClient.listAllMailPage(accountId, offset, SEARCH_PAGE_SIZE);
     if (box === "sent") return mailClient.listSentPage(accountId, offset, SEARCH_PAGE_SIZE);
     if (box === "trash") return mailClient.listTrashPage(accountId, offset, SEARCH_PAGE_SIZE);

@@ -5,9 +5,11 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ## Unreleased
 
 ### New
+- Snooze conversations until later with **h** (Remind Me), then find them in **Snoozed** to reschedule or return them to Inbox. Snoozed mail leaves Inbox in your other mail apps too, and returns when ThreeStrands is running and connected, or when a new reply arrives.
 - **Settings → Diagnostics** now shows recent AI rejection reasons, provider and model details, and request references, and lets you open the application logs folder. You can temporarily capture rejected scheduling values for troubleshooting on the affected device.
 
 ### Improved
+- Press **b** in Mail or Calendar to create an event, matching Superhuman. Calendar also keeps its existing **Shift+N** shortcut.
 - Hidden AI suggestions now say they couldn’t be verified, with an expandable explanation covering invalid scheduling data as well as unmatched evidence.
 
 ### Fixed

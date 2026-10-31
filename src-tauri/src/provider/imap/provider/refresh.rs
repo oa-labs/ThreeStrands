@@ -563,8 +563,12 @@ impl ImapProvider {
             // effective pin so a flag-only change on a pinned message is seen.
             let live_server: std::collections::BTreeSet<u32> =
                 server_uids.iter().copied().collect();
-            let effective: std::collections::BTreeSet<u32> =
+            let mut effective: std::collections::BTreeSet<u32> =
                 all_pins.difference(&expired).copied().collect();
+            // Active snoozes retain their locations independently of search
+            // pin TTLs/caps. Expunges still remove a location; cancellation or
+            // return releases this workflow hold on the next round.
+            effective.extend(self.store.snoozed_uids(mailbox, server_uidvalidity).map_err(db_err)?);
             flag_uids.extend(effective.iter().filter(|uid| live_server.contains(uid)).copied());
             effective
         };
@@ -1514,6 +1518,10 @@ impl MailSync for ImapProvider {
             thread_ids,
             next: None,
         })
+    }
+
+    async fn prepare_snoozed_thread(&self, id: &str, references: &[String]) -> ProviderResult<()> {
+        self.recover_snoozed_thread(id, references).await
     }
 
     async fn fetch_thread(&self, id: &str) -> ProviderResult<Vec<RawMessage>> {

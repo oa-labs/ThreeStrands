@@ -66,7 +66,7 @@ impl Database {
             let archived_filter = if request.include_archived.unwrap_or(false) {
                 ALL_MAIL_LEGACY_FILTER
             } else {
-                "AND t.archived = 0 AND t.trashed = 0"
+                "AND t.archived = 0 AND t.trashed = 0 AND NOT EXISTS(SELECT 1 FROM conversation_snoozes s WHERE s.id=t.id AND json_extract(s.record_json, '$.state')='active')"
             };
             let account_filter = if account_id.is_some() {
                 "AND t.account_id = ?4"
@@ -159,7 +159,7 @@ impl Database {
                 request.include_archived.unwrap_or(false),
             );
             if exclude_archived {
-                predicates.push("t.archived = 0".to_string());
+                predicates.push("t.archived = 0 AND NOT EXISTS(SELECT 1 FROM conversation_snoozes s WHERE s.id=t.id AND json_extract(s.record_json, '$.state')='active')".to_string());
             }
             if exclude_trashed {
                 predicates.push("t.trashed = 0".to_string());
@@ -338,10 +338,11 @@ fn map_thread_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
         summary: row.get(12)?,
         summary_generated_at: row.get(13)?,
         has_attachments: row.get(14)?,
+        snoozed_until: row.get(18)?,
         last_received_at: row.get(15)?,
         summary_revision: row.get(16)?,
         summary_focus_from: row.get(17)?,
-        match_snippet: row.get(18)?,
+        match_snippet: row.get(19)?,
     })
 }
 

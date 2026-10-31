@@ -58,6 +58,36 @@ pub(crate) async fn list_threads(
 }
 
 #[tauri::command]
+pub(crate) async fn snooze_threads(ids: Vec<String>, until: String, state: State<'_, AppState>) -> AppResult<Vec<crate::db::snoozes::ConversationSnooze>> {
+    let database = state.database.clone();
+    run_database_task(move || database.snooze_threads(&ids, &until)).await
+}
+
+#[tauri::command]
+pub(crate) async fn return_snoozed_threads(ids: Vec<String>, state: State<'_, AppState>) -> AppResult<()> {
+    let database = state.database.clone();
+    run_database_task(move || database.return_snoozed_threads(&ids)).await
+}
+
+#[tauri::command]
+pub(crate) async fn restore_snoozes(records: Vec<crate::db::snoozes::ConversationSnooze>, archived_ids: Vec<String>, state: State<'_, AppState>) -> AppResult<()> {
+    let database = state.database.clone();
+    run_database_task(move || database.restore_snoozes(&records, &archived_ids)).await
+}
+
+#[tauri::command]
+pub(crate) async fn list_snooze_records(account_id: Option<String>, state: State<'_, AppState>) -> AppResult<Vec<crate::db::snoozes::ConversationSnooze>> {
+    let database = state.database.clone();
+    run_database_task(move || database.list_snooze_records(account_id.as_deref())).await
+}
+
+#[tauri::command]
+pub(crate) async fn list_snoozed_page(account_id: Option<String>, offset: usize, limit: usize, state: State<'_, AppState>) -> AppResult<ThreadPage> {
+    let database = state.database.clone();
+    run_database_task(move || database.list_snoozed_page(account_id.as_deref(), offset, limit)).await
+}
+
+#[tauri::command]
 pub(crate) async fn list_all_mail(
     account_id: Option<String>,
     state: State<'_, AppState>,

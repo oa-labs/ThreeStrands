@@ -248,3 +248,13 @@ applying a merged profile. Mail and attachment history remain device-local.
 They survive deleting a profile but are excluded from cross-device sync and
 settings transfer. Explicitly typed recipients and deliberately chosen groups
 remain available. See [contact management](address-book.md) for the workflows.
+
+## Conversation snooze schedules
+
+From 0.190.0, encrypted sync carries conversation snooze schedules: account,
+thread and message references, IMAP Message-ID reference tokens, return time,
+and active/returned/cancelled state. It does not carry the mail itself. Any
+connected, running installation that received a schedule can return due mail
+after checking current provider state. Update all devices before sharing this
+entity; older versions cannot open snapshots containing it. See
+[snooze design](snooze-design.md) for persistence and recovery behavior.

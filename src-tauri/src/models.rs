@@ -473,6 +473,7 @@ pub struct Thread {
     /// messages were background. `None` for a summary of the whole thread.
     pub summary_focus_from: Option<String>,
     pub has_attachments: bool,
+    pub snoozed_until: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

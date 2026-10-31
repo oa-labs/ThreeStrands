@@ -240,6 +240,7 @@ impl Database {
                     SELECT 1 FROM mutations
                     WHERE thread_id = ?1 AND kind = ?2 AND payload_json = ?3
                       AND state IN ('pending', 'running')
+                      AND rowid = (SELECT MAX(rowid) FROM mutations WHERE thread_id=?1 AND kind=?2 AND state IN ('pending', 'running'))
                  )",
             params![mutation.thread_id(), kind, payload],
             |row| row.get(0),
@@ -266,6 +267,7 @@ impl Database {
 
     pub fn mutate_thread(&self, mutation: &ThreadMutation) -> DbResult<()> {
         self.with_transaction(|transaction| {
+            Self::cancel_snooze_for_mutation(transaction, mutation)?;
             Self::apply_mutation(transaction, mutation)?;
             Ok(())
         })
@@ -277,6 +279,7 @@ impl Database {
         }
         self.with_transaction(|transaction| {
             for mutation in mutations {
+                Self::cancel_snooze_for_mutation(transaction, mutation)?;
                 Self::apply_mutation(transaction, mutation)?;
             }
             Ok(())

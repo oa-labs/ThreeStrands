@@ -17,9 +17,9 @@ export function buildThreadMutation(threadId: string, template: MutationTemplate
 export function applyMutationTemplate(thread: Thread, template: MutationTemplate): Thread {
   switch (template.kind) {
     case "archive":
-      return { ...thread, archived: template.value };
+      return { ...thread, archived: template.value, snoozedUntil: null };
     case "trash":
-      return { ...thread, trashed: template.value };
+      return { ...thread, trashed: template.value, snoozedUntil: template.value ? null : thread.snoozedUntil };
     case "spam": {
       const next = new Set(thread.labels);
       if (template.value) {
@@ -29,7 +29,7 @@ export function applyMutationTemplate(thread: Thread, template: MutationTemplate
         next.delete("SPAM");
         next.add("INBOX");
       }
-      return { ...thread, archived: template.value, labels: [...next] };
+      return { ...thread, archived: template.value, labels: [...next], snoozedUntil: template.value ? null : thread.snoozedUntil };
     }
     case "read":
       return { ...thread, unread: !template.value };
@@ -39,7 +39,7 @@ export function applyMutationTemplate(thread: Thread, template: MutationTemplate
       const next = new Set(thread.labels);
       if (template.value) next.add(template.labelId);
       else next.delete(template.labelId);
-      return { ...thread, labels: [...next] };
+      return { ...thread, labels: [...next], snoozedUntil: ["INBOX", "TRASH", "SPAM"].includes(template.labelId) ? null : thread.snoozedUntil };
     }
   }
 }

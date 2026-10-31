@@ -46,6 +46,8 @@ pub enum EntityType {
     /// Explicit delivery-pattern evidence, added in 0.173.0. Older builds
     /// cannot open a snapshot containing this entity type.
     SenderConfirmation,
+    /// Conversation return schedules; older apps must update before sharing these snapshots.
+    ConversationSnooze,
 }
 
 /// Most web origins one remembered delivery pattern may contain.
@@ -77,6 +79,7 @@ impl EntityType {
             Self::SignatureDefaults => "signature_defaults",
             Self::Draft => "draft",
             Self::SenderConfirmation => "sender_confirmation",
+            Self::ConversationSnooze => "conversation_snooze",
         }
     }
 
@@ -150,6 +153,25 @@ impl EntityType {
                 if origins.len() > MAX_SENDER_CONFIRMATION_ORIGINS || origins.iter().any(|origin| !origin.is_string()) {
                     return Err("Invalid link origins".into());
                 }
+            }
+            Self::ConversationSnooze => {
+                if object.len() != 1 { return Err("A snooze contains only a schedule".into()); }
+                let schedule = object.get("schedule").and_then(Value::as_object).ok_or("Missing snooze schedule")?;
+                if schedule.keys().any(|key| !["id", "accountId", "providerThreadId", "until", "state", "messageIds", "references"].contains(&key.as_str())) {
+                    return Err("Unknown snooze detail".into());
+                }
+                for field in ["id", "accountId", "providerThreadId"] { required_string(schedule, field, 2048)?; }
+                enum_string(schedule, "state", &["active", "returned", "cancelled"])?;
+                match schedule.get("until") {
+                    Some(Value::String(value)) if value.len() <= 64 => {},
+                    _ => return Err("Invalid snooze return time".into()),
+                }
+                if let Some(references) = schedule.get("references") {
+                    let references = references.as_array().ok_or("Invalid snooze references")?;
+                    if references.iter().any(|reference| reference.as_str().is_none_or(|value| value.len()>2048 || !value.is_ascii() || value.chars().any(char::is_control))) { return Err("Invalid snooze reference".into()); }
+                }
+                let ids = schedule.get("messageIds").and_then(Value::as_array).ok_or("Missing snooze message references")?;
+                if ids.iter().any(|id| id.as_str().is_none_or(|id| id.is_empty() || id.len() > 2048)) { return Err("Invalid snooze message reference".into()); }
             }
             Self::SenderRule => {
                 required_string(object, "id", 128)?;
@@ -333,6 +355,7 @@ impl std::str::FromStr for EntityType {
             "contact_group" => Ok(Self::ContactGroup),
             "scheduled_send_summary" => Ok(Self::ScheduledSendSummary),
             "sender_rule" => Ok(Self::SenderRule),
+            "conversation_snooze" => Ok(Self::ConversationSnooze),
             "sender_confirmation" => Ok(Self::SenderConfirmation),
             "signature" => Ok(Self::Signature),
             "signature_defaults" => Ok(Self::SignatureDefaults),
@@ -505,7 +528,8 @@ mod tests {
             | EntityType::Signature
             | EntityType::SignatureDefaults
             | EntityType::Draft
-            | EntityType::SenderConfirmation => entity_type,
+            | EntityType::SenderConfirmation
+            | EntityType::ConversationSnooze => entity_type,
         };
         for entity_type in [
             EntityType::Task,
@@ -525,6 +549,7 @@ mod tests {
             EntityType::SignatureDefaults,
             EntityType::Draft,
             EntityType::SenderConfirmation,
+            EntityType::ConversationSnooze,
         ] {
             let entity_type = listed(entity_type);
             assert_eq!(entity_type.as_str().parse::<EntityType>(), Ok(entity_type));
@@ -765,5 +790,24 @@ impl ScheduledSendReport {
             return Err("Invalid scheduled-send report".into());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod snooze_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn snooze_snapshots_accept_workflow_references_and_reject_content_and_search_injection() {
+        let valid = json!({"schedule": {"id": "me@example.com:thread", "accountId": "me@example.com", "providerThreadId": "thread", "until": "2099-01-01T09:00:00Z", "state": "active", "messageIds": ["message"], "references": ["message@example.com"]}});
+        assert!(EntityType::ConversationSnooze.validate_payload(&valid).is_ok());
+        let mut preceding = valid.clone(); preceding["schedule"].as_object_mut().unwrap().remove("references");
+        assert!(EntityType::ConversationSnooze.validate_payload(&preceding).is_ok());
+        for key in ["body", "subject", "accessToken", "apiKey"] {
+            let mut extra = valid.clone(); extra["schedule"][key] = json!("private");
+            assert!(EntityType::ConversationSnooze.validate_payload(&extra).is_err());
+        }
+        let mut injected = valid; injected["schedule"]["references"] = json!(["x\r\nSTORE 1 +FLAGS \\Deleted"]);
+        assert!(EntityType::ConversationSnooze.validate_payload(&injected).is_err());
     }
 }

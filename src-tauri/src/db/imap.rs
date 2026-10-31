@@ -1040,6 +1040,17 @@ impl ImapStateStore {
     /// input. Only pins under the CURRENT incarnation matter — a reset renumbers
     /// UIDs, and the caller drops the old incarnation's pins — so the lookup is
     /// scoped by uidvalidity. Returned ascending for a stable set.
+    pub fn snoozed_uids(&self, mailbox: &str, uidvalidity: i64) -> DbResult<Vec<u32>> {
+        self.database.with_connection(|connection| {
+            let mut statement = connection.prepare("SELECT DISTINCT l.uid FROM imap_locations l
+                JOIN imap_threads t ON t.account_id=l.account_id AND t.message_id=l.message_id
+                JOIN conversation_snoozes s ON s.account_id=t.account_id AND json_extract(s.record_json,'$.providerThreadId')=t.thread_id
+                WHERE l.account_id=?1 AND l.mailbox=?2 AND l.uidvalidity=?3 AND json_extract(s.record_json,'$.state')='active' ORDER BY l.uid")?;
+            let rows = statement.query_map(rusqlite::params![self.account_id, mailbox, uidvalidity], |row| row.get::<_, i64>(0).map(|uid| uid as u32))?.collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+    }
+
     pub fn pinned_uids(&self, mailbox: &str, uidvalidity: i64) -> DbResult<Vec<u32>> {
         self.database.with_connection(|connection| {
             let mut statement = connection.prepare(

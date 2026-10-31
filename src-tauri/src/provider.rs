@@ -505,6 +505,12 @@ pub trait MailSync: Send + Sync {
     /// The inbox's current thread ids, one page at a time.
     async fn list_inbox(&self, page: Option<&str>) -> ProviderResult<ThreadPage>;
 
+    /// Reacquire workflow-held mail beyond the normal sync window when a
+    /// device joins or its provider location cache was rebuilt. References
+    /// contain Message-ID tokens only; providers with globally fetchable IDs
+    /// need no preparation.
+    async fn prepare_snoozed_thread(&self, _id: &str, _references: &[String]) -> ProviderResult<()> { Ok(()) }
+
     /// Every message in a thread.
     async fn fetch_thread(&self, id: &str) -> ProviderResult<Vec<RawMessage>>;
 

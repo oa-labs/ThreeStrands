@@ -1,3 +1,13 @@
+export type ConversationSnooze = {
+  id: string;
+  accountId: string;
+  providerThreadId: string;
+  until: string;
+  state: "active" | "returned" | "cancelled";
+  messageIds: string[];
+  references?: string[];
+};
+
 export type Thread = {
   id: string;
   providerThreadId: string;
@@ -25,6 +35,7 @@ export type Thread = {
    */
   summaryFocusFrom?: string | null;
   hasAttachments: boolean;
+  snoozedUntil?: string | null;
 };
 
 export type MessageAttachment = {

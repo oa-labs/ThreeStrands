@@ -14,7 +14,7 @@ pub(crate) const BASELINE_VERSION: i64 = 74;
 
 /// The current schema version. A new schema change adds an
 /// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 90;
+pub(crate) const LATEST_VERSION: i64 = 91;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1004,6 +1004,11 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(error)?;
     }
+    if version < 91 {
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS conversation_snoozes (
+            id TEXT PRIMARY KEY, account_id TEXT NOT NULL, record_json TEXT NOT NULL, pending_apply INTEGER NOT NULL DEFAULT 0, replica_dirty INTEGER NOT NULL DEFAULT 0
+        ); CREATE INDEX IF NOT EXISTS conversation_snoozes_account ON conversation_snoozes(account_id);").map_err(error)?;
+    }
     if stored == 0 {
         // Only new installations get the 90-day default. Existing databases
         // without a retention setting still mean Forever. Keep the default
@@ -1299,6 +1304,8 @@ mod tests {
         "table:ai_activity",
         "table:sender_delivery_patterns",
         "index:sender_delivery_requester",
+        "table:conversation_snoozes",
+        "index:conversation_snoozes_account",
     ];
 
     #[test]

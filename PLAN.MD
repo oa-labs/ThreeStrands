@@ -124,7 +124,7 @@ from the current feature set when publishing a website.
 
 | Direction | What users could expect |
 | --- | --- |
-| Snooze | Put a conversation aside until a chosen time, with clear behavior when the desktop app is closed. |
+| Snooze | Available in 0.190.0: put conversations aside, reschedule them in Snoozed, and return them automatically while a connected installation is running. |
 | Gmail sending aliases | Send from verified Gmail aliases. IMAP identities and per-account signatures exist today. |
 | Connected address books | Import existing Google Contacts and keep them connected to local profiles, notes, and correspondence history. |
 | Smarter inbox rules | Explore inspectable, user-controlled classification beyond today's domain, label, and address rules. |
@@ -137,7 +137,7 @@ priorities. Contact browsing and editing, meeting proposals, available-time
 replies, and reviewed calendar-event creation exist today. Task follow-ups exist
 today. Scheduled sending with one fixed sending device and synchronized
 summary visibility is implemented, and drafts follow the account across devices; conversation
-snoozing remains planned.
+snoozing is implemented in 0.190.0.
 
 ## Competitive feature-gap backlog
 
@@ -155,7 +155,7 @@ execution while devices are closed, and proactive assistance.
 
 | Gap | Current behavior and missing capability | Proposed next step | Sequence / status |
 | --- | --- | --- | --- |
-| Conversation snooze | Follow-up tasks and Keep in Touch reminder snoozing exist; hiding a mail conversation until a chosen time does not. | Define return behavior across restart, sleep, new replies, and multiple devices; then implement snooze, a snoozed view, and cancel/reschedule actions. State clearly what happens while the app is closed. | Near-term 1; planned, unscoped. |
+| Conversation snooze | Gmail and IMAP conversations can be snoozed individually or in batches, with rescheduling, undo, new-reply return, and optional encrypted schedule sync. Returns need a running, connected installation. | Complete developer live-account validation alongside the existing release checks. | Implemented in 0.190.0; see [snooze design](docs/snooze-design.md). |
 | Gmail sending aliases | IMAP sending identities and per-address signatures exist; selecting verified Gmail aliases for sending remains missing. | Discover eligible Gmail identities, support choosing From and replying from the addressed identity, and verify draft, signature, and send behavior. | Near-term 2; planned, unscoped. |
 | General rules and richer saved views | Account-specific Split Inboxes match a domain, label, or address pattern. Sender muting archives and marks mail read. Compound rules, reusable search views, and views across accounts remain gaps. | Define a first rules contract with explicit conditions and actions, previews, and account scope; support saving a search as a view. Decide whether rules run locally or at the provider. | Near-term 3; planned, unscoped. |
 | Connected address books | Local contact profiles and CSV/vCard import/export exist; ongoing Google Contacts and CardDAV sync do not. | Start with Google Contacts; define ownership, matching, conflict, deletion, and local-notes preservation before implementing sync. Track CardDAV as a later extension. | Near-term 4; planned, unscoped. |
@@ -168,9 +168,9 @@ execution while devices are closed, and proactive assistance.
 
 ### Suggested focus for the next few weeks
 
-Scope and work through the four near-term items in order: conversation snooze,
-Gmail aliases, richer rules/views, and connected Google Contacts. This is a
-sequencing recommendation, not a promise to finish all four within that period.
+Conversation snooze is implemented in 0.190.0. Continue with Gmail aliases,
+richer rules/views, and connected Google Contacts. This is a
+sequencing recommendation, not a promise to finish the remaining work within that period.
 Continue the existing reliability and live-account release checks alongside
 feature work. If broader adoption becomes the immediate goal, revisit the
 sequence: mobile continuity and Microsoft 365 are the larger adoption blockers.

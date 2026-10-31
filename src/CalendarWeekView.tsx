@@ -241,6 +241,8 @@ export type CalendarWorkspaceSnapshot = { selected: ScheduleEvent | null; initia
 export function CalendarWeekView({
   anchor,
   initialEvent,
+  createEventRequested = false,
+  onCreateEventRequestHandled,
   onAnchorChange,
   accounts,
   calendars,
@@ -257,6 +259,8 @@ export function CalendarWeekView({
   session,
 }: {
   session?: RefObject<CalendarWorkspaceSnapshot | null>;
+  createEventRequested?: boolean;
+  onCreateEventRequestHandled?(): void;
   /** Changes whenever tasks change elsewhere, to reload Open tasks. */
   taskRefreshKey?: number;
   onTasksChanged?(): void;
@@ -372,6 +376,12 @@ export function CalendarWeekView({
     const range = eventRangeFromSlots(day, minutes, minutes, false);
     setNewEventRange({ start: range.start, end: range.end });
   }, [anchor, now]);
+
+  useEffect(() => {
+    if (!active || !createEventRequested) return;
+    newEventAtAnchor();
+    onCreateEventRequestHandled?.();
+  }, [active, createEventRequested, newEventAtAnchor, onCreateEventRequestHandled]);
 
   useWorkspaceCommands({ "calendar.new": newEventAtAnchor, "calendar.goToday": goToToday }, active);
 
@@ -548,7 +558,7 @@ export function CalendarWeekView({
               <HoverTooltip title={`Previous ${mode === "week" || mode === "workweek" ? "week" : "range"} (-)`}><button type="button" className="btn-icon" aria-label={`Previous ${mode === "week" || mode === "workweek" ? "week" : "range"} (-)`} onClick={() => moveWeek(-1)}><ChevronLeft size={ICON_SIZE.lg} /></button></HoverTooltip>
               <HoverTooltip title={`Next ${mode === "week" || mode === "workweek" ? "week" : "range"} (=)`}><button type="button" className="btn-icon" aria-label={`Next ${mode === "week" || mode === "workweek" ? "week" : "range"} (=)`} onClick={() => moveWeek(1)}><ChevronRight size={ICON_SIZE.lg} /></button></HoverTooltip>
             </div>
-            <button type="button" className="btn" title="New Event (Shift+N)" aria-keyshortcuts="Shift+N" onClick={newEventAtAnchor}><Plus size={ICON_SIZE.md} />New Event</button>
+            <button type="button" className="btn" title="New Event (b, Shift+N)" aria-keyshortcuts="b Shift+N" onClick={newEventAtAnchor}><Plus size={ICON_SIZE.md} />New Event</button>
           </div>
         </header>
         {error ? (

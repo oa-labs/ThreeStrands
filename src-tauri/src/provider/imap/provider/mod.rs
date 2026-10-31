@@ -60,6 +60,7 @@ mod mail_send;
 mod moves;
 mod mutate;
 mod refresh;
+mod snoozes;
 mod server_search;
 
 /// The INBOX name, the only mailbox this slice syncs.

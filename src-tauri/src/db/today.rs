@@ -20,7 +20,7 @@ pub(crate) const PROMISE_LOOKBACK_DAYS: i64 = 14;
 /// Most open promises Today lists, newest first.
 pub(crate) const MAX_OPEN_PROMISES: usize = 20;
 
-const UNREAD_FILTER: &str = "archived = 0 AND trashed = 0 AND unread = 1";
+const UNREAD_FILTER: &str = "archived = 0 AND trashed = 0 AND unread = 1 AND NOT EXISTS(SELECT 1 FROM conversation_snoozes s WHERE s.id=t.id AND json_extract(s.record_json, '$.state')='active')";
 
 impl Database {
     /// Every unread conversation not archived or trashed, newest arrival
@@ -30,8 +30,8 @@ impl Database {
         self.with_connection(|connection| {
             let scope = if account_id.is_some() { "AND account_id = ?1" } else { "" };
             let total: i64 = match account_id {
-                Some(id) => connection.query_row(&format!("SELECT COUNT(*) FROM threads WHERE {UNREAD_FILTER} {scope}"), [id], |row| row.get(0))?,
-                None => connection.query_row(&format!("SELECT COUNT(*) FROM threads WHERE {UNREAD_FILTER}"), [], |row| row.get(0))?,
+                Some(id) => connection.query_row(&format!("SELECT COUNT(*) FROM threads AS t WHERE {UNREAD_FILTER} {scope}"), [id], |row| row.get(0))?,
+                None => connection.query_row(&format!("SELECT COUNT(*) FROM threads AS t WHERE {UNREAD_FILTER}"), [], |row| row.get(0))?,
             };
             let sql = format!(
                 "SELECT {THREAD_COLUMNS} FROM threads AS t WHERE {UNREAD_FILTER} {scope}

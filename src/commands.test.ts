@@ -122,6 +122,27 @@ function noopContext(): CommandContext {
 }
 
 describe("command registry", () => {
+  it("uses Superhuman's h for Remind Me and b for creating a calendar event", async () => {
+    const snooze = commands.find((command) => command.id === "thread.snooze")!;
+    const create = commands.find((command) => command.id === "calendar.new")!;
+    const snoozeSelected = vi.fn();
+    const createCalendarEvent = vi.fn();
+    const context = { ...noopContext(), selectedId: "thread-1", snoozeSelected, createCalendarEvent };
+    expect(snooze.keys).toEqual(["h"]);
+    expect(commandMatchesFilter(snooze, "remind me")).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "h" }), snooze.keys[0])).toBe(true);
+    expect(matchesShortcut(new KeyboardEvent("keydown", { key: "b" }), snooze.keys[0])).toBe(false);
+    expect(create.keys).toEqual(["b", "Shift+n"]);
+    expect(create.enabled(context)).toBe(true);
+    await snooze.run(context);
+    await create.run(context);
+    expect(snoozeSelected).toHaveBeenCalledOnce();
+    expect(createCalendarEvent).toHaveBeenCalledOnce();
+    expect(snooze.enabled({ ...context, composerActive: true })).toBe(false);
+    expect(create.enabled({ ...context, composerActive: true })).toBe(false);
+    expect(create.enabled({ ...context, focusedPane: "calendar" })).toBe(true);
+  });
+
   it("writes every letter shortcut the way it is typed, so labels match the key that works", () => {
     // matchesShortcut ignores letter case but rejects an unexpected Shift, so an
     // uppercase letter without "Shift+" would be labelled with a key that never fires.

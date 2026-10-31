@@ -89,6 +89,18 @@ describe("CalendarWeekView", () => {
     expect(screen.getAllByRole("dialog", { name: "New event" })).toHaveLength(1);
     await waitFor(() => expect(onCreated).not.toHaveBeenCalled());
   });
+  it("handles an event creation request arriving from Mail once", async () => {
+    const onCreateEventRequestHandled = vi.fn();
+    const props = { accounts, calendars, onToggleCalendar: vi.fn(), onAddCalendarAccount: vi.fn(), onOpenSettings: vi.fn(), onCreateEventRequestHandled };
+    const { rerender } = render(<StatefulWeekView {...props} createEventRequested />);
+    expect(await screen.findByRole("dialog", { name: "New event" })).toBeVisible();
+    expect(onCreateEventRequestHandled).toHaveBeenCalledOnce();
+    rerender(<StatefulWeekView {...props} createEventRequested={false} />);
+    fireEvent.click(within(screen.getByRole("dialog", { name: "New event" })).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog", { name: "New event" })).not.toBeInTheDocument();
+    expect(onCreateEventRequestHandled).toHaveBeenCalledOnce();
+  });
+
   it("shows today's full agenda in shared context rows, with all-day events before chronological meetings", async () => {
     vi.mocked(mailClient.listScheduleEvents).mockResolvedValue({ events: [
       event("late", "2026-09-22T15:00:00", "2026-09-22T16:00:00", "Afternoon review"),

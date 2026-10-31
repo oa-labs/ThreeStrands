@@ -64,7 +64,7 @@ use db::Database;
 pub(crate) use error::{AppError, AppResult};
 use models::{MailProviderKind, SyncStatus};
 use sync::SyncService;
-use tauri::{async_runtime::JoinHandle, Manager, State};
+use tauri::{async_runtime::JoinHandle, Emitter, Manager, State};
 
 use tokio_util::sync::CancellationToken;
 use url::Url;
@@ -1048,6 +1048,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         );
     }));
     spawn_badge_loop(database.clone(), app.handle().clone());
+    spawn_snooze_loop(database.clone(), app.handle().clone());
     spawn_storage_maintenance(database.clone());
     let root = data_dir.join("attachments");
     std::fs::create_dir_all(&root)?;
@@ -1135,6 +1136,28 @@ fn spawn_badge_loop(database: Arc<Database>, handle: tauri::AppHandle) {
             {
                 if let Some(window) = handle.get_webview_window("main") {
                     let _ = window.set_badge_count((count > 0).then_some(count));
+                }
+            }
+            tokio::time::sleep(sync::MIN_POLL_INTERVAL).await;
+        }
+    });
+}
+
+/// Runs without a mounted frontend and catches up automatically after sleep.
+fn spawn_snooze_loop(database: Arc<Database>, handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            if let Some(state) = handle.try_state::<AppState>() {
+                for service in sync_services(&state, None).await {
+                    let account = service.account_id();
+                    match database.snooze_refresh_ids(&account, chrono::Utc::now()) {
+                        Ok(ids) if !ids.is_empty() => {
+                            log_failure("conversation snooze", service.sync().await);
+                            let _ = handle.emit("unread-counts-changed", &account);
+                        }
+                        Err(error) => log::warn!("snooze refresh: {error}"),
+                        _ => {}
+                    }
                 }
             }
             tokio::time::sleep(sync::MIN_POLL_INTERVAL).await;
@@ -1404,6 +1427,11 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::attachments::open_attachment,
         commands::attachments::save_attachment,
         // Triage, contacts, and unsubscribe
+        commands::mail::snooze_threads,
+        commands::mail::return_snoozed_threads,
+        commands::mail::restore_snoozes,
+        commands::mail::list_snooze_records,
+        commands::mail::list_snoozed_page,
         commands::mail::mutate_thread,
         commands::mail::mutate_threads,
         commands::mail::record_triage_event,

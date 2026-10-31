@@ -724,7 +724,7 @@ async fn sync_active_with(
     provider: &(impl MailSync + MailMutate + ?Sized),
 ) -> ProviderResult<bool> {
     deliver_mutations(database, account_id, provider).await?;
-    match database.cursor(account_id).map_err(database_provider_error)? {
+    let changed = match database.cursor(account_id).map_err(database_provider_error)? {
         Some(cursor) => match incremental_sync(database, account_id, provider, &SyncCursor::new(cursor))
             .await
         {
@@ -732,7 +732,21 @@ async fn sync_active_with(
             result => result,
         },
         None => full_sync(database, account_id, provider).await,
+    }?;
+    let refresh = database.snooze_refresh_ids(account_id, chrono::Utc::now()).map_err(database_provider_error)?;
+    let refreshed = !refresh.is_empty();
+    if refreshed {
+        let schedules = database.list_snooze_records(Some(account_id)).map_err(database_provider_error)?;
+        for id in &refresh {
+            if let Some(schedule) = schedules.iter().find(|schedule| &schedule.provider_thread_id == id) {
+                provider.prepare_snoozed_thread(id, &schedule.references).await?;
+            }
+        }
+        ingest_snoozed_threads(database, account_id, provider, &refresh).await?;
     }
+    let woke = database.wake_verified_snoozes(account_id, chrono::Utc::now(), &refresh).map_err(database_provider_error)?;
+    if refreshed || woke { deliver_mutations(database, account_id, provider).await?; }
+    Ok(changed || refreshed || woke)
 }
 
 fn pause_for_permanent_auth_failure<T>(
@@ -1058,6 +1072,36 @@ async fn backfill_sent_step(
 // land in the local cache (and become searchable) before the whole scan
 // finishes.
 const INGEST_FLUSH_BATCH_SIZE: usize = 10;
+
+/// A return requires readable, current provider evidence. The general mail
+/// ingester tolerates quarantine and empty-thread grace; neither establishes
+/// that returning a snoozed conversation is appropriate.
+async fn ingest_snoozed_threads(
+    database: &Database,
+    account_id: &str,
+    provider: &(impl MailSync + ?Sized),
+    ids: &[String],
+) -> ProviderResult<()> {
+    for id in ids {
+        let raw = match provider.fetch_thread(id).await {
+            Ok(raw) => raw,
+            Err(ProviderError::NotFound) => {
+                database.delete_thread(account_id, id).map_err(database_provider_error)?;
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        let raw: Vec<_> = raw.into_iter().filter(|message| !is_draft_message(message)).collect();
+        let (messages, quarantined) = normalize_thread(&raw);
+        if messages.is_empty() || !quarantined.is_empty() {
+            return Err(ProviderError::TransientTransport("Snoozed mail could not be verified; its return remains pending".into()));
+        }
+        database.apply_ingested_threads_with_aliases(account_id,
+            &[(id.clone(), messages, quarantined)], &provider.thread_aliases()?)
+            .map_err(database_provider_error)?;
+    }
+    Ok(())
+}
 
 async fn ingest_threads(
     database: &Database,
@@ -1619,6 +1663,38 @@ mod tests {
                 ("a@example.com".to_string(), false),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn due_snooze_checks_provider_trash_and_empty_evidence_before_returning() {
+        for evidence in ["TRASH", "empty", "safe"] {
+            let database = Database::open_memory();
+            database.adopt_account("work@example.com").unwrap();
+            let initial = ContractProvider::normal();
+            sync_with(&database, "work@example.com", &initial).await.unwrap();
+            let id = "work@example.com:gmail-thread".to_string();
+            let mut record = database.snooze_threads(&[id.clone()], "2099-01-01T09:00:00Z").unwrap().remove(0);
+            record.until = "2000-01-01T09:00:00Z".into();
+            database.upsert_synced_snooze(&record).unwrap();
+            let mut message = ContractProvider::message();
+            if evidence == "TRASH" { message.label_ids = vec!["TRASH".into()]; }
+            let provider = ContractProvider {
+                thread_messages: Some(if evidence == "empty" { vec![] } else { vec![message] }),
+                ..ContractProvider::normal()
+            };
+            let result = sync_with(&database, "work@example.com", &provider).await;
+            let saved = database.list_snooze_records(Some("work@example.com")).unwrap().remove(0);
+            if evidence == "empty" {
+                assert!(result.is_err());
+                assert_eq!(saved.state, "active");
+                assert!(database.get_thread(&id).unwrap().thread.archived);
+            } else {
+                result.unwrap();
+                assert_eq!(saved.state, if evidence == "TRASH" { "cancelled" } else { "returned" });
+                assert_eq!(database.get_thread(&id).unwrap().thread.archived, evidence == "TRASH");
+            }
+            assert_eq!(provider.modifies.load(Ordering::SeqCst), if evidence == "safe" { 2 } else { 1 });
+        }
     }
 
     #[tokio::test]

@@ -107,6 +107,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       throw new Error("A goal can only support a longer-term goal whose period includes it");
     }
   };
+  const snoozes = new Map<string, import("../domain").ConversationSnooze>();
   let snippets = seed.snippets;
   let contacts = seed.contacts;
   const suppressedContacts = new Set<string>();
@@ -254,6 +255,10 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
   }
 
   function update(mutation: ThreadMutation) {
+    if (mutation.kind === "archive" || ((mutation.kind === "trash" || mutation.kind === "spam") && mutation.value) || (mutation.kind === "label" && ["INBOX", "TRASH", "SPAM"].includes(mutation.labelId))) {
+      const item = snoozes.get(mutation.threadId);
+      if (item) { item.state = "cancelled"; threads = threads.map((row) => row.id === item.id ? { ...row, snoozedUntil: null } : row); }
+    }
     threads = threads.map((thread) => {
       if (thread.id !== mutation.threadId) return thread;
       switch (mutation.kind) {
@@ -674,6 +679,33 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     },
     async backfillSearchThreads(_query, _accountId) {
       return { status: { kind: "complete" }, unsyncedMailboxes: 0, skippedOverCap: 0, serverSearchedAccounts: 1 };
+    },
+    async listSnoozeRecords(accountId) { return [...snoozes.values()].filter((item) => !accountId || item.accountId === accountId).map((item) => structuredClone(item)); },
+    async listSnoozedPage(accountId, offset, limit) {
+      const matches = threads.filter((thread) => thread.snoozedUntil && !thread.trashed && (!accountId || thread.accountId === accountId)).sort((a, b) => a.snoozedUntil!.localeCompare(b.snoozedUntil!));
+      return { threads: matches.slice(offset, offset + limit), hasMore: matches.length > offset + limit };
+    },
+    async snoozeThreads(ids, until) {
+      if (!Number.isFinite(Date.parse(until)) || Date.parse(until) <= Date.now()) throw new Error("Choose a future return time");
+      const targets = ids.map((id) => threads.find((thread) => thread.id === id));
+      if (targets.some((thread) => !thread || thread.trashed || thread.labels.includes("SPAM"))) throw new Error("Conversation cannot be snoozed");
+      return targets.map((thread) => {
+        const item: import("../domain").ConversationSnooze = { id: thread!.id, accountId: thread!.accountId, providerThreadId: thread!.providerThreadId, until, state: "active", messageIds: [] };
+        update({ kind: "archive", threadId: item.id, value: true });
+        snoozes.set(item.id, item); threads = threads.map((row) => row.id === item.id ? { ...row, snoozedUntil: until } : row);
+        return structuredClone(item);
+      });
+    },
+    async returnSnoozedThreads(ids) {
+      for (const id of ids) { update({ kind: "archive", threadId: id, value: false }); const item = snoozes.get(id); if (item) item.state = "returned"; }
+    },
+    async restoreSnoozes(records, archivedIds) {
+      for (const item of records) {
+        update({ kind: "archive", threadId: item.id, value: item.state === "active" || archivedIds.includes(item.id) });
+        snoozes.set(item.id, structuredClone(item));
+        const thread = threads.find((thread) => thread.id === item.id);
+        if (thread) thread.snoozedUntil = item.state === "active" ? item.until : null;
+      }
     },
     async mutateThread(mutation) {
       update(mutation);

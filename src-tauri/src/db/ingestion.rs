@@ -204,6 +204,7 @@ impl Database {
             "DELETE FROM pending_search_reindex WHERE thread_id = ?1",
             [&thread_id],
         )?;
+        Self::reconcile_ingested_snooze(transaction, account_id, &thread_id, messages)?;
         Self::reapply_undelivered_mutations(transaction, &thread_id)?;
         // After the user's own pending changes, so a conversation they just
         // moved is judged where they left it.
@@ -261,6 +262,7 @@ impl Database {
                 }
                 let old_local = local_thread_id(account_id, old);
                 let survivor_local = local_thread_id(account_id, survivor);
+                Self::migrate_snooze_alias(transaction, &old_local, &survivor_local, survivor)?;
                 {
                     let mut stars=transaction.prepare("SELECT s.message_id,s.attachment_id FROM file_stars s JOIN messages m ON m.id=s.message_id WHERE m.thread_id=?1")?;
                     retained_file_stars.extend(stars.query_map([&old_local],|row|Ok((row.get(0)?,row.get(1)?)))?.collect::<Result<Vec<_>,_>>()?);

@@ -4,7 +4,7 @@ import type { MessageFilterKind } from "./messageFilters";
 import type { SplitInbox, TaskStatus } from "./domain";
 import { adjacentTaskStatus, isActiveTaskStatus } from "./taskViews";
 
-export type MailboxKind = "inbox" | "allMail" | "sent" | "trash" | "drafts" | "outbox" | "split";
+export type MailboxKind = "inbox" | "allMail" | "sent" | "trash" | "drafts" | "outbox" | "split" | "snoozed";
 export type InteractionScope = "read" | "compose" | "search" | "modal" | "palette";
 export type FocusedPane = "mail" | "tasks" | "contacts" | "files" | "calendar" | "today";
 
@@ -36,6 +36,10 @@ export type CommandContext = {
   /** Starts an unaddressed new message from a message the account sent. */
   editAsNew(): void;
   openInbox(): void;
+  openSnoozed?(): void;
+  createCalendarEvent?(): void;
+  snoozeSelected?(): void;
+  returnSnoozedSelected?(): Promise<CommandResult>;
   openAllMail(): void;
   openSent(): void;
   openTrash(): void;
@@ -192,7 +196,11 @@ const workspaceCommand = (id: WorkspaceCommandId, title: string, keys: string[],
 });
 
 export const commands: Command[] = [
-  workspaceCommand("calendar.new", "New Calendar Event", ["Shift+n"], "calendar"),
+  {
+    id: "calendar.new", title: "New Calendar Event", keys: ["b", "Shift+n"], group: "Application",
+    enabled: (c) => !c.composerActive && (c.focusedPane === "calendar" || (c.focusedPane === "mail" && Boolean(c.createCalendarEvent))),
+    run: (c) => complete(() => c.focusedPane === "calendar" ? runWorkspaceCommand("calendar.new") : c.createCalendarEvent?.()),
+  },
   workspaceCommand("contacts.new", "New Contact", ["Shift+n"], "contacts"),
   workspaceCommand("contacts.newGroup", "New Contact Group", ["Shift+g"], "contacts"),
   workspaceCommand("contacts.save", "Save Contact", ["Mod+Enter"], "contacts", true),
@@ -215,6 +223,9 @@ export const commands: Command[] = [
   { id: "mailbox.sent", title: "Go to Sent", keys: ["g then s"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openSent) },
   { id: "mailbox.trash", title: "Go to Trash", keys: ["g then t"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openTrash) },
   { id: "drafts.open", title: "Go to Drafts", keys: ["g then d"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openDrafts) },
+  { id: "snoozed.open", title: "Open Snoozed", keys: ["g then z"], group: "Navigation", enabled: (c) => !c.composerActive && Boolean(c.openSnoozed), run: (c) => complete(() => c.openSnoozed?.()) },
+  { id: "thread.snooze", title: "Snooze Conversation", keys: ["h"], keywords: ["later", "remind me", "reschedule"], group: "Triage", enabled: (c) => c.focusedPane === "mail" && hasThreadTarget(c) && isThreadMailbox(c) && !c.selectedTrashed && !c.composerActive && Boolean(c.snoozeSelected), run: (c) => complete(() => c.snoozeSelected?.()) },
+  { id: "thread.returnSnoozed", title: "Return to Inbox", keys: [], group: "Triage", enabled: (c) => c.focusedPane === "mail" && c.mailbox === "snoozed" && hasThreadTarget(c) && !c.composerActive && Boolean(c.returnSnoozedSelected), run: (c) => c.returnSnoozedSelected?.() ?? Promise.resolve({}), undo: undoResult },
   { id: "outbox.open", title: "Open Outbox", keys: ["g then o"], group: "Navigation", enabled: (c) => !c.composerActive, run: (c) => complete(c.openOutbox) },
   {
     id: "mailbox.nextSplit",

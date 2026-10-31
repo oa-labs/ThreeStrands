@@ -28,6 +28,15 @@ const thread: Thread = {
 };
 
 describe("thread mutations", () => {
+  it("clears a cancelled snooze immediately while read and star actions retain it", () => {
+    const snoozed = { ...thread, snoozedUntil: "2099-01-01T09:00:00Z" };
+    expect(applyMutationTemplate(snoozed, { kind: "archive", value: true }).snoozedUntil).toBeNull();
+    expect(applyMutationTemplate(snoozed, { kind: "trash", value: true }).snoozedUntil).toBeNull();
+    expect(applyMutationTemplate(snoozed, { kind: "spam", value: true }).snoozedUntil).toBeNull();
+    expect(applyMutationTemplate(snoozed, { kind: "read", value: true }).snoozedUntil).toBe(snoozed.snoozedUntil);
+    expect(applyMutationTemplate(snoozed, { kind: "star", value: true }).snoozedUntil).toBe(snoozed.snoozedUntil);
+  });
+
   it.each([
     [{ kind: "archive", value: true } as const, { archived: true }],
     [{ kind: "trash", value: true } as const, { trashed: true }],

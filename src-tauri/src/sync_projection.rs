@@ -88,6 +88,7 @@ impl Database {
                 EntityType::SplitInbox => self.delete_synced_split(entity_id)?,
                 EntityType::SenderConfirmation => self.forget_sender_delivery(entity_id)?,
                 EntityType::SenderRule => self.delete_synced_sender_rule(entity_id)?,
+                EntityType::ConversationSnooze => self.delete_synced_snooze(entity_id)?,
                 EntityType::Contact => self.delete_contact_profile(entity_id)?,
                 // Unlinks local tasks and goals the same way the deleting device did.
                 EntityType::Goal => {
@@ -138,6 +139,12 @@ impl Database {
                     let record: crate::db::sender_feedback::SenderConfirmation = serde_json::from_value(payload["pattern"].clone()).map_err(serialization_error)?;
                     if record.id != entity_id { return Err(DatabaseError::invalid("Sender confirmation identity mismatch")); }
                     self.upsert_synced_sender_confirmation(&record)?;
+                }
+                EntityType::ConversationSnooze => {
+                    entity_type.validate_payload(payload).map_err(DatabaseError::invalid)?;
+                    let record: crate::db::snoozes::ConversationSnooze = serde_json::from_value(payload["schedule"].clone()).map_err(serialization_error)?;
+                    if record.id != entity_id { return Err(DatabaseError::invalid("Snooze identity mismatch")); }
+                    self.upsert_synced_snooze(&record)?;
                 }
                 EntityType::SenderRule => {
                     entity_type.validate_payload(payload).map_err(DatabaseError::invalid)?;

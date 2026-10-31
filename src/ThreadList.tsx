@@ -128,6 +128,7 @@ export const ThreadRow = memo(function ThreadRow({
             <time>{formatMailTimestamp(thread.lastMessageAt)}</time>
           </span>
         </span>
+        {thread.snoozedUntil ? <span className="thread-location-tag">Snoozed until <time dateTime={thread.snoozedUntil}>{new Date(thread.snoozedUntil).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</time></span> : null}
         <span className="thread-subject">{thread.subject}</span>
         <span className="thread-snippet"><HighlightedSnippet thread={thread} /></span>
       </span>

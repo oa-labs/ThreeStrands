@@ -101,6 +101,11 @@ import { nativeCorrespondence, type CorrespondenceClient } from "../corresponden
 import { demoClient } from "./demoClient";
 
 export interface MailClient extends CorrespondenceClient {
+  snoozeThreads(ids: string[], until: string): Promise<import("../domain").ConversationSnooze[]>;
+  returnSnoozedThreads(ids: string[]): Promise<void>;
+  restoreSnoozes(records: import("../domain").ConversationSnooze[], archivedIds: string[]): Promise<void>;
+  listSnoozeRecords(accountId?: string): Promise<import("../domain").ConversationSnooze[]>;
+  listSnoozedPage(accountId: string | undefined, offset: number, limit: number): Promise<ThreadPage>;
   /** Omitted or `"all"` merges every connected account; a specific email scopes to just it. */
   listThreads(accountId?: string): Promise<Thread[]>;
   /** Everything except Trash — archived and inbox threads both included. */
@@ -421,6 +426,11 @@ const tauriClient: MailClient = {
     complete("ai_generate_reply", { context, instruction, provider, model, endpoint, reasoning }),
   searchThreads: (request, accountId) => read("search_threads", { request, accountId }),
   backfillSearchThreads: (query, accountId) => complete("backfill_search_threads", { query, accountId }),
+  snoozeThreads: (ids, until) => complete("snooze_threads", { ids, until }),
+  returnSnoozedThreads: (ids) => complete("return_snoozed_threads", { ids }),
+  restoreSnoozes: (records, archivedIds) => complete("restore_snoozes", { records, archivedIds }),
+  listSnoozeRecords: (accountId) => read("list_snooze_records", { accountId }),
+  listSnoozedPage: (accountId, offset, limit) => read("list_snoozed_page", { accountId, offset, limit }),
   mutateThread: (mutation) => complete("mutate_thread", { mutation }),
   mutateThreads: (mutations) => complete("mutate_threads", { mutations }),
   recordTriageEvent: (event) => complete("record_triage_event", { event }),

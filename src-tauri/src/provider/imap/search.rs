@@ -683,7 +683,7 @@ fn quote_or_note(value: &str, field: SearchField) -> Result<String, SearchNotice
 /// — this function assumes those are absent. Non-ASCII bytes pass through as
 /// UTF-8 (the command carries `CHARSET UTF-8`); NO literal (`{n}`) is ever
 /// emitted.
-fn quote_search_string(value: &str) -> String {
+pub(crate) fn quote_search_string(value: &str) -> String {
     let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
     format!("\"{escaped}\"")
 }

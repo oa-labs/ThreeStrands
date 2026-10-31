@@ -12,6 +12,7 @@ export function useThreadDetail(selectedId: string | null, threads: Thread[], se
   const selectedThread = threads.find((thread) => thread.id === selectedId);
   const selectedThreadLastMessageAt = selectedThread?.lastMessageAt;
   const selectedThreadSnippet = selectedThread?.snippet;
+  const selectedThreadSnoozedUntil = selectedThread?.snoozedUntil;
   useEffect(() => {
     const requestId = ++detailRequest.current;
     if (!selectedId) {
@@ -36,7 +37,7 @@ export function useThreadDetail(selectedId: string | null, threads: Thread[], se
       .finally(() => {
         if (requestId === detailRequest.current) setDetailLoading(false);
       });
-  }, [selectedId, selectedThreadLastMessageAt, selectedThreadSnippet, setNotice]);
+  }, [selectedId, selectedThreadLastMessageAt, selectedThreadSnippet, selectedThreadSnoozedUntil, setNotice]);
 
   return { detail, setDetail, visibleDetail, detailLoading, setDetailLoading };
 }

@@ -2,7 +2,7 @@
 title: Reading and Triage
 nav: Reading and Triage
 summary: Work through your inbox from the keyboard — archive what's done, label and filter the rest, and split high-volume mail into its own tabs.
-reviewed: 0.179.0
+reviewed: 0.190.0
 ---
 
 ## The Triage Loop {#the-triage-loop}
@@ -33,9 +33,21 @@ Reopen a long email you were partway through, such as a newsletter, and it picks
 
 The [keyboard shortcut reference](keyboard-shortcuts.html) lists everything else.
 
+## Snooze {#snooze}
+
+Press <kbd>h</kbd> or click **Snooze** to put a conversation aside. Choose **Later today**, **Tomorrow**, **Next week**, or a date and time in your computer's timezone. Late in the evening, **Later today** is omitted. Checked conversations can be snoozed together; the confirmation offers **Undo**.
+
+Snoozing removes mail from Inbox in your other mail apps too: Gmail archives it, and IMAP moves its inbox messages into the account's Archive folder. Mail remains available in All Mail or Archive and search. Read/unread status is preserved.
+
+Open **Snoozed** from the folder menu, or press <kbd>g</kbd> then <kbd>z</kbd>. Return times appear beside each conversation, earliest first. Select one and choose **Reschedule Snooze** or **Return to Inbox**. Returning a batch also offers Undo. Archiving, trashing, or marking spam in ThreeStrands cancels its pending return; trash or spam observed at the provider also cancels it. A new incoming reply ends snooze when ThreeStrands receives it; your own sent mail does not.
+
+Returns require a running, connected ThreeStrands installation. If the app was closed or offline, overdue mail returns automatically after reconnecting; no confirmation is needed. With encrypted sync enabled, another connected installation can handle the return after receiving the schedule. Without it, use the computer where you snoozed the conversation. Other email clients see archived mail, not a ThreeStrands return time or their own native Snoozed entry.
+
+IMAP keeps active snoozed conversations within reach even outside its usual archive sync window. When restoring on another computer or after rebuilding the provider cache, it can locate mail by Message-ID references. If the server cannot locate it, the return stays pending and the sync error explains why; the app does not assume that a missing cache entry means the email was deleted.
+
 ## Batch Actions {#batch-actions}
 
-Press <kbd>x</kbd> to select the current conversation, or use the checkboxes. A toolbar shows how many are selected and offers Archive, Trash, Mark Spam, Mark Read or Unread, Star, and Labels for all of them at once.
+Press <kbd>x</kbd> to select the current conversation, or use the checkboxes. A toolbar shows how many are selected and offers Archive, Trash, Mark Spam, Mark Read or Unread, Star, Labels, and Snooze for all of them at once.
 
 ## Filters {#filters}
 

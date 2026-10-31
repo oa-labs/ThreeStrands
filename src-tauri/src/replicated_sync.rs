@@ -199,6 +199,10 @@ impl Database {
                 repaired += 1;
             }
         }
+        self.publish_dirty_snoozes()?;
+        for record in self.list_snooze_records(None)? {
+            if self.reconcile_one_entity(EntityType::ConversationSnooze, &record.id, json!({"schedule": record}))? { repaired += 1; }
+        }
         for rule in self.list_sender_rules()? {
             if self.reconcile_one_entity(EntityType::SenderRule, &rule.id, serde_json::to_value(&rule).map_err(display)?)? {
                 repaired += 1;

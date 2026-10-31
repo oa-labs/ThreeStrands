@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import type { CommandResult, MailboxKind } from "./commands";
 import { mailClient } from "./data/client";
-import type { SyncStatus, Thread, ThreadDetail, TriageEvent } from "./domain";
+import type { ConversationSnooze, SyncStatus, Thread, ThreadDetail, TriageEvent } from "./domain";
 import { logBackgroundFailure } from "./errors";
 import {
   applyMutationTemplate,
@@ -97,7 +97,9 @@ export function useThreadMutations({
     // inbox's underlying set is the same unarchived/untrashed inbox scope,
     // so archiving/trashing/spamming a thread should remove it exactly like
     // it would from the plain Inbox.
-    const removesFromView = mailbox === "trash"
+    const removesFromView = mailbox === "snoozed"
+      ? template.kind === "archive" || template.kind === "trash" || template.kind === "spam"
+      : mailbox === "trash"
       ? template.kind === "trash" && !template.value
       : mailbox === "allMail" || mailbox === "sent"
         ? template.kind === "trash" && template.value
@@ -141,7 +143,13 @@ export function useThreadMutations({
     }
 
     let failedIds: string[] = [];
+    let snoozesBefore: ConversationSnooze[] = [];
     try {
+      const changesLocation = template.kind === "archive" || template.kind === "trash" || template.kind === "spam"
+        || (template.kind === "label" && ["INBOX", "TRASH", "SPAM"].includes(template.labelId));
+      if (changesLocation && [...previous.values()].some((thread) => thread.snoozedUntil)) {
+        snoozesBefore = (await mailClient.listSnoozeRecords()).filter((record) => targetIds.includes(record.id) && record.state === "active");
+      }
       await mailClient.mutateThreads(targetIds.map((id) => buildThreadMutation(id, template)));
     } catch {
       failedIds = targetIds;
@@ -207,6 +215,8 @@ export function useThreadMutations({
           if (removesFromView && succeededIds.length === 1) setSelectedId(succeededIds[0]);
         }
         await mailClient.mutateThreads(succeededIds.map((id) => buildThreadMutation(id, undoTemplate)));
+        const restore = snoozesBefore.filter((record) => succeededIds.includes(record.id));
+        if (restore.length) await mailClient.restoreSnoozes(restore, [...previous.values()].filter((thread) => thread.archived).map((thread) => thread.id));
         if (triageEvents) {
           succeededIds.forEach((id) => {
             const event = triageEvents.get(id);
