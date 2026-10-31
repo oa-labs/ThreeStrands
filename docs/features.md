@@ -2,6 +2,8 @@
 
 The maintained user reference is [ThreeStrands Help](https://www.threestrands.app/docs/index.html). It covers current behavior, compatibility, and recovery. This repository page remains to preserve older links; use the help guides for product instructions.
 
+For planned work, see the [product roadmap](../PLAN.MD#product-roadmap--website-draft) and [competitive feature-gap backlog](../PLAN.MD#competitive-feature-gap-backlog). The backlog records current gaps, suggested sequencing, and the next step for each; it does not promise delivery dates.
+
 ## Accounts and providers
 
 See [the help guides](https://www.threestrands.app/docs/index.html). For development and release checks, see [DEVELOPERS.md](../DEVELOPERS.md).
