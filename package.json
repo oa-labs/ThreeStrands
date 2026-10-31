@@ -3,7 +3,7 @@
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "version": "0.189.1",
-  "packageManager": "pnpm@12.4.1",
+  "packageManager": "pnpm@12.16.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
