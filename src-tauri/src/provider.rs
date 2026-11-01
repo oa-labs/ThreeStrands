@@ -463,8 +463,8 @@ pub enum SentCopyStep {
 
 /// One address an account may send as, with an optional display name.
 ///
-/// Provider-neutral by design: Gmail and any single-identity account report
-/// exactly one (their account address, no display name); an IMAP account
+/// Provider-neutral by design: Gmail accounts report
+/// their server-verified cached identities; an IMAP account
 /// reports its ordered, login-anchored identity list. The list's FIRST entry
 /// is always the account's primary (login) address — callers that need "the
 /// account's own address" read `identities()[0]`, and every "sent by me"
@@ -472,7 +472,7 @@ pub enum SentCopyStep {
 /// `docs/imap-design.md` ("Identities") and
 /// [`crate::provider::imap::account_identities`], the one builder that applies
 /// the normalization/validation rules.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SendingIdentity {
     /// The address as displayed (original case preserved for the header).
@@ -480,6 +480,10 @@ pub struct SendingIdentity {
     /// An optional display name for the From header.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_default: bool,
 }
 
 /// Everything the local cache is populated from.
@@ -510,6 +514,10 @@ pub trait MailSync: Send + Sync {
     /// contain Message-ID tokens only; providers with globally fetchable IDs
     /// need no preparation.
     async fn prepare_snoozed_thread(&self, _id: &str, _references: &[String]) -> ProviderResult<()> { Ok(()) }
+
+    /// Optional provider-owned sending-address metadata. Cached separately
+    /// from mail so drafting remains local and offline-safe.
+    async fn refresh_sending_identities(&self, _account: &str) -> ProviderResult<Option<Vec<SendingIdentity>>> { Ok(None) }
 
     /// Every message in a thread.
     async fn fetch_thread(&self, id: &str) -> ProviderResult<Vec<RawMessage>>;
@@ -610,7 +618,7 @@ pub trait MailSend: Send + Sync {
 
     /// The account's ordered sending identities. `account` is the account key
     /// (its own address). The default is the single identity `[account]` with
-    /// no display name — correct for Gmail and any account that sends as
+    /// no display name — correct for an account that sends as
     /// exactly one address — and deliberately makes NO provider call:
     /// `sender_identity()` is a network request for Gmail, and queueing,
     /// scheduling and reply-draft creation must not start needing one. The IMAP
@@ -622,9 +630,13 @@ pub trait MailSend: Send + Sync {
     async fn identities(&self, account: &str) -> ProviderResult<Vec<SendingIdentity>> {
         Ok(vec![SendingIdentity {
             address: account.trim().to_string(),
-            display_name: None,
-        }])
+            display_name: None, ..Default::default() }])
     }
+
+    /// Validate an explicit From immediately before delivery is claimed.
+    /// Providers may recheck server-owned aliases; the primary account's
+    /// existing offline queue behavior does not change.
+    async fn validate_sending_identity(&self, _account: &str, _sender: &str) -> ProviderResult<()> { Ok(()) }
 
     /// The domain to put in a generated `Message-ID` for a send from
     /// `from_address`, or `None` to keep the app's reserved
@@ -759,7 +771,7 @@ mod sending_identity_default_tests {
         let got = OfflineProvider.identities("me@example.com").await.unwrap();
         assert_eq!(
             got,
-            vec![SendingIdentity { address: "me@example.com".into(), display_name: None }]
+            vec![SendingIdentity { address: "me@example.com".into(), display_name: None, ..Default::default() }]
         );
     }
 }

@@ -808,6 +808,7 @@ mod prepare_failures {
     /// What the fake provider's `prepare_delivery` should do.
     #[derive(Clone)]
     enum PrepareBehaviour {
+        RejectAlias,
         /// Succeed, then `send_once` returns the given send result.
         Succeed(SendResult),
         /// Fail with the given error (no permit handed out).
@@ -857,11 +858,16 @@ mod prepare_failures {
 
     #[async_trait::async_trait]
     impl MailSend for FakeSender {
+        async fn validate_sending_identity(&self, _account: &str, _sender: &str) -> ProviderResult<()> {
+            if matches!(self.behaviour, PrepareBehaviour::RejectAlias) { return Err(ProviderError::PermanentClientRejection("Gmail alias is no longer verified".into())); }
+            Ok(())
+        }
         async fn sender_identity(&self) -> ProviderResult<String> {
             Ok("you@example.com".into())
         }
         async fn prepare_delivery(&self) -> ProviderResult<Box<dyn Delivery>> {
             match &self.behaviour {
+                PrepareBehaviour::RejectAlias => panic!("a rejected alias must not obtain a delivery permit"),
                 PrepareBehaviour::Succeed(result) => {
                     Ok(Box::new(ScriptedPermit { result: *result }))
                 }
@@ -1003,6 +1009,17 @@ mod prepare_failures {
         service.send_due_item(&item, &provider, "you@example.com", "", unix_millis()).await.unwrap();
         assert_eq!(state_of(&service, &item.id), "sent");
         assert_forward_has_only_original_and_sent(&service.database);
+    }
+
+    #[tokio::test]
+    async fn a_revoked_alias_is_failed_before_claiming_or_obtaining_a_delivery_permit() {
+        let service = service();
+        let mut item = ready_item(&service);
+        item.draft.from = Some("removed@example.org".into());
+        let provider = FakeSender { behaviour: PrepareBehaviour::RejectAlias };
+        service.send_due_item(&item, &provider, "you@example.com", "", unix_millis()).await.unwrap();
+        assert_eq!(state_of(&service, &item.id), "failed");
+        assert_eq!(attempts_of(&service, &item.id), 0);
     }
 
     #[tokio::test]
@@ -1928,8 +1945,7 @@ fn a_server_draft_blocks_header_injection_like_a_send() {
 fn identity(address: &str, display: Option<&str>) -> crate::provider::SendingIdentity {
     crate::provider::SendingIdentity {
         address: address.into(),
-        display_name: display.map(Into::into),
-    }
+        display_name: display.map(Into::into), ..Default::default() }
 }
 
 #[test]
@@ -3017,4 +3033,40 @@ async fn scheduled_send_uncertainty_is_persisted_without_retry_and_report_failur
     let uncertain=owner.database.outbox().unwrap().remove(0);
     assert_eq!(uncertain.state,"uncertain");assert_eq!(uncertain.schedule.as_ref().unwrap().report.state,"uncertain");
     owner.dispatch_due(&uncertain,item.deadline+1,false,|_,_|async {panic!("uncertain resend")}).await.unwrap();
+}
+
+#[test]
+fn gmail_alias_reply_and_mime_keep_the_address_reply_to_and_signature() {
+    let db = database();
+    let identities=vec![crate::provider::SendingIdentity { address:"you@example.com".into(), ..Default::default() }, crate::provider::SendingIdentity {address:"alias@example.org".into(),display_name:Some("Alias Name".into()),reply_to:Some("replies@example.org".into()),is_default:true}];
+    db.store_gmail_sending_identities("you@example.com",&identities,unix_millis()).unwrap();
+    let mut source=RawMessage {
+        id: "alias-source".into(), thread_id: "alias-thread".into(), label_ids: vec!["INBOX".into()], snippet: "hello".into(), internal_date: "1770000000000".into(),
+        payload: crate::mime::MimePart {
+            mime_type: "text/plain".into(),
+            headers: vec![crate::mime::MimeHeader {name:"From".into(),value:"sender@example.net".into()},crate::mime::MimeHeader{name:"Subject".into(),value:"Alias thread".into()},crate::mime::MimeHeader{name:"Message-ID".into(),value:"<alias-source@example.net>".into()}],
+            body: crate::mime::MimeBody { data: Some(URL_SAFE_NO_PAD.encode("hello")), ..Default::default() }, ..Default::default()
+        }
+    };
+    source.payload.headers.retain(|header| !header.name.eq_ignore_ascii_case("To"));
+    source.payload.headers.push(crate::mime::MimeHeader{name:"To".into(),value:"Alias <alias@example.org>".into()});
+    db.put_message_metadata(&source.id,&serde_json::to_string(&source).unwrap()).unwrap();
+    let mut reply=db.create_draft("reply",Some(source.id.clone()),"you@example.com",&identities).unwrap();
+    assert_eq!(reply.from.as_deref(),Some("alias@example.org"));
+    reply.to="recipient@example.net".into();
+    let root=std::env::temp_dir();
+    let bytes=build_mime(&reply,&identities,None,None,"alias-op",&root).unwrap();
+    let message=MessageParser::default().parse(&bytes).unwrap();
+    assert_eq!(message.from().unwrap().first().unwrap().address(),Some("alias@example.org"));
+    assert_eq!(message.reply_to().unwrap().first().unwrap().address(),Some("replies@example.org"));
+    assert!(build_mime(&reply,&identities[..1],None,None,"alias-op",&root).unwrap_err().contains("no longer"));
+    source.id = "alias-sent-source".into();
+    for header in &mut source.payload.headers {
+        if header.name == "From" { header.value = "Alias Name <alias@example.org>".into(); }
+        if header.name == "To" { header.value = "recipient@example.net".into(); }
+    }
+    db.put_message_metadata(&source.id,&serde_json::to_string(&source).unwrap()).unwrap();
+    let continuation=db.create_draft("reply",Some(source.id),"you@example.com",&identities).unwrap();
+    assert_eq!(continuation.from.as_deref(),Some("alias@example.org"));
+
 }

@@ -101,6 +101,7 @@ import { nativeCorrespondence, type CorrespondenceClient } from "../corresponden
 import { demoClient } from "./demoClient";
 
 export interface MailClient extends CorrespondenceClient {
+  refreshGmailAliases(account: string): Promise<import("../domain").SendingIdentity[]>;
   snoozeThreads(ids: string[], until: string): Promise<import("../domain").ConversationSnooze[]>;
   returnSnoozedThreads(ids: string[]): Promise<void>;
   restoreSnoozes(records: import("../domain").ConversationSnooze[], archivedIds: string[]): Promise<void>;
@@ -501,6 +502,7 @@ const tauriClient: MailClient = {
   discoverImapMailboxes: (email) => complete("discover_imap_mailboxes", { email }),
   commitImapMailboxMapping: (commit) => complete("commit_imap_mailbox_mapping", { commit }),
   finishImapAccountSetup: (email) => complete("finish_imap_account_setup", { email }),
+  refreshGmailAliases: (account) => complete("refresh_gmail_aliases", { account }),
   getImapSendingOptions: (account) => complete("get_imap_sending_options", { account }),
   setImapIdentities: (account, identities) => complete("set_imap_identities", { account, identities }),
   setImapServerSavesSent: (account, enabled) => complete("set_imap_server_saves_sent", { account, enabled }),

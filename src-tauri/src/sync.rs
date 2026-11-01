@@ -714,7 +714,15 @@ pub async fn sync_with(
     {
         return Ok(false);
     }
-    let result = sync_active_with(database, account_id, provider).await;
+    let mut identities_changed = false;
+    if database.gmail_identities_refresh_due(account_id, crate::clock::unix_millis()).map_err(database_provider_error)? {
+        match provider.refresh_sending_identities(account_id).await {
+            Ok(Some(identities)) => identities_changed = database.store_gmail_sending_identities(account_id, &identities, crate::clock::unix_millis()).map_err(database_provider_error)?,
+            Ok(None) => {},
+            Err(error) => log::warn!("Sending address refresh for {account_id}: {error}"),
+        }
+    }
+    let result = sync_active_with(database, account_id, provider).await.map(|changed| changed || identities_changed);
     pause_for_permanent_auth_failure(database, account_id, result)
 }
 

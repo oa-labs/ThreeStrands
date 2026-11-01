@@ -63,6 +63,7 @@ pub use setup::{
     connect_with_settings, plain_language, probe_imap_certificate, test_imap, TestReport,
 };
 pub use smtp::{probe_smtp_certificate, test_smtp};
+pub(crate) use smtp::validate_envelope_address;
 // Mailbox-discovery surface: the mapping types the frontend renders and the
 // discovery/create orchestration.
 pub use mailboxes::{create_mailbox_tolerant, discover_and_persist, MailboxMapping, MailboxRole};

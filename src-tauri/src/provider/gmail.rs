@@ -48,9 +48,62 @@ pub struct GmailClient {
     /// The Gmail API base every request is built from. Always `API` outside
     /// tests; tests point it at a loopback stand-in.
     api: Arc<str>,
+    cached_identities: Vec<crate::provider::SendingIdentity>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GmailSendAs {
+    send_as_email: String,
+    #[serde(default)] display_name: String,
+    #[serde(default)] reply_to_address: String,
+    #[serde(default)] is_primary: bool,
+    #[serde(default)] is_default: bool,
+    #[serde(default)] verification_status: String,
 }
 
 impl GmailClient {
+    pub(crate) fn with_cached_identities(mut self, identities: Vec<crate::provider::SendingIdentity>) -> Self {
+        self.cached_identities = identities;
+        self
+    }
+
+    pub(crate) async fn sending_identities(&self, account: &str) -> ProviderResult<Vec<crate::provider::SendingIdentity>> {
+        #[derive(Deserialize)]
+        struct Response { #[serde(default, rename="sendAs")] addresses: Vec<GmailSendAs> }
+        let request = self.request(Method::GET, format!("{}/settings/sendAs", self.api)).await?
+            .query(&[("fields", "sendAs(sendAsEmail,displayName,replyToAddress,isPrimary,isDefault,verificationStatus)")]);
+        let response: Response = self.json(request, false).await?;
+        Self::accepted_identities(account, response.addresses)
+    }
+
+    fn accepted_identities(account: &str, addresses: Vec<GmailSendAs>) -> ProviderResult<Vec<crate::provider::SendingIdentity>> {
+        let primary = addresses.iter().find(|identity| identity.is_primary && identity.send_as_email.eq_ignore_ascii_case(account))
+            .ok_or_else(|| ProviderError::Authentication("Gmail sending addresses do not match this account. Reconnect it.".into()))?;
+        let primary_name = primary.display_name.clone();
+        let primary_reply = primary.reply_to_address.trim();
+        if !primary_reply.is_empty() { crate::provider::imap::validate_envelope_address(primary_reply)?; }
+        let mut identities = vec![crate::provider::SendingIdentity {
+            address: account.to_string(), display_name: None,
+            reply_to: (!primary_reply.is_empty()).then(|| primary_reply.to_string()), is_default: primary.is_default,
+        }];
+        let mut seen = std::collections::BTreeSet::from([account.to_ascii_lowercase()]);
+        for identity in addresses {
+            if identity.is_primary || identity.verification_status != "accepted" { continue; }
+            let address = identity.send_as_email.trim();
+            if crate::provider::imap::validate_envelope_address(address).is_err() || !seen.insert(address.to_ascii_lowercase()) { continue; }
+            let reply_to = identity.reply_to_address.trim();
+            if !reply_to.is_empty() { crate::provider::imap::validate_envelope_address(reply_to)?; }
+            let name = if identity.display_name.trim().is_empty() { primary_name.trim() } else { identity.display_name.trim() };
+            identities.push(crate::provider::SendingIdentity {
+                address: address.to_string(), display_name: (!name.is_empty() && !name.contains(['\r','\n','\0'])).then(|| name.to_string()),
+                reply_to: (!reply_to.is_empty()).then(|| reply_to.to_string()), is_default: identity.is_default,
+            });
+        }
+        if identities.iter().filter(|identity| identity.is_default).count()>1 { return Err(ProviderError::InvalidOperation("Gmail returned multiple default sending addresses".into())); }
+        Ok(identities)
+    }
+
     /// Read only: the existing gmail.modify grant authorizes this endpoint.
     pub async fn list_signatures(&self) -> ProviderResult<Vec<GmailSignature>> {
         let request = self.request(Method::GET, format!("{}/settings/sendAs", self.api)).await?
@@ -69,6 +122,7 @@ impl GmailClient {
             auth,
             next_thread_fetch: Arc::new(Mutex::new(Instant::now())),
             api: API.into(),
+            cached_identities: Vec::new(),
         }
     }
 
@@ -355,6 +409,10 @@ impl From<GmailLabel> for Label {
 
 #[async_trait]
 impl MailSync for GmailClient {
+    async fn refresh_sending_identities(&self, account: &str) -> ProviderResult<Option<Vec<crate::provider::SendingIdentity>>> {
+        self.sending_identities(account).await.map(Some)
+    }
+
     async fn baseline_cursor(&self) -> ProviderResult<SyncCursor> {
         let request = self.request(Method::GET, format!("{}/profile", self.api)).await?;
         Ok(SyncCursor::new(
@@ -1586,6 +1644,18 @@ impl Delivery for GmailDelivery {
 
 #[async_trait]
 impl MailSend for GmailClient {
+    async fn identities(&self, account: &str) -> ProviderResult<Vec<crate::provider::SendingIdentity>> {
+        if self.cached_identities.first().is_some_and(|primary| primary.address.eq_ignore_ascii_case(account)) { return Ok(self.cached_identities.clone()); }
+        Ok(vec![crate::provider::SendingIdentity { address: account.to_string(), ..Default::default() }])
+    }
+
+    async fn validate_sending_identity(&self, account: &str, sender: &str) -> ProviderResult<()> {
+        if sender.eq_ignore_ascii_case(account) { return Ok(()); }
+        let identities = self.sending_identities(account).await?;
+        if identities.iter().any(|identity| identity.address.eq_ignore_ascii_case(sender)) { return Ok(()); }
+        Err(ProviderError::PermanentClientRejection(format!("{sender} is no longer a verified Gmail sending address. Return this message to Drafts and choose a current sending address.")))
+    }
+
     async fn sender_identity(&self) -> ProviderResult<String> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
@@ -1810,5 +1880,50 @@ impl MailProvider for GmailClient {
             // never runs a separate Sent-copy job for it.
             client_saves_sent_copy: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod alias_tests {
+    use super::*;
+    use crate::auth::Tokens;
+    use serde_json::json;
+    fn aliases(value: serde_json::Value) -> Vec<GmailSendAs> { serde_json::from_value(value).unwrap() }
+    #[test]
+    fn aliases_require_verification_preserve_plus_addresses_and_reject_wrong_account() {
+        let response=json!([
+            {"sendAsEmail":"you@example.com","isPrimary":true,"displayName":"Primary"},
+            {"sendAsEmail":"waiting@example.org","verificationStatus":"pending","isDefault":true},
+            {"sendAsEmail":"work@example.org","verificationStatus":"accepted","displayName":"Work","isDefault":true,"replyToAddress":"replies@example.org"},
+            {"sendAsEmail":"you+tag@example.com","verificationStatus":"accepted"},
+            {"sendAsEmail":"WORK@example.org","verificationStatus":"accepted"},
+            {"sendAsEmail":"bad\r\nBcc: x@example.com","verificationStatus":"accepted"}
+        ]);
+        let list=GmailClient::accepted_identities("you@example.com",aliases(response.clone())).unwrap();
+        assert_eq!(list.iter().map(|item| item.address.as_str()).collect::<Vec<_>>(),vec!["you@example.com","work@example.org","you+tag@example.com"]);
+        assert!(list[1].is_default);
+        assert_eq!(list[1].reply_to.as_deref(),Some("replies@example.org"));
+        assert_eq!(list[2].display_name.as_deref(),Some("Primary"));
+        assert!(GmailClient::accepted_identities("other@example.com",aliases(response)).is_err());
+    }
+
+    #[tokio::test]
+    async fn discovery_uses_existing_grant_and_revoked_alias_fails_before_delivery() {
+        use axum::{Router,routing::get,Json,http::HeaderMap,extract::RawQuery};
+        let app=Router::new().route("/settings/sendAs",get(|headers:HeaderMap,RawQuery(query):RawQuery|async move {
+            assert_eq!(headers.get("authorization").unwrap(),"Bearer token");
+            let query=query.unwrap(); assert!(query.contains("verificationStatus")); assert!(!query.contains("smtpMsa"));
+            Json(json!({"sendAs":[{"sendAsEmail":"you@example.com","isPrimary":true,"isDefault":true},{"sendAsEmail":"work@example.org","verificationStatus":"pending"}]}))
+        }));
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base=format!("http://{}",listener.local_addr().unwrap());
+        let server=tokio::spawn(async move {axum::serve(listener,app).await.unwrap()});
+        let client=GmailClient::new(OAuthCredential::in_memory_for_test(&format!("{base}/token"),Tokens {access_token:"token".into(),refresh_token:None,expires_at:u64::MAX})).with_api_base(&base);
+        assert_eq!(client.sending_identities("you@example.com").await.unwrap().len(),1);
+        assert!(matches!(client.validate_sending_identity("you@example.com","work@example.org").await,Err(ProviderError::PermanentClientRejection(_))));
+        let offline=GmailClient::new(OAuthCredential::in_memory_for_test("http://127.0.0.1:9/token",Tokens{access_token:"token".into(),refresh_token:None,expires_at:u64::MAX}));
+        assert!(offline.validate_sending_identity("you@example.com","you@example.com").await.is_ok());
+        assert_eq!(offline.identities("you@example.com").await.unwrap().len(),1);
+        server.abort();
     }
 }

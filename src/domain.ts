@@ -365,6 +365,8 @@ export type UpdateGoalRequest = {
 };
 
 export type Message = {
+  /** Native ownership relative to the thread account, including sending aliases. */
+  sentByAccount?: string | null;
   id: string;
   threadId: string;
   sender: string;
@@ -1132,7 +1134,7 @@ export type ImapMailboxMappingCommit = {
 };
 
 /** One address an account may send as, with an optional display name. The first in an account's list is its primary (login) address. */
-export type SendingIdentity = { address: string; displayName?: string };
+export type SendingIdentity = { address: string; displayName?: string; replyTo?: string; isDefault?: boolean };
 
 /** An account's sending options for the Settings "Sending" panel (IMAP only). */
 export type ImapSendingOptions = {

@@ -394,7 +394,7 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
   await settings.getByRole("button", { name: "Mail Accounts", exact: true }).click();
   await settings.getByRole("button", { name: "Add Account" }).click();
   await settings.getByRole("button", { name: "Gmail", exact: true }).click();
-  await expect(settings.locator(".accounts-list li")).toHaveCount(2);
+  await expect(settings.locator(".accounts-list > li")).toHaveCount(2);
   await page.keyboard.press("Escape");
   await expect(settings).not.toBeVisible();
 
@@ -485,7 +485,7 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
   const cardSecond = settings.locator("li", { hasText: "demo-2@example.com" });
   await cardSecond.getByRole("button", { name: "Disconnect…" }).click();
   await cardSecond.getByRole("button", { name: "Disconnect this device" }).click();
-  await expect(settings.locator(".accounts-list li")).toHaveCount(1);
+  await expect(settings.locator(".accounts-list > li")).toHaveCount(1);
   await page.keyboard.press("Escape");
   await expect(settings).not.toBeVisible();
   await expect(rail.getByRole("radio")).toHaveCount(1);
@@ -600,7 +600,7 @@ test("prompts to connect a Gmail account when none are connected", async ({ page
   const cardOnly = settings.locator("li", { hasText: "demo@example.com" });
   await cardOnly.getByRole("button", { name: "Disconnect…" }).click();
   await cardOnly.getByRole("button", { name: "Disconnect this device" }).click();
-  await expect(settings.locator(".accounts-list li")).toHaveCount(0);
+  await expect(settings.locator(".accounts-list > li")).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(settings).not.toBeVisible();
 
@@ -610,7 +610,7 @@ test("prompts to connect a Gmail account when none are connected", async ({ page
   await expect(settings).toBeVisible();
   await settings.getByRole("button", { name: "Add Account" }).click();
   await settings.getByRole("button", { name: "Gmail", exact: true }).click();
-  await expect(settings.locator(".accounts-list li")).toHaveCount(1);
+  await expect(settings.locator(".accounts-list > li")).toHaveCount(1);
 });
 
 test("opens Superhuman-compatible folder destinations", async ({ page }) => {

@@ -27,8 +27,7 @@ fn queue(db: &Database) -> OutboxItem {
         OWNER,
         &[crate::provider::SendingIdentity {
             address: "me@example.com".into(),
-            display_name: None,
-        }],
+            display_name: None, ..Default::default() }],
         None,
         Path::new("/unused"),
         1_800_000_000_000,

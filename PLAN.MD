@@ -125,7 +125,7 @@ from the current feature set when publishing a website.
 | Direction | What users could expect |
 | --- | --- |
 | Snooze | Available in 0.190.0: put conversations aside, reschedule them in Snoozed, and return them automatically while a connected installation is running. |
-| Gmail sending aliases | Send from verified Gmail aliases. IMAP identities and per-account signatures exist today. |
+| Gmail sending aliases | Available in 0.191.0: use verified aliases, Gmail defaults, addressed replies, per-address signatures, and server drafts. |
 | Connected address books | Import existing Google Contacts and keep them connected to local profiles, notes, and correspondence history. |
 | Smarter inbox rules | Explore inspectable, user-controlled classification beyond today's domain, label, and address rules. |
 | More mail providers | Harden IMAP/SMTP (design and progress in `docs/imap-design.md`; read, triage, server search, and sending work today), then Microsoft 365. |
@@ -156,7 +156,7 @@ execution while devices are closed, and proactive assistance.
 | Gap | Current behavior and missing capability | Proposed next step | Sequence / status |
 | --- | --- | --- | --- |
 | Conversation snooze | Gmail and IMAP conversations can be snoozed individually or in batches, with rescheduling, undo, new-reply return, and optional encrypted schedule sync. Returns need a running, connected installation. | Complete developer live-account validation alongside the existing release checks. | Implemented in 0.190.0; see [snooze design](docs/snooze-design.md). |
-| Gmail sending aliases | IMAP sending identities and per-address signatures exist; selecting verified Gmail aliases for sending remains missing. | Discover eligible Gmail identities, support choosing From and replying from the addressed identity, and verify draft, signature, and send behavior. | Near-term 2; planned, unscoped. |
+| Gmail sending aliases | Verified aliases, Gmail defaults, addressed replies, per-address signatures, and alias-preserving server drafts are implemented. | Complete developer live-account checks with an alias, including queued and scheduled delivery. | Implemented in 0.191.0; see [Gmail alias design](docs/gmail-aliases-design.md). |
 | General rules and richer saved views | Account-specific Split Inboxes match a domain, label, or address pattern. Sender muting archives and marks mail read. Compound rules, reusable search views, and views across accounts remain gaps. | Define a first rules contract with explicit conditions and actions, previews, and account scope; support saving a search as a view. Decide whether rules run locally or at the provider. | Near-term 3; planned, unscoped. |
 | Connected address books | Local contact profiles and CSV/vCard import/export exist; ongoing Google Contacts and CardDAV sync do not. | Start with Google Contacts; define ownership, matching, conflict, deletion, and local-notes preservation before implementing sync. Track CardDAV as a later extension. | Near-term 4; planned, unscoped. |
 | Mobile access and workflow continuity | Desktop sync carries selected workflow data and provider drafts follow the account. No mobile companion or web client exposes the full workflow on a phone. Windows and Linux builds remain experimental. | Scope a mobile companion around reading, triage, tasks, and follow-ups; decide supported platforms, background notifications, and encrypted workflow-data access before committing to a build. | Expansion; discovery needed. |
@@ -168,8 +168,8 @@ execution while devices are closed, and proactive assistance.
 
 ### Suggested focus for the next few weeks
 
-Conversation snooze is implemented in 0.190.0. Continue with Gmail aliases,
-richer rules/views, and connected Google Contacts. This is a
+Conversation snooze is implemented in 0.190.0 and Gmail sending aliases in
+0.191.0. Continue with richer rules/views and connected Google Contacts. This is a
 sequencing recommendation, not a promise to finish the remaining work within that period.
 Continue the existing reliability and live-account release checks alongside
 feature work. If broader adoption becomes the immediate goal, revisit the

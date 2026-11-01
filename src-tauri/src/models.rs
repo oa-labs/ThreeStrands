@@ -529,6 +529,8 @@ pub struct OpenPromise {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
+    /// Owner account when its sending identities include this From address.
+    pub sent_by_account: Option<String>,
     pub id: String,
     pub thread_id: String,
     pub sender: String,

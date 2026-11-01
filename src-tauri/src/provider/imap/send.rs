@@ -407,8 +407,7 @@ mod tests {
     fn ident(addr: &str) -> SendingIdentity {
         SendingIdentity {
             address: addr.to_string(),
-            display_name: None,
-        }
+            display_name: None, ..Default::default() }
     }
 
     // ---- strip_bcc_header --------------------------------------------

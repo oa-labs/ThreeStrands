@@ -181,17 +181,11 @@ impl Correspondence {
         }
         Ok(())
     }
-    /// The account's sending identities for drafting from an existing message.
-    /// An unavailable provider (disconnected account, locked keychain) must
-    /// not stop a draft from an already-cached message from opening. Fall
-    /// back to the primary identity (`from = None`); `queue` re-resolves the
-    /// identity list from the provider and rejects a `from` that is not on
-    /// it, so nothing can send as the wrong address.
+    /// Read cached sending addresses without requiring a connected provider.
+    /// Gmail discovers these during sync or an explicit settings refresh;
+    /// delivery rechecks explicit Gmail aliases before claiming a send.
     async fn source_identities(&self, account: &str) -> Vec<crate::provider::SendingIdentity> {
-        match self.provider_for(account).await {
-            Ok(provider) => provider.identities(account).await.unwrap_or_default(),
-            Err(_) => Vec::new(),
-        }
+        self.database.account_sending_identities(account).unwrap_or_default()
     }
     /// The account the compose identity bootstrap runs against. Not the only
     /// account drafts can send from — see `auth_for`.
@@ -350,18 +344,9 @@ impl Correspondence {
                 if let Some(id) = &source_id {
                     self.ensure_source_metadata(id, &resolved_account).await?;
                 }
-                // The account's sending identities, so a reply/forward from a
-                // multi-identity account starts on the identity the original
-                // was addressed to. Only resolved for reply/replyAll/forward:
-                // a NEW draft needs no identity selection (it starts on the
-                // first identity, `from = None`), so composing a blank message
-                // must never require a connected provider — this keeps compose
-                // responsive when the keychain/provider is unavailable.
-                let identities = if mode == "new" {
-                    Vec::new()
-                } else {
-                    self.source_identities(&resolved_account).await
-                };
+                // Keep new-message defaults and addressed-alias replies local,
+                // including while the provider or keychain is unavailable.
+                let identities = self.source_identities(&resolved_account).await;
                 let draft = self
                     .database
                     .create_draft(&mode, source_id, &resolved_account, &identities)?;
@@ -715,7 +700,7 @@ impl Correspondence {
             return Err("Reconnect the original sender account".into());
         }
         if let Some(message) = provider
-            .find_sent_copy(id, &item.draft.account)
+            .find_sent_copy(id, item.draft.sender_address())
             .await
             .map_err(error)?
         {
@@ -872,7 +857,10 @@ impl Correspondence {
     ) -> Result<(), String> {
         // Obtain authorization before claiming delivery; transport errors
         // after the claim are uncertain.
-        let permit = match provider.prepare_delivery().await {
+        let permit = match async {
+            provider.validate_sending_identity(&item.draft.account, item.draft.sender_address()).await?;
+            provider.prepare_delivery().await
+        }.await {
             Ok(permit) => permit,
             Err(_) if item.schedule.is_some() => {
                 self.database

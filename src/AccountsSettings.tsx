@@ -13,6 +13,7 @@ import { moveItem, useSettingsOperation } from "./settingsOperations";
 import { errorMessage, logBackgroundFailure } from "./errors";
 import { ICON_SIZE } from "./iconSizes";
 import { ImapAccountSetup } from "./ImapAccountSetup";
+import { GmailSendingSettings } from "./GmailSendingSettings";
 import { ImapSendingSettings } from "./ImapSendingSettings";
 import { ImapServerSettings } from "./ImapServerSettings";
 import { AccountStatusBadge, AccountDisconnectConfirm } from "./accountSettingsParts";
@@ -266,7 +267,7 @@ export function AccountsSettings({
                   Disconnect…
                 </button>
               </div>
-              {account.provider === "imap" ? <ImapSendingSettings account={account.email} /> : null}
+              {account.provider === "imap" ? <ImapSendingSettings account={account.email} /> : <GmailSendingSettings account={account.email} />}
               {account.provider === "imap" ? (
                 <ImapServerSettings
                   account={account.email}

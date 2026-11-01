@@ -4,6 +4,7 @@ import { parseAddress } from "./emailAddress";
 /** Whether `message` came from the account that owns its thread. */
 export function sentByAccount(message: Message, account: string | null | undefined): boolean {
   if (!account) return false;
+  if (message.sentByAccount?.toLocaleLowerCase() === account.toLocaleLowerCase()) return true;
   return parseAddress(message.sender).email.toLocaleLowerCase() === account.toLocaleLowerCase();
 }
 

@@ -1401,3 +1401,15 @@ mod imap_setup_tests {
         }
     }
 }
+
+/// Gmail owns alias verification. This only refreshes the local allowlist;
+/// it cannot create addresses or modify the provider's settings.
+#[tauri::command]
+pub(crate) async fn refresh_gmail_aliases(account: String, state: State<'_, AppState>) -> Result<Vec<crate::provider::SendingIdentity>, String> {
+    state.database.require_local_gmail_account(&account).map_err(|error| error.to_string())?;
+    let auth = resolve_account(&state, Some(&account), |connected| connected.auth.clone()).await.map_err(|error| error.to_string())?;
+    let provider = auth.provider(&state.database).map_err(|error| error.to_string())?;
+    let identities = provider.refresh_sending_identities(&account).await.map_err(|error| error.to_string())?.ok_or("Gmail sending addresses are unavailable")?;
+    state.database.store_gmail_sending_identities(&account, &identities, crate::clock::unix_millis()).map_err(|error| error.to_string())?;
+    Ok(identities)
+}

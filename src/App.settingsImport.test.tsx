@@ -197,7 +197,9 @@ describe("settings section keyboard navigation", () => {
     expect(container).toHaveAttribute("aria-hidden", "true");
 
     const close = within(dialog).getByRole("button", { name: "Close" });
-    const lastControl = within(dialog).getByRole("button", { name: "Disconnect…" });
+    expect(within(dialog).getByRole("button", { name: "Disconnect…" })).toBeEnabled();
+    // Sending-address refresh follows the account actions in tab order.
+    const lastControl = within(dialog).getByRole("button", { name: "Refresh from Gmail" });
     lastControl.focus();
     fireEvent.keyDown(lastControl, { key: "Tab" });
     expect(close).toHaveFocus();

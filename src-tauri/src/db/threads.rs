@@ -221,6 +221,7 @@ impl Database {
             )?;
             let rows = statement.query_map([id], |row| {
                 Ok(Message {
+                    sent_by_account: None,
                     id: row.get(0)?,
                     thread_id: row.get(1)?,
                     sender: row.get(2)?,
@@ -246,7 +247,9 @@ impl Database {
                 })
             })?;
             let mut messages = rows.collect::<Result<Vec<_>, _>>()?;
+            let own = super::sending_addresses_for_account(connection, &thread.account_id);
             for message in &mut messages {
+                message.sent_by_account = own.contains(&super::normalize_sender(&message.sender).0).then(|| thread.account_id.clone());
                 for attachment in &mut message.attachments {
                     attachment.filename =
                         crate::attachment_security::normalize_filename(&attachment.filename);

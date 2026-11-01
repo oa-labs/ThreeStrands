@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import { useAiAvailability } from "./useAiAvailability";
 import { draftSignatureSnapshot, type SignatureState } from "./signatures";
 import { SignaturesSettings } from "./SignaturesSettings";
@@ -404,19 +405,29 @@ export const Composer = forwardRef<ComposerHandle, {
   useEffect(() => {
     const account = draft.account;
     const cached = identityCache.current.get(account);
-    if (cached) { setIdentities(cached); return; }
     let active = true;
-    void mailClient.listIdentities(account)
-      .then((list) => {
+    let generation = 0;
+    const load = () => {
+      const request = ++generation;
+      void mailClient.listIdentities(account).then((list) => {
+        if (!active || request !== generation) return;
         identityCache.current.set(account, list);
-        if (active) setIdentities(list);
-      })
-      .catch((reason) => {
-        // A failed fetch hides the picker (empty) and never blocks sending.
-        if (active) setIdentities([]);
+        setIdentities(list);
+      }).catch((reason) => {
+        if (active && request === generation) setIdentities([]);
         logBackgroundFailure("Sending identities")(reason);
       });
-    return () => { active = false; };
+    };
+    if (cached) setIdentities(cached);
+    load();
+    const onRefresh = (event: Event) => { if (event instanceof CustomEvent && event.detail === account) load(); };
+    window.addEventListener("threestrands:sending-identities-changed", onRefresh);
+    const unlisten = "__TAURI_INTERNALS__" in window ? listen<string>("unread-counts-changed", (event) => { if (event.payload === account) load(); }) : null;
+    return () => {
+      active = false;
+      window.removeEventListener("threestrands:sending-identities-changed", onRefresh);
+      if (unlisten) void unlisten.then((stop) => stop()).catch(logBackgroundFailure("Sending identity listener"));
+    };
   }, [draft.account]);
   useEscapeDismiss(close, !scheduleOpen);
   const isReply = initial.mode === "reply" || initial.mode === "replyAll";
@@ -457,9 +468,10 @@ export const Composer = forwardRef<ComposerHandle, {
         <label className="compose-from"><span>From</span><select aria-label="Send From" value={draft.account} disabled={busy} onChange={(e) => changeAccount(e.target.value)}>
           {accounts.map((a) => <option key={a.email} value={a.email}>{a.email}</option>)}
         </select></label>
-      ) : <span>From {draft.from ?? draft.account}</span>}{identities.length > 1 ? (
+      ) : <span>From {draft.from ?? draft.account}</span>}{identities.length > 1 || (identities.length > 0 && draft.from && !identities.some((identity) => identity.address.toLowerCase() === draft.from?.toLowerCase())) ? (
         <label className="compose-from compose-sending-address"><span>Sending Address</span>
           <select aria-label="Sending Address" value={draft.from ?? identities[0].address} disabled={busy} onChange={(e) => changeFrom(e.target.value)}>
+            {draft.from && !identities.some((identity) => identity.address.toLowerCase() === draft.from?.toLowerCase()) ? <option value={draft.from} disabled>{draft.from} (unavailable)</option> : null}
             {identities.map((identity) => <option key={identity.address} value={identity.address}>{identity.displayName ? `${identity.displayName} <${identity.address}>` : identity.address}</option>)}
           </select>
         </label>

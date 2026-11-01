@@ -133,11 +133,10 @@ impl Database {
     /// WITH display names — the same list the From picker and the account
     /// Sending panel read (`docs/imap-design.md`, "Identities"). Built by the
     /// one shared [`crate::provider::imap::account_identities`] builder from
-    /// the account's stored identity list, so it never branches on a provider
-    /// name: an IMAP account with a settings row returns its stored list
-    /// (login first, deduped, hostile entries dropped); an account with NO
-    /// IMAP settings row (a Gmail account) returns exactly `[account]`. Offline
-    /// safe — one local query, no provider call.
+    /// the account's local identity list: Gmail uses its verified server cache;
+    /// IMAP uses its stored settings (login first, deduped, hostile entries
+    /// dropped). Until discovery, Gmail falls back to `[account]`. Offline
+    /// safe — no provider call.
     ///
     /// Distinct from [`crate::db::sending_addresses_for_account`], which
     /// returns a NORMALIZED set for "is this From mine" membership tests; this
@@ -148,6 +147,7 @@ impl Database {
     ) -> DbResult<Vec<crate::provider::SendingIdentity>> {
         use rusqlite::OptionalExtension;
         self.with_connection(|connection| {
+            if let Some(identities) = super::gmail_identities::cached_gmail_identities(connection, account_id)? { return Ok(identities); }
             let stored: Vec<crate::provider::imap::Identity> = connection
                 .query_row(
                     "SELECT identities_json FROM imap_account_settings WHERE account_id = ?1",
@@ -302,6 +302,7 @@ impl Database {
             )?;
             transaction.execute("DELETE FROM threads WHERE account_id = ?1", [email])?;
             transaction.execute("DELETE FROM mutations WHERE account_id = ?1", [email])?;
+            transaction.execute("DELETE FROM gmail_sending_identities WHERE account_id = ?1", [email])?;
             transaction.execute("DELETE FROM conversation_snoozes WHERE account_id = ?1", [email])?;
             transaction.execute("DELETE FROM tasks WHERE account_id = ?1", [email])?;
             transaction.execute("DELETE FROM goals WHERE account_id = ?1", [email])?;

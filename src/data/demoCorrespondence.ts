@@ -3,7 +3,7 @@ import { defaultSignature } from "../signatures";
 import { previewScheduleChoices } from "../scheduleTimes";
 import type { CorrespondenceClient, Draft, OutboxItem, ScheduledSendReport, ScheduleSelection } from "../correspondence";
 import { plainTextToHtml } from "../richText";
-import type { ThreadDetail } from "../domain";
+import type { SendingIdentity, ThreadDetail } from "../domain";
 import { queuedMessage } from "../queuedReplies";
 import { parseAddress, splitAddressList } from "../emailAddress";
 
@@ -59,7 +59,7 @@ function resolveSelection(selection: ScheduleSelection) {
   if (selected.scheduledAt <= Date.now()) throw new Error("Choose a time in the future");
   return selected.scheduledAt;
 }
-export function demoCorrespondence(getSourceThread: (messageId: string) => Promise<ThreadDetail>, defaultAccount: () => string): CorrespondenceClient {
+export function demoCorrespondence(getSourceThread: (messageId: string) => Promise<ThreadDetail>, defaultAccount: () => string, identitiesFor: (account: string) => SendingIdentity[] = (account) => [{ address: account }]): CorrespondenceClient {
   const recovered = read();
   recovered.outbox.forEach((item) => { if (item.state === "scheduled" && item.deadline < Date.now()) item.state = "overdue"; });
   write(recovered);
@@ -107,11 +107,17 @@ export function demoCorrespondence(getSourceThread: (messageId: string) => Promi
       const existing = mode !== "new" && store.drafts.find((d) => d.mode === mode && d.sourceId === sourceId);
       if (existing) return existing;
       const d: Draft = { id: crypto.randomUUID(), revision: 0, account: account ?? defaultAccount(), mode, sourceId: sourceId ?? null, threadId: null, replyId: null, references: [], to: "", cc: "", bcc: "", subject: "", body: "", followUpTaskId: null, attachments: [], updatedAt: Date.now() };
+      if (mode === "new") d.from = identitiesFor(d.account).slice(1).find((identity) => identity.isDefault)?.address ?? null;
       if (sourceId) {
         const detail = await sourceThread(sourceId);
         // Reply/replyAll/forward always send from the thread's owning account, never the "new message" default.
         if (mode !== "new") d.account = account ?? detail.thread.accountId;
         const message = detail.messages.find((m) => m.id === sourceId)!;
+        const identities = identitiesFor(d.account);
+        const addressed = [...message.recipients, ...(message.cc ?? [])].map((address) => parseAddress(address).email.toLowerCase());
+        const ownSender = identities.find((identity) => identity.address.toLowerCase() === parseAddress(message.sender).email.toLowerCase());
+        const chosen = ownSender ?? addressed.map((address) => identities.find((identity) => identity.address.toLowerCase() === address)).find(Boolean);
+        d.from = chosen && chosen.address.toLowerCase() !== d.account.toLowerCase() ? chosen.address : null;
         d.subject = detail.thread.subject;
         d.body = `\n\nOn ${attributionDate(message.sentAt)}, ${message.sender} wrote:\n${message.bodyText.split("\n").map((line) => `> ${line}`).join("\n")}`;
         if (mode === "forward") {
@@ -124,11 +130,12 @@ export function demoCorrespondence(getSourceThread: (messageId: string) => Promi
             d.body = `\n\n${attribution}${message.bodyText}`;
           }
         } else {
-          const own = parseAddress(message.sender).email.toLowerCase() === d.account.toLowerCase();
+          const mine = new Set(identities.map((identity) => identity.address.toLowerCase()));
+          const own = mine.has(parseAddress(message.sender).email.toLowerCase());
           d.to = own ? message.recipients.join(", ") : message.sender;
           if (mode === "replyAll") {
-            if (!own) d.to = [d.to, ...message.recipients.filter((address) => parseAddress(address).email.toLowerCase() !== d.account.toLowerCase())].join(", ");
-            d.cc = (message.cc ?? []).filter((address) => parseAddress(address).email.toLowerCase() !== d.account.toLowerCase()).join(", ");
+            if (!own) d.to = [d.to, ...message.recipients.filter((address) => !mine.has(parseAddress(address).email.toLowerCase()))].join(", ");
+            d.cc = (message.cc ?? []).filter((address) => !mine.has(parseAddress(address).email.toLowerCase())).join(", ");
           }
         }
         // Replies and forwards both join the source conversation; a forward just addresses nobody.
@@ -152,23 +159,25 @@ export function demoCorrespondence(getSourceThread: (messageId: string) => Promi
     async setDraftAccount(id, account) {
       const store = read(); const d = draft(store, id);
       if (d.mode !== "new") throw new Error("Only new messages can change the sending account");
-      d.account = account; d.from = null;
+      d.account = account; d.from = identitiesFor(account).slice(1).find((identity) => identity.isDefault)?.address ?? null;
       if (!d.signature || d.signature.automatic) {
         const previous = d.signature;
-        d.signature = defaultSignature(readDemoSignatures(), account, account, d.mode);
+        d.signature = defaultSignature(readDemoSignatures(), account, d.from ?? account, d.mode);
         if (d.signature && previous) { d.signature.htmlOffset = previous.htmlOffset; d.signature.textOffset = previous.textOffset; }
       }
       d.revision++; d.updatedAt = Date.now(); write(store); return d;
     },
-    // Browser preview has no IMAP account, so every account is single-identity.
-    async listIdentities(account) { return [{ address: account }]; },
+    // Fixtures can supply verified identities without a connected provider.
+    async listIdentities(account) { return identitiesFor(account); },
     async setDraftFrom(id, from) {
       const store = read(); const d = draft(store, id);
-      // Single-identity in preview: only the account's own address (or null) is valid.
-      if (from && from.toLowerCase() !== d.account.toLowerCase()) {
+      // Apply the same per-account allowlist as native compose.
+      if (from && !identitiesFor(d.account).some((identity) => identity.address.toLowerCase() === from.toLowerCase())) {
         throw new Error(`${from} is not one of this account's sending addresses.`);
       }
-      d.from = null; d.revision++; d.updatedAt = Date.now(); write(store); return d;
+      d.from = from && from.toLowerCase() !== d.account.toLowerCase() ? from : null;
+      if (!d.signature || d.signature.automatic) d.signature = defaultSignature(readDemoSignatures(), d.account, d.from ?? d.account, d.mode);
+      d.revision++; d.updatedAt = Date.now(); write(store); return d;
     },
     async saveDraft(next) {
       const store = read(); const previous = draft(store, next.id);

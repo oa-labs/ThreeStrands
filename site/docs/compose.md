@@ -2,12 +2,12 @@
 title: Writing Mail
 nav: Writing Mail
 summary: Write with rich text and snippets, keep context beside your draft, catch mistakes before you send, and undo or schedule delivery.
-reviewed: 0.179.0
+reviewed: 0.191.0
 ---
 
 ## Start a Message {#start-a-message}
 
-Press <kbd>c</kbd> for a new message, or <kbd>r</kbd>, <kbd>a</kbd>, or <kbd>f</kbd> to reply, reply all, or forward. Click the **To** label to show Cc and Bcc. With several accounts, choose the sender in **From**.
+Press <kbd>c</kbd> for a new message, or <kbd>r</kbd>, <kbd>a</kbd>, or <kbd>f</kbd> to reply, reply all, or forward. Click the **To** label to show Cc and Bcc. With several accounts, choose the account in **From**. For a Gmail account with verified aliases or an IMAP account with several identities, choose **Sending Address**. Gmail uses its default address for new messages and the addressed alias for replies; see [Gmail sending addresses](mail-accounts.html#gmail-sending-addresses) for refresh and offline behavior.
 
 In a reply, click **···** below your message to show the quoted text, which you can edit like the rest of your message. A forward shows the original message below a **Forwarded message** bar. Click **Edit** on that bar to trim the message or add notes inside it. Editing simplifies some formatting and removes images loaded from the web. **Restore Original** brings back the message as you received it.
 

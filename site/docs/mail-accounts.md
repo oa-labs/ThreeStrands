@@ -2,12 +2,22 @@
 title: Manage Mail Accounts
 nav: Mail Accounts
 summary: Connect, recognize, reconnect, and remove accounts without confusing local setup with other devices.
-reviewed: 0.179.0
+reviewed: 0.191.0
 ---
 
 ## Connect an Account {#connect-an-account}
 
 Use [Getting Started](getting-started.html#connect-gmail) for Gmail sign-in or [IMAP setup](getting-started.html#connect-an-imap-account) for password and app-password accounts. Proton Mail needs [Bridge](proton-bridge.html). Calendar connects separately under **Settings → Calendar Accounts**.
+
+## Gmail Sending Addresses {#gmail-sending-addresses}
+
+Add and verify aliases in Gmail's **Settings → Accounts → Send mail as**. ThreeStrands discovers them when it syncs; after changing them in Gmail, use **Settings → Mail Accounts → Sending addresses → Refresh from Gmail** to update immediately. You can see the default address and any Reply-To destination there. ThreeStrands reads these settings using your existing Gmail connection; it does not create or verify aliases for you.
+
+Choose an address in the composer's **Sending Address** picker. New messages use Gmail's default address; replies choose the matching address in the original message's recipients or delivery headers. Each address can have its own defaults in **Settings → Signatures**. Primary-account sender names still use your ThreeStrands settings; alias names and Reply-To destinations come from Gmail.
+
+Previously discovered addresses work offline, and drafts preserve the selected address across restarts and server-draft sync. An address removed from Gmail stays visible as unavailable in an existing draft so you can choose another. Before delivery, ThreeStrands checks that an alias is still verified; an unreachable Gmail connection keeps the message queued, and a removed alias stops delivery so you can return it to Drafts and choose a current address. Scheduled messages also wait if the alias cannot be verified.
+
+Aliases are refreshed independently on each computer. The verified sending-address cache is excluded from settings exports and encrypted sync. Gmail plus-addresses appear only if they are explicitly configured as verified Send mail as addresses.
 
 ## Switch and Recognize Accounts {#switch-and-recognize-accounts}
 

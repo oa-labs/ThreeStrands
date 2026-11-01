@@ -283,6 +283,9 @@ impl Database {
             updated_at: unix_millis(),
             server_draft: None,
         };
+        if mode == "new" {
+            if let Some(identity) = identities.iter().skip(1).find(|identity| identity.is_default) { d.from = Some(identity.address.clone()); }
+        }
         if mode != "new" {
             let source_id = source_id.ok_or("Select a source message")?;
             let raw = self
@@ -330,7 +333,10 @@ impl Database {
                     delivered_to: header(part, "Delivered-To").to_string(),
                     x_original_to: header(part, "X-Original-To").to_string(),
                 };
-                let chosen = crate::provider::imap::choose_reply_identity(identities, &headers);
+                let own_sender = addresses(from).ok().and_then(|senders| {
+                    (senders.len() == 1).then(|| senders[0].1.to_ascii_lowercase())
+                }).and_then(|sender| identities.iter().position(|identity| crate::provider::imap::identity_normalized(identity) == sender));
+                let chosen = own_sender.unwrap_or_else(|| crate::provider::imap::choose_reply_identity(identities, &headers));
                 if chosen != 0 {
                     d.from = Some(identities[chosen].address.clone());
                 }
@@ -559,8 +565,8 @@ impl Database {
         // draft to another account must drop it, or the draft keeps a `from`
         // that is not on the new account's identity list and `queue` later
         // rejects it with "no longer on this account". Clear it so the new
-        // account sends from its own primary identity (`from = None`).
-        d.from = None;
+        // account starts from its own configured default identity.
+        d.from = self.account_sending_identities(account)?.into_iter().skip(1).find(|identity| identity.is_default).map(|identity| identity.address);
         self.replace_automatic_signature(&mut d)?;
         let expected = d.revision;
         d.revision += 1;

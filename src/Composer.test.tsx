@@ -2312,6 +2312,27 @@ describe("Composer sending-address picker", () => {
     expect(picker.value).toBe("work@proton.me");
   });
 
+  it("keeps a removed Gmail alias visible and allows choosing the primary address", async () => {
+    vi.spyOn(mailClient, "listIdentities").mockResolvedValue([{ address: draft.account }]);
+    const setFrom = vi.spyOn(mailClient, "setDraftFrom").mockResolvedValue({ ...draft, from: null, revision: 5 });
+    render(<Composer draft={{ ...draft, from: "removed@example.org" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const picker = await screen.findByRole("combobox", { name: "Sending Address" });
+    expect(picker).toHaveValue("removed@example.org");
+    expect(screen.getByRole("option", { name: "removed@example.org (unavailable)" })).toBeDisabled();
+    fireEvent.change(picker, { target: { value: draft.account } });
+    await waitFor(() => expect(setFrom).toHaveBeenCalledWith(draft.id, null));
+  });
+
+  it("refreshes an already-open Gmail From picker when aliases are refreshed in settings", async () => {
+    const list = vi.spyOn(mailClient, "listIdentities").mockResolvedValue([{ address: draft.account }]);
+    render(<Composer draft={draft} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    await waitFor(() => expect(list).toHaveBeenCalled());
+    list.mockResolvedValue([{ address: draft.account }, { address: "work@example.org", displayName: "Work" }]);
+    act(() => { window.dispatchEvent(new CustomEvent("threestrands:sending-identities-changed", { detail: draft.account })); });
+    expect(await screen.findByRole("combobox", { name: "Sending Address" })).toHaveValue(draft.account);
+    expect(screen.getByRole("option", { name: "Work <work@example.org>" })).toBeInTheDocument();
+  });
+
   it("hides the picker when fetching identities fails and never blocks sending", async () => {
     vi.spyOn(mailClient, "listIdentities").mockRejectedValue(new Error("offline"));
     render(<Composer draft={imapDraft} accounts={imapAccounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);

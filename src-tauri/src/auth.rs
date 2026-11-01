@@ -1604,7 +1604,9 @@ impl AccountAuth {
     ) -> Result<std::sync::Arc<dyn crate::provider::MailProvider>, crate::provider::ProviderError> {
         match self {
             Self::Gmail(credential) => Ok(std::sync::Arc::new(
-                crate::provider::gmail::GmailClient::new(credential.clone()),
+                crate::provider::gmail::GmailClient::new(credential.clone()).with_cached_identities(
+                    database.account_sending_identities(&credential.key()).map_err(|error| crate::provider::ProviderError::InvalidOperation(error.to_string()))?
+                ),
             )),
             Self::Imap(credential) => {
                 Ok(std::sync::Arc::new(build_imap_provider(database, credential)?))

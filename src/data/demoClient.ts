@@ -394,7 +394,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
   };
 
   const client: MailClient = {
-    ...demoCorrespondence(threadForMessage, () => accounts[0]?.email ?? DEMO_ACCOUNT_ID),
+    ...demoCorrespondence(threadForMessage, () => accounts[0]?.email ?? DEMO_ACCOUNT_ID, (account) => seed.sendingIdentities?.[account] ?? [{ address: account }]),
     async listThreads(accountId) {
       return structuredClone(visibleInbox(accountId));
     },
@@ -1338,6 +1338,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       // confirm step completes in browser preview.
     },
     async finishImapAccountSetup(_email): Promise<void> {},
+    async refreshGmailAliases(account) { return client.listIdentities(account); },
     async getImapSendingOptions(account): Promise<ImapSendingOptions> {
       // Browser preview has no real IMAP account: a single identity, no
       // override, detection not yet decided.

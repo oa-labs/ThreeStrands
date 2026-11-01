@@ -38,6 +38,7 @@ export type DemoMessageSeed = {
  */
 export type DemoDataset = {
   accounts: Account[];
+  sendingIdentities?: Record<string, import("../domain").SendingIdentity[]>;
   threads: Thread[];
   messages: Record<string, DemoMessageSeed[]>;
   details: Record<string, string>;

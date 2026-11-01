@@ -1500,6 +1500,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::accounts::commit_imap_mailbox_mapping,
         commands::accounts::finish_imap_account_setup,
         commands::accounts::get_imap_sending_options,
+        commands::accounts::refresh_gmail_aliases,
         commands::accounts::set_imap_identities,
         commands::accounts::set_imap_server_saves_sent,
         commands::accounts::reset_imap_sent_copy_detection,

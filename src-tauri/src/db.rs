@@ -26,6 +26,7 @@ pub(crate) mod contacts;
 mod enrollment;
 mod drafts;
 mod goals;
+pub(crate) mod gmail_identities;
 pub(crate) mod imap;
 mod join_codes;
 mod files;
@@ -183,10 +184,9 @@ fn normalize_sender(value: &str) -> (String, String) {
 /// The NORMALIZED set of addresses that count as "sent by me" for one account:
 /// every sending identity, not only the login address (`docs/imap-design.md`,
 /// "Identities" > "Sent by me"). An IMAP account reads its stored identity
-/// list from `imap_account_settings.identities_json`; a Gmail account (no
-/// settings row) yields exactly `{account}`. The account/login address is
-/// always included and first (the identity accessor guarantees it), so a
-/// single-identity or Gmail account behaves exactly as before.
+/// list from `imap_account_settings.identities_json`; Gmail reads its verified
+/// cache, or yields `{account}` until discovery. The account/login address
+/// is always included, preserving single-identity account behavior.
 ///
 /// This is ONE query per call (the identities JSON for the account), so a
 /// caller running inside a sync/triage transaction loads it ONCE per
@@ -199,6 +199,9 @@ pub(crate) fn sending_addresses_for_account(
     account_id: &str,
 ) -> std::collections::BTreeSet<String> {
     use rusqlite::OptionalExtension;
+    if let Ok(Some(identities)) = gmail_identities::cached_gmail_identities(connection, account_id) {
+        return identities.iter().map(crate::provider::imap::identity_normalized).collect();
+    }
     // Read the stored identity list (if this is an IMAP account with a row).
     let stored: Vec<crate::provider::imap::Identity> = connection
         .query_row(

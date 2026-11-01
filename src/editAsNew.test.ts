@@ -14,6 +14,12 @@ const thread = [
 ];
 
 describe("editAsNewSource", () => {
+  it("recognizes a native-classified alias only for its owning account", () => {
+    const alias = { ...base, sender: "Work <work@example.org>", sentByAccount: "me@example.com" };
+    expect(sentByAccount(alias, "me@example.com")).toBe(true);
+    expect(sentByAccount(alias, "other@example.com")).toBe(false);
+  });
+
   it("prefers the active message when the account sent it", () => {
     expect(editAsNewSource(thread, "me@example.com", "invite")?.id).toBe("invite");
   });

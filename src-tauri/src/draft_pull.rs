@@ -90,11 +90,10 @@ pub(crate) fn draft_from_server_copy(
         .and_then(|from| from.first())
         .and_then(|from| from.address())
         .map(str::to_string);
-    // A sending address other than the account's own is kept only when this
-    // draft had already chosen it; otherwise the account sends.
-    let from = base
-        .and_then(|base| base.from.clone())
-        .filter(|chosen| sender.as_deref().is_some_and(|sender| sender.eq_ignore_ascii_case(chosen)));
+    // Preserve the server author's From even for a newly imported alias
+    // draft. The sending allowlist rejects a removed/unknown identity later;
+    // silently replacing it with the primary address would change intent.
+    let from = sender.filter(|sender| !sender.eq_ignore_ascii_case(account));
 
     let mut attachments = Vec::new();
     let mut total = 0_usize;
@@ -340,6 +339,14 @@ mod tests {
 
     fn fetches(harness: &Harness) -> usize {
         harness.server.calls().iter().filter(|call| call.starts_with("fetch")).count()
+    }
+
+    #[test]
+    fn a_new_server_draft_preserves_its_sending_alias_for_review_and_later_validation() {
+        let raw = message("alias-draft@example.org", "Alias draft", "body").replacen("From: you@example.com", "From: Work <work@example.org>", 1);
+        let fetched = FetchedServerDraft { raw: raw.into_bytes(), draft: crate::provider::ServerDraft { id:"server-alias".into(), version:Some("version".into()) }, thread_id: None };
+        let imported = draft_from_server_copy(&fetched, "you@example.com", "local-id", None, &std::env::temp_dir()).unwrap();
+        assert_eq!(imported.from.as_deref(), Some("work@example.org"));
     }
 
     #[test]

@@ -469,6 +469,7 @@ mod invitation_proposal_tests {
 
     fn message(id: &str, filename: &str, mime_type: &str) -> Message {
         Message {
+            sent_by_account: None,
             id: id.into(), thread_id: "thread".into(), sender: "organizer@example.com".into(),
             recipients: vec!["you@example.com".into()], cc: vec![], sent_at: "2026-10-23T12:00:00Z".into(),
             body_html: String::new(), body_text: "You are invited".into(), unread: false, unsubscribe: None,

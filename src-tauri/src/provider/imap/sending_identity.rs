@@ -64,8 +64,7 @@ pub fn account_identities(login: &str, stored: &[Identity]) -> Vec<SendingIdenti
     seen.insert(login_norm);
     out.push(SendingIdentity {
         address: login.trim().to_string(),
-        display_name: None,
-    });
+        display_name: None, ..Default::default() });
 
     for identity in stored {
         let normalized = normalize_identity_address(&identity.address);
@@ -90,8 +89,7 @@ pub fn account_identities(login: &str, stored: &[Identity]) -> Vec<SendingIdenti
         seen.insert(normalized);
         out.push(SendingIdentity {
             address: identity.address.trim().to_string(),
-            display_name: sanitize_display_name(identity.display_name.as_deref()),
-        });
+            display_name: sanitize_display_name(identity.display_name.as_deref()), ..Default::default() });
     }
     out
 }
@@ -324,8 +322,7 @@ mod tests {
     fn si(address: &str, display: Option<&str>) -> SendingIdentity {
         SendingIdentity {
             address: address.to_string(),
-            display_name: display.map(ToString::to_string),
-        }
+            display_name: display.map(ToString::to_string), ..Default::default() }
     }
 
     // ---- A. account_identities edge cases -----------------------------

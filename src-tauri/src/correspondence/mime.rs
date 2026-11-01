@@ -179,8 +179,7 @@ fn build_message(
     // the account's own address a valid From.
     let account_identity = [crate::provider::SendingIdentity {
         address: d.account.clone(),
-        display_name: None,
-    }];
+        display_name: None, ..Default::default() }];
     let identities: &[crate::provider::SendingIdentity] = if identities.is_empty() {
         &account_identity
     } else {
@@ -246,6 +245,10 @@ fn build_message(
     } else {
         builder.from(from_address.to_string())
     };
+    let builder = if let Some(reply_to) = matched.and_then(|identity| identity.reply_to.as_deref()) {
+        crate::provider::imap::validate_envelope_address(reply_to).map_err(|error| error.to_string())?;
+        builder.reply_to(reply_to.to_string())
+    } else { builder };
     let mut body = d.body.clone();
     let mut body_html = d.body_html.clone();
     let mut signature_images = Vec::new();
