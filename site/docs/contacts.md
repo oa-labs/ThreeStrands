@@ -2,7 +2,7 @@
 title: Contacts
 nav: Contacts
 summary: Keep profiles, groups, and Keep in Touch reminders for the people you write to, and bring your address book in or out with CSV or vCard.
-reviewed: 0.179.0
+reviewed: 0.192.0
 ---
 
 ## The Address Book {#the-address-book}
@@ -14,6 +14,16 @@ Press <kbd>4</kbd> for Contacts. ThreeStrands builds a record of who you corresp
 Click **New Contact** to add someone. A profile can hold several email addresses, a role and company, location, birthday, links, notes, and a photo. Click the heart to make someone a favorite; favorites appear first.
 
 The conversation side panel's recent emails and shared files follow the message you are reading or the recipients you are writing to.
+
+## Mac Contacts {#mac-contacts}
+
+On macOS, choose **Manage Contacts… → Mac Contacts… → Allow Mac Contacts…**, grant access, then choose which address books to use. None are selected automatically. Sources may include iCloud, Google, and other accounts already configured in Apple Contacts; ThreeStrands does not ask for additional Google authorization.
+
+Selected contacts contribute names, email addresses, companies, and job titles to Contacts and recipient suggestions. Phone numbers, photos, birthdays, and Apple lists are not connected in this version. **Never suggest this address** still controls autocomplete.
+
+Apple Contacts stays read-only. Changes you save in ThreeStrands create independent local profiles; refreshing cannot overwrite their details, notes, groups, or reminders. Saved profiles follow your existing export and encrypted sync settings. Source-only contacts and the connection settings stay on this Mac.
+
+Use **Refresh now** to update immediately; automatic refresh runs every two minutes while the app is running. **Disconnect Mac Contacts** removes downloaded entries and connection settings while keeping profiles you saved. Revoking permission in **System Settings → Privacy & Security → Contacts** clears downloaded entries on the next connection status check or automatic refresh.
 
 ## Groups {#groups}
 

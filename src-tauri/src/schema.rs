@@ -14,7 +14,7 @@ pub(crate) const BASELINE_VERSION: i64 = 74;
 
 /// The current schema version. A new schema change adds an
 /// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 92;
+pub(crate) const LATEST_VERSION: i64 = 93;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1015,6 +1015,12 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
             identities_json TEXT NOT NULL, refreshed_at INTEGER NOT NULL
         );").map_err(error)?;
     }
+    if version < 93 {
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS system_contact_connection(id INTEGER PRIMARY KEY CHECK(id=1), connection_json TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS system_contact_cache(id TEXT PRIMARY KEY, data_json TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS system_contact_addresses(contact_id TEXT NOT NULL REFERENCES system_contact_cache(id) ON DELETE CASCADE, email TEXT NOT NULL, display_name TEXT, PRIMARY KEY(contact_id,email));
+            CREATE INDEX IF NOT EXISTS system_contact_email ON system_contact_addresses(email);").map_err(error)?;
+    }
     if stored == 0 {
         // Only new installations get the 90-day default. Existing databases
         // without a retention setting still mean Forever. Keep the default
@@ -1312,6 +1318,10 @@ mod tests {
         "index:sender_delivery_requester",
         "table:conversation_snoozes",
         "table:gmail_sending_identities",
+        "table:system_contact_connection",
+        "table:system_contact_cache",
+        "table:system_contact_addresses",
+        "index:system_contact_email",
         "index:conversation_snoozes_account",
     ];
 

@@ -1082,6 +1082,27 @@ mod tests {
         assert!(validate_export_size(MAX_FILE_BYTES+1).is_err());
     }
 
+    #[test]
+    fn settings_exports_exclude_system_contact_cache_and_connection_settings() {
+        let database = Database::open_memory();
+        let connection = crate::system_contacts::ContactConnection {
+            selected_sources: vec!["private-source-id".into()],
+            ..Default::default()
+        };
+        let contact = crate::system_contacts::SystemContact {
+            id: "private-native-id".into(), source_id: "private-source-id".into(),
+            addresses: vec!["private-system-contact@example.org".into()],
+            ..Default::default()
+        };
+        database.replace_system_contacts(&connection, &[contact]).unwrap();
+        let exported = build_export_payload(&database, payload().preferences).unwrap();
+        assert!(exported.contacts.is_empty());
+        let json = serde_json::to_string(&exported).unwrap();
+        assert!(!json.contains("private-system-contact"));
+        assert!(!json.contains("private-source-id"));
+        assert!(!json.contains("private-native-id"));
+    }
+
     fn payload() -> TransferPayload {
         TransferPayload {
             signatures: None,

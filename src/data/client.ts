@@ -25,6 +25,7 @@ import type {
   DefaultAppStatus,
   UpdateCalendarEventRequest,
   ContactSuggestion,
+  SystemContactsStatus,
   ContactFormat,
   ContactImportPreview,
   ContactImportResult,
@@ -193,8 +194,11 @@ export interface MailClient extends CorrespondenceClient {
   listTriageSenderStats(accountId: string, limit?: number): Promise<TriageSenderStats[]>;
   /** Ranked past correspondents for compose autocomplete, built from local mail history rather than an imported address book. */
   listContactSuggestions(accountId: string, query: string, limit?: number): Promise<ContactSuggestion[]>;
+  systemContactsStatus(): Promise<SystemContactsStatus>;
+  discoverSystemContacts(): Promise<SystemContactsStatus>;
+  refreshSystemContacts(selectedSources?: string[]): Promise<SystemContactsStatus>;
   listContactProfiles(query?: string, limit?: number, accountId?: string): Promise<ContactProfile[]>;
-  /** Maps each address owned by a saved contact to that contact id; unowned addresses are omitted. */
+  /** Resolves saved profiles first, then connected Mac contacts; unknown addresses are omitted. */
   resolveContactIds(emails: string[]): Promise<Record<string, string>>;
   getContactProfile(id: string): Promise<ContactProfile | null>;
   saveContactProfile(request: SaveContactRequest): Promise<ContactProfile>;
@@ -437,6 +441,9 @@ const tauriClient: MailClient = {
   recordTriageEvent: (event) => complete("record_triage_event", { event }),
   listTriageSenderStats: (accountId, limit) => read("list_triage_sender_stats", { accountId, limit }),
   listContactSuggestions: (accountId, query, limit) => read("list_contact_suggestions", { accountId, query, limit }),
+  systemContactsStatus: () => read("system_contacts_status"),
+  discoverSystemContacts: () => complete("discover_system_contacts"),
+  refreshSystemContacts: (selectedSources) => complete("refresh_system_contacts", { selectedSources: selectedSources ?? null }),
   listContactProfiles: (query = "", limit = 500, accountId) => read("list_contact_profiles", { query, limit, accountId }),
   resolveContactIds: (emails) => read("resolve_contact_ids", { emails }),
   getContactProfile: (id) => read("get_contact_profile", { id }),

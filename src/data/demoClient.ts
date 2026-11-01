@@ -717,6 +717,9 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
     async listTriageSenderStats(_accountId: string, _limit?: number): Promise<TriageSenderStats[]> {
       return [];
     },
+    async systemContactsStatus() { return { supported: false, permission: "unsupported", connection: { sources: [], selectedSources: [], refreshedAt: null }, contactCount: 0 }; },
+    async discoverSystemContacts() { return this.systemContactsStatus(); },
+    async refreshSystemContacts() { return this.systemContactsStatus(); },
     async listContactSuggestions(_accountId, query, limit = 8) {
       const needle = query.trim().toLocaleLowerCase();
       const candidates = new Map(contacts.map(contact => [contact.email.toLowerCase(), { ...contact }]));

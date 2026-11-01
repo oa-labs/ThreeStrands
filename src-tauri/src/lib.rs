@@ -18,6 +18,7 @@ mod signatures;
 mod gmail_signatures;
 mod scheduled_send;
 mod contact_interchange;
+mod system_contacts;
 mod credentials;
 mod db;
 mod default_apps;
@@ -1048,6 +1049,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         );
     }));
     spawn_badge_loop(database.clone(), app.handle().clone());
+    system_contacts::spawn(database.clone(), app.handle().clone());
     spawn_snooze_loop(database.clone(), app.handle().clone());
     spawn_storage_maintenance(database.clone());
     let root = data_dir.join("attachments");
@@ -1438,6 +1440,9 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::mail::list_triage_sender_stats,
         commands::contacts::list_contact_suggestions,
         commands::contacts::list_contact_profiles,
+        system_contacts::system_contacts_status,
+        system_contacts::discover_system_contacts,
+        system_contacts::refresh_system_contacts,
         commands::contacts::preview_contact_import,
         commands::contacts::import_contacts,
         commands::contacts::export_contacts,

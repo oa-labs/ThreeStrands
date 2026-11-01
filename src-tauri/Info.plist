@@ -8,6 +8,8 @@
      user chooses ThreeStrands in Settings → Default Apps or in Finder. -->
 <plist version="1.0">
 <dict>
+	<key>NSContactsUsageDescription</key>
+	<string>Use selected Mac address books to find people and suggest email recipients. ThreeStrands never changes your Apple Contacts.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

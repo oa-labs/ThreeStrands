@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.191.0"
+version = "0.192.0"
 description = "A local-first, keyboard-driven email client"
 authors = ["OpenArc LLC"]
 license-file = "../LICENSE"
@@ -124,6 +124,7 @@ tauri-plugin-single-instance = "2"
 # remote image proxy's URLSession fallback for hosts that refuse reqwest.
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
+objc2-contacts = "0.3"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSRunningApplication", "block2", "objc2-uniform-type-identifiers"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSBundle", "NSData", "NSDate", "NSDictionary", "NSError", "NSHTTPCookieStorage", "NSObject", "NSOperation", "NSString", "NSURL", "NSURLAuthenticationChallenge", "NSURLCache", "NSURLCredential", "NSURLCredentialStorage", "NSURLProtectionSpace", "NSURLRequest", "NSURLResponse", "NSURLSession"] }
