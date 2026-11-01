@@ -1,3 +1,4 @@
+import { MacContactsEntry, MacContactsSettings } from "./MacContactsSettings";
 import { useState } from "react";
 import { Modal } from "./AppChrome";
 import { mailClient } from "./data/client";
@@ -7,7 +8,7 @@ import { errorMessage } from "./errors";
 const name = (profile: Pick<ContactProfile, "displayName" | "addresses">) => profile.displayName || profile.addresses[0];
 
 export function ContactManagement({ addresses, onChanged, hasUnsavedChanges = false }: { addresses: string[]; onChanged(): void; hasUnsavedChanges?: boolean }) {
-  const [mode, setMode] = useState<"menu" | "import" | "export" | "suggestions" | null>(null);
+  const [mode, setMode] = useState<"menu" | "import" | "export" | "suggestions" | "system" | null>(null);
   const [preview, setPreview] = useState<ContactImportPreview | null>(null);
   const [suppressed, setSuppressed] = useState<string[]>([]);
   const [email, setEmail] = useState("");
@@ -35,7 +36,7 @@ export function ContactManagement({ addresses, onChanged, hasUnsavedChanges = fa
     await mailClient.setContactSuppressed(address, value);
     setSuppressed(await mailClient.listContactSuppressions()); setEmail("");
   });
-  const title = mode === "import" ? "Review contact import" : mode === "export" ? "Export saved contacts" : mode === "suggestions" ? "Never suggest these addresses" : "Manage contacts";
+  const title = mode === "system" ? "Mac Contacts" : mode === "import" ? "Review contact import" : mode === "export" ? "Export saved contacts" : mode === "suggestions" ? "Never suggest these addresses" : "Manage contacts";
   return <>
     <button type="button" className="btn" onClick={() => { setError(null); setNotice(null); setMode("menu"); }}>Manage Contacts…</button>
     {notice ? <span className="contacts-status" role="status">{notice}</span> : null}
@@ -45,8 +46,10 @@ export function ContactManagement({ addresses, onChanged, hasUnsavedChanges = fa
           <button type="button" className="btn" disabled={busy || hasUnsavedChanges} onClick={() => void chooseImport()}>Import CSV or vCard…</button>
           <button type="button" className="btn" disabled={busy} onClick={() => setMode("export")}>Export CSV or vCard…</button>
           <button type="button" className="btn" disabled={busy} onClick={() => void suggestions()}>Manage recipient suggestions…</button>
+          <MacContactsEntry disabled={busy || hasUnsavedChanges} onOpen={() => setMode("system")}/>
           {hasUnsavedChanges ? <p>Save or discard profile edits before importing contacts.</p> : null}
         </div> : null}
+        {mode === "system" ? <MacContactsSettings onChanged={onChanged}/> : null}
         {mode === "import" && preview ? <>
           <p>{preview.contacts.length} contacts ready to import. Existing profiles are kept; records sharing an existing email address are skipped.</p>
           {preview.skipped ? <p>{preview.skipped} records without valid email addresses were skipped.</p> : null}

@@ -33,6 +33,33 @@ mark someone contacted. Mail in either direction across linked addresses and
 accounts counts toward the reminder. Birthday-only profiles can appear without
 a recurring reminder. These are local workflow reminders; they do not send mail.
 
+## Mac Contacts (macOS)
+
+Choose **Manage Contacts… → Mac Contacts… → Allow Mac Contacts…**, grant system
+permission, then select the address books to use. No address book is selected
+by default. Apple Contacts can contain separate iCloud, Google, and other
+accounts; only the selected sources are read. No new Google permission is needed.
+
+Names, email addresses, companies, and job titles appear in Contacts and recipient
+suggestions. Phone numbers, photos, birthdays, and Apple lists are not connected
+in this version. **Never suggest** still excludes an address from autocomplete.
+
+The connection is read-only. Editing or favoriting a connected person, adding a
+local reminder, or adding them to a local group saves an independent ThreeStrands
+profile. Saved profiles take precedence and are not overwritten by later Mac
+refreshes. Their existing export and encrypted-sync behavior still applies.
+
+Use **Refresh now** for an immediate update. Automatic refresh runs every two
+minutes while ThreeStrands is running. Source deletions remove cached entries;
+local profiles and mail remain. **Disconnect Mac Contacts** removes downloaded
+contacts and the connection settings. Revoking permission in System Settings
+clears downloaded contacts on the next status check or automatic refresh.
+
+Connection settings and downloaded contacts stay on this Mac and are excluded
+from exports and encrypted sync. Other computers must connect independently.
+See [Mac Contacts design](macos-contacts-design.md) for ownership and platform
+boundaries.
+
 ## CSV and vCard interchange
 
 Choose **Manage Contacts… → Import CSV or vCard…**. Save or discard open profile edits first. Select a UTF-8 `.csv`,
@@ -109,7 +136,6 @@ Profiles, photos, groups, and reminder settings live in local SQLite. Optional
 profiles and groups, including imports and merges. Correspondence history is
 rebuilt from each device's mail cache; it is not contact sync data.
 
-There is no connected Google Contacts/CardDAV address book, ongoing provider
-address-book synchronization, automatic duplicate-person detection, or reversible
-merge history. Import/export and deliberate selection-based merging are available
-today; connected address books remain roadmap work.
+macOS builds can read selected system address books. Direct Google Contacts and
+CardDAV connections, Windows/Linux system address-book access, automatic
+duplicate-person detection, and reversible merge history remain future work.

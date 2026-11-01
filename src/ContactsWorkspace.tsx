@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import { useAiAvailability } from "./useAiAvailability";
 import { useWorkspaceCommands } from "./workspaceCommands";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type TextareaHTMLAttributes } from "react";
@@ -154,6 +155,13 @@ export function ContactsWorkspace({onOpenThread,onCompose,onSaved,onOpenAiSettin
     return () => cancelAnimationFrame(frame);
   }, [adding]);
   const unsaved=adding||(!!profile&&formSnapshot(draft)!==formSnapshot(draftFrom(profile)));
+  useEffect(() => {
+    const refresh = () => { if (!unsaved) { void load(); setProfileRevision(value => value + 1); } };
+    window.addEventListener("threestrands:system-contacts-changed", refresh);
+    const unlisten = "__TAURI_INTERNALS__" in window ? listen("system-contacts-changed", refresh) : null;
+    return () => { window.removeEventListener("threestrands:system-contacts-changed", refresh); if (unlisten) void unlisten.then(stop => stop()).catch(() => {}); };
+  }, [load, unsaved]);
+
   useWorkspaceCommands({
     "contacts.search": () => requestAnimationFrame(() => searchRef.current?.focus()),
     "contacts.new": () => { if (!busy && !unsaved) startNew(); },
@@ -230,6 +238,7 @@ export function ContactsWorkspace({onOpenThread,onCompose,onSaved,onOpenAiSettin
           </div>
           {profile?<KeepInTouchSection profile={profile} onChanged={onSectionChanged}/>:null}
           {profile?<ContactGroupsSection groups={profileGroups} busy={busy} onOpenGroup={openGroup} onAdd={()=>setGroupPicker({contactIds:[profile.id],source:"profile"})} onRemove={groupId=>removeFromGroup(groupId,profile.id)}/>:null}
+          {profile?.id.startsWith("derived:mac:") ? <p className="settings-hint">From Mac Contacts. Changes saved here create an independent ThreeStrands profile and do not change Apple Contacts.</p> : null}
           {unsaved?<div className="contact-save-bar" role="region" aria-label="Save changes"><span>{adding?"New contact":"Unsaved changes"}</span><div><button type="button" className="btn" disabled={busy} onClick={discard}>Discard</button><button type="button" className="btn btn-primary" title="Save contact (⌘/Ctrl+Enter)" aria-keyshortcuts="Meta+Enter Control+Enter" disabled={busy} onClick={()=>void save()}><Check size={ICON_SIZE.md}/>Save contact</button></div></div>:null}
           </div></div>
           {showRail?<aside className="contact-context-rail" aria-label="Contact context">

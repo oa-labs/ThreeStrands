@@ -1267,3 +1267,11 @@ export type AiDiagnosticSnapshot = {
     details: Record<string, string | number | boolean | null> | null;
   }[];
 };
+
+/** Device-local read-only connection to the macOS address book. */
+export type SystemContactsStatus = {
+  supported: boolean;
+  permission: "unsupported" | "notDetermined" | "denied" | "restricted" | "authorized" | "limited";
+  connection: { sources: { id: string; name: string }[]; selectedSources: string[]; refreshedAt: string | null };
+  contactCount: number;
+};
