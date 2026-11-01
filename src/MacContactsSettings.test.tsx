@@ -1,0 +1,50 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MacContactsEntry, MacContactsSettings } from "./MacContactsSettings";
+import { mailClient } from "./data/client";
+import type { SystemContactsStatus } from "./domain";
+vi.mock("./data/client", () => ({ mailClient: { systemContactsStatus: vi.fn(), discoverSystemContacts: vi.fn(), refreshSystemContacts: vi.fn() } }));
+const status = (overrides: Partial<SystemContactsStatus> = {}): SystemContactsStatus => ({ supported: true, permission: "authorized", connection: { sources: [{ id: "icloud", name: "iCloud" }, { id: "google", name: "Google" }], selectedSources: [], refreshedAt: null }, contactCount: 0, ...overrides });
+afterEach(cleanup);
+beforeEach(() => { vi.resetAllMocks(); vi.mocked(mailClient.systemContactsStatus).mockResolvedValue(status()); });
+describe("Mac Contacts connection", () => {
+  it("hides the entry on unsupported platforms and protects unsaved profile edits", async () => {
+    vi.mocked(mailClient.systemContactsStatus).mockResolvedValue(status({ supported: false, permission: "unsupported" }));
+    const { unmount } = render(<MacContactsEntry onOpen={vi.fn()} disabled={false}/>);
+    await waitFor(() => expect(mailClient.systemContactsStatus).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("button")).not.toBeInTheDocument(); unmount();
+    vi.mocked(mailClient.systemContactsStatus).mockResolvedValue(status());
+    render(<MacContactsEntry onOpen={vi.fn()} disabled/>);
+    expect(await screen.findByRole("button", { name: "Mac Contacts…" })).toBeDisabled();
+  });
+  it("requests permission only from an explicit action and starts with no sources selected", async () => {
+    vi.mocked(mailClient.systemContactsStatus).mockResolvedValue(status({ permission: "notDetermined", connection: { sources: [], selectedSources: [], refreshedAt: null } }));
+    vi.mocked(mailClient.discoverSystemContacts).mockResolvedValue(status());
+    const changed = vi.fn(); render(<MacContactsSettings onChanged={changed}/>);
+    const allow = await screen.findByRole("button", { name: "Allow Mac Contacts…" });
+    await waitFor(() => expect(allow).toBeEnabled());
+    expect(allow).toHaveAccessibleDescription();
+    expect(mailClient.discoverSystemContacts).not.toHaveBeenCalled();
+    fireEvent.click(allow);
+    const icloud = await screen.findByRole("checkbox", { name: "iCloud" });
+    expect(icloud).not.toBeChecked(); expect(screen.getByRole("checkbox", { name: "Google" })).not.toBeChecked();
+    expect(mailClient.refreshSystemContacts).not.toHaveBeenCalled();
+    vi.mocked(mailClient.refreshSystemContacts).mockResolvedValue(status({ contactCount: 42, connection: { ...status().connection, selectedSources: ["icloud"] } }));
+    fireEvent.click(icloud); fireEvent.click(screen.getByRole("button", { name: "Use selected address books" }));
+    await waitFor(() => expect(mailClient.refreshSystemContacts).toHaveBeenCalledWith(["icloud"]));
+    expect(await screen.findByText(/42 contacts with email addresses connected/)).toBeVisible();
+    expect(changed).toHaveBeenCalledTimes(2);
+  });
+  it("keeps the connection on refresh failure and lets a denied connection disconnect", async () => {
+    const connected = status({ permission: "denied", contactCount: 0, connection: { ...status().connection, selectedSources: ["icloud"] } });
+    vi.mocked(mailClient.systemContactsStatus).mockResolvedValue(connected);
+    vi.mocked(mailClient.refreshSystemContacts).mockRejectedValue(new Error("Cache unavailable"));
+    render(<MacContactsSettings onChanged={vi.fn()}/>);
+    const disconnect = await screen.findByRole("button", { name: "Disconnect Mac Contacts" });
+    expect(screen.getByRole("button", { name: "Refresh now" })).toBeDisabled();
+    fireEvent.click(disconnect);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Cache unavailable");
+    expect(mailClient.refreshSystemContacts).toHaveBeenCalledWith([]);
+    expect(screen.getByRole("button", { name: "Disconnect Mac Contacts" })).toBeEnabled();
+  });
+});

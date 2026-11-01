@@ -40,7 +40,7 @@ pub(crate) async fn resolve_contact_ids(
     state: State<'_, AppState>,
 ) -> AppResult<std::collections::HashMap<String, String>> {
     let database = state.database.clone();
-    run_database_task(move || database.contact_ids_for_addresses(&emails)).await
+    run_database_task(move || database.resolve_contact_ids_with_system(&emails)).await
 }
 
 #[tauri::command]

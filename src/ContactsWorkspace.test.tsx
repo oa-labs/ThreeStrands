@@ -32,6 +32,31 @@ describe("ContactsWorkspace",()=>{
   beforeEach(async()=>{await setAiApiKey("test-key");});
   afterEach(async()=>{cleanup();vi.clearAllMocks();localStorage.clear();await clearAiApiKey();});
 
+  it("refreshes a connected Mac profile when its source changes", async () => {
+    const source = { ...jane, id: "derived:mac:jane" };
+    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([source]);
+    vi.mocked(mailClient.getContactProfile).mockResolvedValue(source);
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await screen.findByDisplayValue("Jane Doe");
+    const updated = { ...source, displayName: "Updated on Mac" };
+    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([updated]);
+    vi.mocked(mailClient.getContactProfile).mockResolvedValue(updated);
+    fireEvent(window, new Event("threestrands:system-contacts-changed"));
+    expect(await screen.findByDisplayValue("Updated on Mac")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Delete contact" })).not.toBeInTheDocument();
+  });
+
+  it("preserves unsaved contact edits during a background Mac refresh", async () => {
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    const name = await screen.findByDisplayValue("Jane Doe");
+    fireEvent.change(name, { target: { value: "My unsaved name" } });
+    const calls = vi.mocked(mailClient.getContactProfile).mock.calls.length;
+    fireEvent(window, new Event("threestrands:system-contacts-changed"));
+    expect(mailClient.getContactProfile).toHaveBeenCalledTimes(calls);
+    expect(name).toHaveValue("My unsaved name");
+    expect(screen.getByRole("region", { name: "Save changes" })).toBeVisible();
+  });
+
   it("saves from editing fields with Mod+Enter and creates contacts and groups with scoped shortcuts", async () => {
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()} />);
     installTestShortcuts({ focusedPane: "contacts" });

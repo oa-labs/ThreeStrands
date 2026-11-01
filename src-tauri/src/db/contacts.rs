@@ -378,6 +378,10 @@ impl Database {
                     .is_some_and(|name| name.to_ascii_lowercase().contains(&needle))
                 || profile.addresses[0].contains(&needle)
         }));
+        let system = self.system_contact_profiles_for_account(query, account_id)?;
+        let system_addresses: std::collections::HashSet<_> = system.iter().flat_map(|p| p.addresses.iter().cloned()).collect();
+        profiles.retain(|p| !p.id.starts_with("derived:") || !p.addresses.iter().any(|a| system_addresses.contains(a)));
+        profiles.extend(system);
         profiles.sort_by(|a, b| {
             b.favorite
                 .cmp(&a.favorite)
@@ -389,6 +393,9 @@ impl Database {
     }
 
     pub fn get_contact_profile(&self, id: &str) -> DbResult<Option<ContactProfile>> {
+        if id.starts_with("derived:mac:") {
+            return Ok(self.system_contact_profiles("")?.into_iter().find(|p| p.id == id));
+        }
         if let Some(email) = id.strip_prefix("derived:") {
             let mut suggestions = Vec::new();
             for account in self.list_accounts()? {
@@ -558,8 +565,8 @@ impl Database {
         let saved = self.save_contact_profile(&SaveContactRequest {
             id: Some(profile.id),
             display_name: profile.display_name,
-            role: None,
-            company: None,
+            role: profile.role,
+            company: profile.company,
             location: None,
             bio: None,
             notes: None,
@@ -719,6 +726,9 @@ impl Database {
 
     /// Resolves a saved contact id or a `derived:<email>` id to its addresses.
     pub(crate) fn contact_address_list(&self, id: &str) -> DbResult<Vec<String>> {
+        if id.starts_with("derived:mac:") {
+            return Ok(self.get_contact_profile(id)?.map(|p| p.addresses).unwrap_or_default());
+        }
         if let Some(email) = id.strip_prefix("derived:") {
             return Ok(vec![email.to_string()]);
         }

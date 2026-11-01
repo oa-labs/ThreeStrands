@@ -16,17 +16,16 @@ const MATCHING_EMAILS: &str = "WITH matching_emails AS (
     UNION SELECT email FROM pinned_contacts WHERE account_id=?1 AND (
         instr(email,?2)=1 OR (instr(email,'@')>0 AND instr(substr(email,instr(email,'@')+1),?2)>0)
         OR instr(lower(display_name),?2)>0)
+    UNION SELECT email FROM system_contact_addresses WHERE
+        instr(email,?2)=1 OR instr(substr(email,instr(email,'@')+1),?2)>0 OR instr(lower(display_name),?2)>0
     UNION SELECT lower(a.email) FROM contact_addresses a JOIN contacts c ON c.id=a.contact_id WHERE
         instr(lower(a.email),?2)=1 OR (instr(a.email,'@')>0 AND instr(lower(substr(a.email,instr(a.email,'@')+1)),?2)>0)
         OR instr(lower(c.display_name),?2)>0
 )";
 
 impl Database {
-    /// Ranks past correspondents for compose autocomplete. Deliberately
-    /// doesn't import Google's address book: every suggestion is mined from
-    /// this account's own cached `messages` (who it sent to, who it heard
-    /// from), so results are inherently people the user has actually
-    /// corresponded with, plus anything explicitly pinned. A sender is
+    /// Ranks correspondents, saved profiles, and selected Mac address books
+    /// for compose autocomplete. Mail history remains account-scoped. A sender is
     /// excluded from the "heard from" side when its message carries
     /// unsubscribe metadata (List-Unsubscribe/one-click) — that marks
     /// bulk/automated mail, not a real correspondent — unless the account
@@ -119,6 +118,16 @@ impl Database {
             let mut profile_statement=connection.prepare("SELECT a.email,c.display_name,c.favorite,c.updated_at FROM contact_addresses a JOIN contacts c ON c.id=a.contact_id")?;
             let profile_rows=profile_statement.query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,bool>(2)?,row.get::<_,String>(3)?)))?;
             for row in profile_rows {let(email,name,favorite,updated)=row?;let email=email.to_ascii_lowercase();let entry=by_email.entry(email).or_insert_with(||Agg{display_name:name.clone(),sent_count:0,received_count:0,last_interacted_at:updated,pinned:false});if entry.display_name.is_none(){entry.display_name=name;}entry.pinned|=favorite;}
+
+            // Provider-only suggestions rank after established correspondents;
+            // a selected address book does not imply favorite/pinned status.
+            let mut system_statement = connection.prepare("SELECT a.email,a.display_name FROM system_contact_addresses a WHERE NOT EXISTS(SELECT 1 FROM system_contact_addresses sibling JOIN contact_addresses local ON local.email=sibling.email WHERE sibling.contact_id=a.contact_id) ORDER BY a.contact_id")?;
+            let system_rows = system_statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)))?;
+            for row in system_rows {
+                let (email, name) = row?;
+                let entry = by_email.entry(email).or_insert_with(|| Agg { display_name: name.clone(), sent_count: 0, received_count: 0, last_interacted_at: String::new(), pinned: false });
+                if name.is_some() { entry.display_name = name; }
+            }
 
             let mut suppressed_statement = connection.prepare("SELECT email FROM contact_suggestion_suppressions")?;
             let suppressed = suppressed_statement.query_map([], |row| row.get::<_, String>(0))?
