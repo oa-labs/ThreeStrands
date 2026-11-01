@@ -126,7 +126,7 @@ from the current feature set when publishing a website.
 | --- | --- |
 | Snooze | Available in 0.190.0: put conversations aside, reschedule them in Snoozed, and return them automatically while a connected installation is running. |
 | Gmail sending aliases | Available in 0.191.0: use verified aliases, Gmail defaults, addressed replies, per-address signatures, and server drafts. |
-| Connected address books | Import existing Google Contacts and keep them connected to local profiles, notes, and correspondence history. |
+| Connected address books | Start with iCloud and other CardDAV address books, connected to local profiles, notes, and correspondence history. Direct Google Contacts integration is deferred while existing Google OAuth scope approval is pending. |
 | Smarter inbox rules | Explore inspectable, user-controlled classification beyond today's domain, label, and address rules. |
 | More mail providers | Harden IMAP/SMTP (design and progress in `docs/imap-design.md`; read, triage, server search, and sending work today), then Microsoft 365. |
 | Encrypted sync reliability | Keep hardening optional encrypted sync across devices and app versions, especially upgrades and interrupted joins. |
@@ -160,7 +160,7 @@ execution while devices are closed, and proactive assistance.
 | Conversation snooze | Gmail and IMAP conversations can be snoozed individually or in batches, with rescheduling, undo, new-reply return, and optional encrypted schedule sync. Returns need a running, connected installation. | Complete developer live-account validation alongside the existing release checks. | Implemented in 0.190.0; see [snooze design](docs/snooze-design.md). |
 | Gmail sending aliases | Verified aliases, Gmail defaults, addressed replies, per-address signatures, and alias-preserving server drafts are implemented. | Complete developer live-account checks with an alias, including queued and scheduled delivery. | Implemented in 0.191.0; see [Gmail alias design](docs/gmail-aliases-design.md). |
 | General rules and richer saved views | Account-specific Split Inboxes match a domain, label, or address pattern. Sender muting archives and marks mail read. Compound rules, reusable search views, and views across accounts remain gaps. | Define a first rules contract with explicit conditions and actions, previews, and account scope; support saving a search as a view. Decide whether rules run locally or at the provider. | After connected address books; planned, unscoped. |
-| Connected address books | Local contact profiles, groups, merging, recipient-suggestion controls, and CSV/vCard import/export exist; ongoing Google Contacts and CardDAV sync do not. | Discuss Google Contacts functionality before implementation: connection/account scope, read-only versus two-way updates, supported fields and labels, matching, local overrides, deletion/disconnect behavior, and cross-device ownership. Track CardDAV as a later extension. | Next; functionality discussion in progress, no implementation approved. |
+| Connected address books | Local contact profiles, groups, merging, recipient-suggestion controls, and CSV/vCard import/export exist; ongoing Google Contacts and CardDAV sync do not. | Start with CardDAV, prioritizing iCloud; defer direct Google Contacts while existing Google OAuth scope approval is pending. Agree on read-only versus two-way updates, address-book selection, suggestion controls, matching, local-data preservation, deletion/disconnect behavior, and cross-device ownership before implementation. Apple Contacts can display separate iCloud and Google sources; an iCloud CardDAV connection reads only the iCloud source. | Next; CardDAV direction selected, functionality discussion in progress. |
 | Mobile access and workflow continuity | Desktop sync carries selected workflow data and provider drafts follow the account. No mobile companion or web client exposes the full workflow on a phone. Windows and Linux builds remain experimental. | Scope a mobile companion around reading, triage, tasks, and follow-ups; decide supported platforms, background notifications, and encrypted workflow-data access before committing to a build. | Expansion; discovery needed. |
 | Microsoft 365 / Exchange | Gmail sign-in and password/app-password IMAP exist; dedicated Microsoft authentication, mail, and calendar integration do not. IMAP is not a substitute for modern authentication or delegation. | Define Microsoft authentication and provider contracts first, then mail and calendar support. Scope delegated/shared mailbox support explicitly rather than assuming basic account support includes it. | Expansion; planned, unscoped. |
 | Broader calendar support | Google Calendar supports event editing, invitations, availability, and task time blocking. Microsoft calendars and CalDAV/iCloud connections remain missing. | Define a calendar-provider contract and invitation/availability semantics; prioritize Microsoft with the Microsoft 365 work, then evaluate CalDAV/iCloud. | Expansion; discovery needed. |
@@ -172,8 +172,10 @@ execution while devices are closed, and proactive assistance.
 
 Conversation snooze (0.190.0) and Gmail sending aliases (0.191.0) are merged.
 Their remaining live-account release checks are validation work rather than
-unimplemented feature gaps. Connected Google Contacts is next for functionality
-discussion; agree on its behavior before implementation. Richer rules/views
+unimplemented feature gaps. Connected address books via CardDAV, prioritizing
+iCloud, is next for functionality discussion; agree on its behavior before
+implementation. Defer direct Google Contacts integration while existing Google
+OAuth scope approval is pending. Richer rules/views
 remain next in the backlog after address books. This is a sequencing
 recommendation, not a promise to finish the remaining work within that period.
 Continue the existing reliability and live-account release checks alongside
