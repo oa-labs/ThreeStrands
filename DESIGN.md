@@ -344,6 +344,13 @@ of roles (`--text-*`) built from them. Components use only the roles:
 - Uppercase text exists only in two recipes: section labels (semibold) and
   field labels (regular, because they wrap inputs). Add a selector to the
   matching recipe, or use `.eyebrow`, instead of uppercasing text elsewhere.
+- Give each UI surface a `--text-body` default so new unstyled text inherits
+  UI sizing rather than the larger shell size. Give descriptions, metadata,
+  and controls their own roles; check that broad paragraph rules do not override
+  these roles. Cover missing defaults and cascade conflicts in typography tests,
+  as well as invalid token values.
+- Reuse `.settings-subsection` for account-card panels and `.settings-hint`
+  for their descriptions.
 - Do not set type in inline component styles.
 
 `src/typography.test.ts` enforces these rules.

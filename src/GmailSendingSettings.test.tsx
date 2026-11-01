@@ -11,9 +11,11 @@ describe("GmailSendingSettings", () => {
     expect(await screen.findByText("me@example.com")).toBeVisible();
     const button = screen.getByRole("button", { name: "Refresh from Gmail" });
     expect(button).toHaveAccessibleDescription(/Only verified aliases/);
+    expect(screen.getByRole("region", { name: "Sending Addresses for me@example.com" })).toBeVisible();
     fireEvent.click(button);
     await waitFor(() => expect(refresh).toHaveBeenCalledWith("me@example.com"));
-    expect(await screen.findByText(/alias@example.org · Default for new messages · Replies to replies@example.org/)).toBeVisible();
+    expect(await screen.findByText("alias@example.org")).toBeVisible();
+    expect(screen.getByText("Default for new messages · Replies to replies@example.org")).toBeVisible();
   });
   it("keeps cached addresses when Gmail refresh fails", async () => {
     vi.spyOn(mailClient, "listIdentities").mockResolvedValue([{ address: "cached@example.org" }]);

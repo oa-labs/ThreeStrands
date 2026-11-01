@@ -18,11 +18,14 @@ export function GmailSendingSettings({ account }: { account: string }) {
     catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
-  return <section className="settings-subsection" aria-label={`Sending addresses for ${account}`}>
-    <h4>Sending addresses</h4>
+  return <section className="settings-subsection" aria-label={`Sending Addresses for ${account}`}>
+    <h4>Sending Addresses</h4>
     <p className="settings-hint" id={`gmail-aliases-${account}`}>Add or verify addresses in Gmail’s Settings → Accounts → Send mail as, then refresh here. Only verified aliases are available for sending. Saved addresses are available offline.</p>
-    <ul>{identities.map((identity) => <li key={identity.address}>{identity.address}{identity.isDefault ? " · Default for new messages" : ""}{identity.replyTo ? ` · Replies to ${identity.replyTo}` : ""}</li>)}</ul>
+    <ul className="sending-identity-list">{identities.map((identity) => <li key={identity.address}>
+      <span>{identity.address}</span>
+      {identity.isDefault || identity.replyTo ? <span className="sending-identity-detail">{[identity.isDefault ? "Default for new messages" : "", identity.replyTo ? `Replies to ${identity.replyTo}` : ""].filter(Boolean).join(" · ")}</span> : null}
+    </li>)}</ul>
     <button type="button" className="btn btn-sm" disabled={busy} aria-describedby={`gmail-aliases-${account}`} onClick={() => { void refresh(); }}>{busy ? "Refreshing…" : "Refresh from Gmail"}</button>
-    {error ? <p className="settings-error" role="alert">{error}</p> : null}
+    {error ? <p className="form-error" role="alert">{error}</p> : null}
   </section>;
 }

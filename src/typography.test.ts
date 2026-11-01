@@ -145,6 +145,17 @@ describe("component typography", () => {
     expect(sizeOf(".proposed-times-list details")).toBe("--text-meta");
   });
 
+  it("gives new settings content a UI default and keeps hints quieter than body text", () => {
+    // Missing declarations used to pass token validation and inherit the larger shell size.
+    expect(sizeOf(".settings-panel")).toBe("--text-body");
+    expect(sizeOf(".settings-section p.settings-hint")).toBe("--text-secondary");
+    expect(sizeOf(".sending-identity-detail")).toBe("--text-meta");
+    expect(sizeOf(".settings-section p.form-error")).toBe("--text-secondary");
+    const subsection = css.nodes.filter((node): node is Rule => node.type === "rule" && node.selectors.includes(".account-card .settings-subsection"));
+    expect(subsection).toHaveLength(1);
+    expect(subsection[0].nodes.some((node) => node.type === "decl" && node.prop === "gap" && node.value === "var(--space-3)")).toBe(true);
+  });
+
   it("sets every pane empty-state message in default UI text rather than the inherited shell size", () => {
     for (const selector of [".reader-empty p", ".contacts-empty-state p"]) expect(sizeOf(selector), selector).toBe("--text-body");
   });
