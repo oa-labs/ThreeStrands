@@ -5,6 +5,10 @@
 //! reference and engine-specific behavior, not just encoded pixels.
 
 pub(crate) const MAX_RASTER_BYTES: usize = 5 * 1024 * 1024;
+/// Remote images fetched by the image proxy. Higher than MAX_RASTER_BYTES
+/// because marketing mail links full-resolution PNGs over 5 MiB that other
+/// clients display; the pixel limits below still bound decoded memory.
+pub(crate) const MAX_REMOTE_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 pub(crate) const MAX_CONTACT_PHOTO_BYTES: usize = 64 * 1024;
 const MAX_RASTER_WIDTH: usize = 8_192;
 const MAX_RASTER_HEIGHT: usize = 8_192;
@@ -53,7 +57,11 @@ pub(crate) fn sniff_raster_mime(bytes: &[u8]) -> Option<&'static str> {
 }
 
 pub(crate) fn validate_raster(bytes: &[u8]) -> Result<(), String> {
-    if bytes.len() > MAX_RASTER_BYTES {
+    validate_raster_with_limit(bytes, MAX_RASTER_BYTES)
+}
+
+pub(crate) fn validate_raster_with_limit(bytes: &[u8], max_bytes: usize) -> Result<(), String> {
+    if bytes.len() > max_bytes {
         return Err("Image exceeds the maximum allowed size".to_string());
     }
     let dimensions =
@@ -166,6 +174,11 @@ mod tests {
     fn enforces_raster_byte_boundaries_before_parsing() {
         assert_eq!(
             validate_raster(&vec![0; MAX_RASTER_BYTES + 1]).unwrap_err(),
+            "Image exceeds the maximum allowed size"
+        );
+        assert_eq!(
+            validate_raster_with_limit(&vec![0; MAX_REMOTE_IMAGE_BYTES + 1], MAX_REMOTE_IMAGE_BYTES)
+                .unwrap_err(),
             "Image exceeds the maximum allowed size"
         );
     }
