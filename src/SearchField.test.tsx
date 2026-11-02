@@ -92,14 +92,30 @@ describe("SearchField", () => {
     fireEvent.change(input, { target: { value: "r" } });
     const toggle = screen.getByRole("button", { name: "Search only the Inbox" });
     expect(toggle).toHaveAttribute("aria-pressed", "false");
-    expect(toggle).toHaveTextContent("Inbox Only");
+    expect(toggle).not.toHaveTextContent("Inbox Only");
     fireEvent.click(toggle);
     expect(props.onToggleInboxOnly).toHaveBeenCalledTimes(1);
   });
 
   it("shows the Inbox Only filter as pressed while the search is narrowed", () => {
     renderField("roadmap", { inboxOnly: true });
-    expect(screen.getByRole("button", { name: "Search only the Inbox" })).toHaveAttribute("aria-pressed", "true");
+    const toggle = screen.getByRole("button", { name: "Search only the Inbox" });
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(toggle).toHaveTextContent("Inbox Only");
+  });
+
+  it("shows the / hint only while the field is idle", () => {
+    const { input } = renderField();
+    const box = input.closest(".search-box")!;
+    expect(box).toHaveClass("idle");
+    expect(box.querySelector("kbd")).toHaveTextContent("/");
+    act(() => input.focus());
+    expect(box).not.toHaveClass("idle");
+    expect(box.querySelector("kbd")).toBeNull();
+    act(() => input.blur());
+    fireEvent.change(input, { target: { value: "roadmap" } });
+    expect(box).not.toHaveClass("idle");
+    expect(box.querySelector("kbd")).toBeNull();
   });
 });
 

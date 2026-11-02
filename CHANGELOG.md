@@ -8,6 +8,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Explore delegated work in the Agents preview: start a local demonstration from an email or personal task, answer questions, discuss the result, and review saved report versions. Web research is not connected yet; the demonstration makes no external requests.
 
 ### Improved
+- The mail search box leaves more room for your search: the / hint only shows while search is idle, and the Inbox Only filter shrinks to an icon until you turn it on.
 - Click an event's address in event details, invitation cards, or meeting suggestions to open it in Google Maps.
 
 ### Fixed

@@ -166,9 +166,11 @@ export function SearchField({
     if (suggestion.kind === "recent") commitNow(next.query);
   }
 
+  const idle = !focused && !draft.trim();
+
   return (
     <div className="search-field">
-      <label className="search-box">
+      <label className={`search-box ${idle ? "idle" : ""}`}>
         <Search size={ICON_SIZE.md} />
         <input
           ref={inputRef}
@@ -229,13 +231,22 @@ export function SearchField({
             onClick={onToggleInboxOnly}
           >
             <Inbox size={ICON_SIZE.sm} />
-            <span>Inbox Only</span>
+            {inboxOnly ? <span>Inbox Only</span> : null}
           </button>
         ) : null}
-        <button type="button" className="btn-icon" aria-label="Close Search" title="Close Search (Esc)" onClick={closeSearch}>
+        {/* One trailing slot: the / hint while idle (Close on hover), Close while searching. */}
+        <button
+          type="button"
+          className="btn-icon search-close"
+          aria-label="Close Search"
+          title="Close Search (Esc)"
+          // Keep focus so the field doesn't flash idle (the / hint) before closing.
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={closeSearch}
+        >
           <X size={ICON_SIZE.sm} />
         </button>
-        <kbd>/</kbd>
+        {idle ? <kbd>/</kbd> : null}
       </label>
       {visible ? (
         <ul className="search-suggestions" role="listbox" id={listId} aria-label={draft.trim() ? "Search suggestions" : "Recent searches"}>
