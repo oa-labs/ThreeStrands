@@ -40,8 +40,8 @@ function NewAgentTask({ controller, accounts, research, onSetup }: { controller:
     <div className="agent-field">
       <label className="agent-field-label" htmlFor={`${id}-account`}>Mail account</label>
       <select id={`${id}-account`} value={seed.accountId} onChange={e => change({ accountId: e.target.value, sourceThreadId: null, linkedTaskId: null })}>
-      {accounts.filter(a => a.onThisDevice !== false).map(a => <option key={a.email} value={a.email}>{a.nickname || a.email}</option>)}
-    </select>
+        {accounts.filter(a => a.onThisDevice !== false).map(a => <option key={a.email} value={a.email}>{a.nickname || a.email}</option>)}
+      </select>
     </div>
     <div className="agent-field">
       <label className="agent-field-label" htmlFor={`${id}-mode`}>Work</label>
