@@ -247,12 +247,29 @@ fn media_type(header: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// Some CDNs label real images as generic binary; those are identified from
-/// their bytes in [`raster_data_uri`]. Every other non-raster type is
-/// refused before the body is read.
+/// A media type requires two nonempty HTTP tokens separated by a slash.
+/// An invalid declaration conveys no usable type; it is not evidence that
+/// the response is a raster. Only byte sniffing may establish that below.
+fn is_valid_media_type(content_type: &str) -> bool {
+    let Some((kind, subtype)) = content_type.split_once('/') else {
+        return false;
+    };
+    let is_token = |value: &str| {
+        !value.is_empty()
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+    };
+    is_token(kind) && is_token(subtype)
+}
+
+/// Missing, generic binary, and syntactically invalid declarations require
+/// raster byte sniffing. Valid non-raster types (including HTML and SVG)
+/// remain authoritative and are refused before the body is read.
 fn check_declared_type(content_type: &str) -> Result<(), String> {
     if !crate::image_format::is_supported_raster_mime(content_type)
         && !crate::image_format::is_generic_binary_mime(content_type)
+        && is_valid_media_type(content_type)
     {
         return Err(format!(
             "Refusing unsupported image content-type: {content_type}"
@@ -262,6 +279,7 @@ fn check_declared_type(content_type: &str) -> Result<(), String> {
 }
 
 fn raster_data_uri(content_type: &str, bytes: &[u8]) -> Result<String, String> {
+    check_declared_type(content_type)?;
     let mime_type = if crate::image_format::is_supported_raster_mime(content_type) {
         content_type
     } else {
@@ -551,6 +569,69 @@ mod tests {
         assert!(jpeg.starts_with("data:image/jpeg;base64,"), "{jpeg}");
     }
 
+    #[test]
+    fn distinguishes_invalid_declarations_from_unsupported_media_types() {
+        for invalid in [
+            "",
+            "content-type",
+            "image",
+            "image/",
+            "/png",
+            "image/png/extra",
+            "image/p ng",
+        ] {
+            assert!(!is_valid_media_type(invalid), "{invalid}");
+        }
+        for valid in [
+            "image/png",
+            "image/svg+xml",
+            "text/html",
+            "application/x-custom",
+            "image/*",
+        ] {
+            assert!(is_valid_media_type(valid), "{valid}");
+        }
+    }
+
+    #[tokio::test]
+    async fn identifies_rasters_with_malformed_content_type_declarations() {
+        for declaration in ["Content-Type", "image", "image/", "image/png/extra"] {
+            for (body, mime) in [(TINY_PNG, "image/png"), (TINY_JPEG, "image/jpeg")] {
+                let data = download_served(Some(declaration), body).await.unwrap();
+                assert_eq!(
+                    data,
+                    format!("data:{mime};base64,{}", STANDARD.encode(body))
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_declarations_do_not_bypass_raster_validation() {
+        for declaration in ["Content-Type", "image/"] {
+            for body in [
+                &b"<svg xmlns=\"http://www.w3.org/2000/svg\" onload=\"alert(1)\"/>"[..],
+                b"<!DOCTYPE html><script>alert(1)</script>",
+                b"not an image",
+                b"",
+            ] {
+                let error = download_served(Some(declaration), body).await.unwrap_err();
+                assert!(
+                    error.starts_with("Refusing unrecognized image data"),
+                    "{error}"
+                );
+            }
+            let error = download_served(Some(declaration), b"\x89PNG\r\n\x1a\n")
+                .await
+                .unwrap_err();
+            assert_eq!(error, "Unable to verify image dimensions");
+            let error = download_served(Some(declaration), &jpeg_header(6_000, 6_000))
+                .await
+                .unwrap_err();
+            assert_eq!(error, "Image dimensions exceed the maximum allowed size");
+        }
+    }
+
     #[tokio::test]
     async fn admits_full_size_phone_photos_and_refuses_larger_rasters() {
         let photo = download_served(Some("image/jpeg"), &jpeg_header(5_712, 4_284))
@@ -588,7 +669,13 @@ mod tests {
 
     #[tokio::test]
     async fn never_sniffs_an_explicitly_non_raster_type() {
-        for content_type in ["image/svg+xml", "text/html"] {
+        for content_type in [
+            "image/svg+xml",
+            "text/html",
+            "text/plain",
+            "application/x-custom",
+            "image/*",
+        ] {
             let error = download_served(Some(content_type), TINY_PNG)
                 .await
                 .unwrap_err();

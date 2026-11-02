@@ -2,7 +2,7 @@
   "name": "threestrands",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
-  "version": "0.194.4",
+  "version": "0.194.5",
   "packageManager": "pnpm@12.16.1",
   "type": "module",
   "scripts": {

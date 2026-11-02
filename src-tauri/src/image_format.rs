@@ -20,8 +20,9 @@ pub(crate) fn is_supported_raster_mime(mime_type: &str) -> bool {
 }
 
 /// Types a server sends when it doesn't know (or doesn't say) what the bytes
-/// are. Only these may be identified by sniffing; any other declared type,
-/// including `image/svg+xml` and `text/html`, is taken at its word.
+/// are. These permit raster sniffing. The remote image proxy also permits
+/// syntactically invalid declarations; valid non-raster types, including
+/// `image/svg+xml` and `text/html`, remain authoritative.
 pub(crate) fn is_generic_binary_mime(mime_type: &str) -> bool {
     matches!(
         mime_type,
