@@ -4,6 +4,8 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ## Unreleased
 
+## 0.194.2 — 2026-11-01
+
 ### New
 - Recipient suggestions now prioritize people you often email together after you select someone. The same suggestions help you add members to contact groups, using email history kept on this device.
 - Groups now show **Recent Emails** with their current members, including sent messages. Open a conversation from the sidebar to find other people you may want to add.
