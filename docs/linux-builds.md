@@ -5,7 +5,7 @@ Ubuntu 22.04 devcontainer. The same devcontainer definition is used locally
 and by GitHub Actions so both builds share the Node, pnpm, Rust, native library,
 and packaging toolchain.
 
-The build toolchain pins Node 22.22.0, pnpm 12.4.1, and Rust 1.98.1.
+The build toolchain pins Node 22.22.0, pnpm 12.16.1, and Rust 1.98.1.
 
 Ubuntu 22.04 is intentionally the baseline. Building on an older supported
 distribution prevents a newer host glibc from unnecessarily restricting where
@@ -19,7 +19,9 @@ the resulting AppImage can run.
   CLI, or another implementation of the Dev Container specification
 - At least 8 GB of memory available to the container
 
-Open the repository in its devcontainer. Its post-create command installs the
+Open the repository in its **ThreeStrands Linux build** devcontainer (the
+**ThreeStrands development** container is for day-to-day work; see
+[Dependency safety](../DEVELOPERS.md#dependency-safety)). Its post-create command installs the
 locked JavaScript dependencies. Named volumes keep Linux `node_modules` and
 Rust target files separate from any macOS build outputs. The container
 deliberately targets `linux/amd64`; on an Apple Silicon host, Docker therefore

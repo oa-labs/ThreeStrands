@@ -99,6 +99,21 @@ describe("calendar sidebar", () => {
     expect(screen.getByRole("dialog", { name: "Prep call details" })).toHaveTextContent("javascript:alert(1) or Room 4B");
   });
 
+  it("opens a street address location in Google Maps", () => {
+    render(<EventViewer event={{
+      id: "lunch",
+      accountId: "calendar@example.com",
+      title: "Lunch",
+      start: "2026-10-05T12:00:00-04:00",
+      end: "2026-10-05T13:00:00-04:00",
+      allDay: false,
+      location: "100 Main St, Springfield",
+    }} onDismiss={() => {}} onUpdated={() => {}} />);
+    const link = screen.getByRole("link", { name: "100 Main St, Springfield" });
+    fireEvent.click(link);
+    expect(openUrl).toHaveBeenCalledWith("https://www.google.com/maps/search/?api=1&query=100%20Main%20St%2C%20Springfield");
+  });
+
   it("shows each attendee's RSVP and a count of responses", () => {
     const event = {
       id: "planning",

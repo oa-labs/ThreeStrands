@@ -370,7 +370,7 @@ resumes once, and cannot publish after cancellation or deletion.
 
 ### 2. Build the shared interactive workspace
 
-**Implemented for 0.196.0.** See the [phase-2 record](agent-integrations/phase-2-workspace.md).
+**Implemented for 0.197.0.** See the [phase-2 record](agent-integrations/phase-2-workspace.md).
 Agents is a full-size workspace with email and personal-task entry points,
 clarification, discussion, explicit revisions, saved report versions, and unread
 activity. Execution remains an explicitly enabled local demonstration. Reports

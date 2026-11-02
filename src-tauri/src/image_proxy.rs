@@ -138,7 +138,7 @@ impl ImageCacheInner {
 }
 
 fn append_bounded(bytes: &mut Vec<u8>, chunk: &[u8]) -> Result<(), String> {
-    if chunk.len() > crate::image_format::MAX_RASTER_BYTES.saturating_sub(bytes.len()) {
+    if chunk.len() > crate::image_format::MAX_REMOTE_IMAGE_BYTES.saturating_sub(bytes.len()) {
         return Err("Image exceeds the maximum allowed size".to_string());
     }
     bytes.extend_from_slice(chunk);
@@ -213,7 +213,7 @@ async fn download(parsed: Url, cache: &ImageCache) -> Result<String, String> {
     check_declared_type(&content_type)?;
 
     if let Some(claimed_len) = response.content_length() {
-        if claimed_len > crate::image_format::MAX_RASTER_BYTES as u64 {
+        if claimed_len > crate::image_format::MAX_REMOTE_IMAGE_BYTES as u64 {
             return Err("Image exceeds the maximum allowed size".to_string());
         }
     }
@@ -224,7 +224,7 @@ async fn download(parsed: Url, cache: &ImageCache) -> Result<String, String> {
         response
             .content_length()
             .unwrap_or(0)
-            .min(crate::image_format::MAX_RASTER_BYTES as u64) as usize,
+            .min(crate::image_format::MAX_REMOTE_IMAGE_BYTES as u64) as usize,
     );
     while let Some(chunk) = response
         .chunk()
@@ -287,7 +287,7 @@ fn raster_data_uri(content_type: &str, bytes: &[u8]) -> Result<String, String> {
             format!("Refusing unrecognized image data labelled as content-type: {content_type}")
         })?
     };
-    crate::image_format::validate_raster(bytes)?;
+    crate::image_format::validate_raster_with_limit(bytes, crate::image_format::MAX_REMOTE_IMAGE_BYTES)?;
 
     Ok(format!(
         "data:{mime_type};base64,{}",
@@ -357,7 +357,7 @@ async fn download_with_platform_stack(parsed: Url) -> Result<String, String> {
         IMAGE_PROXY_USER_AGENT,
         &IMAGE_PROXY_HEADERS,
         REQUEST_TIMEOUT,
-        crate::image_format::MAX_RASTER_BYTES,
+        crate::image_format::MAX_REMOTE_IMAGE_BYTES,
     )
     .await?;
     if !(200..300).contains(&response.status) {
@@ -408,13 +408,13 @@ mod tests {
 
     #[test]
     fn streams_through_the_byte_limit_and_rejects_the_next_byte() {
-        let mut bytes = vec![0; crate::image_format::MAX_RASTER_BYTES - 1];
+        let mut bytes = vec![0; crate::image_format::MAX_REMOTE_IMAGE_BYTES - 1];
         assert!(append_bounded(&mut bytes, &[0]).is_ok());
-        assert_eq!(bytes.len(), crate::image_format::MAX_RASTER_BYTES);
+        assert_eq!(bytes.len(), crate::image_format::MAX_REMOTE_IMAGE_BYTES);
         assert!(append_bounded(&mut bytes, &[0]).is_err());
         assert_eq!(
             bytes.len(),
-            crate::image_format::MAX_RASTER_BYTES,
+            crate::image_format::MAX_REMOTE_IMAGE_BYTES,
             "an oversized chunk must not be appended"
         );
     }

@@ -1,0 +1,24 @@
+# Supply-chain checks for both Cargo workspaces (the root `crates/` workspace
+# and `src-tauri`). Run from the repository root:
+#
+#   cargo deny check advisories sources
+#   cargo deny --manifest-path src-tauri/Cargo.toml check --config deny.toml advisories sources
+#
+# License and duplicate-version policy are intentionally not enforced here.
+
+[graph]
+all-features = true
+
+[advisories]
+# Unmaintained and unsound notices fail only when a workspace crate depends on
+# the affected crate directly; deep transitive notices are reported, not fatal.
+unmaintained = "workspace"
+unsound = "workspace"
+yanked = "deny"
+ignore = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

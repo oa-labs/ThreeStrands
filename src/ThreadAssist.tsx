@@ -8,6 +8,7 @@ import { FindTimesCard } from "./FindTimesCard";
 import { MoreActionsMenu } from "./MoreActionsMenu";
 import { planMeeting } from "./scheduling";
 import { safeWebUrl } from "./calendarTime";
+import { EventLocation } from "./EventLocation";
 import { HoverTooltip } from "./AppChrome";
 import { parseAddress } from "./emailAddress";
 import { isSummaryStale } from "./threadPresentation";
@@ -202,7 +203,7 @@ function ProposalCard({ proposal, index, source, suggestions, scheduling }: {
         {where.place ? <>{where.place} · </> : null}
         {/* The address shows on hover, since it came from the email or the calendar rather than from ThreeStrands. */}
         <a href={where.joinUrl} title={where.joinUrl} onClick={(event) => { event.preventDefault(); void openUrl(where.joinUrl!); }}>{where.place ? "Join" : "Join video meeting"}</a>
-      </span></p> : where?.place ? <p className="proposal-detail"><MapPin size={ICON_SIZE.sm} aria-hidden="true" /><span>{where.place}</span></p> : null}
+      </span></p> : where?.place ? <p className="proposal-detail"><MapPin size={ICON_SIZE.sm} aria-hidden="true" /><span><EventLocation location={where.place} /></span></p> : null}
       {people ? <p className="proposal-detail"><Users size={ICON_SIZE.sm} aria-hidden="true" /><span>{people}</span></p> : null}
     </> : <p>{proposal.notes || proposal.kind.replace("_", " ")}{proposal.dueValue ? ` · Due ${proposal.dueValue}` : ""}</p>}
     {proposal.type === "meeting" ? <FindTimesCard

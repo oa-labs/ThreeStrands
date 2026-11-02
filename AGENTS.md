@@ -62,6 +62,15 @@ Do not start the dev server, click through the UI, take screenshots, or use a
 browser to judge look and feel. Ship the change with automated coverage and
 leave hands-on UI verification to the developer.
 
+## Dependencies
+
+When a change adds or updates an npm package or Rust crate, follow
+[Dependency safety](DEVELOPERS.md#dependency-safety) and run `cargo vet` and
+`cargo deny` in the affected workspace. Do not relax `pnpm-workspace.yaml`
+policies, add `cargo vet` exemptions or certifications, or ignore advisories
+to get a change through; name the package and version in the summary and let
+the developer decide.
+
 ## Settings transfer compatibility
 
 Treat the encrypted settings export as a persistent, cross-version format. Do not remove a field, add a required field, or change a field's meaning under the existing format version without a backward-compatible default or migration. If compatibility cannot be preserved, bump the format version intentionally and keep support for importing earlier versions. Every transfer schema change must include regression coverage for exports produced by the preceding schema.

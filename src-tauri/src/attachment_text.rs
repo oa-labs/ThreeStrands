@@ -177,7 +177,8 @@ impl OfficeArchive {
     }
 
     fn names(&self) -> Vec<String> {
-        self.archive.file_names().map(str::to_string).collect()
+        // Names that don't decode can't match the ASCII part prefixes we look for.
+        self.archive.file_names().filter_map(Result::ok).map(|name| name.into_owned()).collect()
     }
 
     /// Reads one part as text, or `None` when the archive lacks it.

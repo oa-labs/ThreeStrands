@@ -1,6 +1,6 @@
 # Phase 2: shared interactive workspace
 
-Implemented on 2026-11-02 for 0.196.0. This completes the interactive workspace
+Implemented on 2026-11-02 for 0.197.0. This completes the interactive workspace
 milestone in [the delegated agents plan](../delegated-agents-plan.md), using the
 existing deterministic native runner. It does not enable real research.
 
