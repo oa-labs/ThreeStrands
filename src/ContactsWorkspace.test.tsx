@@ -7,7 +7,7 @@ import { mailClient } from "./data/client";
 import { clearAiApiKey, setAiApiKey } from "./aiSettings";
 import { expectPrimaryActionLast, expectSharedButtons } from "./test/sharedButtons";
 
-vi.mock("./data/client",()=>({mailClient:{listContactProfiles:vi.fn(),getContactProfile:vi.fn(),saveContactProfile:vi.fn(),deleteContactProfile:vi.fn(),contactTimeline:vi.fn(),enrichContact:vi.fn(),listKeepInTouch:vi.fn(),setKeepInTouch:vi.fn(),snoozeKeepInTouch:vi.fn(),markContacted:vi.fn(),contactFiles:vi.fn(),fileStars:vi.fn().mockResolvedValue([]),setFileStar:vi.fn().mockResolvedValue(undefined),openAttachment:vi.fn(),resolveContactIds:vi.fn(),listContactGroups:vi.fn(),createContactGroup:vi.fn(),renameContactGroup:vi.fn(),addContactGroupMembers:vi.fn(),removeContactGroupMembers:vi.fn(),deleteContactGroup:vi.fn(),mergeContacts:vi.fn()}}));
+vi.mock("./data/client",()=>({mailClient:{listContactProfiles:vi.fn(),getContactProfile:vi.fn(),saveContactProfile:vi.fn(),deleteContactProfile:vi.fn(),contactTimeline:vi.fn(),contactGroupTimeline:vi.fn(),enrichContact:vi.fn(),listKeepInTouch:vi.fn(),setKeepInTouch:vi.fn(),snoozeKeepInTouch:vi.fn(),markContacted:vi.fn(),contactFiles:vi.fn(),fileStars:vi.fn().mockResolvedValue([]),setFileStar:vi.fn().mockResolvedValue(undefined),openAttachment:vi.fn(),resolveContactIds:vi.fn(),listContactGroups:vi.fn(),createContactGroup:vi.fn(),renameContactGroup:vi.fn(),addContactGroupMembers:vi.fn(),removeContactGroupMembers:vi.fn(),deleteContactGroup:vi.fn(),mergeContacts:vi.fn()}}));
 
 const jane:ContactProfile={id:"contact:jane@example.com",displayName:"Jane Doe",role:"Founder",company:null,location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:["jane@example.com"],sentCount:3,receivedCount:2,lastInteractedAt:"2026-09-20T00:00:00Z",birthday:null,keepInTouch:{intervalDays:null,startedAt:null,snoozedUntil:null,snoozedAt:null,lastTouchAt:null},keepInTouchDueAt:null};
 const favoriteContact:ContactProfile={...jane,id:"contact:favorite@example.com",displayName:"Favorite Person",favorite:true,addresses:["favorite@example.com"],lastInteractedAt:"2026-09-10T00:00:00Z"};
@@ -21,6 +21,7 @@ describe("ContactsWorkspace",()=>{
     vi.mocked(mailClient.listContactProfiles).mockResolvedValue([jane]);
     vi.mocked(mailClient.getContactProfile).mockResolvedValue(jane);
     vi.mocked(mailClient.contactTimeline).mockResolvedValue([]);
+    vi.mocked(mailClient.contactGroupTimeline).mockResolvedValue([]);
     vi.mocked(mailClient.saveContactProfile).mockImplementation(async request=>({...jane,...request,id:request.id??jane.id,sentCount:3,receivedCount:2,lastInteractedAt:jane.lastInteractedAt}));
     vi.mocked(mailClient.deleteContactProfile).mockResolvedValue(undefined);
     vi.mocked(mailClient.enrichContact).mockResolvedValue({suggestions:[],messagesReviewed:0,hasMore:false});
@@ -601,7 +602,58 @@ describe("ContactsWorkspace",()=>{
     expect(screen.getByRole("button",{name:"Favorite contact"})).toHaveAttribute("aria-pressed","false");
   });
 
+  it("restores independent tab selections after leaving Contacts",async()=>{
+    const board:ContactGroup={id:"board",name:"Board",memberIds:[],createdAt:"2026-10-01T00:00:00Z",updatedAt:"2026-10-01T00:00:00Z"};
+    const family={...board,id:"family",name:"Family"};
+    vi.mocked(mailClient.listContactProfiles).mockResolvedValue([jane,favoriteContact,newerContact]);
+    vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>[jane,favoriteContact,newerContact].find(item=>item.id===id)??null);
+    vi.mocked(mailClient.listKeepInTouch).mockResolvedValue([jane,newerContact].map(item=>({...item,keepInTouch:{...item.keepInTouch,intervalDays:30},keepInTouchDueAt:"2026-01-01T00:00:00Z"})));
+    vi.mocked(mailClient.listContactGroups).mockResolvedValue([board,family]);
+    const props={onOpenThread:vi.fn(),onSaved:vi.fn(),accountId:"work"};
+    const first=render(<ContactsWorkspace {...props}/>);
+    fireEvent.click(await screen.findByRole("button",{name:/Favorite Person/}));
+    await screen.findByDisplayValue("Favorite Person");
+    fireEvent.click(screen.getByRole("tab",{name:/Keep in Touch/}));
+    fireEvent.click(await screen.findByRole("button",{name:/Newer Person/}));
+    await screen.findByDisplayValue("Newer Person");
+    fireEvent.change(screen.getByRole("textbox",{name:"Role"}),{target:{value:"Updated role"}});
+    fireEvent.click(screen.getByRole("button",{name:/Save contact/}));
+    await waitFor(()=>expect(mailClient.saveContactProfile).toHaveBeenCalledWith(expect.objectContaining({id:newerContact.id,role:"Updated role"})));
+    await waitFor(()=>expect(screen.queryByRole("region",{name:"Save changes"})).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("tab",{name:"All Contacts"}));
+    expect(await screen.findByDisplayValue("Favorite Person")).toBeVisible();
+    fireEvent.click(screen.getByRole("tab",{name:"Groups"}));
+    fireEvent.click(await screen.findByRole("button",{name:/Family.*0 members/}));
+    first.unmount();
+    const second=render(<ContactsWorkspace {...props} initialView="groups"/>);
+    expect(await screen.findByRole("button",{name:/Family.*0 members/})).toHaveAttribute("aria-pressed","true");
+    fireEvent.click(screen.getByRole("tab",{name:/Keep in Touch/}));
+    expect(await screen.findByDisplayValue("Newer Person")).toBeVisible();
+    expect(screen.getByRole("button",{name:/Newer Person/})).toHaveAttribute("aria-pressed","true");
+    fireEvent.click(screen.getByRole("tab",{name:"All Contacts"}));
+    expect(await screen.findByDisplayValue("Favorite Person")).toBeVisible();
+    second.unmount();
+    render(<ContactsWorkspace {...props} accountId="personal"/>);
+    await screen.findByRole("button",{name:/Jane Doe/});
+    expect(screen.getByRole("button",{name:/Jane Doe/})).toHaveAttribute("aria-pressed","true");
+  });
+
+  it("falls back when a remembered contact or group was deleted",async()=>{
+    const key=(view:string)=>`threestrands.contacts.selection.${JSON.stringify([null,view])}`;
+    for(const view of ["all","keepInTouch","groups"])localStorage.setItem(key(view),"deleted");
+    const group:ContactGroup={id:"remaining",name:"Remaining",memberIds:[],createdAt:"2026-10-01T00:00:00Z",updatedAt:"2026-10-01T00:00:00Z"};
+    vi.mocked(mailClient.listContactGroups).mockResolvedValue([group]);
+    vi.mocked(mailClient.listKeepInTouch).mockResolvedValue([{...jane,keepInTouchDueAt:"2026-01-01T00:00:00Z"}]);
+    render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()}/>);
+    await waitFor(()=>expect(localStorage.getItem(key("all"))).toBe(jane.id));
+    fireEvent.click(screen.getByRole("tab",{name:/Keep in Touch/}));
+    await waitFor(()=>expect(localStorage.getItem(key("keepInTouch"))).toBe(jane.id));
+    fireEvent.click(screen.getByRole("tab",{name:"Groups"}));
+    expect(screen.getByRole("button",{name:/Remaining.*0 members/})).toHaveAttribute("aria-pressed","true");
+  });
+
   it("selects the contact opened from the conversation pane",async()=>{
+    localStorage.setItem(`threestrands.contacts.selection.${JSON.stringify([null,"all"])}`,jane.id);
     vi.mocked(mailClient.listContactProfiles).mockResolvedValue([jane,favoriteContact]);
     vi.mocked(mailClient.getContactProfile).mockImplementation(async id=>id===favoriteContact.id?favoriteContact:jane);
     render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()} initialContactId={favoriteContact.id}/>);
@@ -1039,6 +1091,22 @@ describe("ContactsWorkspace",()=>{
     const board:ContactGroup={id:"group-board",name:"Board",memberIds:[],createdAt:"2026-10-01T00:00:00Z",updatedAt:"2026-10-01T00:00:00Z"};
     const withMembers=(group:ContactGroup,...memberIds:string[]):ContactGroup=>({...group,memberIds});
     const groupsView=()=>render(<ContactsWorkspace onOpenThread={vi.fn()} onSaved={vi.fn()} initialView="groups"/>);
+
+    it("shows group history, opens a conversation, and refreshes after removing a member",async()=>{
+      const onOpenThread=vi.fn();
+      vi.mocked(mailClient.listContactGroups).mockResolvedValue([withMembers(board,jane.id)]);
+      vi.mocked(mailClient.contactGroupTimeline).mockResolvedValue([{threadId:"board-thread",accountId:"work",contactEmail:jane.addresses[0],subject:"Board plans",snippet:"Invite another person",sentAt:"2026-10-01T12:00:00Z",labels:[]}]);
+      vi.mocked(mailClient.removeContactGroupMembers).mockResolvedValue(board);
+      render(<ContactsWorkspace onOpenThread={onOpenThread} onSaved={vi.fn()} initialView="groups" accountId="work"/>);
+      const rail=await screen.findByRole("complementary",{name:"Group context"});
+      fireEvent.click(await within(rail).findByRole("button",{name:/Board plans/}));
+      expect(onOpenThread).toHaveBeenCalledWith("board-thread");
+      expect(mailClient.contactGroupTimeline).toHaveBeenCalledWith(board.id,0,20,"work");
+      vi.mocked(mailClient.contactGroupTimeline).mockResolvedValue([]);
+      fireEvent.click(await screen.findByRole("button",{name:/Remove Jane Doe/}));
+      expect(await within(rail).findByText("No emails with current group members in this account.")).toBeVisible();
+      expect(mailClient.contactGroupTimeline).toHaveBeenCalledTimes(2);
+    });
 
     it("lists groups by name in the Groups view and creates one inline",async()=>{
       const family:ContactGroup={...board,id:"group-family",name:"Family"};

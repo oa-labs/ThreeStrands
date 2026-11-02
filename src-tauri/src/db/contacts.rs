@@ -628,6 +628,25 @@ impl Database {
         self.interaction_threads(&format!("ci.email IN ({marks}) AND (? IS NULL OR ci.account_id=?)"), values, offset, limit)
     }
 
+    /// History follows the group's current members, across every saved address.
+    /// Match before paging so conversations with several members appear once.
+    pub fn contact_group_timeline(
+        &self,
+        id: &str,
+        offset: usize,
+        limit: usize,
+        account_id: Option<&str>,
+    ) -> DbResult<Vec<ContactTimelineItem>> {
+        let account = account_id.map(|id| rusqlite::types::Value::Text(id.to_string()))
+            .unwrap_or(rusqlite::types::Value::Null);
+        self.interaction_threads(
+            "EXISTS (SELECT 1 FROM contact_group_members gm JOIN contact_addresses ca ON ca.contact_id=gm.contact_id WHERE gm.group_id=? AND ca.email=ci.email) AND (? IS NULL OR ci.account_id=?)",
+            vec![rusqlite::types::Value::Text(id.to_string()), account.clone(), account],
+            offset,
+            limit,
+        )
+    }
+
     /// One row per conversation whose interactions match `filter`, newest
     /// matching interaction first.
     fn interaction_threads(
@@ -638,7 +657,7 @@ impl Database {
         limit: usize,
     ) -> DbResult<Vec<ContactTimelineItem>> {
         self.with_connection(|connection|{
-            let sql=format!("WITH matched AS (SELECT ci.thread_id,ci.account_id,ci.email,ci.sent_at,ROW_NUMBER() OVER (PARTITION BY ci.thread_id ORDER BY ci.sent_at DESC,ci.message_id DESC,ci.email) AS position FROM contact_interactions ci WHERE {filter}) SELECT t.id,t.account_id,matched.email,t.subject,t.snippet,matched.sent_at,t.labels_json FROM matched JOIN threads t ON t.id=matched.thread_id WHERE matched.position=1 ORDER BY matched.sent_at DESC LIMIT ? OFFSET ?");
+            let sql=format!("WITH matched AS (SELECT ci.thread_id,ci.account_id,ci.email,ci.sent_at,ROW_NUMBER() OVER (PARTITION BY ci.thread_id ORDER BY ci.sent_at DESC,ci.message_id DESC,ci.email) AS position FROM contact_interactions ci WHERE {filter}) SELECT t.id,t.account_id,matched.email,t.subject,t.snippet,matched.sent_at,t.labels_json FROM matched JOIN threads t ON t.id=matched.thread_id WHERE matched.position=1 ORDER BY matched.sent_at DESC,matched.thread_id LIMIT ? OFFSET ?");
             values.push(rusqlite::types::Value::Integer(limit.clamp(1,100) as i64));
             values.push(rusqlite::types::Value::Integer(offset.min(i64::MAX as usize) as i64));
             let mut statement=connection.prepare(&sql)?;
