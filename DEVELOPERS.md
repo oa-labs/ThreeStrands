@@ -38,6 +38,85 @@ Linux release packages are built in the repository's reproducible Ubuntu
 devcontainer. It produces x86-64 Debian, RPM, and AppImage artifacts whether
 the host is Linux or Apple Silicon. See the [Linux build guide](docs/linux-builds.md).
 
+## Dependency safety
+
+npm packages and Rust crates run code on the machine that builds them: npm
+packages whenever a tool like Vite, Vitest, or ESLint loads them, and crates
+through build scripts and procedural macros on every build, including the
+background checks rust-analyzer runs in your editor.
+
+### Development container
+
+`.devcontainer/dev` is a native-architecture Ubuntu container (arm64 on Apple
+Silicon) for day-to-day work, so that code runs in Linux, not on your Mac. In
+VS Code, run **Dev Containers: Reopen in Container** and pick **ThreeStrands
+development**. It installs the locked dependencies and Playwright's Chromium,
+and keeps `node_modules` and both Cargo `target` directories in named volumes
+so they never mix with macOS build output.
+
+Use it for `pnpm dev`, `pnpm lint`, `pnpm test`, `pnpm test:e2e`, `pnpm build`,
+`cargo test`, `cargo clippy`, and rust-analyzer. It cannot build or run the
+macOS app, and code under `#[cfg(target_os = "macos")]` is not compiled there;
+`pnpm tauri dev` and macOS builds still run on the host. The
+**ThreeStrands Linux build** container remains the x86-64 release environment.
+
+The container is a boundary for your files and keychain, not for the
+repository: the checkout is mounted read-write, so anything that runs inside
+can edit sources or `.git/hooks`. VS Code also forwards your Git credentials
+and SSH agent into the container by default. Review diffs before committing
+from the host.
+
+### npm
+
+`pnpm-workspace.yaml` adds to pnpm's defaults, which already refuse dependency
+install scripts that are not explicitly allowed:
+
+- `minimumReleaseAge: 10080` — new versions are not installed until they have
+  been public for 7 days. Most compromised releases are removed within that
+  window. To take an urgent fix sooner, add that exact version to
+  `minimumReleaseAgeExclude`. This covers pnpm itself: keep `PNPM_VERSION`
+  in `.devcontainer/Dockerfile` equal to `packageManager` in `package.json`,
+  or the container's pnpm will try to switch to a version the rule may still
+  hold back.
+- `trustPolicy: no-downgrade` — installs fail when a package version has
+  weaker publishing evidence (trusted publisher, provenance) than an earlier
+  release, a common sign of a hijacked maintainer account.
+  `trustPolicyExclude` lists reviewed exceptions, such as `semver@6.3.1`, a
+  legitimate 6.x backport published after provenance-signed 7.x releases.
+
+### Rust
+
+Both Cargo workspaces (the root `crates/` workspace and `src-tauri`) are
+checked with [`cargo vet`](https://mozilla.github.io/cargo-vet/) and
+[`cargo deny`](https://embarkstudios.github.io/cargo-deny/). Both tools are
+installed in the development container.
+
+```sh
+cargo vet                                      # root workspace
+(cd src-tauri && cargo vet)
+cargo deny check advisories sources            # uses deny.toml
+cargo deny --manifest-path src-tauri/Cargo.toml check advisories sources
+```
+
+`cargo vet` imports audits published by Mozilla, Google, the Bytecode
+Alliance, and others (`supply-chain/` and `src-tauri/supply-chain/`). Crates
+locked before it was adopted are listed as exemptions. Any new crate or
+version must be covered by an imported audit, audited with `cargo vet
+certify`, or deliberately exempted, so dependency changes show up in review.
+After a dependency change, run `cargo vet` in the affected workspace; `cargo
+vet suggest` lists the smallest diffs to review. `cargo vet prune` drops
+exemptions that imported audits now cover.
+
+`cargo deny` fails on RustSec security advisories, yanked crates, and
+dependencies from any source other than crates.io.
+
+The **Supply chain** workflow (`.github/workflows/supply-chain.yml`) runs all
+four checks on pull requests that touch Cargo manifests, lockfiles, or audit
+files, on every push to `master`, and weekly, since new advisories can fail
+an unchanged lockfile. It installs pinned, checksum-verified release
+binaries; keep their versions in step with `CARGO_VET_VERSION` and
+`CARGO_DENY_VERSION` in `.devcontainer/Dockerfile`.
+
 ## Releases
 
 Commit the release changes on `master`, then run:

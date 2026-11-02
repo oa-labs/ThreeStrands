@@ -1,6 +1,6 @@
 [package]
 name = "threestrands"
-version = "0.196.0"
+version = "0.196.1"
 description = "A local-first, keyboard-driven email client"
 authors = ["OpenArc LLC"]
 license-file = "../LICENSE"
@@ -67,7 +67,7 @@ tokio = { version = "1", features = ["fs", "net", "sync", "time", "io-util", "ma
 tokio-util = { version = "0.7", default-features = false }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
-zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9.2.2", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 zstd = "0.13"
 threestrands-mail-mime = { path = "../crates/mail-mime" }
 threestrands-mail-text = { path = "../crates/mail-text" }
