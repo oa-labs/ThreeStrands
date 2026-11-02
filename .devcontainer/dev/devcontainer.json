@@ -12,9 +12,14 @@
     "source=threestrands-dev-node-modules,target=${containerWorkspaceFolder}/node_modules,type=volume",
     "source=threestrands-dev-cargo-target,target=${containerWorkspaceFolder}/target,type=volume",
     "source=threestrands-dev-tauri-target,target=${containerWorkspaceFolder}/src-tauri/target,type=volume",
-    "source=threestrands-dev-cargo-registry,target=/home/vscode/.cargo/registry,type=volume"
+    "source=threestrands-dev-cargo-registry,target=/home/vscode/.cargo/registry,type=volume",
+    "source=threestrands-dev-claude,target=/home/vscode/.claude,type=volume",
+    "source=threestrands-dev-codex,target=/home/vscode/.codex,type=volume"
   ],
-  "postCreateCommand": "sudo chown -R vscode:vscode node_modules target src-tauri/target /home/vscode/.cargo/registry && pnpm install --frozen-lockfile && pnpm exec playwright install --with-deps chromium",
+  "containerEnv": {
+    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
+  },
+  "postCreateCommand": "sudo chown -R vscode:vscode node_modules target src-tauri/target /home/vscode/.cargo/registry /home/vscode/.claude /home/vscode/.codex &&pnpm install --frozen-lockfile && pnpm exec playwright install --with-deps chromium",
   "forwardPorts": [1420],
   "hostRequirements": {
     "cpus": 4,
@@ -25,7 +30,9 @@
       "extensions": [
         "rust-lang.rust-analyzer",
         "tauri-apps.tauri-vscode",
-        "dbaeumer.vscode-eslint"
+        "dbaeumer.vscode-eslint",
+        "anthropic.claude-code",
+        "openai.chatgpt"
       ]
     }
   }
