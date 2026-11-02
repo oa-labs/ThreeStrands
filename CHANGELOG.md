@@ -5,6 +5,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 ## Unreleased
 
 ### Fixed
+- Returning to Mail from Contacts or another workspace now restores your place in a long email.
 - Long emails now scroll as one continuous message while composing, keeping the last line readable and the signature directly after your text.
 
 ## 0.194.2 — 2026-11-01

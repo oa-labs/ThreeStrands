@@ -972,6 +972,34 @@ describe("keyboard-first task and action workspaces", () => {
     expect(screen.getByText("Address book")).toBeInTheDocument();
   });
 
+  it("restores the email reading position after visiting Contacts", async () => {
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 0; });
+    try {
+      const { container } = render(<App />);
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      const stack = container.querySelector<HTMLElement>(".message-stack")!;
+      const latest = stack.querySelector<HTMLElement>("[data-message-id]:last-child")!;
+      Object.defineProperty(stack, "clientHeight", { configurable: true, value: 600 });
+      Object.defineProperty(stack, "scrollHeight", { configurable: true, value: 5000 });
+      stack.getBoundingClientRect = () => ({ top: 0, bottom: 600 }) as DOMRect;
+      latest.getBoundingClientRect = () => ({ top: -1800, bottom: 3200 }) as DOMRect;
+      stack.scrollTop = 1800;
+      fireEvent.wheel(window);
+      fireEvent.scroll(stack);
+
+      fireEvent.click(screen.getByRole("button", { name: "Contacts (4)" }));
+      await screen.findByRole("heading", { name: "Contacts" });
+      expect(container.querySelector(".message-stack")).toBeNull();
+      fireEvent.keyDown(window, { key: "1" });
+      await screen.findByRole("heading", { name: "Welcome to ThreeStrands" });
+      const restored = container.querySelector<HTMLElement>(".message-stack")!;
+      expect(restored).not.toBe(stack);
+      expect(restored.scrollTop).toBe(1800);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("restores the selected contact after switching to Mail and back", async () => {
     const save=(name:string,email:string)=>mailClient.saveContactProfile({id:null,displayName:name,role:null,company:null,location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:[email],birthday:null});
     const first=await save("A First Contact","first-selection@example.com");

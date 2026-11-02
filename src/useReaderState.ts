@@ -33,6 +33,14 @@ export function useReaderState({
   const [messageExpansionOverrides, setMessageExpansionOverrides] = useState<Map<string, boolean>>(new Map());
   const latestMessageRef = useRef<HTMLElement | null>(null);
   const messageStackRef = useRef<HTMLDivElement>(null);
+  // Workspaces unmount the reader while this hook stays alive. Track the DOM
+  // host as well as the conversation so a returning reader reconnects and
+  // restores its place while its email bodies size again.
+  const [messageStackNode, setMessageStackNode] = useState<HTMLDivElement | null>(null);
+  const attachMessageStack = useCallback((node: HTMLDivElement | null) => {
+    messageStackRef.current = node;
+    setMessageStackNode(node);
+  }, []);
   const messageRefs = useRef<Map<string, HTMLElement>>(new Map());
   const activeMessageIdRef = useRef<string | null>(null);
   const pendingMessageToggleFocusRef = useRef<string | null>(null);
@@ -50,7 +58,7 @@ export function useReaderState({
     readingMessageIdRef.current = messageId;
     setReadingMessageIdState(messageId);
   }, []);
-  const lastAutoScrollRef = useRef<{ threadId: string; messageId: string } | null>(null);
+  const lastAutoScrollRef = useRef<{ threadId: string; messageId: string; stack: HTMLElement | null } | null>(null);
   // Where the reader last settled in the open conversation, saved on leaving
   // it. Not updated while the reader is pinned to a place it was opened at,
   // since the body is still sizing and that scroll position is not the user's.
@@ -93,7 +101,7 @@ export function useReaderState({
   }, [detailThreadId, latestDisplayedMessageId, setReadingMessage]);
 
   useEffect(() => {
-    const stack = messageStackRef.current;
+    const stack = messageStackNode;
     if (!stack || !detailThreadId) return;
     let frame = 0;
     const update = () => {
@@ -136,19 +144,20 @@ export function useReaderState({
       savePlace();
       readingPlaceRef.current = null;
     };
-  }, [detailThreadId, setReadingMessage]);
+  }, [detailThreadId, messageStackNode, setReadingMessage]);
 
   useEffect(() => {
     if (!detailThreadId || !latestDisplayedMessageId || composerOpen) return;
     // Read status, summaries, and other metadata replace detail without
     // opening a conversation or adding a message. Leave the reader in place.
     const previous = lastAutoScrollRef.current;
-    if (previous?.threadId === detailThreadId && previous.messageId === latestDisplayedMessageId) return;
-    lastAutoScrollRef.current = { threadId: detailThreadId, messageId: latestDisplayedMessageId };
-    const stack = messageStackRef.current;
+    const stack = messageStackNode;
+    if (!stack) return;
+    if (previous?.threadId === detailThreadId && previous.messageId === latestDisplayedMessageId && previous.stack === stack) return;
+    lastAutoScrollRef.current = { threadId: detailThreadId, messageId: latestDisplayedMessageId, stack };
     // Reopening a conversation goes back to where the user stopped reading,
     // unless that place expired or a newer message arrived since.
-    const resume = previous ? null : readingPositionFor(readReadingPositions(), detailThreadId, latestDisplayedMessageId, Date.now());
+    const resume = previous?.stack === stack ? null : readingPositionFor(readReadingPositions(), detailThreadId, latestDisplayedMessageId, Date.now());
     const resumeNode = resume ? messageRefs.current.get(resume.messageId) : undefined;
     let target: HTMLElement | null;
     // How far the stack's top sits past the target message's top.
@@ -189,7 +198,7 @@ export function useReaderState({
     stack.addEventListener("scroll", onScroll, { passive: true });
     for (const type of RELEASE_EVENTS) window.addEventListener(type, release, { capture: true, passive: true });
     return release;
-  }, [composerOpen, detailThreadId, latestDisplayedMessageId]);
+  }, [composerOpen, detailThreadId, latestDisplayedMessageId, messageStackNode]);
 
   useLayoutEffect(() => {
     // Collapsing tall cards can leave Chrome's scroll offset beyond the new
@@ -214,6 +223,7 @@ export function useReaderState({
     setMessageExpansionOverrides,
     latestMessageRef,
     messageStackRef,
+    attachMessageStack,
     messageRefs,
     activeMessageIdRef,
     pendingMessageToggleFocusRef,

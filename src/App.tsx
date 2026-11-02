@@ -1209,7 +1209,7 @@ export function App() {
           <ContactCardContext.Provider value={contactCardActions}>
           <div
             className={`message-stack${correspondence.activeDraft && !composerBelongsToVisibleThread ? " draft-message-stack" : ""}`}
-            ref={visibleDetail && (!correspondence.activeDraft || composerBelongsToVisibleThread) ? messageStackRef : undefined}
+            ref={visibleDetail && (!correspondence.activeDraft || composerBelongsToVisibleThread) ? reader.attachMessageStack : undefined}
           >
             {visibleDetail && (!correspondence.activeDraft || composerBelongsToVisibleThread) ? displayedMessages.map((message, index) => {
                 const isLatest = index === displayedMessages.length - 1;

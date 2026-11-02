@@ -95,6 +95,8 @@ describe("useReaderState", () => {
       },
     });
     result.current.latestMessageRef.current = { scrollIntoView } as unknown as HTMLElement;
+    act(() => result.current.attachMessageStack(document.createElement("div")));
+    scrollIntoView.mockClear();
     rerender({
       selectedThreadId: "thread-2",
       detail: null,
@@ -118,6 +120,7 @@ describe("useReaderState", () => {
       },
     });
     result.current.latestMessageRef.current = { scrollIntoView } as unknown as HTMLElement;
+    act(() => result.current.attachMessageStack(document.createElement("div")));
     rerender({ selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen: false });
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
     act(() => {
@@ -151,6 +154,7 @@ describe("useReaderState", () => {
       },
     });
     result.current.latestMessageRef.current = { scrollIntoView } as unknown as HTMLElement;
+    act(() => result.current.attachMessageStack(document.createElement("div")));
     rerender({ selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen: false });
     const next = { ...detail, messages: [...detail.messages, message("newest")] };
     rerender({ selectedThreadId: "thread-1", detail: next, displayedMessages: next.messages, composerOpen: false });
@@ -173,6 +177,7 @@ describe("useReaderState", () => {
       },
     });
     result.current.latestMessageRef.current = { scrollIntoView } as unknown as HTMLElement;
+    act(() => result.current.attachMessageStack(document.createElement("div")));
     rerender({ selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen: false });
     rerender({ selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen: true });
     rerender({ selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen: false });
@@ -193,6 +198,7 @@ describe("useReaderState", () => {
       },
     });
     result.current.latestMessageRef.current = { scrollIntoView } as unknown as HTMLElement;
+    act(() => result.current.attachMessageStack(document.createElement("div")));
 
     rerender({ selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen });
 
@@ -216,6 +222,7 @@ describe("useReaderState", () => {
       },
     });
     result.current.latestMessageRef.current = { scrollIntoView } as unknown as HTMLElement;
+    act(() => result.current.attachMessageStack(document.createElement("div")));
     rerender({ selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen: true });
     expect(scrollIntoView).not.toHaveBeenCalled();
 
@@ -236,7 +243,7 @@ describe("useReaderState", () => {
       const scrollIntoView = vi.fn();
       function Reader() {
         const reader = useReaderState({ selectedThreadId: "thread-1", detail, displayedMessages: detail.messages, composerOpen: false });
-        return createElement("div", { ref: reader.messageStackRef, "data-testid": "stack" },
+        return createElement("div", { ref: reader.attachMessageStack, "data-testid": "stack" },
           createElement("article", { ref: (node: HTMLElement | null) => {
             if (node) {
               node.scrollIntoView = scrollIntoView;
@@ -303,7 +310,7 @@ describe("the message being read", () => {
     let reader!: ReturnType<typeof useReaderState>;
     function Reader() {
       reader = useReaderState({ selectedThreadId: "thread-1", detail: threeDetail, displayedMessages: three, composerOpen: false });
-      return createElement("div", { ref: reader.messageStackRef, "data-testid": "stack" },
+      return createElement("div", { ref: reader.attachMessageStack, "data-testid": "stack" },
         three.map((item) => createElement("article", { key: item.id, ref: (node: HTMLElement | null) => { if (node) reader.messageRefs.current.set(item.id, node); } })));
     }
     const view = render(createElement(Reader));
@@ -381,13 +388,14 @@ describe("returning to where the user stopped reading", () => {
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 0; });
     const scrollIntoView = vi.fn();
     let reader!: ReturnType<typeof useReaderState>;
-    function Reader({ selectedThreadId }: { selectedThreadId: string | null }) {
+    function Reader({ selectedThreadId, visible = true }: { selectedThreadId: string | null; visible?: boolean }) {
       const open = selectedThreadId === "thread-1";
       reader = useReaderState({ selectedThreadId, detail: open ? detail : null, displayedMessages: open ? detail.messages : [], composerOpen: false });
+      if (!visible) return null;
       return createElement("div", {
         "data-testid": "stack",
         ref: (node: HTMLDivElement | null) => {
-          reader.messageStackRef.current = node;
+          reader.attachMessageStack(node);
           if (!node) return;
           Object.defineProperty(node, "clientHeight", { configurable: true, value: 600 });
           Object.defineProperty(node, "scrollHeight", { configurable: true, value: 4300 });
@@ -427,6 +435,8 @@ describe("returning to where the user stopped reading", () => {
       scrollTo,
       current: () => reader,
       select: (selectedThreadId: string | null) => view.rerender(createElement(Reader, { selectedThreadId })),
+      show: (visible: boolean) => view.rerender(createElement(Reader, { selectedThreadId: "thread-1", visible })),
+      stackNow: () => view.getByTestId("stack"),
     };
   }
 
@@ -445,6 +455,37 @@ describe("returning to where the user stopped reading", () => {
         latestMessageId: "latest",
         anchor: { messageId: "latest", offset: 1800 },
       })]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("restores a remounted reader and keeps tracking its position with the same conversation loaded", () => {
+    try {
+      const reader = mountReader();
+      fireEvent.wheel(window);
+      reader.scrollTo(2100);
+      reader.show(false);
+      expect(reader.resize.disconnected).toBe(true);
+      reader.show(true);
+      const restored = reader.stackNow();
+      expect(restored).not.toBe(reader.stack);
+      expect(restored.scrollTop).toBe(2100);
+      restored.scrollTop = 400;
+      reader.resize.notify();
+      expect(restored.scrollTop).toBe(2100);
+
+      // Input and scroll listeners must follow the replacement host too.
+      fireEvent.wheel(window);
+      const rect = (top: number, bottom: number) => ({ top, bottom }) as DOMRect;
+      restored.getBoundingClientRect = () => rect(0, 600);
+      reader.current().messageRefs.current.get("older")!.getBoundingClientRect = () => rect(-2700, -2400);
+      reader.current().messageRefs.current.get("latest")!.getBoundingClientRect = () => rect(-2400, 1600);
+      restored.scrollTop = 2700;
+      act(() => { fireEvent.scroll(restored); });
+      reader.show(false);
+      reader.show(true);
+      expect(reader.stackNow().scrollTop).toBe(2700);
     } finally {
       vi.unstubAllGlobals();
     }
