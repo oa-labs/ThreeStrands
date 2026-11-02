@@ -234,6 +234,7 @@ export interface MailClient extends CorrespondenceClient {
   snoozeKeepInTouch(id: string, until: string | null): Promise<ContactProfile>;
   /** Logs a touch outside email at the current time, ending any snooze. */
   markContacted(id: string): Promise<ContactProfile>;
+  contactGroupTimeline(id: string, offset?: number, limit?: number, accountId?: string): Promise<ContactTimelineItem[]>;
   contactTimeline(id: string, offset?: number, limit?: number, accountId?: string): Promise<ContactTimelineItem[]>;
   /** Counts and timing of local correspondence with a saved id or `derived:<email>`. */
   contactActivity(id: string): Promise<ContactActivity>;
@@ -467,6 +468,7 @@ const tauriClient: MailClient = {
   setKeepInTouch: (ids, intervalDays) => complete("set_keep_in_touch", { ids, intervalDays }),
   snoozeKeepInTouch: (id, until) => complete("snooze_keep_in_touch", { id, until }),
   markContacted: (id) => complete("mark_contacted", { id }),
+  contactGroupTimeline: (id, offset = 0, limit = 30, accountId) => read("contact_group_timeline", { id, offset, limit, accountId }),
   contactTimeline: (id, offset = 0, limit = 30, accountId) => read("contact_timeline", { id, offset, limit, accountId }),
   contactActivity: (id) => read("contact_activity", { id }),
   senderHistory: (accountId, email, limit) => read("sender_history", { accountId, email, limit }),

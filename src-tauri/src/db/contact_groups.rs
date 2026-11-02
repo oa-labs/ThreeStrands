@@ -427,6 +427,61 @@ mod tests {
     }
 
     #[test]
+    fn group_timeline_pages_distinct_conversations_with_current_members_and_account_scope() {
+        use crate::db::test_support::{database, message};
+        let database = database();
+        database.adopt_account("you@example.com").unwrap();
+        database.adopt_account("other@example.com").unwrap();
+        let ada = contact(&database, "Ada", "ada@example.com");
+        let zed = contact(&database, "Zed", "zed@example.com");
+        database.with_connection(|connection| {
+            connection.execute("INSERT INTO contact_addresses(contact_id,email,position) VALUES(?1,'alias@example.com',1)", [&ada])?;
+            Ok(())
+        }).unwrap();
+        let group = database.create_contact_group("Board", &[ada.clone(), zed.clone()], &[]).unwrap().group;
+        let empty = database.create_contact_group("Empty", &[], &[]).unwrap().group;
+        let mut sent = message("group-sent", "group-thread", "2026-10-01T12:00:00Z", "sent to both members");
+        sent.from = "you@example.com".into();
+        sent.to = vec!["ADA@example.com".into(), "zed@example.com".into()];
+        let mut received = message("group-reply", "group-thread", "2026-10-03T12:00:00Z", "member reply");
+        received.from = "alias@example.com".into();
+        received.to = vec!["you@example.com".into()];
+        database.upsert_thread("you@example.com", &[sent, received]).unwrap();
+        let mut other = message("group-other", "other-thread", "2026-10-02T12:00:00Z", "other account");
+        other.from = "ada@example.com".into();
+        other.to = vec!["other@example.com".into()];
+        database.upsert_thread("other@example.com", &[other]).unwrap();
+        let mut outgoing = message("group-outgoing", "sent-thread", "2026-10-04T12:00:00Z", "sent using group");
+        outgoing.from = "you@example.com".into();
+        outgoing.to = vec!["ada@example.com".into(), "zed@example.com".into()];
+        database.upsert_thread("you@example.com", &[outgoing]).unwrap();
+        let unrelated = message("unrelated", "unrelated-thread", "2026-10-05T12:00:00Z", "not a member");
+        database.upsert_thread("you@example.com", &[unrelated]).unwrap();
+
+        let all = database.contact_group_timeline(&group.id, 0, 20, None).unwrap();
+        assert_eq!(all.iter().map(|item| item.thread_id.as_str()).collect::<Vec<_>>(), vec!["you@example.com:sent-thread", "you@example.com:group-thread", "other@example.com:other-thread"]);
+        assert_eq!(all[1].contact_email, "alias@example.com");
+        assert_eq!(all[1].sent_at, "2026-10-03T12:00:00Z");
+        for (index, expected) in all.iter().enumerate() {
+            let page = database.contact_group_timeline(&group.id, index, 1, None).unwrap();
+            assert_eq!(page.len(), 1);
+            assert_eq!(page[0].thread_id, expected.thread_id);
+        }
+        assert!(database.contact_group_timeline(&group.id, 3, 1, None).unwrap().is_empty());
+        assert_eq!(database.contact_group_timeline(&group.id, 0, 20, Some("you@example.com")).unwrap().len(), 2);
+        assert_eq!(database.contact_group_timeline(&group.id, 0, 20, Some("other@example.com")).unwrap().len(), 1);
+        assert!(database.contact_group_timeline(&empty.id, 0, 20, None).unwrap().is_empty());
+        assert!(database.contact_group_timeline("missing", 0, 20, None).unwrap().is_empty());
+        database.remove_contact_group_members(&group.id, &[ada]).unwrap();
+        let remaining = database.contact_group_timeline(&group.id, 0, 20, None).unwrap();
+        assert_eq!(remaining.len(), 2);
+        assert_eq!(remaining[1].contact_email, "zed@example.com");
+        assert_eq!(remaining[1].sent_at, "2026-10-01T12:00:00Z");
+        database.remove_contact_group_members(&group.id, &[zed]).unwrap();
+        assert!(database.contact_group_timeline(&group.id, 0, 20, None).unwrap().is_empty());
+    }
+
+    #[test]
     fn groups_round_trip_with_members_listed_by_name() {
         let database = Database::open_memory();
         let zed = contact(&database, "Zed", "zed@example.com");
