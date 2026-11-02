@@ -90,7 +90,7 @@ export const Composer = forwardRef<ComposerHandle, {
   const busyRef = useRef(false);
   // The draft account's ordered sending identities, for the From picker.
   // Fetched when the account changes; cached per account. A failed fetch
-  // leaves this empty (the picker is hidden) and never blocks sending.
+  // leaves aliases out of the picker and never blocks sending.
   const [identities, setIdentities] = useState<SendingIdentity[]>([]);
   const identityCache = useRef(new Map<string, SendingIdentity[]>());
   const [showBlankCopies, setShowBlankCopies] = useState(false);
@@ -179,7 +179,7 @@ export const Composer = forwardRef<ComposerHandle, {
   }
   function changeAccount(email: string) {
     if (email === latest.current.account) return;
-    // Switching the account resets the From picker: the new account's
+    // Switching the account resets its aliases: the new account's
     // identities are refetched by the effect below, and the backend clears
     // any stale `from` on the moved draft.
     setIdentities([]);
@@ -474,18 +474,21 @@ export const Composer = forwardRef<ComposerHandle, {
           if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
         }
       }}>
-      <header className="composer-header"><div><h2>{initial.mode === "new" ? "New Message" : initial.mode === "forward" ? "Forward" : initial.mode === "replyAll" ? "Reply All" : "Reply"}</h2>{initial.mode === "new" && accounts.length > 1 ? (
-        <label className="compose-from"><span>From</span><select aria-label="Send From" value={draft.account} disabled={busy} onChange={(e) => changeAccount(e.target.value)}>
-          {accounts.map((a) => <option key={a.email} value={a.email}>{a.email}</option>)}
-        </select></label>
-      ) : <span>From {draft.from ?? draft.account}</span>}{identities.length > 1 || (identities.length > 0 && draft.from && !identities.some((identity) => identity.address.toLowerCase() === draft.from?.toLowerCase())) ? (
-        <label className="compose-from compose-sending-address"><span>Sending Address</span>
-          <select aria-label="Sending Address" value={draft.from ?? identities[0].address} disabled={busy} onChange={(e) => changeFrom(e.target.value)}>
-            {draft.from && !identities.some((identity) => identity.address.toLowerCase() === draft.from?.toLowerCase()) ? <option value={draft.from} disabled>{draft.from} (unavailable)</option> : null}
-            {identities.map((identity) => <option key={identity.address} value={identity.address}>{identity.displayName ? `${identity.displayName} <${identity.address}>` : identity.address}</option>)}
+      <header className="composer-header"><div><h2>{initial.mode === "new" ? "New Message" : initial.mode === "forward" ? "Forward" : initial.mode === "replyAll" ? "Reply All" : "Reply"}</h2>{(initial.mode === "new" && accounts.length > 1) || identities.length > 1 || (identities.length > 0 && draft.from) ? (
+        <label className="compose-from"><span>From</span>
+          <select aria-label="Send From" value={draft.from ? `identity:${draft.from}` : draft.account} disabled={busy} onChange={(e) => {
+            const value = e.target.value;
+            if (value.startsWith("identity:")) changeFrom(value.slice("identity:".length));
+            else if (value === draft.account) changeFrom(value);
+            else changeAccount(value);
+          }}>
+            {draft.from && !identities.some((identity) => identity.address.toLowerCase() === draft.from?.toLowerCase()) ? <option value={`identity:${draft.from}`} disabled>{draft.from} (unavailable)</option> : null}
+            <option value={draft.account}>{draft.account}</option>
+            {identities.filter((identity) => identity.address.toLowerCase() !== draft.account.toLowerCase()).map((identity) => <option key={identity.address} value={`identity:${identity.address}`}>{identity.displayName ? `${identity.displayName} <${identity.address}>` : identity.address}</option>)}
+            {initial.mode === "new" ? accounts.filter((account) => account.email !== draft.account).map((account) => <option key={account.email} value={account.email}>{account.email}</option>) : null}
           </select>
         </label>
-      ) : null}</div><button className="btn-icon" aria-label="Save and Close Draft" onClick={close} disabled={busy}><X size={ICON_SIZE.lg} /></button></header>
+      ) : <span>From {draft.from ?? draft.account}</span>}</div><button className="btn-icon" aria-label="Save and Close Draft" onClick={close} disabled={busy}><X size={ICON_SIZE.lg} /></button></header>
       <div className="composer-content">
         <RecipientField id="to" label="To" value={draft.to} context={recipientContext} onCommittedChange={reportCommittedRecipients} account={draft.account} disabled={busy} labelExpanded={showBlankCopies} onLabelClick={() => setShowBlankCopies((visible) => !visible)} onChange={(value) => edit("to", value)} />
         {(["cc", "bcc"] as const).map((field) => (

@@ -21,24 +21,24 @@ test("Gmail defaults and selected aliases survive saving and reopening a draft",
   await installAliasFixture(page);
   await page.keyboard.press("c");
   const composer = page.getByRole("dialog", { name: "New Message" });
-  const from = composer.getByRole("combobox", { name: "Sending Address" });
-  await expect(from).toHaveValue("work@example.org");
+  const from = composer.getByRole("combobox", { name: "Send From" });
+  await expect(from).toHaveValue("identity:work@example.org");
   await composer.getByRole("textbox", { name: "To", exact: true }).fill("recipient@example.net");
   await composer.getByRole("textbox", { name: "Subject" }).fill("Alias persistence");
-  await from.selectOption("support@example.org");
-  await expect(from).toHaveValue("support@example.org");
+  await from.selectOption("identity:support@example.org");
+  await expect(from).toHaveValue("identity:support@example.org");
   await composer.getByRole("button", { name: "Save and Close Draft" }).click();
   await page.getByRole("button", { name: /Choose folder, current folder/ }).click();
   await page.getByRole("group", { name: "Folders" }).getByRole("button", { name: /Drafts/ }).click();
   await page.getByRole("option", { name: /Alias persistence/ }).click();
-  await expect(from).toHaveValue("support@example.org");
+  await expect(from).toHaveValue("identity:support@example.org");
 });
 
 test("a Gmail reply uses the addressed alias and leaves own aliases out of Reply All", async ({ page }) => {
   await installAliasFixture(page);
   await page.keyboard.press("a");
   const composer = page.getByRole("dialog", { name: "Reply Message" });
-  await expect(composer.getByRole("combobox", { name: "Sending Address" })).toHaveValue("support@example.org");
+  await expect(composer.getByRole("combobox", { name: "Send From" })).toHaveValue("identity:support@example.org");
   await expect(composer.getByRole("button", { name: "Remove Customer", exact: true })).toBeVisible();
   await expect(composer.getByRole("button", { name: /^Remove / })).toHaveCount(1);
 });

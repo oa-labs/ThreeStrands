@@ -454,9 +454,9 @@ test("switches accounts from the keyboard and palette, and disconnecting one lea
   const from = composer.getByRole("combobox", { name: "Send From" });
   const subject = composer.getByRole("textbox", { name: "Subject" });
   await expect(from).toHaveValue("demo@example.com");
-  // From and Subject share the app-wide control height (--control-h), the same as buttons.
+  // From uses the compact control height; Subject keeps the standard height.
   await expect(from).toHaveCSS("box-sizing", "border-box");
-  await expect(from).toHaveCSS("height", "34px");
+  await expect(from).toHaveCSS("height", "28px");
   await expect(subject).toHaveCSS("box-sizing", "border-box");
   await expect(subject).toHaveCSS("height", "34px");
   await from.selectOption("demo-2@example.com");

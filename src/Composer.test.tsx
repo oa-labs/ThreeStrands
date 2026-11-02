@@ -2309,7 +2309,7 @@ describe("Composer sending-address picker", () => {
     vi.spyOn(mailClient, "listIdentities").mockResolvedValue([{ address: "me@proton.me" }]);
     render(<Composer draft={imapDraft} accounts={imapAccounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     await waitFor(() => expect(mailClient.listIdentities).toHaveBeenCalledWith("me@proton.me"));
-    expect(screen.queryByRole("combobox", { name: "Sending Address" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Send From" })).not.toBeInTheDocument();
   });
 
   it.each(["new", "reply"] as const)("shows the picker with several identities (%s mode) and sets from", async (mode) => {
@@ -2317,10 +2317,24 @@ describe("Composer sending-address picker", () => {
     vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
     const setDraftFrom = vi.spyOn(mailClient, "setDraftFrom").mockResolvedValue({ ...imapDraft, mode, revision: 5, from: "work@proton.me" });
     render(<Composer draft={{ ...imapDraft, mode }} accounts={imapAccounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    const picker = await screen.findByRole("combobox", { name: "Sending Address" });
+    const picker = await screen.findByRole("combobox", { name: "Send From" });
     expect(within(picker).getByRole("option", { name: "Work <work@proton.me>" })).toBeInTheDocument();
-    await act(async () => { fireEvent.change(picker, { target: { value: "work@proton.me" } }); });
+    await act(async () => { fireEvent.change(picker, { target: { value: "identity:work@proton.me" } }); });
     await waitFor(() => expect(setDraftFrom).toHaveBeenCalledWith("draft-1", "work@proton.me"));
+  });
+
+  it("combines accounts and aliases in one From menu and clears the alias when changing accounts", async () => {
+    vi.spyOn(mailClient, "listIdentities").mockImplementation(async (account) => account === imapDraft.account ? twoIdentities : [{ address: "other@example.com" }]);
+    const setAccount = vi.spyOn(mailClient, "setDraftAccount").mockResolvedValue({ ...imapDraft, account: "other@example.com", from: null, revision: 5 });
+    render(<Composer draft={{ ...imapDraft, from: "work@proton.me" }} accounts={[...imapAccounts, { ...imapAccounts[0], email: "other@example.com" }]} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
+    const picker = await screen.findByRole("combobox", { name: "Send From" });
+    await waitFor(() => expect(within(picker).getByRole("option", { name: "Work <work@proton.me>" })).toBeInTheDocument());
+    expect(screen.getAllByRole("combobox", { name: /From|Sending Address/ })).toHaveLength(1);
+    expect(picker).toHaveValue("identity:work@proton.me");
+    fireEvent.change(picker, { target: { value: "other@example.com" } });
+    await waitFor(() => expect(setAccount).toHaveBeenCalledWith(imapDraft.id, "other@example.com"));
+    await waitFor(() => expect(picker).toHaveValue("other@example.com"));
+    expect(within(picker).queryByRole("option", { name: "Work <work@proton.me>" })).not.toBeInTheDocument();
   });
 
   it("stores null when the primary identity is chosen", async () => {
@@ -2328,7 +2342,7 @@ describe("Composer sending-address picker", () => {
     vi.spyOn(mailClient, "saveDraft").mockImplementation(async (next) => ({ ...next, revision: next.revision + 1 }));
     const setDraftFrom = vi.spyOn(mailClient, "setDraftFrom").mockResolvedValue({ ...imapDraft, revision: 5, from: null });
     render(<Composer draft={{ ...imapDraft, from: "work@proton.me" }} accounts={imapAccounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    const picker = await screen.findByRole("combobox", { name: "Sending Address" });
+    const picker = await screen.findByRole("combobox", { name: "Send From" });
     await act(async () => { fireEvent.change(picker, { target: { value: "me@proton.me" } }); });
     await waitFor(() => expect(setDraftFrom).toHaveBeenCalledWith("draft-1", null));
   });
@@ -2336,16 +2350,16 @@ describe("Composer sending-address picker", () => {
   it("shows the draft's chosen from in the picker value", async () => {
     vi.spyOn(mailClient, "listIdentities").mockResolvedValue(twoIdentities);
     render(<Composer draft={{ ...imapDraft, from: "work@proton.me" }} accounts={imapAccounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    const picker = await screen.findByRole("combobox", { name: "Sending Address" }) as HTMLSelectElement;
-    expect(picker.value).toBe("work@proton.me");
+    const picker = await screen.findByRole("combobox", { name: "Send From" }) as HTMLSelectElement;
+    expect(picker.value).toBe("identity:work@proton.me");
   });
 
   it("keeps a removed Gmail alias visible and allows choosing the primary address", async () => {
     vi.spyOn(mailClient, "listIdentities").mockResolvedValue([{ address: draft.account }]);
     const setFrom = vi.spyOn(mailClient, "setDraftFrom").mockResolvedValue({ ...draft, from: null, revision: 5 });
     render(<Composer draft={{ ...draft, from: "removed@example.org" }} accounts={accounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
-    const picker = await screen.findByRole("combobox", { name: "Sending Address" });
-    expect(picker).toHaveValue("removed@example.org");
+    const picker = await screen.findByRole("combobox", { name: "Send From" });
+    expect(picker).toHaveValue("identity:removed@example.org");
     expect(screen.getByRole("option", { name: "removed@example.org (unavailable)" })).toBeDisabled();
     fireEvent.change(picker, { target: { value: draft.account } });
     await waitFor(() => expect(setFrom).toHaveBeenCalledWith(draft.id, null));
@@ -2357,7 +2371,7 @@ describe("Composer sending-address picker", () => {
     await waitFor(() => expect(list).toHaveBeenCalled());
     list.mockResolvedValue([{ address: draft.account }, { address: "work@example.org", displayName: "Work" }]);
     act(() => { window.dispatchEvent(new CustomEvent("threestrands:sending-identities-changed", { detail: draft.account })); });
-    expect(await screen.findByRole("combobox", { name: "Sending Address" })).toHaveValue(draft.account);
+    expect(await screen.findByRole("combobox", { name: "Send From" })).toHaveValue(draft.account);
     expect(screen.getByRole("option", { name: "Work <work@example.org>" })).toBeInTheDocument();
   });
 
@@ -2365,7 +2379,7 @@ describe("Composer sending-address picker", () => {
     vi.spyOn(mailClient, "listIdentities").mockRejectedValue(new Error("offline"));
     render(<Composer draft={imapDraft} accounts={imapAccounts} {...snippetProps} onClose={() => {}} onQueued={() => {}} />);
     await waitFor(() => expect(mailClient.listIdentities).toHaveBeenCalled());
-    expect(screen.queryByRole("combobox", { name: "Sending Address" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Send From" })).not.toBeInTheDocument();
     // Send is still available (not disabled by the failed fetch).
     expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
   });

@@ -3290,8 +3290,10 @@ input::placeholder { color: var(--muted); opacity: 1; }
 .composer header span { display: block; margin-top: var(--space-1); color: var(--muted); font-size: var(--text-secondary); }
 .compose-from { display: flex; align-items: center; gap: var(--space-1-5); margin-top: var(--space-1); }
 .compose-from span { margin-top: 0; }
-/* An inline picker in the composer header: control text on the raised surface. */
-.compose-from select { font-size: var(--text-control); background-color: var(--raised); border-color: var(--border); }
+.composer-header > div { min-width: 0; }
+/* Keep From subordinate to the message title and within narrow panes. */
+.compose-from select { min-width: 0; max-width: 100%; height: var(--control-h-sm); font-size: var(--text-control); background-color: transparent; border-color: transparent; }
+.compose-from select:hover, .compose-from select:focus-visible { border-color: var(--border); }
 .composer-content { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: auto; padding: 0 var(--pane-inset); }
 .compose-field { display: flex; align-items: center; gap: var(--space-3); min-height: 38px; border-bottom: 1px solid var(--border); font-size: var(--text-body); flex-shrink: 0; }
 .compose-field:focus-within { border-bottom-color: var(--accent); }
