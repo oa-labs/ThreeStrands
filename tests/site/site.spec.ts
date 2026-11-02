@@ -74,11 +74,12 @@ test.describe("feature claims", () => {
     await expect(tour).toContainText("mark it achieved, drop it, or carry it forward");
     const roadmap = page.locator("#roadmap");
     await expect(roadmap.getByRole("heading", { level: 3 })).toHaveText([
-      "Snooze", "Sending Aliases",
       "Connected Address Books", "Smarter Inbox Rules", "Microsoft 365",
       "Encrypted Sync Reliability", "Shared and Mobile Workflows",
     ]);
-    await expect(roadmap).toContainText("verified Gmail aliases");
+    await expect(tour).toContainText("Snooze a conversation");
+    await expect(tour).toContainText("verified Gmail alias");
+    await expect(roadmap).not.toContainText("Sending Aliases");
     await expect(roadmap).not.toContainText("Drafts Across Devices");
     await expect(roadmap).toContainText("Google Contacts and CardDAV address books connected with ongoing synchronization");
     await expect(roadmap).toContainText("CSV and vCard import and export are available today");
@@ -220,7 +221,9 @@ test.describe("feature claims", () => {
     const exportStamp = stamps.locator("li").filter({ has: page.getByRole("heading", { name: "Encrypted Settings Export", exact: true }) });
     await expect(exportStamp).toContainText("Mail, drafts, queued sends, and credentials stay behind");
     const sync = stamps.locator("li").filter({ has: page.getByRole("heading", { name: "Encrypted Sync", exact: true }) });
-    await expect(sync).toContainText("Sync drafts, tasks, goals, saved contacts");
+    await expect(sync).toContainText("Sync tasks, goals, saved contacts");
+    await expect(sync).toContainText("Drafts travel through your Gmail or IMAP Drafts folder, attachments included");
+    await expect(sync).not.toContainText("Sync drafts");
     await expect(sync).toContainText("Mail, attachment files, queued send payloads");
     await expect(sync).toContainText("Scheduled-send summaries share the account, subject, timing, sending computer, and last reported status");
     await expect(sync).toContainText("queued send payloads, and provider credentials stay on each device");
@@ -633,6 +636,7 @@ test.describe("docs", () => {
       for (const match of doc.html.matchAll(/href="([\w-]+)\.html#([^"]+)"/g)) validate(match[1]!, match[2]);
     }
     for (const id of ["today", "search", "files", "trust-and-attachment-warnings"]) validate("triage", id);
+    validate("compose", "suggestions-for-people-you-email-together");
     validate("getting-started", "proton-mail-bridge");
     validate("settings-and-sync", "replicated-sync");
     const transfer = docs.get("settings-and-sync")!.html;

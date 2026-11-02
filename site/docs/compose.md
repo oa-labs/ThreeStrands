@@ -2,7 +2,7 @@
 title: Writing Mail
 nav: Writing Mail
 summary: Write with rich text and snippets, keep context beside your draft, catch mistakes before you send, and undo or schedule delivery.
-reviewed: 0.191.0
+reviewed: 0.194.0
 ---
 
 ## Start a Message {#start-a-message}
@@ -14,6 +14,15 @@ In a reply, click **···** below your message to show the quoted text, which y
 Drafts save automatically. On Gmail accounts they also save to your Gmail **Drafts**, and on IMAP accounts, including Proton Mail Bridge, to the account's Drafts mailbox, a few seconds after you stop typing. You can finish them in your mail provider's apps or in ThreeStrands on another computer, attachments included. Drafts you write in another app appear in **Drafts** here within a minute, and on Gmail a reply you started elsewhere shows at the end of its conversation with **Resume Draft**. If a draft changes both here and somewhere else before either is saved, the composer asks which version to keep. An IMAP account without a Drafts mailbox keeps its drafts on this computer. Press <kbd>Escape</kbd> to close the composer and keep the draft in **Drafts** (<kbd>g</kbd> then <kbd>d</kbd>).
 
 <ts-shot scene="reply" alt="Replying to a conversation, with recipient history and related tasks in the panel beside the draft."></ts-shot>
+
+## Recipient Suggestions {#suggestions-for-people-you-email-together}
+
+After you add someone, recipient suggestions prioritize people you often email
+alongside the To and Cc recipients. Focus an empty recipient field to see
+suggestions, or type to search. A suggestion adds a person only when you choose
+it. Bcc recipients do not influence these recommendations, and Bcc history is
+excluded. The ranking uses cached sent-mail headers on this device; suggestions
+can differ between devices with different cached history.
 
 ## Formatting {#formatting}
 
@@ -84,12 +93,3 @@ On a message you sent, click **Edit as New** beside **Forward**, or press <kbd>S
 ## Outbox {#outbox}
 
 The **Outbox** (<kbd>g</kbd> then <kbd>o</kbd>) holds mail that has not finished sending: the undo window, scheduled sends, and messages that failed or need a delivery check. Finished sends move to **Sent**. Select an item to read it with its delivery status and actions above the message. From there you can reschedule, return a message to drafts, or send it now. If ThreeStrands can't confirm that a message was delivered, it offers **Check Sent Mail** rather than sending it again.
-
-### Suggestions for people you email together
-
-After you add someone, recipient suggestions prioritize people you often email
-alongside the To and Cc recipients. Focus an empty recipient field to see
-suggestions, or type to search. A suggestion adds a person only when you choose
-it. Bcc recipients do not influence these recommendations, and Bcc history is
-excluded. The ranking uses cached sent-mail headers on this device; suggestions
-can differ between devices with different cached history.

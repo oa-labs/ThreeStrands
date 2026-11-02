@@ -2,7 +2,7 @@
 title: Get Help
 nav: Get Help
 summary: Find the right guide and report a problem without exposing private mail or credentials.
-reviewed: 0.179.0
+reviewed: 0.194.0
 ---
 
 ## Find an Answer {#find-an-answer}
@@ -19,7 +19,7 @@ In the app, open the command palette with <kbd>⌘/Ctrl + k</kbd> and choose **H
 - The affected feature and provider type, such as Gmail, IMAP, or Google Calendar.
 - What you expected, what happened, and the shortest steps that reproduce it.
 - Whether the provider's own app shows the same problem.
-- A redacted error from **Settings → Diagnostics**, if relevant.
+- A redacted error from **Settings → Diagnostics**, if relevant. For AI failures or hidden suggestions, follow [AI diagnostics](troubleshooting.html#ai-diagnostics) and include the rejection reason, provider, model, and request reference from the affected computer.
 
 Review everything before posting: issues are public. Remove private message text, subjects, addresses, attachments, access tokens, API keys, passwords, storage credentials, join codes, and recovery phrases. A screenshot can expose unrelated mail; crop and redact it yourself before sharing.
 

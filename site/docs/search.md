@@ -2,7 +2,7 @@
 title: Search Your Mail
 nav: Search
 summary: Find messages locally and on the server with examples, operators, and search suggestions.
-reviewed: 0.179.0
+reviewed: 0.194.0
 ---
 
 ## Start a Search {#start-a-search}
@@ -10,6 +10,8 @@ reviewed: 0.179.0
 Press <kbd>/</kbd> to search. Search looks through all your mail, including archived conversations, and shows results from this computer right away. When you stop typing, it also asks the server for older mail. Results still in your inbox are marked **Inbox**. Click **Inbox Only** to search just your inbox. Trash and Spam are left out unless you add `in:trash`, `in:spam`, or `in:anywhere`.
 
 You can narrow a search with `from:`, `to:`, `subject:`, `before:` and `after:` (YYYY/MM/DD), `is:unread`, `is:starred`, `label:`, `in:`, and `has:attachment`. `to:` also finds mail where the person was on Cc or Bcc. Put a minus in front of a term to leave it out (`invoice -from:billing@example.com`), and use `OR` or braces for either-or (`from:ana OR from:bo`, or `{from:ana from:bo}`). As you type, suggestions appear below the search box: operator names, people from your contacts after `from:` or `to:` (choosing someone with more than one address searches all of them), your labels after `label:` or `in:`, and dates like **Past month** after `after:` or `before:`. Use the arrow keys and <kbd>Enter</kbd>, or click, to choose one. <kbd>Escape</kbd> closes the suggestions, and a second <kbd>Escape</kbd> clears the search. Click the empty search box to see your recent searches, which stay on this computer.
+
+Your active mail search stays in place when you visit Contacts or another view. Return to Mail to continue searching; the search box regains focus. Click **Close Search** to clear the search and return to your inbox.
 
 
 ## Search Examples {#search-examples}
