@@ -68,6 +68,16 @@ describe("SearchField", () => {
     expect(props.onCommit).not.toHaveBeenCalled();
   });
 
+  it("closes from the visible button without committing a pending draft", () => {
+    const { input, props } = renderField("Welcome");
+    fireEvent.change(input, { target: { value: "roadmap" } });
+    fireEvent.click(screen.getByRole("button", { name: "Close Search" }));
+    expect(input).toHaveValue("");
+    expect(props.onEscape).toHaveBeenCalledOnce();
+    act(() => { vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS); });
+    expect(props.onCommit).not.toHaveBeenCalled();
+  });
+
   it("turns off inline predictions so a single Escape reaches the field", () => {
     const { input } = renderField();
     expect(input).toHaveAttribute("writingsuggestions", "false");

@@ -399,6 +399,9 @@ impl Database {
             let mut candidates: Vec<_> = profiles
                 .iter()
                 .filter(|p| !group.member_ids.contains(&p.id))
+                // A group uses the primary address. Do not promote a hidden
+                // primary through relationship evidence on a secondary address.
+                .filter(|p| !p.addresses.first().is_some_and(|a| hidden.contains(a)))
                 .filter_map(|profile| {
                     let best = profile
                         .addresses

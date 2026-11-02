@@ -312,6 +312,18 @@ pub(crate) async fn contact_timeline(
 }
 
 #[tauri::command]
+pub(crate) async fn contact_group_timeline(
+    id: String,
+    offset: usize,
+    limit: usize,
+    account_id: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<ContactTimelineItem>> {
+    let database = state.database.clone();
+    run_database_task(move || database.contact_group_timeline(&id, offset, limit, account_id.as_deref())).await
+}
+
+#[tauri::command]
 pub(crate) async fn contact_activity(id: String, state: State<'_, AppState>) -> AppResult<ContactActivity> {
     let database = state.database.clone();
     run_database_task(move || database.contact_activity(&id)).await

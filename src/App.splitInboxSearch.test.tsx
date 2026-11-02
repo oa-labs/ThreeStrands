@@ -294,6 +294,29 @@ describe("split inbox search shortcuts", () => {
     }
   });
 
+  it("keeps mail search visible and dismissible after visiting Contacts", async () => {
+    const searchThreads = vi.spyOn(mailClient, "searchThreads");
+    render(<App />);
+    await screen.findByRole("button", { name: "Choose folder, current folder Inbox" });
+    fireEvent.keyDown(window, { key: "/" });
+    const search = await screen.findByRole("textbox", { name: "Search Mail" });
+    fireEvent.change(search, { target: { value: "Welcome" } });
+    await waitFor(() => expect(searchThreads).toHaveBeenCalledWith(
+      expect.objectContaining({ query: "Welcome" }), undefined,
+    ));
+
+    fireEvent.click(screen.getByRole("button", { name: "Contacts (4)" }));
+    expect(screen.queryByRole("textbox", { name: "Search Mail" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Inbox (1)" }));
+    const restoredSearch = screen.getByRole("textbox", { name: "Search Mail" });
+    expect(restoredSearch).toBeVisible();
+    expect(restoredSearch).toHaveValue("Welcome");
+    expect(restoredSearch).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Close Search" }));
+    expect(screen.queryByRole("textbox", { name: "Search Mail" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByRole("option").length).toBeGreaterThan(1));
+  });
+
   it("autocompletes contacts and labels from the account being searched", async () => {
     localStorage.setItem("threestrands.settings.selectedAccountId", "demo@example.com");
     vi.spyOn(mailClient, "listLabels").mockResolvedValue([

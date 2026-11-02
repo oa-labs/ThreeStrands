@@ -384,8 +384,8 @@ export function App() {
   }, [correspondence.sentCount, loadThreadsRef, queryRef]);
 
   useEffect(() => {
-    if (searchOpen && isTabbedMailbox) searchRef.current?.focus();
-  }, [isTabbedMailbox, searchOpen]);
+    if (rightWorkspace === null && searchOpen && isTabbedMailbox) searchRef.current?.focus();
+  }, [rightWorkspace, isTabbedMailbox, searchOpen]);
 
   const { triageSessionRef, recordTriageEvent } = useTriageSession({ visibleDetail, mailbox, includeArchived, messageStackRef });
   const mutateIds = useThreadMutations({

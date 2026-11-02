@@ -1473,6 +1473,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::contacts::snooze_keep_in_touch,
         commands::contacts::mark_contacted,
         commands::contacts::contact_timeline,
+        commands::contacts::contact_group_timeline,
         commands::contacts::contact_activity,
         commands::contacts::sender_history,
         commands::contacts::message_trust,

@@ -437,6 +437,31 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
   function compareRelations(a: { relatedTo: string[]; strength: number } | undefined, b: { relatedTo: string[]; strength: number } | undefined) {
     return (b?.relatedTo.length ?? 0) - (a?.relatedTo.length ?? 0) || (b?.strength ?? 0) - (a?.strength ?? 0);
   }
+  async function timelineForAddresses(addresses: string[], offset: number, limit: number, accountId?: string): Promise<ContactTimelineItem[]> {
+    const target = new Set(addresses.map((address) => address.toLocaleLowerCase()));
+    const items: ContactTimelineItem[] = [];
+    for (const thread of threads) {
+      if (accountId && thread.accountId !== accountId) continue;
+      const detail = await client.getThread(thread.id);
+      const matching = detail.messages.flatMap((message) => {
+        const sender = parseAddress(message.sender).email.toLocaleLowerCase();
+        const contactEmail = sender === thread.accountId.toLocaleLowerCase()
+          ? message.recipients.flatMap(splitAddressList).map((raw) => parseAddress(raw).email.toLocaleLowerCase()).find((address) => target.has(address))
+          : target.has(sender) ? sender : undefined;
+        return contactEmail ? [{ contactEmail, sentAt: message.sentAt }] : [];
+      }).sort((left, right) => right.sentAt.localeCompare(left.sentAt))[0];
+      if (matching) items.push({ threadId: thread.id, accountId: thread.accountId, contactEmail: matching.contactEmail, subject: thread.subject, snippet: thread.snippet, sentAt: matching.sentAt, labels: thread.labels });
+    }
+    items.sort((a,b) => b.sentAt.localeCompare(a.sentAt));
+    const seen = new Set<string>();
+    const unique = items.filter(item => {
+      if (seen.has(item.threadId)) return false;
+      seen.add(item.threadId);
+      return true;
+    });
+    return structuredClone(unique.slice(offset, offset + limit));
+  }
+
   const client: MailClient = {
     ...demoCorrespondence(threadForMessage, () => accounts[0]?.email ?? DEMO_ACCOUNT_ID, (account) => seed.sendingIdentities?.[account] ?? [{ address: account }]),
     async listThreads(accountId) {
@@ -770,7 +795,7 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       const profiles = await this.listContactProfiles("", 5000);
       const seeds = [...emails, ...profiles.filter((p) => group.memberIds.includes(p.id) || selectedIds.includes(p.id)).flatMap((p) => p.addresses)];
       const relations = relatedContacts(undefined, seeds);
-      const ranked = profiles.filter((p) => !group.memberIds.includes(p.id)).flatMap((p) => {
+      const ranked = profiles.filter((p) => !group.memberIds.includes(p.id) && !suppressedContacts.has(p.addresses[0])).flatMap((p) => {
         const best = p.addresses.filter((email) => !suppressedContacts.has(email)).map((email) => relations.get(email)).filter((item) => item != null).sort(compareRelations)[0];
         return best ? [{ id: p.id, favorite: p.favorite, ...best }] : [];
       });
@@ -1011,25 +1036,15 @@ export function createDemoClient(dataset: DemoDataset): MailClient {
       const tasks = await this.listTasks();
       return tasks.filter((task) => task.threadId && threadIds.has(task.threadId) && (task.status === "open" || task.status === "in_progress"));
     },
+    async contactGroupTimeline(id, offset = 0, limit = 30, accountId) {
+      const group = (await client.listContactGroups()).find((item) => item.id === id);
+      const members = await Promise.all((group?.memberIds ?? []).map((memberId) => client.getContactProfile(memberId)));
+      return timelineForAddresses(members.flatMap((member) => member?.addresses ?? []), offset, Math.min(100, Math.max(1, limit)), accountId);
+    },
     async contactTimeline(id, offset = 0, limit = 30, accountId): Promise<ContactTimelineItem[]> {
       const profile = await client.getContactProfile(id);
       if (!profile) return [];
-      const target = new Set(profile.addresses.map((address) => address.toLocaleLowerCase()));
-      const items: ContactTimelineItem[] = [];
-      for (const thread of threads) {
-        if (accountId && thread.accountId !== accountId) continue;
-        const detail = await client.getThread(thread.id);
-        const matching = detail.messages.flatMap((message) => {
-          const sender = parseAddress(message.sender).email.toLocaleLowerCase();
-          const contactEmail = sender === thread.accountId.toLocaleLowerCase()
-            ? message.recipients.flatMap(splitAddressList).map((raw) => parseAddress(raw).email.toLocaleLowerCase()).find((address) => target.has(address))
-            : target.has(sender) ? sender : undefined;
-          return contactEmail ? [{ contactEmail, sentAt: message.sentAt }] : [];
-        }).sort((left, right) => right.sentAt.localeCompare(left.sentAt))[0];
-        if (matching) items.push({ threadId: thread.id, accountId: thread.accountId, contactEmail: matching.contactEmail, subject: thread.subject, snippet: thread.snippet, sentAt: matching.sentAt, labels: thread.labels });
-      }
-      items.sort((a,b) => b.sentAt.localeCompare(a.sentAt));
-      return structuredClone(items.slice(offset, offset + limit));
+      return timelineForAddresses(profile.addresses, offset, limit, accountId);
     },
     async contactActivity(id): Promise<ContactActivity> {
       const profile = await client.getContactProfile(id);

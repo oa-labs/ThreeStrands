@@ -406,6 +406,21 @@ fn group_profile_ranking_uses_secondary_addresses_and_shared_accounts_without_sa
         .unwrap()
         .member_ids
         .is_empty());
+    db.with_connection(|c| {
+        c.execute(
+            "INSERT INTO contact_suggestion_suppressions(email) VALUES('bob@example.com')",
+            [],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    assert!(
+        !db.rank_contact_group_candidates(&alice.id, &[], &[])
+            .unwrap()
+            .iter()
+            .any(|item| item.id == bob.member_ids[0]),
+        "Secondary-address evidence must not promote a hidden primary address"
+    );
 }
 
 #[test]

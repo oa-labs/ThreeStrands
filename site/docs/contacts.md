@@ -29,6 +29,12 @@ Use **Refresh now** to update immediately; automatic refresh runs every two minu
 
 Click **New Group** to create one, then **Add Members**. **Email Group** starts a new message to everyone in the group. Typing a group's name in To or Cc also offers the whole group, which expands into individual recipients.
 
+When you choose **Add Members**, existing members and your pending selections
+help prioritize people you often email together. Recommendations use cached
+sent-mail history across accounts on this device, and never select or save a
+member for you. Different devices may suggest different people; learned
+relationships are excluded from encrypted sync.
+
 ## Keep in Touch {#keep-in-touch}
 
 Set a **Keep in Touch** frequency on a profile, from weekly to yearly or a custom number of days. Email in either direction counts as being in touch. The Keep in Touch view groups people as Overdue, Due Today, This Week, and Later, and shows upcoming birthdays.

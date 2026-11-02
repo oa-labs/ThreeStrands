@@ -1,6 +1,6 @@
 # Co-recipient contact suggestions
 
-**Status:** Implemented for 0.194.0; automated verification complete before integration with latest master.
+**Status:** Implemented for 0.194.0; automated verification complete against master at 0.193.1.
 **Planned:** 2026-11-01 against 0.192.2.
 
 **Sync decision:** Learned evidence, scores, and backfill progress remain local.
@@ -197,3 +197,25 @@ the current identity list, so alias refreshes need no bulk reindex. Backfill use
 a resumable primary-key cursor in device-local storage. Missing individual
 message labels fall back conservatively to cached thread labels. No score cache
 or replicated ranking entity is introduced.
+
+
+## Verification results
+
+- `pnpm test`: 3,139 tests passed across 212 files.
+- `cargo test` in `src-tauri`: 2,034 passed; seven pre-existing ignored tests.
+- `pnpm test:e2e`: all 197 passed, including explicit selection of a
+  co-recipient suggestion and preservation of the selected recipients.
+- `pnpm build`, ESLint for changed TypeScript files, the 30 changelog tests,
+  and `git diff --check` passed.
+- The synthetic 5,000-message regression checks the joined query plan uses
+  `co_recipient_seed` without a table scan and still finds the relevant contact.
+  A diagnostic lookup took about 0.1 ms on this machine; this is a fixture
+  measurement, not a guaranteed latency for every mailbox.
+
+Coverage includes one and multiple seeds, recency and group-size boundaries,
+thread/day caps, Cc discovery before result truncation, historical Bcc exclusion,
+sent-folder eligibility, aliases, suppression (including hidden group primary
+addresses), account isolation, migration from schema 93, resumable backfill,
+message updates, retention and account deletion, stale responses, uncommitted
+address input, keyboard selection, failure fallback, and secondary profile
+addresses. Existing frequency counts and settings-transfer formats are unchanged.

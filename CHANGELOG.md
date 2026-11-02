@@ -6,16 +6,19 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 
 ### New
 - Recipient suggestions now prioritize people you often email together after you select someone. The same suggestions help you add members to contact groups, using email history kept on this device.
+- Groups now show **Recent Emails** with their current members, including sent messages. Open a conversation from the sidebar to find other people you may want to add.
 - Connect selected Mac address books from **Contacts → Manage Contacts… → Mac Contacts…** to browse people and suggest recipients. Access is read-only, and disconnecting keeps profiles you deliberately saved in ThreeStrands.
 - Send from verified Gmail aliases using **Sending Address** in the composer. New messages use your Gmail default, replies use the address the message was sent to, and **Settings → Mail Accounts → Sending Addresses** lets you refresh your list after changing it in Gmail. Accounts with only their primary sending address show a compact **Aliases…** action; accounts with aliases show the full list, with default and reply-to details underneath.
 - Snooze conversations until later with **h** (Remind Me), then find them in **Snoozed** to reschedule or return them to Inbox. Snoozed mail leaves Inbox in your other mail apps too, and returns when ThreeStrands is running and connected, or when a new reply arrives.
 - **Settings → Diagnostics** now shows recent AI rejection reasons, provider and model details, and request references, and lets you open the application logs folder. You can temporarily capture rejected scheduling values for troubleshooting on the affected device.
 
 ### Improved
+- Contacts remembers your selected person separately in **All Contacts** and **Keep in Touch**, plus your selected group in **Groups**, when you return from Mail.
 - Press **b** in Mail or Calendar to create an event, matching Superhuman. Calendar also keeps its existing **Shift+N** shortcut.
 - Hidden AI suggestions now say they couldn’t be verified, with an expandable explanation covering invalid scheduling data as well as unmatched evidence.
 
 ### Fixed
+- Active mail searches keep their search controls visible, and returning from Contacts or another view restores focus to the search box. A **Close Search** button lets you clear the filter and return to your inbox.
 - Meeting suggestions in Brief are less likely to be hidden because of invalid date or timezone formatting.
 - Links wrapped by Google or Microsoft Safe Links no longer trigger a link-text mismatch warning when the embedded destination matches the displayed site. Checks for misleading or suspicious destinations still apply, and clicking keeps the original wrapped link.
 
