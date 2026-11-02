@@ -52,6 +52,20 @@ describe("useMailboxThreads", () => {
     return { ...hook, refreshUnreadCounts, refreshMailboxUnreadCounts };
   }
 
+  it("keeps search controls open while a nonempty query filters the mailbox", async () => {
+    const { result } = setup();
+    await flushReload();
+    expect(result.current.searchOpen).toBe(false);
+    act(() => result.current.setQuery("Welcome"));
+    expect(result.current.searchOpen).toBe(true);
+    act(() => result.current.setSearchOpen(false));
+    expect(result.current.searchOpen).toBe(true);
+    act(() => result.current.setQuery(""));
+    expect(result.current.searchOpen).toBe(false);
+    act(() => result.current.setSearchOpen(true));
+    expect(result.current.searchOpen).toBe(true);
+  });
+
   it("invalidates an old account's response before the replacement reload starts", async () => {
     const oldPage = deferred<{ threads: Thread[]; hasMore: boolean }>();
     vi.spyOn(mailClient, "listThreadsPage")

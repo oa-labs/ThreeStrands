@@ -1,4 +1,4 @@
-import { AtSign, Calendar, Clock, Folder, Inbox, Search, SlidersHorizontal, Tag, User } from "lucide-react";
+import { AtSign, Calendar, Clock, Folder, Inbox, Search, SlidersHorizontal, Tag, User, X } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { ICON_SIZE } from "./iconSizes";
 import { SEARCH_INPUT_ATTRIBUTES } from "./searchInputAttributes";
@@ -148,6 +148,13 @@ export function SearchField({
     onCommit(next);
   }
 
+  function closeSearch() {
+    committedRef.current = "";
+    setDraft("");
+    setCaret(0);
+    onEscape();
+  }
+
   function rememberSearch() {
     if (committedRef.current.trim()) setRecentSearches(recordRecentSearch(committedRef.current));
   }
@@ -209,10 +216,7 @@ export function SearchField({
               setDismissed(true);
               return;
             }
-            committedRef.current = "";
-            setDraft("");
-            setCaret(0);
-            onEscape();
+            closeSearch();
           }}
         />
         {draft.trim() ? (
@@ -228,6 +232,9 @@ export function SearchField({
             <span>Inbox Only</span>
           </button>
         ) : null}
+        <button type="button" className="btn-icon" aria-label="Close Search" title="Close Search (Esc)" onClick={closeSearch}>
+          <X size={ICON_SIZE.sm} />
+        </button>
         <kbd>/</kbd>
       </label>
       {visible ? (

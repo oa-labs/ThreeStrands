@@ -292,7 +292,9 @@ export function useMailboxThreads({
   }, []);
 
   return {
-    threads, setThreads, query, setQuery, queryRef, searchOpen, setSearchOpen, includeArchived,
+    threads, setThreads, query, setQuery, queryRef,
+    // An active filter must always expose the controls that can clear it.
+    searchOpen: searchOpen || Boolean(query.trim()), setSearchOpen, includeArchived,
     inboxOnly, setInboxOnly, remoteSearchState, searchStatus, setSearchStatus, hasMoreResults, loading,
     mailboxError, loadingMoreState,
     loadThreads, loadThreadsRef, loadMoreResults, contextOpenedThreadRef,
