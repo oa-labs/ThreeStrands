@@ -2,7 +2,7 @@
 title: Contacts
 nav: Contacts
 summary: Keep profiles, groups, and Keep in Touch reminders for the people you write to, and bring your address book in or out with CSV or vCard.
-reviewed: 0.192.0
+reviewed: 0.194.0
 ---
 
 ## The Address Book {#the-address-book}
@@ -17,7 +17,7 @@ The conversation side panel's recent emails and shared files follow the message 
 
 ## Mac Contacts {#mac-contacts}
 
-On macOS, choose **Manage Contacts… → Mac Contacts… → Allow Mac Contacts…**, grant access, then choose which address books to use. None are selected automatically. Sources may include iCloud, Google, and other accounts already configured in Apple Contacts; ThreeStrands does not ask for additional Google authorization.
+On macOS, open **Contacts → Manage Contacts… → Mac Contacts…**, choose **Allow Mac Contacts…**, grant access, then choose which address books to use. None are selected automatically. Sources may include iCloud, Google, and other accounts already configured in Apple Contacts; ThreeStrands does not ask for additional Google authorization.
 
 Selected contacts contribute names, email addresses, companies, and job titles to Contacts and recipient suggestions. Phone numbers, photos, birthdays, and Apple lists are not connected in this version. **Never suggest this address** still controls autocomplete.
 
@@ -34,6 +34,12 @@ help prioritize people you often email together. Recommendations use cached
 sent-mail history across accounts on this device, and never select or save a
 member for you. Different devices may suggest different people; learned
 relationships are excluded from encrypted sync.
+
+### Recent Emails {#group-recent-emails}
+
+Select a group to see **Recent Emails** in its side panel. It lists conversations with any current member from mail cached on this computer, including sent messages. The list follows your selected mail account; choose all accounts to see conversations across accounts. Changing group membership updates the history.
+
+Click a conversation to open it and see who else took part, then return to the group and use **Add Members** for anyone you want to include. Expand the list to see more of the loaded conversations, or choose **Load older emails** when available. Contacts remembers your selected person separately in **All Contacts** and **Keep in Touch**, and your selected group in **Groups**, when you return from Mail.
 
 ## Keep in Touch {#keep-in-touch}
 

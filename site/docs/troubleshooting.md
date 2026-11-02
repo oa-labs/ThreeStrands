@@ -2,7 +2,7 @@
 title: Troubleshooting
 nav: Troubleshooting
 summary: Check mail, sending, drafts, calendar, and sync problems before removing data.
-reviewed: 0.179.0
+reviewed: 0.194.0
 ---
 
 ## Mail Stopped Arriving {#mail-stopped-arriving}
@@ -58,6 +58,14 @@ Try **Email Zoom**, **Minimum Email Font Size**, and **Email Text Colors** in **
 Open **Settings → AI Provider**. Confirm the provider, saved key, model name, and **Show AI In** choices, then use **Test Connection**. Usage or account limits at the provider can stop requests. A provider subscription and an API billing account may be different products; check the account associated with your API key.
 
 For a custom endpoint, verify its URL and compatible model. Keep keys out of reports. See [AI Assistance](ai.html).
+
+### Inspect AI Diagnostics {#ai-diagnostics}
+
+For failed requests or hidden suggestions from **Brief**, **Suggestions**, or **Ask About This Conversation**, open **Settings → Diagnostics → AI Diagnostics** on the affected computer. Recent entries show the rejection reason, feature, provider, and model. Expand **Request details** for the request reference. **Refresh AI Diagnostics** reloads the list; **Clear AI Diagnostics** removes its entries. Saved suggestions may predate these diagnostics.
+
+The latest 100 entries stay on this device for seven days. They are not synced or included in settings exports. If you need more detail to reproduce a scheduling problem, enable **Capture Detailed AI Diagnostics**, then repeat the action. For 15 minutes, it also keeps rejected date, time, duration, and timezone values. These values may contain private information; message bodies and evidence excerpts are never captured. Capture stops on restart, but captured entries remain until cleared or seven days pass.
+
+Under **Application Logs**, choose **Open Logs Folder** to find logs from this computer. Review and redact logs and diagnostic values before sharing them. When [reporting a problem](get-help.html#report-a-problem), include the relevant rejection reason, provider, model, and request reference after checking them for private information.
 
 ## The App Reports a Problem {#the-app-reports-a-problem}
 
