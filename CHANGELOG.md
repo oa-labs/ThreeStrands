@@ -8,6 +8,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Delegate read-only web research in **Agents** with separately configured Anthropic and Exa keys: review public search subjects, answer questions, discuss findings, and save report revisions with sources. Research has shared usage limits and explicit data-sharing choices; the local demonstration remains available without external requests.
 
 ### Improved
+- Agents now uses consistent text sizes, clearer form grouping, and aligned controls.
 - Click an event's address in event details, invitation cards, or meeting suggestions to open it in Google Maps.
 
 ### Fixed

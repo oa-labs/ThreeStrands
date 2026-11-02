@@ -35,29 +35,39 @@ function NewAgentTask({ controller, accounts, research, onSetup }: { controller:
   const change = (patch: Partial<AgentStart>) => controller.setStart({ ...seed, ...patch });
   return <form className="agent-new" aria-label="New delegated task" onSubmit={e => { e.preventDefault(); if (mode === "demo") void controller.create({ ...seed, workflow: "fixture_research_v1" }); else if (ready && consent) void controller.createResearch({task:{...seed,workflow:"web_research_v1"},subjects:subjects.split("\n").map(s=>s.trim()).filter(Boolean),consent}); }}>
     <h2>New delegated task</h2>
-    <p id={`${id}-scope`}>{mode === "demo" ? "The local demonstration asks a question and prepares a sample report. It sends no email or web requests and has no provider charges." : "Your objective, public subjects, follow-up messages, and retrieved evidence go to Anthropic. Exa receives only the public subjects you review below, with fixed research terms. Page hosts receive your IP. The source email is linked for navigation; its body and addresses are not sent."}</p>
+    <p className="agent-hint" id={`${id}-scope`}>{mode === "demo" ? "The local demonstration asks a question and prepares a sample report. It sends no email or web requests and has no provider charges." : "Your objective, public subjects, follow-up messages, and retrieved evidence go to Anthropic. Exa receives only the public subjects you review below, with fixed research terms. Page hosts receive your IP. The source email is linked for navigation; its body and addresses are not sent."}</p>
     {!controller.enabled ? <button type="button" className="btn" disabled={controller.busy} onClick={() => void controller.enable(true)}>{mode === "demo" ? "Enable local demonstration" : "Enable delegated work"}</button> : null}
-    <label htmlFor={`${id}-account`}>Mail account</label>
-    <select id={`${id}-account`} value={seed.accountId} onChange={e => change({ accountId: e.target.value, sourceThreadId: null, linkedTaskId: null })}>
+    <div className="agent-field">
+      <label className="agent-field-label" htmlFor={`${id}-account`}>Mail account</label>
+      <select id={`${id}-account`} value={seed.accountId} onChange={e => change({ accountId: e.target.value, sourceThreadId: null, linkedTaskId: null })}>
       {accounts.filter(a => a.onThisDevice !== false).map(a => <option key={a.email} value={a.email}>{a.nickname || a.email}</option>)}
     </select>
-    <label htmlFor={`${id}-mode`}>Work</label>
-    <select id={`${id}-mode`} value={mode} onChange={e => setMode(e.target.value)}><option value="demo">Invitation research demonstration</option><option value="web">Web research</option></select>
+    </div>
+    <div className="agent-field">
+      <label className="agent-field-label" htmlFor={`${id}-mode`}>Work</label>
+      <select id={`${id}-mode`} value={mode} onChange={e => setMode(e.target.value)}><option value="demo">Invitation research demonstration</option><option value="web">Web research</option></select>
+    </div>
     {mode === "web" ? <>
       {!ready ? <p role="status">Web research is not configured. Save separate research keys, record your storage agreement, and check connections.</p> : null}
       <button type="button" className="btn" onClick={onSetup}>Research settings</button>
-      <label htmlFor={`${id}-subjects`}>Public search subjects (one per line)</label>
-      <textarea id={`${id}-subjects`} value={subjects} onChange={e=>setSubjects(e.target.value)} aria-describedby={`${id}-public-help`} />
+      <div className="agent-field">
+        <label className="agent-field-label" htmlFor={`${id}-subjects`}>Public search subjects (one per line)</label>
+        <textarea id={`${id}-subjects`} value={subjects} onChange={e=>setSubjects(e.target.value)} aria-describedby={`${id}-public-help`} />
+      </div>
       <p className="agent-hint" id={`${id}-public-help`}>Review up to five public show, event or organization names. Do not include private customer names, email bodies, credentials or a home address. Only these subjects plus fixed terms can be searched.</p>
       <p className="agent-hint">This task shares cumulative limits of {policy.limits.modelCallsPerTask} model calls, {policy.limits.searchCallsPerTask} searches, {policy.limits.pageCallsPerTask} pages and {policy.limits.activeSecondsPerTask/60} active minutes with retries and revisions. Estimates ({policy.verifiedOn}): ${policy.model.inputUsdPerMillion}/${policy.model.outputUsdPerMillion} per million input/output tokens and ${policy.search.usdPerRequest} per search; these are estimates, not a hard dollar cap. Routing and mailbox search are unavailable.</p>
       <label className="agent-toggle"><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)} />I reviewed these public subjects and allow this task to use Anthropic, Exa and public pages under these limits.</label>
     </> : null}
-    <label htmlFor={`${id}-objective`}>What would you like to find out?</label>
-    <textarea id={`${id}-objective`} required value={seed.objective} onChange={e => change({ objective: e.target.value })} aria-describedby={`${id}-scope`} />
-    <label htmlFor={`${id}-task`}>Link a personal task (optional)</label>
-    <select id={`${id}-task`} value={seed.linkedTaskId ?? ""} onChange={e => change({ linkedTaskId: e.target.value || null })}><option value="">No personal task</option>{tasks.map(t => <option key={t.id} value={t.id}>{t.title}</option>)}</select>
+    <div className="agent-field">
+      <label className="agent-field-label" htmlFor={`${id}-objective`}>What would you like to find out?</label>
+      <textarea id={`${id}-objective`} required value={seed.objective} onChange={e => change({ objective: e.target.value })} aria-describedby={`${id}-scope`} />
+    </div>
+    <div className="agent-field">
+      <label className="agent-field-label" htmlFor={`${id}-task`}>Link a personal task (optional)</label>
+      <select id={`${id}-task`} value={seed.linkedTaskId ?? ""} onChange={e => change({ linkedTaskId: e.target.value || null })}><option value="">No personal task</option>{tasks.map(t => <option key={t.id} value={t.id}>{t.title}</option>)}</select>
+    </div>
     {error ? <p role="alert">Could not load personal tasks: {error}</p> : null}
-    {seed.sourceThreadId ? <p>Linked to the selected conversation.</p> : null}
+    {seed.sourceThreadId ? <p className="agent-hint">Linked to the selected conversation.</p> : null}
     <div className="agent-actions"><button className="btn btn-primary" disabled={!controller.enabled || controller.busy || (mode === "web" && (!ready || !consent || !subjects.trim())) || !seed.accountId || !seed.objective.trim()}>{mode === "demo" ? "Start demonstration" : "Start research"}</button><button type="button" className="btn" onClick={() => controller.setStart(null)}>Cancel</button></div>
   </form>;
 }
@@ -163,7 +173,7 @@ export function AgentsWorkspace({ controller: c, accounts, accountId, onOpenThre
       e.preventDefault(); const index = rows.findIndex(d => d.task.id === c.selectedId); c.select(rows[Math.max(0, Math.min(rows.length - 1, index + (["j", "ArrowDown"].includes(e.key) ? 1 : -1)))].task.id);
     }
   }}>
-    <header className="agents-toolbar"><h1>Agents <span className="agent-preview">Preview</span></h1><button className="btn" onClick={begin}>New delegated task</button><button className="btn" disabled={c.busy} onClick={() => void c.refresh()}>Refresh agents</button><label><input type="checkbox" checked={c.enabled} disabled={c.busy || !c.loaded} onChange={e => void c.enable(e.target.checked)} /> Delegated work enabled</label><button className="btn" onClick={()=>setSetup(true)}>Research settings</button></header>
+    <header className="agents-toolbar"><h1>Agents <span className="agent-preview">Preview</span></h1><button className="btn" onClick={begin}>New delegated task</button><button className="btn" disabled={c.busy} onClick={() => void c.refresh()}>Refresh agents</button><label className="agent-toggle"><input type="checkbox" checked={c.enabled} disabled={c.busy || !c.loaded} onChange={e => void c.enable(e.target.checked)} /> Delegated work enabled</label><button className="btn" onClick={()=>setSetup(true)}>Research settings</button></header>
     {c.error ? <p className="form-error" role="alert">{c.error} <button className="btn-link" onClick={() => void c.refresh()}>Retry loading agents</button></p> : null}
     <div className="agents-layout"><nav className="agent-list" aria-label="Delegated tasks">
       <label>Find delegated work<input ref={search} type="search" value={query} onChange={e => setQuery(e.target.value)} /></label>
