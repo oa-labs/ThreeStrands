@@ -486,6 +486,23 @@ describe("demoClient contact groups", () => {
   const save = (client: ReturnType<typeof createDemoClient>, name: string, email: string) =>
     client.saveContactProfile({ id: null, displayName: name, role: null, company: null, location: null, bio: null, notes: null, links: [], photoData: null, favorite: false, addresses: [email], birthday: null });
 
+  it("combines member history before paging and follows membership and account scope", async () => {
+    const dataset = buildShowcaseDataset(new Date("2026-10-07T12:00:00Z"));
+    const client = createDemoClient(dataset);
+    const profiles = await client.listContactProfiles("", 5000);
+    const group = await client.createContactGroup("Everyone", profiles.map(profile => profile.id));
+    const histories = await Promise.all(group.memberIds.map(id => client.contactTimeline(id, 0, 100)));
+    const expected = [...new Map(histories.flat().sort((a,b) => a.sentAt.localeCompare(b.sentAt)).map(item => [item.threadId, item])).values()].sort((a,b) => b.sentAt.localeCompare(a.sentAt));
+    const all = await client.contactGroupTimeline(group.id, 0, 100);
+    expect(all.length).toBeGreaterThan(1);
+    expect(all.map(item => item.threadId)).toEqual(expected.map(item => item.threadId));
+    expect(await client.contactGroupTimeline(group.id, 1, 1)).toEqual(all.slice(1,2));
+    expect(await client.contactGroupTimeline(group.id, 0, 100, "missing-account")).toEqual([]);
+    await client.removeContactGroupMembers(group.id, group.memberIds);
+    expect(await client.contactGroupTimeline(group.id)).toEqual([]);
+    expect(await client.contactGroupTimeline("missing-group")).toEqual([]);
+  });
+
   it("seeds the showcase with a group of saved contacts", async () => {
     const client = createDemoClient(buildShowcaseDataset(new Date("2026-10-07T12:00:00Z")));
     const [group] = await client.listContactGroups();

@@ -972,6 +972,28 @@ describe("keyboard-first task and action workspaces", () => {
     expect(screen.getByText("Address book")).toBeInTheDocument();
   });
 
+  it("restores the selected contact after switching to Mail and back", async () => {
+    const save=(name:string,email:string)=>mailClient.saveContactProfile({id:null,displayName:name,role:null,company:null,location:null,bio:null,notes:null,links:[],photoData:null,favorite:false,addresses:[email],birthday:null});
+    const first=await save("A First Contact","first-selection@example.com");
+    const selected=await save("Z Remembered Contact","remembered-selection@example.com");
+    try {
+      render(<App/>);
+      await screen.findByRole("region",{name:"Inbox"});
+      fireEvent.keyDown(window,{key:"4"});
+      fireEvent.click(await screen.findByRole("button",{name:/Z Remembered Contact/}));
+      await screen.findByDisplayValue("Z Remembered Contact");
+      fireEvent.keyDown(window,{key:"1"});
+      await waitFor(()=>expect(screen.queryByRole("heading",{name:"Contacts"})).not.toBeInTheDocument());
+      fireEvent.keyDown(window,{key:"4"});
+      expect(await screen.findByDisplayValue("Z Remembered Contact")).toBeVisible();
+      expect(await screen.findByRole("button",{name:/Z Remembered Contact/})).toHaveAttribute("aria-pressed","true");
+    } finally {
+      cleanup();
+      await mailClient.deleteContactProfile(first.id);
+      await mailClient.deleteContactProfile(selected.id);
+    }
+  });
+
   it("alternates contact views with Tab and remembers the last one when the address book reopens", async () => {
     localStorage.removeItem("threestrands.contacts.view");
     try {
