@@ -45,6 +45,15 @@ function sizeOf(selector: string) {
 const roles = [...rootTokens.keys()].filter((name) => name.startsWith("--text-"));
 
 describe("type roles", () => {
+  it("gives the member dialog UI type and keeps hints and relationship evidence secondary", () => {
+    expect(sizeOf(".contact-member-modal")).toBe("--text-body");
+    expect(sizeOf(".contact-member-name")).toBe("--text-body");
+    expect(sizeOf(".contact-member-hint")).toBe("--text-secondary");
+    for (const selector of [".contact-member-email", ".contact-member-reason", ".contact-member-evidence"]) {
+      expect(sizeOf(selector)).toBe("--text-meta");
+    }
+  });
+
   it("defines every role from one of the nine scaled size steps", () => {
     expect(roles.length).toBeGreaterThan(0);
     for (const role of roles) {

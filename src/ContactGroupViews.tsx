@@ -220,6 +220,13 @@ export function ContactMemberPicker({
   }, [rankingKey, profiles]);
   const rankById = new Map(rankings.map((item, index) => [item.id, index]));
   const reasonById = new Map(rankings.map((item) => [item.id, item.relatedTo]));
+  const namesByEmail = new Map(profiles.flatMap((profile) => profile.addresses.map((email) =>
+    [email.toLowerCase(), profile.displayName?.trim() || email] as const)));
+  const relatedName = (email: string) => namesByEmail.get(email.toLowerCase()) ?? email;
+  const compactReason = (related: string[]) => {
+    const others = related.length - 1;
+    return `Often emailed with ${relatedName(related[0])}${others ? ` and ${others} ${others === 1 ? "other" : "others"}` : ""}`;
+  };
   const candidates = groupCandidates(group, profiles).sort((a, b) =>
     Number(b.favorite) - Number(a.favorite) ||
     (rankById.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rankById.get(b.id) ?? Number.MAX_SAFE_INTEGER));
@@ -270,7 +277,7 @@ export function ContactMemberPicker({
       setBusy(false);
     }
   };
-  const tokens = count ? <span className="contact-member-selection" aria-label="Selected members" role="group">
+  const tokens = count ? <span className="contact-member-selection" aria-label="Selected Members" role="group">
     {chosen.map((profile) => <span key={profile.id} className="recipient-chip">
       <span className="recipient-chip-label">{contactName(profile)}</span>
       <button type="button" className="recipient-chip-remove" aria-label={`Unselect ${contactName(profile)}`} onClick={() => toggle(profile.id)}><X size={ICON_SIZE.xs} /></button>
@@ -281,14 +288,25 @@ export function ContactMemberPicker({
     </span>)}
   </span> : undefined;
   const label = busy ? "Adding…" : count ? `Add ${count} ${count === 1 ? "Member" : "Members"}` : "Add Members";
-  return <Modal title={`Add to “${group.name}”`} className="goal-link-modal" onClose={onClose}>
-    <p id={`${listId}-context`}>Suggestions use email history across accounts on this device.</p>
+  return <Modal title={`Add Members to ${group.name}`} className="contact-member-modal" onClose={onClose}>
+    <div className="contact-member-picker">
     <FindOrCreatePicker
       items={candidates}
+      multiple
+      searchHint={<p className="contact-member-hint" id={`${listId}-context`}>Suggestions use email history across accounts on this device.</p>}
+      renderActiveItemDetails={(profile) => {
+        const related = reasonById.get(profile.id);
+        return related?.length ? <p className="contact-member-evidence">
+          <strong>{contactName(profile)}</strong>: Often emailed with {related.map((email) => {
+            const name = relatedName(email);
+            return name.toLowerCase() === email.toLowerCase() ? email : `${name} (${email})`;
+          }).join(", ")}
+        </p> : null;
+      }}
       getItemKey={(profile) => profile.id}
       getSearchText={(profile) => `${profile.displayName ?? ""} ${profile.addresses.join(" ")}`}
       placeholder="Find contacts, or type or paste email addresses"
-      ariaLabel="Find contacts to add"
+      ariaLabel="Find Contacts to Add"
       ariaDescribedBy={`${listId}-context`}
       listId={listId}
       listLabel="Contacts"
@@ -316,7 +334,7 @@ export function ContactMemberPicker({
           id={option.id}
           role="option"
           aria-label={text}
-          aria-selected={option.active}
+          aria-selected={false}
           className={`find-or-create-create${option.active ? " highlighted" : ""}`}
           onMouseEnter={option.onMouseEnter}
           onClick={option.onClick}
@@ -326,24 +344,24 @@ export function ContactMemberPicker({
       }}
       renderItem={(profile, option) => {
         const checked = contactIds.includes(profile.id);
+        const related = reasonById.get(profile.id);
         return <div
           key={profile.id}
           id={option.id}
           role="option"
           aria-label={checked ? `${contactName(profile)}, selected` : contactName(profile)}
-          aria-selected={option.active}
-          className={option.active ? "highlighted" : undefined}
+          aria-selected={checked}
+          className={`contact-member-option${option.active ? " highlighted" : ""}${checked ? " is-selected" : ""}`}
+          onMouseDown={(event) => event.preventDefault()}
           onMouseEnter={option.onMouseEnter}
           onClick={option.onClick}
         >
-          <span className="label-option-name">
-            {checked ? <Check size={ICON_SIZE.sm} /> : <span className="label-option-check-spacer" />}
-            {contactName(profile)}
+          <span className="contact-member-check" aria-hidden="true">{checked ? <Check size={ICON_SIZE.xs} /> : null}</span>
+          <span className="contact-member-person">
+            <span className="contact-member-name">{contactName(profile)}</span>
+            {profile.displayName ? <span className="contact-member-email">{profile.addresses[0]}</span> : null}
+            {related?.length ? <span className="contact-member-reason">{compactReason(related)}</span> : null}
           </span>
-          {profile.displayName ? <small className="contact-group-option-detail">{profile.addresses[0]}</small> : null}
-          {!!reasonById.get(profile.id)?.length && <small className="contact-group-option-detail">
-            Often emailed with {reasonById.get(profile.id)!.join(", ")}
-          </small>}
         </div>;
       }}
     />
@@ -353,6 +371,7 @@ export function ContactMemberPicker({
         <button type="button" className="btn" onClick={onClose}>Cancel</button>
         <button type="button" className="btn btn-primary" disabled={busy || !count} onClick={() => void submit()}>{label}</button>
       </div>
+    </div>
     </div>
   </Modal>;
 }

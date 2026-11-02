@@ -2700,6 +2700,29 @@ div.message-body-plain { color: var(--body-text); font-size: var(--text-reading)
 .find-or-create-notice { margin: 0; padding: var(--space-2); color: var(--muted); font-size: var(--text-meta); }
 .contact-member-selection { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); max-width: 100%; }
 .contact-member-footer { padding-top: 0; }
+/* Keep the chooser's search, selected badges, and actions outside the scrolling list. */
+.contact-member-modal { display: flex; flex-direction: column; font-size: var(--text-body); }
+.contact-member-modal > header { flex: none; gap: var(--space-3); }
+.contact-member-modal > header h2 { min-width: 0; overflow-wrap: anywhere; }
+.contact-member-modal > header .btn-icon { flex-shrink: 0; }
+.contact-member-picker { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+.contact-member-picker .label-search { flex: none; padding: var(--space-2) var(--dialog-inset) var(--space-3); }
+.contact-member-hint { margin: var(--space-2) 0 0; color: var(--muted); font-size: var(--text-secondary); line-height: var(--leading-normal); }
+.contact-member-picker .find-or-create-field { max-height: 18vh; overflow-y: auto; padding: var(--space-0-5) var(--space-1-5); }
+.contact-member-picker .find-or-create-field:focus-within { box-shadow: var(--focus-ring); }
+.contact-member-picker .find-or-create-field input { height: var(--control-h-sm); }
+.contact-member-picker .label-list { flex: 1; min-height: 0; padding: 0 var(--list-gutter) var(--space-2); }
+.contact-member-picker .label-list > .contact-member-option { display: grid; grid-template-columns: var(--check-size) minmax(0, 1fr); align-items: start; gap: var(--space-2); padding: var(--space-2); }
+.contact-member-check { display: grid; place-items: center; box-sizing: border-box; width: var(--check-size); height: var(--check-size); margin-top: var(--space-0-5); border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--input); }
+.contact-member-option.is-selected .contact-member-check { color: var(--accent-contrast); background: var(--accent); border-color: var(--accent); }
+.contact-member-person { display: grid; min-width: 0; gap: var(--space-0-5); }
+.contact-member-name { font-size: var(--text-body); font-weight: var(--weight-medium); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+.contact-member-email { color: var(--muted); font-size: var(--text-meta); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+.contact-member-reason { overflow: hidden; color: var(--muted); font-size: var(--text-meta); line-height: var(--leading-normal); white-space: nowrap; text-overflow: ellipsis; }
+.contact-member-picker .find-or-create-details { flex: none; max-height: 14vh; overflow-y: auto; padding: var(--space-2) var(--dialog-inset); border-top: 1px solid var(--border); }
+.contact-member-evidence { margin: 0; color: var(--muted); font-size: var(--text-meta); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+.contact-member-evidence strong { color: var(--text); font-weight: var(--weight-medium); }
+.contact-member-picker .contact-member-footer { flex: none; padding: var(--space-3) var(--dialog-inset) var(--space-4); border-top: 1px solid var(--border); }
 .label-actions { display: flex; align-items: center; gap: var(--space-1); }
 .rename-label { display: flex; gap: var(--space-2); padding: var(--space-2-5) var(--space-4); border-top: 1px solid var(--border); }
 .rename-label input { min-width: 0; flex: 1; height: var(--control-h); padding: 0 var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text); background: var(--input); }

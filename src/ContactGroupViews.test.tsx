@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ContactMemberPicker } from "./ContactGroupViews";
@@ -23,7 +24,7 @@ describe("group member recommendations", () => {
     const add = vi.fn().mockResolvedValue(undefined);
     render(<ContactMemberPicker group={group} profiles={profiles} onAdd={add} onClose={() => {}} />);
     await tick();
-    expect(screen.getByRole("combobox", { name: "Find contacts to add" })).toHaveAccessibleDescription();
+    expect(screen.getByRole("combobox", { name: "Find Contacts to Add" })).toHaveAccessibleDescription();
     expect(rank).toHaveBeenLastCalledWith("team", [], []);
     expect(list().getAllByRole("option")[0]).toHaveAccessibleName("Bob");
     expect(list().getByRole("option", { name: "Bob" })).toHaveTextContent("bob@example.com");
@@ -54,11 +55,112 @@ describe("group member recommendations", () => {
     const add = vi.fn();
     render(<ContactMemberPicker group={group} profiles={profiles} onAdd={add} onClose={() => {}} />);
     await tick();
-    const input=screen.getByRole("combobox", { name: "Find contacts to add" });
+    const input=screen.getByRole("combobox", { name: "Find Contacts to Add" });
     fireEvent.change(input,{target:{value:"new@example.com"}});
     fireEvent.keyDown(input,{key:"Enter"}); await tick();
     expect(mailClient.rankContactGroupCandidates).toHaveBeenLastCalledWith("team", [], ["new@example.com"]);
     fireEvent.click(screen.getByRole("button", { name: "Add 1 Member" }));
     expect(add).toHaveBeenCalledWith([], ["new@example.com"]);
+  });
+});
+
+describe("Add Members layout and interaction", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.spyOn(mailClient, "rankContactGroupCandidates").mockResolvedValue([]);
+  });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
+
+  it("keeps keyboard highlight distinct from selection and reports the pending count", () => {
+    const add = vi.fn();
+    render(<ContactMemberPicker group={group} profiles={profiles} onAdd={add} onClose={() => {}} />);
+    const input = screen.getByRole("combobox", { name: "Find Contacts to Add" });
+    expect(input).toHaveFocus();
+    const list = screen.getByRole("listbox", { name: "Contacts" });
+    expect(list).toHaveAttribute("aria-multiselectable", "true");
+    const carol = within(list).getByRole("option", { name: "Carol" });
+    expect(input).toHaveAttribute("aria-activedescendant", carol.id);
+    expect(carol).toHaveAttribute("aria-selected", "false");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByRole("combobox", { name: "Find Contacts to Add" })).toBe(input);
+    expect(input).toHaveFocus();
+    expect(within(list).getByRole("option", { name: "Carol, selected" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    const bob = within(list).getByRole("option", { name: "Bob" });
+    expect(input).toHaveAttribute("aria-activedescendant", bob.id);
+    expect(bob).toHaveAttribute("aria-selected", "false");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByRole("button", { name: "Add 2 Members" })).toBeEnabled();
+    expect(add).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Unselect Bob" }));
+    expect(screen.getByRole("button", { name: "Add 1 Member" })).toBeEnabled();
+  });
+
+  it("keeps reasons short and makes full named evidence visible for keyboard, hover, and touch selection", async () => {
+    vi.mocked(mailClient.rankContactGroupCandidates).mockResolvedValue([{ id: "bob", relatedTo: ["alice@example.com", "carol@example.com", "unknown@example.net"] }]);
+    render(<ContactMemberPicker group={group} profiles={profiles} onAdd={vi.fn()} onClose={() => {}} />);
+    await tick();
+    const input = screen.getByRole("combobox", { name: "Find Contacts to Add" });
+    const bob = screen.getByRole("option", { name: "Bob" });
+    expect(bob).toHaveTextContent("Often emailed with Alice and 2 others");
+    expect(bob).not.toHaveTextContent("unknown@example.net");
+    // Ranking preserves Carol's keyboard highlight; moving up exposes Bob's details.
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    expect(input).toHaveAccessibleDescription(/Alice \(alice@example.com\), Carol \(carol@example.com\), unknown@example.net/);
+    const detailsId = input.getAttribute("aria-describedby")!.split(" ").at(-1)!;
+    expect(document.getElementById(detailsId)).toBeVisible();
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(input).not.toHaveAccessibleDescription(/unknown@example.net/);
+    fireEvent.mouseEnter(bob);
+    expect(input).toHaveAccessibleDescription(/unknown@example.net/);
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.click(bob); // Touch does not require a hover first.
+    await tick();
+    expect(input).toHaveAccessibleDescription(/unknown@example.net/);
+    expect(screen.getByRole("button", { name: "Add 1 Member" })).toBeEnabled();
+  });
+
+  it("keeps the modal focus boundary, Escape dismissal, and focus restoration", () => {
+    const add = vi.fn();
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return <><button type="button" onClick={() => setOpen(true)}>Add Members</button>
+        {open ? <ContactMemberPicker group={group} profiles={profiles} onAdd={add} onClose={() => setOpen(false)} /> : null}</>;
+    }
+    const { container } = render(<Harness />);
+    const trigger = screen.getByRole("button", { name: "Add Members" });
+    act(() => trigger.focus()); fireEvent.click(trigger);
+    const modal = screen.getByRole("dialog", { name: "Add Members to Team" });
+    expect(modal).toHaveAttribute("data-shortcut-scope", "modal");
+    expect(container).toHaveAttribute("aria-hidden", "true");
+    expect(container.inert).toBe(true);
+    const input = screen.getByRole("combobox", { name: "Find Contacts to Add" });
+    expect(input).toHaveFocus();
+    fireEvent.keyDown(input, { key: "Enter" });
+    const last = screen.getByRole("button", { name: "Add 1 Member" });
+    act(() => last.focus()); fireEvent.keyDown(last, { key: "Tab" });
+    const close = screen.getByRole("button", { name: "Close" });
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
+    expect(last).toHaveFocus();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    expect(container).not.toHaveAttribute("aria-hidden");
+    expect(add).not.toHaveBeenCalled();
+  });
+
+  it("preserves the selected badges after a failed add and keeps Cancel available", async () => {
+    const add = vi.fn().mockRejectedValue(new Error("Could not save members"));
+    const close = vi.fn();
+    render(<ContactMemberPicker group={group} profiles={profiles} onAdd={add} onClose={close} />);
+    fireEvent.click(screen.getByRole("option", { name: "Bob" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add 1 Member" }));
+    await act(async () => {});
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not save members");
+    expect(screen.getByRole("button", { name: "Unselect Bob" })).toBeVisible();
+    expect(close).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(close).toHaveBeenCalledOnce();
   });
 });

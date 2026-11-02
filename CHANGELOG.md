@@ -13,6 +13,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - **Settings → Diagnostics** now shows recent AI rejection reasons, provider and model details, and request references, and lets you open the application logs folder. You can temporarily capture rejected scheduling values for troubleshooting on the affected device.
 
 ### Improved
+- **Groups → Add Members** now keeps contact names, addresses, and shorter suggestions together in readable rows. Search and actions stay visible while you browse, with clear selection checks and full suggestion details available from the keyboard.
 - Contacts remembers your selected person separately in **All Contacts** and **Keep in Touch**, plus your selected group in **Groups**, when you return from Mail.
 - Press **b** in Mail or Calendar to create an event, matching Superhuman. Calendar also keeps its existing **Shift+N** shortcut.
 - Hidden AI suggestions now say they couldn’t be verified, with an expandable explanation covering invalid scheduling data as well as unmatched evidence.

@@ -40,6 +40,28 @@ function spacePx(name: string): number {
 }
 
 describe("spacing", () => {
+  it("aligns member-list selection marks with the dialog's search and header inset", () => {
+    let gutter = "", inset = "";
+    css.walkRules(".contact-member-picker .label-list", (r) => r.walkDecls("padding", (d) => { gutter = d.value.split(" ")[1]; }));
+    css.walkRules(".contact-member-picker .label-list > .contact-member-option", (r) => r.walkDecls("padding", (d) => { inset = d.value; }));
+    const token = (value: string) => /^var\((--[\w-]+)\)$/.exec(value)?.[1] ?? "";
+    expect(spacePx(token(gutter)) + spacePx(token(inset))).toBe(spacePx("--dialog-inset"));
+  });
+
+  it("keeps the member dialog's search and footer outside its bounded scrolling list", () => {
+    const value = (selector: string, prop: string) => {
+      let result: string | undefined;
+      css.walkRules(selector, (r) => r.walkDecls(prop, (d) => { result = d.value; }));
+      return result;
+    };
+    expect(value(".contact-member-modal", "display")).toBe("flex");
+    expect(value(".contact-member-picker", "min-height")).toBe("0");
+    expect(value(".contact-member-picker .label-list", "flex")).toBe("1");
+    expect(value(".label-list", "overflow")).toBe("auto");
+    expect(value(".contact-member-picker .label-search", "flex")).toBe("none");
+    expect(value(".contact-member-picker .contact-member-footer", "flex")).toBe("none");
+  });
+
   it("keeps the spacing scale on a 4px grid, with half steps only below 12px", () => {
     const steps = [...rootTokens].filter(([name]) => /^--space-\d+(-5)?$/.test(name));
     expect(steps.length).toBeGreaterThan(0);

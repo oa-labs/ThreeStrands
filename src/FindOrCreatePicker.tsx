@@ -15,6 +15,9 @@ export function FindOrCreatePicker<T>({
   placeholder,
   ariaLabel,
   ariaDescribedBy,
+  searchHint,
+  multiple = false,
+  renderActiveItemDetails,
   listId,
   listLabel,
   emptyMessage,
@@ -35,6 +38,10 @@ export function FindOrCreatePicker<T>({
   placeholder: string;
   ariaLabel: string;
   ariaDescribedBy?: string;
+  searchHint?: ReactNode;
+  multiple?: boolean;
+  /** Visible details for the keyboard-highlighted or hovered item; also read by the combobox. */
+  renderActiveItemDetails?(item: T): ReactNode;
   listId: string;
   listLabel: string;
   emptyMessage: string;
@@ -76,6 +83,13 @@ export function FindOrCreatePicker<T>({
   const rowCount = filteredItems.length + (showCreateRow ? 1 : 0);
   const activeIndex = rowCount === 0 ? -1 : Math.min(Math.max(highlightedIndex, 0), rowCount - 1);
 
+  const activeDetails = activeIndex >= 0 && activeIndex < filteredItems.length
+    ? renderActiveItemDetails?.(filteredItems[activeIndex]) : null;
+  const hasActiveDetails = Boolean(activeDetails);
+  useLayoutEffect(() => {
+    if (multiple && activeIndex >= 0) document.getElementById(`${listId}-option-${activeIndex}`)?.scrollIntoView?.({ block: "nearest" });
+  }, [multiple, listId, activeIndex, hasActiveDetails]);
+
   const previous = useRef<{ query: string; items: T[] } | null>(null);
   useLayoutEffect(() => {
     const before = previous.current;
@@ -97,7 +111,7 @@ export function FindOrCreatePicker<T>({
     id: `${listId}-option-${index}`,
     active: index === activeIndex,
     onMouseEnter: () => setHighlightedIndex(index),
-    onClick: click,
+    onClick: () => { setHighlightedIndex(index); click(); },
   });
   const create = () => {
     if (onCreate(query.trim()) !== false && clearOnPick) changeQuery("");
@@ -105,7 +119,7 @@ export function FindOrCreatePicker<T>({
   const selectRow = (index: number) => {
     if (index < filteredItems.length) {
       onSelect(filteredItems[index], query.trim());
-      if (clearOnPick) changeQuery("");
+      if (clearOnPick && (!multiple || query)) changeQuery("");
     } else if (showCreateRow) create();
   };
   const input = <input
@@ -116,7 +130,7 @@ export function FindOrCreatePicker<T>({
     onChange={(event) => changeQuery(event.target.value)}
     placeholder={tokens ? undefined : placeholder}
     aria-label={ariaLabel}
-    aria-describedby={ariaDescribedBy}
+    aria-describedby={[ariaDescribedBy, activeDetails ? `${listId}-details` : null].filter(Boolean).join(" ") || undefined}
     role="combobox"
     aria-expanded="true"
     aria-controls={listId}
@@ -141,11 +155,12 @@ export function FindOrCreatePicker<T>({
   return (
     <>
       <div className="label-search">
-        {tokens
+        {tokens || multiple
           ? <div className="find-or-create-field" onClick={(event) => { if (event.target === event.currentTarget) inputRef.current?.focus(); }}>{tokens}{input}</div>
           : input}
+        {searchHint}
       </div>
-      <div className="label-list" id={listId} role="listbox" aria-label={listLabel}>
+      <div className="label-list" id={listId} role="listbox" aria-label={listLabel} aria-multiselectable={multiple || undefined}>
         {filteredItems.map((item, index) => renderItem(item, optionProps(index, () => selectRow(index))))}
         {showCreateRow ? renderCreateItem
           ? renderCreateItem(query.trim(), optionProps(filteredItems.length, create))
@@ -163,6 +178,7 @@ export function FindOrCreatePicker<T>({
         {noticeContent ? <p className="find-or-create-notice" role="status">{noticeContent}</p> : null}
         {filteredItems.length === 0 && !showCreateRow && !noticeContent ? <p className="empty">{emptyMessage}</p> : null}
       </div>
+      {activeDetails ? <div className="find-or-create-details" id={`${listId}-details`}>{activeDetails}</div> : null}
     </>
   );
 }
