@@ -152,7 +152,7 @@ not certification of those things. Hands-on app verification belongs to the deve
 
 Recorded automated verification:
 
-- `pnpm test`: 217 files, 3,177 tests passed.
+- `pnpm test`: 217 files, 3,179 tests passed after combining the UI polish and current master.
 - `cargo test`: 2,076 passed; 7 existing ignored tests.
 - `pnpm test:e2e`: 202 passed.
 - Production build, ESLint, and TypeScript passed.
