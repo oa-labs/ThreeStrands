@@ -433,7 +433,7 @@ export const ComposeBodyEditor = forwardRef<ComposeBodyEditorHandle, ComposeBody
   return <>
     <div
       ref={bodyEditor}
-      className="compose-body"
+      className="compose-body compose-authored"
       role="textbox"
       aria-label="Message Body"
       aria-multiline="true"

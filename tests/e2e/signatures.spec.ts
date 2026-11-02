@@ -33,6 +33,24 @@ test("creates an imported signature, sets defaults, and preserves its images and
   await expect(signature.locator("img")).toHaveAttribute("src", `data:image/png;base64,${png}`);
   await composer.getByRole("textbox", { name: "Subject", exact: true }).fill("Signature snapshot");
   await composer.getByRole("textbox", { name: "Message Body" }).fill("Hello 😀");
+  const body = composer.getByRole("textbox", { name: "Message Body", exact: true });
+  await body.fill("A paragraph in a long signed email.\n".repeat(80) + "Final line");
+  await signature.scrollIntoViewIfNeeded();
+  const spacing = await composer.evaluate((element) => {
+    const body = element.querySelector('[aria-label="Message Body"]')!;
+    const signature = element.querySelector('[aria-label="Message Signature"]')!;
+    const range = document.createRange();
+    range.selectNodeContents(body);
+    const textBottom = range.getBoundingClientRect().bottom;
+    return {
+      hiddenText: body.scrollHeight - body.clientHeight,
+      signatureGap: signature.getBoundingClientRect().top - textBottom,
+    };
+  });
+  expect(spacing.hiddenText).toBeLessThanOrEqual(1);
+  expect(spacing.signatureGap).toBeGreaterThanOrEqual(0);
+  expect(spacing.signatureGap).toBeLessThanOrEqual(40);
+  await body.fill("Hello 😀");
   const signaturePicker = composer.getByRole("combobox", { name: "Signature", exact: true });
   await expect(signaturePicker).toBeInViewport();
   await signaturePicker.selectOption({ label: "Manage signatures…" });

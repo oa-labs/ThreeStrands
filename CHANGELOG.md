@@ -19,6 +19,7 @@ What's new in ThreeStrands, written for the people who use it. Each release's no
 - Hidden AI suggestions now say they couldn’t be verified, with an expandable explanation covering invalid scheduling data as well as unmatched evidence.
 
 ### Fixed
+- Long emails now scroll as one continuous message while composing, keeping the last line readable and the signature directly after your text.
 - New messages use the account whose mailbox you are viewing instead of always falling back to the default account.
 - Active mail searches keep their search controls visible, and returning from Contacts or another view restores focus to the search box. A **Close Search** button lets you clear the filter and return to your inbox.
 - Meeting suggestions in Brief are less likely to be hidden because of invalid date or timezone formatting.

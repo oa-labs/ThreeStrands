@@ -19,6 +19,31 @@ test("C opens a focused composer and autosave and polling preserve the body care
   })).toBe(true);
 });
 
+for (const mode of ["new", "reply"] as const) {
+  test(`long ${mode} body grows with its text and keeps the final typed line visible`, async ({ page }) => {
+    await page.goto("/");
+    if (mode === "new") await page.getByRole("button", { name: "New Message (c)" }).click();
+    else {
+      await page.getByLabel("Message content", { exact: true }).contentFrame().locator("body").click();
+      await page.keyboard.press("r");
+    }
+    const composer = page.getByRole("dialog", { name: mode === "new" ? "New Message" : "Reply Message" });
+    const body = composer.getByRole("textbox", { name: "Message Body", exact: true });
+    await body.fill("A long email paragraph.\n".repeat(80));
+    await body.press("ControlOrMeta+End");
+    await page.keyboard.type("The final line remains readable.");
+    await expect.poll(() => body.evaluate((element) => element.scrollHeight - element.clientHeight)).toBeLessThanOrEqual(1);
+    await expect.poll(() => body.evaluate((element) => {
+      const selection = window.getSelection();
+      if (!selection?.rangeCount) return false;
+      const caret = selection.getRangeAt(0).getBoundingClientRect();
+      const viewport = element.closest(".composer-content")!.getBoundingClientRect();
+      return caret.height > 0 && caret.top >= viewport.top && caret.bottom <= viewport.bottom;
+    })).toBe(true);
+    await expect(composer.getByRole("button", { name: "Send", exact: true })).toBeInViewport({ ratio: 1 });
+  });
+}
+
 test("C creates mail from the selected mailbox after switching accounts", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Settings (⌘,)" }).click();

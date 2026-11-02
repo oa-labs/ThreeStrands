@@ -316,7 +316,7 @@ describe("Composer From selector", () => {
     expect(screen.getByRole("dialog", { name: "Reply Message" })).not.toHaveClass("composer-new");
 
     const css = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
-    expect(css).toContain(".composer-new .compose-body:not(.compose-quoted):not(.compose-signature) { height: min(45vh + 90px, 600px, 100vh - 400px); }");
+    expect(css).toContain(".composer-new .compose-authored { min-height: max(200px, min(45vh + 90px, 600px, 100vh - 400px)); }");
   });
 });
 
