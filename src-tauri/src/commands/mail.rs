@@ -39,6 +39,7 @@ pub(crate) async fn finish_exit(app: tauri::AppHandle, state: State<'_, AppState
     }
     // Give drafts a bounded chance to reach the server; they stay saved here.
     state.correspondence.push_drafts_before_exit().await;
+    crate::log_failure("stopping delegated work before exit", state.agent_runner.shutdown().await);
     // Do not terminate while a provider request is awaiting acknowledgement.
     let _send_guard = state.correspondence.gate.lock().await;
     state

@@ -121,3 +121,30 @@ describe("native account requests", () => {
     expect(invoke).toHaveBeenCalledWith("finish_imap_account_setup", { email: "me@example.com" });
   });
 });
+
+
+describe("native delegated-work contract", () => {
+  it("routes local reads, explicit controls, and clarification to registered native commands", async () => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockResolvedValue({});
+    const request = { accountId: "you@example.com", objective: "Fixture", workflow: "fixture_research_v1" as const };
+    await client.agentRunnerEnabled();
+    await client.setAgentRunnerEnabled(true);
+    await client.createAgentTask(request);
+    await client.getAgentTask("agent-1");
+    await client.listAgentTasks("you@example.com");
+    await client.controlAgentTask("agent-1", "pause");
+    await client.answerAgentQuestion("agent-1", "question-1", "Sales");
+    await client.deleteAgentTask("agent-1");
+    expect(vi.mocked(invoke).mock.calls).toEqual([
+      ["agent_runner_enabled", undefined],
+      ["set_agent_runner_enabled", { enabled: true }],
+      ["create_agent_task", { request }],
+      ["get_agent_task", { id: "agent-1" }],
+      ["list_agent_tasks", { accountId: "you@example.com", includeArchived: false }],
+      ["control_agent_task", { id: "agent-1", action: "pause" }],
+      ["answer_agent_question", { id: "agent-1", questionId: "question-1", answer: "Sales" }],
+      ["delete_agent_task", { id: "agent-1" }],
+    ]);
+  });
+});

@@ -1,0 +1,15 @@
+{
+  "hops": [
+    {
+      "url": "https://example.com/report",
+      "resolved": [
+        "93.184.215.14"
+      ],
+      "peer": "93.184.215.14",
+      "status": 200,
+      "contentType": "text/html; charset=utf-8",
+      "bytes": 600
+    }
+  ],
+  "normalized": "accepted"
+}

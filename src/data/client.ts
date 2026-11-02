@@ -1,3 +1,4 @@
+import type { AgentDetail, AgentTaskControl, CreateAgentTaskRequest } from "../domain";
 import type { CheckedProposedTime, CheckProposedTimesRequest, FindAvailabilityRequest } from "../domain";
 import type { GmailSignature, Signature, SignatureDefaults, SignatureLibrary } from "../signatures";
 import type { FileQuery, FilePage, ContextQuery, WorkspaceConversation } from "../domain";
@@ -102,6 +103,14 @@ import { nativeCorrespondence, type CorrespondenceClient } from "../corresponden
 import { demoClient } from "./demoClient";
 
 export interface MailClient extends CorrespondenceClient {
+  agentRunnerEnabled(): Promise<boolean>;
+  setAgentRunnerEnabled(enabled: boolean): Promise<void>;
+  createAgentTask(request: CreateAgentTaskRequest): Promise<AgentDetail>;
+  getAgentTask(id: string): Promise<AgentDetail>;
+  listAgentTasks(accountId?: string, includeArchived?: boolean): Promise<AgentDetail[]>;
+  controlAgentTask(id: string, action: AgentTaskControl): Promise<AgentDetail>;
+  answerAgentQuestion(id: string, questionId: string, answer: string): Promise<AgentDetail>;
+  deleteAgentTask(id: string): Promise<void>;
   refreshGmailAliases(account: string): Promise<import("../domain").SendingIdentity[]>;
   snoozeThreads(ids: string[], until: string): Promise<import("../domain").ConversationSnooze[]>;
   returnSnoozedThreads(ids: string[]): Promise<void>;
@@ -574,6 +583,14 @@ const tauriClient: MailClient = {
   createSnippet: (name, body) => complete("create_snippet", { request: { name, body } }),
   updateSnippet: (id, name, body) => complete("update_snippet", { request: { id, name, body } }),
   deleteSnippet: (id) => complete("delete_snippet", { id }),
+  agentRunnerEnabled: () => read("agent_runner_enabled"),
+  setAgentRunnerEnabled: (enabled) => complete("set_agent_runner_enabled", { enabled }),
+  createAgentTask: (request) => complete("create_agent_task", { request }),
+  getAgentTask: (id) => read("get_agent_task", { id }),
+  listAgentTasks: (accountId, includeArchived = false) => read("list_agent_tasks", { accountId, includeArchived }),
+  controlAgentTask: (id, action) => complete("control_agent_task", { id, action }),
+  answerAgentQuestion: (id, questionId, answer) => complete("answer_agent_question", { id, questionId, answer }),
+  deleteAgentTask: (id) => complete("delete_agent_task", { id }),
   listTasks: (accountId, status) => read("list_tasks", { accountId, status }),
   createTask: (request) => complete("create_task", { request }),
   updateTask: (request) => complete("update_task", { request }),

@@ -1,0 +1,22 @@
+[
+  {
+    "id": "model_broken_json",
+    "adapter": "model",
+    "rawBody": "{\"type\":\"message\""
+  },
+  {
+    "id": "model_unknown_action",
+    "adapter": "model",
+    "rawBody": "{\"id\": \"msg_fixture_1\", \"type\": \"message\", \"role\": \"assistant\", \"model\": \"claude-sonnet-4-6\", \"content\": [{\"type\": \"tool_use\", \"id\": \"bad_call\", \"name\": \"send_mail\", \"input\": {\"to\": \"person@example.com\"}}], \"stop_reason\": \"tool_use\", \"usage\": {\"input_tokens\": 1200, \"output_tokens\": 80}}"
+  },
+  {
+    "id": "search_invalid_results",
+    "adapter": "search",
+    "rawBody": "{\"requestId\": \"bad_search\", \"results\": {}}"
+  },
+  {
+    "id": "search_unsafe_url",
+    "adapter": "search",
+    "rawBody": "{\"results\": [{\"title\": \"Unsafe\", \"url\": \"http://127.0.0.1\", \"highlights\": []}]}"
+  }
+]

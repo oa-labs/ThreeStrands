@@ -1279,3 +1279,14 @@ export type SystemContactsStatus = {
   connection: { sources: { id: string; name: string }[]; selectedSources: string[]; refreshedAt: string | null };
   contactCount: number;
 };
+
+/** Device-local delegated work; v1 executes only the labeled fixture workflow.
+ * Times are UTC epoch seconds, matching native leases and the injected clock. */
+export type AgentRunState = "queued" | "running" | "waiting_for_input" | "paused" | "completed" | "failed" | "cancelled";
+export type AgentTaskControl = "pause" | "resume" | "retry" | "cancel" | "archive" | "unarchive" | "mark_read";
+export type CreateAgentTaskRequest = { accountId: string; objective: string; sourceThreadId?: string | null; linkedTaskId?: string | null; workflow: "fixture_research_v1" };
+export type AgentTask = { id: string; accountId: string; objective: string; sourceThreadId: string | null; linkedTaskId: string | null; workflow: "fixture_research_v1"; revision: number; createdAt: number; archived: boolean; unread: boolean };
+export type AgentRun = { id: string; taskId: string; state: AgentRunState; reason: string | null; generation: number; checkpoint: number; owner: string | null; leaseUntil: number | null; startedAt: number | null; notBefore: number; dispatches: number; attempts: number; activeSeconds: number; questionId: string | null };
+export type AgentTurn = { id: string; role: "user" | "assistant"; text: string; questionId: string | null; answerTo: string | null; createdAt: number };
+export type AgentArtifact = { id: string; version: number; kind: "fixture_report"; body: string; notResearched: true; createdAt: number };
+export type AgentDetail = { task: AgentTask; run: AgentRun; turns: AgentTurn[]; artifacts: AgentArtifact[] };

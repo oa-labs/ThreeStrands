@@ -1,0 +1,41 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "https://api.exa.ai/search",
+    "headers": {
+      "Content-Type": "application/json",
+      "x-api-key": "<keychain>"
+    },
+    "body": {
+      "query": "Example Summit official speakers",
+      "type": "auto",
+      "numResults": 5,
+      "contents": {
+        "highlights": true
+      }
+    }
+  },
+  "response": {
+    "requestId": "exa_fixture_1",
+    "results": [
+      {
+        "title": "Example Summit speakers",
+        "url": "https://example.com/speakers",
+        "highlights": [
+          "Published speaker list; attendance not established."
+        ]
+      }
+    ],
+    "costDollars": {
+      "total": 0.007
+    }
+  },
+  "normalized": [
+    {
+      "url": "https://example.com/speakers",
+      "title": "Example Summit speakers",
+      "excerpt": "Published speaker list; attendance not established.",
+      "evidenceKind": "search_snippet"
+    }
+  ]
+}

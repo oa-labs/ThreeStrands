@@ -336,6 +336,7 @@ impl Database {
     /// Three Strands-owned workflow records and the synchronized catalog row.
     pub fn disconnect_account_locally(&self, email: &str) -> DbResult<()> {
         self.with_transaction(|transaction| {
+            transaction.execute("DELETE FROM agent_tasks WHERE account_id=?1", [email])?;
             transaction.execute(
                 "DELETE FROM thread_search WHERE thread_id IN (SELECT id FROM threads WHERE account_id=?1)",
                 [email],

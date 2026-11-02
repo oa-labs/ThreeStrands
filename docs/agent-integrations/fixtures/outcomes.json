@@ -1,0 +1,277 @@
+[
+  {
+    "id": "model_unsupported",
+    "service": "model",
+    "response": {
+      "status": 400,
+      "body": {
+        "type": "error",
+        "error": {
+          "type": "invalid_request_error",
+          "message": "Synthetic fixture error"
+        },
+        "request_id": "req_fixture_error"
+      }
+    },
+    "expected": {
+      "kind": "unsupported_or_invalid"
+    }
+  },
+  {
+    "id": "model_credentials",
+    "service": "model",
+    "response": {
+      "status": 401,
+      "body": {
+        "type": "error",
+        "error": {
+          "type": "authentication_error",
+          "message": "Synthetic fixture error"
+        },
+        "request_id": "req_fixture_error"
+      }
+    },
+    "expected": {
+      "kind": "credentials_or_access"
+    }
+  },
+  {
+    "id": "model_rate_limited",
+    "service": "model",
+    "response": {
+      "status": 429,
+      "headers": {
+        "retry-after": "12"
+      },
+      "body": {
+        "type": "error",
+        "error": {
+          "type": "rate_limit_error",
+          "message": "Synthetic fixture error"
+        },
+        "request_id": "req_fixture_error"
+      }
+    },
+    "expected": {
+      "kind": "retry",
+      "afterSeconds": 12,
+      "reserveUsage": true
+    }
+  },
+  {
+    "id": "model_overloaded",
+    "service": "model",
+    "response": {
+      "status": 503,
+      "body": {
+        "type": "error",
+        "error": {
+          "type": "api_error",
+          "message": "Synthetic fixture error"
+        },
+        "request_id": "req_fixture_error"
+      }
+    },
+    "expected": {
+      "kind": "retry",
+      "afterSeconds": 2,
+      "reserveUsage": true
+    }
+  },
+  {
+    "id": "model_interrupted",
+    "service": "model",
+    "response": {
+      "transport": "interrupted_after_dispatch"
+    },
+    "expected": {
+      "kind": "ambiguous",
+      "reserveUsage": true
+    }
+  },
+  {
+    "id": "model_cancelled",
+    "service": "model",
+    "response": {
+      "transport": "cancelled"
+    },
+    "expected": {
+      "kind": "cancelled"
+    }
+  },
+  {
+    "id": "search_unsupported",
+    "service": "search",
+    "response": {
+      "status": 400,
+      "body": {
+        "requestId": "exa_fixture_error",
+        "error": "Synthetic fixture error",
+        "tag": "TEST_ERROR"
+      }
+    },
+    "expected": {
+      "kind": "unsupported_or_invalid"
+    }
+  },
+  {
+    "id": "search_credentials",
+    "service": "search",
+    "response": {
+      "status": 401,
+      "body": {
+        "requestId": "exa_fixture_error",
+        "error": "Synthetic fixture error",
+        "tag": "TEST_ERROR"
+      }
+    },
+    "expected": {
+      "kind": "credentials_or_access"
+    }
+  },
+  {
+    "id": "search_rate_limited",
+    "service": "search",
+    "response": {
+      "status": 429,
+      "headers": {
+        "retry-after": "12"
+      },
+      "body": {
+        "requestId": "exa_fixture_error",
+        "error": "Synthetic fixture error",
+        "tag": "TEST_ERROR"
+      }
+    },
+    "expected": {
+      "kind": "retry",
+      "afterSeconds": 12,
+      "reserveUsage": true
+    }
+  },
+  {
+    "id": "search_overloaded",
+    "service": "search",
+    "response": {
+      "status": 503,
+      "body": {
+        "requestId": "exa_fixture_error",
+        "error": "Synthetic fixture error",
+        "tag": "TEST_ERROR"
+      }
+    },
+    "expected": {
+      "kind": "retry",
+      "afterSeconds": 2,
+      "reserveUsage": true
+    }
+  },
+  {
+    "id": "search_interrupted",
+    "service": "search",
+    "response": {
+      "transport": "interrupted_after_dispatch"
+    },
+    "expected": {
+      "kind": "ambiguous",
+      "reserveUsage": true
+    }
+  },
+  {
+    "id": "search_cancelled",
+    "service": "search",
+    "response": {
+      "transport": "cancelled"
+    },
+    "expected": {
+      "kind": "cancelled"
+    }
+  },
+  {
+    "id": "page_unsupported",
+    "service": "page",
+    "response": {
+      "status": 400,
+      "body": "Synthetic HTTP error"
+    },
+    "expected": {
+      "kind": "unsupported_or_invalid"
+    }
+  },
+  {
+    "id": "page_credentials",
+    "service": "page",
+    "response": {
+      "status": 401,
+      "body": "Synthetic HTTP error"
+    },
+    "expected": {
+      "kind": "credentials_or_access"
+    }
+  },
+  {
+    "id": "page_rate_limited",
+    "service": "page",
+    "response": {
+      "status": 429,
+      "headers": {
+        "retry-after": "12"
+      },
+      "body": "Synthetic HTTP error"
+    },
+    "expected": {
+      "kind": "retry",
+      "afterSeconds": 12,
+      "reserveUsage": true
+    }
+  },
+  {
+    "id": "page_overloaded",
+    "service": "page",
+    "response": {
+      "status": 503,
+      "body": "Synthetic HTTP error"
+    },
+    "expected": {
+      "kind": "retry",
+      "afterSeconds": 2,
+      "reserveUsage": true
+    }
+  },
+  {
+    "id": "page_interrupted",
+    "service": "page",
+    "response": {
+      "transport": "interrupted_after_dispatch"
+    },
+    "expected": {
+      "kind": "ambiguous",
+      "reserveUsage": true
+    }
+  },
+  {
+    "id": "page_cancelled",
+    "service": "page",
+    "response": {
+      "transport": "cancelled"
+    },
+    "expected": {
+      "kind": "cancelled"
+    }
+  },
+  {
+    "id": "search_payment_required",
+    "service": "search",
+    "response": {
+      "status": 402,
+      "body": {
+        "requestId": "exa_fixture_error",
+        "error": "Synthetic fixture error",
+        "tag": "TEST_ERROR"
+      }
+    },
+    "expected": {
+      "kind": "budget_or_credits_required"
+    }
+  }
+]

@@ -14,7 +14,7 @@ pub(crate) const BASELINE_VERSION: i64 = 74;
 
 /// The current schema version. A new schema change adds an
 /// `if version < N { ... }` block in [`migrate`] and bumps this constant to N.
-pub(crate) const LATEST_VERSION: i64 = 94;
+pub(crate) const LATEST_VERSION: i64 = 95;
 
 pub(crate) const INITIAL_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -1031,6 +1031,31 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS co_recipient_seed ON co_recipient_addresses(account_id,email,sent_at);
             CREATE INDEX IF NOT EXISTS co_recipient_shared_seed ON co_recipient_addresses(email,sent_at);").map_err(error)?;
     }
+    if version < 95 {
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS agent_tasks (
+            id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(email) ON DELETE CASCADE,
+            source_thread_id TEXT REFERENCES threads(id) ON DELETE SET NULL,
+            linked_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+            record_json TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS agent_runs (
+                id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE,
+                state TEXT NOT NULL CHECK(state IN ('queued','running','waiting_for_input','paused','completed','failed','cancelled')),
+                generation INTEGER NOT NULL, lease_until INTEGER, not_before INTEGER NOT NULL,
+                record_json TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS agent_runnable ON agent_runs(state,not_before,lease_until);
+            CREATE UNIQUE INDEX IF NOT EXISTS agent_one_active_run ON agent_runs(task_id)
+                WHERE state IN ('queued','running','waiting_for_input','paused');
+            CREATE TABLE IF NOT EXISTS agent_turns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE,
+                answer_to TEXT, record_json TEXT NOT NULL, UNIQUE(task_id,answer_to));
+            CREATE TABLE IF NOT EXISTS agent_steps (
+                id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+                checkpoint INTEGER NOT NULL, generation INTEGER NOT NULL, status TEXT NOT NULL,
+                result_json TEXT);
+            CREATE TABLE IF NOT EXISTS agent_artifacts (
+                id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE,
+                version INTEGER NOT NULL, record_json TEXT NOT NULL, UNIQUE(task_id,version));").map_err(error)?;
+    }
     if stored == 0 {
         // Only new installations get the 90-day default. Existing databases
         // without a retention setting still mean Forever. Keep the default
@@ -1315,6 +1340,13 @@ mod tests {
 
     /// Objects each migration above the v74 baseline adds, in `schema_objects` form.
     const ABOVE_BASELINE_OBJECTS: &[&str] = &[
+        "table:agent_tasks",
+        "table:agent_runs",
+        "table:agent_turns",
+        "table:agent_steps",
+        "table:agent_artifacts",
+        "index:agent_runnable",
+        "index:agent_one_active_run",
         "table:co_recipient_addresses",
         "index:co_recipient_seed",
         "index:co_recipient_shared_seed",

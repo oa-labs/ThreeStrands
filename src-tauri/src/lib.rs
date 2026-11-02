@@ -1,6 +1,7 @@
 mod clock;
 mod transport_validation;
 mod ai;
+mod agents;
 mod app_update;
 mod availability;
 mod proposed_times;
@@ -183,6 +184,7 @@ pub(crate) async fn rekey_placeholder_account(accounts: &AccountRegistry, identi
 }
 
 struct AppState {
+    agent_runner: agents::Runner,
     database: Arc<Database>,
     /// The pluggable replicated-sync engine (see `replicated_sync.rs`).
     /// Inert unless the beta toggle or `THREESTRANDS_REPLICATED_SYNC` turns
@@ -1092,7 +1094,10 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     });
     let replicated_sync = replicated_sync::ReplicatedSync::new(database.clone());
     replicated_sync.clone().spawn(app.handle().clone(), reconcile_account_registry);
+    let agent_runner = agents::Runner::new(database.clone());
+    agent_runner.start();
     app.manage(AppState {
+        agent_runner,
         database,
         replicated_sync,
         auth_config,
@@ -1592,6 +1597,14 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stat
         commands::ai::ai_review_draft,
         commands::ai::ai_find_times,
         // Tasks and follow-ups
+        commands::agents::agent_runner_enabled,
+        commands::agents::set_agent_runner_enabled,
+        commands::agents::create_agent_task,
+        commands::agents::get_agent_task,
+        commands::agents::list_agent_tasks,
+        commands::agents::control_agent_task,
+        commands::agents::answer_agent_question,
+        commands::agents::delete_agent_task,
         commands::tasks::list_tasks,
         commands::tasks::create_task,
         commands::tasks::update_task,
@@ -1689,6 +1702,7 @@ fn handle_run_event(handle: &tauri::AppHandle, event: tauri::RunEvent) {
         }
         tauri::RunEvent::Exit => {
             if let Some(state) = handle.try_state::<AppState>() {
+                state.agent_runner.request_stop();
                 log_failure("checkpointing the WAL at exit", state.database.checkpoint_on_exit());
             }
         }

@@ -1,0 +1,13 @@
+{
+  "request": {
+    "capability": "route",
+    "origin": null,
+    "destination": null
+  },
+  "normalized": {
+    "kind": "unavailable",
+    "reason": "not_configured",
+    "distanceMeters": null,
+    "durationSeconds": null
+  }
+}

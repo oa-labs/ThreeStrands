@@ -141,6 +141,7 @@ async fn relaunch(app: &AppHandle) -> Result<(), String> {
         Ok(()) => {
             use tauri::Manager;
             if let Some(state) = app.try_state::<crate::AppState>() {
+                crate::log_failure("stopping delegated work before relaunch", state.agent_runner.shutdown().await);
                 state.exiting.store(true, std::sync::atomic::Ordering::SeqCst);
             }
             app.exit(0);

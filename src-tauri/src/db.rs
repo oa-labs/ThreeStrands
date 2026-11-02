@@ -16,6 +16,7 @@ use std::{
 };
 
 mod accounts;
+mod agents;
 mod ai;
 mod calendar_accounts;
 mod compose_settings;

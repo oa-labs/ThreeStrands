@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "verifiedOn": "2026-11-02",
+  "model": {
+    "provider": "anthropic",
+    "id": "claude-sonnet-4-6",
+    "endpoint": "https://api.anthropic.com/v1/messages",
+    "apiVersion": "2023-06-01",
+    "inputUsdPerMillion": 3,
+    "outputUsdPerMillion": 15,
+    "stream": false,
+    "toolChoice": {
+      "type": "auto",
+      "disable_parallel_tool_use": true
+    }
+  },
+  "search": {
+    "provider": "exa",
+    "enabledByDefault": false,
+    "endpoint": "https://api.exa.ai/search",
+    "type": "auto",
+    "usdPerRequest": 0.007,
+    "resultsPerRequest": 5,
+    "requestsPerSecond": 1,
+    "requiresPersistenceBasis": true
+  },
+  "routing": {
+    "provider": null,
+    "reason": "not_configured"
+  },
+  "limits": {
+    "concurrentJobs": 2,
+    "concurrentDispatchesPerJob": 1,
+    "modelCallsPerTask": 20,
+    "searchCallsPerTask": 20,
+    "pageCallsPerTask": 30,
+    "activeSecondsPerTask": 900,
+    "retriesPerStep": 2,
+    "retryBaseSeconds": 2,
+    "maxAutomaticRetryDelaySeconds": 300,
+    "inputTokensPerCall": 24000,
+    "outputTokensPerCall": 4096,
+    "inputTokensPerTask": 200000,
+    "outputTokensPerTask": 40000,
+    "queryCharacters": 400,
+    "responseBytes": 2097152,
+    "extractedCharactersPerPage": 30000,
+    "persistedEvidenceBytesPerTask": 5242880,
+    "redirects": 3,
+    "connectSeconds": 10,
+    "requestSeconds": 60,
+    "rawEvidenceRetentionDays": 7
+  },
+  "page": {
+    "schemes": [
+      "https:"
+    ],
+    "ports": [
+      443
+    ],
+    "contentTypes": [
+      "text/html",
+      "text/plain"
+    ],
+    "charsets": [
+      "utf-8",
+      "us-ascii"
+    ],
+    "contentEncodings": [
+      "identity"
+    ],
+    "allowCookies": false,
+    "allowEnvironmentProxy": false,
+    "allowScripts": false,
+    "allowSubresources": false
+  },
+  "tools": [
+    "search_web",
+    "read_page",
+    "ask_user",
+    "publish_artifact"
+  ],
+  "keychain": {
+    "service": "app.threestrands.mail",
+    "modelAccount": "agents-anthropic-api-key",
+    "searchAccount": "agents-exa-api-key"
+  }
+}
